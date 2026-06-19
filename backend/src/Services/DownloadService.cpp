@@ -3679,6 +3679,7 @@ namespace fluxora
             ExistingModInstallMode existingModMode,
             bool hasFomodOutput,
             std::wstring archiveContentHash,
+            const std::vector<PlacementOverride>& placementOverrides,
             Logger& logger)
         {
             const std::wstring gameId = InstanceMetadataStore::gameId(projectDirectory);
@@ -3711,6 +3712,7 @@ namespace fluxora
             request.hasFomodOutput = hasFomodOutput;
             request.archiveContentHash = std::move(archiveContentHash);
             request.gameDefinitionVersion = lookup.definition->definitionVersion;
+            request.manualOverrides = placementOverrides;
             request.logger = &logger;
 
             const PlacementPlan plan = layout.analyzeDirectory(stagingDirectory, request);
@@ -3724,6 +3726,7 @@ namespace fluxora
             ExistingModInstallMode existingModMode,
             bool hasFomodOutput,
             std::wstring archiveContentHash,
+            const std::vector<PlacementOverride>& placementOverrides,
             Logger& logger)
         {
             ContentLayoutService layout;
@@ -3733,6 +3736,7 @@ namespace fluxora
                 existingModMode,
                 hasFomodOutput,
                 std::move(archiveContentHash),
+                placementOverrides,
                 logger);
             if (!plan.canInstall())
             {
@@ -3751,7 +3755,8 @@ namespace fluxora
             ExistingModInstallMode existingModMode,
             DownloadMetadata metadata,
             bool persistMetadata,
-            const char* logKind)
+            const char* logKind,
+            const std::vector<PlacementOverride>& placementOverrides)
         {
             const std::wstring requestedName = trim(std::wstring(modName));
             const std::wstring installName = requestedName.empty()
@@ -3773,7 +3778,8 @@ namespace fluxora
                     "\", archivePath=\"" + toUtf8(archivePath.wstring()) +
                     "\", requestedName=\"" + toUtf8(requestedName) +
                     "\", safeName=\"" + toUtf8(safeName) +
-                    "\", source=\"" + toUtf8(metadata.source) +
+                    "\", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
+                    ", source=\"" + toUtf8(metadata.source) +
                     "\", gameDomain=\"" + toUtf8(metadata.gameDomain) +
                     "\", modId=\"" + toUtf8(metadata.modId) +
                     "\", fileId=\"" + toUtf8(metadata.fileId) +
@@ -3825,6 +3831,7 @@ namespace fluxora
                     existingModMode,
                     false,
                     fileCacheFingerprint(archivePath),
+                    placementOverrides,
                     logger);
                 detectedVersion = detectInstalledModVersion(stagingDirectory, archivePath, metadata, safeName);
                 switch (existingModMode)
@@ -3859,9 +3866,10 @@ namespace fluxora
                     LogLevel::Error,
                     "ModInstall",
                     std::string("installMod failed kind=\"") + logKind +
-                        "\", selectedGameId=\"" + toUtf8(selectedGameId) +
-                        "\", safeName=\"" + toUtf8(safeName) +
-                        "\", stagingDirectory=\"" + toUtf8(stagingDirectory.wstring()) +
+                    "\", selectedGameId=\"" + toUtf8(selectedGameId) +
+                    "\", safeName=\"" + toUtf8(safeName) +
+                    "\", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
+                    ", stagingDirectory=\"" + toUtf8(stagingDirectory.wstring()) +
                         "\", reason=\"" + exception.what() + "\".");
                 std::filesystem::remove_all(stagingDirectory);
                 throw;
@@ -3904,7 +3912,8 @@ namespace fluxora
                     "\", safeName=\"" + toUtf8(safeName) +
                     "\", targetDirectory=\"" + toUtf8(targetDirectory.wstring()) +
                     "\", installMode=\"" + installModeName(existingModMode) +
-                    "\", versionResult=\"" +
+                    "\", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
+                    ", versionResult=\"" +
                     (detectedVersion.empty() ? std::string("unknown") : toUtf8(detectedVersion)) + "\".");
 
             return InstalledMod{
@@ -3925,7 +3934,8 @@ namespace fluxora
             const std::vector<std::wstring>& selectedOptionIds,
             DownloadMetadata metadata,
             bool persistMetadata,
-            const char* logKind)
+            const char* logKind,
+            const std::vector<PlacementOverride>& placementOverrides)
         {
             const std::wstring requestedName = trim(std::wstring(modName));
             const std::wstring installName = requestedName.empty()
@@ -3952,6 +3962,7 @@ namespace fluxora
                     "\", modId=\"" + toUtf8(metadata.modId) +
                     "\", fileId=\"" + toUtf8(metadata.fileId) +
                     "\", selectedOptionCount=" + std::to_string(selectedOptionIds.size()) +
+                    ", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
                     ", versionResult=\"" +
                     (metadata.version.empty() ? std::string("metadata-unavailable") : toUtf8(metadata.version)) + "\".");
 
@@ -4035,6 +4046,7 @@ namespace fluxora
                     existingModMode,
                     true,
                     fomodOutputCacheFingerprint(archivePath, selectedOptionIds),
+                    placementOverrides,
                     logger);
 
                 detectedVersion = trim(descriptor.moduleVersion);
@@ -4083,7 +4095,8 @@ namespace fluxora
                         "\", packageDirectory=\"" + toUtf8(packageDirectory.wstring()) +
                         "\", stagingDirectory=\"" + toUtf8(stagingDirectory.wstring()) +
                         "\", appliedPluginRules=\"fomod options=" + std::to_string(appliedOptionIds.size()) +
-                        "\", reason=\"" + exception.what() + "\".");
+                        "\", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
+                        ", reason=\"" + exception.what() + "\".");
                 cleanupTemporaryDirectory(stagingDirectory, logger, "FOMOD");
                 cleanupTemporaryDirectory(packageDirectory, logger, "FOMOD");
                 throw;
@@ -4859,7 +4872,8 @@ namespace fluxora
         const std::filesystem::path& projectDirectory,
         const std::filesystem::path& downloadPath,
         std::wstring_view modName,
-        ExistingModInstallMode existingModMode) const
+        ExistingModInstallMode existingModMode,
+        const std::vector<PlacementOverride>& placementOverrides) const
     {
         if (downloadPath.empty() || !std::filesystem::exists(downloadPath) || !std::filesystem::is_regular_file(downloadPath))
         {
@@ -4886,14 +4900,16 @@ namespace fluxora
             existingModMode,
             std::move(metadata),
             true,
-            "archive");
+            "archive",
+            placementOverrides);
     }
 
     InstalledMod DownloadService::installArchive(
         const std::filesystem::path& projectDirectory,
         const std::filesystem::path& archivePath,
         std::wstring_view modName,
-        ExistingModInstallMode existingModMode) const
+        ExistingModInstallMode existingModMode,
+        const std::vector<PlacementOverride>& placementOverrides) const
     {
         if (archivePath.empty() || !std::filesystem::exists(archivePath) || !std::filesystem::is_regular_file(archivePath))
         {
@@ -4917,7 +4933,8 @@ namespace fluxora
             existingModMode,
             std::move(metadata),
             false,
-            "manualArchive");
+            "manualArchive",
+            placementOverrides);
     }
 
     PlacementPlan DownloadService::analyzeDownloadContentLayout(
@@ -4975,6 +4992,7 @@ namespace fluxora
                 existingModMode,
                 false,
                 fileCacheFingerprint(downloadPath),
+                {},
                 logger_);
             cleanupTemporaryDirectory(analysisDirectory, logger_, "ContentLayout");
             return plan;
@@ -5155,6 +5173,7 @@ namespace fluxora
                 existingModMode,
                 true,
                 fomodOutputCacheFingerprint(downloadPath, selectedOptionIds),
+                {},
                 logger_);
             cleanupTemporaryDirectory(stagingDirectory, logger_, "FOMOD");
             cleanupTemporaryDirectory(packageDirectory, logger_, "FOMOD");
@@ -5173,7 +5192,8 @@ namespace fluxora
         const std::filesystem::path& downloadPath,
         std::wstring_view modName,
         ExistingModInstallMode existingModMode,
-        const std::vector<std::wstring>& selectedOptionIds) const
+        const std::vector<std::wstring>& selectedOptionIds,
+        const std::vector<PlacementOverride>& placementOverrides) const
     {
         if (downloadPath.empty() || !std::filesystem::exists(downloadPath) || !std::filesystem::is_regular_file(downloadPath))
         {
@@ -5201,7 +5221,8 @@ namespace fluxora
             selectedOptionIds,
             std::move(metadata),
             true,
-            "fomod");
+            "fomod",
+            placementOverrides);
     }
 
     InstalledMod DownloadService::installFomodArchive(
@@ -5209,7 +5230,8 @@ namespace fluxora
         const std::filesystem::path& archivePath,
         std::wstring_view modName,
         ExistingModInstallMode existingModMode,
-        const std::vector<std::wstring>& selectedOptionIds) const
+        const std::vector<std::wstring>& selectedOptionIds,
+        const std::vector<PlacementOverride>& placementOverrides) const
     {
         if (archivePath.empty() || !std::filesystem::exists(archivePath) || !std::filesystem::is_regular_file(archivePath))
         {
@@ -5234,7 +5256,8 @@ namespace fluxora
             selectedOptionIds,
             std::move(metadata),
             false,
-            "manualFomodArchive");
+            "manualFomodArchive",
+            placementOverrides);
     }
 
     bool DownloadService::isInitialized() const noexcept

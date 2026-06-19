@@ -378,11 +378,31 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    // placementOverridesJson is a JSON array of objects:
+    // { "sourcePath": "archive/file.ext", "target": "data|gameRoot", "targetRelativePath": "folder/file.ext" }.
+    FLUXORA_CORE_API int fluxora_install_download_with_layout(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* placementOverridesJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_install_archive_with_mode(
         const wchar_t* projectDirectory,
         const wchar_t* archivePath,
         const wchar_t* modName,
         int existingModMode,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_install_archive_with_layout(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* placementOverridesJson,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
@@ -415,12 +435,32 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_install_fomod_download_with_layout(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_install_fomod_archive_with_mode(
         const wchar_t* projectDirectory,
         const wchar_t* archivePath,
         const wchar_t* modName,
         int existingModMode,
         const wchar_t* selectedOptionIdsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_install_fomod_archive_with_layout(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 

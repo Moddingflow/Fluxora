@@ -503,6 +503,47 @@ namespace fluxora::tests
         EXPECT_FALSE(std::filesystem::exists(modPath / L"skse64_loader.exe"));
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, InstallDownloadAppliesManualPlacementOverrides)
+    {
+        const DownloadEntry download = importArchive(
+            L"Manual Placement.zip",
+            {
+                {L"Data/SkyUI_SE.esp", "plugin"}
+            });
+
+        std::optional<InstalledMod> installed;
+        std::string error;
+        try
+        {
+            installed = downloads_.installDownload(
+                project_,
+                download.localPath,
+                L"Manual Placement",
+                ExistingModInstallMode::FailIfExists,
+                {
+                    PlacementOverride{
+                        GameRelativePath::parseOrThrow(L"Data/SkyUI_SE.esp"),
+                        PlacementTarget::GameRoot
+                    }
+                });
+        }
+        catch (const std::exception& exception)
+        {
+            error = exception.what();
+        }
+
+        if (!installed.has_value() && isMissingExtractorError(error))
+        {
+            GTEST_SKIP() << "No supported archive extractor was available: " << error;
+        }
+
+        ASSERT_TRUE(installed.has_value()) << error;
+        const std::filesystem::path modPath = modsDirectory() / L"Manual Placement";
+        EXPECT_TRUE(std::filesystem::is_regular_file(modPath / L"root" / L"SkyUI_SE.esp"));
+        EXPECT_FALSE(std::filesystem::exists(modPath / L"SkyUI_SE.esp"));
+        EXPECT_FALSE(std::filesystem::exists(modPath / L"Data" / L"SkyUI_SE.esp"));
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, InstallDownloadNormalizesSkyrimArchiveWithoutDataFolder)
     {
         std::string error;

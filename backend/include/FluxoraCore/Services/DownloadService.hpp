@@ -98,13 +98,15 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& downloadPath,
             std::wstring_view modName,
-            ExistingModInstallMode existingModMode = ExistingModInstallMode::FailIfExists) const;
+            ExistingModInstallMode existingModMode = ExistingModInstallMode::FailIfExists,
+            const std::vector<PlacementOverride>& placementOverrides = {}) const;
 
         InstalledMod installArchive(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& archivePath,
             std::wstring_view modName,
-            ExistingModInstallMode existingModMode = ExistingModInstallMode::FailIfExists) const;
+            ExistingModInstallMode existingModMode = ExistingModInstallMode::FailIfExists,
+            const std::vector<PlacementOverride>& placementOverrides = {}) const;
 
         [[nodiscard]] PlacementPlan analyzeDownloadContentLayout(
             const std::filesystem::path& projectDirectory,
@@ -126,14 +128,16 @@ namespace fluxora
             const std::filesystem::path& downloadPath,
             std::wstring_view modName,
             ExistingModInstallMode existingModMode,
-            const std::vector<std::wstring>& selectedOptionIds) const;
+            const std::vector<std::wstring>& selectedOptionIds,
+            const std::vector<PlacementOverride>& placementOverrides = {}) const;
 
         InstalledMod installFomodArchive(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& archivePath,
             std::wstring_view modName,
             ExistingModInstallMode existingModMode,
-            const std::vector<std::wstring>& selectedOptionIds) const;
+            const std::vector<std::wstring>& selectedOptionIds,
+            const std::vector<PlacementOverride>& placementOverrides = {}) const;
 
         [[nodiscard]] bool isInitialized() const noexcept;
 

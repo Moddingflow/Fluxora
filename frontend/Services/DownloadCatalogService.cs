@@ -77,6 +77,7 @@ public sealed class DownloadCatalogService : IAppService
         DownloadEntry download,
         string modName,
         ExistingModInstallMode existingModMode,
+        IReadOnlyList<PlacementOverride>? placementOverrides = null,
         CancellationToken cancellationToken = default)
     {
         return coreBridgeService.InstallDownloadAsync(
@@ -84,6 +85,7 @@ public sealed class DownloadCatalogService : IAppService
             download.LocalPath,
             modName,
             existingModMode,
+            placementOverrides,
             cancellationToken);
     }
 
@@ -92,6 +94,7 @@ public sealed class DownloadCatalogService : IAppService
         string archivePath,
         string modName,
         ExistingModInstallMode existingModMode,
+        IReadOnlyList<PlacementOverride>? placementOverrides = null,
         CancellationToken cancellationToken = default)
     {
         return coreBridgeService.InstallArchiveAsync(
@@ -99,6 +102,7 @@ public sealed class DownloadCatalogService : IAppService
             archivePath,
             modName,
             existingModMode,
+            placementOverrides,
             cancellationToken);
     }
 
@@ -147,6 +151,7 @@ public sealed class DownloadCatalogService : IAppService
         string modName,
         ExistingModInstallMode existingModMode,
         IReadOnlyList<string> selectedOptionIds,
+        IReadOnlyList<PlacementOverride>? placementOverrides = null,
         CancellationToken cancellationToken = default)
     {
         return coreBridgeService.InstallFomodDownloadAsync(
@@ -155,6 +160,7 @@ public sealed class DownloadCatalogService : IAppService
             modName,
             existingModMode,
             selectedOptionIds,
+            placementOverrides,
             cancellationToken);
     }
 
@@ -164,6 +170,7 @@ public sealed class DownloadCatalogService : IAppService
         string modName,
         ExistingModInstallMode existingModMode,
         IReadOnlyList<string> selectedOptionIds,
+        IReadOnlyList<PlacementOverride>? placementOverrides = null,
         CancellationToken cancellationToken = default)
     {
         return coreBridgeService.InstallFomodArchiveAsync(
@@ -172,6 +179,7 @@ public sealed class DownloadCatalogService : IAppService
             modName,
             existingModMode,
             selectedOptionIds,
+            placementOverrides,
             cancellationToken);
     }
 }

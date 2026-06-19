@@ -218,6 +218,7 @@ public sealed class MainWindowViewModelCapabilityTests
 
     private sealed class NullModInstallDialogService : IModInstallDialogService
     {
+        public ModInstallDialogResult? PickModInstallOptions(string suggestedName, ContentLayoutPreview? layoutPreview = null) => null;
         public string? PickModName(string suggestedName, ContentLayoutPreview? layoutPreview = null) => null;
         public string? PickEmptyModName(string suggestedName) => null;
         public ExistingModInstallMode? PickExistingModInstallMode(string modName) => null;

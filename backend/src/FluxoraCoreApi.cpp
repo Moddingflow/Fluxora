@@ -1548,6 +1548,66 @@ namespace
         return values;
     }
 
+    std::vector<fluxora::PlacementOverride> parsePlacementOverridesJson(const wchar_t* json)
+    {
+        if (isBlank(json))
+        {
+            return {};
+        }
+
+        const fluxora::JsonValue root = fluxora::JsonReader::parse(json);
+        if (!root.isArray())
+        {
+            throw std::invalid_argument("Expected a JSON placement override array.");
+        }
+
+        std::vector<fluxora::PlacementOverride> values;
+        for (const fluxora::JsonValue& item : root.asArray())
+        {
+            if (!item.isObject())
+            {
+                throw std::invalid_argument("Placement override entry must be an object.");
+            }
+
+            const auto readRequiredString = [&item](std::wstring_view field) -> std::wstring
+            {
+                const fluxora::JsonValue* value = item.find(field);
+                if (value == nullptr || !value->isString())
+                {
+                    throw std::invalid_argument("Placement override has a field with the wrong type.");
+                }
+
+                return value->asString();
+            };
+
+            const std::wstring sourcePath = readRequiredString(L"sourcePath");
+            const std::wstring target = readRequiredString(L"target");
+
+            std::optional<fluxora::GameRelativePath> targetRelativePath;
+            if (const fluxora::JsonValue* value = item.find(L"targetRelativePath"))
+            {
+                if (!value->isString())
+                {
+                    throw std::invalid_argument("Placement override targetRelativePath must be a string.");
+                }
+
+                const std::wstring rawTargetRelativePath = value->asString();
+                if (!rawTargetRelativePath.empty())
+                {
+                    targetRelativePath = fluxora::GameRelativePath::parse(rawTargetRelativePath).valueOrThrow();
+                }
+            }
+
+            values.push_back(fluxora::PlacementOverride{
+                fluxora::GameRelativePath::parse(sourcePath).valueOrThrow(),
+                fluxora::parsePlacementTarget(target).valueOrThrow(),
+                std::move(targetRelativePath)
+            });
+        }
+
+        return values;
+    }
+
     std::vector<fluxora::GameExecutable> parseGameExecutablesJson(const wchar_t* json)
     {
         if (isBlank(json))
@@ -1896,6 +1956,7 @@ namespace
         const wchar_t* downloadPath,
         const wchar_t* modName,
         int existingModMode,
+        const wchar_t* placementOverridesJson,
         wchar_t* jsonBuffer,
         int jsonBufferLength)
     {
@@ -1914,6 +1975,8 @@ namespace
                 return FluxoraCoreResultInvalidArgument;
             }
 
+            const std::vector<fluxora::PlacementOverride> placementOverrides =
+                parsePlacementOverridesJson(placementOverridesJson);
             logBridge(fluxora::LogLevel::Info, "fluxora_install_download started.");
             logOperation(
                 fluxora::LogLevel::Info,
@@ -1922,13 +1985,15 @@ namespace
                     pathForLog(std::filesystem::path(projectDirectory)) + "\", downloadPath=\"" +
                     pathForLog(std::filesystem::path(downloadPath)) + "\", modName=\"" +
                     textForLog(modName) + "\", existingModMode=\"" +
-                    existingModInstallModeForLog(mode) + "\"");
+                    existingModInstallModeForLog(mode) + "\", placementOverrideCount=" +
+                    std::to_string(placementOverrides.size()));
             const std::wstring json = serializeInstalledMod(
                 core().downloads().installDownload(
                     std::filesystem::path(projectDirectory),
                     std::filesystem::path(downloadPath),
                     modName,
-                    mode));
+                    mode,
+                    placementOverrides));
             logOperation(fluxora::LogLevel::Info, "Downloads", "Install download completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
@@ -1943,6 +2008,7 @@ namespace
         const wchar_t* archivePath,
         const wchar_t* modName,
         int existingModMode,
+        const wchar_t* placementOverridesJson,
         wchar_t* jsonBuffer,
         int jsonBufferLength)
     {
@@ -1961,6 +2027,8 @@ namespace
                 return FluxoraCoreResultInvalidArgument;
             }
 
+            const std::vector<fluxora::PlacementOverride> placementOverrides =
+                parsePlacementOverridesJson(placementOverridesJson);
             logBridge(fluxora::LogLevel::Info, "fluxora_install_archive started.");
             logOperation(
                 fluxora::LogLevel::Info,
@@ -1969,13 +2037,15 @@ namespace
                     pathForLog(std::filesystem::path(projectDirectory)) + "\", archivePath=\"" +
                     pathForLog(std::filesystem::path(archivePath)) + "\", modName=\"" +
                     textForLog(modName) + "\", existingModMode=\"" +
-                    existingModInstallModeForLog(mode) + "\"");
+                    existingModInstallModeForLog(mode) + "\", placementOverrideCount=" +
+                    std::to_string(placementOverrides.size()));
             const std::wstring json = serializeInstalledMod(
                 core().downloads().installArchive(
                     std::filesystem::path(projectDirectory),
                     std::filesystem::path(archivePath),
                     modName,
-                    mode));
+                    mode,
+                    placementOverrides));
             logOperation(fluxora::LogLevel::Info, "Mods", "Install archive completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
@@ -3422,6 +3492,7 @@ extern "C"
             downloadPath,
             modName,
             0,
+            nullptr,
             jsonBuffer,
             jsonBufferLength);
     }
@@ -3439,6 +3510,26 @@ extern "C"
             downloadPath,
             modName,
             existingModMode,
+            nullptr,
+            jsonBuffer,
+            jsonBufferLength);
+    }
+
+    int fluxora_install_download_with_layout(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* placementOverridesJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        return installDownloadWithMode(
+            projectDirectory,
+            downloadPath,
+            modName,
+            existingModMode,
+            placementOverridesJson,
             jsonBuffer,
             jsonBufferLength);
     }
@@ -3456,6 +3547,26 @@ extern "C"
             archivePath,
             modName,
             existingModMode,
+            nullptr,
+            jsonBuffer,
+            jsonBufferLength);
+    }
+
+    int fluxora_install_archive_with_layout(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* placementOverridesJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        return installArchiveWithMode(
+            projectDirectory,
+            archivePath,
+            modName,
+            existingModMode,
+            placementOverridesJson,
             jsonBuffer,
             jsonBufferLength);
     }
@@ -3679,6 +3790,118 @@ extern "C"
                     modName,
                     mode,
                     selectedOptionIds));
+            logOperation(fluxora::LogLevel::Info, "Mods", "Install FOMOD archive completed.");
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_install_fomod_download_with_layout(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(downloadPath) || isBlank(modName))
+            {
+                lastError = L"Project directory, download path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            if (!tryParseExistingModInstallMode(existingModMode, mode))
+            {
+                lastError = L"Existing mod install mode is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::vector<std::wstring> selectedOptionIds = parseStringArrayJson(selectedOptionIdsJson);
+            const std::vector<fluxora::PlacementOverride> placementOverrides =
+                parsePlacementOverridesJson(placementOverridesJson);
+            logBridge(fluxora::LogLevel::Info, "fluxora_install_fomod_download_with_layout started.");
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Downloads",
+                std::string("Install FOMOD download requested. projectDirectory=\"") +
+                    pathForLog(std::filesystem::path(projectDirectory)) + "\", downloadPath=\"" +
+                    pathForLog(std::filesystem::path(downloadPath)) + "\", modName=\"" +
+                    textForLog(modName) + "\", existingModMode=\"" +
+                    existingModInstallModeForLog(mode) + "\", selectedOptionCount=" +
+                    std::to_string(selectedOptionIds.size()) + ", placementOverrideCount=" +
+                    std::to_string(placementOverrides.size()));
+            const std::wstring json = serializeInstalledMod(
+                core().downloads().installFomodDownload(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(downloadPath),
+                    modName,
+                    mode,
+                    selectedOptionIds,
+                    placementOverrides));
+            logOperation(fluxora::LogLevel::Info, "Downloads", "Install FOMOD download completed.");
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_install_fomod_archive_with_layout(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(archivePath) || isBlank(modName))
+            {
+                lastError = L"Project directory, archive path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            if (!tryParseExistingModInstallMode(existingModMode, mode))
+            {
+                lastError = L"Existing mod install mode is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::vector<std::wstring> selectedOptionIds = parseStringArrayJson(selectedOptionIdsJson);
+            const std::vector<fluxora::PlacementOverride> placementOverrides =
+                parsePlacementOverridesJson(placementOverridesJson);
+            logBridge(fluxora::LogLevel::Info, "fluxora_install_fomod_archive_with_layout started.");
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Mods",
+                std::string("Install FOMOD archive requested. projectDirectory=\"") +
+                    pathForLog(std::filesystem::path(projectDirectory)) + "\", archivePath=\"" +
+                    pathForLog(std::filesystem::path(archivePath)) + "\", modName=\"" +
+                    textForLog(modName) + "\", existingModMode=\"" +
+                    existingModInstallModeForLog(mode) + "\", selectedOptionCount=" +
+                    std::to_string(selectedOptionIds.size()) + ", placementOverrideCount=" +
+                    std::to_string(placementOverrides.size()));
+            const std::wstring json = serializeInstalledMod(
+                core().downloads().installFomodArchive(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(archivePath),
+                    modName,
+                    mode,
+                    selectedOptionIds,
+                    placementOverrides));
             logOperation(fluxora::LogLevel::Info, "Mods", "Install FOMOD archive completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }

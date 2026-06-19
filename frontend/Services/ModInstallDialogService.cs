@@ -4,14 +4,21 @@ namespace Fluxora.App.Services;
 
 public sealed class ModInstallDialogService : IModInstallDialogService
 {
-    public string? PickModName(string suggestedName, ContentLayoutPreview? layoutPreview = null)
+    public ModInstallDialogResult? PickModInstallOptions(string suggestedName, ContentLayoutPreview? layoutPreview = null)
     {
         InstallModWindow dialog = new(suggestedName, layoutPreview)
         {
             Owner = System.Windows.Application.Current?.MainWindow
         };
 
-        return dialog.ShowDialog() == true ? dialog.ModName : null;
+        return dialog.ShowDialog() == true
+            ? new ModInstallDialogResult(dialog.ModName, dialog.PlacementOverrides)
+            : null;
+    }
+
+    public string? PickModName(string suggestedName, ContentLayoutPreview? layoutPreview = null)
+    {
+        return PickModInstallOptions(suggestedName, layoutPreview)?.ModName;
     }
 
     public string? PickEmptyModName(string suggestedName)

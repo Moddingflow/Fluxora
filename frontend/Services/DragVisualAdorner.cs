@@ -41,7 +41,7 @@ internal sealed class DragVisualAdorner : Adorner
     {
     }
 
-    private DragVisualAdorner(UIElement adornedElement, string caption, string title)
+    public DragVisualAdorner(UIElement adornedElement, string caption, string title)
         : base(adornedElement)
     {
         IsHitTestVisible = false;

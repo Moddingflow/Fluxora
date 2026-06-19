@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Fluxora.App.Models;
 
 public sealed class GameCapabilities
@@ -124,6 +126,18 @@ public sealed class ContentLayoutFinding
     public string Classification { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public bool BlocksInstall { get; set; }
+}
+
+public sealed class PlacementOverride
+{
+    [JsonPropertyName("sourcePath")]
+    public string SourcePath { get; set; } = string.Empty;
+
+    [JsonPropertyName("target")]
+    public string Target { get; set; } = string.Empty;
+
+    [JsonPropertyName("targetRelativePath")]
+    public string TargetRelativePath { get; set; } = string.Empty;
 }
 
 public sealed class ExecutableDisplayMetadata

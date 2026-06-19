@@ -408,10 +408,25 @@
                        TextWrapping="Wrap"
                        Visibility="Collapsed" />
 
-            <StackPanel Grid.Row="5"
-                        Orientation="Horizontal"
-                        HorizontalAlignment="Right"
-                        Margin="0,18,0,0">
+            <Grid Grid.Row="5"
+                  Margin="0,18,0,0">
+                <Button x:Name="DetailsButton"
+                        HorizontalAlignment="Left"
+                        Style="{StaticResource SecondaryDialogButtonStyle}"
+                        Click="OnDetailsClick"
+                        Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="Segoe MDL2 Assets"
+                                   Text="&#xE8FD;"
+                                   FontSize="12"
+                                   Margin="0,0,8,0"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="Подробно" />
+                    </StackPanel>
+                </Button>
+
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Right">
                     <Button Style="{StaticResource SecondaryDialogButtonStyle}"
                             IsCancel="True"
                             Click="OnCancelClick"
@@ -439,7 +454,8 @@
                                        Text="Установить" />
                         </StackPanel>
                     </Button>
-            </StackPanel>
+                </StackPanel>
+            </Grid>
         </Grid>
     </Border>
 </Window>

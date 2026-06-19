@@ -400,6 +400,26 @@ public sealed class TemplateBridgeShapeTests
     }
 
     [Fact]
+    public void PlacementOverrideSerializesNativePayloadShape()
+    {
+        PlacementOverride[] overrides =
+        [
+            new()
+            {
+                SourcePath = "Data/SkyUI_SE.esp",
+                Target = "gameRoot",
+                TargetRelativePath = "SkyUI_SE.esp"
+            }
+        ];
+
+        string json = JsonSerializer.Serialize(overrides, BridgeJsonOptions);
+
+        Assert.Contains("\"sourcePath\":\"Data/SkyUI_SE.esp\"", json);
+        Assert.Contains("\"target\":\"gameRoot\"", json);
+        Assert.Contains("\"targetRelativePath\":\"SkyUI_SE.esp\"", json);
+    }
+
+    [Fact]
     public void GameExecutableLaunchResultDeserializesOldAndNewLaunchTrackingShape()
     {
         const string oldJson = """

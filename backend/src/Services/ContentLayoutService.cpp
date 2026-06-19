@@ -595,6 +595,112 @@ namespace fluxora
             }
         }
 
+        [[nodiscard]] bool containsTarget(
+            const std::vector<PlacementTarget>& targets,
+            PlacementTarget target)
+        {
+            return std::find(targets.begin(), targets.end(), target) != targets.end();
+        }
+
+        [[nodiscard]] ContentArea contentAreaForTarget(PlacementTarget target, ContentArea fallback) noexcept;
+
+        void applyManualOverrides(
+            PlacementPlan& plan,
+            const ContentLayoutAnalysisRequest& request)
+        {
+            if (request.manualOverrides.empty())
+            {
+                return;
+            }
+
+            std::map<std::wstring, PlacementPlanEntry*> entriesBySource;
+            for (PlacementPlanEntry& entry : plan.entries)
+            {
+                entriesBySource.emplace(entry.sourcePath.comparisonKey(), &entry);
+            }
+
+            std::set<std::wstring> seenOverrides;
+            for (const PlacementOverride& manualOverride : request.manualOverrides)
+            {
+                const std::wstring sourceKey = manualOverride.sourcePath.comparisonKey();
+                if (!seenOverrides.insert(sourceKey).second)
+                {
+                    addFinding(
+                        plan,
+                        HealthSeverity::Blocker,
+                        std::optional<GameRelativePath>{manualOverride.sourcePath},
+                        ContentLayoutClassification::Unsafe,
+                        L"Manual placement contains duplicate choices for the same archive entry.",
+                        true);
+                    continue;
+                }
+
+                const auto entryMatch = entriesBySource.find(sourceKey);
+                if (entryMatch == entriesBySource.end())
+                {
+                    addFinding(
+                        plan,
+                        HealthSeverity::Blocker,
+                        std::optional<GameRelativePath>{manualOverride.sourcePath},
+                        ContentLayoutClassification::Unsafe,
+                        L"Manual placement targets an archive entry that is not in the analyzed plan.",
+                        true);
+                    continue;
+                }
+
+                PlacementPlanEntry& entry = *entryMatch->second;
+                if (!entry.manualOverrideAllowed ||
+                    !containsTarget(entry.safeManualTargets, manualOverride.target))
+                {
+                    addFinding(
+                        plan,
+                        HealthSeverity::Blocker,
+                        std::optional<GameRelativePath>{entry.sourcePath},
+                        entry.classification,
+                        L"Manual placement target is not allowed by the selected game's layout rules.",
+                        true);
+                    continue;
+                }
+
+                if (manualOverride.target == PlacementTarget::GameRoot &&
+                    (plan.rootFileWrapperDirectory.empty() ||
+                     !request.selectedGameCapabilities.has(GameCapability::RootFiles)))
+                {
+                    addFinding(
+                        plan,
+                        HealthSeverity::Blocker,
+                        std::optional<GameRelativePath>{entry.sourcePath},
+                        entry.classification,
+                        L"Manual placement cannot use the game root because the selected game does not define a root wrapper.",
+                        true);
+                    continue;
+                }
+
+                entry.target = manualOverride.target;
+                entry.contentArea = contentAreaForTarget(manualOverride.target, entry.contentArea);
+                if (manualOverride.targetRelativePath.has_value())
+                {
+                    const std::optional<GameRelativePath> safeTargetPath =
+                        tryParseSafeRelativePath(manualOverride.targetRelativePath->path());
+                    if (!safeTargetPath.has_value())
+                    {
+                        addFinding(
+                            plan,
+                            HealthSeverity::Blocker,
+                            std::optional<GameRelativePath>{entry.sourcePath},
+                            entry.classification,
+                            L"Manual placement target path is unsafe.",
+                            true);
+                        continue;
+                    }
+
+                    entry.targetRelativePath = safeTargetPath.value();
+                }
+
+                entry.explanation = L"Manual placement selected during install.";
+            }
+        }
+
         void countEntry(ContentLayoutSummary& summary, const PlacementPlanEntry& entry)
         {
             if (entry.target != PlacementTarget::Blocked)
@@ -635,10 +741,30 @@ namespace fluxora
             }
         }
 
+        [[nodiscard]] ContentArea contentAreaForTarget(PlacementTarget target, ContentArea fallback) noexcept
+        {
+            switch (target)
+            {
+            case PlacementTarget::GameRoot:
+                return ContentArea::GameRoot;
+            case PlacementTarget::Data:
+                return ContentArea::Data;
+            case PlacementTarget::Profile:
+                return ContentArea::Profile;
+            case PlacementTarget::Overwrite:
+                return ContentArea::Overwrite;
+            case PlacementTarget::Blocked:
+                return fallback;
+            }
+
+            return fallback;
+        }
+
         [[nodiscard]] std::vector<PlacementTarget> safeOverrideTargets(
             ContentLayoutClassification classification,
             const CapabilitySet& capabilities,
-            PlacementTarget currentTarget)
+            PlacementTarget currentTarget,
+            bool rootTargetAvailable)
         {
             std::vector<PlacementTarget> targets;
             const auto add = [&targets](PlacementTarget target)
@@ -654,18 +780,16 @@ namespace fluxora
                 add(currentTarget);
             }
 
-            if (classification == ContentLayoutClassification::Unknown ||
-                classification == ContentLayoutClassification::Documentation ||
-                classification == ContentLayoutClassification::Screenshots ||
-                classification == ContentLayoutClassification::Config ||
-                classification == ContentLayoutClassification::Ini)
+            if (classification != ContentLayoutClassification::ToolExecutable &&
+                classification != ContentLayoutClassification::Unsafe)
             {
                 add(PlacementTarget::Data);
             }
 
-            if ((classification == ContentLayoutClassification::GameRoot ||
-                 classification == ContentLayoutClassification::ScriptExtender) &&
-                capabilities.has(GameCapability::RootFiles))
+            if (rootTargetAvailable &&
+                capabilities.has(GameCapability::RootFiles) &&
+                classification != ContentLayoutClassification::ToolExecutable &&
+                classification != ContentLayoutClassification::Unsafe)
             {
                 add(PlacementTarget::GameRoot);
             }
@@ -1082,7 +1206,8 @@ namespace fluxora
             entry.safeManualTargets = safeOverrideTargets(
                 classification,
                 request.selectedGameCapabilities,
-                target);
+                target,
+                rules.supportsRootFiles && !plan.rootFileWrapperDirectory.empty());
             entry.manualOverrideAllowed = !entry.safeManualTargets.empty() &&
                 classification != ContentLayoutClassification::ToolExecutable;
             countEntry(plan.summary, entry);
@@ -1103,6 +1228,8 @@ namespace fluxora
 
             plan.entries.push_back(std::move(entry));
         }
+
+        applyManualOverrides(plan, request);
 
         std::map<std::wstring, GameRelativePath> targetPaths;
         for (const PlacementPlanEntry& entry : plan.entries)

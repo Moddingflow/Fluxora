@@ -4480,6 +4480,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             bool isFomodInstall = false;
             string modName;
             ContentLayoutPreview? layoutPreview = null;
+            IReadOnlyList<PlacementOverride> placementOverrides = Array.Empty<PlacementOverride>();
             ExistingModInstallMode existingModMode = ExistingModInstallMode.FailIfExists;
 
             ModOperationProcess.ApplyProgress("Проверяю FOMOD", archiveEntry.Name, 10);
@@ -4502,6 +4503,26 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     operation.Complete($"cancelled=true, fomod=true, modName=\"{modName}\"");
                     return;
                 }
+
+                ModOperationProcess.ApplyProgress("Анализирую размещение", modName, 20);
+                layoutPreview = await downloadCatalogService.AnalyzeFomodDownloadContentLayoutAsync(
+                    SelectedProject,
+                    archiveEntry,
+                    ExistingModInstallMode.FailIfExists,
+                    fomodSelection);
+                ModOperationProcess.Reset();
+                ModInstallDialogResult? installOptions = modInstallDialogService.PickModInstallOptions(modName, layoutPreview);
+                if (installOptions is null)
+                {
+                    ActivityMessage = layoutPreview is { CanInstall: false }
+                        ? ContentLayoutPreviewBlockerText(layoutPreview)
+                        : $"Установка отменена: {modName}";
+                    operation.Complete($"cancelled=true, fomod=true, layoutBlocked={layoutPreview is { CanInstall: false }}");
+                    return;
+                }
+
+                modName = installOptions.ModName.Trim();
+                placementOverrides = installOptions.PlacementOverrides;
             }
             else
             {
@@ -4511,8 +4532,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     archiveEntry,
                     ExistingModInstallMode.FailIfExists);
                 ModOperationProcess.Reset();
-                string? selectedModName = modInstallDialogService.PickModName(archiveEntry.Name, layoutPreview);
-                if (string.IsNullOrWhiteSpace(selectedModName))
+                ModInstallDialogResult? installOptions = modInstallDialogService.PickModInstallOptions(archiveEntry.Name, layoutPreview);
+                if (installOptions is null || string.IsNullOrWhiteSpace(installOptions.ModName))
                 {
                     ActivityMessage = layoutPreview is { CanInstall: false }
                         ? ContentLayoutPreviewBlockerText(layoutPreview)
@@ -4521,8 +4542,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     return;
                 }
 
-                modName = selectedModName.Trim();
+                modName = installOptions.ModName.Trim();
+                placementOverrides = installOptions.PlacementOverrides;
             }
+
+            logService.OperationInfo(
+                "ModInstall",
+                $"Install options confirmed. fomod={isFomodInstall}, modName=\"{modName}\", placementOverrideCount={placementOverrides.Count}");
 
             ModEntry? existingMod = FindInstalledModByName(Mods, modName);
             if (existingMod is not null)
@@ -4539,24 +4565,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 existingModMode = selectedMode.Value;
             }
 
-            if (isFomodInstall && fomodSelection is not null)
-            {
-                ModOperationProcess.ApplyProgress("Проверяю размещение", modName, 20);
-                layoutPreview = await downloadCatalogService.AnalyzeFomodDownloadContentLayoutAsync(
-                    SelectedProject,
-                    archiveEntry,
-                    existingModMode,
-                    fomodSelection);
-                if (!layoutPreview.CanInstall)
-                {
-                    string blockerMessage = ContentLayoutPreviewBlockerText(layoutPreview);
-                    ActivityMessage = blockerMessage;
-                    ModOperationProcess.Fail(blockerMessage);
-                    operation.Fail(new InvalidOperationException(blockerMessage));
-                    return;
-                }
-            }
-
             ModOperationProcess.Start(
                 InstallOperationTitle(existingModMode),
                 "Подготовка установки",
@@ -4568,12 +4576,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     archivePath,
                     modName,
                     existingModMode,
-                    fomodSelection ?? Array.Empty<string>())
+                    fomodSelection ?? Array.Empty<string>(),
+                    placementOverrides)
                 : await downloadCatalogService.InstallArchiveAsync(
                     SelectedProject,
                     archivePath,
                     modName,
-                    existingModMode);
+                    existingModMode,
+                    placementOverrides);
             RefreshSelectedProjectSizeAfterMutation();
 
             ModOperationProcess.ApplyProgress("Обновляю список модов", "Синхронизирую профиль", 70);
@@ -4583,7 +4593,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             SelectedMod = ResolveVisibleModSelection(installedMod.Id);
             ActivityMessage = InstallSuccessMessage(existingModMode, installedMod.Name, false);
             await CompleteModOperationSplashAsync(InstallCompleteStep(existingModMode), installedMod.Name);
-            operation.Complete($"installedMod=\"{installedMod.Name}\", id=\"{installedMod.Id}\", existingModMode=\"{existingModMode}\", fomod={isFomodInstall}");
+            operation.Complete($"installedMod=\"{installedMod.Name}\", id=\"{installedMod.Id}\", existingModMode=\"{existingModMode}\", fomod={isFomodInstall}, placementOverrideCount={placementOverrides.Count}");
         }
         catch (Exception exception)
         {
@@ -5684,6 +5694,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             bool isFomodInstall = false;
             string modName;
             ContentLayoutPreview? layoutPreview = null;
+            IReadOnlyList<PlacementOverride> placementOverrides = Array.Empty<PlacementOverride>();
             ExistingModInstallMode existingModMode = ExistingModInstallMode.FailIfExists;
             ModOperationProcess.ApplyProgress("Проверяю FOMOD", downloadToInstall.Name, 10);
             FomodInstallerInfo fomodInstaller = await downloadCatalogService.AnalyzeFomodDownloadAsync(
@@ -5705,6 +5716,26 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     operation.Complete($"cancelled=true, fomod=true, modName=\"{modName}\"");
                     return;
                 }
+
+                ModOperationProcess.ApplyProgress("Анализирую размещение", modName, 20);
+                layoutPreview = await downloadCatalogService.AnalyzeFomodDownloadContentLayoutAsync(
+                    SelectedProject,
+                    downloadToInstall,
+                    ExistingModInstallMode.FailIfExists,
+                    fomodSelection);
+                ModOperationProcess.Reset();
+                ModInstallDialogResult? installOptions = modInstallDialogService.PickModInstallOptions(modName, layoutPreview);
+                if (installOptions is null)
+                {
+                    ActivityMessage = layoutPreview is { CanInstall: false }
+                        ? ContentLayoutPreviewBlockerText(layoutPreview)
+                        : $"Установка отменена: {modName}";
+                    operation.Complete($"cancelled=true, fomod=true, layoutBlocked={layoutPreview is { CanInstall: false }}");
+                    return;
+                }
+
+                modName = installOptions.ModName.Trim();
+                placementOverrides = installOptions.PlacementOverrides;
             }
             else
             {
@@ -5714,8 +5745,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     downloadToInstall,
                     ExistingModInstallMode.FailIfExists);
                 ModOperationProcess.Reset();
-                string? selectedModName = modInstallDialogService.PickModName(downloadToInstall.Name, layoutPreview);
-                if (string.IsNullOrWhiteSpace(selectedModName))
+                ModInstallDialogResult? installOptions = modInstallDialogService.PickModInstallOptions(downloadToInstall.Name, layoutPreview);
+                if (installOptions is null || string.IsNullOrWhiteSpace(installOptions.ModName))
                 {
                     ActivityMessage = layoutPreview is { CanInstall: false }
                         ? ContentLayoutPreviewBlockerText(layoutPreview)
@@ -5724,8 +5755,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     return;
                 }
 
-                modName = selectedModName.Trim();
+                modName = installOptions.ModName.Trim();
+                placementOverrides = installOptions.PlacementOverrides;
             }
+
+            logService.OperationInfo(
+                "ModInstall",
+                $"Install options confirmed. fomod={isFomodInstall}, modName=\"{modName}\", placementOverrideCount={placementOverrides.Count}");
 
             ModEntry? existingMod = FindInstalledModByName(Mods, modName);
             if (existingMod is not null)
@@ -5742,24 +5778,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 existingModMode = selectedMode.Value;
             }
 
-            if (isFomodInstall && fomodSelection is not null)
-            {
-                ModOperationProcess.ApplyProgress("Проверяю размещение", modName, 20);
-                layoutPreview = await downloadCatalogService.AnalyzeFomodDownloadContentLayoutAsync(
-                    SelectedProject,
-                    downloadToInstall,
-                    existingModMode,
-                    fomodSelection);
-                if (!layoutPreview.CanInstall)
-                {
-                    string blockerMessage = ContentLayoutPreviewBlockerText(layoutPreview);
-                    ActivityMessage = blockerMessage;
-                    ModOperationProcess.Fail(blockerMessage);
-                    operation.Fail(new InvalidOperationException(blockerMessage));
-                    return;
-                }
-            }
-
             ModOperationProcess.Start(
                 InstallOperationTitle(existingModMode),
                 "Подготовка установки",
@@ -5774,12 +5792,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     downloadToInstall,
                     modName,
                     existingModMode,
-                    fomodSelection ?? Array.Empty<string>())
+                    fomodSelection ?? Array.Empty<string>(),
+                    placementOverrides)
                 : await downloadCatalogService.InstallDownloadAsync(
                     SelectedProject,
                     downloadToInstall,
                     modName,
-                    existingModMode);
+                    existingModMode,
+                    placementOverrides);
             RefreshSelectedProjectSizeAfterMutation();
 
             if (insertionIndex.HasValue)
@@ -5830,7 +5850,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             SelectedMod = ResolveVisibleModSelection(installedMod.Id);
             ActivityMessage = InstallSuccessMessage(existingModMode, installedMod.Name, insertionIndex.HasValue);
             await CompleteModOperationSplashAsync(InstallCompleteStep(existingModMode), installedMod.Name);
-            operation.Complete($"installedMod=\"{installedMod.Name}\", id=\"{installedMod.Id}\", existingModMode=\"{existingModMode}\", fomod={isFomodInstall}, insertionIndex={targetInsertionIndex}");
+            operation.Complete($"installedMod=\"{installedMod.Name}\", id=\"{installedMod.Id}\", existingModMode=\"{existingModMode}\", fomod={isFomodInstall}, insertionIndex={targetInsertionIndex}, placementOverrideCount={placementOverrides.Count}");
         }
         catch (Exception exception)
         {

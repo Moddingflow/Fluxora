@@ -1645,6 +1645,7 @@ public sealed class CoreBridgeService : IAppService
         string downloadPath,
         string modName,
         ExistingModInstallMode existingModMode,
+        IReadOnlyList<PlacementOverride>? placementOverrides = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1654,17 +1655,19 @@ public sealed class CoreBridgeService : IAppService
             () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                string placementOverridesJson = SerializePlacementOverrides(placementOverrides);
 
                 return RunNative(
                     "InstallDownload",
                     () =>
                     {
                         StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.InstallDownloadWithMode(
+                        int result = NativeMethods.InstallDownloadWithLayout(
                             projectDirectory,
                             downloadPath,
                             modName,
                             (int)existingModMode,
+                            placementOverridesJson,
                             json,
                             json.Capacity);
                         if (result != NativeResult.Ok)
@@ -1683,6 +1686,7 @@ public sealed class CoreBridgeService : IAppService
         string archivePath,
         string modName,
         ExistingModInstallMode existingModMode,
+        IReadOnlyList<PlacementOverride>? placementOverrides = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1692,17 +1696,19 @@ public sealed class CoreBridgeService : IAppService
             () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                string placementOverridesJson = SerializePlacementOverrides(placementOverrides);
 
                 return RunNative(
                     "InstallArchive",
                     () =>
                     {
                         StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.InstallArchiveWithMode(
+                        int result = NativeMethods.InstallArchiveWithLayout(
                             projectDirectory,
                             archivePath,
                             modName,
                             (int)existingModMode,
+                            placementOverridesJson,
                             json,
                             json.Capacity);
                         if (result != NativeResult.Ok)
@@ -1815,6 +1821,7 @@ public sealed class CoreBridgeService : IAppService
         string modName,
         ExistingModInstallMode existingModMode,
         IReadOnlyList<string> selectedOptionIds,
+        IReadOnlyList<PlacementOverride>? placementOverrides = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1825,18 +1832,20 @@ public sealed class CoreBridgeService : IAppService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 string selectedOptionIdsJson = JsonSerializer.Serialize(selectedOptionIds, JsonOptions);
+                string placementOverridesJson = SerializePlacementOverrides(placementOverrides);
 
                 return RunNative(
                     "InstallFomodDownload",
                     () =>
                     {
                         StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.InstallFomodDownloadWithMode(
+                        int result = NativeMethods.InstallFomodDownloadWithLayout(
                             projectDirectory,
                             downloadPath,
                             modName,
                             (int)existingModMode,
                             selectedOptionIdsJson,
+                            placementOverridesJson,
                             json,
                             json.Capacity);
                         if (result != NativeResult.Ok)
@@ -1856,6 +1865,7 @@ public sealed class CoreBridgeService : IAppService
         string modName,
         ExistingModInstallMode existingModMode,
         IReadOnlyList<string> selectedOptionIds,
+        IReadOnlyList<PlacementOverride>? placementOverrides = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1866,18 +1876,20 @@ public sealed class CoreBridgeService : IAppService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 string selectedOptionIdsJson = JsonSerializer.Serialize(selectedOptionIds, JsonOptions);
+                string placementOverridesJson = SerializePlacementOverrides(placementOverrides);
 
                 return RunNative(
                     "InstallFomodArchive",
                     () =>
                     {
                         StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.InstallFomodArchiveWithMode(
+                        int result = NativeMethods.InstallFomodArchiveWithLayout(
                             projectDirectory,
                             archivePath,
                             modName,
                             (int)existingModMode,
                             selectedOptionIdsJson,
+                            placementOverridesJson,
                             json,
                             json.Capacity);
                         if (result != NativeResult.Ok)
@@ -2193,6 +2205,11 @@ public sealed class CoreBridgeService : IAppService
         {
             throw new InvalidOperationException("Native core returned an invalid content layout preview.", exception);
         }
+    }
+
+    private static string SerializePlacementOverrides(IReadOnlyList<PlacementOverride>? placementOverrides)
+    {
+        return JsonSerializer.Serialize(placementOverrides ?? Array.Empty<PlacementOverride>(), JsonOptions);
     }
 
     private static ModEntry DeserializeModEntry(string json)
@@ -2602,12 +2619,32 @@ public sealed class CoreBridgeService : IAppService
             StringBuilder jsonBuffer,
             int jsonBufferLength);
 
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_install_download_with_layout", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int InstallDownloadWithLayout(
+            string projectDirectory,
+            string downloadPath,
+            string modName,
+            int existingModMode,
+            string placementOverridesJson,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
         [DllImport("FluxoraCore", EntryPoint = "fluxora_install_archive_with_mode", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
         public static extern int InstallArchiveWithMode(
             string projectDirectory,
             string archivePath,
             string modName,
             int existingModMode,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_install_archive_with_layout", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int InstallArchiveWithLayout(
+            string projectDirectory,
+            string archivePath,
+            string modName,
+            int existingModMode,
+            string placementOverridesJson,
             StringBuilder jsonBuffer,
             int jsonBufferLength);
 
@@ -2636,6 +2673,17 @@ public sealed class CoreBridgeService : IAppService
             StringBuilder jsonBuffer,
             int jsonBufferLength);
 
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_install_fomod_download_with_layout", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int InstallFomodDownloadWithLayout(
+            string projectDirectory,
+            string downloadPath,
+            string modName,
+            int existingModMode,
+            string selectedOptionIdsJson,
+            string placementOverridesJson,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
         [DllImport("FluxoraCore", EntryPoint = "fluxora_install_fomod_archive_with_mode", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
         public static extern int InstallFomodArchiveWithMode(
             string projectDirectory,
@@ -2643,6 +2691,17 @@ public sealed class CoreBridgeService : IAppService
             string modName,
             int existingModMode,
             string selectedOptionIdsJson,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_install_fomod_archive_with_layout", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int InstallFomodArchiveWithLayout(
+            string projectDirectory,
+            string archivePath,
+            string modName,
+            int existingModMode,
+            string selectedOptionIdsJson,
+            string placementOverridesJson,
             StringBuilder jsonBuffer,
             int jsonBufferLength);
 

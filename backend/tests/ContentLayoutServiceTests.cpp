@@ -385,6 +385,123 @@ namespace fluxora::tests
         EXPECT_TRUE(hasFindingFor(plan, ContentLayoutClassification::Plugin));
     }
 
+    TEST_F(ContentLayoutServiceTests, ManualOverrideCanMoveEntryToGameRoot)
+    {
+        ContentLayoutAnalysisRequest request = skyrimRequest({
+            {L"Data/SkyUI_SE.esp"}
+        });
+        request.manualOverrides.push_back(PlacementOverride{
+            GameRelativePath::parseOrThrow(L"Data/SkyUI_SE.esp"),
+            PlacementTarget::GameRoot
+        });
+
+        const PlacementPlan plan = service_.analyze(request);
+
+        ASSERT_TRUE(plan.canInstall());
+        const PlacementPlanEntry* plugin = findEntry(plan, L"Data/SkyUI_SE.esp");
+        ASSERT_NE(plugin, nullptr);
+        EXPECT_EQ(plugin->target, PlacementTarget::GameRoot);
+        EXPECT_EQ(plugin->contentArea, ContentArea::GameRoot);
+        EXPECT_EQ(plugin->targetRelativePath.path().generic_wstring(), L"SkyUI_SE.esp");
+    }
+
+    TEST_F(ContentLayoutServiceTests, ManualOverrideCanMoveEntryToSpecificTargetPath)
+    {
+        ContentLayoutAnalysisRequest request = skyrimRequest({
+            {L"Data/SkyUI_SE.esp"}
+        });
+        request.manualOverrides.push_back(PlacementOverride{
+            GameRelativePath::parseOrThrow(L"Data/SkyUI_SE.esp"),
+            PlacementTarget::Data,
+            GameRelativePath::parseOrThrow(L"textures/interface/SkyUI_SE.esp")
+        });
+
+        const PlacementPlan plan = service_.analyze(request);
+
+        ASSERT_TRUE(plan.canInstall());
+        const PlacementPlanEntry* plugin = findEntry(plan, L"Data/SkyUI_SE.esp");
+        ASSERT_NE(plugin, nullptr);
+        EXPECT_EQ(plugin->target, PlacementTarget::Data);
+        EXPECT_EQ(plugin->contentArea, ContentArea::Data);
+        EXPECT_EQ(plugin->targetRelativePath.path().generic_wstring(), L"textures/interface/SkyUI_SE.esp");
+    }
+
+    TEST_F(ContentLayoutServiceTests, ManualOverrideBlocksUnsafeTargetPath)
+    {
+        ContentLayoutAnalysisRequest request = skyrimRequest({
+            {L"Data/SkyUI_SE.esp"}
+        });
+        request.manualOverrides.push_back(PlacementOverride{
+            GameRelativePath::parseOrThrow(L"Data/SkyUI_SE.esp"),
+            PlacementTarget::Data,
+            GameRelativePath::parseOrThrow(L"CON/SkyUI_SE.esp")
+        });
+
+        const PlacementPlan plan = service_.analyze(request);
+
+        EXPECT_FALSE(plan.canInstall());
+        EXPECT_TRUE(plan.summary.hasBlockers);
+        EXPECT_TRUE(hasFindingFor(plan, ContentLayoutClassification::Plugin));
+    }
+
+    TEST_F(ContentLayoutServiceTests, ManualOverrideResolvesDuplicateTargetsAcrossRoots)
+    {
+        ContentLayoutAnalysisRequest request = skyrimRequest({
+            {L"Data/Same.esp"},
+            {L"same.ESP"}
+        });
+        request.manualOverrides.push_back(PlacementOverride{
+            GameRelativePath::parseOrThrow(L"same.ESP"),
+            PlacementTarget::GameRoot
+        });
+
+        const PlacementPlan plan = service_.analyze(request);
+
+        EXPECT_TRUE(plan.canInstall());
+        const PlacementPlanEntry* rootEntry = findEntry(plan, L"same.ESP");
+        ASSERT_NE(rootEntry, nullptr);
+        EXPECT_EQ(rootEntry->target, PlacementTarget::GameRoot);
+        EXPECT_FALSE(plan.summary.hasBlockers);
+    }
+
+    TEST_F(ContentLayoutServiceTests, ManualOverrideMaterializesGameRootThroughWrapper)
+    {
+        TempDirectory temp;
+        const std::filesystem::path staging = temp.path() / L"staging";
+        writeTextFile(staging / L"Data" / L"SkyUI_SE.esp", "plugin");
+
+        ContentLayoutAnalysisRequest request = skyrimRequest();
+        request.manualOverrides.push_back(PlacementOverride{
+            GameRelativePath::parseOrThrow(L"Data/SkyUI_SE.esp"),
+            PlacementTarget::GameRoot
+        });
+        const PlacementPlan plan = service_.analyzeDirectory(staging, request);
+        ASSERT_TRUE(plan.canInstall());
+
+        service_.applyPlanToDirectory(staging, plan);
+
+        EXPECT_TRUE(std::filesystem::is_regular_file(staging / L"root" / L"SkyUI_SE.esp"));
+        EXPECT_FALSE(std::filesystem::exists(staging / L"SkyUI_SE.esp"));
+        EXPECT_FALSE(std::filesystem::exists(staging / L"Data" / L"SkyUI_SE.esp"));
+    }
+
+    TEST_F(ContentLayoutServiceTests, ManualOverrideForMissingEntryBlocksInstall)
+    {
+        ContentLayoutAnalysisRequest request = skyrimRequest({
+            {L"Data/SkyUI_SE.esp"}
+        });
+        request.manualOverrides.push_back(PlacementOverride{
+            GameRelativePath::parseOrThrow(L"Data/Missing.esp"),
+            PlacementTarget::GameRoot
+        });
+
+        const PlacementPlan plan = service_.analyze(request);
+
+        EXPECT_FALSE(plan.canInstall());
+        EXPECT_TRUE(plan.summary.hasBlockers);
+        EXPECT_TRUE(hasFindingFor(plan, ContentLayoutClassification::Unsafe));
+    }
+
     TEST_F(ContentLayoutServiceTests, SelectedGameRulesBlockRootFilesWhenCapabilityIsDisabled)
     {
         ContentLayoutSupportRules rules;

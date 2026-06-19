@@ -64,6 +64,13 @@ namespace fluxora
         std::wstring reason;
     };
 
+    struct PlacementOverride
+    {
+        GameRelativePath sourcePath;
+        PlacementTarget target{PlacementTarget::Data};
+        std::optional<GameRelativePath> targetRelativePath;
+    };
+
     struct PlacementPlanEntry
     {
         GameRelativePath sourcePath;
@@ -121,6 +128,7 @@ namespace fluxora
         bool hasFomodOutput{false};
         std::wstring archiveContentHash;
         std::wstring gameDefinitionVersion;
+        std::vector<PlacementOverride> manualOverrides;
         const std::atomic_bool* cancellationRequested{nullptr};
         const Logger* logger{nullptr};
     };

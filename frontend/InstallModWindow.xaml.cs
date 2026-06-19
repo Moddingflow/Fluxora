@@ -4,6 +4,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using Fluxora.App.Models;
 using Fluxora.App.Services;
+using Fluxora.App.ViewModels;
 
 namespace Fluxora.App;
 
@@ -11,6 +12,8 @@ public partial class InstallModWindow : Window
 {
     private readonly WindowChromeService windowChromeService;
     private readonly bool isConflictResolutionMode;
+    private ContentLayoutPreview? placementPreview;
+    private InstallArchiveDetailsViewModel? placementDetailsViewModel;
     private static readonly char[] TrimCharacters = [' ', '\t', '\r', '\n', '.'];
     private static readonly char[] InvalidFileNameCharacters = Path.GetInvalidFileNameChars();
     private static readonly HashSet<string> ReservedDeviceNames = new(StringComparer.OrdinalIgnoreCase)
@@ -106,6 +109,9 @@ public partial class InstallModWindow : Window
 
     public string ModName => NormalizeModName(ModNameTextBox.Text);
 
+    public IReadOnlyList<PlacementOverride> PlacementOverrides =>
+        placementDetailsViewModel?.CreatePlacementOverrides() ?? Array.Empty<PlacementOverride>();
+
     public ExistingModInstallMode ExistingModMode { get; private set; } = ExistingModInstallMode.FailIfExists;
 
     public static InstallModWindow CreateConflictResolutionDialog(string modName)
@@ -147,6 +153,12 @@ public partial class InstallModWindow : Window
             return;
         }
 
+        if (!TryValidatePlacement(out validationMessage))
+        {
+            ShowValidationMessage(validationMessage);
+            return;
+        }
+
         DialogResult = true;
         Close();
     }
@@ -157,7 +169,14 @@ public partial class InstallModWindow : Window
         {
             if (TryValidateModName(out string validationMessage))
             {
-                HideValidationMessage();
+                if (placementPreview is { CanInstall: false })
+                {
+                    RefreshPlacementGate();
+                }
+                else
+                {
+                    HideValidationMessage();
+                }
             }
             else
             {
@@ -236,34 +255,109 @@ public partial class InstallModWindow : Window
             return;
         }
 
+        placementPreview = preview;
+        placementDetailsViewModel = new InstallArchiveDetailsViewModel(preview);
         Height = Math.Max(Height, 432);
         MinHeight = Math.Max(MinHeight, 432);
+        DetailsButton.Visibility = Visibility.Visible;
         PlacementPreviewPanel.Visibility = Visibility.Visible;
-        PlacementPreviewSummaryTextBlock.Text = BuildPlacementPreviewSummary(preview);
-        PlacementPreviewItemsControl.ItemsSource = BuildPlacementPreviewLines(preview);
-
-        if (!preview.CanInstall)
-        {
-            AcceptButton.IsEnabled = false;
-            ValidationMessageTextBlock.Text = "Архив заблокирован правилами размещения.";
-            ValidationMessageTextBlock.Visibility = Visibility.Visible;
-        }
+        RefreshPlacementPreview();
+        RefreshPlacementGate();
     }
 
-    private static string BuildPlacementPreviewSummary(ContentLayoutPreview preview)
+    private void OnDetailsClick(object sender, RoutedEventArgs e)
+    {
+        if (placementDetailsViewModel is null)
+        {
+            return;
+        }
+
+        InstallArchiveDetailsWindow dialog = new(placementDetailsViewModel)
+        {
+            Owner = this
+        };
+        dialog.ShowDialog();
+        RefreshPlacementPreview();
+        RefreshPlacementGate();
+    }
+
+    private void RefreshPlacementGate()
+    {
+        if (placementPreview is not { CanInstall: false })
+        {
+            return;
+        }
+
+        string validationMessage;
+        if (PlacementOverrides.Count > 0)
+        {
+            AcceptButton.IsEnabled = true;
+            validationMessage = "Ручное размещение будет проверено перед установкой.";
+        }
+        else
+        {
+            AcceptButton.IsEnabled = false;
+            validationMessage = "Архив заблокирован правилами размещения.";
+        }
+
+        ValidationMessageTextBlock.Text = validationMessage;
+        ValidationMessageTextBlock.Visibility = Visibility.Visible;
+    }
+
+    private bool TryValidatePlacement(out string validationMessage)
+    {
+        if (placementPreview is { CanInstall: false } && PlacementOverrides.Count > 0)
+        {
+            validationMessage = string.Empty;
+            return true;
+        }
+
+        if (placementPreview is { CanInstall: false })
+        {
+            validationMessage = "Архив заблокирован правилами размещения.";
+            return false;
+        }
+
+        validationMessage = string.Empty;
+        return true;
+    }
+
+    private void RefreshPlacementPreview()
+    {
+        if (placementPreview is null)
+        {
+            return;
+        }
+
+        int overrideCount = PlacementOverrides.Count;
+        PlacementPreviewSummaryTextBlock.Text = BuildPlacementPreviewSummary(placementPreview, overrideCount);
+        PlacementPreviewItemsControl.ItemsSource = BuildPlacementPreviewLines(placementPreview, overrideCount);
+    }
+
+    private static string BuildPlacementPreviewSummary(ContentLayoutPreview preview, int overrideCount)
     {
         string summary = string.IsNullOrWhiteSpace(preview.ExplanationSummary)
             ? "Fluxora построила план размещения для выбранной игры."
             : preview.ExplanationSummary;
+
+        if (overrideCount > 0)
+        {
+            summary += $" Изменено вручную: {overrideCount}.";
+        }
 
         return preview.Summary.TotalEntries > 0
             ? $"{summary} Файлов: {preview.Summary.TotalEntries}, к установке: {preview.Summary.PlannedEntries}."
             : summary;
     }
 
-    private static List<string> BuildPlacementPreviewLines(ContentLayoutPreview preview)
+    private static List<string> BuildPlacementPreviewLines(ContentLayoutPreview preview, int overrideCount)
     {
         List<string> lines = new();
+        if (overrideCount > 0)
+        {
+            lines.Add($"Ручных изменений размещения: {overrideCount}");
+        }
+
         foreach (ContentLayoutFinding finding in preview.ValidationFindings.Where(finding => finding.BlocksInstall))
         {
             string prefix = string.IsNullOrWhiteSpace(finding.Path) ? "Блокер" : $"Блокер · {finding.Path}";
