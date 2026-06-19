@@ -86,7 +86,6 @@ public partial class InstallModWindow : Window
         windowChromeService = new WindowChromeService(this);
         windowChromeService.Attach();
         Title = title;
-        TitleTextBlock.Text = title;
         DescriptionTextBlock.Text = description;
         AcceptButtonTextBlock.Text = acceptText;
         ModNameTextBox.Text = suggestedName;
@@ -164,22 +163,6 @@ public partial class InstallModWindow : Window
             {
                 ValidationMessageTextBlock.Text = validationMessage;
             }
-        }
-    }
-
-    private void OnWindowDragMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (e.ChangedButton != MouseButton.Left)
-        {
-            return;
-        }
-
-        try
-        {
-            DragMove();
-        }
-        catch (InvalidOperationException)
-        {
         }
     }
 
