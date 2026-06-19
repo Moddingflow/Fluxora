@@ -151,6 +151,11 @@ namespace fluxora
                 true,
                 false,
                 false,
+                false,
+                false,
+                false,
+                false,
+                false,
                 {},
                 record.separatorTitle
             };
@@ -178,6 +183,11 @@ namespace fluxora
                 mod.isEnabled,
                 mod.canCheckUpdates,
                 mod.hasUpdate,
+                mod.sourceIsNexus,
+                mod.sourceIsModdingFlow,
+                mod.isLocal,
+                mod.isTranslation,
+                mod.isPatch,
                 record.mod.uuid,
                 {}
             };
@@ -206,6 +216,11 @@ namespace fluxora
                 mod.state != L"disabled",
                 canCheckNexusUpdates(mod),
                 hasUpdate(mod),
+                mod.sourceIsNexus,
+                mod.sourceIsModdingFlow,
+                mod.isLocal,
+                mod.isTranslation,
+                mod.isPatch,
                 record.mod.uuid,
                 {}
             };
@@ -232,6 +247,11 @@ namespace fluxora
                 mod.state != L"disabled",
                 canCheckNexusUpdates(mod),
                 hasUpdate(mod),
+                mod.sourceIsNexus,
+                mod.sourceIsModdingFlow,
+                mod.isLocal,
+                mod.isTranslation,
+                mod.isPatch,
                 mod.uuid,
                 {}
             };

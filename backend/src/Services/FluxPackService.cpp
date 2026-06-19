@@ -660,6 +660,8 @@ namespace fluxora
             return provider == L"nexus" ||
                 provider == L"github" ||
                 provider == L"mega" ||
+                provider == L"moddingflow" ||
+                provider == L"modding-flow" ||
                 provider == L"modernflow" ||
                 provider == L"modern-flow" ||
                 !source.url.empty() ||
@@ -1287,9 +1289,12 @@ namespace fluxora
             {
                 return L"mega";
             }
-            if (provider == L"modernflow" || provider == L"modern-flow")
+            if (provider == L"moddingflow" ||
+                provider == L"modding-flow" ||
+                provider == L"modernflow" ||
+                provider == L"modern-flow")
             {
-                return L"modernflow";
+                return L"moddingflow";
             }
             if (!provider.empty())
             {
@@ -1313,9 +1318,9 @@ namespace fluxora
             {
                 return L"MEGA";
             }
-            if (id == L"modernflow")
+            if (id == L"moddingflow" || id == L"modding-flow" || id == L"modernflow")
             {
-                return L"ModernFlow";
+                return L"ModdingFlow";
             }
             if (id == L"direct")
             {

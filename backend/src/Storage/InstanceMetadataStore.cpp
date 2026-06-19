@@ -447,6 +447,36 @@ namespace fluxora
             return value->asString();
         }
 
+        bool readBoolOrDefault(
+            const JsonValue& object,
+            std::wstring_view field,
+            bool fallback = false)
+        {
+            const JsonValue* value = object.find(field);
+            if (value == nullptr || value->isNull())
+            {
+                return fallback;
+            }
+
+            if (value->type() == JsonValue::Type::Boolean)
+            {
+                return value->asBoolean();
+            }
+
+            if (value->isNumber())
+            {
+                return value->asNumber() != L"0";
+            }
+
+            if (value->isString())
+            {
+                const std::wstring text = toLower(trim(value->asString()));
+                return text == L"true" || text == L"1" || text == L"yes";
+            }
+
+            return fallback;
+        }
+
         ModSourceRecord readSourceFromManifest(const JsonValue& object)
         {
             const JsonValue* source = object.find(L"source");
@@ -492,6 +522,11 @@ namespace fluxora
             record.updatedAt = readStringOrDefault(root, L"updatedAt");
             record.state = readStringOrDefault(root, L"state", L"installed");
             record.contentFingerprint = readStringOrDefault(root, L"contentFingerprint");
+            record.sourceIsNexus = readBoolOrDefault(root, L"sourceIsNexus");
+            record.sourceIsModdingFlow = readBoolOrDefault(root, L"sourceIsModdingFlow");
+            record.isLocal = readBoolOrDefault(root, L"isLocal");
+            record.isTranslation = readBoolOrDefault(root, L"isTranslation");
+            record.isPatch = readBoolOrDefault(root, L"isPatch");
             record.path = modDirectory;
             record.source = readSourceFromManifest(root);
             return record;
@@ -610,11 +645,48 @@ namespace fluxora
             return stream.str();
         }
 
+        bool containsToken(std::wstring_view value, std::wstring_view token)
+        {
+            return toLower(std::wstring(value)).find(toLower(std::wstring(token))) != std::wstring::npos;
+        }
+
+        bool equalsIgnoreCase(std::wstring_view left, std::wstring_view right)
+        {
+            return toLower(std::wstring(left)) == toLower(std::wstring(right));
+        }
+
+        bool providerIsModdingFlow(std::wstring_view provider)
+        {
+            const std::wstring normalized = toLower(std::wstring(provider));
+            return normalized == L"moddingflow" ||
+                normalized == L"modding-flow" ||
+                normalized == L"modernflow" ||
+                normalized == L"modern-flow";
+        }
+
         std::wstring normalizeProvider(ModSourceRecord source)
         {
             if (!source.provider.empty())
             {
-                return source.provider;
+                const std::wstring provider = toLower(trim(source.provider));
+                if (provider == L"nexus")
+                {
+                    return L"nexus";
+                }
+                if (providerIsModdingFlow(provider))
+                {
+                    return L"moddingflow";
+                }
+                if (provider == L"local")
+                {
+                    return L"local";
+                }
+                if (provider == L"manual")
+                {
+                    return L"manual";
+                }
+
+                return trim(source.provider);
             }
 
             if (!source.gameDomain.empty() || !source.remoteModId.empty() || !source.remoteFileId.empty())
@@ -623,6 +695,75 @@ namespace fluxora
             }
 
             return source.url.empty() ? L"local" : L"manual";
+        }
+
+        bool sourceLooksNexus(const ModSourceRecord& source)
+        {
+            const std::wstring provider = toLower(normalizeProvider(source));
+            return provider == L"nexus" ||
+                containsToken(source.url, L"nexusmods.com") ||
+                toLower(source.url).starts_with(L"nxm://") ||
+                !source.gameDomain.empty() ||
+                !source.remoteModId.empty() ||
+                !source.remoteFileId.empty();
+        }
+
+        bool sourceLooksModdingFlow(const ModSourceRecord& source)
+        {
+            const std::wstring provider = normalizeProvider(source);
+            return providerIsModdingFlow(provider) ||
+                containsToken(source.url, L"moddingflow") ||
+                containsToken(source.url, L"modernflow");
+        }
+
+        bool textLooksTranslation(std::wstring_view text)
+        {
+            return containsToken(text, L"translation") ||
+                containsToken(text, L"translated") ||
+                containsToken(text, L"localization") ||
+                containsToken(text, L"localisation") ||
+                containsToken(text, L"language pack") ||
+                containsToken(text, L"russian") ||
+                containsToken(text, L"english") ||
+                containsToken(text, L"german") ||
+                containsToken(text, L"deutsch") ||
+                containsToken(text, L"перевод") ||
+                containsToken(text, L"локализац");
+        }
+
+        bool textLooksPatch(std::wstring_view text)
+        {
+            return containsToken(text, L"patch") ||
+                containsToken(text, L"compatibility") ||
+                containsToken(text, L"compat") ||
+                containsToken(text, L"fix") ||
+                containsToken(text, L"hotfix") ||
+                containsToken(text, L"патч") ||
+                containsToken(text, L"исправлен");
+        }
+
+        void deriveModFlags(InstalledModRecord& record)
+        {
+            record.source.provider = normalizeProvider(record.source);
+            record.sourceIsNexus = record.sourceIsNexus || sourceLooksNexus(record.source);
+            record.sourceIsModdingFlow = record.sourceIsModdingFlow || sourceLooksModdingFlow(record.source);
+
+            const bool hasRemoteIdentity = record.sourceIsNexus ||
+                record.sourceIsModdingFlow ||
+                !record.source.remoteModId.empty() ||
+                !record.source.remoteFileId.empty() ||
+                (!record.source.url.empty() && !equalsIgnoreCase(record.source.provider, L"local"));
+            record.isLocal = record.isLocal ||
+                equalsIgnoreCase(record.source.provider, L"local") ||
+                (!hasRemoteIdentity && record.source.url.empty());
+
+            const std::wstring searchable =
+                record.folderName + L" " +
+                record.displayName + L" " +
+                record.source.url + L" " +
+                record.source.provider;
+            record.isTranslation = record.isTranslation || textLooksTranslation(searchable);
+            record.isPatch = record.isPatch || textLooksPatch(searchable);
         }
 
         class SqliteApi final
@@ -990,6 +1131,42 @@ namespace fluxora
             bool committed_{false};
         };
 
+        bool columnExists(Database& database, const char* tableName, std::wstring_view columnName)
+        {
+            std::string sql = "PRAGMA table_info(";
+            sql += tableName;
+            sql += ");";
+            Statement statement = database.prepare(sql.c_str());
+            while (statement.stepRow())
+            {
+                if (statement.columnText(1) == columnName)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        void ensureColumn(
+            Database& database,
+            const char* tableName,
+            std::wstring_view columnName,
+            const char* columnDefinition)
+        {
+            if (columnExists(database, tableName, columnName))
+            {
+                return;
+            }
+
+            std::string sql = "ALTER TABLE ";
+            sql += tableName;
+            sql += " ADD COLUMN ";
+            sql += columnDefinition;
+            sql += ";";
+            database.exec(sql.c_str());
+        }
+
         void ensureSchema(Database& database)
         {
             database.exec("PRAGMA busy_timeout = 15000;");
@@ -1012,8 +1189,18 @@ namespace fluxora
                 "installed_at TEXT NOT NULL,"
                 "updated_at TEXT NOT NULL,"
                 "state TEXT NOT NULL DEFAULT 'installed',"
-                "content_fingerprint TEXT NOT NULL DEFAULT ''"
+                "content_fingerprint TEXT NOT NULL DEFAULT '',"
+                "source_is_nexus INTEGER NOT NULL DEFAULT 0,"
+                "source_is_moddingflow INTEGER NOT NULL DEFAULT 0,"
+                "is_local INTEGER NOT NULL DEFAULT 0,"
+                "is_translation INTEGER NOT NULL DEFAULT 0,"
+                "is_patch INTEGER NOT NULL DEFAULT 0"
                 ");");
+            ensureColumn(database, "mods", L"source_is_nexus", "source_is_nexus INTEGER NOT NULL DEFAULT 0");
+            ensureColumn(database, "mods", L"source_is_moddingflow", "source_is_moddingflow INTEGER NOT NULL DEFAULT 0");
+            ensureColumn(database, "mods", L"is_local", "is_local INTEGER NOT NULL DEFAULT 0");
+            ensureColumn(database, "mods", L"is_translation", "is_translation INTEGER NOT NULL DEFAULT 0");
+            ensureColumn(database, "mods", L"is_patch", "is_patch INTEGER NOT NULL DEFAULT 0");
             database.exec(
                 "CREATE TABLE IF NOT EXISTS mod_sources ("
                 "mod_id INTEGER PRIMARY KEY NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
@@ -1024,6 +1211,72 @@ namespace fluxora
                 "url TEXT NOT NULL DEFAULT '',"
                 "last_checked_at TEXT NOT NULL DEFAULT '',"
                 "latest_version TEXT NOT NULL DEFAULT ''"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_files ("
+                "mod_id INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
+                "relative_path TEXT NOT NULL,"
+                "parent_path TEXT NOT NULL DEFAULT '',"
+                "path_key TEXT NOT NULL,"
+                "parent_key TEXT NOT NULL DEFAULT '',"
+                "name TEXT NOT NULL,"
+                "kind TEXT NOT NULL,"
+                "size INTEGER NOT NULL DEFAULT 0,"
+                "modified_at TEXT NOT NULL DEFAULT '',"
+                "PRIMARY KEY(mod_id, path_key)"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_tags ("
+                "mod_id INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
+                "tag TEXT NOT NULL,"
+                "source TEXT NOT NULL DEFAULT 'system',"
+                "created_at TEXT NOT NULL DEFAULT '',"
+                "PRIMARY KEY(mod_id, tag)"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_dependencies ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "mod_id INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
+                "dependency_kind TEXT NOT NULL DEFAULT 'required',"
+                "target_provider TEXT NOT NULL DEFAULT '',"
+                "target_mod_id TEXT NOT NULL DEFAULT '',"
+                "target_file_id TEXT NOT NULL DEFAULT '',"
+                "target_name TEXT NOT NULL DEFAULT '',"
+                "constraint_text TEXT NOT NULL DEFAULT '',"
+                "source TEXT NOT NULL DEFAULT 'system',"
+                "created_at TEXT NOT NULL DEFAULT ''"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_conflicts ("
+                "mod_id INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
+                "other_mod_id INTEGER REFERENCES mods(id) ON DELETE CASCADE,"
+                "relative_path TEXT NOT NULL DEFAULT '',"
+                "conflict_kind TEXT NOT NULL DEFAULT '',"
+                "source TEXT NOT NULL DEFAULT 'scan',"
+                "detected_at TEXT NOT NULL DEFAULT '',"
+                "PRIMARY KEY(mod_id, other_mod_id, relative_path, conflict_kind)"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_install_history ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "mod_id INTEGER REFERENCES mods(id) ON DELETE SET NULL,"
+                "folder_name TEXT NOT NULL DEFAULT '',"
+                "operation TEXT NOT NULL DEFAULT 'install',"
+                "version TEXT NOT NULL DEFAULT '',"
+                "source_provider TEXT NOT NULL DEFAULT '',"
+                "source_url TEXT NOT NULL DEFAULT '',"
+                "archive_path TEXT NOT NULL DEFAULT '',"
+                "created_at TEXT NOT NULL,"
+                "details_json TEXT NOT NULL DEFAULT '{}'"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_notes ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "mod_id INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
+                "note_text TEXT NOT NULL DEFAULT '',"
+                "source TEXT NOT NULL DEFAULT 'user',"
+                "created_at TEXT NOT NULL,"
+                "updated_at TEXT NOT NULL"
                 ");");
             database.exec(
                 "CREATE TABLE IF NOT EXISTS remote_cache ("
@@ -1049,6 +1302,11 @@ namespace fluxora
                 "modified_at TEXT NOT NULL DEFAULT '',"
                 "PRIMARY KEY(mod_id, path_key)"
                 ");");
+            database.exec(
+                "INSERT OR IGNORE INTO mod_files("
+                "mod_id, relative_path, parent_path, path_key, parent_key, name, kind, size, modified_at"
+                ") SELECT mod_id, relative_path, parent_path, path_key, parent_key, name, kind, size, modified_at "
+                "FROM mod_file_cache;");
             database.exec(
                 "CREATE TABLE IF NOT EXISTS profile_order_items ("
                 "id TEXT PRIMARY KEY NOT NULL,"
@@ -1077,13 +1335,20 @@ namespace fluxora
             database.exec("CREATE INDEX IF NOT EXISTS idx_mods_state ON mods(state);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mods_display_name ON mods(display_name COLLATE NOCASE);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_sources_remote ON mod_sources(provider, game_domain, remote_mod_id, remote_file_id);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_files_path ON mod_files(path_key);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_files_parent ON mod_files(mod_id, parent_key, kind, name COLLATE NOCASE);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_tags_tag ON mod_tags(tag COLLATE NOCASE);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_dependencies_target ON mod_dependencies(target_provider, target_mod_id, target_file_id);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_conflicts_path ON mod_conflicts(relative_path COLLATE NOCASE);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_install_history_mod ON mod_install_history(mod_id, created_at);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_notes_mod ON mod_notes(mod_id, updated_at);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_remote_cache_checked ON remote_cache(checked_at);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_file_cache_path ON mod_file_cache(path_key);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_file_cache_parent ON mod_file_cache(mod_id, parent_key, kind, name COLLATE NOCASE);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_profile_order_profile_position ON profile_order_items(profile_name, position);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_profile_plugin_order_profile_position ON profile_plugin_order_items(profile_name, position);");
             database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_profile_plugin_order_unique_plugin ON profile_plugin_order_items(profile_name, plugin_name) WHERE kind = 'plugin';");
-            database.exec("PRAGMA user_version = 4;");
+            database.exec("PRAGMA user_version = 5;");
         }
 
         Database openInstanceDatabase(const std::filesystem::path& projectDirectory)
@@ -1137,6 +1402,11 @@ namespace fluxora
             writer.field(L"updatedAt", record.updatedAt);
             writer.field(L"state", record.state);
             writer.field(L"contentFingerprint", record.contentFingerprint);
+            writer.field(L"sourceIsNexus", record.sourceIsNexus);
+            writer.field(L"sourceIsModdingFlow", record.sourceIsModdingFlow);
+            writer.field(L"isLocal", record.isLocal);
+            writer.field(L"isTranslation", record.isTranslation);
+            writer.field(L"isPatch", record.isPatch);
             writer.key(L"source").beginObject();
             writer.field(L"provider", record.source.provider);
             writer.field(L"gameDomain", record.source.gameDomain);
@@ -1149,6 +1419,101 @@ namespace fluxora
             writer.endObject();
 
             writeTextFile(manifestPathForMod(record.path), toUtf8(writer.str()));
+        }
+
+        void insertSystemTag(
+            Database& database,
+            std::int64_t modId,
+            std::wstring_view tag,
+            std::wstring_view createdAt)
+        {
+            Statement insert = database.prepare(
+                "INSERT OR IGNORE INTO mod_tags(mod_id, tag, source, created_at) "
+                "VALUES(?, ?, 'system', ?);");
+            insert.bindInt64(1, modId);
+            insert.bindText(2, tag);
+            insert.bindText(3, createdAt);
+            insert.stepDone();
+        }
+
+        void syncSystemTags(Database& database, const InstalledModRecord& record)
+        {
+            Statement remove = database.prepare(
+                "DELETE FROM mod_tags WHERE mod_id = ? AND source = 'system';");
+            remove.bindInt64(1, record.id);
+            remove.stepDone();
+
+            const std::wstring createdAt = record.updatedAt.empty() ? nowUtcText() : record.updatedAt;
+            if (record.sourceIsNexus)
+            {
+                insertSystemTag(database, record.id, L"source:nexus", createdAt);
+            }
+            if (record.sourceIsModdingFlow)
+            {
+                insertSystemTag(database, record.id, L"source:moddingflow", createdAt);
+            }
+            if (record.isLocal)
+            {
+                insertSystemTag(database, record.id, L"local", createdAt);
+            }
+            if (record.isTranslation)
+            {
+                insertSystemTag(database, record.id, L"translation", createdAt);
+            }
+            if (record.isPatch)
+            {
+                insertSystemTag(database, record.id, L"patch", createdAt);
+            }
+        }
+
+        void recordInstallHistory(Database& database, const InstalledModRecord& record)
+        {
+            Statement existing = database.prepare(
+                "SELECT 1 FROM mod_install_history "
+                "WHERE mod_id = ? AND operation = 'install' LIMIT 1;");
+            existing.bindInt64(1, record.id);
+            if (existing.stepRow())
+            {
+                return;
+            }
+
+            const std::wstring createdAt = record.installedAt.empty() ? nowUtcText() : record.installedAt;
+            Statement insert = database.prepare(
+                "INSERT INTO mod_install_history("
+                "mod_id, folder_name, operation, version, source_provider, source_url, archive_path, created_at, details_json"
+                ") VALUES(?, ?, 'install', ?, ?, ?, '', ?, '{}');");
+            insert.bindInt64(1, record.id);
+            insert.bindText(2, record.folderName);
+            insert.bindText(3, record.version);
+            insert.bindText(4, record.source.provider);
+            insert.bindText(5, record.source.url);
+            insert.bindText(6, createdAt);
+            insert.stepDone();
+        }
+
+        void updateModFlags(Database& database, InstalledModRecord& record)
+        {
+            deriveModFlags(record);
+
+            Statement update = database.prepare(
+                "UPDATE mods SET "
+                "source_is_nexus = ?,"
+                "source_is_moddingflow = ?,"
+                "is_local = ?,"
+                "is_translation = ?,"
+                "is_patch = ?,"
+                "updated_at = ? "
+                "WHERE id = ?;");
+            update.bindInt(1, record.sourceIsNexus ? 1 : 0);
+            update.bindInt(2, record.sourceIsModdingFlow ? 1 : 0);
+            update.bindInt(3, record.isLocal ? 1 : 0);
+            update.bindInt(4, record.isTranslation ? 1 : 0);
+            update.bindInt(5, record.isPatch ? 1 : 0);
+            update.bindText(6, record.updatedAt);
+            update.bindInt64(7, record.id);
+            update.stepDone();
+
+            syncSystemTags(database, record);
         }
 
         void upsertModRecord(Database& database, InstalledModRecord& record)
@@ -1186,19 +1551,25 @@ namespace fluxora
                 record.gameId = readMetadataValue(database, L"game_id");
             }
 
-            record.source.provider = normalizeProvider(record.source);
+            deriveModFlags(record);
 
             Statement mod = database.prepare(
                 "INSERT INTO mods("
-                "uuid, game_id, folder_name, display_name, version, installed_at, updated_at, state, content_fingerprint"
-                ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "uuid, game_id, folder_name, display_name, version, installed_at, updated_at, state, content_fingerprint, "
+                "source_is_nexus, source_is_moddingflow, is_local, is_translation, is_patch"
+                ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(folder_name) DO UPDATE SET "
                 "game_id = CASE WHEN excluded.game_id = '' THEN mods.game_id ELSE excluded.game_id END,"
                 "display_name = excluded.display_name,"
                 "version = excluded.version,"
                 "updated_at = excluded.updated_at,"
                 "state = excluded.state,"
-                "content_fingerprint = excluded.content_fingerprint;");
+                "content_fingerprint = excluded.content_fingerprint,"
+                "source_is_nexus = excluded.source_is_nexus,"
+                "source_is_moddingflow = excluded.source_is_moddingflow,"
+                "is_local = excluded.is_local,"
+                "is_translation = excluded.is_translation,"
+                "is_patch = excluded.is_patch;");
             mod.bindText(1, record.uuid);
             mod.bindText(2, record.gameId);
             mod.bindText(3, record.folderName);
@@ -1208,9 +1579,17 @@ namespace fluxora
             mod.bindText(7, record.updatedAt);
             mod.bindText(8, record.state);
             mod.bindText(9, record.contentFingerprint);
+            mod.bindInt(10, record.sourceIsNexus ? 1 : 0);
+            mod.bindInt(11, record.sourceIsModdingFlow ? 1 : 0);
+            mod.bindInt(12, record.isLocal ? 1 : 0);
+            mod.bindInt(13, record.isTranslation ? 1 : 0);
+            mod.bindInt(14, record.isPatch ? 1 : 0);
             mod.stepDone();
 
-            Statement id = database.prepare("SELECT id, uuid, installed_at FROM mods WHERE folder_name = ? LIMIT 1;");
+            Statement id = database.prepare(
+                "SELECT id, uuid, installed_at, source_is_nexus, source_is_moddingflow, "
+                "is_local, is_translation, is_patch "
+                "FROM mods WHERE folder_name = ? LIMIT 1;");
             id.bindText(1, record.folderName);
             if (!id.stepRow())
             {
@@ -1220,6 +1599,11 @@ namespace fluxora
             record.id = std::stoll(id.columnText(0));
             record.uuid = id.columnText(1);
             record.installedAt = id.columnText(2);
+            record.sourceIsNexus = id.columnInt(3) != 0;
+            record.sourceIsModdingFlow = id.columnInt(4) != 0;
+            record.isLocal = id.columnInt(5) != 0;
+            record.isTranslation = id.columnInt(6) != 0;
+            record.isPatch = id.columnInt(7) != 0;
 
             Statement source = database.prepare(
                 "INSERT INTO mod_sources("
@@ -1242,6 +1626,9 @@ namespace fluxora
             source.bindText(7, record.source.lastCheckedAt);
             source.bindText(8, record.source.latestVersion);
             source.stepDone();
+
+            syncSystemTags(database, record);
+            recordInstallHistory(database, record);
         }
 
         InstalledModRecord readRecordByFolder(
@@ -1254,6 +1641,7 @@ namespace fluxora
                 "SELECT "
                 "m.id, m.uuid, m.game_id, m.folder_name, m.display_name, m.version, "
                 "m.installed_at, m.updated_at, m.state, m.content_fingerprint, "
+                "m.source_is_nexus, m.source_is_moddingflow, m.is_local, m.is_translation, m.is_patch, "
                 "COALESCE(s.provider, ''), COALESCE(s.game_domain, ''), "
                 "COALESCE(s.remote_mod_id, ''), COALESCE(s.remote_file_id, ''), "
                 "COALESCE(s.url, ''), COALESCE(s.last_checked_at, ''), COALESCE(s.latest_version, '') "
@@ -1278,15 +1666,20 @@ namespace fluxora
             record.updatedAt = statement.columnText(7);
             record.state = statement.columnText(8);
             record.contentFingerprint = statement.columnText(9);
+            record.sourceIsNexus = statement.columnInt(10) != 0;
+            record.sourceIsModdingFlow = statement.columnInt(11) != 0;
+            record.isLocal = statement.columnInt(12) != 0;
+            record.isTranslation = statement.columnInt(13) != 0;
+            record.isPatch = statement.columnInt(14) != 0;
             record.path = modsDirectory(projectDirectory, modsRoot) / std::filesystem::path(record.folderName);
             record.source = ModSourceRecord{
-                statement.columnText(10),
-                statement.columnText(11),
-                statement.columnText(12),
-                statement.columnText(13),
-                statement.columnText(14),
                 statement.columnText(15),
-                statement.columnText(16)
+                statement.columnText(16),
+                statement.columnText(17),
+                statement.columnText(18),
+                statement.columnText(19),
+                statement.columnText(20),
+                statement.columnText(21)
             };
             return record;
         }
@@ -1300,6 +1693,7 @@ namespace fluxora
                 "SELECT "
                 "m.id, m.uuid, m.game_id, m.folder_name, m.display_name, m.version, "
                 "m.installed_at, m.updated_at, m.state, m.content_fingerprint, "
+                "m.source_is_nexus, m.source_is_moddingflow, m.is_local, m.is_translation, m.is_patch, "
                 "COALESCE(s.provider, ''), COALESCE(s.game_domain, ''), "
                 "COALESCE(s.remote_mod_id, ''), COALESCE(s.remote_file_id, ''), "
                 "COALESCE(s.url, ''), COALESCE(s.last_checked_at, ''), COALESCE(s.latest_version, '') "
@@ -1322,15 +1716,20 @@ namespace fluxora
                 record.updatedAt = statement.columnText(7);
                 record.state = statement.columnText(8);
                 record.contentFingerprint = statement.columnText(9);
+                record.sourceIsNexus = statement.columnInt(10) != 0;
+                record.sourceIsModdingFlow = statement.columnInt(11) != 0;
+                record.isLocal = statement.columnInt(12) != 0;
+                record.isTranslation = statement.columnInt(13) != 0;
+                record.isPatch = statement.columnInt(14) != 0;
                 record.path = modsDirectory(projectDirectory, modsRoot) / std::filesystem::path(record.folderName);
                 record.source = ModSourceRecord{
-                    statement.columnText(10),
-                    statement.columnText(11),
-                    statement.columnText(12),
-                    statement.columnText(13),
-                    statement.columnText(14),
                     statement.columnText(15),
-                    statement.columnText(16)
+                    statement.columnText(16),
+                    statement.columnText(17),
+                    statement.columnText(18),
+                    statement.columnText(19),
+                    statement.columnText(20),
+                    statement.columnText(21)
                 };
                 records.push_back(std::move(record));
             }
@@ -1443,6 +1842,8 @@ namespace fluxora
                 "COALESCE(m.version, ''), COALESCE(m.installed_at, ''), "
                 "COALESCE(m.updated_at, ''), COALESCE(m.state, ''), "
                 "COALESCE(m.content_fingerprint, ''), "
+                "COALESCE(m.source_is_nexus, 0), COALESCE(m.source_is_moddingflow, 0), "
+                "COALESCE(m.is_local, 0), COALESCE(m.is_translation, 0), COALESCE(m.is_patch, 0), "
                 "COALESCE(s.provider, ''), COALESCE(s.game_domain, ''), "
                 "COALESCE(s.remote_mod_id, ''), COALESCE(s.remote_file_id, ''), "
                 "COALESCE(s.url, ''), COALESCE(s.last_checked_at, ''), COALESCE(s.latest_version, '') "
@@ -1477,16 +1878,21 @@ namespace fluxora
                     record.mod.updatedAt = statement.columnText(12);
                     record.mod.state = statement.columnText(13);
                     record.mod.contentFingerprint = statement.columnText(14);
+                    record.mod.sourceIsNexus = statement.columnInt(15) != 0;
+                    record.mod.sourceIsModdingFlow = statement.columnInt(16) != 0;
+                    record.mod.isLocal = statement.columnInt(17) != 0;
+                    record.mod.isTranslation = statement.columnInt(18) != 0;
+                    record.mod.isPatch = statement.columnInt(19) != 0;
                     record.mod.path =
                         modsDirectory(projectDirectory, modsRoot) / std::filesystem::path(record.mod.folderName);
                     record.mod.source = ModSourceRecord{
-                        statement.columnText(15),
-                        statement.columnText(16),
-                        statement.columnText(17),
-                        statement.columnText(18),
-                        statement.columnText(19),
                         statement.columnText(20),
-                        statement.columnText(21)
+                        statement.columnText(21),
+                        statement.columnText(22),
+                        statement.columnText(23),
+                        statement.columnText(24),
+                        statement.columnText(25),
+                        statement.columnText(26)
                     };
                 }
 
@@ -1823,7 +2229,7 @@ namespace fluxora
         int cachedFileCount(Database& database, std::int64_t modId)
         {
             Statement statement = database.prepare(
-                "SELECT COUNT(*) FROM mod_file_cache WHERE mod_id = ? AND kind = 'file';");
+                "SELECT COUNT(*) FROM mod_files WHERE mod_id = ? AND kind = 'file';");
             statement.bindInt64(1, modId);
             return statement.stepRow() ? statement.columnInt(0) : 0;
         }
@@ -1831,7 +2237,7 @@ namespace fluxora
         int cachedEntryCount(Database& database, std::int64_t modId)
         {
             Statement statement = database.prepare(
-                "SELECT COUNT(*) FROM mod_file_cache WHERE mod_id = ?;");
+                "SELECT COUNT(*) FROM mod_files WHERE mod_id = ?;");
             statement.bindInt64(1, modId);
             return statement.stepRow() ? statement.columnInt(0) : 0;
         }
@@ -1856,7 +2262,7 @@ namespace fluxora
             std::wstring_view modifiedAt)
         {
             Statement insert = database.prepare(
-                "INSERT INTO mod_file_cache("
+                "INSERT INTO mod_files("
                 "mod_id, relative_path, parent_path, path_key, parent_key, name, kind, size, modified_at"
                 ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(mod_id, path_key) DO UPDATE SET "
@@ -1881,7 +2287,7 @@ namespace fluxora
 
         void rebuildFileCache(Database& database, InstalledModRecord& record)
         {
-            Statement remove = database.prepare("DELETE FROM mod_file_cache WHERE mod_id = ?;");
+            Statement remove = database.prepare("DELETE FROM mod_files WHERE mod_id = ?;");
             remove.bindInt64(1, record.id);
             remove.stepDone();
 
@@ -1946,13 +2352,15 @@ namespace fluxora
 
             rebuildFileCache(database, record);
             record.contentFingerprint = currentFingerprint;
+            record.updatedAt = nowUtcText();
 
             Statement update = database.prepare(
                 "UPDATE mods SET content_fingerprint = ?, updated_at = ? WHERE id = ?;");
             update.bindText(1, record.contentFingerprint);
-            update.bindText(2, nowUtcText());
+            update.bindText(2, record.updatedAt);
             update.bindInt64(3, record.id);
             update.stepDone();
+            writePortableManifest(record);
         }
 
         void ensureFileCachePrepared(Database& database, InstalledModRecord& record)
@@ -1975,7 +2383,7 @@ namespace fluxora
         {
             Statement statement = database.prepare(
                 "SELECT f.mod_id, m.display_name "
-                "FROM mod_file_cache f "
+                "FROM mod_files f "
                 "JOIN mods m ON m.id = f.mod_id "
                 "WHERE f.path_key = ? AND f.kind = 'file' AND m.state = 'installed' "
                 "ORDER BY m.id ASC;");
@@ -2035,10 +2443,98 @@ namespace fluxora
             return names;
         }
 
+        struct ConflictFileOwner
+        {
+            std::wstring pathKey;
+            std::wstring relativePath;
+            std::int64_t modId{0};
+        };
+
+        void insertDetectedConflict(
+            Database& database,
+            const ConflictFileOwner& owner,
+            const ConflictFileOwner& other,
+            std::wstring_view kind,
+            std::wstring_view detectedAt)
+        {
+            Statement insert = database.prepare(
+                "INSERT OR REPLACE INTO mod_conflicts("
+                "mod_id, other_mod_id, relative_path, conflict_kind, source, detected_at"
+                ") VALUES(?, ?, ?, ?, 'scan', ?);");
+            insert.bindInt64(1, owner.modId);
+            insert.bindInt64(2, other.modId);
+            insert.bindText(3, owner.relativePath);
+            insert.bindText(4, kind);
+            insert.bindText(5, detectedAt);
+            insert.stepDone();
+        }
+
+        void refreshDetectedConflicts(Database& database)
+        {
+            Statement remove = database.prepare("DELETE FROM mod_conflicts WHERE source = 'scan';");
+            remove.stepDone();
+
+            Statement select = database.prepare(
+                "SELECT f.path_key, f.relative_path, f.mod_id "
+                "FROM mod_files f "
+                "JOIN mods m ON m.id = f.mod_id "
+                "WHERE f.kind = 'file' AND m.state = 'installed' "
+                "ORDER BY f.path_key, f.mod_id;");
+
+            const std::wstring detectedAt = nowUtcText();
+            std::wstring currentKey;
+            std::vector<ConflictFileOwner> owners;
+
+            auto flush = [&]()
+            {
+                if (owners.size() <= 1)
+                {
+                    return;
+                }
+
+                for (std::size_t left = 0; left < owners.size(); ++left)
+                {
+                    for (std::size_t right = 0; right < owners.size(); ++right)
+                    {
+                        if (left == right)
+                        {
+                            continue;
+                        }
+
+                        insertDetectedConflict(
+                            database,
+                            owners[left],
+                            owners[right],
+                            left < right ? L"overwritten-by" : L"overwrites",
+                            detectedAt);
+                    }
+                }
+            };
+
+            while (select.stepRow())
+            {
+                const std::wstring key = select.columnText(0);
+                if (!currentKey.empty() && key != currentKey)
+                {
+                    flush();
+                    owners.clear();
+                }
+
+                currentKey = key;
+                owners.push_back(ConflictFileOwner{
+                    key,
+                    select.columnText(1),
+                    select.columnInt64(2)
+                });
+            }
+
+            flush();
+        }
+
         bool hasCachedChildren(Database& database, std::int64_t modId, std::wstring_view parentKey)
         {
             Statement statement = database.prepare(
-                "SELECT 1 FROM mod_file_cache WHERE mod_id = ? AND parent_key = ? LIMIT 1;");
+                "SELECT 1 FROM mod_files WHERE mod_id = ? AND parent_key = ? LIMIT 1;");
             statement.bindInt64(1, modId);
             statement.bindText(2, parentKey);
             return statement.stepRow();
@@ -2047,7 +2543,7 @@ namespace fluxora
         ModFileSummary summarizeCachedModFiles(Database& database, const InstalledModRecord& record)
         {
             Statement statement = database.prepare(
-                "SELECT path_key FROM mod_file_cache WHERE mod_id = ? AND kind = 'file';");
+                "SELECT path_key FROM mod_files WHERE mod_id = ? AND kind = 'file';");
             statement.bindInt64(1, record.id);
 
             ModFileSummary summary;
@@ -2098,6 +2594,7 @@ namespace fluxora
             {
                 ensureFileCacheFresh(database, record);
             }
+            refreshDetectedConflicts(database);
             transaction.commit();
         }
 
@@ -2114,6 +2611,7 @@ namespace fluxora
             {
                 ensureFileCachePrepared(database, record);
             }
+            refreshDetectedConflicts(database);
             transaction.commit();
         }
 
@@ -2205,7 +2703,7 @@ namespace fluxora
 
             Statement statement = database.prepare(
                 "SELECT f.path_key, f.mod_id, m.state "
-                "FROM mod_file_cache f "
+                "FROM mod_files f "
                 "JOIN profile_order_items oi ON oi.mod_id = f.mod_id "
                 "JOIN mods m ON m.id = f.mod_id "
                 "WHERE oi.profile_name = ? "
@@ -2358,6 +2856,19 @@ namespace fluxora
                 diskFolders.insert(folderName);
                 if (activeFolders.contains(folderName))
                 {
+                    try
+                    {
+                        InstalledModRecord record =
+                            readRecordByFolder(database, projectDirectory, folderName, directory);
+                        if (portableManifestNeedsWrite(record, false))
+                        {
+                            writePortableManifest(record);
+                        }
+                    }
+                    catch (const std::exception&)
+                    {
+                    }
+
                     continue;
                 }
 
@@ -2382,6 +2893,11 @@ namespace fluxora
                     nowUtcText(),
                     L"installed",
                     {},
+                    false,
+                    false,
+                    true,
+                    false,
+                    false,
                     entry.path(),
                     ModSourceRecord{L"manual"}
                 });
@@ -3010,6 +3526,11 @@ namespace fluxora
             record.state = import.isEnabled ? L"installed" : L"disabled";
             record.path = import.modDirectory;
             record.source = import.source;
+            record.sourceIsNexus = import.sourceIsNexus;
+            record.sourceIsModdingFlow = import.sourceIsModdingFlow;
+            record.isLocal = import.isLocal;
+            record.isTranslation = import.isTranslation;
+            record.isPatch = import.isPatch;
 
             records.push_back(std::move(record));
             shouldComputeContentFingerprint.push_back(import.computeContentFingerprint ? 1 : 0);
@@ -3112,7 +3633,7 @@ namespace fluxora
         id.bindText(1, folderName);
         if (id.stepRow())
         {
-            Statement removeCache = database.prepare("DELETE FROM mod_file_cache WHERE mod_id = ?;");
+            Statement removeCache = database.prepare("DELETE FROM mod_files WHERE mod_id = ?;");
             removeCache.bindInt64(1, std::stoll(id.columnText(0)));
             removeCache.stepDone();
         }
@@ -3243,6 +3764,7 @@ namespace fluxora
         source.lastCheckedAt = checkedAt;
         source.latestVersion = check.latestVersion;
 
+        std::optional<InstalledModRecord> manifestToWrite;
         Transaction transaction(database);
 
         Statement cache = database.prepare(
@@ -3284,16 +3806,27 @@ namespace fluxora
             updateSource.bindText(8, source.latestVersion);
             updateSource.bindText(9, check.folderName);
             updateSource.stepDone();
+
+            try
+            {
+                InstalledModRecord record =
+                    readRecordByFolder(database, projectDirectory, check.folderName, modsRoot);
+                record.updatedAt = checkedAt;
+                updateModFlags(database, record);
+                manifestToWrite = std::move(record);
+            }
+            catch (const std::exception&)
+            {
+            }
         }
 
         transaction.commit();
 
-        if (!check.folderName.empty())
+        if (manifestToWrite.has_value())
         {
             try
             {
-                InstalledModRecord record = readRecordByFolder(database, projectDirectory, check.folderName, modsRoot);
-                writePortableManifest(record);
+                writePortableManifest(manifestToWrite.value());
             }
             catch (const std::exception&)
             {
@@ -3405,7 +3938,7 @@ namespace fluxora
 
         Statement statement = database.prepare(
             "SELECT name, relative_path, kind, size, path_key "
-            "FROM mod_file_cache "
+            "FROM mod_files "
             "WHERE mod_id = ? AND parent_key = ? "
             "ORDER BY CASE kind WHEN 'directory' THEN 0 ELSE 1 END, name COLLATE NOCASE;");
         statement.bindInt64(1, record.id);

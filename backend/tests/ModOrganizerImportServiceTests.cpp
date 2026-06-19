@@ -38,7 +38,16 @@ namespace fluxora::tests
             "1\\modid=32444\n"
             "1\\fileid=392563\n"
             "size=1\n");
-        writeTextFile(source / L"profiles" / L"Default" / L"modlist.txt", "+SkyUI\n+Address Library\n");
+        writeTextFile(source / L"mods" / L"Local Translation Patch" / L"Data" / L"LocalPatch.esp", "patch");
+        writeTextFile(
+            source / L"mods" / L"Local Translation Patch" / L"meta.ini",
+            "[General]\n"
+            "name=Local Translation Patch\n"
+            "version=2\n"
+            "category=Translations; Patches\n");
+        writeTextFile(
+            source / L"profiles" / L"Default" / L"modlist.txt",
+            "+SkyUI\n+Address Library\n-Local Translation Patch\n");
         writeTextFile(source / L"profiles" / L"Default" / L"plugins.txt", "*Skyrim.esm\n");
         writeTextFile(source / L"external overwrite" / L"SKSE" / L"Plugins" / L"generated.log", "overwrite");
 
@@ -95,6 +104,8 @@ namespace fluxora::tests
         EXPECT_EQ(skyUi->source.remoteModId, L"3863");
         EXPECT_EQ(skyUi->source.remoteFileId, L"123");
         EXPECT_EQ(skyUi->source.url, L"nxm://skyrimspecialedition/mods/3863/files/123");
+        EXPECT_TRUE(skyUi->sourceIsNexus);
+        EXPECT_FALSE(std::filesystem::exists(result.analysis.targetProjectDirectory / L"mods" / L"SkyUI" / L"meta.ini"));
 
         const auto addressLibrary = std::find_if(
             importedMods.begin(),
@@ -108,6 +119,22 @@ namespace fluxora::tests
         EXPECT_EQ(addressLibrary->source.remoteModId, L"32444");
         EXPECT_EQ(addressLibrary->source.remoteFileId, L"392563");
         EXPECT_EQ(addressLibrary->source.url, L"nxm://skyrimspecialedition/mods/32444/files/392563");
+
+        const auto localPatch = std::find_if(
+            importedMods.begin(),
+            importedMods.end(),
+            [](const InstalledModRecord& mod)
+            {
+                return mod.folderName == L"Local Translation Patch";
+            });
+        ASSERT_NE(localPatch, importedMods.end());
+        EXPECT_EQ(localPatch->source.provider, L"local");
+        EXPECT_TRUE(localPatch->isLocal);
+        EXPECT_TRUE(localPatch->isTranslation);
+        EXPECT_TRUE(localPatch->isPatch);
+        EXPECT_EQ(localPatch->state, L"disabled");
+        EXPECT_FALSE(std::filesystem::exists(
+            result.analysis.targetProjectDirectory / L"mods" / L"Local Translation Patch" / L"meta.ini"));
     }
 
     TEST(ModOrganizerImportServiceTests, ImportRejectsUnsupportedGameInsteadOfUsingFirstTemplate)

@@ -536,7 +536,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         !IsBusy &&
         IsTransferReady;
 
-    public string TransferModeTitle => IsReplaceMode ? T("Замена текущей сборки") : T("Новая сборка на Home");
+    public string TransferModeTitle => IsReplaceMode ? T("Замена текущей сборки") : T("Новая сборка на странице проектов");
 
     public string TransferModeSubtitle => IsReplaceMode
         ? T("Импорт заменит все данные открытой сборки. Текущая MO2-папка останется на месте.")

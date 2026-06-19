@@ -37,6 +37,11 @@ namespace fluxora
         bool isEnabled{true};
         bool canCheckUpdates{false};
         bool hasUpdate{false};
+        bool sourceIsNexus{false};
+        bool sourceIsModdingFlow{false};
+        bool isLocal{false};
+        bool isTranslation{false};
+        bool isPatch{false};
     };
 
     class ModService final : public IService

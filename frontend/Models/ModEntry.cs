@@ -29,6 +29,11 @@ public sealed class ModEntry : ICollapsibleListItem, INotifyPropertyChanged
     }
     public bool CanCheckUpdates { get; init; }
     public bool HasUpdate { get; init; }
+    public bool SourceIsNexus { get; init; }
+    public bool SourceIsModdingFlow { get; init; }
+    public bool IsLocal { get; init; }
+    public bool IsTranslation { get; init; }
+    public bool IsPatch { get; init; }
 
     public bool IsSeparator => string.Equals(Kind, "separator", StringComparison.OrdinalIgnoreCase);
 

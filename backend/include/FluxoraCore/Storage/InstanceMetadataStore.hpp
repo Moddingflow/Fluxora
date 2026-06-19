@@ -33,6 +33,11 @@ namespace fluxora
         std::wstring updatedAt;
         std::wstring state;
         std::wstring contentFingerprint;
+        bool sourceIsNexus{false};
+        bool sourceIsModdingFlow{false};
+        bool isLocal{false};
+        bool isTranslation{false};
+        bool isPatch{false};
         std::filesystem::path path;
         ModSourceRecord source;
     };
@@ -45,6 +50,11 @@ namespace fluxora
         bool isEnabled{true};
         ModSourceRecord source;
         bool computeContentFingerprint{true};
+        bool sourceIsNexus{false};
+        bool sourceIsModdingFlow{false};
+        bool isLocal{false};
+        bool isTranslation{false};
+        bool isPatch{false};
     };
 
     using InstalledModImportProgress =

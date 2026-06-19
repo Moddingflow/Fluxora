@@ -1288,6 +1288,11 @@ namespace
         writer.field(L"isEnabled", mod.isEnabled);
         writer.field(L"canCheckUpdates", mod.canCheckUpdates);
         writer.field(L"hasUpdate", mod.hasUpdate);
+        writer.field(L"sourceIsNexus", mod.sourceIsNexus);
+        writer.field(L"sourceIsModdingFlow", mod.sourceIsModdingFlow);
+        writer.field(L"isLocal", mod.isLocal);
+        writer.field(L"isTranslation", mod.isTranslation);
+        writer.field(L"isPatch", mod.isPatch);
         writer.endObject();
     }
 
@@ -1329,6 +1334,11 @@ namespace
         writer.field(L"isEnabled", item.isEnabled);
         writer.field(L"canCheckUpdates", item.canCheckUpdates);
         writer.field(L"hasUpdate", item.hasUpdate);
+        writer.field(L"sourceIsNexus", item.sourceIsNexus);
+        writer.field(L"sourceIsModdingFlow", item.sourceIsModdingFlow);
+        writer.field(L"isLocal", item.isLocal);
+        writer.field(L"isTranslation", item.isTranslation);
+        writer.field(L"isPatch", item.isPatch);
         writer.endObject();
     }
 

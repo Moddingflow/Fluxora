@@ -695,7 +695,12 @@ namespace fluxora
                 summary.overwritingFileCount,
                 mod.state != L"disabled",
                 canCheckNexusUpdates(mod),
-                hasUpdate(mod)
+                hasUpdate(mod),
+                mod.sourceIsNexus,
+                mod.sourceIsModdingFlow,
+                mod.isLocal,
+                mod.isTranslation,
+                mod.isPatch
             };
         }
 

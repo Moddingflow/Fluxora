@@ -2737,15 +2737,114 @@ namespace fluxora
             }
 
             ModSourceRecord source;
-            source.provider = !modId.empty() || !fileId.empty() || !url.empty()
-                ? L"nexus"
-                : L"local";
-            source.gameDomain = resolvedTemplate.nexusDomain;
+            if (!modId.empty() || !fileId.empty() || containsIgnoreCase(url, L"nexusmods.com") ||
+                toLower(url).starts_with(L"nxm://"))
+            {
+                source.provider = L"nexus";
+            }
+            else if (containsIgnoreCase(url, L"moddingflow") || containsIgnoreCase(url, L"modernflow"))
+            {
+                source.provider = L"moddingflow";
+            }
+            else
+            {
+                source.provider = url.empty() ? L"local" : L"manual";
+            }
+            source.gameDomain = source.provider == L"nexus" ? resolvedTemplate.nexusDomain : std::wstring{};
             source.remoteModId = modId;
             source.remoteFileId = fileId;
             source.url = url;
             source.latestVersion = newestVersion;
             return source;
+        }
+
+        bool metaContainsAny(
+            const std::map<std::wstring, std::wstring>& meta,
+            const std::vector<std::wstring_view>& keys,
+            const std::vector<std::wstring_view>& needles)
+        {
+            std::wstring text;
+            for (std::wstring_view key : keys)
+            {
+                const std::wstring value = iniValue(meta, {key});
+                if (!value.empty())
+                {
+                    text += L" ";
+                    text += value;
+                }
+            }
+
+            for (std::wstring_view needle : needles)
+            {
+                if (containsIgnoreCase(text, needle))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        bool metaLooksTranslation(const std::map<std::wstring, std::wstring>& meta)
+        {
+            return metaContainsAny(
+                meta,
+                {
+                    L"name",
+                    L"General.name",
+                    L"displayName",
+                    L"General.displayName",
+                    L"category",
+                    L"General.category",
+                    L"categories",
+                    L"General.categories",
+                    L"description",
+                    L"General.description",
+                    L"notes",
+                    L"General.notes"
+                },
+                {
+                    L"translation",
+                    L"translated",
+                    L"localization",
+                    L"localisation",
+                    L"language pack",
+                    L"russian",
+                    L"english",
+                    L"german",
+                    L"deutsch",
+                    L"перевод",
+                    L"локализац"
+                });
+        }
+
+        bool metaLooksPatch(const std::map<std::wstring, std::wstring>& meta)
+        {
+            return metaContainsAny(
+                meta,
+                {
+                    L"name",
+                    L"General.name",
+                    L"displayName",
+                    L"General.displayName",
+                    L"category",
+                    L"General.category",
+                    L"categories",
+                    L"General.categories",
+                    L"description",
+                    L"General.description",
+                    L"notes",
+                    L"General.notes"
+                },
+                {
+                    L"patch",
+                    L"compatibility",
+                    L"compat",
+                    L"fix",
+                    L"hotfix",
+                    L"патч",
+                    L"исправлен"
+                });
         }
 
         std::wstring versionFromMeta(const std::map<std::wstring, std::wstring>& meta)
@@ -3069,14 +3168,20 @@ namespace fluxora
                 const std::filesystem::path sourceMod = sourceModsDirectory / std::filesystem::path(mod.folderName);
                 const std::filesystem::path targetMod = targetModsDirectory / std::filesystem::path(mod.folderName);
                 const auto meta = readIni(sourceMod / L"meta.ini");
+                ModSourceRecord source = sourceRecordFromMeta(meta, plan.resolvedTemplate);
 
                 modsToRegister.push_back(InstalledModImportRecord{
                     targetMod,
                     nameFromMeta(meta, mod.folderName),
                     versionFromMeta(meta),
                     mod.isEnabled,
-                    sourceRecordFromMeta(meta, plan.resolvedTemplate),
-                    false
+                    source,
+                    false,
+                    equalsIgnoreCase(source.provider, L"nexus"),
+                    equalsIgnoreCase(source.provider, L"moddingflow"),
+                    equalsIgnoreCase(source.provider, L"local"),
+                    metaLooksTranslation(meta),
+                    metaLooksPatch(meta)
                 });
             }
 

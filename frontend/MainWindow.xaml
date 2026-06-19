@@ -3580,12 +3580,10 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="1*" />
-                        <ColumnDefinition Width="4*" MinWidth="0" />
+                        <ColumnDefinition Width="*" MinWidth="0" />
                     </Grid.ColumnDefinitions>
 
-                    <Border Grid.Column="1"
-                            Style="{StaticResource PanelBorderStyle}"
+                    <Border Style="{StaticResource PanelBorderStyle}"
                             Background="{StaticResource HeroBrush}"
                             Padding="22,16"
                             Margin="0,0,0,12">
@@ -3596,10 +3594,11 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel VerticalAlignment="Center">
-                                <TextBlock Text="Home"
+                                <TextBlock Text="Страница с проектами"
                                            FontSize="28"
                                            FontWeight="Black"
-                                           Foreground="{StaticResource TextBrush}" />
+                                           Foreground="{StaticResource TextBrush}"
+                                           TextWrapping="Wrap" />
                                 <TextBlock Text="Создавайте игровые структуры и держите рабочие папки под рукой."
                                            Margin="0,6,0,0"
                                            FontSize="13"
@@ -3635,8 +3634,7 @@
                         </Grid>
                     </Border>
 
-                    <Grid Grid.Row="1"
-                          Grid.Column="1">
+                    <Grid Grid.Row="1">
                         <Border Padding="20"
                                 VerticalAlignment="Top">
                             <Border.Style>
@@ -3706,192 +3704,181 @@
                                         Style="{StaticResource InnerPanelStyle}"
                                         Padding="18"
                                         Margin="0,20,0,0">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="1.35*" MinWidth="0" />
-                                            <ColumnDefinition Width="18" />
-                                            <ColumnDefinition Width="1*" MinWidth="280" />
-                                        </Grid.ColumnDefinitions>
-
-                                        <StackPanel>
-                                            <TextBlock Text="ПУТИ И ДЕЙСТВИЯ" Style="{StaticResource SectionLabelStyle}" />
-
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto" />
-                                                    <ColumnDefinition Width="12" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="12" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <Border Width="36" Height="36" CornerRadius="10"
-                                                        Background="{StaticResource AccentSoftBrush}"
-                                                        BorderBrush="{StaticResource AccentLineBrush}"
-                                                        BorderThickness="1"
-                                                        VerticalAlignment="Top">
-                                                    <controls:LineIcon Data="{StaticResource Icon.Folder}" Width="18" Height="18"
-                                                                       Foreground="{StaticResource AccentHoverBrush}" />
-                                                </Border>
-                                                <StackPanel Grid.Column="2">
-                                                    <TextBlock Text="Папка сборки" FontWeight="SemiBold" FontSize="12"
-                                                               Foreground="{StaticResource TextBrush}" />
-                                                    <TextBlock Text="{Binding SelectedProject.ProjectDirectory}"
-                                                               Margin="0,3,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap" />
-                                                </StackPanel>
-                                                <Button Grid.Column="4"
-                                                        Style="{StaticResource CompactPrimaryButtonStyle}"
-                                                        Command="{Binding OpenHomeProjectDirectoryCommand}"
-                                                        MinWidth="86"
-                                                        VerticalAlignment="Center"
-                                                        Content="Открыть" />
-                                            </Grid>
-
-                                            <Grid Margin="0,16,0,0">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto" />
-                                                    <ColumnDefinition Width="12" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="12" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <Border Width="36" Height="36" CornerRadius="10"
-                                                        Background="{StaticResource AccentSoftBrush}"
-                                                        BorderBrush="{StaticResource AccentLineBrush}"
-                                                        BorderThickness="1"
-                                                        VerticalAlignment="Top">
-                                                    <controls:LineIcon Data="{StaticResource Icon.HardDrive}" Width="18" Height="18"
-                                                                       Foreground="{StaticResource AccentHoverBrush}" />
-                                                </Border>
-                                                <StackPanel Grid.Column="2">
-                                                    <TextBlock Text="Папка игры" FontWeight="SemiBold" FontSize="12"
-                                                               Foreground="{StaticResource TextBrush}" />
-                                                    <TextBlock Text="{Binding SelectedProject.Paths.GameDirectory}"
-                                                               Margin="0,3,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap" />
-                                                </StackPanel>
-                                                <Button Grid.Column="4"
-                                                        Style="{StaticResource CompactPrimaryButtonStyle}"
-                                                        Command="{Binding OpenHomeGameDirectoryCommand}"
-                                                        MinWidth="86"
-                                                        VerticalAlignment="Center"
-                                                        Content="Открыть" />
-                                            </Grid>
-                                        </StackPanel>
-
-                                        <Grid Grid.Column="2">
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="10" />
-                                                <RowDefinition Height="Auto" />
-                                            </Grid.RowDefinitions>
-
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="10" />
-                                                    <ColumnDefinition Width="*" />
-                                                </Grid.ColumnDefinitions>
-
-                                                <Border Background="{StaticResource PanelSoftBrush}"
-                                                        BorderBrush="{StaticResource LineBrush}"
-                                                        BorderThickness="1"
-                                                        CornerRadius="8"
-                                                        Padding="12">
-                                                    <StackPanel>
-                                                        <TextBlock Text="Добавлена" Style="{StaticResource SectionLabelStyle}" />
-                                                        <TextBlock Text="{Binding SelectedProjectCreatedText}"
-                                                                   Foreground="{StaticResource TextBrush}"
-                                                                   FontWeight="SemiBold"
-                                                                   FontSize="12" />
-                                                    </StackPanel>
-                                                </Border>
-
-                                                <Border Grid.Column="2"
-                                                        Background="{StaticResource PanelSoftBrush}"
-                                                        BorderBrush="{StaticResource LineBrush}"
-                                                        BorderThickness="1"
-                                                        CornerRadius="8"
-                                                        Padding="12">
-                                                    <StackPanel>
-                                                        <TextBlock Text="Последний запуск" Style="{StaticResource SectionLabelStyle}" />
-                                                        <TextBlock Text="{Binding SelectedProjectLastLaunchText}"
-                                                                   Foreground="{StaticResource TextBrush}"
-                                                                   FontWeight="SemiBold"
-                                                                   FontSize="12"
-                                                                   TextWrapping="Wrap" />
-                                                    </StackPanel>
-                                                </Border>
-                                            </Grid>
-
-                                            <Grid Grid.Row="2">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="10" />
-                                                    <ColumnDefinition Width="*" />
-                                                </Grid.ColumnDefinitions>
-
-                                                <Border Background="{StaticResource PanelSoftBrush}"
-                                                        BorderBrush="{StaticResource LineBrush}"
-                                                        BorderThickness="1"
-                                                        CornerRadius="8"
-                                                        Padding="12">
-                                                    <StackPanel>
-                                                        <TextBlock Text="Размер проекта" Style="{StaticResource SectionLabelStyle}" />
-                                                        <TextBlock Text="{Binding SelectedProjectSizeText}"
-                                                                   Foreground="{StaticResource TextBrush}"
-                                                                   FontWeight="SemiBold"
-                                                                   FontSize="16" />
-                                                    </StackPanel>
-                                                </Border>
-
-                                                <Border Grid.Column="2"
-                                                        Background="{StaticResource PanelSoftBrush}"
-                                                        BorderBrush="{StaticResource LineBrush}"
-                                                        BorderThickness="1"
-                                                        CornerRadius="8"
-                                                        Padding="12">
-                                                    <Grid>
-                                                        <Grid.RowDefinitions>
-                                                            <RowDefinition Height="Auto" />
-                                                            <RowDefinition Height="Auto" />
-                                                            <RowDefinition Height="Auto" />
-                                                        </Grid.RowDefinitions>
-                                                        <TextBlock Text="Количество модов" Style="{StaticResource SectionLabelStyle}" />
-                                                        <Grid Grid.Row="1">
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="*" />
-                                                                <ColumnDefinition Width="*" />
-                                                            </Grid.ColumnDefinitions>
-                                                            <StackPanel>
-                                                                <TextBlock Text="{Binding ActiveModCountText}"
-                                                                           Foreground="{StaticResource TextBrush}"
-                                                                           FontWeight="Black"
-                                                                           FontSize="18" />
-                                                                <TextBlock Text="активные"
-                                                                           Style="{StaticResource MutedTextStyle}" />
-                                                            </StackPanel>
-                                                            <StackPanel Grid.Column="1">
-                                                                <TextBlock Text="{Binding DisabledModCountText}"
-                                                                           Foreground="{StaticResource TextBrush}"
-                                                                           FontWeight="Black"
-                                                                           FontSize="18" />
-                                                                <TextBlock Text="выключенные"
-                                                                           Style="{StaticResource MutedTextStyle}" />
-                                                            </StackPanel>
-                                                        </Grid>
-                                                        <TextBlock Grid.Row="2"
-                                                                   Text="{Binding ProjectModBreakdownText}"
-                                                                   Margin="0,7,0,0"
-                                                                   Style="{StaticResource MutedTextStyle}"
-                                                                   TextWrapping="Wrap" />
-                                                    </Grid>
-                                                </Border>
-                                            </Grid>
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="12" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="12" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Width="36" Height="36" CornerRadius="10"
+                                                    Background="{StaticResource AccentSoftBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    VerticalAlignment="Top">
+                                                <controls:LineIcon Data="{StaticResource Icon.Folder}" Width="18" Height="18"
+                                                                   Foreground="{StaticResource AccentHoverBrush}" />
+                                            </Border>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="Папка сборки" FontWeight="SemiBold" FontSize="12"
+                                                           Foreground="{StaticResource TextBrush}"
+                                                           TextWrapping="Wrap" />
+                                                <TextBlock Text="{Binding SelectedProject.ProjectDirectory}"
+                                                           Margin="0,3,0,0"
+                                                           Style="{StaticResource MutedTextStyle}"
+                                                           TextWrapping="Wrap" />
+                                            </StackPanel>
+                                            <Button Grid.Column="4"
+                                                    Style="{StaticResource CompactPrimaryButtonStyle}"
+                                                    Command="{Binding OpenHomeProjectDirectoryCommand}"
+                                                    MinWidth="86"
+                                                    VerticalAlignment="Center"
+                                                    Content="Открыть" />
                                         </Grid>
-                                    </Grid>
+
+                                        <Grid Margin="0,14,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="12" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="12" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Width="36" Height="36" CornerRadius="10"
+                                                    Background="{StaticResource AccentSoftBrush}"
+                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    BorderThickness="1"
+                                                    VerticalAlignment="Top">
+                                                <controls:LineIcon Data="{StaticResource Icon.HardDrive}" Width="18" Height="18"
+                                                                   Foreground="{StaticResource AccentHoverBrush}" />
+                                            </Border>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="Папка игры" FontWeight="SemiBold" FontSize="12"
+                                                           Foreground="{StaticResource TextBrush}"
+                                                           TextWrapping="Wrap" />
+                                                <TextBlock Text="{Binding SelectedProject.Paths.GameDirectory}"
+                                                           Margin="0,3,0,0"
+                                                           Style="{StaticResource MutedTextStyle}"
+                                                           TextWrapping="Wrap" />
+                                            </StackPanel>
+                                            <Button Grid.Column="4"
+                                                    Style="{StaticResource CompactPrimaryButtonStyle}"
+                                                    Command="{Binding OpenHomeGameDirectoryCommand}"
+                                                    MinWidth="86"
+                                                    VerticalAlignment="Center"
+                                                    Content="Открыть" />
+                                        </Grid>
+
+                                        <Grid Margin="48,18,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="180" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="Дата добавления"
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       FontSize="10"
+                                                       FontWeight="SemiBold"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding SelectedProjectCreatedText}"
+                                                       Foreground="{StaticResource TextBrush}"
+                                                       FontWeight="SemiBold"
+                                                       FontSize="12"
+                                                       TextWrapping="Wrap" />
+                                        </Grid>
+
+                                        <Grid Margin="48,12,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="180" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="Размер проекта"
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       FontSize="10"
+                                                       FontWeight="SemiBold"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding SelectedProjectSizeText}"
+                                                       Foreground="{StaticResource TextBrush}"
+                                                       FontWeight="Black"
+                                                       FontSize="16"
+                                                       TextWrapping="Wrap" />
+                                        </Grid>
+
+                                        <Grid Margin="48,12,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="180" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="Последний запуск"
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       FontSize="10"
+                                                       FontWeight="SemiBold"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding SelectedProjectLastLaunchText}"
+                                                       Foreground="{StaticResource TextBrush}"
+                                                       FontWeight="SemiBold"
+                                                       FontSize="12"
+                                                       TextWrapping="Wrap" />
+                                        </Grid>
+
+                                        <Grid Margin="48,12,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="180" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="Количество модов"
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       FontSize="10"
+                                                       FontWeight="SemiBold"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding ProjectModBreakdownText}"
+                                                       Foreground="{StaticResource TextBrush}"
+                                                       FontWeight="SemiBold"
+                                                       FontSize="12"
+                                                       TextWrapping="Wrap" />
+                                        </Grid>
+
+                                        <Grid Margin="48,12,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="180" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="активные"
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       FontSize="10"
+                                                       FontWeight="SemiBold"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding ActiveModCountText}"
+                                                       Foreground="{StaticResource TextBrush}"
+                                                       FontWeight="Black"
+                                                       FontSize="18"
+                                                       TextWrapping="Wrap" />
+                                        </Grid>
+
+                                        <Grid Margin="48,12,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="180" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="выключенные"
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       FontSize="10"
+                                                       FontWeight="SemiBold"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding DisabledModCountText}"
+                                                       Foreground="{StaticResource TextBrush}"
+                                                       FontWeight="Black"
+                                                       FontSize="18"
+                                                       TextWrapping="Wrap" />
+                                        </Grid>
+                                    </StackPanel>
                                 </Border>
                             </Grid>
                         </Border>
