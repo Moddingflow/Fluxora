@@ -174,4 +174,30 @@ public sealed class MainWindowViewModelModInstallPlacementTests
 
         Assert.Equal("patcher", modName);
     }
+
+    [Fact]
+    public void ResolveAppendModOrderIndex_UsesEndOfCurrentProfileOrder()
+    {
+        List<ModEntry> mods =
+        [
+            new() { Id = "separator", Kind = "separator", Name = "Visuals" },
+            new() { Id = @"C:\Fluxora\TestProject\mods\SkyUI", Name = "SkyUI" }
+        ];
+
+        Assert.Equal(2, MainWindowViewModel.ResolveAppendModOrderIndex(mods));
+    }
+
+    [Fact]
+    public void CreateManualArchiveEntry_UsesSelectedArchivePathWithoutDownloadImport()
+    {
+        DownloadEntry entry = MainWindowViewModel.CreateManualArchiveEntry(
+            @"C:\Users\modder\Downloads\SkyUI 5.2.zip");
+
+        Assert.Equal(@"C:\Users\modder\Downloads\SkyUI 5.2.zip", entry.Id);
+        Assert.Equal(@"C:\Users\modder\Downloads\SkyUI 5.2.zip", entry.LocalPath);
+        Assert.Equal(@"C:\Users\modder\Downloads\SkyUI 5.2.zip", entry.Source);
+        Assert.Equal("SkyUI 5.2", entry.Name);
+        Assert.Equal("SkyUI 5.2.zip", entry.FileName);
+        Assert.True(entry.CanInstall);
+    }
 }

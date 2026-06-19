@@ -1188,6 +1188,36 @@ public sealed class CoreBridgeService : IAppService
             cancellationToken);
     }
 
+    public Task<ModEntry> CreateEmptyModAsync(
+        string projectDirectory,
+        string modName,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureCoreAvailable();
+
+        return Task.Run(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return RunNative(
+                    "CreateEmptyMod",
+                    () =>
+                    {
+                        StringBuilder json = new(NativeJsonBufferLength);
+                        int result = NativeMethods.CreateEmptyMod(projectDirectory, modName, json, json.Capacity);
+                        if (result != NativeResult.Ok)
+                        {
+                            throw new InvalidOperationException(ReadLastNativeError(result));
+                        }
+
+                        return DeserializeModEntry(json.ToString());
+                    });
+            },
+            cancellationToken);
+    }
+
     public Task SetInstalledModEnabledAsync(
         string projectDirectory,
         string modPath,
@@ -1648,6 +1678,44 @@ public sealed class CoreBridgeService : IAppService
             cancellationToken);
     }
 
+    public Task<ModEntry> InstallArchiveAsync(
+        string projectDirectory,
+        string archivePath,
+        string modName,
+        ExistingModInstallMode existingModMode,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureCoreAvailable();
+
+        return Task.Run(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                return RunNative(
+                    "InstallArchive",
+                    () =>
+                    {
+                        StringBuilder json = new(NativeJsonBufferLength);
+                        int result = NativeMethods.InstallArchiveWithMode(
+                            projectDirectory,
+                            archivePath,
+                            modName,
+                            (int)existingModMode,
+                            json,
+                            json.Capacity);
+                        if (result != NativeResult.Ok)
+                        {
+                            throw new InvalidOperationException(ReadLastNativeError(result));
+                        }
+
+                        return DeserializeModEntry(json.ToString());
+                    });
+            },
+            cancellationToken);
+    }
+
     public Task<ContentLayoutPreview> AnalyzeDownloadContentLayoutAsync(
         string projectDirectory,
         string downloadPath,
@@ -1766,6 +1834,47 @@ public sealed class CoreBridgeService : IAppService
                         int result = NativeMethods.InstallFomodDownloadWithMode(
                             projectDirectory,
                             downloadPath,
+                            modName,
+                            (int)existingModMode,
+                            selectedOptionIdsJson,
+                            json,
+                            json.Capacity);
+                        if (result != NativeResult.Ok)
+                        {
+                            throw new InvalidOperationException(ReadLastNativeError(result));
+                        }
+
+                        return DeserializeModEntry(json.ToString());
+                    });
+            },
+            cancellationToken);
+    }
+
+    public Task<ModEntry> InstallFomodArchiveAsync(
+        string projectDirectory,
+        string archivePath,
+        string modName,
+        ExistingModInstallMode existingModMode,
+        IReadOnlyList<string> selectedOptionIds,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureCoreAvailable();
+
+        return Task.Run(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string selectedOptionIdsJson = JsonSerializer.Serialize(selectedOptionIds, JsonOptions);
+
+                return RunNative(
+                    "InstallFomodArchive",
+                    () =>
+                    {
+                        StringBuilder json = new(NativeJsonBufferLength);
+                        int result = NativeMethods.InstallFomodArchiveWithMode(
+                            projectDirectory,
+                            archivePath,
                             modName,
                             (int)existingModMode,
                             selectedOptionIdsJson,
@@ -2354,6 +2463,13 @@ public sealed class CoreBridgeService : IAppService
             string projectDirectory,
             string modPath);
 
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_create_empty_mod", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int CreateEmptyMod(
+            string projectDirectory,
+            string modName,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
         [DllImport("FluxoraCore", EntryPoint = "fluxora_set_installed_mod_enabled", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
         public static extern int SetInstalledModEnabled(
             string projectDirectory,
@@ -2486,6 +2602,15 @@ public sealed class CoreBridgeService : IAppService
             StringBuilder jsonBuffer,
             int jsonBufferLength);
 
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_install_archive_with_mode", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int InstallArchiveWithMode(
+            string projectDirectory,
+            string archivePath,
+            string modName,
+            int existingModMode,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
         [DllImport("FluxoraCore", EntryPoint = "fluxora_analyze_download_content_layout", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
         public static extern int AnalyzeDownloadContentLayout(
             string projectDirectory,
@@ -2505,6 +2630,16 @@ public sealed class CoreBridgeService : IAppService
         public static extern int InstallFomodDownloadWithMode(
             string projectDirectory,
             string downloadPath,
+            string modName,
+            int existingModMode,
+            string selectedOptionIdsJson,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_install_fomod_archive_with_mode", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int InstallFomodArchiveWithMode(
+            string projectDirectory,
+            string archivePath,
             string modName,
             int existingModMode,
             string selectedOptionIdsJson,

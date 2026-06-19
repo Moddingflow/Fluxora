@@ -215,8 +215,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         OpenProfilesDirectoryCommand = new RelayCommand(OpenProfilesDirectory, () => IsProjectWorkspaceOpen && HasSelectedProject && !IsWorkspaceOperationBlocked);
         OpenDownloadsDirectoryCommand = new RelayCommand(OpenDownloadsDirectory, () => IsProjectWorkspaceOpen && HasSelectedProject && !IsWorkspaceOperationBlocked);
         AddDownloadFileCommand = new RelayCommand(AddDownloadFile, () => IsProjectWorkspaceOpen && HasSelectedProject && !IsProcessingDownload && !IsWorkspaceOperationBlocked);
+        InstallModFromArchiveCommand = new RelayCommand(InstallModFromArchive, CanRunModCreationAction);
         CheckModUpdatesCommand = new RelayCommand(CheckModUpdates, () => IsProjectWorkspaceOpen && HasSelectedProject && !IsCheckingModUpdates && !IsWorkspaceOperationBlocked);
         CreateModSeparatorCommand = new RelayCommand(CreateModSeparator, () => IsProjectWorkspaceOpen && HasSelectedProject && !IsProcessingDownload && !IsWorkspaceOperationBlocked);
+        CreateModSeparatorAtEndCommand = new RelayCommand(CreateModSeparatorAtEnd, CanRunModCreationAction);
+        CreateEmptyModCommand = new RelayCommand(CreateEmptyMod, CanRunModCreationAction);
         OpenModInExplorerCommand = new RelayCommand<ModEntry>(
             OpenModInExplorer,
             CanOpenSelectedModInExplorer);
@@ -413,8 +416,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public ICommand OpenProfilesDirectoryCommand { get; }
     public ICommand OpenDownloadsDirectoryCommand { get; }
     public ICommand AddDownloadFileCommand { get; }
+    public ICommand InstallModFromArchiveCommand { get; }
     public ICommand CheckModUpdatesCommand { get; }
     public ICommand CreateModSeparatorCommand { get; }
+    public ICommand CreateModSeparatorAtEndCommand { get; }
+    public ICommand CreateEmptyModCommand { get; }
     public ICommand OpenModInExplorerCommand { get; }
     public ICommand ToggleModSeparatorCommand { get; }
     public ICommand MoveSelectedModUpCommand { get; }
@@ -685,7 +691,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(CanImportDownloadFiles));
                 (AddDownloadFileCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (InstallModFromArchiveCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (CreateModSeparatorCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (CreateModSeparatorAtEndCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (CreateEmptyModCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 RaiseModCommandStateChanged();
                 (InstallSelectedDownloadCommand as RelayCommand<DownloadEntry>)?.RaiseCanExecuteChanged();
                 (DeleteSelectedDownloadCommand as RelayCommand<DownloadEntry>)?.RaiseCanExecuteChanged();
@@ -4433,6 +4442,262 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
+    private async void InstallModFromArchive()
+    {
+        if (SelectedProject is null)
+        {
+            return;
+        }
+
+        string? selectedPath = modArchivePickerService.PickArchive(SelectedProject.Paths.DownloadsDirectory);
+        if (string.IsNullOrWhiteSpace(selectedPath))
+        {
+            return;
+        }
+
+        await InstallArchiveAsync(selectedPath);
+    }
+
+    private async Task InstallArchiveAsync(string archivePath)
+    {
+        if (SelectedProject is null)
+        {
+            return;
+        }
+
+        DownloadEntry archiveEntry = CreateManualArchiveEntry(archivePath);
+        using var operation = logService.BeginOperation(
+            "InstallArchive",
+            $"project=\"{SelectedProject.Name}\", archivePath=\"{archivePath}\"");
+        try
+        {
+            IsProcessingDownload = true;
+            ModOperationProcess.Start(
+                "Проверка архива",
+                "Подготовка установки",
+                $"Готовлю архив: {archiveEntry.Name}");
+            IReadOnlyList<string>? fomodSelection = null;
+            bool isFomodInstall = false;
+            string modName;
+            ContentLayoutPreview? layoutPreview = null;
+            ExistingModInstallMode existingModMode = ExistingModInstallMode.FailIfExists;
+
+            ModOperationProcess.ApplyProgress("Проверяю FOMOD", archiveEntry.Name, 10);
+            FomodInstallerInfo fomodInstaller = await downloadCatalogService.AnalyzeFomodDownloadAsync(
+                SelectedProject,
+                archiveEntry);
+            if (fomodInstaller.IsFomod)
+            {
+                isFomodInstall = true;
+                modName = ResolveFomodInstallName(fomodInstaller, archiveEntry);
+                ModOperationProcess.ApplyProgress(
+                    "Открываю FOMOD",
+                    string.IsNullOrWhiteSpace(fomodInstaller.ModuleName) ? archiveEntry.Name : fomodInstaller.ModuleName,
+                    16);
+                fomodSelection = modInstallDialogService.PickFomodSelections(fomodInstaller);
+                if (fomodSelection is null)
+                {
+                    ModOperationProcess.Reset();
+                    ActivityMessage = $"Установка FOMOD отменена: {modName}";
+                    operation.Complete($"cancelled=true, fomod=true, modName=\"{modName}\"");
+                    return;
+                }
+            }
+            else
+            {
+                ModOperationProcess.ApplyProgress("Анализирую размещение", archiveEntry.Name, 14);
+                layoutPreview = await downloadCatalogService.AnalyzeDownloadContentLayoutAsync(
+                    SelectedProject,
+                    archiveEntry,
+                    ExistingModInstallMode.FailIfExists);
+                ModOperationProcess.Reset();
+                string? selectedModName = modInstallDialogService.PickModName(archiveEntry.Name, layoutPreview);
+                if (string.IsNullOrWhiteSpace(selectedModName))
+                {
+                    ActivityMessage = layoutPreview is { CanInstall: false }
+                        ? ContentLayoutPreviewBlockerText(layoutPreview)
+                        : ActivityMessage;
+                    operation.Complete($"cancelled=true, fomod=false, layoutBlocked={layoutPreview is { CanInstall: false }}");
+                    return;
+                }
+
+                modName = selectedModName.Trim();
+            }
+
+            ModEntry? existingMod = FindInstalledModByName(Mods, modName);
+            if (existingMod is not null)
+            {
+                ExistingModInstallMode? selectedMode = modInstallDialogService.PickExistingModInstallMode(existingMod.DisplayName);
+                if (!selectedMode.HasValue)
+                {
+                    ModOperationProcess.Reset();
+                    ActivityMessage = $"Установка отменена: {modName}";
+                    operation.Complete($"cancelled=true, fomod={isFomodInstall}, modName=\"{modName}\", existingMod=true");
+                    return;
+                }
+
+                existingModMode = selectedMode.Value;
+            }
+
+            if (isFomodInstall && fomodSelection is not null)
+            {
+                ModOperationProcess.ApplyProgress("Проверяю размещение", modName, 20);
+                layoutPreview = await downloadCatalogService.AnalyzeFomodDownloadContentLayoutAsync(
+                    SelectedProject,
+                    archiveEntry,
+                    existingModMode,
+                    fomodSelection);
+                if (!layoutPreview.CanInstall)
+                {
+                    string blockerMessage = ContentLayoutPreviewBlockerText(layoutPreview);
+                    ActivityMessage = blockerMessage;
+                    ModOperationProcess.Fail(blockerMessage);
+                    operation.Fail(new InvalidOperationException(blockerMessage));
+                    return;
+                }
+            }
+
+            ModOperationProcess.Start(
+                InstallOperationTitle(existingModMode),
+                "Подготовка установки",
+                $"Готовлю архив: {archiveEntry.Name}");
+            ModOperationProcess.ApplyProgress(InstallProgressStep(existingModMode), modName, 24);
+            ModEntry installedMod = isFomodInstall
+                ? await downloadCatalogService.InstallFomodArchiveAsync(
+                    SelectedProject,
+                    archivePath,
+                    modName,
+                    existingModMode,
+                    fomodSelection ?? Array.Empty<string>())
+                : await downloadCatalogService.InstallArchiveAsync(
+                    SelectedProject,
+                    archivePath,
+                    modName,
+                    existingModMode);
+            RefreshSelectedProjectSizeAfterMutation();
+
+            ModOperationProcess.ApplyProgress("Обновляю список модов", "Синхронизирую профиль", 70);
+            await LoadModsFromProjectAsync(SelectedProject);
+            ModOperationProcess.ApplyProgress("Обновляю плагины", "Проверяю load order", 88);
+            await LoadPluginsFromProjectAsync(SelectedProject);
+            SelectedMod = ResolveVisibleModSelection(installedMod.Id);
+            ActivityMessage = InstallSuccessMessage(existingModMode, installedMod.Name, false);
+            await CompleteModOperationSplashAsync(InstallCompleteStep(existingModMode), installedMod.Name);
+            operation.Complete($"installedMod=\"{installedMod.Name}\", id=\"{installedMod.Id}\", existingModMode=\"{existingModMode}\", fomod={isFomodInstall}");
+        }
+        catch (Exception exception)
+        {
+            operation.Fail(exception);
+            ModOperationProcess.Fail(exception.Message);
+            ActivityMessage = $"Не удалось установить мод: {exception.Message}";
+        }
+        finally
+        {
+            IsProcessingDownload = false;
+        }
+    }
+
+    private async void CreateModSeparatorAtEnd()
+    {
+        if (SelectedProject is null)
+        {
+            return;
+        }
+
+        string? separatorName = modInstallDialogService.PickSeparatorName("Новый разделитель");
+        if (string.IsNullOrWhiteSpace(separatorName))
+        {
+            return;
+        }
+
+        int targetIndex = ResolveAppendModOrderIndex(Mods);
+        using var operation = logService.BeginOperation(
+            "CreateModSeparatorAtEnd",
+            $"project=\"{SelectedProject.Name}\", profile=\"{SelectedProfile}\", title=\"{separatorName}\", targetIndex={targetIndex}");
+        try
+        {
+            IsProcessingDownload = true;
+            IReadOnlyList<ModEntry> mods = await modCatalogService.CreateModSeparatorAsync(
+                SelectedProject,
+                SelectedProfile,
+                separatorName,
+                targetIndex);
+            SyncMods(mods, null);
+            ModEntry? createdSeparator = Mods.LastOrDefault(mod =>
+                mod.IsSeparator &&
+                string.Equals(mod.DisplayName, separatorName, StringComparison.OrdinalIgnoreCase));
+
+            RangeSelectionService.Clear(VisibleMods, static (item, value) => item.IsSelected = value);
+            if (createdSeparator is not null)
+            {
+                createdSeparator.IsSelected = true;
+                modSelectionAnchorId = ModListItemKey(createdSeparator);
+            }
+
+            SelectedMod = createdSeparator ?? Mods.LastOrDefault();
+            NotifyModCountPropertiesChanged();
+            RaiseModCommandStateChanged();
+            RefreshSelectedProjectSizeAfterMutation();
+            ActivityMessage = $"Разделитель создан: {separatorName}";
+            operation.Complete();
+        }
+        catch (Exception exception)
+        {
+            operation.Fail(exception);
+            ActivityMessage = $"Не удалось создать разделитель: {exception.Message}";
+            await LoadModsFromProjectAsync(SelectedProject);
+        }
+        finally
+        {
+            IsProcessingDownload = false;
+        }
+    }
+
+    private async void CreateEmptyMod()
+    {
+        if (SelectedProject is null)
+        {
+            return;
+        }
+
+        string? modName = modInstallDialogService.PickEmptyModName("Новый мод");
+        if (string.IsNullOrWhiteSpace(modName))
+        {
+            return;
+        }
+
+        using var operation = logService.BeginOperation(
+            "CreateEmptyMod",
+            $"project=\"{SelectedProject.Name}\", profile=\"{SelectedProfile}\", modName=\"{modName}\"");
+        try
+        {
+            IsProcessingDownload = true;
+            ModEntry createdMod = await modCatalogService.CreateEmptyModAsync(
+                SelectedProject,
+                modName);
+            IReadOnlyList<ModEntry> mods = await modCatalogService.GetInstalledModsAsync(
+                SelectedProject,
+                SelectedProfile);
+            SyncMods(mods, createdMod.Id);
+            SelectedMod = ResolveVisibleModSelection(createdMod.Id) ?? Mods.LastOrDefault();
+            NotifyModCountPropertiesChanged();
+            RaiseModCommandStateChanged();
+            RefreshSelectedProjectSizeAfterMutation();
+            ActivityMessage = $"Пустой мод создан: {createdMod.Name}";
+            operation.Complete($"mod=\"{createdMod.Name}\", id=\"{createdMod.Id}\"");
+        }
+        catch (Exception exception)
+        {
+            operation.Fail(exception);
+            ActivityMessage = $"Не удалось создать пустой мод: {exception.Message}";
+            await LoadModsFromProjectAsync(SelectedProject);
+        }
+        finally
+        {
+            IsProcessingDownload = false;
+        }
+    }
+
     private async void CreateModSeparator()
     {
         if (SelectedProject is null)
@@ -5149,6 +5414,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         return IsProjectWorkspaceOpen &&
             HasSelectedProject &&
             ResolveModActionTargets(mod).Count > 0 &&
+            !IsProcessingDownload &&
+            !IsWorkspaceOperationBlocked;
+    }
+
+    private bool CanRunModCreationAction()
+    {
+        return IsProjectWorkspaceOpen &&
+            HasSelectedProject &&
             !IsProcessingDownload &&
             !IsWorkspaceOperationBlocked;
     }
@@ -6801,8 +7074,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         (OpenProfilesDirectoryCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (OpenDownloadsDirectoryCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (AddDownloadFileCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (InstallModFromArchiveCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (CheckModUpdatesCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (CreateModSeparatorCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (CreateModSeparatorAtEndCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (CreateEmptyModCommand as RelayCommand)?.RaiseCanExecuteChanged();
         RaiseModCommandStateChanged();
         RaisePluginCommandStateChanged();
         RaiseDownloadCommandStateChanged();
@@ -7129,6 +7405,31 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
 
         return resolved;
+    }
+
+    internal static int ResolveAppendModOrderIndex(IReadOnlyCollection<ModEntry> mods)
+    {
+        return mods.Count;
+    }
+
+    internal static DownloadEntry CreateManualArchiveEntry(string archivePath)
+    {
+        string fileName = Path.GetFileName(archivePath);
+        string name = Path.GetFileNameWithoutExtension(fileName);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            name = string.IsNullOrWhiteSpace(fileName) ? "Архив мода" : fileName;
+        }
+
+        return new DownloadEntry
+        {
+            Id = archivePath,
+            Name = name,
+            FileName = fileName,
+            LocalPath = archivePath,
+            Source = archivePath,
+            CanInstall = true
+        };
     }
 
     private static bool IsSameModListItem(ModEntry mod, string id)

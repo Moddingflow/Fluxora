@@ -253,6 +253,12 @@ extern "C"
         const wchar_t* projectDirectory,
         const wchar_t* modPath);
 
+    FLUXORA_CORE_API int fluxora_create_empty_mod(
+        const wchar_t* projectDirectory,
+        const wchar_t* modName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_set_installed_mod_enabled(
         const wchar_t* projectDirectory,
         const wchar_t* modPath,
@@ -372,6 +378,14 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_install_archive_with_mode(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     // Returns a JSON placement plan for a regular archive using the selected
     // project's content layout rules. existingModMode has the same values as
     // fluxora_install_download_with_mode.
@@ -395,6 +409,15 @@ extern "C"
     FLUXORA_CORE_API int fluxora_install_fomod_download_with_mode(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_install_fomod_archive_with_mode(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
         const wchar_t* modName,
         int existingModMode,
         const wchar_t* selectedOptionIdsJson,

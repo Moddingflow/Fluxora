@@ -5,6 +5,7 @@ namespace Fluxora.App.Services;
 public interface IModInstallDialogService
 {
     string? PickModName(string suggestedName, ContentLayoutPreview? layoutPreview = null);
+    string? PickEmptyModName(string suggestedName);
     ExistingModInstallMode? PickExistingModInstallMode(string modName);
     IReadOnlyList<string>? PickFomodSelections(FomodInstallerInfo installer);
     string? PickSeparatorName(string suggestedName);

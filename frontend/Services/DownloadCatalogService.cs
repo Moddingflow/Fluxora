@@ -87,6 +87,21 @@ public sealed class DownloadCatalogService : IAppService
             cancellationToken);
     }
 
+    public Task<ModEntry> InstallArchiveAsync(
+        ModProject project,
+        string archivePath,
+        string modName,
+        ExistingModInstallMode existingModMode,
+        CancellationToken cancellationToken = default)
+    {
+        return coreBridgeService.InstallArchiveAsync(
+            project.ProjectDirectory,
+            archivePath,
+            modName,
+            existingModMode,
+            cancellationToken);
+    }
+
     public Task<ContentLayoutPreview> AnalyzeDownloadContentLayoutAsync(
         ModProject project,
         DownloadEntry download,
@@ -137,6 +152,23 @@ public sealed class DownloadCatalogService : IAppService
         return coreBridgeService.InstallFomodDownloadAsync(
             project.ProjectDirectory,
             download.LocalPath,
+            modName,
+            existingModMode,
+            selectedOptionIds,
+            cancellationToken);
+    }
+
+    public Task<ModEntry> InstallFomodArchiveAsync(
+        ModProject project,
+        string archivePath,
+        string modName,
+        ExistingModInstallMode existingModMode,
+        IReadOnlyList<string> selectedOptionIds,
+        CancellationToken cancellationToken = default)
+    {
+        return coreBridgeService.InstallFomodArchiveAsync(
+            project.ProjectDirectory,
+            archivePath,
             modName,
             existingModMode,
             selectedOptionIds,

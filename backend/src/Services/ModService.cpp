@@ -3,6 +3,7 @@
 #include "FluxoraCore/Services/AppSettingsService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
+#include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
 
 #include <algorithm>
@@ -62,6 +63,90 @@ namespace fluxora
         bool equalsIgnoreCase(std::wstring_view left, std::wstring_view right)
         {
             return toLower(std::wstring(left)) == toLower(std::wstring(right));
+        }
+
+        bool containsInvalidFileNameCharacter(std::wstring_view value)
+        {
+            for (wchar_t character : value)
+            {
+                if (character < 32)
+                {
+                    return true;
+                }
+
+                switch (character)
+                {
+                case L'<':
+                case L'>':
+                case L':':
+                case L'"':
+                case L'/':
+                case L'\\':
+                case L'|':
+                case L'?':
+                case L'*':
+                    return true;
+                default:
+                    break;
+                }
+            }
+
+            return false;
+        }
+
+        bool isReservedDeviceName(std::wstring_view value)
+        {
+            std::wstring name(value);
+            const std::size_t dot = name.find(L'.');
+            if (dot != std::wstring::npos)
+            {
+                name.resize(dot);
+            }
+
+            name = toLower(std::move(name));
+            return name == L"con" ||
+                name == L"prn" ||
+                name == L"aux" ||
+                name == L"nul" ||
+                name == L"com1" ||
+                name == L"com2" ||
+                name == L"com3" ||
+                name == L"com4" ||
+                name == L"com5" ||
+                name == L"com6" ||
+                name == L"com7" ||
+                name == L"com8" ||
+                name == L"com9" ||
+                name == L"lpt1" ||
+                name == L"lpt2" ||
+                name == L"lpt3" ||
+                name == L"lpt4" ||
+                name == L"lpt5" ||
+                name == L"lpt6" ||
+                name == L"lpt7" ||
+                name == L"lpt8" ||
+                name == L"lpt9";
+        }
+
+        std::wstring validateModFolderName(std::wstring_view value)
+        {
+            std::wstring name = trim(std::wstring(value));
+            if (name.empty())
+            {
+                throw std::invalid_argument("Mod name is required.");
+            }
+
+            if (containsInvalidFileNameCharacter(name))
+            {
+                throw std::invalid_argument("Mod name contains invalid path characters.");
+            }
+
+            if (isReservedDeviceName(name))
+            {
+                throw std::invalid_argument("Mod name is reserved by Windows.");
+            }
+
+            return name;
         }
 
         std::wstring nowUtcText()
@@ -1022,6 +1107,57 @@ namespace fluxora
             modPath,
             relativeDirectory,
             pathSettings_.modsDirectory(projectDirectory));
+    }
+
+    InstalledModEntry ModService::createEmptyMod(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view modName) const
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const std::wstring safeName = validateModFolderName(modName);
+        const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
+        const std::filesystem::path targetDirectory = modsDirectory / std::filesystem::path(safeName);
+        if (std::filesystem::exists(targetDirectory))
+        {
+            throw std::invalid_argument("Mod is already installed.");
+        }
+
+        const PathSafetyService safety;
+        safety.validateDirectoryWriteRoot(modsDirectory)
+            .throwIfUnsafe("Mods directory is unsafe");
+        safety.validateWritePath(modsDirectory, targetDirectory)
+            .throwIfUnsafe("Empty mod target path is unsafe");
+
+        try
+        {
+            std::filesystem::create_directories(targetDirectory);
+            const InstalledModRecord record = InstanceMetadataStore::registerInstalledMod(
+                projectDirectory,
+                targetDirectory,
+                safeName,
+                {},
+                ModSourceRecord{L"local"});
+            logger_.writeOperation(
+                LogLevel::Info,
+                "ModCreate",
+                "Created empty mod path=\"" + toUtf8(targetDirectory.wstring()) + "\"");
+            return entryFromRecord(record, deferredFileSummary());
+        }
+        catch (const std::exception& exception)
+        {
+            logger_.writeOperation(
+                LogLevel::Error,
+                "ModCreate",
+                "Failed to create empty mod path=\"" + toUtf8(targetDirectory.wstring()) +
+                    "\", reason=\"" + exception.what() + "\"");
+            std::error_code cleanupError;
+            std::filesystem::remove_all(targetDirectory, cleanupError);
+            throw;
+        }
     }
 
     void ModService::deleteInstalledMod(

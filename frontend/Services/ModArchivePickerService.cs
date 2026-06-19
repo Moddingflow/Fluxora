@@ -9,7 +9,7 @@ public sealed class ModArchivePickerService : IModArchivePickerService
     {
         WpfOpenFileDialog dialog = new()
         {
-            Title = "Добавить загрузку",
+            Title = "Выбрать архив мода",
             Filter = "Mod archives (*.zip;*.7z;*.rar;*.fomod;*.omod;*.tar;*.tgz;*.gz;*.bz2;*.xz;*.zst;*.ba2;*.bsa)|*.zip;*.7z;*.rar;*.fomod;*.omod;*.tar;*.tgz;*.gz;*.bz2;*.xz;*.zst;*.ba2;*.bsa|All files (*.*)|*.*",
             CheckFileExists = true,
             Multiselect = false,

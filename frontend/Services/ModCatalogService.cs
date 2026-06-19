@@ -92,6 +92,14 @@ public sealed class ModCatalogService : IAppService
         return coreBridgeService.DeleteInstalledModAsync(project.ProjectDirectory, mod.Id, cancellationToken);
     }
 
+    public Task<ModEntry> CreateEmptyModAsync(
+        ModProject project,
+        string modName,
+        CancellationToken cancellationToken = default)
+    {
+        return coreBridgeService.CreateEmptyModAsync(project.ProjectDirectory, modName, cancellationToken);
+    }
+
     public Task SetInstalledModEnabledAsync(
         ModProject project,
         ModEntry mod,

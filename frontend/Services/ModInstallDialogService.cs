@@ -14,6 +14,20 @@ public sealed class ModInstallDialogService : IModInstallDialogService
         return dialog.ShowDialog() == true ? dialog.ModName : null;
     }
 
+    public string? PickEmptyModName(string suggestedName)
+    {
+        InstallModWindow dialog = new(
+            suggestedName,
+            "Пустой мод",
+            "Укажите название мода. Fluxora создаст пустую папку в mods.",
+            "Создать")
+        {
+            Owner = System.Windows.Application.Current?.MainWindow
+        };
+
+        return dialog.ShowDialog() == true ? dialog.ModName : null;
+    }
+
     public ExistingModInstallMode? PickExistingModInstallMode(string modName)
     {
         InstallModWindow dialog = InstallModWindow.CreateConflictResolutionDialog(modName);

@@ -375,6 +375,69 @@ namespace fluxora::tests
         EXPECT_EQ(summary.conflictingFileCount, 0);
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, InstallArchiveFromExternalFileDoesNotImportDownloadMetadata)
+    {
+        const std::filesystem::path archivePath =
+            temp_.path() / L"Внешние архивы" / L"Manual Texture 1.0.zip";
+        writeZipArchive(
+            archivePath,
+            {
+                {L"textures/manual.dds", "texture"},
+                {L"fomod/info.xml", "<fomod><Name>Manual Texture</Name><Version>1.0</Version></fomod>"}
+            });
+
+        InstalledMod installed;
+        try
+        {
+            installed = downloads_.installArchive(project_, archivePath, L"Manual Texture");
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+
+            throw;
+        }
+
+        EXPECT_EQ(installed.name, L"Manual Texture");
+        EXPECT_EQ(installed.version, L"1.0");
+        EXPECT_TRUE(std::filesystem::is_regular_file(modsDirectory() / L"Manual Texture" / L"textures" / L"manual.dds"));
+        EXPECT_TRUE(downloads_.listDownloads(project_).empty());
+        EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(archivePath.wstring() + L".fluxora.json")));
+
+        const std::vector<InstalledModRecord> records =
+            InstanceMetadataStore::listInstalledMods(project_, modsDirectory());
+        const InstalledModRecord* record = findInstalledMod(records, L"Manual Texture");
+        ASSERT_NE(record, nullptr);
+        EXPECT_EQ(record->source.provider, L"manual");
+        EXPECT_EQ(record->source.url, archivePath.wstring());
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, CreateEmptyModCreatesFolderManifestAndAppendsProfileOrder)
+    {
+        const std::vector<ProfileModOrderItem> withSeparator =
+            profileOrder_.createModSeparator(project_, L"Default", L"Outputs", 0);
+        ASSERT_EQ(withSeparator.size(), 1U);
+        ASSERT_EQ(withSeparator.front().kind, L"separator");
+
+        const InstalledModEntry created = mods_.createEmptyMod(project_, L"Nemesis Output");
+
+        EXPECT_EQ(created.name, L"Nemesis Output");
+        const std::filesystem::path modPath = modsDirectory() / L"Nemesis Output";
+        EXPECT_TRUE(std::filesystem::is_directory(modPath));
+        EXPECT_TRUE(std::filesystem::is_regular_file(modPath / L".flow" / L"manifest.json"));
+
+        const std::vector<ProfileModOrderItem> order =
+            profileOrder_.listModOrder(project_, L"Default");
+        ASSERT_EQ(order.size(), 2U);
+        EXPECT_EQ(order[0].kind, L"separator");
+        EXPECT_EQ(order[0].separatorTitle, L"Outputs");
+        EXPECT_EQ(order[1].kind, L"mod");
+        EXPECT_EQ(order[1].name, L"Nemesis Output");
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, ImportLocalSkyrimBsaUsesGameDefinitionArchiveRules)
     {
         const std::filesystem::path archivePath =

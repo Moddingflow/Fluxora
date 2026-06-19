@@ -1308,6 +1308,13 @@ namespace
         return writer.str();
     }
 
+    std::wstring serializeInstalledModEntry(const fluxora::InstalledModEntry& mod)
+    {
+        fluxora::JsonWriter writer;
+        writeInstalledModEntry(writer, mod);
+        return writer.str();
+    }
+
     void writeProfileModOrderItem(fluxora::JsonWriter& writer, const fluxora::ProfileModOrderItem& item)
     {
         const bool isSeparator = item.kind == L"separator";
@@ -1923,6 +1930,53 @@ namespace
                     modName,
                     mode));
             logOperation(fluxora::LogLevel::Info, "Downloads", "Install download completed.");
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int installArchiveWithMode(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(archivePath) || isBlank(modName))
+            {
+                lastError = L"Project directory, archive path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            if (!tryParseExistingModInstallMode(existingModMode, mode))
+            {
+                lastError = L"Existing mod install mode is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            logBridge(fluxora::LogLevel::Info, "fluxora_install_archive started.");
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Mods",
+                std::string("Install archive requested. projectDirectory=\"") +
+                    pathForLog(std::filesystem::path(projectDirectory)) + "\", archivePath=\"" +
+                    pathForLog(std::filesystem::path(archivePath)) + "\", modName=\"" +
+                    textForLog(modName) + "\", existingModMode=\"" +
+                    existingModInstallModeForLog(mode) + "\"");
+            const std::wstring json = serializeInstalledMod(
+                core().downloads().installArchive(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(archivePath),
+                    modName,
+                    mode));
+            logOperation(fluxora::LogLevel::Info, "Mods", "Install archive completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)
@@ -2855,6 +2909,40 @@ extern "C"
         }
     }
 
+    int fluxora_create_empty_mod(
+        const wchar_t* projectDirectory,
+        const wchar_t* modName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(modName))
+            {
+                lastError = L"Project directory and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            logBridge(fluxora::LogLevel::Info, "fluxora_create_empty_mod started.");
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Mods",
+                std::string("Create empty mod requested. projectDirectory=\"") +
+                    pathForLog(std::filesystem::path(projectDirectory)) + "\", modName=\"" +
+                    textForLog(modName) + "\"");
+            const std::wstring json = serializeInstalledModEntry(
+                core().mods().createEmptyMod(
+                    std::filesystem::path(projectDirectory),
+                    modName));
+            logOperation(fluxora::LogLevel::Info, "Mods", "Create empty mod completed.");
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
     int fluxora_set_installed_mod_enabled(
         const wchar_t* projectDirectory,
         const wchar_t* modPath,
@@ -3355,6 +3443,23 @@ extern "C"
             jsonBufferLength);
     }
 
+    int fluxora_install_archive_with_mode(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        return installArchiveWithMode(
+            projectDirectory,
+            archivePath,
+            modName,
+            existingModMode,
+            jsonBuffer,
+            jsonBufferLength);
+    }
+
     int fluxora_analyze_download_content_layout(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
@@ -3524,6 +3629,57 @@ extern "C"
                     mode,
                     selectedOptionIds));
             logOperation(fluxora::LogLevel::Info, "Downloads", "Install FOMOD download completed.");
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_install_fomod_archive_with_mode(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(archivePath) || isBlank(modName))
+            {
+                lastError = L"Project directory, archive path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            if (!tryParseExistingModInstallMode(existingModMode, mode))
+            {
+                lastError = L"Existing mod install mode is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::vector<std::wstring> selectedOptionIds = parseStringArrayJson(selectedOptionIdsJson);
+            logBridge(fluxora::LogLevel::Info, "fluxora_install_fomod_archive started.");
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Mods",
+                std::string("Install FOMOD archive requested. projectDirectory=\"") +
+                    pathForLog(std::filesystem::path(projectDirectory)) + "\", archivePath=\"" +
+                    pathForLog(std::filesystem::path(archivePath)) + "\", modName=\"" +
+                    textForLog(modName) + "\", existingModMode=\"" +
+                    existingModInstallModeForLog(mode) + "\", selectedOptionCount=" +
+                    std::to_string(selectedOptionIds.size()));
+            const std::wstring json = serializeInstalledMod(
+                core().downloads().installFomodArchive(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(archivePath),
+                    modName,
+                    mode,
+                    selectedOptionIds));
+            logOperation(fluxora::LogLevel::Info, "Mods", "Install FOMOD archive completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)

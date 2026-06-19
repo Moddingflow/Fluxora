@@ -32,6 +32,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -3741,6 +3742,402 @@ namespace fluxora
             layout.applyPlanToDirectory(stagingDirectory, plan);
         }
 
+        InstalledMod installArchiveCore(
+            Logger& logger,
+            const BuildPathSettingsService& pathSettings,
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& archivePath,
+            std::wstring_view modName,
+            ExistingModInstallMode existingModMode,
+            DownloadMetadata metadata,
+            bool persistMetadata,
+            const char* logKind)
+        {
+            const std::wstring requestedName = trim(std::wstring(modName));
+            const std::wstring installName = requestedName.empty()
+                ? metadata.nexusModName
+                : requestedName;
+            std::wstring safeName = sanitizeFileName(installName);
+            if (safeName.empty())
+            {
+                throw std::invalid_argument("Mod name is required.");
+            }
+
+            const std::wstring selectedGameId = InstanceMetadataStore::gameId(projectDirectory);
+            logger.writeOperation(
+                LogLevel::Info,
+                "ModInstall",
+                std::string("installMod requested kind=\"") + logKind +
+                    "\", selectedGameId=\"" + toUtf8(selectedGameId) +
+                    "\", installMode=\"" + installModeName(existingModMode) +
+                    "\", archivePath=\"" + toUtf8(archivePath.wstring()) +
+                    "\", requestedName=\"" + toUtf8(requestedName) +
+                    "\", safeName=\"" + toUtf8(safeName) +
+                    "\", source=\"" + toUtf8(metadata.source) +
+                    "\", gameDomain=\"" + toUtf8(metadata.gameDomain) +
+                    "\", modId=\"" + toUtf8(metadata.modId) +
+                    "\", fileId=\"" + toUtf8(metadata.fileId) +
+                    "\", versionResult=\"" +
+                    (metadata.version.empty() ? std::string("metadata-unavailable") : toUtf8(metadata.version)) + "\".");
+
+            const std::filesystem::path modsDirectory = pathSettings.modsDirectory(projectDirectory);
+            const std::filesystem::path targetDirectory = modsDirectory / std::filesystem::path(safeName);
+            const bool targetExists = std::filesystem::exists(targetDirectory);
+            if (targetExists && existingModMode == ExistingModInstallMode::FailIfExists)
+            {
+                throw std::invalid_argument("Mod is already installed.");
+            }
+            if (targetExists &&
+                existingModMode == ExistingModInstallMode::Merge &&
+                !std::filesystem::is_directory(targetDirectory))
+            {
+                throw std::invalid_argument("Existing mod path is not a directory.");
+            }
+
+            const PathSafetyService safety;
+            safety.validateDirectoryWriteRoot(modsDirectory)
+                .throwIfUnsafe("Mods directory is unsafe");
+            safety.validateWritePath(modsDirectory, targetDirectory)
+                .throwIfUnsafe("Installed mod target path is unsafe");
+            std::filesystem::create_directories(modsDirectory);
+            const std::filesystem::path stagingDirectory = uniquePath(modsDirectory, L"." + safeName + L".installing");
+            safety.validateWritePath(modsDirectory, stagingDirectory)
+                .throwIfUnsafe("Installed mod staging path is unsafe");
+            std::filesystem::create_directories(stagingDirectory);
+
+            bool extracted = false;
+            std::wstring detectedVersion;
+            try
+            {
+                extracted = extractArchiveToDirectory(archivePath, stagingDirectory);
+                if (!extracted)
+                {
+                    std::filesystem::copy_file(archivePath, stagingDirectory / archivePath.filename());
+                }
+                else
+                {
+                    flattenRedundantModRootDirectory(stagingDirectory, safeName);
+                }
+
+                applyContentLayoutToStaging(
+                    projectDirectory,
+                    stagingDirectory,
+                    existingModMode,
+                    false,
+                    fileCacheFingerprint(archivePath),
+                    logger);
+                detectedVersion = detectInstalledModVersion(stagingDirectory, archivePath, metadata, safeName);
+                switch (existingModMode)
+                {
+                case ExistingModInstallMode::Replace:
+                    replaceDirectoryWithStaging(stagingDirectory, targetDirectory, modsDirectory, safeName);
+                    logger.write(LogLevel::Info, "Installed archive by replacing existing mod: " + toUtf8(safeName));
+                    break;
+                case ExistingModInstallMode::Merge:
+                    if (targetExists)
+                    {
+                        copyDirectoryContentsOverwriting(stagingDirectory, targetDirectory);
+                        std::filesystem::remove_all(stagingDirectory);
+                        logger.write(LogLevel::Info, "Installed archive by merging into existing mod: " + toUtf8(safeName));
+                    }
+                    else
+                    {
+                        std::filesystem::rename(stagingDirectory, targetDirectory);
+                        logger.write(LogLevel::Info, "Installed archive with merge mode into new mod: " + toUtf8(safeName));
+                    }
+                    break;
+                case ExistingModInstallMode::FailIfExists:
+                default:
+                    std::filesystem::rename(stagingDirectory, targetDirectory);
+                    logger.write(LogLevel::Info, "Installed archive as new mod: " + toUtf8(safeName));
+                    break;
+                }
+            }
+            catch (const std::exception& exception)
+            {
+                logger.writeOperation(
+                    LogLevel::Error,
+                    "ModInstall",
+                    std::string("installMod failed kind=\"") + logKind +
+                        "\", selectedGameId=\"" + toUtf8(selectedGameId) +
+                        "\", safeName=\"" + toUtf8(safeName) +
+                        "\", stagingDirectory=\"" + toUtf8(stagingDirectory.wstring()) +
+                        "\", reason=\"" + exception.what() + "\".");
+                std::filesystem::remove_all(stagingDirectory);
+                throw;
+            }
+
+            metadata.version = detectedVersion;
+            if (metadata.latestVersion.empty())
+            {
+                metadata.latestVersion = detectedVersion;
+            }
+            metadata.installedModName = safeName;
+            metadata.installedAtUtc = nowUtcText();
+            metadata.status = L"Установлен: " + safeName;
+            if (persistMetadata)
+            {
+                writeMetadata(archivePath, metadata);
+            }
+
+            const ModSourceRecord source{
+                !metadata.gameDomain.empty() ? L"nexus" : (metadata.source.empty() ? L"local" : L"manual"),
+                metadata.gameDomain,
+                metadata.modId,
+                metadata.fileId,
+                metadata.source.empty() ? archivePath.wstring() : metadata.source,
+                {},
+                metadata.latestVersion
+            };
+            const InstalledModRecord record = InstanceMetadataStore::registerInstalledMod(
+                projectDirectory,
+                targetDirectory,
+                safeName,
+                detectedVersion,
+                source);
+
+            logger.writeOperation(
+                LogLevel::Info,
+                "ModInstall",
+                std::string("installMod completed kind=\"") + logKind +
+                    "\", selectedGameId=\"" + toUtf8(selectedGameId) +
+                    "\", safeName=\"" + toUtf8(safeName) +
+                    "\", targetDirectory=\"" + toUtf8(targetDirectory.wstring()) +
+                    "\", installMode=\"" + installModeName(existingModMode) +
+                    "\", versionResult=\"" +
+                    (detectedVersion.empty() ? std::string("unknown") : toUtf8(detectedVersion)) + "\".");
+
+            return InstalledMod{
+                record.path,
+                record.displayName,
+                record.version.empty() ? L"Unknown" : record.version,
+                record.state == L"installed"
+            };
+        }
+
+        InstalledMod installFomodArchiveCore(
+            Logger& logger,
+            const BuildPathSettingsService& pathSettings,
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& archivePath,
+            std::wstring_view modName,
+            ExistingModInstallMode existingModMode,
+            const std::vector<std::wstring>& selectedOptionIds,
+            DownloadMetadata metadata,
+            bool persistMetadata,
+            const char* logKind)
+        {
+            const std::wstring requestedName = trim(std::wstring(modName));
+            const std::wstring installName = requestedName.empty()
+                ? metadata.nexusModName
+                : requestedName;
+            std::wstring safeName = sanitizeFileName(installName);
+            if (safeName.empty())
+            {
+                throw std::invalid_argument("Mod name is required.");
+            }
+
+            const std::wstring selectedGameId = InstanceMetadataStore::gameId(projectDirectory);
+            logger.writeOperation(
+                LogLevel::Info,
+                "ModInstall",
+                std::string("installMod requested kind=\"") + logKind +
+                    "\", selectedGameId=\"" + toUtf8(selectedGameId) +
+                    "\", installMode=\"" + installModeName(existingModMode) +
+                    "\", archivePath=\"" + toUtf8(archivePath.wstring()) +
+                    "\", requestedName=\"" + toUtf8(requestedName) +
+                    "\", safeName=\"" + toUtf8(safeName) +
+                    "\", source=\"" + toUtf8(metadata.source) +
+                    "\", gameDomain=\"" + toUtf8(metadata.gameDomain) +
+                    "\", modId=\"" + toUtf8(metadata.modId) +
+                    "\", fileId=\"" + toUtf8(metadata.fileId) +
+                    "\", selectedOptionCount=" + std::to_string(selectedOptionIds.size()) +
+                    ", versionResult=\"" +
+                    (metadata.version.empty() ? std::string("metadata-unavailable") : toUtf8(metadata.version)) + "\".");
+
+            const BuildPathSettings paths = pathSettings.loadForProjectDirectory(projectDirectory);
+            const std::filesystem::path modsDirectory = paths.modsDirectory;
+            const std::filesystem::path targetDirectory = modsDirectory / std::filesystem::path(safeName);
+            const bool targetExists = std::filesystem::exists(targetDirectory);
+            if (targetExists && existingModMode == ExistingModInstallMode::FailIfExists)
+            {
+                throw std::invalid_argument("Mod is already installed.");
+            }
+            if (targetExists &&
+                existingModMode == ExistingModInstallMode::Merge &&
+                !std::filesystem::is_directory(targetDirectory))
+            {
+                throw std::invalid_argument("Existing mod path is not a directory.");
+            }
+
+            const PathSafetyService safety;
+            safety.validateDirectoryWriteRoot(modsDirectory)
+                .throwIfUnsafe("Mods directory is unsafe");
+            safety.validateWritePath(modsDirectory, targetDirectory)
+                .throwIfUnsafe("Installed FOMOD target path is unsafe");
+            std::filesystem::create_directories(modsDirectory);
+            const std::filesystem::path packageDirectory = uniquePath(
+                paths.downloadsDirectory,
+                L"fomod-install-" + safeName);
+            const std::filesystem::path stagingDirectory = uniquePath(modsDirectory, L"." + safeName + L".installing");
+            safety.validateWritePath(paths.downloadsDirectory, packageDirectory)
+                .throwIfUnsafe("FOMOD package path is unsafe");
+            safety.validateWritePath(modsDirectory, stagingDirectory)
+                .throwIfUnsafe("Installed FOMOD staging path is unsafe");
+            std::filesystem::create_directories(packageDirectory);
+            std::filesystem::create_directories(stagingDirectory);
+
+            std::wstring detectedVersion;
+            FomodInstallerDescriptor descriptor;
+            std::vector<std::wstring> appliedOptionIds;
+            try
+            {
+                if (!extractArchiveToDirectory(archivePath, packageDirectory))
+                {
+                    throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
+                }
+
+                const FomodPackageIdentity identity{
+                    !metadata.gameDomain.empty() ? L"nexus" : (metadata.source.empty() ? L"local" : L"manual"),
+                    metadata.gameDomain,
+                    metadata.modId,
+                    metadata.fileId,
+                    metadata.source.empty() ? archivePath.wstring() : metadata.source,
+                    safeName
+                };
+
+                descriptor = FomodInstallerService::analyze(
+                    projectDirectory,
+                    paths.gameDirectory,
+                    paths.modsDirectory,
+                    packageDirectory,
+                    identity,
+                    fomodGameDataFoldersForProject(projectDirectory));
+                if (!descriptor.isFomod)
+                {
+                    throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
+                }
+
+                appliedOptionIds = FomodInstallerService::install(FomodInstallContext{
+                    projectDirectory,
+                    paths.gameDirectory,
+                    paths.modsDirectory,
+                    packageDirectory,
+                    stagingDirectory,
+                    identity,
+                    selectedOptionIds,
+                    fomodGameDataFoldersForProject(projectDirectory)
+                });
+
+                applyContentLayoutToStaging(
+                    projectDirectory,
+                    stagingDirectory,
+                    existingModMode,
+                    true,
+                    fomodOutputCacheFingerprint(archivePath, selectedOptionIds),
+                    logger);
+
+                detectedVersion = trim(descriptor.moduleVersion);
+                if (detectedVersion.empty())
+                {
+                    detectedVersion = detectInstalledModVersion(packageDirectory, archivePath, metadata, safeName);
+                }
+
+                switch (existingModMode)
+                {
+                case ExistingModInstallMode::Replace:
+                    replaceDirectoryWithStaging(stagingDirectory, targetDirectory, modsDirectory, safeName);
+                    logger.write(LogLevel::Info, "Installed FOMOD by replacing existing mod: " + toUtf8(safeName));
+                    break;
+                case ExistingModInstallMode::Merge:
+                    if (targetExists)
+                    {
+                        copyDirectoryContentsOverwriting(stagingDirectory, targetDirectory);
+                        std::filesystem::remove_all(stagingDirectory);
+                        logger.write(LogLevel::Info, "Installed FOMOD by merging into existing mod: " + toUtf8(safeName));
+                    }
+                    else
+                    {
+                        std::filesystem::rename(stagingDirectory, targetDirectory);
+                        logger.write(LogLevel::Info, "Installed FOMOD with merge mode into new mod: " + toUtf8(safeName));
+                    }
+                    break;
+                case ExistingModInstallMode::FailIfExists:
+                default:
+                    std::filesystem::rename(stagingDirectory, targetDirectory);
+                    logger.write(LogLevel::Info, "Installed FOMOD as new mod: " + toUtf8(safeName));
+                    break;
+                }
+
+                FomodInstallerService::rememberSelection(projectDirectory, descriptor, appliedOptionIds);
+                cleanupTemporaryDirectory(packageDirectory, logger, "FOMOD");
+            }
+            catch (const std::exception& exception)
+            {
+                logger.writeOperation(
+                    LogLevel::Error,
+                    "ModInstall",
+                    std::string("installMod failed kind=\"") + logKind +
+                        "\", selectedGameId=\"" + toUtf8(selectedGameId) +
+                        "\", safeName=\"" + toUtf8(safeName) +
+                        "\", packageDirectory=\"" + toUtf8(packageDirectory.wstring()) +
+                        "\", stagingDirectory=\"" + toUtf8(stagingDirectory.wstring()) +
+                        "\", appliedPluginRules=\"fomod options=" + std::to_string(appliedOptionIds.size()) +
+                        "\", reason=\"" + exception.what() + "\".");
+                cleanupTemporaryDirectory(stagingDirectory, logger, "FOMOD");
+                cleanupTemporaryDirectory(packageDirectory, logger, "FOMOD");
+                throw;
+            }
+
+            metadata.version = detectedVersion;
+            if (metadata.latestVersion.empty())
+            {
+                metadata.latestVersion = detectedVersion;
+            }
+            metadata.installedModName = safeName;
+            metadata.installedAtUtc = nowUtcText();
+            metadata.status = L"Установлен FOMOD: " + safeName;
+            if (persistMetadata)
+            {
+                writeMetadata(archivePath, metadata);
+            }
+
+            const ModSourceRecord source{
+                !metadata.gameDomain.empty() ? L"nexus" : (metadata.source.empty() ? L"local" : L"manual"),
+                metadata.gameDomain,
+                metadata.modId,
+                metadata.fileId,
+                metadata.source.empty() ? archivePath.wstring() : metadata.source,
+                {},
+                metadata.latestVersion
+            };
+            const InstalledModRecord record = InstanceMetadataStore::registerInstalledMod(
+                projectDirectory,
+                targetDirectory,
+                safeName,
+                detectedVersion,
+                source);
+
+            logger.writeOperation(
+                LogLevel::Info,
+                "ModInstall",
+                std::string("installMod completed kind=\"") + logKind +
+                    "\", selectedGameId=\"" + toUtf8(selectedGameId) +
+                    "\", safeName=\"" + toUtf8(safeName) +
+                    "\", targetDirectory=\"" + toUtf8(targetDirectory.wstring()) +
+                    "\", installMode=\"" + installModeName(existingModMode) +
+                    "\", appliedPluginRules=\"fomod options=" + std::to_string(appliedOptionIds.size()) +
+                    "\", versionResult=\"" +
+                    (detectedVersion.empty() ? std::string("unknown") : toUtf8(detectedVersion)) + "\".");
+
+            return InstalledMod{
+                record.path,
+                record.displayName,
+                record.version.empty() ? L"Unknown" : record.version,
+                record.state == L"installed"
+            };
+        }
+
         std::wstring fetchNexusModName(
             const NxmDownloadRequest& request,
             const AppSettingsService& settings)
@@ -4480,159 +4877,47 @@ namespace fluxora
             throw std::invalid_argument("Download is still in progress.");
         }
 
-        const std::wstring requestedName = trim(std::wstring(modName));
-        const std::wstring installName = requestedName.empty()
-            ? metadata.nexusModName
-            : requestedName;
-        std::wstring safeName = sanitizeFileName(installName);
-        if (safeName.empty())
-        {
-            throw std::invalid_argument("Mod name is required.");
-        }
-        const std::wstring selectedGameId = InstanceMetadataStore::gameId(projectDirectory);
-        logger_.writeOperation(
-            LogLevel::Info,
-            "ModInstall",
-            "installMod requested kind=\"archive\", selectedGameId=\"" + toUtf8(selectedGameId) +
-                "\", installMode=\"" + installModeName(existingModMode) +
-                "\", downloadPath=\"" + toUtf8(downloadPath.wstring()) +
-                "\", requestedName=\"" + toUtf8(requestedName) +
-                "\", safeName=\"" + toUtf8(safeName) +
-                "\", source=\"" + toUtf8(metadata.source) +
-                "\", gameDomain=\"" + toUtf8(metadata.gameDomain) +
-                "\", modId=\"" + toUtf8(metadata.modId) +
-                "\", fileId=\"" + toUtf8(metadata.fileId) +
-                "\", versionResult=\"" +
-                (metadata.version.empty() ? std::string("metadata-unavailable") : toUtf8(metadata.version)) + "\".");
-
-        const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
-        const std::filesystem::path targetDirectory = modsDirectory / std::filesystem::path(safeName);
-        const bool targetExists = std::filesystem::exists(targetDirectory);
-        if (targetExists && existingModMode == ExistingModInstallMode::FailIfExists)
-        {
-            throw std::invalid_argument("Mod is already installed.");
-        }
-        if (targetExists &&
-            existingModMode == ExistingModInstallMode::Merge &&
-            !std::filesystem::is_directory(targetDirectory))
-        {
-            throw std::invalid_argument("Existing mod path is not a directory.");
-        }
-
-        const PathSafetyService safety;
-        safety.validateDirectoryWriteRoot(modsDirectory)
-            .throwIfUnsafe("Mods directory is unsafe");
-        safety.validateWritePath(modsDirectory, targetDirectory)
-            .throwIfUnsafe("Installed mod target path is unsafe");
-        std::filesystem::create_directories(modsDirectory);
-        const std::filesystem::path stagingDirectory = uniquePath(modsDirectory, L"." + safeName + L".installing");
-        safety.validateWritePath(modsDirectory, stagingDirectory)
-            .throwIfUnsafe("Installed mod staging path is unsafe");
-        std::filesystem::create_directories(stagingDirectory);
-
-        bool extracted = false;
-        std::wstring detectedVersion;
-        try
-        {
-            extracted = extractArchiveToDirectory(downloadPath, stagingDirectory);
-            if (!extracted)
-            {
-                std::filesystem::copy_file(downloadPath, stagingDirectory / downloadPath.filename());
-            }
-            else
-            {
-                flattenRedundantModRootDirectory(stagingDirectory, safeName);
-            }
-
-            applyContentLayoutToStaging(
-                projectDirectory,
-                stagingDirectory,
-                existingModMode,
-                false,
-                fileCacheFingerprint(downloadPath),
-                logger_);
-            detectedVersion = detectInstalledModVersion(stagingDirectory, downloadPath, metadata, safeName);
-            switch (existingModMode)
-            {
-            case ExistingModInstallMode::Replace:
-                replaceDirectoryWithStaging(stagingDirectory, targetDirectory, modsDirectory, safeName);
-                logger_.write(LogLevel::Info, "Installed download by replacing existing mod: " + toUtf8(safeName));
-                break;
-            case ExistingModInstallMode::Merge:
-                if (targetExists)
-                {
-                    copyDirectoryContentsOverwriting(stagingDirectory, targetDirectory);
-                    std::filesystem::remove_all(stagingDirectory);
-                    logger_.write(LogLevel::Info, "Installed download by merging into existing mod: " + toUtf8(safeName));
-                }
-                else
-                {
-                    std::filesystem::rename(stagingDirectory, targetDirectory);
-                    logger_.write(LogLevel::Info, "Installed download with merge mode into new mod: " + toUtf8(safeName));
-                }
-                break;
-            case ExistingModInstallMode::FailIfExists:
-            default:
-                std::filesystem::rename(stagingDirectory, targetDirectory);
-                logger_.write(LogLevel::Info, "Installed download as new mod: " + toUtf8(safeName));
-                break;
-            }
-        }
-        catch (const std::exception& exception)
-        {
-            logger_.writeOperation(
-                LogLevel::Error,
-                "ModInstall",
-                "installMod failed kind=\"archive\", selectedGameId=\"" + toUtf8(selectedGameId) +
-                    "\", safeName=\"" + toUtf8(safeName) +
-                    "\", stagingDirectory=\"" + toUtf8(stagingDirectory.wstring()) +
-                    "\", reason=\"" + exception.what() + "\".");
-            std::filesystem::remove_all(stagingDirectory);
-            throw;
-        }
-
-        metadata.version = detectedVersion;
-        if (metadata.latestVersion.empty())
-        {
-            metadata.latestVersion = detectedVersion;
-        }
-        metadata.installedModName = safeName;
-        metadata.installedAtUtc = nowUtcText();
-        metadata.status = L"Установлен: " + safeName;
-        writeMetadata(downloadPath, metadata);
-
-        const ModSourceRecord source{
-            !metadata.gameDomain.empty() ? L"nexus" : (metadata.source.empty() ? L"local" : L"manual"),
-            metadata.gameDomain,
-            metadata.modId,
-            metadata.fileId,
-            metadata.source.empty() ? downloadPath.wstring() : metadata.source,
-            {},
-            metadata.latestVersion
-        };
-        const InstalledModRecord record = InstanceMetadataStore::registerInstalledMod(
+        return installArchiveCore(
+            logger_,
+            pathSettings_,
             projectDirectory,
-            targetDirectory,
-            safeName,
-            detectedVersion,
-            source);
+            downloadPath,
+            modName,
+            existingModMode,
+            std::move(metadata),
+            true,
+            "archive");
+    }
 
-        logger_.writeOperation(
-            LogLevel::Info,
-            "ModInstall",
-            "installMod completed kind=\"archive\", selectedGameId=\"" + toUtf8(selectedGameId) +
-                "\", safeName=\"" + toUtf8(safeName) +
-                "\", targetDirectory=\"" + toUtf8(targetDirectory.wstring()) +
-                "\", installMode=\"" + installModeName(existingModMode) +
-                "\", versionResult=\"" +
-                (detectedVersion.empty() ? std::string("unknown") : toUtf8(detectedVersion)) + "\".");
+    InstalledMod DownloadService::installArchive(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& archivePath,
+        std::wstring_view modName,
+        ExistingModInstallMode existingModMode) const
+    {
+        if (archivePath.empty() || !std::filesystem::exists(archivePath) || !std::filesystem::is_regular_file(archivePath))
+        {
+            throw std::invalid_argument("Archive file does not exist.");
+        }
 
-        return InstalledMod{
-            record.path,
-            record.displayName,
-            record.version.empty() ? L"Unknown" : record.version,
-            record.state == L"installed"
-        };
+        if (!hasSupportedDownloadFileExtension(archivePath.filename().wstring()))
+        {
+            throw std::invalid_argument("Archive file type is not supported.");
+        }
+
+        DownloadMetadata metadata;
+        metadata.source = archivePath.wstring();
+        metadata.version = versionFromArchiveFileName(archivePath, trim(std::wstring(modName)));
+        return installArchiveCore(
+            logger_,
+            pathSettings_,
+            projectDirectory,
+            archivePath,
+            modName,
+            existingModMode,
+            std::move(metadata),
+            false,
+            "manualArchive");
     }
 
     PlacementPlan DownloadService::analyzeDownloadContentLayout(
@@ -4906,208 +5191,50 @@ namespace fluxora
             throw std::invalid_argument("Download is still in progress.");
         }
 
-        const std::wstring requestedName = trim(std::wstring(modName));
-        const std::wstring installName = requestedName.empty()
-            ? metadata.nexusModName
-            : requestedName;
-        std::wstring safeName = sanitizeFileName(installName);
-        if (safeName.empty())
-        {
-            throw std::invalid_argument("Mod name is required.");
-        }
-        const std::wstring selectedGameId = InstanceMetadataStore::gameId(projectDirectory);
-        logger_.writeOperation(
-            LogLevel::Info,
-            "ModInstall",
-            "installMod requested kind=\"fomod\", selectedGameId=\"" + toUtf8(selectedGameId) +
-                "\", installMode=\"" + installModeName(existingModMode) +
-                "\", downloadPath=\"" + toUtf8(downloadPath.wstring()) +
-                "\", requestedName=\"" + toUtf8(requestedName) +
-                "\", safeName=\"" + toUtf8(safeName) +
-                "\", source=\"" + toUtf8(metadata.source) +
-                "\", gameDomain=\"" + toUtf8(metadata.gameDomain) +
-                "\", modId=\"" + toUtf8(metadata.modId) +
-                "\", fileId=\"" + toUtf8(metadata.fileId) +
-                "\", selectedOptionCount=" + std::to_string(selectedOptionIds.size()) +
-                ", versionResult=\"" +
-                (metadata.version.empty() ? std::string("metadata-unavailable") : toUtf8(metadata.version)) + "\".");
-
-        const BuildPathSettings paths = pathSettings_.loadForProjectDirectory(projectDirectory);
-        const std::filesystem::path modsDirectory = paths.modsDirectory;
-        const std::filesystem::path targetDirectory = modsDirectory / std::filesystem::path(safeName);
-        const bool targetExists = std::filesystem::exists(targetDirectory);
-        if (targetExists && existingModMode == ExistingModInstallMode::FailIfExists)
-        {
-            throw std::invalid_argument("Mod is already installed.");
-        }
-        if (targetExists &&
-            existingModMode == ExistingModInstallMode::Merge &&
-            !std::filesystem::is_directory(targetDirectory))
-        {
-            throw std::invalid_argument("Existing mod path is not a directory.");
-        }
-
-        const PathSafetyService safety;
-        safety.validateDirectoryWriteRoot(modsDirectory)
-            .throwIfUnsafe("Mods directory is unsafe");
-        safety.validateWritePath(modsDirectory, targetDirectory)
-            .throwIfUnsafe("Installed FOMOD target path is unsafe");
-        std::filesystem::create_directories(modsDirectory);
-        const std::filesystem::path packageDirectory = uniquePath(
-            paths.downloadsDirectory,
-            L"fomod-install-" + safeName);
-        const std::filesystem::path stagingDirectory = uniquePath(modsDirectory, L"." + safeName + L".installing");
-        safety.validateWritePath(paths.downloadsDirectory, packageDirectory)
-            .throwIfUnsafe("FOMOD package path is unsafe");
-        safety.validateWritePath(modsDirectory, stagingDirectory)
-            .throwIfUnsafe("Installed FOMOD staging path is unsafe");
-        std::filesystem::create_directories(packageDirectory);
-        std::filesystem::create_directories(stagingDirectory);
-
-        std::wstring detectedVersion;
-        FomodInstallerDescriptor descriptor;
-        std::vector<std::wstring> appliedOptionIds;
-        try
-        {
-            if (!extractArchiveToDirectory(downloadPath, packageDirectory))
-            {
-                throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
-            }
-
-            const FomodPackageIdentity identity{
-                !metadata.gameDomain.empty() ? L"nexus" : (metadata.source.empty() ? L"local" : L"manual"),
-                metadata.gameDomain,
-                metadata.modId,
-                metadata.fileId,
-                metadata.source.empty() ? downloadPath.wstring() : metadata.source,
-                safeName
-            };
-
-            descriptor = FomodInstallerService::analyze(
-                projectDirectory,
-                paths.gameDirectory,
-                paths.modsDirectory,
-                packageDirectory,
-                identity,
-                fomodGameDataFoldersForProject(projectDirectory));
-            if (!descriptor.isFomod)
-            {
-                throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
-            }
-
-            appliedOptionIds = FomodInstallerService::install(FomodInstallContext{
-                projectDirectory,
-                paths.gameDirectory,
-                paths.modsDirectory,
-                packageDirectory,
-                stagingDirectory,
-                identity,
-                selectedOptionIds,
-                fomodGameDataFoldersForProject(projectDirectory)
-            });
-
-            applyContentLayoutToStaging(
-                projectDirectory,
-                stagingDirectory,
-                existingModMode,
-                true,
-                fomodOutputCacheFingerprint(downloadPath, selectedOptionIds),
-                logger_);
-
-            detectedVersion = trim(descriptor.moduleVersion);
-            if (detectedVersion.empty())
-            {
-                detectedVersion = detectInstalledModVersion(packageDirectory, downloadPath, metadata, safeName);
-            }
-
-            switch (existingModMode)
-            {
-            case ExistingModInstallMode::Replace:
-                replaceDirectoryWithStaging(stagingDirectory, targetDirectory, modsDirectory, safeName);
-                logger_.write(LogLevel::Info, "Installed FOMOD by replacing existing mod: " + toUtf8(safeName));
-                break;
-            case ExistingModInstallMode::Merge:
-                if (targetExists)
-                {
-                    copyDirectoryContentsOverwriting(stagingDirectory, targetDirectory);
-                    std::filesystem::remove_all(stagingDirectory);
-                    logger_.write(LogLevel::Info, "Installed FOMOD by merging into existing mod: " + toUtf8(safeName));
-                }
-                else
-                {
-                    std::filesystem::rename(stagingDirectory, targetDirectory);
-                    logger_.write(LogLevel::Info, "Installed FOMOD with merge mode into new mod: " + toUtf8(safeName));
-                }
-                break;
-            case ExistingModInstallMode::FailIfExists:
-            default:
-                std::filesystem::rename(stagingDirectory, targetDirectory);
-                logger_.write(LogLevel::Info, "Installed FOMOD as new mod: " + toUtf8(safeName));
-                break;
-            }
-
-            FomodInstallerService::rememberSelection(projectDirectory, descriptor, appliedOptionIds);
-            cleanupTemporaryDirectory(packageDirectory, logger_, "FOMOD");
-        }
-        catch (const std::exception& exception)
-        {
-            logger_.writeOperation(
-                LogLevel::Error,
-                "ModInstall",
-                "installMod failed kind=\"fomod\", selectedGameId=\"" + toUtf8(selectedGameId) +
-                    "\", safeName=\"" + toUtf8(safeName) +
-                    "\", packageDirectory=\"" + toUtf8(packageDirectory.wstring()) +
-                    "\", stagingDirectory=\"" + toUtf8(stagingDirectory.wstring()) +
-                    "\", appliedPluginRules=\"fomod options=" + std::to_string(appliedOptionIds.size()) +
-                    "\", reason=\"" + exception.what() + "\".");
-            cleanupTemporaryDirectory(stagingDirectory, logger_, "FOMOD");
-            cleanupTemporaryDirectory(packageDirectory, logger_, "FOMOD");
-            throw;
-        }
-
-        metadata.version = detectedVersion;
-        if (metadata.latestVersion.empty())
-        {
-            metadata.latestVersion = detectedVersion;
-        }
-        metadata.installedModName = safeName;
-        metadata.installedAtUtc = nowUtcText();
-        metadata.status = L"Установлен FOMOD: " + safeName;
-        writeMetadata(downloadPath, metadata);
-
-        const ModSourceRecord source{
-            !metadata.gameDomain.empty() ? L"nexus" : (metadata.source.empty() ? L"local" : L"manual"),
-            metadata.gameDomain,
-            metadata.modId,
-            metadata.fileId,
-            metadata.source.empty() ? downloadPath.wstring() : metadata.source,
-            {},
-            metadata.latestVersion
-        };
-        const InstalledModRecord record = InstanceMetadataStore::registerInstalledMod(
+        return installFomodArchiveCore(
+            logger_,
+            pathSettings_,
             projectDirectory,
-            targetDirectory,
-            safeName,
-            detectedVersion,
-            source);
+            downloadPath,
+            modName,
+            existingModMode,
+            selectedOptionIds,
+            std::move(metadata),
+            true,
+            "fomod");
+    }
 
-        logger_.writeOperation(
-            LogLevel::Info,
-            "ModInstall",
-            "installMod completed kind=\"fomod\", selectedGameId=\"" + toUtf8(selectedGameId) +
-                "\", safeName=\"" + toUtf8(safeName) +
-                "\", targetDirectory=\"" + toUtf8(targetDirectory.wstring()) +
-                "\", installMode=\"" + installModeName(existingModMode) +
-                "\", appliedPluginRules=\"fomod options=" + std::to_string(appliedOptionIds.size()) +
-                "\", versionResult=\"" +
-                (detectedVersion.empty() ? std::string("unknown") : toUtf8(detectedVersion)) + "\".");
+    InstalledMod DownloadService::installFomodArchive(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& archivePath,
+        std::wstring_view modName,
+        ExistingModInstallMode existingModMode,
+        const std::vector<std::wstring>& selectedOptionIds) const
+    {
+        if (archivePath.empty() || !std::filesystem::exists(archivePath) || !std::filesystem::is_regular_file(archivePath))
+        {
+            throw std::invalid_argument("Archive file does not exist.");
+        }
 
-        return InstalledMod{
-            record.path,
-            record.displayName,
-            record.version.empty() ? L"Unknown" : record.version,
-            record.state == L"installed"
-        };
+        if (!hasSupportedDownloadFileExtension(archivePath.filename().wstring()))
+        {
+            throw std::invalid_argument("Archive file type is not supported.");
+        }
+
+        DownloadMetadata metadata;
+        metadata.source = archivePath.wstring();
+        metadata.version = versionFromArchiveFileName(archivePath, trim(std::wstring(modName)));
+        return installFomodArchiveCore(
+            logger_,
+            pathSettings_,
+            projectDirectory,
+            archivePath,
+            modName,
+            existingModMode,
+            selectedOptionIds,
+            std::move(metadata),
+            false,
+            "manualFomodArchive");
     }
 
     bool DownloadService::isInitialized() const noexcept
