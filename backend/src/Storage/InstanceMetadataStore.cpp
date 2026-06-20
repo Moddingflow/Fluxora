@@ -2226,14 +2226,6 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modsRoot = {});
 
-        int cachedFileCount(Database& database, std::int64_t modId)
-        {
-            Statement statement = database.prepare(
-                "SELECT COUNT(*) FROM mod_files WHERE mod_id = ? AND kind = 'file';");
-            statement.bindInt64(1, modId);
-            return statement.stepRow() ? statement.columnInt(0) : 0;
-        }
-
         int cachedEntryCount(Database& database, std::int64_t modId)
         {
             Statement statement = database.prepare(
@@ -2342,16 +2334,17 @@ namespace fluxora
             }
         }
 
-        void ensureFileCacheFresh(Database& database, InstalledModRecord& record)
+        void updateRecordContentFingerprint(
+            Database& database,
+            InstalledModRecord& record,
+            std::wstring fingerprint)
         {
-            const std::wstring currentFingerprint = computeContentFingerprint(record.path);
-            if (currentFingerprint == record.contentFingerprint && cachedFileCount(database, record.id) > 0)
+            if (fingerprint == record.contentFingerprint)
             {
                 return;
             }
 
-            rebuildFileCache(database, record);
-            record.contentFingerprint = currentFingerprint;
+            record.contentFingerprint = std::move(fingerprint);
             record.updatedAt = nowUtcText();
 
             Statement update = database.prepare(
@@ -2365,12 +2358,16 @@ namespace fluxora
 
         void ensureFileCachePrepared(Database& database, InstalledModRecord& record)
         {
-            if (!record.contentFingerprint.empty() && cachedEntryCount(database, record.id) > 0)
+            if (cachedEntryCount(database, record.id) > 0)
             {
                 return;
             }
 
-            ensureFileCacheFresh(database, record);
+            rebuildFileCache(database, record);
+            if (record.contentFingerprint.empty())
+            {
+                updateRecordContentFingerprint(database, record, computeContentFingerprint(record.path));
+            }
         }
 
         struct ConflictOwner
@@ -2579,23 +2576,6 @@ namespace fluxora
             }
 
             return summary;
-        }
-
-        void ensureAllFileCachesFresh(
-            Database& database,
-            const std::filesystem::path& projectDirectory,
-            const std::filesystem::path& modsRoot = {})
-        {
-            syncInstalledModsFromDisk(database, projectDirectory, modsRoot);
-            std::vector<InstalledModRecord> records = readInstalledRecords(database, projectDirectory, modsRoot);
-
-            Transaction transaction(database);
-            for (InstalledModRecord& record : records)
-            {
-                ensureFileCacheFresh(database, record);
-            }
-            refreshDetectedConflicts(database);
-            transaction.commit();
         }
 
         void ensureAllFileCachesPrepared(
@@ -2904,10 +2884,6 @@ namespace fluxora
 
                 record.folderName = folderName;
                 record.path = entry.path();
-                if (record.contentFingerprint.empty())
-                {
-                    record.contentFingerprint = computeContentFingerprint(entry.path());
-                }
 
                 upsertModRecord(database, record);
                 writePortableManifest(record);
@@ -3848,10 +3824,14 @@ namespace fluxora
 
         Database database = openInstanceDatabase(projectDirectory);
         const std::filesystem::path resolvedModsRoot = modsRoot.empty() ? modPath.parent_path() : modsRoot;
-        ensureAllFileCachesFresh(database, projectDirectory, resolvedModsRoot);
+        syncInstalledModsFromDisk(database, projectDirectory, resolvedModsRoot);
 
         InstalledModRecord record =
             readRecordByFolder(database, projectDirectory, modPath.filename().wstring(), resolvedModsRoot);
+        Transaction transaction(database);
+        ensureFileCachePrepared(database, record);
+        refreshDetectedConflicts(database);
+        transaction.commit();
         return summarizeCachedModFiles(database, record);
     }
 
@@ -3867,7 +3847,7 @@ namespace fluxora
         }
 
         Database database = openInstanceDatabase(projectDirectory);
-        ensureAllFileCachesFresh(database, projectDirectory, modsRoot);
+        ensureAllFileCachesPrepared(database, projectDirectory, modsRoot);
 
         std::vector<ModFileSummaryRecord> summaries;
         for (const InstalledModRecord& record : readInstalledRecords(database, projectDirectory, modsRoot))
@@ -3933,7 +3913,7 @@ namespace fluxora
             readRecordByFolder(database, projectDirectory, modPath.filename().wstring(), resolvedModsRoot);
 
         Transaction transaction(database);
-        ensureFileCacheFresh(database, record);
+        ensureFileCachePrepared(database, record);
         transaction.commit();
 
         Statement statement = database.prepare(

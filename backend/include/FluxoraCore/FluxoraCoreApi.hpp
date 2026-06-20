@@ -33,6 +33,17 @@ extern "C"
     FLUXORA_CORE_API int fluxora_set_operation_context(
         const wchar_t* operationId);
 
+    // Returns the thread-local output length required by the most recent
+    // FluxoraCoreResultBufferTooSmall result, including the null terminator.
+    FLUXORA_CORE_API int fluxora_get_last_required_buffer_length();
+
+    // Copies the thread-local output buffered by the most recent
+    // FluxoraCoreResultBufferTooSmall result. This lets callers resize once
+    // without re-running a bridge operation that may have side effects.
+    FLUXORA_CORE_API int fluxora_copy_last_output(
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     // Returns a JSON array describing the available game templates that can be
     // layered on top of the base template. Deprecated compatibility fields remain
     // in place while additive game-definition fields include uiTemplateId,

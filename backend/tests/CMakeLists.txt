@@ -40,6 +40,7 @@ add_executable(FluxoraCoreTests
     ProjectServiceTests.cpp
     ProjectStateTransactionTests.cpp
     TemplateServiceTests.cpp
+    VfsContentPlacementAnalyzerTests.cpp
     TestFilesystem.hpp
     ../src/Services/AppSettingsService.cpp
     ../src/Services/BulkFileCopyService.cpp
@@ -70,6 +71,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/ProfileOrderService.cpp
     ../src/Services/ProjectService.cpp
     ../src/Services/TemplateService.cpp
+    ../src/Services/VfsContentPlacementAnalyzer.cpp
     ../src/Storage/AtomicFileStore.cpp
     ../src/Storage/InstanceMetadataStore.cpp
     ../src/Storage/ProjectStateTransaction.cpp

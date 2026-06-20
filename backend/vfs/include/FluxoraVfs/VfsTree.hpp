@@ -4,6 +4,7 @@
 
 #include <windows.h>
 
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -37,6 +38,12 @@ namespace fluxora::vfs
     class VfsTree final
     {
     public:
+        VfsTree() = default;
+        VfsTree(const VfsTree&) = delete;
+        VfsTree& operator=(const VfsTree&) = delete;
+        VfsTree(VfsTree&& other) noexcept;
+        VfsTree& operator=(VfsTree&& other) noexcept;
+
         // What a path under the mount target maps to in the merged tree.
         struct PathInfo
         {
@@ -68,8 +75,9 @@ namespace fluxora::vfs
         // directory whose listing must be synthesized from the merged tree.
         [[nodiscard]] bool isVirtualDir(const std::wstring& relLower) const;
 
-        // Merged, name-sorted children of a virtual directory, or nullptr.
-        [[nodiscard]] const std::vector<DirChild>* listing(const std::wstring& relLower) const;
+        // Merged, name-sorted children of a virtual directory. Built lazily per
+        // directory so hook install does not need to materialize every mod file.
+        [[nodiscard]] std::vector<DirChild> listing(const std::wstring& relLower) const;
 
         // Path helpers shared with the hooks.
         [[nodiscard]] static std::wstring toLower(std::wstring value);
@@ -82,24 +90,45 @@ namespace fluxora::vfs
         {
             bool realExists{false};        // the real game directory has this path
             std::wstring openPath;         // an existing directory to back a handle
+            bool childrenBuilt{false};
             std::vector<DirChild> children;
         };
 
-        void walkOverlay(const std::wstring& sourceRoot, const std::wstring& rel);
-        void mergeRealDirectory(const std::wstring& relLower, const std::wstring& realDir);
-        DirNode& ensureDir(const std::wstring& relLower);
-        void upsertChild(const std::wstring& parentLower, DirChild child, bool overrideExisting);
+        struct PathLookup
+        {
+            PathInfo::Kind kind{PathInfo::Kind::Unknown};
+            std::wstring path;
+            bool realExists{false};
+        };
+
+        [[nodiscard]] PathLookup lookupPathLocked(
+            const std::wstring& rel,
+            const std::wstring& relLower) const;
+        void buildDirectoryLocked(const std::wstring& relLower) const;
+        void mergeDirectoryLocked(
+            const std::wstring& relLower,
+            const std::wstring& displayRel,
+            const std::wstring& directory,
+            bool overrideExisting,
+            bool applyRootExclusions,
+            std::unordered_map<std::wstring, DirChild>& children) const;
+        DirNode& ensureDir(const std::wstring& relLower) const;
         [[nodiscard]] bool isExcludedTopLevelName(const std::wstring& name) const;
-        void finalize();
+        [[nodiscard]] bool isExcludedRelativePath(const std::wstring& relLower) const;
+        [[nodiscard]] bool hasOverlayDirectoryLocked(
+            const std::wstring& rel,
+            const std::wstring& relLower) const;
 
         std::wstring target_;
         std::wstring overwrite_;
+        std::vector<std::wstring> mods_;
         std::vector<std::wstring> excludedRootNames_;
 
-        // rel(lower) -> winning backing file path. Files only.
-        std::unordered_map<std::wstring, std::wstring> fileMap_;
+        mutable std::mutex cacheMutex_;
+        // rel(lower) -> winning backing file path. Populated on demand.
+        mutable std::unordered_map<std::wstring, std::wstring> fileMap_;
         // rel(lower) -> directory node. "" is the data root.
-        std::unordered_map<std::wstring, DirNode> dirMap_;
+        mutable std::unordered_map<std::wstring, DirNode> dirMap_;
 
         bool built_{false};
     };

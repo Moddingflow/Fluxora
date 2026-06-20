@@ -228,8 +228,41 @@ namespace fluxora::tests
                 [name](const ProfileModOrderItem& mod)
                 {
                     return mod.name == name;
-                });
+            });
             return found == mods.end() ? nullptr : &*found;
+        }
+
+        std::vector<std::filesystem::path> installStagingCachePayloads(
+            const std::filesystem::path& downloadsDirectory,
+            std::wstring_view entryPrefix)
+        {
+            const std::filesystem::path cacheRoot = downloadsDirectory / L".install-staging-cache";
+            std::vector<std::filesystem::path> payloads;
+            std::error_code iterateError;
+            for (const auto& entry : std::filesystem::directory_iterator(cacheRoot, iterateError))
+            {
+                if (iterateError)
+                {
+                    break;
+                }
+
+                std::error_code typeError;
+                if (!entry.is_directory(typeError) ||
+                    !entry.path().filename().wstring().starts_with(entryPrefix))
+                {
+                    continue;
+                }
+
+                const std::filesystem::path payload = entry.path() / L"payload";
+                std::error_code payloadError;
+                if (std::filesystem::is_directory(payload, payloadError))
+                {
+                    payloads.push_back(payload);
+                }
+            }
+
+            std::sort(payloads.begin(), payloads.end());
+            return payloads;
         }
     }
 
@@ -260,6 +293,11 @@ namespace fluxora::tests
         std::filesystem::path modsDirectory() const
         {
             return pathSettings_.modsDirectory(project_);
+        }
+
+        std::filesystem::path downloadsDirectory() const
+        {
+            return pathSettings_.downloadsDirectory(project_);
         }
 
         DownloadEntry importArchive(
@@ -501,6 +539,60 @@ namespace fluxora::tests
         EXPECT_TRUE(std::filesystem::is_regular_file(modPath / L"root" / L"skse64_loader.exe"));
         EXPECT_FALSE(std::filesystem::exists(modPath / L"Data" / L"SkyUI_SE.esp"));
         EXPECT_FALSE(std::filesystem::exists(modPath / L"skse64_loader.exe"));
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, AnalyzeDownloadContentLayoutCachesExtractedPayloadForInstall)
+    {
+        const DownloadEntry download = importArchive(
+            L"Cached Layout.zip",
+            {
+                {L"Data/SkyUI_SE.esp", "original-plugin"},
+                {L"Data/SkyUI_SE.bsa", "archive"}
+            });
+
+        PlacementPlan plan;
+        try
+        {
+            plan = downloads_.analyzeDownloadContentLayout(
+                project_,
+                download.localPath,
+                ExistingModInstallMode::FailIfExists);
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+
+            throw;
+        }
+
+        ASSERT_TRUE(plan.canInstall());
+        const std::vector<std::filesystem::path> payloads =
+            installStagingCachePayloads(downloadsDirectory(), L"archive-staging-");
+        ASSERT_EQ(payloads.size(), 1U);
+        const std::filesystem::path cachedPlugin = payloads.front() / L"Data" / L"SkyUI_SE.esp";
+        ASSERT_TRUE(std::filesystem::is_regular_file(cachedPlugin));
+        writeTextFile(cachedPlugin, "cache-hit-plugin");
+
+        std::optional<InstalledMod> installed;
+        std::string installError;
+        try
+        {
+            installed = downloads_.installDownload(
+                project_,
+                download.localPath,
+                L"Cached Layout",
+                ExistingModInstallMode::FailIfExists);
+        }
+        catch (const std::exception& exception)
+        {
+            installError = exception.what();
+        }
+
+        ASSERT_TRUE(installed.has_value()) << installError;
+        EXPECT_EQ(readTextFile(modsDirectory() / L"Cached Layout" / L"SkyUI_SE.esp"), "cache-hit-plugin");
     }
 
     TEST_F(ModFileOperationsIntegrationTests, InstallDownloadAppliesManualPlacementOverrides)
@@ -936,6 +1028,66 @@ namespace fluxora::tests
         EXPECT_EQ(plan.summary.scriptExtenderEntries, 1U);
         EXPECT_FALSE(plan.userExplanation.details.empty());
         EXPECT_FALSE(std::filesystem::exists(modsDirectory() / L"SkyUI FOMOD Preview"));
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, AnalyzeFomodDownloadCachesPackageForInstall)
+    {
+        const DownloadEntry download = importArchive(
+            L"Cached FOMOD Package.fomod",
+            {
+                {L"fomod/ModuleConfig.xml", R"xml(<config>
+  <moduleName>Cached FOMOD Package</moduleName>
+  <requiredInstallFiles>
+    <folder source="payload" />
+  </requiredInstallFiles>
+</config>)xml"},
+                {L"fomod/info.xml", R"xml(<fomod><Name>Cached FOMOD Package</Name><Version>1.0.0</Version></fomod>)xml"},
+                {L"payload/Data/SkyUI_SE.esp", "original-plugin"}
+            });
+
+        FomodInstallerDescriptor descriptor;
+        try
+        {
+            descriptor = downloads_.analyzeFomodDownload(project_, download.localPath);
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+
+            throw;
+        }
+
+        ASSERT_TRUE(descriptor.isFomod);
+        const std::vector<std::filesystem::path> payloads =
+            installStagingCachePayloads(downloadsDirectory(), L"fomod-package-");
+        ASSERT_EQ(payloads.size(), 1U);
+        const std::filesystem::path cachedPlugin = payloads.front() / L"payload" / L"Data" / L"SkyUI_SE.esp";
+        ASSERT_TRUE(std::filesystem::is_regular_file(cachedPlugin));
+        writeTextFile(cachedPlugin, "cache-hit-plugin");
+
+        std::optional<InstalledMod> installed;
+        std::string installError;
+        try
+        {
+            installed = downloads_.installFomodDownload(
+                project_,
+                download.localPath,
+                L"Cached FOMOD Package",
+                ExistingModInstallMode::FailIfExists,
+                {});
+        }
+        catch (const std::exception& exception)
+        {
+            installError = exception.what();
+        }
+
+        ASSERT_TRUE(installed.has_value()) << installError;
+        EXPECT_EQ(
+            readTextFile(modsDirectory() / L"Cached FOMOD Package" / L"SkyUI_SE.esp"),
+            "cache-hit-plugin");
     }
 
     TEST_F(ModFileOperationsIntegrationTests, ReplayedFomodChoicesCannotBypassContentSafety)

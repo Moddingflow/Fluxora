@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace fluxora::tests
 {
@@ -398,5 +399,67 @@ namespace fluxora::tests
                 << entry.path().string();
         }
 #endif
+    }
+
+    TEST(ProjectServiceTests, ListProjectConfigSummariesUsesLightCacheWithoutMigratingLegacyManifest)
+    {
+        TempDirectory temp;
+        const std::filesystem::path projectDirectory = temp.path() / L"Legacy Skyrim Build";
+        const std::filesystem::path configPath = projectDirectory / L"legacy.build.json";
+        writeTextFile(projectDirectory / L"Game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(projectDirectory / L"Game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(
+            configPath,
+            R"json({
+                "schemaVersion": "1",
+                "name": "Legacy Skyrim Build",
+                "gameId": "skyrimse",
+                "gameName": "Skyrim Special Edition",
+                "gamePath": "Game",
+                "installRoot": "..",
+                "projectDirectory": ".",
+                "dataDirectory": "Data",
+                "defaultProfile": "Default"
+            })json");
+        const std::string before = readTextFile(configPath);
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        std::vector<ProjectOpenResult> summaries =
+            projects.listProjectConfigSummaries(projectDirectory);
+
+        ASSERT_EQ(summaries.size(), 1U);
+        EXPECT_EQ(summaries[0].project.name, L"Legacy Skyrim Build");
+        EXPECT_EQ(summaries[0].project.templateId, L"skyrimse");
+        EXPECT_EQ(summaries[0].resolvedTemplate.id, L"skyrimse");
+        ASSERT_TRUE(summaries[0].project.fingerprint.has_value());
+        EXPECT_EQ(summaries[0].project.fingerprint->gameId, L"skyrimse");
+        EXPECT_EQ(readTextFile(configPath), before);
+        EXPECT_FALSE(std::filesystem::exists(AtomicFileStore::backupPathFor(configPath)));
+
+        writeTextFile(
+            configPath,
+            R"json({
+                "schemaVersion": "1",
+                "name": "Updated Legacy Skyrim Build",
+                "gameId": "skyrimse",
+                "gameName": "Skyrim Special Edition",
+                "gamePath": "Game",
+                "installRoot": "..",
+                "projectDirectory": ".",
+                "dataDirectory": "Data",
+                "defaultProfile": "Default",
+                "catalogRevision": "changed"
+            })json");
+
+        summaries = projects.listProjectConfigSummaries(projectDirectory);
+
+        ASSERT_EQ(summaries.size(), 1U);
+        EXPECT_EQ(summaries[0].project.name, L"Updated Legacy Skyrim Build");
+        EXPECT_EQ(readTextFile(configPath).find("\"projectFingerprint\""), std::string::npos);
     }
 }

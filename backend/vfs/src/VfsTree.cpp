@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cwctype>
+#include <utility>
 
 namespace fluxora::vfs
 {
@@ -37,6 +38,19 @@ namespace fluxora::vfs
             value.LowPart = time.dwLowDateTime;
             value.HighPart = static_cast<LONG>(time.dwHighDateTime);
             return value;
+        }
+
+        bool readAttributes(const std::wstring& path, DWORD& attributes)
+        {
+            attributes = GetFileAttributesW(path.c_str());
+            return attributes != INVALID_FILE_ATTRIBUTES;
+        }
+
+        bool hasDirectoryAttributes(const std::wstring& path)
+        {
+            DWORD attributes = INVALID_FILE_ATTRIBUTES;
+            return readAttributes(path, attributes) &&
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         }
 
         DirChild childFromFindData(
@@ -139,32 +153,43 @@ namespace fluxora::vfs
         return rel;
     }
 
-    // --- build state -------------------------------------------------------
-    // Per-directory child maps used only while the tree is being assembled, so the
-    // last (highest priority) writer wins and the result can be name-sorted once.
-    namespace
+    VfsTree::VfsTree(VfsTree&& other) noexcept
     {
-        std::unordered_map<std::wstring, std::unordered_map<std::wstring, DirChild>> g_buildChildren;
-        std::unordered_map<std::wstring, std::wstring> g_dirRel; // relLower -> display rel
+        *this = std::move(other);
     }
 
-    VfsTree::DirNode& VfsTree::ensureDir(const std::wstring& relLower)
+    VfsTree& VfsTree::operator=(VfsTree&& other) noexcept
+    {
+        if (this == &other)
+        {
+            return *this;
+        }
+
+        {
+            std::scoped_lock lock(cacheMutex_, other.cacheMutex_);
+            target_ = std::move(other.target_);
+            overwrite_ = std::move(other.overwrite_);
+            mods_ = std::move(other.mods_);
+            excludedRootNames_ = std::move(other.excludedRootNames_);
+            fileMap_ = std::move(other.fileMap_);
+            dirMap_ = std::move(other.dirMap_);
+            built_ = other.built_;
+
+            other.built_ = false;
+            other.target_.clear();
+            other.overwrite_.clear();
+            other.mods_.clear();
+            other.excludedRootNames_.clear();
+            other.fileMap_.clear();
+            other.dirMap_.clear();
+        }
+
+        return *this;
+    }
+
+    VfsTree::DirNode& VfsTree::ensureDir(const std::wstring& relLower) const
     {
         return dirMap_[relLower];
-    }
-
-    void VfsTree::upsertChild(const std::wstring& parentLower, DirChild child, bool overrideExisting)
-    {
-        auto& children = g_buildChildren[parentLower];
-        const std::wstring key = toLower(child.name);
-        if (overrideExisting)
-        {
-            children[key] = std::move(child);
-        }
-        else
-        {
-            children.emplace(key, std::move(child));
-        }
     }
 
     bool VfsTree::isExcludedTopLevelName(const std::wstring& name) const
@@ -174,15 +199,31 @@ namespace fluxora::vfs
             excludedRootNames_.end();
     }
 
-    void VfsTree::walkOverlay(const std::wstring& physicalDir, const std::wstring& rel)
+    bool VfsTree::isExcludedRelativePath(const std::wstring& relLower) const
     {
-        const std::wstring relLower = toLower(rel);
-        DirNode& node = ensureDir(relLower);
-        node.openPath = physicalDir; // highest-priority overlay walked last wins
-        g_dirRel[relLower] = rel;
+        if (relLower.empty())
+        {
+            return false;
+        }
 
+        const std::size_t separator = relLower.find(L'\\');
+        const std::wstring rootName = separator == std::wstring::npos
+            ? relLower
+            : relLower.substr(0, separator);
+        return std::find(excludedRootNames_.begin(), excludedRootNames_.end(), rootName) !=
+            excludedRootNames_.end();
+    }
+
+    void VfsTree::mergeDirectoryLocked(
+        const std::wstring& relLower,
+        const std::wstring& displayRel,
+        const std::wstring& directory,
+        bool overrideExisting,
+        bool applyRootExclusions,
+        std::unordered_map<std::wstring, DirChild>& children) const
+    {
         WIN32_FIND_DATAW data{};
-        const HANDLE find = FindFirstFileW((physicalDir + L"\\*").c_str(), &data);
+        const HANDLE find = FindFirstFileW((directory + L"\\*").c_str(), &data);
         if (find == INVALID_HANDLE_VALUE)
         {
             return;
@@ -196,100 +237,220 @@ namespace fluxora::vfs
                 continue;
             }
 
-            if (rel.empty() && isExcludedTopLevelName(name))
+            if (applyRootExclusions && isExcludedTopLevelName(name))
             {
                 continue;
             }
 
-            const std::wstring fullChild = joinPath(physicalDir, name);
-            const std::wstring childRel = joinPath(rel, name);
+            const std::wstring fullChild = joinPath(directory, name);
             DirChild child = childFromFindData(fullChild, data);
-            const bool isDirectory = child.isDirectory;
-
-            upsertChild(relLower, child, /*overrideExisting=*/true);
-
-            if (isDirectory)
+            const std::wstring key = toLower(child.name);
+            if (overrideExisting)
             {
-                walkOverlay(fullChild, childRel);
+                children[key] = std::move(child);
             }
             else
             {
-                fileMap_[toLower(childRel)] = fullChild;
+                children.emplace(key, std::move(child));
             }
         } while (FindNextFileW(find, &data) != 0);
 
         FindClose(find);
+
+        (void)relLower;
+        (void)displayRel;
     }
 
-    void VfsTree::mergeRealDirectory(const std::wstring& relLower, const std::wstring& realDir)
+    VfsTree::PathLookup VfsTree::lookupPathLocked(
+        const std::wstring& rel,
+        const std::wstring& relLower) const
     {
-        DirNode& node = dirMap_[relLower];
-
-        WIN32_FIND_DATAW data{};
-        const HANDLE find = FindFirstFileW((realDir + L"\\*").c_str(), &data);
-        if (find == INVALID_HANDLE_VALUE)
+        if (const auto dir = dirMap_.find(relLower);
+            dir != dirMap_.end() && !dir->second.openPath.empty())
         {
-            node.realExists = false;
+            return PathLookup{
+                PathInfo::Kind::Directory,
+                dir->second.openPath,
+                dir->second.realExists
+            };
+        }
+
+        if (const auto file = fileMap_.find(relLower); file != fileMap_.end())
+        {
+            return PathLookup{PathInfo::Kind::File, file->second, false};
+        }
+
+        const std::wstring realPath = rel.empty() ? target_ : joinPath(target_, rel);
+        const auto cacheDirectory = [&](const std::wstring& path)
+        {
+            DirNode& node = ensureDir(relLower);
+            node.openPath = path;
+            node.realExists = hasDirectoryAttributes(realPath);
+            return PathLookup{PathInfo::Kind::Directory, path, node.realExists};
+        };
+
+        const auto cacheFile = [&](const std::wstring& path)
+        {
+            fileMap_[relLower] = path;
+            return PathLookup{PathInfo::Kind::File, path, false};
+        };
+
+        const auto probe = [&](const std::wstring& path) -> PathLookup
+        {
+            DWORD attributes = INVALID_FILE_ATTRIBUTES;
+            if (!readAttributes(path, attributes))
+            {
+                return {};
+            }
+
+            return (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+                ? cacheDirectory(path)
+                : cacheFile(path);
+        };
+
+        if (!isExcludedRelativePath(relLower))
+        {
+            if (!overwrite_.empty())
+            {
+                if (PathLookup lookup = probe(rel.empty() ? overwrite_ : joinPath(overwrite_, rel));
+                    lookup.kind != PathInfo::Kind::Unknown)
+                {
+                    return lookup;
+                }
+            }
+
+            for (auto it = mods_.rbegin(); it != mods_.rend(); ++it)
+            {
+                if (PathLookup lookup = probe(rel.empty() ? *it : joinPath(*it, rel));
+                    lookup.kind != PathInfo::Kind::Unknown)
+                {
+                    return lookup;
+                }
+            }
+        }
+
+        if (relLower.empty() && hasDirectoryAttributes(realPath))
+        {
+            return cacheDirectory(realPath);
+        }
+
+        return {};
+    }
+
+    bool VfsTree::hasOverlayDirectoryLocked(
+        const std::wstring& rel,
+        const std::wstring& relLower) const
+    {
+        return lookupPathLocked(rel, relLower).kind == PathInfo::Kind::Directory;
+    }
+
+    void VfsTree::buildDirectoryLocked(const std::wstring& relLower) const
+    {
+        DirNode& node = ensureDir(relLower);
+        if (node.childrenBuilt)
+        {
             return;
         }
 
-        node.realExists = true;
-        if (node.openPath.empty())
+        std::unordered_map<std::wstring, DirChild> children;
+        const std::wstring displayRel = relLower;
+        const std::wstring realDir = relLower.empty() ? target_ : joinPath(target_, displayRel);
+        node.realExists = hasDirectoryAttributes(realDir);
+        if (node.realExists && node.openPath.empty())
         {
             node.openPath = realDir;
         }
-
-        const std::wstring rel = g_dirRel[relLower];
-        do
+        if (node.realExists)
         {
-            const std::wstring name = data.cFileName;
-            if (name == L"." || name == L"..")
-            {
-                continue;
-            }
-
-            const std::wstring fullChild = joinPath(realDir, name);
-            const std::wstring childRel = joinPath(rel, name);
-            DirChild child = childFromFindData(fullChild, data);
-
-            // The real game directory is the lowest priority: only fill gaps.
-            upsertChild(relLower, child, /*overrideExisting=*/false);
-            if (!child.isDirectory)
-            {
-                fileMap_.emplace(toLower(childRel), fullChild);
-            }
-        } while (FindNextFileW(find, &data) != 0);
-
-        FindClose(find);
-    }
-
-    void VfsTree::finalize()
-    {
-        for (auto& [relLower, children] : g_buildChildren)
-        {
-            DirNode& node = dirMap_[relLower];
-            node.children.clear();
-            node.children.reserve(children.size());
-            for (auto& [nameLower, child] : children)
-            {
-                node.children.push_back(child);
-            }
-
-            std::sort(node.children.begin(), node.children.end(),
-                [](const DirChild& a, const DirChild& b)
-                {
-                    return toLower(a.name) < toLower(b.name);
-                });
+            mergeDirectoryLocked(
+                relLower,
+                displayRel,
+                realDir,
+                /*overrideExisting=*/false,
+                /*applyRootExclusions=*/false,
+                children);
         }
 
-        g_buildChildren.clear();
-        g_dirRel.clear();
+        if (!isExcludedRelativePath(relLower))
+        {
+            const bool applyRootExclusions = relLower.empty();
+            for (const std::wstring& mod : mods_)
+            {
+                const std::wstring directory = relLower.empty() ? mod : joinPath(mod, displayRel);
+                if (!hasDirectoryAttributes(directory))
+                {
+                    continue;
+                }
+
+                node.openPath = directory;
+                mergeDirectoryLocked(
+                    relLower,
+                    displayRel,
+                    directory,
+                    /*overrideExisting=*/true,
+                    applyRootExclusions,
+                    children);
+            }
+
+            if (!overwrite_.empty())
+            {
+                const std::wstring directory = relLower.empty() ? overwrite_ : joinPath(overwrite_, displayRel);
+                if (hasDirectoryAttributes(directory))
+                {
+                    node.openPath = directory;
+                    mergeDirectoryLocked(
+                        relLower,
+                        displayRel,
+                        directory,
+                        /*overrideExisting=*/true,
+                        applyRootExclusions,
+                        children);
+                }
+            }
+        }
+
+        node.children.clear();
+        node.children.reserve(children.size());
+        for (auto& [nameLower, child] : children)
+        {
+            const std::wstring childRelLower = relLower.empty()
+                ? nameLower
+                : relLower + L"\\" + nameLower;
+            if (child.isDirectory)
+            {
+                fileMap_.erase(childRelLower);
+            }
+            else
+            {
+                fileMap_[childRelLower] = child.realPath;
+            }
+            node.children.push_back(std::move(child));
+        }
+
+        std::sort(node.children.begin(), node.children.end(),
+            [](const DirChild& a, const DirChild& b)
+            {
+                return toLower(a.name) < toLower(b.name);
+            });
+        node.childrenBuilt = true;
     }
 
     void VfsTree::build(const VfsMountConfig& config)
     {
+        std::scoped_lock lock(cacheMutex_);
         target_ = stripTrailingSlashes(config.target);
         overwrite_ = stripTrailingSlashes(config.overwrite);
+        mods_.clear();
+        mods_.reserve(config.mods.size());
+        for (const std::wstring& mod : config.mods)
+        {
+            const std::wstring root = stripTrailingSlashes(mod);
+            if (hasDirectoryAttributes(root))
+            {
+                mods_.push_back(root);
+            }
+        }
+
         excludedRootNames_.clear();
         excludedRootNames_.reserve(config.excludedRootNames.size());
         for (const std::wstring& name : config.excludedRootNames)
@@ -301,83 +462,70 @@ namespace fluxora::vfs
             }
         }
 
-        // Always have a root node so the mount target itself is virtualized.
+        fileMap_.clear();
+        dirMap_.clear();
         ensureDir(L"");
-        g_dirRel[L""] = L"";
-
-        // Mods in load order ascending: each is walked on top of the previous, so
-        // a later mod overrides an earlier one.
-        for (const std::wstring& mod : config.mods)
-        {
-            const std::wstring root = stripTrailingSlashes(mod);
-            if (GetFileAttributesW(root.c_str()) != INVALID_FILE_ATTRIBUTES)
-            {
-                walkOverlay(root, L"");
-            }
-        }
-
-        // The writable overwrite overlay has the highest read priority.
-        if (!overwrite_.empty() && GetFileAttributesW(overwrite_.c_str()) != INVALID_FILE_ATTRIBUTES)
-        {
-            walkOverlay(overwrite_, L"");
-        }
-
-        // Merge the real game directory into every touched directory so unmodded
-        // siblings still appear in the merged listing.
-        std::vector<std::wstring> affected;
-        affected.reserve(dirMap_.size());
-        for (const auto& [relLower, node] : dirMap_)
-        {
-            affected.push_back(relLower);
-        }
-
-        for (const std::wstring& relLower : affected)
-        {
-            const std::wstring rel = g_dirRel.count(relLower) ? g_dirRel[relLower] : relLower;
-            const std::wstring realDir = rel.empty() ? target_ : joinPath(target_, rel);
-            mergeRealDirectory(relLower, realDir);
-        }
-
-        finalize();
         built_ = true;
 
         VfsLog::writef(
-            L"VfsTree built: %zu files, %zu virtual directories, target=%s",
-            fileMap_.size(),
-            dirMap_.size(),
+            L"VfsTree initialized lazily: %zu overlay roots, target=%s",
+            mods_.size() + (overwrite_.empty() ? 0 : 1),
             target_.c_str());
     }
 
     bool VfsTree::isVirtualDir(const std::wstring& relLower) const
     {
-        return dirMap_.find(relLower) != dirMap_.end();
+        const std::wstring rel = normalizeRel(relLower);
+        const std::wstring key = toLower(rel);
+        std::scoped_lock lock(cacheMutex_);
+        if (key.empty())
+        {
+            return dirMap_.find(L"") != dirMap_.end();
+        }
+        if (const auto existing = dirMap_.find(key);
+            existing != dirMap_.end() && !existing->second.openPath.empty())
+        {
+            return true;
+        }
+
+        if (isExcludedRelativePath(key))
+        {
+            return false;
+        }
+
+        return hasOverlayDirectoryLocked(rel, key);
     }
 
-    const std::vector<DirChild>* VfsTree::listing(const std::wstring& relLower) const
+    std::vector<DirChild> VfsTree::listing(const std::wstring& relLower) const
     {
-        const auto it = dirMap_.find(relLower);
-        return it == dirMap_.end() ? nullptr : &it->second.children;
+        const std::wstring rel = normalizeRel(relLower);
+        const std::wstring key = toLower(rel);
+        std::scoped_lock lock(cacheMutex_);
+        buildDirectoryLocked(key);
+        const auto it = dirMap_.find(key);
+        return it == dirMap_.end() ? std::vector<DirChild>{} : it->second.children;
     }
 
     VfsTree::PathInfo VfsTree::classify(const std::wstring& rel) const
     {
         const std::wstring relN = normalizeRel(rel);
         const std::wstring key = toLower(relN);
+        std::scoped_lock lock(cacheMutex_);
 
-        if (const auto dir = dirMap_.find(key); dir != dirMap_.end())
+        const PathLookup lookup = lookupPathLocked(relN, key);
+        if (lookup.kind == PathInfo::Kind::Directory)
         {
             PathInfo info;
             info.kind = PathInfo::Kind::Directory;
-            info.winner = dir->second.openPath;
-            info.directoryRealExists = dir->second.realExists;
+            info.winner = lookup.path;
+            info.directoryRealExists = lookup.realExists;
             return info;
         }
-
-        if (const auto file = fileMap_.find(key); file != fileMap_.end())
+        if (lookup.kind == PathInfo::Kind::File)
         {
             PathInfo info;
             info.kind = PathInfo::Kind::File;
-            info.winner = file->second;
+            info.winner = lookup.path;
             return info;
         }
 
@@ -385,7 +533,16 @@ namespace fluxora::vfs
         info.kind = PathInfo::Kind::Unknown;
         const auto slash = key.find_last_of(L'\\');
         const std::wstring parentLower = slash == std::wstring::npos ? std::wstring() : key.substr(0, slash);
-        info.parentVirtual = isVirtualDir(parentLower);
+        if (parentLower.empty())
+        {
+            info.parentVirtual = dirMap_.find(L"") != dirMap_.end();
+        }
+        else
+        {
+            const auto relSlash = relN.find_last_of(L'\\');
+            const std::wstring parentRel = relSlash == std::wstring::npos ? std::wstring() : relN.substr(0, relSlash);
+            info.parentVirtual = hasOverlayDirectoryLocked(parentRel, parentLower);
+        }
         return info;
     }
 }

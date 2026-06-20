@@ -8,7 +8,7 @@ namespace Fluxora.App.Services;
 public sealed class CoreBridgeService : IAppService
 {
     private const int NativePathBufferLength = 32768;
-    private const int NativeJsonBufferLength = 1024 * 1024;
+    private const int NativeJsonInitialBufferLength = 32 * 1024;
     private const int MaxNativeJsonBufferLength = 16 * 1024 * 1024;
     private readonly ApplicationLogService? logger;
 
@@ -88,37 +88,82 @@ public sealed class CoreBridgeService : IAppService
         logger?.BridgeInfo("NativeBridge", $"{operationName} native call started.");
         try
         {
-            int bufferLength = NativeJsonBufferLength;
-            while (true)
-            {
-                StringBuilder json = new(bufferLength);
-                int result = invoke(json);
-                if (result == NativeResult.Ok)
-                {
-                    logger?.BridgeInfo("NativeBridge", $"{operationName} native call completed.");
-                    return json.ToString();
-                }
-
-                if (result == NativeResult.BufferTooSmall && bufferLength < MaxNativeJsonBufferLength)
-                {
-                    int nextBufferLength = Math.Min(bufferLength * 2, MaxNativeJsonBufferLength);
-                    logger?.BridgeWarning(
-                        "NativeBridge",
-                        $"{operationName} response exceeded {bufferLength} chars. Retrying with {nextBufferLength} chars.");
-                    bufferLength = nextBufferLength;
-                    continue;
-                }
-
-                string nativeError = ReadLastNativeError(result);
-                logger?.BridgeError(
-                    "NativeBridge",
-                    $"{operationName} native call failed. result={result}, error=\"{nativeError}\"");
-                throw new InvalidOperationException(nativeError);
-            }
+            string json = ReadNativeJsonBuffer(invoke, operationName);
+            logger?.BridgeInfo("NativeBridge", $"{operationName} native call completed.");
+            return json;
         }
         finally
         {
             ClearNativeOperationContext();
+        }
+    }
+
+    private string ReadNativeJsonBuffer(Func<StringBuilder, int> invoke, string operationName)
+    {
+        int bufferLength = NativeJsonInitialBufferLength;
+        bool useBufferedOutput = false;
+        bool bufferedOutputApiUnavailable = false;
+        while (true)
+        {
+            StringBuilder json = new(bufferLength, bufferLength);
+            int result;
+            try
+            {
+                result = useBufferedOutput
+                    ? NativeMethods.CopyLastOutput(json, json.Capacity)
+                    : invoke(json);
+            }
+            catch (Exception exception) when (useBufferedOutput && IsNativeLoadException(exception))
+            {
+                bufferedOutputApiUnavailable = true;
+                useBufferedOutput = false;
+                result = invoke(json);
+            }
+
+            if (result == NativeResult.Ok)
+            {
+                return json.ToString();
+            }
+
+            if (result == NativeResult.BufferTooSmall && bufferLength < MaxNativeJsonBufferLength)
+            {
+                int nextBufferLength = NextNativeJsonBufferLength(bufferLength);
+                logger?.BridgeWarning(
+                    "NativeBridge",
+                    $"{operationName} response exceeded {bufferLength} chars. Retrying with {nextBufferLength} chars.");
+                bufferLength = nextBufferLength;
+                useBufferedOutput = !bufferedOutputApiUnavailable;
+                continue;
+            }
+
+            string nativeError = ReadLastNativeError(result);
+            logger?.BridgeError(
+                "NativeBridge",
+                $"{operationName} native call failed. result={result}, error=\"{nativeError}\"");
+            throw new InvalidOperationException(nativeError);
+        }
+    }
+
+    private static int NextNativeJsonBufferLength(int currentBufferLength)
+    {
+        int requiredLength = TryGetLastNativeRequiredBufferLength();
+        if (requiredLength > currentBufferLength)
+        {
+            return Math.Min(requiredLength, MaxNativeJsonBufferLength);
+        }
+
+        return Math.Min(currentBufferLength * 2, MaxNativeJsonBufferLength);
+    }
+
+    private static int TryGetLastNativeRequiredBufferLength()
+    {
+        try
+        {
+            return NativeMethods.GetLastRequiredBufferLength();
+        }
+        catch (Exception exception) when (IsNativeLoadException(exception) || exception is EntryPointNotFoundException)
+        {
+            return 0;
         }
     }
 
@@ -194,16 +239,12 @@ public sealed class CoreBridgeService : IAppService
             return Array.Empty<GameTemplateOption>();
         }
 
-        StringBuilder buffer = new(NativeJsonBufferLength);
-        int result = NativeMethods.GetGameTemplates(buffer, buffer.Capacity);
-        if (result != NativeResult.Ok)
-        {
-            return Array.Empty<GameTemplateOption>();
-        }
-
         try
         {
-            List<GameTemplateOption> templates = JsonSerializer.Deserialize<List<GameTemplateOption>>(buffer.ToString(), JsonOptions)
+            string json = ReadNativeJson(
+                buffer => NativeMethods.GetGameTemplates(buffer, buffer.Capacity),
+                "GetGameTemplates");
+            List<GameTemplateOption> templates = JsonSerializer.Deserialize<List<GameTemplateOption>>(json, JsonOptions)
                 ?? new List<GameTemplateOption>();
             foreach (GameTemplateOption template in templates)
             {
@@ -212,7 +253,7 @@ public sealed class CoreBridgeService : IAppService
 
             return templates;
         }
-        catch (JsonException)
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
             return Array.Empty<GameTemplateOption>();
         }
@@ -226,20 +267,16 @@ public sealed class CoreBridgeService : IAppService
             return null;
         }
 
-        StringBuilder buffer = new(NativeJsonBufferLength);
-        int result = NativeMethods.ResolveTemplate(templateId, buffer, buffer.Capacity);
-        if (result != NativeResult.Ok)
-        {
-            return null;
-        }
-
         try
         {
-            ResolvedTemplate? template = JsonSerializer.Deserialize<ResolvedTemplate>(buffer.ToString(), JsonOptions);
+            string json = ReadNativeJson(
+                buffer => NativeMethods.ResolveTemplate(templateId, buffer, buffer.Capacity),
+                "ResolveTemplate");
+            ResolvedTemplate? template = JsonSerializer.Deserialize<ResolvedTemplate>(json, JsonOptions);
             NormalizeTemplate(template);
             return template;
         }
-        catch (JsonException)
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
             return null;
         }
@@ -286,21 +323,16 @@ public sealed class CoreBridgeService : IAppService
                     "CreateProject",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.CreateProject(
-                            name,
-                            template.Id,
-                            gamePath,
-                            installRootDirectory,
-                            json,
-                            json.Capacity);
-
-                        if (result != NativeResult.Ok)
-                        {
-                            throw new InvalidOperationException(ReadLastNativeError(result));
-                        }
-
-                        return DeserializeModProject(json.ToString());
+                        string json = ReadNativeJsonBuffer(
+                            buffer => NativeMethods.CreateProject(
+                                name,
+                                template.Id,
+                                gamePath,
+                                installRootDirectory,
+                                buffer,
+                                buffer.Capacity),
+                            "CreateProject");
+                        return DeserializeModProject(json);
                     });
             },
             cancellationToken);
@@ -330,14 +362,10 @@ public sealed class CoreBridgeService : IAppService
                     "OpenProjectConfig",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.OpenProjectConfig(configPath, json, json.Capacity);
-                        if (result != NativeResult.Ok)
-                        {
-                            throw new InvalidOperationException(ReadLastNativeError(result));
-                        }
-
-                        return DeserializeModProject(json.ToString());
+                        string json = ReadNativeJsonBuffer(
+                            buffer => NativeMethods.OpenProjectConfig(configPath, buffer, buffer.Capacity),
+                            "OpenProjectConfig");
+                        return DeserializeModProject(json);
                     });
             },
             cancellationToken);
@@ -402,14 +430,10 @@ public sealed class CoreBridgeService : IAppService
                     "RenameProject",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.RenameProject(configPath, newName, json, json.Capacity);
-                        if (result != NativeResult.Ok)
-                        {
-                            throw new InvalidOperationException(ReadLastNativeError(result));
-                        }
-
-                        return DeserializeModProject(json.ToString());
+                        string json = ReadNativeJsonBuffer(
+                            buffer => NativeMethods.RenameProject(configPath, newName, buffer, buffer.Capacity),
+                            "RenameProject");
+                        return DeserializeModProject(json);
                     });
             },
             cancellationToken);
@@ -592,22 +616,17 @@ public sealed class CoreBridgeService : IAppService
                     "InstallFluxPack",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.InstallFluxPack(
-                            fluxPackPath,
-                            installRootDirectory,
-                            callback,
-                            IntPtr.Zero,
-                            json,
-                            json.Capacity);
+                        string json = ReadNativeJsonBuffer(
+                            buffer => NativeMethods.InstallFluxPack(
+                                fluxPackPath,
+                                installRootDirectory,
+                                callback,
+                                IntPtr.Zero,
+                                buffer,
+                                buffer.Capacity),
+                            "InstallFluxPack");
                         GC.KeepAlive(callback);
-
-                        if (result != NativeResult.Ok)
-                        {
-                            throw new InvalidOperationException(ReadLastNativeError(result));
-                        }
-
-                        return DeserializeFluxPackInstallResult(json.ToString());
+                        return DeserializeFluxPackInstallResult(json);
                     });
             },
             cancellationToken);
@@ -711,23 +730,25 @@ public sealed class CoreBridgeService : IAppService
                     "AnalyzeModOrganizerInstance",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.AnalyzeModOrganizerInstance(
-                            sourceDirectory,
-                            destinationRootDirectory,
-                            existingConfigPath ?? string.Empty,
-                            json,
-                            json.Capacity);
-                        if (result != NativeResult.Ok)
+                        try
                         {
-                            string nativeError = ReadLastNativeError(result);
+                            string json = ReadNativeJsonBuffer(
+                                buffer => NativeMethods.AnalyzeModOrganizerInstance(
+                                    sourceDirectory,
+                                    destinationRootDirectory,
+                                    existingConfigPath ?? string.Empty,
+                                    buffer,
+                                    buffer.Capacity),
+                                "AnalyzeModOrganizerInstance");
+                            return DeserializeModOrganizerImportAnalysis(json);
+                        }
+                        catch (InvalidOperationException exception)
+                        {
                             logger?.BridgeWarning(
                                 "MO2Import",
-                                $"Mod Organizer analysis failed. nativeResult={result}, error=\"{nativeError}\"");
-                            throw new InvalidOperationException(nativeError);
+                                $"Mod Organizer analysis failed. error=\"{exception.Message}\"");
+                            throw;
                         }
-
-                        return DeserializeModOrganizerImportAnalysis(json.ToString());
                     });
             },
             cancellationToken);
@@ -802,32 +823,33 @@ public sealed class CoreBridgeService : IAppService
                     "ImportModOrganizerInstance",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.ImportModOrganizerInstance(
-                            sourceDirectory,
-                            destinationRootDirectory,
-                            existingConfigPath ?? string.Empty,
-                            replaceExisting ? 1 : 0,
-                            callback,
-                            IntPtr.Zero,
-                            json,
-                            json.Capacity);
-                        GC.KeepAlive(callback);
-
-                        if (result != NativeResult.Ok)
+                        try
                         {
-                            string nativeError = ReadLastNativeError(result);
+                            string json = ReadNativeJsonBuffer(
+                                buffer => NativeMethods.ImportModOrganizerInstance(
+                                    sourceDirectory,
+                                    destinationRootDirectory,
+                                    existingConfigPath ?? string.Empty,
+                                    replaceExisting ? 1 : 0,
+                                    callback,
+                                    IntPtr.Zero,
+                                    buffer,
+                                    buffer.Capacity),
+                                "ImportModOrganizerInstance");
+                            GC.KeepAlive(callback);
+                            ModProject project = DeserializeModProject(json);
+                            logger?.BridgeInfo(
+                                "MO2Import",
+                                $"Mod Organizer import completed. project=\"{project.Name}\", configPath=\"{project.ConfigPath}\"");
+                            return project;
+                        }
+                        catch (InvalidOperationException exception)
+                        {
                             logger?.BridgeError(
                                 "MO2Import",
-                                $"Mod Organizer import failed. nativeResult={result}, source=\"{sourceDirectory}\", destinationRoot=\"{destinationRootDirectory}\", existingConfig=\"{existingConfigPath}\", replaceExisting={replaceExisting}, error=\"{nativeError}\"");
-                            throw new InvalidOperationException(nativeError);
+                                $"Mod Organizer import failed. source=\"{sourceDirectory}\", destinationRoot=\"{destinationRootDirectory}\", existingConfig=\"{existingConfigPath}\", replaceExisting={replaceExisting}, error=\"{exception.Message}\"");
+                            throw;
                         }
-
-                        ModProject project = DeserializeModProject(json.ToString());
-                        logger?.BridgeInfo(
-                            "MO2Import",
-                            $"Mod Organizer import completed. project=\"{project.Name}\", configPath=\"{project.ConfigPath}\"");
-                        return project;
                     });
             },
             cancellationToken);
@@ -912,14 +934,10 @@ public sealed class CoreBridgeService : IAppService
                     "LaunchGameExecutable",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.LaunchGameExecutable(configPath, executableId, json, json.Capacity);
-                        if (result != NativeResult.Ok)
-                        {
-                            throw new InvalidOperationException(ReadLastNativeError(result));
-                        }
-
-                        return DeserializeGameExecutableLaunchResult(json.ToString());
+                        string json = ReadNativeJsonBuffer(
+                            buffer => NativeMethods.LaunchGameExecutable(configPath, executableId, buffer, buffer.Capacity),
+                            "LaunchGameExecutable");
+                        return DeserializeGameExecutableLaunchResult(json);
                     });
             },
             cancellationToken);
@@ -1205,14 +1223,10 @@ public sealed class CoreBridgeService : IAppService
                     "CreateEmptyMod",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.CreateEmptyMod(projectDirectory, modName, json, json.Capacity);
-                        if (result != NativeResult.Ok)
-                        {
-                            throw new InvalidOperationException(ReadLastNativeError(result));
-                        }
-
-                        return DeserializeModEntry(json.ToString());
+                        string json = ReadNativeJsonBuffer(
+                            buffer => NativeMethods.CreateEmptyMod(projectDirectory, modName, buffer, buffer.Capacity),
+                            "CreateEmptyMod");
+                        return DeserializeModEntry(json);
                     });
             },
             cancellationToken);
@@ -1543,14 +1557,10 @@ public sealed class CoreBridgeService : IAppService
                     "ImportDownloadFile",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.ImportDownloadFile(projectDirectory, sourcePath, json, json.Capacity);
-                        if (result != NativeResult.Ok)
-                        {
-                            throw new InvalidOperationException(ReadLastNativeError(result));
-                        }
-
-                        return DeserializeDownload(json.ToString());
+                        string json = ReadNativeJsonBuffer(
+                            buffer => NativeMethods.ImportDownloadFile(projectDirectory, sourcePath, buffer, buffer.Capacity),
+                            "ImportDownloadFile");
+                        return DeserializeDownload(json);
                     });
             },
             cancellationToken);
@@ -1627,14 +1637,10 @@ public sealed class CoreBridgeService : IAppService
                     "ResumeDownload",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.ResumeDownload(projectDirectory, downloadPath, json, json.Capacity);
-                        if (result != NativeResult.Ok)
-                        {
-                            throw new InvalidOperationException(ReadLastNativeError(result));
-                        }
-
-                        return DeserializeDownload(json.ToString());
+                        string json = ReadNativeJsonBuffer(
+                            buffer => NativeMethods.ResumeDownload(projectDirectory, downloadPath, buffer, buffer.Capacity),
+                            "ResumeDownload");
+                        return DeserializeDownload(json);
                     });
             },
             cancellationToken);
@@ -1661,21 +1667,17 @@ public sealed class CoreBridgeService : IAppService
                     "InstallDownload",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.InstallDownloadWithLayout(
-                            projectDirectory,
-                            downloadPath,
-                            modName,
-                            (int)existingModMode,
-                            placementOverridesJson,
-                            json,
-                            json.Capacity);
-                        if (result != NativeResult.Ok)
-                        {
-                            throw new InvalidOperationException(ReadLastNativeError(result));
-                        }
-
-                        return DeserializeModEntry(json.ToString());
+                        string json = ReadNativeJsonBuffer(
+                            buffer => NativeMethods.InstallDownloadWithLayout(
+                                projectDirectory,
+                                downloadPath,
+                                modName,
+                                (int)existingModMode,
+                                placementOverridesJson,
+                                buffer,
+                                buffer.Capacity),
+                            "InstallDownload");
+                        return DeserializeModEntry(json);
                     });
             },
             cancellationToken);
@@ -1702,21 +1704,17 @@ public sealed class CoreBridgeService : IAppService
                     "InstallArchive",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.InstallArchiveWithLayout(
-                            projectDirectory,
-                            archivePath,
-                            modName,
-                            (int)existingModMode,
-                            placementOverridesJson,
-                            json,
-                            json.Capacity);
-                        if (result != NativeResult.Ok)
-                        {
-                            throw new InvalidOperationException(ReadLastNativeError(result));
-                        }
-
-                        return DeserializeModEntry(json.ToString());
+                        string json = ReadNativeJsonBuffer(
+                            buffer => NativeMethods.InstallArchiveWithLayout(
+                                projectDirectory,
+                                archivePath,
+                                modName,
+                                (int)existingModMode,
+                                placementOverridesJson,
+                                buffer,
+                                buffer.Capacity),
+                            "InstallArchive");
+                        return DeserializeModEntry(json);
                     });
             },
             cancellationToken);
@@ -1740,7 +1738,7 @@ public sealed class CoreBridgeService : IAppService
                     "AnalyzeDownloadContentLayout",
                     () =>
                     {
-                        string json = ReadNativeJson(
+                        string json = ReadNativeJsonBuffer(
                             buffer => NativeMethods.AnalyzeDownloadContentLayout(
                                 projectDirectory,
                                 downloadPath,
@@ -1771,7 +1769,7 @@ public sealed class CoreBridgeService : IAppService
                     "AnalyzeFomodDownload",
                     () =>
                     {
-                        string json = ReadNativeJson(
+                        string json = ReadNativeJsonBuffer(
                             buffer => NativeMethods.AnalyzeFomodDownload(projectDirectory, downloadPath, buffer, buffer.Capacity),
                             "AnalyzeFomodDownload");
                         return DeserializeFomodInstaller(json);
@@ -1800,7 +1798,7 @@ public sealed class CoreBridgeService : IAppService
                     "AnalyzeFomodDownloadContentLayout",
                     () =>
                     {
-                        string json = ReadNativeJson(
+                        string json = ReadNativeJsonBuffer(
                             buffer => NativeMethods.AnalyzeFomodDownloadContentLayout(
                                 projectDirectory,
                                 downloadPath,
@@ -1838,22 +1836,18 @@ public sealed class CoreBridgeService : IAppService
                     "InstallFomodDownload",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.InstallFomodDownloadWithLayout(
-                            projectDirectory,
-                            downloadPath,
-                            modName,
-                            (int)existingModMode,
-                            selectedOptionIdsJson,
-                            placementOverridesJson,
-                            json,
-                            json.Capacity);
-                        if (result != NativeResult.Ok)
-                        {
-                            throw new InvalidOperationException(ReadLastNativeError(result));
-                        }
-
-                        return DeserializeModEntry(json.ToString());
+                        string json = ReadNativeJsonBuffer(
+                            buffer => NativeMethods.InstallFomodDownloadWithLayout(
+                                projectDirectory,
+                                downloadPath,
+                                modName,
+                                (int)existingModMode,
+                                selectedOptionIdsJson,
+                                placementOverridesJson,
+                                buffer,
+                                buffer.Capacity),
+                            "InstallFomodDownload");
+                        return DeserializeModEntry(json);
                     });
             },
             cancellationToken);
@@ -1882,22 +1876,18 @@ public sealed class CoreBridgeService : IAppService
                     "InstallFomodArchive",
                     () =>
                     {
-                        StringBuilder json = new(NativeJsonBufferLength);
-                        int result = NativeMethods.InstallFomodArchiveWithLayout(
-                            projectDirectory,
-                            archivePath,
-                            modName,
-                            (int)existingModMode,
-                            selectedOptionIdsJson,
-                            placementOverridesJson,
-                            json,
-                            json.Capacity);
-                        if (result != NativeResult.Ok)
-                        {
-                            throw new InvalidOperationException(ReadLastNativeError(result));
-                        }
-
-                        return DeserializeModEntry(json.ToString());
+                        string json = ReadNativeJsonBuffer(
+                            buffer => NativeMethods.InstallFomodArchiveWithLayout(
+                                projectDirectory,
+                                archivePath,
+                                modName,
+                                (int)existingModMode,
+                                selectedOptionIdsJson,
+                                placementOverridesJson,
+                                buffer,
+                                buffer.Capacity),
+                            "InstallFomodArchive");
+                        return DeserializeModEntry(json);
                     });
             },
             cancellationToken);
@@ -2263,6 +2253,14 @@ public sealed class CoreBridgeService : IAppService
 
         [DllImport("FluxoraCore", EntryPoint = "fluxora_set_operation_context", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
         public static extern int SetOperationContext(string operationId);
+
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_get_last_required_buffer_length", CallingConvention = CallingConvention.Cdecl)]
+        public static extern int GetLastRequiredBufferLength();
+
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_copy_last_output", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int CopyLastOutput(
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
 
         [DllImport("FluxoraCore", EntryPoint = "fluxora_get_game_templates", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
         public static extern int GetGameTemplates(

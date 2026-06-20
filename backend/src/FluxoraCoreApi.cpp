@@ -42,6 +42,9 @@
 namespace
 {
     thread_local std::wstring lastError;
+    thread_local int lastRequiredBufferLength = 0;
+    thread_local std::wstring lastBufferedOutput;
+    thread_local bool hasLastBufferedOutput = false;
     fluxora::Core* currentCore = nullptr;
 
     bool isBlank(const wchar_t* value);
@@ -1896,6 +1899,9 @@ namespace
     {
         if (buffer == nullptr || bufferLength <= 0)
         {
+            lastRequiredBufferLength = 0;
+            lastBufferedOutput.clear();
+            hasLastBufferedOutput = false;
             lastError = L"Output buffer is required.";
             return FluxoraCoreResultInvalidArgument;
         }
@@ -1903,6 +1909,9 @@ namespace
         const auto requiredLength = static_cast<int>(value.size() + 1);
         if (requiredLength > bufferLength)
         {
+            lastRequiredBufferLength = requiredLength;
+            lastBufferedOutput = value;
+            hasLastBufferedOutput = true;
             lastError =
                 L"Output buffer is too small. Required length: " +
                 std::to_wstring(requiredLength) +
@@ -1929,12 +1938,18 @@ namespace
         }
 
         std::wmemcpy(buffer, value.c_str(), value.size() + 1);
+        lastRequiredBufferLength = 0;
+        lastBufferedOutput.clear();
+        hasLastBufferedOutput = false;
         lastError.clear();
         return FluxoraCoreResultOk;
     }
 
     int mapException(const std::exception& exception)
     {
+        lastRequiredBufferLength = 0;
+        lastBufferedOutput.clear();
+        hasLastBufferedOutput = false;
         const char* message = exception.what();
         lastError = messageToWide(std::string_view(message, std::strlen(message)));
         const bool isInvalidArgument = dynamic_cast<const std::invalid_argument*>(&exception) != nullptr;
@@ -2084,6 +2099,23 @@ extern "C"
         }
 
         return FluxoraCoreResultOk;
+    }
+
+    int fluxora_get_last_required_buffer_length()
+    {
+        return lastRequiredBufferLength;
+    }
+
+    int fluxora_copy_last_output(wchar_t* jsonBuffer, int jsonBufferLength)
+    {
+        if (!hasLastBufferedOutput)
+        {
+            lastRequiredBufferLength = 0;
+            lastError = L"No buffered output is available.";
+            return FluxoraCoreResultInvalidArgument;
+        }
+
+        return writeToBuffer(lastBufferedOutput, jsonBuffer, jsonBufferLength);
     }
 
     int fluxora_preview_project_directory(

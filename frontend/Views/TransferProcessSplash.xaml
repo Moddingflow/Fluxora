@@ -108,10 +108,8 @@
     </UserControl.Style>
 
     <Grid>
-        <Grid.Triggers>
-            <EventTrigger RoutedEvent="FrameworkElement.Loaded">
-                <BeginStoryboard>
-                    <Storyboard RepeatBehavior="Forever">
+        <services:VisibleStoryboardService.Storyboard>
+            <Storyboard RepeatBehavior="Forever">
                         <DoubleAnimation Storyboard.TargetName="MainArcRotate"
                                          Storyboard.TargetProperty="Angle"
                                          From="-24"
@@ -173,10 +171,8 @@
                             <SplineDoubleKeyFrame KeyTime="0:0:1.63" Value="0.22" KeySpline="0.2,0 0.16,1" />
                             <SplineDoubleKeyFrame KeyTime="0:0:3.7" Value="0.08" KeySpline="0.28,0 0.16,1" />
                         </DoubleAnimationUsingKeyFrames>
-                    </Storyboard>
-                </BeginStoryboard>
-            </EventTrigger>
-        </Grid.Triggers>
+            </Storyboard>
+        </services:VisibleStoryboardService.Storyboard>
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">

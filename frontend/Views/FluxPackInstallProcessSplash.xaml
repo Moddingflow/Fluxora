@@ -111,6 +111,16 @@
     </UserControl.Style>
 
     <Grid>
+        <services:VisibleStoryboardService.Storyboard>
+            <Storyboard RepeatBehavior="Forever">
+                <DoubleAnimation Storyboard.TargetName="InstallSpinnerPath"
+                                 Storyboard.TargetProperty="(Path.RenderTransform).(RotateTransform.Angle)"
+                                 From="0"
+                                 To="360"
+                                 Duration="0:0:2.4" />
+            </Storyboard>
+        </services:VisibleStoryboardService.Storyboard>
+
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                 <GradientStop Color="#F50A0D14" Offset="0" />
@@ -157,7 +167,8 @@
                         <Ellipse Stroke="#2C4655"
                                  StrokeThickness="2"
                                  Fill="#111A20" />
-                        <Path Data="M 31,6 A 25,25 0 1 1 30.9,6"
+                        <Path x:Name="InstallSpinnerPath"
+                              Data="M 31,6 A 25,25 0 1 1 30.9,6"
                               Stroke="{StaticResource InstallProgressBrush}"
                               StrokeThickness="3"
                               StrokeStartLineCap="Round"
@@ -167,18 +178,6 @@
                             <Path.RenderTransform>
                                 <RotateTransform />
                             </Path.RenderTransform>
-                            <Path.Triggers>
-                                <EventTrigger RoutedEvent="FrameworkElement.Loaded">
-                                    <BeginStoryboard>
-                                        <Storyboard RepeatBehavior="Forever">
-                                            <DoubleAnimation Storyboard.TargetProperty="(Path.RenderTransform).(RotateTransform.Angle)"
-                                                             From="0"
-                                                             To="360"
-                                                             Duration="0:0:2.4" />
-                                        </Storyboard>
-                                    </BeginStoryboard>
-                                </EventTrigger>
-                            </Path.Triggers>
                         </Path>
                         <TextBlock Text="FP"
                                    HorizontalAlignment="Center"

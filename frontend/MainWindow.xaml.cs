@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private readonly ModOrderDragDropService modOrderDragDropService;
     private readonly PluginOrderDragDropService pluginOrderDragDropService;
     private readonly DownloadDragDropService downloadDragDropService;
+    private readonly DownloadMarqueeSelectionService downloadMarqueeSelectionService;
     private readonly List<string> pendingExternalNxmLinks = new();
     private readonly SemaphoreSlim externalNxmLinksGate = new(1, 1);
     private bool isViewModelInitialized;
@@ -125,6 +126,16 @@ public partial class MainWindow : Window
             download => viewModel.CanInstallDownloadAtModInsertionIndex(download),
             (download, insertionIndex) => viewModel.InstallDownloadAtInsertionIndexAsync(download, insertionIndex));
         downloadDragDropService.Attach();
+
+        downloadMarqueeSelectionService = new DownloadMarqueeSelectionService(
+            DownloadsGrid,
+            viewModel.ActivateDownloadSelectionScope,
+            download =>
+            {
+                viewModel.FocusDownloadSelection(download);
+                SynchronizeSelection(SelectionScope.Downloads);
+            });
+        downloadMarqueeSelectionService.Attach();
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)

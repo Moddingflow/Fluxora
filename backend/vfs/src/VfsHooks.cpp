@@ -860,7 +860,7 @@ namespace fluxora::vfs
                 return;
             }
 
-            const std::vector<DirChild>* listing =
+            const std::vector<DirChild> listing =
                 g_mounts[state.mountIndex].tree.listing(state.relLower);
 
             const auto matches = [&state](const std::wstring& nameLower)
@@ -877,9 +877,9 @@ namespace fluxora::vfs
                 state.entries.push_back(makeDotEntry(L".."));
             }
 
-            if (listing != nullptr)
+            if (!listing.empty())
             {
-                for (const DirChild& child : *listing)
+                for (const DirChild& child : listing)
                 {
                     state.entries.push_back(child);
                 }

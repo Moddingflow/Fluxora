@@ -7,9 +7,11 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace fluxora
@@ -92,13 +94,26 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const BuildTemplate& resolved) const;
 
+        ProjectOpenResult readProjectConfigSummaryLight(const std::filesystem::path& configPath) const;
+        ProjectOpenResult readCachedProjectConfigSummary(const std::filesystem::path& configPath) const;
+        void invalidateProjectSummaryCache(const std::filesystem::path& configPath) const;
+
         void writeBuildManifest(
             const ProjectDescriptor& project,
             const BuildTemplate& resolved) const;
 
+        struct ProjectSummaryCacheEntry
+        {
+            std::filesystem::file_time_type lastWriteTime{};
+            std::uintmax_t fileSize{0};
+            ProjectOpenResult summary;
+        };
+
         Logger& logger_;
         const TemplateService& templates_;
         std::vector<ProjectDescriptor> projects_;
+        mutable std::mutex projectSummaryCacheMutex_;
+        mutable std::unordered_map<std::wstring, ProjectSummaryCacheEntry> projectSummaryCache_;
         bool initialized_{false};
     };
 }

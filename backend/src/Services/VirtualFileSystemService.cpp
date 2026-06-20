@@ -1,10 +1,10 @@
 #include "FluxoraCore/Services/VirtualFileSystemService.hpp"
 
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
-#include "FluxoraCore/Services/ContentLayoutService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Services/ProfileOrderService.hpp"
+#include "FluxoraCore/Services/VfsContentPlacementAnalyzer.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
 
 #include <fstream>
@@ -659,116 +659,6 @@ namespace fluxora
             return mods;
         }
 
-        struct StaticContentLayoutRulesProvider final : IContentLayoutRulesProvider
-        {
-            explicit StaticContentLayoutRulesProvider(const ContentLayoutSupportRules& value) noexcept
-                : rules(&value)
-            {
-            }
-
-            [[nodiscard]] const ContentLayoutSupportRules& contentLayoutRules() const noexcept override
-            {
-                return *rules;
-            }
-
-            const ContentLayoutSupportRules* rules;
-        };
-
-        bool relativePathStartsWith(
-            const std::filesystem::path& path,
-            const std::filesystem::path& prefix)
-        {
-            if (path.empty() || prefix.empty())
-            {
-                return false;
-            }
-
-            auto pathIt = path.begin();
-            auto prefixIt = prefix.begin();
-            for (; prefixIt != prefix.end(); ++prefixIt, ++pathIt)
-            {
-                if (pathIt == path.end() || !equalsIgnoreCase(pathIt->wstring(), prefixIt->wstring()))
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        struct VfsContentPlacementRoots
-        {
-            bool dataAtModRoot{false};
-            bool dataWrapper{false};
-            bool rootBuilderData{false};
-            bool rootBuilderRoot{false};
-        };
-
-        VfsContentPlacementRoots analyzeVfsContentPlacement(
-            const std::filesystem::path& mod,
-            const ContentLayoutAnalysisRequest& baseRequest,
-            const std::wstring& dataDirectory,
-            const std::wstring& rootBuilderDirectoryName,
-            Logger& logger)
-        {
-            VfsContentPlacementRoots roots;
-            if (!directoryHasEntries(mod))
-            {
-                return roots;
-            }
-
-            try
-            {
-                const PlacementPlan plan = ContentLayoutService().analyzeDirectory(mod, baseRequest);
-                if (!plan.summary.supported || plan.summary.hasBlockers)
-                {
-                    return roots;
-                }
-
-                const std::filesystem::path dataPrefix(dataDirectory);
-                const std::filesystem::path rootPrefix(rootBuilderDirectoryName);
-                const std::filesystem::path rootDataPrefix =
-                    rootBuilderDirectoryName.empty()
-                        ? std::filesystem::path{}
-                        : std::filesystem::path(rootBuilderDirectoryName) / dataDirectory;
-
-                for (const PlacementPlanEntry& entry : plan.entries)
-                {
-                    const std::filesystem::path source = entry.sourcePath.path();
-                    if (entry.target == PlacementTarget::Data)
-                    {
-                        if (!rootDataPrefix.empty() && relativePathStartsWith(source, rootDataPrefix))
-                        {
-                            roots.rootBuilderData = true;
-                        }
-                        else if (relativePathStartsWith(source, dataPrefix))
-                        {
-                            roots.dataWrapper = true;
-                        }
-                        else
-                        {
-                            roots.dataAtModRoot = true;
-                        }
-                    }
-                    else if (entry.target == PlacementTarget::GameRoot &&
-                        !rootPrefix.empty() &&
-                        relativePathStartsWith(source, rootPrefix))
-                    {
-                        roots.rootBuilderRoot = true;
-                    }
-                }
-            }
-            catch (const std::exception& exception)
-            {
-                logger.write(
-                    LogLevel::Warning,
-                    "VFS content layout analysis skipped mod \"" + toUtf8(mod.wstring()) +
-                        "\": " + exception.what());
-            }
-
-            return roots;
-        }
-
         std::vector<std::filesystem::path> collectRootBuilderMods(
             const std::vector<std::filesystem::path>& mods,
             const std::vector<VfsContentPlacementRoots>& placements,
@@ -1183,23 +1073,17 @@ namespace fluxora
         std::wstring profile = resolved.defaultProfile.empty() ? L"Default" : resolved.defaultProfile;
         const std::vector<std::filesystem::path> mods =
             collectEnabledMods(profileOrder_, resolved.projectDirectory, profile);
-        StaticContentLayoutRulesProvider contentProvider(*contentRules);
-        ContentLayoutAnalysisRequest layoutRequest;
-        layoutRequest.selectedGameId = resolved.gameId;
-        layoutRequest.selectedGameDisplayName = resolved.gameDisplayName;
-        layoutRequest.selectedGameCapabilities = resolved.gameCapabilities;
-        layoutRequest.rulesProvider = &contentProvider;
-        layoutRequest.logger = &logger_;
+        const VfsContentPlacementAnalyzer placementAnalyzer;
         std::vector<VfsContentPlacementRoots> placements;
         placements.reserve(mods.size());
         for (const std::filesystem::path& mod : mods)
         {
-            placements.push_back(analyzeVfsContentPlacement(
+            placements.push_back(placementAnalyzer.analyze(
                 mod,
-                layoutRequest,
+                *contentRules,
                 dataDirectory,
                 rootBuilderDirectoryName,
-                logger_));
+                &logger_));
         }
 
         const std::filesystem::path overwrite = pathSettings_.overwriteDirectory(resolved.projectDirectory);

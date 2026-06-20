@@ -11,6 +11,8 @@ param(
 
     [switch]$LooseFiles,
 
+    [switch]$SingleFilePayload,
+
     [switch]$NoClean
 )
 
@@ -264,12 +266,19 @@ if ($SelfContained -and $FrameworkDependent) {
     throw "Use either -SelfContained or -FrameworkDependent, not both."
 }
 
+if ($LooseFiles -and $SingleFilePayload) {
+    throw "Use either -LooseFiles or -SingleFilePayload, not both."
+}
+
 $publishSelfContained = -not $FrameworkDependent
 if ($publishSelfContained -and [string]::IsNullOrWhiteSpace($Runtime)) {
     throw "Self-contained publish requires a runtime. Example: -Runtime win-x64"
 }
 
-$publishSingleFile = $publishSelfContained -and (-not $LooseFiles)
+# The public artifact is the installer. Keep the staged app payload loose by
+# default so Build.ps1 does not wrap a single-file app inside the installer
+# package; opt into that local shape only when explicitly requested.
+$publishSingleFile = $publishSelfContained -and $SingleFilePayload -and (-not $LooseFiles)
 
 if (-not (Test-Path -LiteralPath (Join-Path $BackendSource 'CMakeLists.txt'))) {
     throw "Backend CMake project was not found at '$BackendSource'."

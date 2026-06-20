@@ -6,8 +6,9 @@ namespace Fluxora.Installer.Services;
 public sealed class PayloadResourceService
 {
     private const string PayloadResourceSuffix = ".FluxoraPayload.flxpkg";
+    private const int CopyBufferSize = 1024 * 1024;
 
-    public string ExtractPayloadToTemp()
+    public async Task<string> ExtractPayloadToTempAsync(CancellationToken cancellationToken = default)
     {
         Assembly assembly = Assembly.GetExecutingAssembly();
         string? resourceName = assembly
@@ -23,29 +24,49 @@ public sealed class PayloadResourceService
         Directory.CreateDirectory(directory);
         string packagePath = Path.Combine(directory, "FluxoraPayload.flxpkg");
 
-        using Stream? resource = assembly.GetManifestResourceStream(resourceName);
-        if (resource is null)
+        try
         {
-            throw new InvalidOperationException("Fluxora installer payload could not be opened.");
-        }
+            using Stream? resource = assembly.GetManifestResourceStream(resourceName);
+            if (resource is null)
+            {
+                throw new InvalidOperationException("Fluxora installer payload could not be opened.");
+            }
 
-        using FileStream output = new(packagePath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-        resource.CopyTo(output);
-        return packagePath;
+            await using FileStream output = new(
+                packagePath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.Read,
+                CopyBufferSize,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await resource.CopyToAsync(output, CopyBufferSize, cancellationToken);
+            return packagePath;
+        }
+        catch
+        {
+            TryDeletePayload(packagePath);
+            throw;
+        }
     }
 
     public void TryDeletePayload(string packagePath)
     {
         try
         {
-            if (!string.IsNullOrWhiteSpace(packagePath) && File.Exists(packagePath))
+            if (string.IsNullOrWhiteSpace(packagePath))
             {
-                string? directory = Path.GetDirectoryName(packagePath);
+                return;
+            }
+
+            string? directory = Path.GetDirectoryName(packagePath);
+            if (File.Exists(packagePath))
+            {
                 File.Delete(packagePath);
-                if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
-                {
-                    Directory.Delete(directory, recursive: true);
-                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
             }
         }
         catch

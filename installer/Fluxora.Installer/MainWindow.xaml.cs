@@ -405,6 +405,15 @@ public partial class MainWindow : Window
         }
     }
 
+    private Task<string> PrepareInstallPayloadAsync(string installPath)
+    {
+        return Task.Run(async () =>
+        {
+            nativeBridge.ValidateInstallDirectory(installPath);
+            return await payloadResourceService.ExtractPayloadToTempAsync().ConfigureAwait(false);
+        });
+    }
+
     private async void OnInstallClick(object sender, RoutedEventArgs e)
     {
         if (!CanInstall())
@@ -436,8 +445,7 @@ public partial class MainWindow : Window
             UpdateStep();
 
             InstallPathTextBox.Text = installPath;
-            nativeBridge.ValidateInstallDirectory(installPath);
-            payloadPath = payloadResourceService.ExtractPayloadToTemp();
+            payloadPath = await PrepareInstallPayloadAsync(installPath);
             logService.Info($"Starting install. target=\"{installPath}\"");
 
             installerResult = await nativeBridge.InstallPackageAsync(

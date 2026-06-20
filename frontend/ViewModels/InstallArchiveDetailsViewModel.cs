@@ -7,6 +7,9 @@ namespace Fluxora.App.ViewModels;
 
 public sealed class InstallArchiveDetailsViewModel : INotifyPropertyChanged
 {
+    private readonly HashSet<InstallArchiveFileNode> subscribedNodes = new();
+    private int changedFileCount;
+
     public InstallArchiveDetailsViewModel(ContentLayoutPreview preview)
     {
         Preview = preview;
@@ -26,7 +29,7 @@ public sealed class InstallArchiveDetailsViewModel : INotifyPropertyChanged
 
     public bool HasFindings => Findings.Count > 0;
 
-    public int ChangedFileCount => Flatten(Roots).Count(node => node.IsFile && node.HasOverride);
+    public int ChangedFileCount => changedFileCount;
 
     public string ChangeSummaryText => ChangedFileCount == 0
         ? "Ручных изменений нет."
@@ -37,7 +40,7 @@ public sealed class InstallArchiveDetailsViewModel : INotifyPropertyChanged
     public IReadOnlyList<PlacementOverride> CreatePlacementOverrides()
     {
         List<PlacementOverride> overrides = new();
-        foreach (InstallArchiveFileNode node in Flatten(Roots))
+        foreach (InstallArchiveFileNode node in subscribedNodes)
         {
             if (!node.IsFile ||
                 string.IsNullOrWhiteSpace(node.SourcePath) ||
@@ -108,14 +111,13 @@ public sealed class InstallArchiveDetailsViewModel : INotifyPropertyChanged
         folder.AddChildSorted(node);
         folder.NotifyChildrenChanged();
 
-        OnPropertyChanged(nameof(ChangedFileCount));
-        OnPropertyChanged(nameof(ChangeSummaryText));
+        NotifyChangeSummaryChanged();
         return true;
     }
 
     public void ResetTargets()
     {
-        UnsubscribeNodes(Roots);
+        UnsubscribeNodes();
         Roots.Clear();
         foreach (InstallArchiveFileNode node in BuildTree(Preview))
         {
@@ -123,13 +125,13 @@ public sealed class InstallArchiveDetailsViewModel : INotifyPropertyChanged
         }
 
         SubscribeNodes(Roots);
-        OnPropertyChanged(nameof(ChangedFileCount));
-        OnPropertyChanged(nameof(ChangeSummaryText));
+        changedFileCount = 0;
+        NotifyChangeSummaryChanged();
     }
 
     public void SetFolderDropHover(InstallArchiveFileNode? folder)
     {
-        foreach (InstallArchiveFileNode node in Flatten(Roots).Where(node => node.IsDirectory))
+        foreach (InstallArchiveFileNode node in subscribedNodes.Where(node => node.IsDirectory))
         {
             node.IsDragOver = ReferenceEquals(node, folder);
         }
@@ -142,37 +144,69 @@ public sealed class InstallArchiveDetailsViewModel : INotifyPropertyChanged
 
     private void SubscribeNodes(IEnumerable<InstallArchiveFileNode> nodes)
     {
-        foreach (InstallArchiveFileNode node in Flatten(nodes))
+        foreach (InstallArchiveFileNode node in nodes)
         {
-            node.PropertyChanged += OnNodePropertyChanged;
+            SubscribeNode(node);
         }
     }
 
-    private void UnsubscribeNodes(IEnumerable<InstallArchiveFileNode> nodes)
+    private void SubscribeNode(InstallArchiveFileNode node)
     {
-        foreach (InstallArchiveFileNode node in Flatten(nodes))
-        {
-            node.PropertyChanged -= OnNodePropertyChanged;
-        }
-    }
-
-    private void OnNodePropertyChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        if (e.PropertyName != nameof(InstallArchiveFileNode.SelectedTarget) &&
-            e.PropertyName != nameof(InstallArchiveFileNode.SelectedTargetRelativePath) &&
-            e.PropertyName != nameof(InstallArchiveFileNode.HasOverride))
+        if (!subscribedNodes.Add(node))
         {
             return;
         }
 
+        node.PropertyChanged += OnNodePropertyChanged;
+        node.ChildrenMaterialized += OnNodeChildrenMaterialized;
+        if (node.MaterializedChildren is not null)
+        {
+            SubscribeNodes(node.MaterializedChildren);
+        }
+    }
+
+    private void UnsubscribeNodes()
+    {
+        foreach (InstallArchiveFileNode node in subscribedNodes)
+        {
+            node.PropertyChanged -= OnNodePropertyChanged;
+            node.ChildrenMaterialized -= OnNodeChildrenMaterialized;
+        }
+
+        subscribedNodes.Clear();
+    }
+
+    private void OnNodeChildrenMaterialized(
+        InstallArchiveFileNode node,
+        IReadOnlyList<InstallArchiveFileNode> children)
+    {
+        SubscribeNodes(children);
+    }
+
+    private void OnNodePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(InstallArchiveFileNode.HasOverride))
+        {
+            return;
+        }
+
+        NotifyChangeSummaryChanged();
+    }
+
+    private void NotifyChangeSummaryChanged()
+    {
+        changedFileCount = subscribedNodes.Count(node => node.IsFile && node.HasOverride);
         OnPropertyChanged(nameof(ChangedFileCount));
         OnPropertyChanged(nameof(ChangeSummaryText));
     }
 
     private static ObservableCollection<InstallArchiveFileNode> BuildTree(ContentLayoutPreview preview)
     {
-        InstallArchiveFileNode root = new("archive", string.Empty, false, string.Empty, string.Empty);
-        Dictionary<string, InstallArchiveFileNode> directories = new(StringComparer.OrdinalIgnoreCase)
+        InstallArchiveNodeDescriptor root = InstallArchiveNodeDescriptor.CreateDirectory(
+            "archive",
+            string.Empty,
+            string.Empty);
+        Dictionary<string, InstallArchiveNodeDescriptor> directories = new(StringComparer.OrdinalIgnoreCase)
         {
             [DirectoryKey(string.Empty, string.Empty)] = root
         };
@@ -191,32 +225,30 @@ public sealed class InstallArchiveDetailsViewModel : INotifyPropertyChanged
                 continue;
             }
 
-            InstallArchiveFileNode parent = root;
+            InstallArchiveNodeDescriptor parent = root;
             for (int index = 0; index < parts.Length - 1; index++)
             {
                 string folderRelativePath = FolderRelativePathForDisplay(entry.Target, parts, index);
                 string key = DirectoryKey(entry.Target, folderRelativePath);
-                if (!directories.TryGetValue(key, out InstallArchiveFileNode? directory))
+                if (!directories.TryGetValue(key, out InstallArchiveNodeDescriptor? directory))
                 {
-                    directory = new InstallArchiveFileNode(
+                    directory = InstallArchiveNodeDescriptor.CreateDirectory(
                         parts[index],
-                        string.Empty,
-                        false,
                         entry.Target,
                         folderRelativePath);
                     directories[key] = directory;
-                    parent.AddChild(directory);
+                    parent.Children.Add(directory);
                 }
 
                 parent = directory;
             }
 
             string sourcePath = NormalizePath(entry.SourcePath);
-            parent.AddChild(InstallArchiveFileNode.FromEntry(parts[^1], sourcePath, entry));
+            parent.Children.Add(InstallArchiveNodeDescriptor.CreateFile(parts[^1], sourcePath, entry));
         }
 
         SortTree(root.Children);
-        return root.Children;
+        return CreateNodes(root.Children, null);
     }
 
     private static string BuildDisplayPath(ContentLayoutPreviewEntry entry)
@@ -260,30 +292,32 @@ public sealed class InstallArchiveDetailsViewModel : INotifyPropertyChanged
         return string.Join("/", parts.Skip(firstRelativePart).Take(directoryIndex - firstRelativePart + 1));
     }
 
-    private static void SortTree(ObservableCollection<InstallArchiveFileNode> nodes)
+    private static ObservableCollection<InstallArchiveFileNode> CreateNodes(
+        IReadOnlyList<InstallArchiveNodeDescriptor> descriptors,
+        InstallArchiveFileNode? parent)
     {
-        List<InstallArchiveFileNode> sorted = nodes
+        ObservableCollection<InstallArchiveFileNode> nodes = new();
+        foreach (InstallArchiveNodeDescriptor descriptor in descriptors)
+        {
+            nodes.Add(InstallArchiveFileNode.FromDescriptor(descriptor, parent));
+        }
+
+        return nodes;
+    }
+
+    private static void SortTree(List<InstallArchiveNodeDescriptor> nodes)
+    {
+        List<InstallArchiveNodeDescriptor> sorted = nodes
             .OrderByDescending(node => node.IsDirectory)
             .ThenBy(node => node.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
         nodes.Clear();
-        foreach (InstallArchiveFileNode node in sorted)
+        foreach (InstallArchiveNodeDescriptor node in sorted)
         {
             SortTree(node.Children);
-            nodes.Add(node);
         }
-    }
 
-    private static IEnumerable<InstallArchiveFileNode> Flatten(IEnumerable<InstallArchiveFileNode> nodes)
-    {
-        foreach (InstallArchiveFileNode node in nodes)
-        {
-            yield return node;
-            foreach (InstallArchiveFileNode child in Flatten(node.Children))
-            {
-                yield return child;
-            }
-        }
+        nodes.AddRange(sorted);
     }
 
     private static string DirectoryKey(string target, string relativePath)
@@ -339,11 +373,77 @@ public sealed class InstallArchiveDetailsViewModel : INotifyPropertyChanged
     }
 }
 
+internal sealed class InstallArchiveNodeDescriptor
+{
+    private InstallArchiveNodeDescriptor(
+        string name,
+        string sourcePath,
+        bool isFile,
+        string selectedTarget,
+        string selectedTargetRelativePath,
+        ContentLayoutPreviewEntry? entry)
+    {
+        Name = name;
+        SourcePath = sourcePath;
+        IsFile = isFile;
+        SelectedTarget = selectedTarget;
+        SelectedTargetRelativePath = selectedTargetRelativePath;
+        Entry = entry;
+    }
+
+    public string Name { get; }
+
+    public string SourcePath { get; }
+
+    public bool IsFile { get; }
+
+    public bool IsDirectory => !IsFile;
+
+    public string SelectedTarget { get; }
+
+    public string SelectedTargetRelativePath { get; }
+
+    public ContentLayoutPreviewEntry? Entry { get; }
+
+    public List<InstallArchiveNodeDescriptor> Children { get; } = new();
+
+    public static InstallArchiveNodeDescriptor CreateDirectory(
+        string name,
+        string selectedTarget,
+        string selectedTargetRelativePath)
+    {
+        return new InstallArchiveNodeDescriptor(
+            name,
+            string.Empty,
+            false,
+            selectedTarget,
+            selectedTargetRelativePath,
+            null);
+    }
+
+    public static InstallArchiveNodeDescriptor CreateFile(
+        string name,
+        string sourcePath,
+        ContentLayoutPreviewEntry entry)
+    {
+        return new InstallArchiveNodeDescriptor(
+            name,
+            sourcePath,
+            true,
+            entry.Target,
+            entry.TargetRelativePath,
+            entry);
+    }
+}
+
 public sealed class InstallArchiveFileNode : INotifyPropertyChanged
 {
     private string selectedTarget;
     private string selectedTargetRelativePath;
     private bool isDragOver;
+    private readonly IReadOnlyList<InstallArchiveNodeDescriptor> childDescriptors;
+    private ObservableCollection<InstallArchiveFileNode>? children;
+    private int childCount;
 
     private InstallArchiveFileNode(
         string name,
@@ -356,7 +456,8 @@ public sealed class InstallArchiveFileNode : INotifyPropertyChanged
         string classification,
         string explanation,
         bool manualOverrideAllowed,
-        IReadOnlyList<PlacementTargetChoice> targetChoices)
+        IReadOnlyList<PlacementTargetChoice> targetChoices,
+        IReadOnlyList<InstallArchiveNodeDescriptor>? childDescriptors = null)
     {
         Name = name;
         SourcePath = sourcePath;
@@ -369,6 +470,8 @@ public sealed class InstallArchiveFileNode : INotifyPropertyChanged
         Explanation = explanation;
         ManualOverrideAllowed = manualOverrideAllowed;
         TargetChoices = targetChoices;
+        this.childDescriptors = childDescriptors ?? Array.Empty<InstallArchiveNodeDescriptor>();
+        childCount = this.childDescriptors.Count;
     }
 
     public InstallArchiveFileNode(
@@ -484,7 +587,7 @@ public sealed class InstallArchiveFileNode : INotifyPropertyChanged
         {
             if (!IsFile)
             {
-                return Children.Count == 1 ? "1 элемент" : $"{Children.Count} элементов";
+                return childCount == 1 ? "1 элемент" : $"{childCount} элементов";
             }
 
             string classification = string.IsNullOrWhiteSpace(Classification)
@@ -494,17 +597,58 @@ public sealed class InstallArchiveFileNode : INotifyPropertyChanged
         }
     }
 
-    public ObservableCollection<InstallArchiveFileNode> Children { get; } = new();
+    public ObservableCollection<InstallArchiveFileNode> Children => children ??= MaterializeChildren();
+
+    internal ObservableCollection<InstallArchiveFileNode>? MaterializedChildren => children;
+
+    internal bool AreChildrenMaterialized => children is not null;
 
     public InstallArchiveFileNode? Parent { get; internal set; }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    internal event Action<InstallArchiveFileNode, IReadOnlyList<InstallArchiveFileNode>>? ChildrenMaterialized;
+
     public static InstallArchiveFileNode FromEntry(string name, string sourcePath, ContentLayoutPreviewEntry entry)
+    {
+        return FromEntry(name, sourcePath, entry, null);
+    }
+
+    internal static InstallArchiveFileNode FromDescriptor(
+        InstallArchiveNodeDescriptor descriptor,
+        InstallArchiveFileNode? parent)
+    {
+        if (descriptor.IsFile && descriptor.Entry is not null)
+        {
+            return FromEntry(descriptor.Name, descriptor.SourcePath, descriptor.Entry, parent);
+        }
+
+        InstallArchiveFileNode node = new(
+            descriptor.Name,
+            string.Empty,
+            false,
+            descriptor.SelectedTarget,
+            descriptor.SelectedTarget,
+            descriptor.SelectedTargetRelativePath,
+            descriptor.SelectedTargetRelativePath,
+            string.Empty,
+            string.Empty,
+            false,
+            Array.Empty<PlacementTargetChoice>(),
+            childDescriptors: descriptor.Children);
+        node.Parent = parent;
+        return node;
+    }
+
+    private static InstallArchiveFileNode FromEntry(
+        string name,
+        string sourcePath,
+        ContentLayoutPreviewEntry entry,
+        InstallArchiveFileNode? parent)
     {
         IReadOnlyList<PlacementTargetChoice> choices = BuildTargetChoices(entry);
         string targetRelativePath = NormalizePath(entry.TargetRelativePath);
-        return new InstallArchiveFileNode(
+        InstallArchiveFileNode node = new(
             name,
             sourcePath,
             true,
@@ -516,6 +660,8 @@ public sealed class InstallArchiveFileNode : INotifyPropertyChanged
             entry.Explanation,
             entry.ManualOverrideAllowed,
             choices);
+        node.Parent = parent;
+        return node;
     }
 
     public void AddChild(InstallArchiveFileNode child)
@@ -546,7 +692,25 @@ public sealed class InstallArchiveFileNode : INotifyPropertyChanged
 
     internal void NotifyChildrenChanged()
     {
+        if (children is not null)
+        {
+            childCount = children.Count;
+        }
+
         OnPropertyChanged(nameof(MetadataText));
+    }
+
+    private ObservableCollection<InstallArchiveFileNode> MaterializeChildren()
+    {
+        ObservableCollection<InstallArchiveFileNode> materialized = new();
+        foreach (InstallArchiveNodeDescriptor descriptor in childDescriptors)
+        {
+            materialized.Add(FromDescriptor(descriptor, this));
+        }
+
+        childCount = materialized.Count;
+        ChildrenMaterialized?.Invoke(this, materialized);
+        return materialized;
     }
 
     private static IReadOnlyList<PlacementTargetChoice> BuildTargetChoices(ContentLayoutPreviewEntry entry)

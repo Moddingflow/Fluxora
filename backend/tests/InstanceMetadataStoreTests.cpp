@@ -375,4 +375,59 @@ namespace fluxora::tests
         EXPECT_FALSE(deferred->contentFingerprint.empty());
 #endif
     }
+
+    TEST(InstanceMetadataStoreTests, ListInstalledModsSyncsDiskFoldersWithoutFingerprintingContent)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path modPath = mods / L"Manual Disk Mod";
+        writeTextFile(modPath / L"Data" / L"Manual.esp", "plugin");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+
+        const std::vector<InstalledModRecord> records =
+            InstanceMetadataStore::listInstalledMods(project, mods);
+
+        const InstalledModRecord* manual = findInstalledMod(records, L"Manual Disk Mod");
+        ASSERT_NE(manual, nullptr);
+        EXPECT_TRUE(manual->contentFingerprint.empty());
+        ASSERT_TRUE(std::filesystem::is_regular_file(portableManifestPath(modPath)));
+        EXPECT_NE(readTextFile(portableManifestPath(modPath)).find(R"("contentFingerprint":"")"), std::string::npos);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, ListModFileTreeUsesPreparedCacheWithoutReadSideRefresh)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path modPath = mods / L"Prepared Tree";
+        writeTextFile(modPath / L"Data" / L"First.esp", "plugin");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{modPath, L"Prepared Tree", L"1.0", true, {}}
+            });
+
+        std::vector<ModFileTreeEntry> entries =
+            InstanceMetadataStore::listModFileTree(project, modPath, L"Data", mods);
+        ASSERT_EQ(entries.size(), 1U);
+        EXPECT_EQ(entries[0].name, L"First.esp");
+
+        writeTextFile(modPath / L"Data" / L"Second.esp", "plugin");
+        entries = InstanceMetadataStore::listModFileTree(project, modPath, L"Data", mods);
+
+        ASSERT_EQ(entries.size(), 1U);
+        EXPECT_EQ(entries[0].name, L"First.esp");
+#endif
+    }
 }

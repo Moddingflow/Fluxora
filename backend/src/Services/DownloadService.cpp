@@ -97,6 +97,11 @@ namespace fluxora
         };
         std::mutex activeDownloadsMutex;
         std::set<std::wstring> activeDownloads;
+        std::mutex installStagingCacheMutex;
+        constexpr std::wstring_view installStagingCacheDirectoryName = L".install-staging-cache";
+        constexpr std::wstring_view installStagingCachePayloadDirectoryName = L"payload";
+        constexpr std::wstring_view installStagingCacheReadyFileName = L"ready.txt";
+        constexpr int installStagingCacheMaxEntries = 8;
 
         struct NxmDownloadRequest
         {
@@ -3575,6 +3580,309 @@ namespace fluxora
             throw std::runtime_error("Failed to extract archive. Install 7-Zip or WinRAR, or place 7z.exe next to FluxoraModding.exe.");
         }
 
+        [[nodiscard]] std::filesystem::path installStagingCacheRoot(
+            const std::filesystem::path& downloadsDirectory)
+        {
+            return downloadsDirectory / std::filesystem::path(installStagingCacheDirectoryName);
+        }
+
+        [[nodiscard]] std::filesystem::path installStagingCachePayloadDirectory(
+            const std::filesystem::path& entryDirectory)
+        {
+            return entryDirectory / std::filesystem::path(installStagingCachePayloadDirectoryName);
+        }
+
+        [[nodiscard]] std::filesystem::path installStagingCacheReadyPath(
+            const std::filesystem::path& entryDirectory)
+        {
+            return entryDirectory / std::filesystem::path(installStagingCacheReadyFileName);
+        }
+
+        [[nodiscard]] bool isUsableInstallStagingCacheEntry(
+            const std::filesystem::path& entryDirectory)
+        {
+            std::error_code payloadError;
+            std::error_code readyError;
+            return std::filesystem::is_directory(
+                       installStagingCachePayloadDirectory(entryDirectory),
+                       payloadError) &&
+                std::filesystem::is_regular_file(
+                    installStagingCacheReadyPath(entryDirectory),
+                    readyError);
+        }
+
+        [[nodiscard]] std::filesystem::file_time_type installStagingCacheEntryTime(
+            const std::filesystem::path& entryDirectory,
+            std::error_code& error)
+        {
+            error.clear();
+            const std::filesystem::path readyPath = installStagingCacheReadyPath(entryDirectory);
+            std::filesystem::file_time_type modified =
+                std::filesystem::last_write_time(readyPath, error);
+            if (!error)
+            {
+                return modified;
+            }
+
+            error.clear();
+            modified = std::filesystem::last_write_time(entryDirectory, error);
+            return modified;
+        }
+
+        [[nodiscard]] bool isInstallStagingCacheEntryStale(
+            const std::filesystem::path& entryDirectory)
+        {
+            std::error_code error;
+            const std::filesystem::file_time_type modified =
+                installStagingCacheEntryTime(entryDirectory, error);
+            if (error)
+            {
+                return true;
+            }
+
+            const std::filesystem::file_time_type cutoff =
+                std::filesystem::file_time_type::clock::now() - std::chrono::hours(24);
+            return modified < cutoff;
+        }
+
+        void touchInstallStagingCacheEntry(const std::filesystem::path& entryDirectory)
+        {
+            const std::filesystem::file_time_type now =
+                std::filesystem::file_time_type::clock::now();
+            std::error_code error;
+            std::filesystem::last_write_time(installStagingCacheReadyPath(entryDirectory), now, error);
+            error.clear();
+            std::filesystem::last_write_time(entryDirectory, now, error);
+        }
+
+        void cleanupInstallStagingCacheLocked(
+            const std::filesystem::path& cacheRoot,
+            const Logger& logger,
+            const std::filesystem::path& protectedEntry = {})
+        {
+            std::error_code existsError;
+            if (!std::filesystem::exists(cacheRoot, existsError))
+            {
+                return;
+            }
+
+            std::vector<std::pair<std::filesystem::path, std::filesystem::file_time_type>> retainedEntries;
+            std::error_code iterateError;
+            for (const auto& entry : std::filesystem::directory_iterator(cacheRoot, iterateError))
+            {
+                if (iterateError)
+                {
+                    logger.write(
+                        LogLevel::Warning,
+                        "InstallStagingCache",
+                        "Failed to scan install staging cache: " + iterateError.message());
+                    break;
+                }
+
+                std::error_code typeError;
+                if (!entry.is_directory(typeError))
+                {
+                    continue;
+                }
+
+                const std::filesystem::path entryPath = entry.path();
+                if (!protectedEntry.empty() && entryPath == protectedEntry)
+                {
+                    std::error_code timeError;
+                    const std::filesystem::file_time_type modified =
+                        installStagingCacheEntryTime(entryPath, timeError);
+                    retainedEntries.push_back({
+                        entryPath,
+                        timeError ? (std::filesystem::file_time_type::min)() : modified
+                    });
+                    continue;
+                }
+
+                if (!isUsableInstallStagingCacheEntry(entryPath) ||
+                    isInstallStagingCacheEntryStale(entryPath))
+                {
+                    cleanupTemporaryDirectory(entryPath, logger, "InstallStagingCache");
+                    continue;
+                }
+
+                std::error_code timeError;
+                const std::filesystem::file_time_type modified =
+                    installStagingCacheEntryTime(entryPath, timeError);
+                retainedEntries.push_back({
+                    entryPath,
+                    timeError ? (std::filesystem::file_time_type::min)() : modified
+                });
+            }
+
+            std::sort(
+                retainedEntries.begin(),
+                retainedEntries.end(),
+                [](const auto& left, const auto& right)
+                {
+                    return left.second > right.second;
+                });
+
+            for (std::size_t index = installStagingCacheMaxEntries;
+                 index < retainedEntries.size();
+                 ++index)
+            {
+                if (!protectedEntry.empty() && retainedEntries[index].first == protectedEntry)
+                {
+                    continue;
+                }
+
+                cleanupTemporaryDirectory(retainedEntries[index].first, logger, "InstallStagingCache");
+            }
+        }
+
+        [[nodiscard]] std::wstring installStagingCacheEntryName(
+            std::wstring_view kind,
+            std::wstring_view key)
+        {
+            return std::wstring(kind) + L"-" + hashText(key);
+        }
+
+        template <typename Producer>
+        [[nodiscard]] std::filesystem::path ensureInstallStagingCachePayloadLocked(
+            const std::filesystem::path& downloadsDirectory,
+            std::wstring_view kind,
+            std::wstring_view key,
+            const Logger& logger,
+            Producer producer)
+        {
+            const std::filesystem::path cacheRoot = installStagingCacheRoot(downloadsDirectory);
+            std::filesystem::create_directories(downloadsDirectory);
+            PathSafetyService().validateDirectoryWriteRoot(downloadsDirectory)
+                .throwIfUnsafe("Downloads directory is unsafe");
+            PathSafetyService().validateWritePath(downloadsDirectory, cacheRoot)
+                .throwIfUnsafe("Install staging cache root is unsafe");
+            std::filesystem::create_directories(cacheRoot);
+            cleanupInstallStagingCacheLocked(cacheRoot, logger);
+
+            const std::filesystem::path entryDirectory =
+                cacheRoot / std::filesystem::path(installStagingCacheEntryName(kind, key));
+            const std::filesystem::path payloadDirectory =
+                installStagingCachePayloadDirectory(entryDirectory);
+            if (isUsableInstallStagingCacheEntry(entryDirectory))
+            {
+                touchInstallStagingCacheEntry(entryDirectory);
+                logger.write(
+                    LogLevel::Info,
+                    "InstallStagingCache",
+                    "Install staging cache hit. kind=\"" + toUtf8(std::wstring(kind)) +
+                        "\", path=\"" + toUtf8(payloadDirectory.wstring()) + "\"");
+                return payloadDirectory;
+            }
+
+            cleanupTemporaryDirectory(entryDirectory, logger, "InstallStagingCache");
+            const std::filesystem::path temporaryEntryDirectory = uniquePath(
+                cacheRoot,
+                L".building-" + installStagingCacheEntryName(kind, key));
+            const std::filesystem::path temporaryPayloadDirectory =
+                installStagingCachePayloadDirectory(temporaryEntryDirectory);
+
+            try
+            {
+                std::filesystem::create_directories(temporaryPayloadDirectory);
+                producer(temporaryPayloadDirectory);
+                validateExtractedDirectoryTree(temporaryPayloadDirectory);
+                writeTextFile(
+                    installStagingCacheReadyPath(temporaryEntryDirectory),
+                    "ready");
+                std::filesystem::rename(temporaryEntryDirectory, entryDirectory);
+                touchInstallStagingCacheEntry(entryDirectory);
+                logger.write(
+                    LogLevel::Info,
+                    "InstallStagingCache",
+                    "Install staging cache populated. kind=\"" + toUtf8(std::wstring(kind)) +
+                        "\", path=\"" + toUtf8(payloadDirectory.wstring()) + "\"");
+            }
+            catch (const std::exception&)
+            {
+                cleanupTemporaryDirectory(temporaryEntryDirectory, logger, "InstallStagingCache");
+                throw;
+            }
+
+            cleanupInstallStagingCacheLocked(cacheRoot, logger, entryDirectory);
+            return payloadDirectory;
+        }
+
+        [[nodiscard]] std::optional<std::filesystem::path> tryInstallStagingCachePayloadLocked(
+            const std::filesystem::path& downloadsDirectory,
+            std::wstring_view kind,
+            std::wstring_view key,
+            const Logger& logger)
+        {
+            const std::filesystem::path cacheRoot = installStagingCacheRoot(downloadsDirectory);
+            std::error_code existsError;
+            if (!std::filesystem::is_directory(cacheRoot, existsError))
+            {
+                return std::nullopt;
+            }
+
+            cleanupInstallStagingCacheLocked(cacheRoot, logger);
+            const std::filesystem::path entryDirectory =
+                cacheRoot / std::filesystem::path(installStagingCacheEntryName(kind, key));
+            if (!isUsableInstallStagingCacheEntry(entryDirectory))
+            {
+                return std::nullopt;
+            }
+
+            const std::filesystem::path payloadDirectory =
+                installStagingCachePayloadDirectory(entryDirectory);
+            touchInstallStagingCacheEntry(entryDirectory);
+            logger.write(
+                LogLevel::Info,
+                "InstallStagingCache",
+                "Install staging cache hit. kind=\"" + toUtf8(std::wstring(kind)) +
+                    "\", path=\"" + toUtf8(payloadDirectory.wstring()) + "\"");
+            return payloadDirectory;
+        }
+
+        void discardInstallStagingCachePayloadLocked(
+            const std::filesystem::path& payloadDirectory,
+            const Logger& logger)
+        {
+            if (payloadDirectory.empty() ||
+                payloadDirectory.filename() != std::filesystem::path(installStagingCachePayloadDirectoryName))
+            {
+                return;
+            }
+
+            cleanupTemporaryDirectory(payloadDirectory.parent_path(), logger, "InstallStagingCache");
+        }
+
+        void materializeArchiveInstallCachePayload(
+            const std::filesystem::path& archivePath,
+            const std::filesystem::path& destinationDirectory,
+            std::wstring_view safeName)
+        {
+            const bool extracted = extractArchiveToDirectory(archivePath, destinationDirectory);
+            if (!extracted)
+            {
+                std::filesystem::copy_file(archivePath, destinationDirectory / archivePath.filename());
+                return;
+            }
+
+            flattenRedundantModRootDirectory(destinationDirectory, safeName);
+        }
+
+        [[nodiscard]] std::wstring archiveInstallStagingCacheKey(
+            const std::filesystem::path& archivePath,
+            ExistingModInstallMode existingModMode,
+            std::wstring_view safeName)
+        {
+            return L"v=1|kind=archive-staging|archive=" + fileCacheFingerprint(archivePath) +
+                L"|layoutMode=" + std::to_wstring(static_cast<int>(existingModMode)) +
+                L"|safeName=" + hashText(toLower(std::wstring(safeName)));
+        }
+
+        [[nodiscard]] std::wstring fomodPackageStagingCacheKey(
+            const std::filesystem::path& archivePath)
+        {
+            return L"v=1|kind=fomod-package|archive=" + fileCacheFingerprint(archivePath);
+        }
+
         [[nodiscard]] ContentLayoutInstallMode contentLayoutInstallMode(ExistingModInstallMode mode)
         {
             switch (mode)
@@ -3786,7 +4094,8 @@ namespace fluxora
                     "\", versionResult=\"" +
                     (metadata.version.empty() ? std::string("metadata-unavailable") : toUtf8(metadata.version)) + "\".");
 
-            const std::filesystem::path modsDirectory = pathSettings.modsDirectory(projectDirectory);
+            const BuildPathSettings paths = pathSettings.loadForProjectDirectory(projectDirectory);
+            const std::filesystem::path modsDirectory = paths.modsDirectory;
             const std::filesystem::path targetDirectory = modsDirectory / std::filesystem::path(safeName);
             const bool targetExists = std::filesystem::exists(targetDirectory);
             if (targetExists && existingModMode == ExistingModInstallMode::FailIfExists)
@@ -3811,18 +4120,27 @@ namespace fluxora
                 .throwIfUnsafe("Installed mod staging path is unsafe");
             std::filesystem::create_directories(stagingDirectory);
 
-            bool extracted = false;
             std::wstring detectedVersion;
             try
             {
-                extracted = extractArchiveToDirectory(archivePath, stagingDirectory);
-                if (!extracted)
+                bool copiedFromCachedPayload = false;
                 {
-                    std::filesystem::copy_file(archivePath, stagingDirectory / archivePath.filename());
+                    std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
+                    const std::optional<std::filesystem::path> cachedPayload =
+                        tryInstallStagingCachePayloadLocked(
+                            paths.downloadsDirectory,
+                            L"archive-staging",
+                            archiveInstallStagingCacheKey(archivePath, existingModMode, safeName),
+                            logger);
+                    if (cachedPayload.has_value())
+                    {
+                        copyDirectoryContentsOverwriting(cachedPayload.value(), stagingDirectory);
+                        copiedFromCachedPayload = true;
+                    }
                 }
-                else
+                if (!copiedFromCachedPayload)
                 {
-                    flattenRedundantModRootDirectory(stagingDirectory, safeName);
+                    materializeArchiveInstallCachePayload(archivePath, stagingDirectory, safeName);
                 }
 
                 applyContentLayoutToStaging(
@@ -3987,27 +4305,17 @@ namespace fluxora
             safety.validateWritePath(modsDirectory, targetDirectory)
                 .throwIfUnsafe("Installed FOMOD target path is unsafe");
             std::filesystem::create_directories(modsDirectory);
-            const std::filesystem::path packageDirectory = uniquePath(
-                paths.downloadsDirectory,
-                L"fomod-install-" + safeName);
             const std::filesystem::path stagingDirectory = uniquePath(modsDirectory, L"." + safeName + L".installing");
-            safety.validateWritePath(paths.downloadsDirectory, packageDirectory)
-                .throwIfUnsafe("FOMOD package path is unsafe");
             safety.validateWritePath(modsDirectory, stagingDirectory)
                 .throwIfUnsafe("Installed FOMOD staging path is unsafe");
-            std::filesystem::create_directories(packageDirectory);
             std::filesystem::create_directories(stagingDirectory);
 
             std::wstring detectedVersion;
+            std::filesystem::path packageDirectory;
             FomodInstallerDescriptor descriptor;
             std::vector<std::wstring> appliedOptionIds;
             try
             {
-                if (!extractArchiveToDirectory(archivePath, packageDirectory))
-                {
-                    throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
-                }
-
                 const FomodPackageIdentity identity{
                     !metadata.gameDomain.empty() ? L"nexus" : (metadata.source.empty() ? L"local" : L"manual"),
                     metadata.gameDomain,
@@ -4017,28 +4325,51 @@ namespace fluxora
                     safeName
                 };
 
-                descriptor = FomodInstallerService::analyze(
-                    projectDirectory,
-                    paths.gameDirectory,
-                    paths.modsDirectory,
-                    packageDirectory,
-                    identity,
-                    fomodGameDataFoldersForProject(projectDirectory));
-                if (!descriptor.isFomod)
                 {
-                    throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
-                }
+                    std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
+                    packageDirectory = ensureInstallStagingCachePayloadLocked(
+                        paths.downloadsDirectory,
+                        L"fomod-package",
+                        fomodPackageStagingCacheKey(archivePath),
+                        logger,
+                        [&](const std::filesystem::path& payloadDirectory)
+                        {
+                            if (!extractArchiveToDirectory(archivePath, payloadDirectory))
+                            {
+                                throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
+                            }
+                        });
 
-                appliedOptionIds = FomodInstallerService::install(FomodInstallContext{
-                    projectDirectory,
-                    paths.gameDirectory,
-                    paths.modsDirectory,
-                    packageDirectory,
-                    stagingDirectory,
-                    identity,
-                    selectedOptionIds,
-                    fomodGameDataFoldersForProject(projectDirectory)
-                });
+                    descriptor = FomodInstallerService::analyze(
+                        projectDirectory,
+                        paths.gameDirectory,
+                        paths.modsDirectory,
+                        packageDirectory,
+                        identity,
+                        fomodGameDataFoldersForProject(projectDirectory));
+                    if (!descriptor.isFomod)
+                    {
+                        discardInstallStagingCachePayloadLocked(packageDirectory, logger);
+                        throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
+                    }
+
+                    appliedOptionIds = FomodInstallerService::install(FomodInstallContext{
+                        projectDirectory,
+                        paths.gameDirectory,
+                        paths.modsDirectory,
+                        packageDirectory,
+                        stagingDirectory,
+                        identity,
+                        selectedOptionIds,
+                        fomodGameDataFoldersForProject(projectDirectory)
+                    });
+
+                    detectedVersion = trim(descriptor.moduleVersion);
+                    if (detectedVersion.empty())
+                    {
+                        detectedVersion = detectInstalledModVersion(packageDirectory, archivePath, metadata, safeName);
+                    }
+                }
 
                 applyContentLayoutToStaging(
                     projectDirectory,
@@ -4048,12 +4379,6 @@ namespace fluxora
                     fomodOutputCacheFingerprint(archivePath, selectedOptionIds),
                     placementOverrides,
                     logger);
-
-                detectedVersion = trim(descriptor.moduleVersion);
-                if (detectedVersion.empty())
-                {
-                    detectedVersion = detectInstalledModVersion(packageDirectory, archivePath, metadata, safeName);
-                }
 
                 switch (existingModMode)
                 {
@@ -4082,7 +4407,6 @@ namespace fluxora
                 }
 
                 FomodInstallerService::rememberSelection(projectDirectory, descriptor, appliedOptionIds);
-                cleanupTemporaryDirectory(packageDirectory, logger, "FOMOD");
             }
             catch (const std::exception& exception)
             {
@@ -4098,7 +4422,6 @@ namespace fluxora
                         "\", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
                         ", reason=\"" + exception.what() + "\".");
                 cleanupTemporaryDirectory(stagingDirectory, logger, "FOMOD");
-                cleanupTemporaryDirectory(packageDirectory, logger, "FOMOD");
                 throw;
             }
 
@@ -4965,43 +5288,26 @@ namespace fluxora
         const std::wstring safeName = sanitizeFileName(fallbackName).empty()
             ? L"download"
             : sanitizeFileName(fallbackName);
-        const std::filesystem::path analysisDirectory = uniquePath(
-            paths.downloadsDirectory,
-            L".layout-analysis-" + safeName);
+        std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
+        const std::filesystem::path cachedPayload =
+            ensureInstallStagingCachePayloadLocked(
+                paths.downloadsDirectory,
+                L"archive-staging",
+                archiveInstallStagingCacheKey(downloadPath, existingModMode, safeName),
+                logger_,
+                [&](const std::filesystem::path& payloadDirectory)
+                {
+                    materializeArchiveInstallCachePayload(downloadPath, payloadDirectory, safeName);
+                });
 
-        const PathSafetyService safety;
-        safety.validateWritePath(paths.downloadsDirectory, analysisDirectory)
-            .throwIfUnsafe("Content layout analysis path is unsafe");
-        std::filesystem::create_directories(analysisDirectory);
-
-        try
-        {
-            const bool extracted = extractArchiveToDirectory(downloadPath, analysisDirectory);
-            if (!extracted)
-            {
-                std::filesystem::copy_file(downloadPath, analysisDirectory / downloadPath.filename());
-            }
-            else
-            {
-                flattenRedundantModRootDirectory(analysisDirectory, safeName);
-            }
-
-            PlacementPlan plan = analyzeContentLayoutForStaging(
-                projectDirectory,
-                analysisDirectory,
-                existingModMode,
-                false,
-                fileCacheFingerprint(downloadPath),
-                {},
-                logger_);
-            cleanupTemporaryDirectory(analysisDirectory, logger_, "ContentLayout");
-            return plan;
-        }
-        catch (const std::exception&)
-        {
-            cleanupTemporaryDirectory(analysisDirectory, logger_, "ContentLayout");
-            throw;
-        }
+        return analyzeContentLayoutForStaging(
+            projectDirectory,
+            cachedPayload,
+            existingModMode,
+            false,
+            fileCacheFingerprint(downloadPath),
+            {},
+            logger_);
     }
 
     FomodInstallerDescriptor DownloadService::analyzeFomodDownload(
@@ -5024,64 +5330,69 @@ namespace fluxora
             return {};
         }
 
+        if (!isExtractableArchive(downloadPath))
+        {
+            return {};
+        }
+
         const BuildPathSettings paths = pathSettings_.loadForProjectDirectory(projectDirectory);
         const std::wstring fallbackName = trim(metadata.nexusModName).empty()
             ? downloadPath.stem().wstring()
             : trim(metadata.nexusModName);
-        const std::filesystem::path packageDirectory = uniquePath(
-            paths.downloadsDirectory,
-            L".fomod-analysis-" + sanitizeFileName(fallbackName));
-        std::filesystem::create_directories(packageDirectory);
 
-        try
-        {
-            if (!extractArchiveToDirectory(downloadPath, packageDirectory))
-            {
-                cleanupTemporaryDirectory(packageDirectory, logger_, "FOMOD");
-                return {};
-            }
+        std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
+        const std::filesystem::path packageDirectory =
+            ensureInstallStagingCachePayloadLocked(
+                paths.downloadsDirectory,
+                L"fomod-package",
+                fomodPackageStagingCacheKey(downloadPath),
+                logger_,
+                [&](const std::filesystem::path& payloadDirectory)
+                {
+                    if (!extractArchiveToDirectory(downloadPath, payloadDirectory))
+                    {
+                        throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
+                    }
+                });
 
-            const FomodPackageIdentity identity{
+        FomodInstallerDescriptor descriptor = FomodInstallerService::analyze(
+            projectDirectory,
+            paths.gameDirectory,
+            paths.modsDirectory,
+            packageDirectory,
+            FomodPackageIdentity{
                 !metadata.gameDomain.empty() ? L"nexus" : (metadata.source.empty() ? L"local" : L"manual"),
                 metadata.gameDomain,
                 metadata.modId,
                 metadata.fileId,
                 metadata.source.empty() ? downloadPath.wstring() : metadata.source,
                 fallbackName
-            };
-
-            FomodInstallerDescriptor descriptor = FomodInstallerService::analyze(
-                projectDirectory,
-                paths.gameDirectory,
-                paths.modsDirectory,
-                packageDirectory,
-                identity,
-                fomodGameDataFoldersForProject(projectDirectory));
-            const std::filesystem::path previewDirectory = fomodPreviewCacheDirectory(
-                paths.downloadsDirectory,
-                downloadPath,
-                fallbackName);
-            std::error_code previewCleanupError;
-            std::filesystem::remove_all(previewDirectory, previewCleanupError);
-            const std::size_t previewCount = materializeFomodPreviewImages(
-                descriptor,
-                fomodPreviewPackageRoot(packageDirectory),
-                previewDirectory);
-            if (previewCount > 0)
-            {
-                logger_.write(
-                    LogLevel::Info,
-                    "Cached FOMOD preview images. count=" + std::to_string(previewCount) +
-                        ", path=\"" + toUtf8(previewDirectory.wstring()) + "\"");
-            }
-            cleanupTemporaryDirectory(packageDirectory, logger_, "FOMOD");
-            return descriptor;
-        }
-        catch (const std::exception&)
+            },
+            fomodGameDataFoldersForProject(projectDirectory));
+        if (!descriptor.isFomod)
         {
-            cleanupTemporaryDirectory(packageDirectory, logger_, "FOMOD");
-            throw;
+            discardInstallStagingCachePayloadLocked(packageDirectory, logger_);
+            return {};
         }
+
+        const std::filesystem::path previewDirectory = fomodPreviewCacheDirectory(
+            paths.downloadsDirectory,
+            downloadPath,
+            fallbackName);
+        std::error_code previewCleanupError;
+        std::filesystem::remove_all(previewDirectory, previewCleanupError);
+        const std::size_t previewCount = materializeFomodPreviewImages(
+            descriptor,
+            fomodPreviewPackageRoot(packageDirectory),
+            previewDirectory);
+        if (previewCount > 0)
+        {
+            logger_.write(
+                LogLevel::Info,
+                "Cached FOMOD preview images. count=" + std::to_string(previewCount) +
+                    ", path=\"" + toUtf8(previewDirectory.wstring()) + "\"");
+        }
+        return descriptor;
     }
 
     PlacementPlan DownloadService::analyzeFomodDownloadContentLayout(
@@ -5113,28 +5424,17 @@ namespace fluxora
         const std::wstring safeName = sanitizeFileName(fallbackName).empty()
             ? L"fomod"
             : sanitizeFileName(fallbackName);
-        const std::filesystem::path packageDirectory = uniquePath(
-            paths.downloadsDirectory,
-            L".fomod-layout-analysis-" + safeName);
         const std::filesystem::path stagingDirectory = uniquePath(
             paths.downloadsDirectory,
             L".fomod-layout-output-" + safeName);
 
         const PathSafetyService safety;
-        safety.validateWritePath(paths.downloadsDirectory, packageDirectory)
-            .throwIfUnsafe("FOMOD package analysis path is unsafe");
         safety.validateWritePath(paths.downloadsDirectory, stagingDirectory)
             .throwIfUnsafe("FOMOD output analysis path is unsafe");
-        std::filesystem::create_directories(packageDirectory);
         std::filesystem::create_directories(stagingDirectory);
 
         try
         {
-            if (!extractArchiveToDirectory(downloadPath, packageDirectory))
-            {
-                throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
-            }
-
             const FomodPackageIdentity identity{
                 !metadata.gameDomain.empty() ? L"nexus" : (metadata.source.empty() ? L"local" : L"manual"),
                 metadata.gameDomain,
@@ -5144,28 +5444,46 @@ namespace fluxora
                 safeName
             };
 
-            const FomodInstallerDescriptor descriptor = FomodInstallerService::analyze(
-                projectDirectory,
-                paths.gameDirectory,
-                paths.modsDirectory,
-                packageDirectory,
-                identity,
-                fomodGameDataFoldersForProject(projectDirectory));
-            if (!descriptor.isFomod)
             {
-                throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
-            }
+                std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
+                const std::filesystem::path packageDirectory =
+                    ensureInstallStagingCachePayloadLocked(
+                        paths.downloadsDirectory,
+                        L"fomod-package",
+                        fomodPackageStagingCacheKey(downloadPath),
+                        logger_,
+                        [&](const std::filesystem::path& payloadDirectory)
+                        {
+                            if (!extractArchiveToDirectory(downloadPath, payloadDirectory))
+                            {
+                                throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
+                            }
+                        });
 
-            (void)FomodInstallerService::install(FomodInstallContext{
-                projectDirectory,
-                paths.gameDirectory,
-                paths.modsDirectory,
-                packageDirectory,
-                stagingDirectory,
-                identity,
-                selectedOptionIds,
-                fomodGameDataFoldersForProject(projectDirectory)
-            });
+                const FomodInstallerDescriptor descriptor = FomodInstallerService::analyze(
+                    projectDirectory,
+                    paths.gameDirectory,
+                    paths.modsDirectory,
+                    packageDirectory,
+                    identity,
+                    fomodGameDataFoldersForProject(projectDirectory));
+                if (!descriptor.isFomod)
+                {
+                    discardInstallStagingCachePayloadLocked(packageDirectory, logger_);
+                    throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
+                }
+
+                (void)FomodInstallerService::install(FomodInstallContext{
+                    projectDirectory,
+                    paths.gameDirectory,
+                    paths.modsDirectory,
+                    packageDirectory,
+                    stagingDirectory,
+                    identity,
+                    selectedOptionIds,
+                    fomodGameDataFoldersForProject(projectDirectory)
+                });
+            }
 
             PlacementPlan plan = analyzeContentLayoutForStaging(
                 projectDirectory,
@@ -5176,13 +5494,11 @@ namespace fluxora
                 {},
                 logger_);
             cleanupTemporaryDirectory(stagingDirectory, logger_, "FOMOD");
-            cleanupTemporaryDirectory(packageDirectory, logger_, "FOMOD");
             return plan;
         }
         catch (const std::exception&)
         {
             cleanupTemporaryDirectory(stagingDirectory, logger_, "FOMOD");
-            cleanupTemporaryDirectory(packageDirectory, logger_, "FOMOD");
             throw;
         }
     }

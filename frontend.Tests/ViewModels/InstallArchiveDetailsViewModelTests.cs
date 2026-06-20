@@ -115,6 +115,20 @@ public sealed class InstallArchiveDetailsViewModelTests
         Assert.Empty(viewModel.CreatePlacementOverrides());
     }
 
+    [Fact]
+    public void DirectoryMetadata_DoesNotMaterializeLazyChildren()
+    {
+        InstallArchiveDetailsViewModel viewModel = new(CreatePreview());
+        InstallArchiveFileNode data = Assert.Single(viewModel.Roots, node => node.Name == "Data");
+
+        Assert.False(data.AreChildrenMaterialized);
+        Assert.Equal("2 элементов", data.MetadataText);
+        Assert.False(data.AreChildrenMaterialized);
+
+        Assert.Equal(2, data.Children.Count);
+        Assert.True(data.AreChildrenMaterialized);
+    }
+
     private static ContentLayoutPreview CreatePreview()
     {
         return new ContentLayoutPreview

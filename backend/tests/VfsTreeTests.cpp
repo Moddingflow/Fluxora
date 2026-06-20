@@ -66,12 +66,11 @@ namespace fluxora::tests
         ASSERT_EQ(highOnly.kind, vfs::VfsTree::PathInfo::Kind::File);
         expectSamePath(highOnly.winner, modHigh / L"meshes" / L"high-only.nif");
 
-        const std::vector<vfs::DirChild>* textures =
+        const std::vector<vfs::DirChild> textures =
             tree.listing(vfs::VfsTree::toLower(L"textures"));
-        ASSERT_NE(textures, nullptr);
-        EXPECT_TRUE(containsChild(*textures, L"base.dds"));
-        EXPECT_TRUE(containsChild(*textures, L"low-only.dds"));
-        EXPECT_TRUE(containsChild(*textures, L"shared.dds"));
+        EXPECT_TRUE(containsChild(textures, L"base.dds"));
+        EXPECT_TRUE(containsChild(textures, L"low-only.dds"));
+        EXPECT_TRUE(containsChild(textures, L"shared.dds"));
     }
 
     TEST(VfsTreeTests, BuildExcludesRootBuilderTopLevelFolderFromDataMount)
@@ -101,11 +100,10 @@ namespace fluxora::tests
         ASSERT_EQ(script.kind, vfs::VfsTree::PathInfo::Kind::File);
         expectSamePath(script.winner, mod / L"Scripts" / L"mod.pex");
 
-        const std::vector<vfs::DirChild>* root = tree.listing(L"");
-        ASSERT_NE(root, nullptr);
-        EXPECT_FALSE(containsChild(*root, L"root"));
-        EXPECT_TRUE(containsChild(*root, L"Scripts"));
-        EXPECT_TRUE(containsChild(*root, L"Skyrim.esm"));
+        const std::vector<vfs::DirChild> root = tree.listing(L"");
+        EXPECT_FALSE(containsChild(root, L"root"));
+        EXPECT_TRUE(containsChild(root, L"Scripts"));
+        EXPECT_TRUE(containsChild(root, L"Skyrim.esm"));
     }
 
     TEST(VfsTreeTests, BuildSupportsModsWithNestedDataWrapper)
@@ -136,10 +134,38 @@ namespace fluxora::tests
         const vfs::VfsTree::PathInfo leakedPlugin = tree.classify(L"Data\\Wrapped.esp");
         EXPECT_EQ(leakedPlugin.kind, vfs::VfsTree::PathInfo::Kind::Unknown);
 
-        const std::vector<vfs::DirChild>* root = tree.listing(L"");
-        ASSERT_NE(root, nullptr);
-        EXPECT_FALSE(containsChild(*root, L"Data"));
-        EXPECT_TRUE(containsChild(*root, L"Wrapped.esp"));
+        const std::vector<vfs::DirChild> root = tree.listing(L"");
+        EXPECT_FALSE(containsChild(root, L"Data"));
+        EXPECT_TRUE(containsChild(root, L"Wrapped.esp"));
+    }
+
+    TEST(VfsTreeTests, DirectClassifyFindsNestedOverlayFileBeforeDirectoryEnumeration)
+    {
+        TempDirectory temp;
+
+        const std::filesystem::path data = temp.path() / L"Game" / L"Data";
+        const std::filesystem::path mod = temp.path() / L"mods" / L"Late Lookup";
+        const std::filesystem::path overwrite = temp.path() / L"overwrite";
+
+        writeTextFile(data / L"textures" / L"base.dds", "base");
+        writeTextFile(mod / L"textures" / L"actors" / L"body.dds", "mod");
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            data.wstring(),
+            overwrite.wstring(),
+            {mod.wstring()},
+            {}
+        });
+
+        const vfs::VfsTree::PathInfo nested = tree.classify(L"textures\\actors\\body.dds");
+        ASSERT_EQ(nested.kind, vfs::VfsTree::PathInfo::Kind::File);
+        expectSamePath(nested.winner, mod / L"textures" / L"actors" / L"body.dds");
+
+        const std::vector<vfs::DirChild> textures =
+            tree.listing(vfs::VfsTree::toLower(L"textures"));
+        EXPECT_TRUE(containsChild(textures, L"actors"));
+        EXPECT_TRUE(containsChild(textures, L"base.dds"));
     }
 
     TEST(VfsTreeTests, WildcardMatchSupportsNativeDosStarMasks)

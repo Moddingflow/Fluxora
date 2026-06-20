@@ -43,6 +43,12 @@ namespace fluxora
         constexpr std::wstring_view manifestFileExtension = L".json";
         constexpr std::wstring_view invalidFolderCharacters = L"<>:\"/\\|?*";
 
+        struct ProjectConfigFileStamp
+        {
+            std::filesystem::file_time_type lastWriteTime{};
+            std::uintmax_t fileSize{0};
+        };
+
 #ifdef _WIN32
         std::wstring readEnvironmentVariable(const wchar_t* name)
         {
@@ -1335,6 +1341,126 @@ namespace fluxora
             return resolved;
         }
 
+        BuildTemplate lightBuildTemplateFromManifest(
+            const JsonValue& manifest,
+            std::wstring templateId)
+        {
+            if (templateId.empty())
+            {
+                throw std::invalid_argument("Build config does not declare a supported game id.");
+            }
+
+            BuildTemplate resolved{};
+            resolved.id = std::move(templateId);
+            resolved.displayName = resolved.id;
+            resolved.defaultProfileName = std::wstring(fallbackProfileName);
+
+            applyStringField(manifest, L"baseTemplateId", resolved.baseTemplateId);
+            applyStringField(manifest, L"gameName", resolved.gameName);
+            applyStringField(manifest, L"dataDirectory", resolved.dataDirectory);
+            applyStringField(manifest, L"nexusDomain", resolved.nexusDomain);
+            applyStringField(manifest, L"defaultProfile", resolved.defaultProfileName);
+            applyStringArrayField(manifest, L"folders", resolved.folders);
+            applyStringArrayField(manifest, L"profileFiles", resolved.profileFiles);
+            applyStringArrayField(manifest, L"basePlugins", resolved.basePlugins);
+            applyStringArrayField(manifest, L"pluginExtensions", resolved.pluginExtensions);
+            applyStringArrayField(manifest, L"executables", resolved.executables);
+
+            if (std::optional<std::vector<TemplateCapability>> capabilities = readCapabilitiesField(manifest))
+            {
+                resolved.capabilities = std::move(capabilities.value());
+            }
+
+            if (std::optional<ScriptExtender> scriptExtender = readScriptExtenderField(manifest))
+            {
+                const ScriptExtender& value = scriptExtender.value();
+                if (value.name.empty() && value.loaderExecutable.empty())
+                {
+                    resolved.scriptExtender = std::nullopt;
+                }
+                else
+                {
+                    resolved.scriptExtender = value;
+                }
+            }
+
+            const std::wstring gameDisplayName = readStringOrDefault(manifest, L"gameDisplayName");
+            if (resolved.gameName.empty())
+            {
+                resolved.gameName = gameDisplayName.empty() ? resolved.displayName : gameDisplayName;
+            }
+            if (resolved.displayName.empty() || resolved.displayName == resolved.id)
+            {
+                resolved.displayName = resolved.gameName.empty() ? resolved.id : resolved.gameName;
+            }
+
+            return resolved;
+        }
+
+        std::wstring resolveTemplateIdForCatalogSummary(
+            const JsonValue& manifest,
+            const TemplateService& templates,
+            const std::optional<ProjectFingerprint>& fingerprint)
+        {
+            if (std::wstring templateId = readStringOrDefault(manifest, L"templateId"); !templateId.empty())
+            {
+                return templateId;
+            }
+            if (std::wstring gameId = readStringOrDefault(manifest, L"gameId"); !gameId.empty())
+            {
+                return gameId;
+            }
+            if (fingerprint.has_value() && !fingerprint->gameId.empty())
+            {
+                return fingerprint->gameId;
+            }
+
+            const std::wstring gameName = readStringOrDefault(
+                manifest,
+                L"gameName",
+                readStringOrDefault(manifest, L"gameDisplayName"));
+            if (!gameName.empty())
+            {
+                for (const BuildTemplate& candidate : templates.gameTemplates())
+                {
+                    if (equalsIgnoreCase(candidate.gameName, gameName) ||
+                        equalsIgnoreCase(candidate.displayName, gameName))
+                    {
+                        return candidate.id;
+                    }
+                }
+            }
+
+            throw std::invalid_argument("Build config does not declare a supported game id.");
+        }
+
+        std::optional<ProjectConfigFileStamp> readProjectConfigFileStamp(
+            const std::filesystem::path& configPath)
+        {
+            std::error_code error;
+            if (!std::filesystem::is_regular_file(configPath, error) || error)
+            {
+                return std::nullopt;
+            }
+
+            const auto lastWriteTime = std::filesystem::last_write_time(configPath, error);
+            if (error)
+            {
+                return std::nullopt;
+            }
+
+            const std::uintmax_t fileSize = std::filesystem::file_size(configPath, error);
+            if (error)
+            {
+                return std::nullopt;
+            }
+
+            return ProjectConfigFileStamp{
+                lastWriteTime,
+                fileSize
+            };
+        }
+
         std::optional<std::filesystem::path> defaultGameExecutablePath(
             const BuildTemplate& resolved,
             const std::filesystem::path& gameDirectory)
@@ -1786,7 +1912,7 @@ namespace fluxora
             }
         }
 
-        void recoverBuildCatalogState(const TemplateService& templates, Logger& logger)
+        void recoverBuildCatalogState(Logger& logger)
         {
             const std::filesystem::path catalogDirectory = resolveBuildManifestDirectory();
             AtomicFileStore store;
@@ -1822,28 +1948,13 @@ namespace fluxora
                         L"project manifest",
                         ProjectStateValidation::JsonObject,
                         logger);
-
-                    const std::filesystem::path manifestDirectory = entry.path().parent_path();
-                    const JsonValue manifest = parseJsonConfig(readTextFile(entry.path()));
-                    const std::wstring templateId =
-                        resolveTemplateIdFromManifest(manifest, manifestDirectory, logger);
-                    const BuildTemplate resolved = buildTemplateFromManifest(manifest, templates, templateId);
-                    std::filesystem::path projectDirectory = resolveManifestPath(
-                        readStringOrDefault(manifest, L"projectDirectory", manifestDirectory.wstring()),
-                        manifestDirectory);
-                    if (projectDirectory.empty())
-                    {
-                        projectDirectory = manifestDirectory;
-                    }
-
-                    recoverProjectDirectoryState(projectDirectory, resolved, logger);
                 }
                 catch (const std::exception& exception)
                 {
                     logger.write(
                         LogLevel::Warning,
                         "ProjectStateRecovery",
-                        std::string("Skipped project state recovery for catalog manifest \"") +
+                        std::string("Skipped project catalog manifest recovery for \"") +
                             toUtf8(entry.path().wstring()) + "\": " + exception.what());
                 }
             }
@@ -1863,7 +1974,7 @@ namespace fluxora
             return;
         }
 
-        recoverBuildCatalogState(templates_, logger_);
+        recoverBuildCatalogState(logger_);
         initialized_ = true;
         logger_.write(LogLevel::Info, "Project service initialized.");
     }
@@ -2135,6 +2246,116 @@ namespace fluxora
         };
     }
 
+    ProjectOpenResult ProjectService::readProjectConfigSummaryLight(const std::filesystem::path& configPath) const
+    {
+        if (configPath.empty())
+        {
+            throw std::invalid_argument("Build config path is required.");
+        }
+
+        const auto absoluteConfigPath = std::filesystem::absolute(configPath);
+        if (!std::filesystem::exists(absoluteConfigPath) || !std::filesystem::is_regular_file(absoluteConfigPath))
+        {
+            throw std::invalid_argument("Build config file does not exist.");
+        }
+
+        const JsonValue manifest = parseJsonConfig(readTextFile(absoluteConfigPath));
+        requireObject(manifest);
+
+        const auto manifestDirectory = absoluteConfigPath.parent_path();
+        std::filesystem::path projectDirectory = resolveManifestPath(
+            readStringOrDefault(manifest, L"projectDirectory", manifestDirectory.wstring()),
+            manifestDirectory);
+        if (projectDirectory.empty())
+        {
+            projectDirectory = manifestDirectory;
+        }
+
+        if (!std::filesystem::exists(projectDirectory) || !std::filesystem::is_directory(projectDirectory))
+        {
+            throw std::invalid_argument("Build project directory does not exist.");
+        }
+
+        std::optional<ProjectFingerprint> fingerprint = readProjectFingerprintField(manifest);
+        if (!fingerprint.has_value())
+        {
+            fingerprint = readProjectFingerprintCompatibilityFields(manifest);
+        }
+
+        const std::wstring resolvedTemplateId =
+            resolveTemplateIdForCatalogSummary(manifest, templates_, fingerprint);
+        BuildTemplate resolved = lightBuildTemplateFromManifest(manifest, resolvedTemplateId);
+
+        const std::wstring installRootText = readStringOrDefault(
+            manifest,
+            L"installRoot",
+            readStringOrDefault(manifest, L"installRootDirectory"));
+
+        ProjectDescriptor project{
+            readRequiredString(manifest, L"name"),
+            resolved.id,
+            resolved.gameName,
+            resolveManifestPath(readStringOrDefault(manifest, L"gamePath"), projectDirectory),
+            resolveManifestPath(installRootText, projectDirectory),
+            projectDirectory,
+            absoluteConfigPath,
+            std::move(fingerprint)
+        };
+
+        return ProjectOpenResult{
+            project,
+            resolved
+        };
+    }
+
+    ProjectOpenResult ProjectService::readCachedProjectConfigSummary(const std::filesystem::path& configPath) const
+    {
+        const auto absoluteConfigPath = std::filesystem::absolute(configPath);
+        const std::optional<ProjectConfigFileStamp> stamp = readProjectConfigFileStamp(absoluteConfigPath);
+        if (!stamp.has_value())
+        {
+            throw std::invalid_argument("Build config file does not exist.");
+        }
+
+        const std::wstring cacheKey = normalizePathForComparison(absoluteConfigPath);
+        {
+            std::lock_guard lock(projectSummaryCacheMutex_);
+            const auto cached = projectSummaryCache_.find(cacheKey);
+            if (cached != projectSummaryCache_.end() &&
+                cached->second.lastWriteTime == stamp->lastWriteTime &&
+                cached->second.fileSize == stamp->fileSize)
+            {
+                return cached->second.summary;
+            }
+        }
+
+        ProjectOpenResult summary = readProjectConfigSummaryLight(absoluteConfigPath);
+        {
+            std::lock_guard lock(projectSummaryCacheMutex_);
+            projectSummaryCache_.insert_or_assign(
+                cacheKey,
+                ProjectSummaryCacheEntry{
+                    stamp->lastWriteTime,
+                    stamp->fileSize,
+                    summary
+                });
+        }
+
+        return summary;
+    }
+
+    void ProjectService::invalidateProjectSummaryCache(const std::filesystem::path& configPath) const
+    {
+        if (configPath.empty())
+        {
+            return;
+        }
+
+        const std::wstring cacheKey = normalizePathForComparison(configPath);
+        std::lock_guard lock(projectSummaryCacheMutex_);
+        projectSummaryCache_.erase(cacheKey);
+    }
+
     std::vector<ProjectOpenResult> ProjectService::listProjectConfigSummaries(
         const std::filesystem::path& buildConfigsDirectory) const
     {
@@ -2184,7 +2405,7 @@ namespace fluxora
         {
             try
             {
-                summaries.push_back(readProjectConfigSummary(entry.path()));
+                summaries.push_back(readCachedProjectConfigSummary(entry.path()));
             }
             catch (const std::exception&)
             {
@@ -2308,6 +2529,8 @@ namespace fluxora
                 }),
             projects_.end());
         projects_.push_back(renamed);
+        invalidateProjectSummaryCache(previous.configPath);
+        invalidateProjectSummaryCache(renamed.configPath);
 
         logger_.write(LogLevel::Info, "Project renamed.");
         return ProjectOpenResult{
@@ -2419,6 +2642,11 @@ namespace fluxora
                         isSamePath(candidate.projectDirectory, current.project.projectDirectory);
                 }),
             projects_.end());
+        invalidateProjectSummaryCache(current.project.configPath);
+        for (const std::filesystem::path& configTarget : configTargets)
+        {
+            invalidateProjectSummaryCache(configTarget);
+        }
 
         publishDeleteProgress(
             request.progress,
@@ -2583,6 +2811,7 @@ namespace fluxora
             toUtf8(writer.str()),
             L"project manifest",
             ProjectStateValidation::JsonObject);
+        invalidateProjectSummaryCache(project.configPath);
     }
 
     const std::vector<ProjectDescriptor>& ProjectService::projects() const noexcept

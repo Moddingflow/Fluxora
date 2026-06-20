@@ -9,8 +9,11 @@ namespace Fluxora.App.Services;
 
 public sealed class FomodImageSourceConverter : IValueConverter
 {
+    private const int MaxCachedImages = 48;
+
     private static readonly object CacheGate = new();
-    private static readonly Dictionary<string, ImageSource> Cache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, LinkedListNode<CacheEntry>> Cache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly LinkedList<CacheEntry> CacheOrder = new();
 
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
     {
@@ -38,48 +41,132 @@ public sealed class FomodImageSourceConverter : IValueConverter
 
     private static ImageSource? LoadImage(string path, int decodePixelWidth)
     {
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        if (string.IsNullOrWhiteSpace(path))
         {
             return null;
         }
 
-        string cacheKey = path + "|" + decodePixelWidth.ToString(CultureInfo.InvariantCulture);
-        lock (CacheGate)
+        FileInfo fileInfo;
+        try
         {
-            if (Cache.TryGetValue(cacheKey, out ImageSource? cached))
-            {
-                return cached;
-            }
-
-            try
-            {
-                BitmapImage image = new();
-                image.BeginInit();
-                image.CacheOption = BitmapCacheOption.OnLoad;
-                image.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-                image.DecodePixelWidth = decodePixelWidth;
-                image.UriSource = new Uri(path, UriKind.Absolute);
-                image.EndInit();
-                image.Freeze();
-                Cache[cacheKey] = image;
-                return image;
-            }
-            catch (IOException)
-            {
-                return null;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return null;
-            }
-            catch (NotSupportedException)
-            {
-                return null;
-            }
-            catch (UriFormatException)
+            fileInfo = new FileInfo(path);
+            if (!fileInfo.Exists)
             {
                 return null;
             }
         }
+        catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        string cacheKey = BuildCacheKey(fileInfo, decodePixelWidth);
+        lock (CacheGate)
+        {
+            if (TryGetCached(cacheKey, out ImageSource? cached))
+            {
+                return cached;
+            }
+        }
+
+        ImageSource? source = TryLoadImage(fileInfo.FullName, decodePixelWidth);
+        if (source is null)
+        {
+            return null;
+        }
+
+        lock (CacheGate)
+        {
+            if (TryGetCached(cacheKey, out ImageSource? cached))
+            {
+                return cached;
+            }
+
+            AddCached(cacheKey, source);
+            return source;
+        }
+    }
+
+    private static string BuildCacheKey(FileInfo fileInfo, int decodePixelWidth)
+    {
+        return string.Join(
+            '|',
+            fileInfo.FullName,
+            decodePixelWidth.ToString(CultureInfo.InvariantCulture),
+            fileInfo.Length.ToString(CultureInfo.InvariantCulture),
+            fileInfo.LastWriteTimeUtc.Ticks.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private static bool TryGetCached(string cacheKey, out ImageSource? source)
+    {
+        if (!Cache.TryGetValue(cacheKey, out LinkedListNode<CacheEntry>? node))
+        {
+            source = null;
+            return false;
+        }
+
+        CacheOrder.Remove(node);
+        CacheOrder.AddFirst(node);
+        source = node.Value.Source;
+        return true;
+    }
+
+    private static void AddCached(string cacheKey, ImageSource source)
+    {
+        LinkedListNode<CacheEntry> node = new(new CacheEntry(cacheKey, source));
+        CacheOrder.AddFirst(node);
+        Cache[cacheKey] = node;
+
+        while (Cache.Count > MaxCachedImages && CacheOrder.Last is not null)
+        {
+            LinkedListNode<CacheEntry> last = CacheOrder.Last;
+            CacheOrder.RemoveLast();
+            Cache.Remove(last.Value.Key);
+        }
+    }
+
+    private static ImageSource? TryLoadImage(string path, int decodePixelWidth)
+    {
+        try
+        {
+            BitmapImage image = new();
+            image.BeginInit();
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+            image.DecodePixelWidth = decodePixelWidth;
+            image.UriSource = new Uri(path, UriKind.Absolute);
+            image.EndInit();
+            image.Freeze();
+            return image;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+        catch (UriFormatException)
+        {
+            return null;
+        }
+    }
+
+    private sealed class CacheEntry
+    {
+        public CacheEntry(string key, ImageSource source)
+        {
+            Key = key;
+            Source = source;
+        }
+
+        public string Key { get; }
+
+        public ImageSource Source { get; }
     }
 }

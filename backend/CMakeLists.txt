@@ -101,6 +101,7 @@ add_library(FluxoraCore SHARED
     src/Services/ProfileOrderService.cpp
     src/Services/ProjectService.cpp
     src/Services/TemplateService.cpp
+    src/Services/VfsContentPlacementAnalyzer.cpp
     src/Services/VirtualFileSystemService.cpp
     src/Storage/AtomicFileStore.cpp
     src/Storage/InstanceMetadataStore.cpp

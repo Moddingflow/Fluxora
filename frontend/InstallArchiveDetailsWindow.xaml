@@ -403,7 +403,6 @@
         </Style>
 
         <Style x:Key="ArchiveTreeViewItemStyle" TargetType="{x:Type TreeViewItem}">
-            <Setter Property="IsExpanded" Value="True" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="AllowDrop" Value="True" />
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
@@ -638,8 +637,11 @@
                                   BorderThickness="0"
                                   Foreground="{StaticResource TextBrush}"
                                   AllowDrop="True"
+                                  ScrollViewer.CanContentScroll="True"
                                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                  ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                  VirtualizingStackPanel.IsVirtualizing="True"
+                                  VirtualizingStackPanel.VirtualizationMode="Recycling" />
 
                         <TextBlock Grid.Row="2"
                                    Text="{Binding ChangeSummaryText}"

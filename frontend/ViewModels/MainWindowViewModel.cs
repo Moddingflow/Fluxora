@@ -1126,6 +1126,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         FocusDownloadSelection(SelectedDownload is { IsSelected: true } ? SelectedDownload : Downloads.FirstOrDefault());
     }
 
+    public void ActivateDownloadSelectionScope()
+    {
+        ClearSelectionsExcept(SelectionScope.Downloads);
+    }
+
     public void FocusDownloadSelection(DownloadEntry? download)
     {
         ClearSelectionsExcept(SelectionScope.Downloads);
@@ -3577,31 +3582,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             .Select(download => download.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        for (int index = Downloads.Count - 1; index >= 0; --index)
-        {
-            if (!downloads.Any(download => IsSamePath(download.Id, Downloads[index].Id)))
-            {
-                Downloads.RemoveAt(index);
-            }
-        }
-
-        for (int index = 0; index < downloads.Count; ++index)
-        {
-            DownloadEntry download = downloads[index];
-            int existingIndex = IndexOfDownload(download.Id);
-            if (existingIndex < 0)
-            {
-                Downloads.Insert(index, download);
-                continue;
-            }
-
-            if (existingIndex != index)
-            {
-                Downloads.Move(existingIndex, index);
-            }
-
-            Downloads[index] = download;
-        }
+        OrderedCollectionSyncService.Sync(
+            Downloads,
+            downloads,
+            download => download.Id,
+            AreEquivalentDownloadEntries);
 
         RestoreDownloadSelection(selectedDownloadIds, selectedDownloadId);
     }
@@ -7496,6 +7481,27 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             left.IsEnabled == right.IsEnabled &&
             left.CanCheckUpdates == right.CanCheckUpdates &&
             left.HasUpdate == right.HasUpdate;
+    }
+
+    internal static bool AreEquivalentDownloadEntries(DownloadEntry left, DownloadEntry right)
+    {
+        return string.Equals(left.Id, right.Id, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(left.Name, right.Name, StringComparison.Ordinal) &&
+            string.Equals(left.FileName, right.FileName, StringComparison.Ordinal) &&
+            string.Equals(left.LocalPath, right.LocalPath, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(left.Source, right.Source, StringComparison.Ordinal) &&
+            string.Equals(left.Status, right.Status, StringComparison.Ordinal) &&
+            string.Equals(left.SizeText, right.SizeText, StringComparison.Ordinal) &&
+            string.Equals(left.CreatedAtText, right.CreatedAtText, StringComparison.Ordinal) &&
+            left.ProgressPercent == right.ProgressPercent &&
+            string.Equals(left.ProgressText, right.ProgressText, StringComparison.Ordinal) &&
+            string.Equals(left.EtaText, right.EtaText, StringComparison.Ordinal) &&
+            string.Equals(left.DownloadSpeedText, right.DownloadSpeedText, StringComparison.Ordinal) &&
+            left.IsDownloading == right.IsDownloading &&
+            left.HasKnownProgress == right.HasKnownProgress &&
+            left.CanResume == right.CanResume &&
+            left.CanInstall == right.CanInstall &&
+            left.CanDelete == right.CanDelete;
     }
 
     private static bool AreEquivalentPluginEntries(PluginEntry left, PluginEntry right)

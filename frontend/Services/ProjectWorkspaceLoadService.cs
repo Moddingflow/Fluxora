@@ -33,29 +33,31 @@ public sealed class ProjectWorkspaceLoadService : IAppService
         ArgumentNullException.ThrowIfNull(project);
         cancellationToken.ThrowIfCancellationRequested();
 
+        Task<ProjectWorkspaceLoadSection<ModEntry>> modsTask =
+            CaptureAsync(token => modCatalogService.GetInstalledModsAsync(project, profileName, token), cancellationToken);
+        Task<ProjectWorkspaceLoadSection<PluginEntry>> pluginsTask = ShouldRequestPluginSection(project)
+            ? CaptureAsync(token => pluginCatalogService.GetPluginsAsync(project, profileName, token), cancellationToken)
+            : Task.FromResult(ProjectWorkspaceLoadSection<PluginEntry>.Success(Array.Empty<PluginEntry>()));
         Task<ProjectWorkspaceLoadSection<DownloadEntry>>? downloadsTask = includeDownloads
             ? CaptureAsync(token => downloadCatalogService.GetDownloadsAsync(project, token), cancellationToken)
             : null;
 
         try
         {
-            ProjectWorkspaceLoadSection<ModEntry> mods =
-                await CaptureAsync(token => modCatalogService.GetInstalledModsAsync(project, profileName, token), cancellationToken);
+            Task[] loadTasks = downloadsTask is null
+                ? new Task[] { modsTask, pluginsTask }
+                : new Task[] { modsTask, pluginsTask, downloadsTask };
+            await Task.WhenAll(loadTasks);
 
-            cancellationToken.ThrowIfCancellationRequested();
-
-            ProjectWorkspaceLoadSection<PluginEntry> plugins = ShouldRequestPluginSection(project)
-                ? await CaptureAsync(token => pluginCatalogService.GetPluginsAsync(project, profileName, token), cancellationToken)
-                : ProjectWorkspaceLoadSection<PluginEntry>.Success(Array.Empty<PluginEntry>());
-
-            ProjectWorkspaceLoadSection<DownloadEntry>? downloads = downloadsTask is null
-                ? null
-                : await downloadsTask;
-
-            return new ProjectWorkspaceLoadResult(mods, plugins, downloads);
+            return new ProjectWorkspaceLoadResult(
+                await modsTask,
+                await pluginsTask,
+                downloadsTask is null ? null : await downloadsTask);
         }
         catch
         {
+            ObserveIfFaulted(modsTask);
+            ObserveIfFaulted(pluginsTask);
             ObserveIfFaulted(downloadsTask);
             throw;
         }
@@ -69,16 +71,15 @@ public sealed class ProjectWorkspaceLoadService : IAppService
         ArgumentNullException.ThrowIfNull(project);
         cancellationToken.ThrowIfCancellationRequested();
 
-        ProjectWorkspaceLoadSection<ModEntry> mods =
-            await CaptureAsync(token => modCatalogService.GetInstalledModsAsync(project, profileName, token), cancellationToken);
+        Task<ProjectWorkspaceLoadSection<ModEntry>> modsTask =
+            CaptureAsync(token => modCatalogService.GetInstalledModsAsync(project, profileName, token), cancellationToken);
+        Task<ProjectWorkspaceLoadSection<PluginEntry>> pluginsTask = ShouldRequestPluginSection(project)
+            ? CaptureAsync(token => pluginCatalogService.GetPluginsAsync(project, profileName, token), cancellationToken)
+            : Task.FromResult(ProjectWorkspaceLoadSection<PluginEntry>.Success(Array.Empty<PluginEntry>()));
 
-        cancellationToken.ThrowIfCancellationRequested();
+        await Task.WhenAll(modsTask, pluginsTask);
 
-        ProjectWorkspaceLoadSection<PluginEntry> plugins = ShouldRequestPluginSection(project)
-            ? await CaptureAsync(token => pluginCatalogService.GetPluginsAsync(project, profileName, token), cancellationToken)
-            : ProjectWorkspaceLoadSection<PluginEntry>.Success(Array.Empty<PluginEntry>());
-
-        return new ProjectWorkspaceProfileLoadResult(mods, plugins);
+        return new ProjectWorkspaceProfileLoadResult(await modsTask, await pluginsTask);
     }
 
     internal static bool ShouldRequestPluginSection(ModProject project)
