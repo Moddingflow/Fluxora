@@ -10,10 +10,14 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <future>
 #include <optional>
 #include <string>
 #include <vector>
@@ -22,10 +26,38 @@
 #include <windows.h>
 #endif
 
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+namespace fluxora::test_hooks
+{
+    void setInstallStagingCacheProducerHook(
+        std::function<void(std::wstring_view, std::wstring_view, const std::filesystem::path&)> hook);
+}
+#endif
+
 namespace fluxora::tests
 {
     namespace
     {
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        class InstallStagingCacheProducerHookGuard
+        {
+        public:
+            explicit InstallStagingCacheProducerHookGuard(
+                std::function<void(std::wstring_view, std::wstring_view, const std::filesystem::path&)> hook)
+            {
+                test_hooks::setInstallStagingCacheProducerHook(std::move(hook));
+            }
+
+            InstallStagingCacheProducerHookGuard(const InstallStagingCacheProducerHookGuard&) = delete;
+            InstallStagingCacheProducerHookGuard& operator=(const InstallStagingCacheProducerHookGuard&) = delete;
+
+            ~InstallStagingCacheProducerHookGuard()
+            {
+                test_hooks::setInstallStagingCacheProducerHook({});
+            }
+        };
+#endif
+
         struct ZipEntry
         {
             std::wstring path;
@@ -595,6 +627,142 @@ namespace fluxora::tests
         EXPECT_EQ(readTextFile(modsDirectory() / L"Cached Layout" / L"SkyUI_SE.esp"), "cache-hit-plugin");
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, AnalyzeDownloadContentLayoutCleansStaleBuildingCacheEntry)
+    {
+        const std::filesystem::path staleBuilding =
+            downloadsDirectory() / L".install-staging-cache" / L".building-archive-staging-crash";
+        writeTextFile(staleBuilding / L"payload" / L"partial.txt", "partial");
+        std::filesystem::last_write_time(
+            staleBuilding,
+            std::filesystem::file_time_type::clock::now() - std::chrono::hours(25));
+
+        const DownloadEntry download = importArchive(
+            L"Cleanup Stale Building.zip",
+            {
+                {L"Data/Cleanup.esp", "plugin"}
+            });
+
+        PlacementPlan plan;
+        try
+        {
+            plan = downloads_.analyzeDownloadContentLayout(
+                project_,
+                download.localPath,
+                ExistingModInstallMode::FailIfExists);
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+
+            throw;
+        }
+
+        ASSERT_TRUE(plan.canInstall());
+        EXPECT_FALSE(std::filesystem::exists(staleBuilding));
+        EXPECT_EQ(installStagingCachePayloads(downloadsDirectory(), L"archive-staging-").size(), 1U);
+    }
+
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+    TEST_F(ModFileOperationsIntegrationTests, AnalyzeDownloadContentLayoutAllowsDifferentArchivesToBuildInParallel)
+    {
+        const DownloadEntry first = importArchive(
+            L"Parallel First.zip",
+            {
+                {L"Data/First.esp", "first"}
+            });
+        const DownloadEntry second = importArchive(
+            L"Parallel Second.zip",
+            {
+                {L"Data/Second.esp", "second"}
+            });
+
+        std::promise<void> firstProducerStartedPromise;
+        std::future<void> firstProducerStarted = firstProducerStartedPromise.get_future();
+        std::promise<void> releaseFirstProducerPromise;
+        std::shared_future<void> releaseFirstProducer = releaseFirstProducerPromise.get_future().share();
+        std::atomic_bool firstProducerPaused{false};
+        std::atomic_bool firstProducerReleased{false};
+        auto releaseFirst = [&]()
+        {
+            if (!firstProducerReleased.exchange(true))
+            {
+                releaseFirstProducerPromise.set_value();
+            }
+        };
+
+        InstallStagingCacheProducerHookGuard hook{
+            [&](std::wstring_view kind, std::wstring_view, const std::filesystem::path&)
+            {
+                if (kind == L"archive-staging" && !firstProducerPaused.exchange(true))
+                {
+                    firstProducerStartedPromise.set_value();
+                    releaseFirstProducer.wait();
+                }
+            }};
+
+        auto firstAnalyze = std::async(std::launch::async, [&]()
+        {
+            return downloads_.analyzeDownloadContentLayout(
+                project_,
+                first.localPath,
+                ExistingModInstallMode::FailIfExists);
+        });
+
+        ASSERT_EQ(firstProducerStarted.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+
+        auto secondAnalyze = std::async(std::launch::async, [&]()
+        {
+            return downloads_.analyzeDownloadContentLayout(
+                project_,
+                second.localPath,
+                ExistingModInstallMode::FailIfExists);
+        });
+
+        if (secondAnalyze.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+        {
+            releaseFirst();
+            FAIL() << "Second archive analysis waited for another archive cache build.";
+        }
+
+        try
+        {
+            const PlacementPlan secondPlan = secondAnalyze.get();
+            EXPECT_TRUE(secondPlan.canInstall());
+        }
+        catch (const std::exception& exception)
+        {
+            releaseFirst();
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+
+            throw;
+        }
+
+        releaseFirst();
+        try
+        {
+            const PlacementPlan firstPlan = firstAnalyze.get();
+            EXPECT_TRUE(firstPlan.canInstall());
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+
+            throw;
+        }
+
+        EXPECT_EQ(installStagingCachePayloads(downloadsDirectory(), L"archive-staging-").size(), 2U);
+    }
+#endif
+
     TEST_F(ModFileOperationsIntegrationTests, InstallDownloadAppliesManualPlacementOverrides)
     {
         const DownloadEntry download = importArchive(
@@ -1090,6 +1258,120 @@ namespace fluxora::tests
             "cache-hit-plugin");
     }
 
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+    TEST_F(ModFileOperationsIntegrationTests, OrdinaryArchiveInstallCompletesWhileFomodPackageBuildIsPaused)
+    {
+        std::vector<ZipEntry> fomodEntries{
+            {L"fomod/ModuleConfig.xml", R"xml(<config>
+  <moduleName>Slow FOMOD Package</moduleName>
+  <requiredInstallFiles>
+    <folder source="payload" />
+  </requiredInstallFiles>
+</config>)xml"},
+            {L"fomod/info.xml", R"xml(<fomod><Name>Slow FOMOD Package</Name><Version>1.0.0</Version></fomod>)xml"},
+            {L"payload/Data/SlowFomod.esp", "fomod-plugin"}
+        };
+        for (int index = 0; index < 128; ++index)
+        {
+            fomodEntries.push_back({
+                L"payload/textures/generated/slow-" + std::to_wstring(index) + L".dds",
+                "texture"
+            });
+        }
+
+        const DownloadEntry fomod = importArchive(L"Slow FOMOD Package.fomod", fomodEntries);
+        const DownloadEntry archive = importArchive(
+            L"Plain Archive.zip",
+            {
+                {L"Data/PlainArchive.esp", "plain-plugin"}
+            });
+
+        std::promise<void> fomodProducerStartedPromise;
+        std::future<void> fomodProducerStarted = fomodProducerStartedPromise.get_future();
+        std::promise<void> releaseFomodProducerPromise;
+        std::shared_future<void> releaseFomodProducer = releaseFomodProducerPromise.get_future().share();
+        std::atomic_bool fomodProducerPaused{false};
+        std::atomic_bool fomodProducerReleased{false};
+        auto releaseFomod = [&]()
+        {
+            if (!fomodProducerReleased.exchange(true))
+            {
+                releaseFomodProducerPromise.set_value();
+            }
+        };
+
+        InstallStagingCacheProducerHookGuard hook{
+            [&](std::wstring_view kind, std::wstring_view, const std::filesystem::path&)
+            {
+                if (kind == L"fomod-package" && !fomodProducerPaused.exchange(true))
+                {
+                    fomodProducerStartedPromise.set_value();
+                    releaseFomodProducer.wait();
+                }
+            }};
+
+        auto fomodAnalyze = std::async(std::launch::async, [&]()
+        {
+            return downloads_.analyzeFomodDownload(project_, fomod.localPath);
+        });
+
+        ASSERT_EQ(fomodProducerStarted.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+
+        auto archiveInstall = std::async(std::launch::async, [&]()
+        {
+            return downloads_.installDownload(
+                project_,
+                archive.localPath,
+                L"Plain Archive",
+                ExistingModInstallMode::FailIfExists);
+        });
+
+        if (archiveInstall.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
+        {
+            releaseFomod();
+            FAIL() << "Ordinary archive install waited for a different FOMOD package cache build.";
+        }
+
+        try
+        {
+            const InstalledMod installed = archiveInstall.get();
+            EXPECT_EQ(installed.name, L"Plain Archive");
+            EXPECT_TRUE(std::filesystem::is_regular_file(
+                modsDirectory() / L"Plain Archive" / L"PlainArchive.esp"));
+        }
+        catch (const std::exception& exception)
+        {
+            releaseFomod();
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+
+            throw;
+        }
+
+        releaseFomod();
+        try
+        {
+            const FomodInstallerDescriptor descriptor = fomodAnalyze.get();
+            EXPECT_TRUE(descriptor.isFomod);
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+
+            throw;
+        }
+
+        EXPECT_EQ(installStagingCachePayloads(downloadsDirectory(), L"fomod-package-").size(), 1U);
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            modsDirectory() / L"Plain Archive" / L"PlainArchive.esp"));
+    }
+#endif
+
     TEST_F(ModFileOperationsIntegrationTests, ReplayedFomodChoicesCannotBypassContentSafety)
     {
         const DownloadEntry download = importArchive(
@@ -1235,7 +1517,7 @@ namespace fluxora::tests
         EXPECT_NE(descriptor.steps[0].groups[0].options[0].imagePath.find(L".fomod-previews"), std::wstring::npos);
     }
 
-    TEST_F(ModFileOperationsIntegrationTests, ListInstalledModsIgnoresLegacyFomodPackageDirectories)
+    TEST_F(ModFileOperationsIntegrationTests, RefreshInstalledModsFromDiskIgnoresLegacyFomodPackageDirectories)
     {
         writeTextFile(modsDirectory() / L"Real Mod" / L"textures" / L"real.dds", "real");
         writeTextFile(
@@ -1245,6 +1527,7 @@ namespace fluxora::tests
             modsDirectory() / L"Interrupted Install.installing" / L"textures" / L"partial.dds",
             "partial");
 
+        InstanceMetadataStore::refreshInstalledModsFromDisk(project_, modsDirectory());
         const std::vector<InstalledModRecord> records =
             InstanceMetadataStore::listInstalledMods(project_, modsDirectory());
 

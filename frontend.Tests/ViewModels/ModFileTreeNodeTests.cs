@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using Fluxora.App.Models;
 using Fluxora.App.ViewModels;
 
@@ -39,5 +40,32 @@ public sealed class ModFileTreeNodeTests
         Assert.Matches(@"^1[,.]5 KB$", node.SizeText);
         Assert.True(node.HasConflict);
         Assert.Equal("Конфликт · SkyUI, USSEP", node.ConflictText);
+    }
+
+    [Fact]
+    public void ReplaceChildren_WithLargeFolder_RaisesSingleReset()
+    {
+        ModFileTreeNode node = new(new ModFileTreeEntry
+        {
+            Name = "textures",
+            RelativePath = "textures",
+            IsDirectory = true,
+            HasChildren = true
+        });
+        List<NotifyCollectionChangedEventArgs> events = [];
+
+        node.Children.CollectionChanged += (_, args) => events.Add(args);
+        node.ReplaceChildren(Enumerable.Range(0, 10_000).Select(index => new ModFileTreeEntry
+        {
+            Name = $"file-{index}.dds",
+            RelativePath = $"textures/file-{index}.dds",
+            Size = 256
+        }));
+
+        Assert.True(node.IsLoaded);
+        Assert.Equal(10_000, node.Children.Count);
+        Assert.DoesNotContain(node.Children, child => child.IsPlaceholder);
+        NotifyCollectionChangedEventArgs notification = Assert.Single(events);
+        Assert.Equal(NotifyCollectionChangedAction.Reset, notification.Action);
     }
 }

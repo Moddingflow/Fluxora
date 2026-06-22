@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -8,6 +9,7 @@ namespace Fluxora.Installer.Services;
 public sealed class InstallerNativeBridge
 {
     private const int NativeBufferLength = 32768;
+    private const int NativeReadBufferLength = 1024 * 256;
     private readonly InstallerLogService? logService;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -143,6 +145,108 @@ public sealed class InstallerNativeBridge
             cancellationToken);
     }
 
+    public Task<InstallerResult> InstallPackageStreamAsync(
+        Stream packageStream,
+        string installDirectory,
+        bool createDesktopShortcut,
+        Action<InstallerProgress>? progress,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(packageStream);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return Task.Run(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                byte[] readBuffer = new byte[NativeReadBufferLength];
+                NativeMethods.NativeReadCallback readCallback = (buffer, byteCount, _) =>
+                {
+                    if (buffer == IntPtr.Zero || byteCount == 0)
+                    {
+                        return 0;
+                    }
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        return -1;
+                    }
+
+                    try
+                    {
+                        int requested = (int)Math.Min(byteCount, (ulong)readBuffer.Length);
+                        int read = packageStream.Read(readBuffer, 0, requested);
+                        if (read > 0)
+                        {
+                            Marshal.Copy(readBuffer, 0, buffer, read);
+                        }
+
+                        return read;
+                    }
+                    catch (Exception exception)
+                    {
+                        logService?.BridgeWarning("Installer package stream read failed.", exception);
+                        return -1;
+                    }
+                };
+
+                NativeMethods.NativeProgressCallback? callback = null;
+                if (progress is not null)
+                {
+                    callback = (json, _) =>
+                    {
+                        if (string.IsNullOrWhiteSpace(json))
+                        {
+                            return;
+                        }
+
+                        try
+                        {
+                            InstallerProgress? update =
+                                JsonSerializer.Deserialize<InstallerProgress>(json, JsonOptions);
+                            if (update is not null)
+                            {
+                                progress(update);
+                            }
+                        }
+                        catch
+                        {
+                            logService?.BridgeWarning($"Invalid installer progress payload ignored. payloadLength={json.Length}");
+                        }
+                    };
+                }
+
+                return RunNative(
+                    "InstallPackageStream",
+                    () =>
+                    {
+                        StringBuilder jsonBuffer = new(NativeBufferLength);
+                        int result = NativeMethods.InstallPackageStream(
+                            readCallback,
+                            IntPtr.Zero,
+                            installDirectory,
+                            createDesktopShortcut ? 1 : 0,
+                            callback,
+                            IntPtr.Zero,
+                            jsonBuffer,
+                            jsonBuffer.Capacity);
+                        GC.KeepAlive(readCallback);
+                        GC.KeepAlive(callback);
+                        GC.KeepAlive(packageStream);
+
+                        if (result != NativeResult.Ok)
+                        {
+                            throw new InvalidOperationException(ReadLastError(result));
+                        }
+
+                        return JsonSerializer.Deserialize<InstallerResult>(jsonBuffer.ToString(), JsonOptions)
+                            ?? throw new InvalidOperationException("Native installer returned an empty result.");
+                    });
+            },
+            cancellationToken);
+    }
+
     private void ApplyNativeOperationContext()
     {
         try
@@ -206,9 +310,26 @@ public sealed class InstallerNativeBridge
             [MarshalAs(UnmanagedType.LPWStr)] string? progressJson,
             IntPtr userData);
 
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        public delegate long NativeReadCallback(
+            IntPtr buffer,
+            ulong byteCount,
+            IntPtr userData);
+
         [DllImport("FluxoraInstallerCore", EntryPoint = "fluxora_installer_install_package", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
         public static extern int InstallPackage(
             string packagePath,
+            string installDirectory,
+            int createDesktopShortcut,
+            NativeProgressCallback? progressCallback,
+            IntPtr progressUserData,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
+        [DllImport("FluxoraInstallerCore", EntryPoint = "fluxora_installer_install_package_stream", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int InstallPackageStream(
+            NativeReadCallback readCallback,
+            IntPtr readUserData,
             string installDirectory,
             int createDesktopShortcut,
             NativeProgressCallback? progressCallback,

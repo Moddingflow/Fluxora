@@ -18,7 +18,7 @@ public sealed class FomodImageSourceConverter : IValueConverter
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
     {
         string imagePath = value as string ?? string.Empty;
-        ImageSource? source = LoadImage(imagePath, DecodePixelWidth(parameter));
+        ImageSource? source = LoadImageSource(imagePath, DecodePixelWidth(parameter));
         return source ?? DependencyProperty.UnsetValue;
     }
 
@@ -37,6 +37,16 @@ public sealed class FomodImageSourceConverter : IValueConverter
         }
 
         return 900;
+    }
+
+    internal static ImageSource? LoadImageSource(string path, int decodePixelWidth)
+    {
+        return LoadImage(path, decodePixelWidth);
+    }
+
+    internal static Task<ImageSource?> LoadImageAsync(string path, int decodePixelWidth)
+    {
+        return Task.Run(() => LoadImage(path, decodePixelWidth));
     }
 
     private static ImageSource? LoadImage(string path, int decodePixelWidth)

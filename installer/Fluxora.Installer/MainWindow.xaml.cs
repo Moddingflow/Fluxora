@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private readonly PayloadResourceService payloadResourceService = new();
     private readonly InstallerLogService logService = new();
     private readonly WindowChromeService chromeService;
+    private readonly ProgressUpdateCoalescer<InstallerProgress> installProgressCoalescer;
     private readonly IReadOnlyList<InstallerLanguage> languages =
     [
         new("en", "English", "English"),
@@ -42,6 +43,12 @@ public partial class MainWindow : Window
         logService.Initialize();
         RegisterCrashHandlers();
         nativeBridge = new InstallerNativeBridge(logService);
+        installProgressCoalescer = new ProgressUpdateCoalescer<InstallerProgress>(
+            ApplyNativeProgress,
+            RunOnUiThread,
+            (previous, current) => ProgressUpdateCoalescer<InstallerProgress>.ShouldForcePhaseUpdate(
+                previous?.Phase,
+                current.Phase));
 
         LanguageComboBox.ItemsSource = languages;
         LanguageComboBox.SelectedItem = PickDefaultLanguage();
@@ -271,6 +278,7 @@ public partial class MainWindow : Window
 
     private void OnClosed(object? sender, EventArgs e)
     {
+        installProgressCoalescer.Dispose();
         logService.Dispose();
     }
 
@@ -405,12 +413,12 @@ public partial class MainWindow : Window
         }
     }
 
-    private Task<string> PrepareInstallPayloadAsync(string installPath)
+    private Task<Stream> PrepareInstallPayloadAsync(string installPath)
     {
-        return Task.Run(async () =>
+        return Task.Run(() =>
         {
             nativeBridge.ValidateInstallDirectory(installPath);
-            return await payloadResourceService.ExtractPayloadToTempAsync().ConfigureAwait(false);
+            return payloadResourceService.OpenPayloadPackageStream();
         });
     }
 
@@ -422,7 +430,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        string payloadPath = string.Empty;
         string installPath = NormalizeInstallPath(InstallPathTextBox.Text);
         using InstallerLogService.OperationScope operation = logService.BeginOperation(
             "InstallPackage",
@@ -437,6 +444,7 @@ public partial class MainWindow : Window
             isInstalling = true;
             stepIndex = 3;
             installerResult = null;
+            installProgressCoalescer.Reset();
             InstallProgressBar.Value = 0;
             ProgressPercentText.Text = "0%";
             ProgressTitleText.Text = T("ProgressTitle");
@@ -445,15 +453,16 @@ public partial class MainWindow : Window
             UpdateStep();
 
             InstallPathTextBox.Text = installPath;
-            payloadPath = await PrepareInstallPayloadAsync(installPath);
+            using Stream payloadStream = await PrepareInstallPayloadAsync(installPath);
             logService.Info($"Starting install. target=\"{installPath}\"");
 
-            installerResult = await nativeBridge.InstallPackageAsync(
-                payloadPath,
+            installerResult = await nativeBridge.InstallPackageStreamAsync(
+                payloadStream,
                 installPath,
                 ShortcutCheckBox.IsChecked == true,
                 OnNativeProgress);
 
+            installProgressCoalescer.Flush();
             logService.Info($"Install completed. app=\"{installerResult.ApplicationPath}\"");
             operation.Complete($"app=\"{installerResult.ApplicationPath}\", installDirectory=\"{installerResult.InstallDirectory}\"");
             ShowSuccess(installerResult);
@@ -461,12 +470,12 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             operation.Fail(exception);
+            installProgressCoalescer.Flush();
             logService.Error("Install failed.", exception);
             ShowError(exception.Message);
         }
         finally
         {
-            payloadResourceService.TryDeletePayload(payloadPath);
             isInstalling = false;
             UpdateStep();
         }
@@ -474,26 +483,40 @@ public partial class MainWindow : Window
 
     private void OnNativeProgress(InstallerProgress progress)
     {
-        Dispatcher.BeginInvoke(() =>
+        installProgressCoalescer.Report(progress);
+    }
+
+    private void ApplyNativeProgress(InstallerProgress progress)
+    {
+        double percent = Math.Clamp(progress.Percent, 0, 100);
+        InstallProgressBar.Value = percent;
+        ProgressPercentText.Text = $"{percent:0}%";
+
+        string phaseText = progress.Phase switch
         {
-            double percent = Math.Clamp(progress.Percent, 0, 100);
-            InstallProgressBar.Value = percent;
-            ProgressPercentText.Text = $"{percent:0}%";
+            "preparing" => T("ProgressPreparing"),
+            "copying" => T("ProgressCopying"),
+            "finalizing" => T("ProgressFinalizing"),
+            "completed" => T("ProgressCompleted"),
+            "error" => T("ErrorTitle"),
+            _ => T("ProgressCopying")
+        };
 
-            string phaseText = progress.Phase switch
-            {
-                "preparing" => T("ProgressPreparing"),
-                "copying" => T("ProgressCopying"),
-                "finalizing" => T("ProgressFinalizing"),
-                "completed" => T("ProgressCompleted"),
-                _ => T("ProgressCopying")
-            };
+        ProgressPhaseText.Text = phaseText;
+        ProgressDetailText.Text = string.IsNullOrWhiteSpace(progress.CurrentItem)
+            ? phaseText
+            : $"{phaseText}: {progress.CurrentItem}";
+    }
 
-            ProgressPhaseText.Text = phaseText;
-            ProgressDetailText.Text = string.IsNullOrWhiteSpace(progress.CurrentItem)
-                ? phaseText
-                : $"{phaseText}: {progress.CurrentItem}";
-        });
+    private void RunOnUiThread(Action action)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(action);
+            return;
+        }
+
+        action();
     }
 
     private void ShowSuccess(InstallerResult result)

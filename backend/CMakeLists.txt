@@ -149,7 +149,7 @@ if(WIN32)
 
     target_compile_features(FluxoraInstallerCore PUBLIC cxx_std_20)
     target_compile_definitions(FluxoraInstallerCore PRIVATE FLUXORA_INSTALLER_EXPORTS)
-    target_link_libraries(FluxoraInstallerCore PRIVATE ole32 shell32 spdlog::spdlog_header_only)
+    target_link_libraries(FluxoraInstallerCore PRIVATE bcrypt ole32 shell32 spdlog::spdlog_header_only)
 
     if(MSVC)
         target_compile_options(FluxoraInstallerCore PRIVATE /W4 /permissive- /utf-8)

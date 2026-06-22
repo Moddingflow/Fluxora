@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -31,6 +32,33 @@ namespace fluxora::tests
                     return mod.folderName == folderName;
                 });
             return match == mods.end() ? nullptr : &(*match);
+        }
+
+        const ModFileSummaryRecord* findSummary(
+            const std::vector<ModFileSummaryRecord>& summaries,
+            std::wstring_view folderName)
+        {
+            const auto match = std::find_if(
+                summaries.begin(),
+                summaries.end(),
+                [folderName](const ModFileSummaryRecord& summary)
+                {
+                    return summary.folderName == folderName;
+                });
+            return match == summaries.end() ? nullptr : &(*match);
+        }
+
+        void writeBulkConflictFiles(
+            const std::filesystem::path& modPath,
+            int fileCount,
+            const std::string& content)
+        {
+            for (int index = 0; index < fileCount; ++index)
+            {
+                writeTextFile(
+                    modPath / L"textures" / L"bulk" / (L"file-" + std::to_wstring(index) + L".dds"),
+                    content);
+            }
         }
 
         std::filesystem::path portableManifestPath(const std::filesystem::path& modPath)
@@ -310,7 +338,7 @@ namespace fluxora::tests
 #endif
     }
 
-    TEST(InstanceMetadataStoreTests, ListInstalledModsRecreatesMissingPortableManifest)
+    TEST(InstanceMetadataStoreTests, RefreshInstalledModsFromDiskRecreatesMissingPortableManifest)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
@@ -332,6 +360,7 @@ namespace fluxora::tests
         ASSERT_TRUE(std::filesystem::is_regular_file(manifest));
         ASSERT_TRUE(std::filesystem::remove(manifest));
 
+        InstanceMetadataStore::refreshInstalledModsFromDisk(project, mods);
         const std::vector<InstalledModRecord> records =
             InstanceMetadataStore::listInstalledMods(project, mods);
 
@@ -376,7 +405,7 @@ namespace fluxora::tests
 #endif
     }
 
-    TEST(InstanceMetadataStoreTests, ListInstalledModsSyncsDiskFoldersWithoutFingerprintingContent)
+    TEST(InstanceMetadataStoreTests, ListInstalledModsUsesDatabaseSnapshotUntilExplicitRefresh)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
@@ -389,8 +418,12 @@ namespace fluxora::tests
 
         InstanceMetadataStore::ensureInstance(project, L"skyrimse");
 
-        const std::vector<InstalledModRecord> records =
+        std::vector<InstalledModRecord> records =
             InstanceMetadataStore::listInstalledMods(project, mods);
+        EXPECT_EQ(findInstalledMod(records, L"Manual Disk Mod"), nullptr);
+
+        InstanceMetadataStore::refreshInstalledModsFromDisk(project, mods);
+        records = InstanceMetadataStore::listInstalledMods(project, mods);
 
         const InstalledModRecord* manual = findInstalledMod(records, L"Manual Disk Mod");
         ASSERT_NE(manual, nullptr);
@@ -428,6 +461,76 @@ namespace fluxora::tests
 
         ASSERT_EQ(entries.size(), 1U);
         EXPECT_EQ(entries[0].name, L"First.esp");
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, ConflictSummaryAndTreeUseBoundedSqlForTenThousandVisibleConflicts)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#elif !defined(FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS)
+        GTEST_SKIP() << "Instance metadata SQL test hooks are disabled.";
+#else
+        constexpr int fileCount = 10000;
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path firstPath = mods / L"Bulk Conflict A";
+        const std::filesystem::path secondPath = mods / L"Bulk Conflict B";
+        writeBulkConflictFiles(firstPath, fileCount, "a");
+        writeBulkConflictFiles(secondPath, fileCount, "b");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{firstPath, L"Bulk Conflict A", L"1.0", true, {}},
+                InstalledModImportRecord{secondPath, L"Bulk Conflict B", L"1.0", true, {}}
+            });
+
+        const std::vector<ModFileSummaryRecord> warmSummaries =
+            InstanceMetadataStore::summarizeInstalledModFiles(project, mods);
+        ASSERT_EQ(warmSummaries.size(), 2U);
+
+        InstanceMetadataStore::resetSqlPrepareCountForTesting();
+        const std::vector<ModFileSummaryRecord> summaries =
+            InstanceMetadataStore::summarizeInstalledModFiles(project, mods);
+        const std::uint64_t summaryPrepareCount =
+            InstanceMetadataStore::sqlPrepareCountForTesting();
+
+        EXPECT_LE(summaryPrepareCount, 32ULL);
+        const ModFileSummaryRecord* firstSummary = findSummary(summaries, L"Bulk Conflict A");
+        const ModFileSummaryRecord* secondSummary = findSummary(summaries, L"Bulk Conflict B");
+        ASSERT_NE(firstSummary, nullptr);
+        ASSERT_NE(secondSummary, nullptr);
+        EXPECT_EQ(firstSummary->summary.fileCount, fileCount);
+        EXPECT_EQ(firstSummary->summary.conflictingFileCount, fileCount);
+        EXPECT_EQ(firstSummary->summary.overwrittenFileCount, fileCount);
+        EXPECT_EQ(firstSummary->summary.overwritingFileCount, 0);
+        EXPECT_EQ(secondSummary->summary.fileCount, fileCount);
+        EXPECT_EQ(secondSummary->summary.conflictingFileCount, fileCount);
+        EXPECT_EQ(secondSummary->summary.overwrittenFileCount, 0);
+        EXPECT_EQ(secondSummary->summary.overwritingFileCount, fileCount);
+
+        InstanceMetadataStore::resetSqlPrepareCountForTesting();
+        const std::vector<ModFileTreeEntry> entries =
+            InstanceMetadataStore::listModFileTree(project, firstPath, L"textures/bulk", mods);
+        const std::uint64_t treePrepareCount =
+            InstanceMetadataStore::sqlPrepareCountForTesting();
+
+        EXPECT_LE(treePrepareCount, 16ULL);
+        ASSERT_EQ(entries.size(), static_cast<std::size_t>(fileCount));
+        EXPECT_TRUE(std::all_of(
+            entries.begin(),
+            entries.end(),
+            [](const ModFileTreeEntry& entry)
+            {
+                return !entry.isDirectory &&
+                    entry.conflictState == L"overwritten" &&
+                    entry.conflictOwners.size() == 2U &&
+                    entry.conflictOwners[0] == L"Bulk Conflict A" &&
+                    entry.conflictOwners[1] == L"Bulk Conflict B";
+            }));
 #endif
     }
 }

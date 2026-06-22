@@ -20,10 +20,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <regex>
@@ -47,9 +49,13 @@ namespace fluxora
     {
         constexpr std::wstring_view pendingNxmExtension = L".nxm";
         constexpr std::wstring_view metadataExtension = L".fluxora.json";
+        constexpr std::wstring_view progressSidecarExtension = L".fluxora.progress.json";
         constexpr std::wstring_view cancelMarkerExtension = L".cancel";
         constexpr std::wstring_view transientFileExtension = L".tmp";
         constexpr std::wstring_view partialDownloadExtension = L".part";
+        constexpr std::chrono::milliseconds progressSidecarWriteInterval{250};
+        constexpr std::chrono::seconds durableProgressCheckpointInterval{30};
+        constexpr std::uintmax_t durableProgressCheckpointBytes = 64ULL * 1024ULL * 1024ULL;
         constexpr std::wstring_view protocolKeyPath = L"Software\\Classes\\nxm";
         constexpr std::wstring_view commandKeyPath = L"Software\\Classes\\nxm\\shell\\open\\command";
         constexpr std::wstring_view backupKeyPath = L"Software\\Fluxora\\NxmProtocol";
@@ -98,6 +104,8 @@ namespace fluxora
         std::mutex activeDownloadsMutex;
         std::set<std::wstring> activeDownloads;
         std::mutex installStagingCacheMutex;
+        std::map<std::wstring, std::weak_ptr<std::mutex>> installStagingCacheKeyMutexes;
+        std::map<std::filesystem::path, std::size_t> installStagingCacheActiveEntries;
         constexpr std::wstring_view installStagingCacheDirectoryName = L".install-staging-cache";
         constexpr std::wstring_view installStagingCachePayloadDirectoryName = L"payload";
         constexpr std::wstring_view installStagingCacheReadyFileName = L"ready.txt";
@@ -279,6 +287,34 @@ namespace fluxora
                     L"generated download metadata",
                     ProjectStateValidation::Utf8Text
                 });
+        }
+
+        bool tryWriteVolatileTextFile(const std::filesystem::path& path, const std::string& content)
+        {
+            if (path.empty())
+            {
+                return false;
+            }
+
+            std::error_code directoryError;
+            const std::filesystem::path parent = path.parent_path();
+            if (!parent.empty())
+            {
+                std::filesystem::create_directories(parent, directoryError);
+                if (directoryError)
+                {
+                    return false;
+                }
+            }
+
+            std::ofstream file(path, std::ios::out | std::ios::trunc | std::ios::binary);
+            if (!file)
+            {
+                return false;
+            }
+
+            file.write(content.data(), static_cast<std::streamsize>(content.size()));
+            return static_cast<bool>(file);
         }
 
         std::uintmax_t parseUnsigned(std::wstring_view value)
@@ -1156,6 +1192,11 @@ namespace fluxora
             return path.wstring() + std::wstring(metadataExtension);
         }
 
+        std::wstring progressSidecarPath(const std::filesystem::path& path)
+        {
+            return path.wstring() + std::wstring(progressSidecarExtension);
+        }
+
         bool isHex8(std::wstring_view value)
         {
             if (value.size() != 8)
@@ -1197,9 +1238,33 @@ namespace fluxora
             }
         }
 
-        DownloadMetadata readMetadata(const std::filesystem::path& path)
+        std::string serializeMetadata(const DownloadMetadata& metadata)
         {
-            const std::string content = readTextFile(metadataPath(path));
+            JsonWriter writer;
+            writer.beginObject();
+            writer.field(L"source", metadata.source);
+            writer.field(L"status", metadata.status);
+            writer.field(L"gameDomain", metadata.gameDomain);
+            writer.field(L"modId", metadata.modId);
+            writer.field(L"fileId", metadata.fileId);
+            writer.field(L"nexusModName", metadata.nexusModName);
+            writer.field(L"version", metadata.version);
+            writer.field(L"latestVersion", metadata.latestVersion);
+            writer.field(L"installedModName", metadata.installedModName);
+            writer.field(L"installedAtUtc", metadata.installedAtUtc);
+            writer.field(L"destinationFileName", metadata.destinationFileName);
+            writer.field(L"partialPath", metadata.partialPath.wstring());
+            writer.field(L"bytesReceived", metadata.bytesReceived);
+            writer.field(L"totalBytes", metadata.totalBytes);
+            writer.field(L"downloadStartedUnix", metadata.downloadStartedUnix);
+            writer.field(L"isDownloading", metadata.isDownloading);
+            writer.endObject();
+
+            return toUtf8(writer.str());
+        }
+
+        DownloadMetadata parseMetadata(std::string_view content)
+        {
             if (content.empty())
             {
                 return {};
@@ -1207,7 +1272,8 @@ namespace fluxora
 
             try
             {
-                const JsonValue root = JsonReader::parse(fromUtf8(content));
+                const std::string ownedContent(content);
+                const JsonValue root = JsonReader::parse(fromUtf8(ownedContent));
                 if (!root.isObject())
                 {
                     return {};
@@ -1312,29 +1378,56 @@ namespace fluxora
             }
         }
 
+        DownloadMetadata readMetadata(const std::filesystem::path& path, bool includeVolatileProgress = false)
+        {
+            DownloadMetadata metadata = parseMetadata(readTextFile(metadataPath(path)));
+            if (!includeVolatileProgress ||
+                !metadata.isDownloading ||
+                metadata.status == L"Отмена загрузки")
+            {
+                return metadata;
+            }
+
+            const DownloadMetadata progress = parseMetadata(readTextFile(progressSidecarPath(path)));
+            if (!progress.isDownloading ||
+                progress.bytesReceived < metadata.bytesReceived ||
+                (metadata.downloadStartedUnix != 0 &&
+                    progress.downloadStartedUnix != 0 &&
+                    progress.downloadStartedUnix != metadata.downloadStartedUnix))
+            {
+                return metadata;
+            }
+
+            metadata.status = progress.status.empty() ? metadata.status : progress.status;
+            metadata.destinationFileName = progress.destinationFileName.empty()
+                ? metadata.destinationFileName
+                : progress.destinationFileName;
+            metadata.partialPath = progress.partialPath.empty()
+                ? metadata.partialPath
+                : progress.partialPath;
+            metadata.bytesReceived = progress.bytesReceived;
+            metadata.totalBytes = progress.totalBytes;
+            metadata.downloadStartedUnix = progress.downloadStartedUnix == 0
+                ? metadata.downloadStartedUnix
+                : progress.downloadStartedUnix;
+            metadata.isDownloading = true;
+            return metadata;
+        }
+
         void writeMetadata(const std::filesystem::path& path, const DownloadMetadata& metadata)
         {
-            JsonWriter writer;
-            writer.beginObject();
-            writer.field(L"source", metadata.source);
-            writer.field(L"status", metadata.status);
-            writer.field(L"gameDomain", metadata.gameDomain);
-            writer.field(L"modId", metadata.modId);
-            writer.field(L"fileId", metadata.fileId);
-            writer.field(L"nexusModName", metadata.nexusModName);
-            writer.field(L"version", metadata.version);
-            writer.field(L"latestVersion", metadata.latestVersion);
-            writer.field(L"installedModName", metadata.installedModName);
-            writer.field(L"installedAtUtc", metadata.installedAtUtc);
-            writer.field(L"destinationFileName", metadata.destinationFileName);
-            writer.field(L"partialPath", metadata.partialPath.wstring());
-            writer.field(L"bytesReceived", metadata.bytesReceived);
-            writer.field(L"totalBytes", metadata.totalBytes);
-            writer.field(L"downloadStartedUnix", metadata.downloadStartedUnix);
-            writer.field(L"isDownloading", metadata.isDownloading);
-            writer.endObject();
+            writeTextFile(metadataPath(path), serializeMetadata(metadata));
+        }
 
-            writeTextFile(metadataPath(path), toUtf8(writer.str()));
+        void writeDownloadProgressSidecar(const std::filesystem::path& path, const DownloadMetadata& metadata)
+        {
+            (void)tryWriteVolatileTextFile(progressSidecarPath(path), serializeMetadata(metadata));
+        }
+
+        void removeDownloadProgressSidecar(const std::filesystem::path& path)
+        {
+            std::error_code error;
+            std::filesystem::remove(progressSidecarPath(path), error);
         }
 
         DownloadMetadata metadataForRequest(
@@ -2273,7 +2366,7 @@ namespace fluxora
 
         DownloadEntry buildEntry(const std::filesystem::path& path)
         {
-            DownloadMetadata metadata = readMetadata(path);
+            DownloadMetadata metadata = readMetadata(path, true);
             const bool isPending = path.extension().wstring() == pendingNxmExtension;
             const std::filesystem::path directory = path.parent_path();
             if (metadata.isDownloading && !isActiveDownload(path))
@@ -2283,6 +2376,7 @@ namespace fluxora
                 metadata.downloadStartedUnix = 0;
                 metadata.isDownloading = false;
                 writeMetadata(path, metadata);
+                removeDownloadProgressSidecar(path);
                 std::filesystem::remove(cancelMarkerPath(path));
             }
 
@@ -2698,24 +2792,45 @@ namespace fluxora
             return body;
         }
 
+        enum class DownloadProgressWriteMode
+        {
+            VolatileOnly,
+            DurableCheckpoint
+        };
+
+        DownloadMetadata progressMetadataSnapshot(
+            DownloadMetadata metadata,
+            std::uintmax_t bytesReceived,
+            std::uintmax_t totalBytes,
+            std::uintmax_t startedUnix)
+        {
+            metadata.status = L"Скачивается";
+            metadata.bytesReceived = bytesReceived;
+            metadata.totalBytes = totalBytes;
+            metadata.downloadStartedUnix = startedUnix;
+            metadata.isDownloading = true;
+            return metadata;
+        }
+
         void updateDownloadProgress(
             const std::filesystem::path& progressPath,
             DownloadMetadata metadata,
             std::uintmax_t bytesReceived,
             std::uintmax_t totalBytes,
-            std::uintmax_t startedUnix)
+            std::uintmax_t startedUnix,
+            DownloadProgressWriteMode mode)
         {
             if (progressPath.empty())
             {
                 return;
             }
 
-            metadata.status = L"Скачивается";
-            metadata.bytesReceived = bytesReceived;
-            metadata.totalBytes = totalBytes;
-            metadata.downloadStartedUnix = startedUnix;
-            metadata.isDownloading = true;
-            writeMetadata(progressPath, metadata);
+            metadata = progressMetadataSnapshot(std::move(metadata), bytesReceived, totalBytes, startedUnix);
+            writeDownloadProgressSidecar(progressPath, metadata);
+            if (mode == DownloadProgressWriteMode::DurableCheckpoint)
+            {
+                writeMetadata(progressPath, metadata);
+            }
         }
 
         std::filesystem::path winHttpDownloadToFile(
@@ -2876,9 +2991,36 @@ namespace fluxora
 
             std::uintmax_t bytesReceived = requestedOffset;
             const std::uintmax_t startedUnix = currentUnixSeconds();
-            auto lastProgressWrite = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+            auto lastProgressWrite = std::chrono::steady_clock::now() - progressSidecarWriteInterval;
+            auto lastDurableProgressCheckpoint = std::chrono::steady_clock::now();
+            std::uintmax_t lastDurableProgressBytes = bytesReceived;
+            const auto noteDurableProgressCheckpoint = [&](std::chrono::steady_clock::time_point now)
+            {
+                lastDurableProgressCheckpoint = now;
+                lastDurableProgressBytes = bytesReceived;
+            };
+            const auto shouldWriteDurableProgressCheckpoint = [&](std::chrono::steady_clock::time_point now)
+            {
+                const bool enoughTimePassed =
+                    now - lastDurableProgressCheckpoint >= durableProgressCheckpointInterval;
+                const bool enoughBytesPassed =
+                    bytesReceived >= lastDurableProgressBytes &&
+                    bytesReceived - lastDurableProgressBytes >= durableProgressCheckpointBytes;
+                const bool complete =
+                    totalBytes > 0 && bytesReceived >= totalBytes;
+                return enoughTimePassed || enoughBytesPassed || complete;
+            };
+            const auto writeProgressUpdate = [&](DownloadProgressWriteMode mode)
+            {
+                updateDownloadProgress(progressPath, progressMetadata, bytesReceived, totalBytes, startedUnix, mode);
+                if (mode == DownloadProgressWriteMode::DurableCheckpoint)
+                {
+                    noteDurableProgressCheckpoint(std::chrono::steady_clock::now());
+                }
+            };
             std::filesystem::remove(cancelMarkerPath(progressPath));
-            updateDownloadProgress(progressPath, progressMetadata, bytesReceived, totalBytes, startedUnix);
+            writeProgressUpdate(DownloadProgressWriteMode::DurableCheckpoint);
+            lastProgressWrite = std::chrono::steady_clock::now();
             const auto writePausedMetadata = [&]()
             {
                 DownloadMetadata pausedMetadata = progressMetadata;
@@ -2888,6 +3030,7 @@ namespace fluxora
                 pausedMetadata.downloadStartedUnix = 0;
                 pausedMetadata.isDownloading = false;
                 writeMetadata(progressPath, pausedMetadata);
+                removeDownloadProgressSidecar(progressPath);
             };
             const auto throwIfCanceled = [&]()
             {
@@ -2908,7 +3051,7 @@ namespace fluxora
                 DWORD available{};
                 if (!WinHttpQueryDataAvailable(request, &available))
                 {
-                    updateDownloadProgress(progressPath, progressMetadata, bytesReceived, totalBytes, startedUnix);
+                    writeProgressUpdate(DownloadProgressWriteMode::DurableCheckpoint);
                     file.close();
                     closeHandles();
                     throw std::runtime_error("Failed to read download response.");
@@ -2924,7 +3067,7 @@ namespace fluxora
                 throwIfCanceled();
                 if (!WinHttpReadData(request, buffer.data(), available, &read))
                 {
-                    updateDownloadProgress(progressPath, progressMetadata, bytesReceived, totalBytes, startedUnix);
+                    writeProgressUpdate(DownloadProgressWriteMode::DurableCheckpoint);
                     file.close();
                     closeHandles();
                     throw std::runtime_error("Failed to read download data.");
@@ -2939,7 +3082,7 @@ namespace fluxora
                 file.write(buffer.data(), static_cast<std::streamsize>(read));
                 if (!file)
                 {
-                    updateDownloadProgress(progressPath, progressMetadata, bytesReceived, totalBytes, startedUnix);
+                    writeProgressUpdate(DownloadProgressWriteMode::DurableCheckpoint);
                     file.close();
                     closeHandles();
                     throw std::runtime_error("Failed to write downloaded file.");
@@ -2947,10 +3090,13 @@ namespace fluxora
 
                 bytesReceived += read;
                 const auto now = std::chrono::steady_clock::now();
-                if (now - lastProgressWrite >= std::chrono::milliseconds(250) ||
+                if (now - lastProgressWrite >= progressSidecarWriteInterval ||
                     (totalBytes > 0 && bytesReceived >= totalBytes))
                 {
-                    updateDownloadProgress(progressPath, progressMetadata, bytesReceived, totalBytes, startedUnix);
+                    const DownloadProgressWriteMode mode = shouldWriteDurableProgressCheckpoint(now)
+                        ? DownloadProgressWriteMode::DurableCheckpoint
+                        : DownloadProgressWriteMode::VolatileOnly;
+                    writeProgressUpdate(mode);
                     lastProgressWrite = now;
                 }
             }
@@ -2959,11 +3105,12 @@ namespace fluxora
             file.close();
             if (!file)
             {
+                writeProgressUpdate(DownloadProgressWriteMode::DurableCheckpoint);
                 closeHandles();
                 throw std::runtime_error("Failed to finalize downloaded file.");
             }
 
-            updateDownloadProgress(progressPath, progressMetadata, bytesReceived, totalBytes, startedUnix);
+            writeProgressUpdate(DownloadProgressWriteMode::DurableCheckpoint);
             closeHandles();
             std::filesystem::remove(cancelMarkerPath(progressPath));
             std::error_code renameError;
@@ -3645,6 +3792,47 @@ namespace fluxora
             return modified < cutoff;
         }
 
+        [[nodiscard]] bool isInstallStagingCacheBuildingEntry(
+            const std::filesystem::path& entryDirectory)
+        {
+            return entryDirectory.filename().wstring().starts_with(L".building-");
+        }
+
+        void retainInstallStagingCacheEntryLocked(const std::filesystem::path& entryDirectory)
+        {
+            ++installStagingCacheActiveEntries[entryDirectory];
+        }
+
+        void releaseInstallStagingCacheEntry(const std::filesystem::path& entryDirectory)
+        {
+            if (entryDirectory.empty())
+            {
+                return;
+            }
+
+            std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
+            const auto found = installStagingCacheActiveEntries.find(entryDirectory);
+            if (found == installStagingCacheActiveEntries.end())
+            {
+                return;
+            }
+
+            if (found->second <= 1)
+            {
+                installStagingCacheActiveEntries.erase(found);
+                return;
+            }
+
+            --found->second;
+        }
+
+        [[nodiscard]] bool isInstallStagingCacheEntryActiveLocked(
+            const std::filesystem::path& entryDirectory)
+        {
+            const auto found = installStagingCacheActiveEntries.find(entryDirectory);
+            return found != installStagingCacheActiveEntries.end() && found->second > 0;
+        }
+
         void touchInstallStagingCacheEntry(const std::filesystem::path& entryDirectory)
         {
             const std::filesystem::file_time_type now =
@@ -3698,6 +3886,27 @@ namespace fluxora
                     continue;
                 }
 
+                if (isInstallStagingCacheEntryActiveLocked(entryPath))
+                {
+                    std::error_code timeError;
+                    const std::filesystem::file_time_type modified =
+                        installStagingCacheEntryTime(entryPath, timeError);
+                    retainedEntries.push_back({
+                        entryPath,
+                        timeError ? (std::filesystem::file_time_type::max)() : modified
+                    });
+                    continue;
+                }
+
+                if (isInstallStagingCacheBuildingEntry(entryPath))
+                {
+                    if (isInstallStagingCacheEntryStale(entryPath))
+                    {
+                        cleanupTemporaryDirectory(entryPath, logger, "InstallStagingCache");
+                    }
+                    continue;
+                }
+
                 if (!isUsableInstallStagingCacheEntry(entryPath) ||
                     isInstallStagingCacheEntryStale(entryPath))
                 {
@@ -3730,6 +3939,10 @@ namespace fluxora
                 {
                     continue;
                 }
+                if (isInstallStagingCacheEntryActiveLocked(retainedEntries[index].first))
+                {
+                    continue;
+                }
 
                 cleanupTemporaryDirectory(retainedEntries[index].first, logger, "InstallStagingCache");
             }
@@ -3742,13 +3955,45 @@ namespace fluxora
             return std::wstring(kind) + L"-" + hashText(key);
         }
 
-        template <typename Producer>
-        [[nodiscard]] std::filesystem::path ensureInstallStagingCachePayloadLocked(
-            const std::filesystem::path& downloadsDirectory,
+        [[nodiscard]] std::wstring installStagingCacheLockKey(
             std::wstring_view kind,
-            std::wstring_view key,
-            const Logger& logger,
-            Producer producer)
+            std::wstring_view key)
+        {
+            return std::wstring(kind) + L"\n" + std::wstring(key);
+        }
+
+        [[nodiscard]] std::shared_ptr<std::mutex> installStagingCacheKeyMutex(
+            std::wstring_view kind,
+            std::wstring_view key)
+        {
+            std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
+            const std::wstring lockKey = installStagingCacheLockKey(kind, key);
+            for (auto iterator = installStagingCacheKeyMutexes.begin();
+                 iterator != installStagingCacheKeyMutexes.end();)
+            {
+                if (iterator->first != lockKey && iterator->second.expired())
+                {
+                    iterator = installStagingCacheKeyMutexes.erase(iterator);
+                    continue;
+                }
+
+                ++iterator;
+            }
+
+            std::weak_ptr<std::mutex>& cached = installStagingCacheKeyMutexes[lockKey];
+            if (std::shared_ptr<std::mutex> existing = cached.lock())
+            {
+                return existing;
+            }
+
+            std::shared_ptr<std::mutex> created = std::make_shared<std::mutex>();
+            cached = created;
+            return created;
+        }
+
+        [[nodiscard]] std::filesystem::path prepareInstallStagingCacheRootLocked(
+            const std::filesystem::path& downloadsDirectory,
+            const Logger& logger)
         {
             const std::filesystem::path cacheRoot = installStagingCacheRoot(downloadsDirectory);
             std::filesystem::create_directories(downloadsDirectory);
@@ -3758,44 +4003,200 @@ namespace fluxora
                 .throwIfUnsafe("Install staging cache root is unsafe");
             std::filesystem::create_directories(cacheRoot);
             cleanupInstallStagingCacheLocked(cacheRoot, logger);
+            return cacheRoot;
+        }
 
-            const std::filesystem::path entryDirectory =
-                cacheRoot / std::filesystem::path(installStagingCacheEntryName(kind, key));
-            const std::filesystem::path payloadDirectory =
-                installStagingCachePayloadDirectory(entryDirectory);
-            if (isUsableInstallStagingCacheEntry(entryDirectory))
+        class InstallStagingCachePayloadLease
+        {
+        public:
+            InstallStagingCachePayloadLease() = default;
+
+            InstallStagingCachePayloadLease(
+                std::filesystem::path entryDirectory,
+                std::filesystem::path payloadDirectory,
+                std::shared_ptr<std::mutex> keyMutex,
+                std::unique_lock<std::mutex> keyLock)
+                : entryDirectory_(std::move(entryDirectory)),
+                  payloadDirectory_(std::move(payloadDirectory)),
+                  keyMutex_(std::move(keyMutex)),
+                  keyLock_(std::move(keyLock))
             {
-                touchInstallStagingCacheEntry(entryDirectory);
-                logger.write(
-                    LogLevel::Info,
-                    "InstallStagingCache",
-                    "Install staging cache hit. kind=\"" + toUtf8(std::wstring(kind)) +
-                        "\", path=\"" + toUtf8(payloadDirectory.wstring()) + "\"");
-                return payloadDirectory;
             }
 
-            cleanupTemporaryDirectory(entryDirectory, logger, "InstallStagingCache");
-            const std::filesystem::path temporaryEntryDirectory = uniquePath(
-                cacheRoot,
-                L".building-" + installStagingCacheEntryName(kind, key));
-            const std::filesystem::path temporaryPayloadDirectory =
-                installStagingCachePayloadDirectory(temporaryEntryDirectory);
+            InstallStagingCachePayloadLease(const InstallStagingCachePayloadLease&) = delete;
+            InstallStagingCachePayloadLease& operator=(const InstallStagingCachePayloadLease&) = delete;
+
+            InstallStagingCachePayloadLease(InstallStagingCachePayloadLease&& other) noexcept
+                : entryDirectory_(std::move(other.entryDirectory_)),
+                  payloadDirectory_(std::move(other.payloadDirectory_)),
+                  keyMutex_(std::move(other.keyMutex_)),
+                  keyLock_(std::move(other.keyLock_))
+            {
+                other.entryDirectory_.clear();
+            }
+
+            InstallStagingCachePayloadLease& operator=(InstallStagingCachePayloadLease&& other) noexcept
+            {
+                if (this != &other)
+                {
+                    releaseActiveEntry();
+                    entryDirectory_ = std::move(other.entryDirectory_);
+                    payloadDirectory_ = std::move(other.payloadDirectory_);
+                    keyMutex_ = std::move(other.keyMutex_);
+                    keyLock_ = std::move(other.keyLock_);
+                    other.entryDirectory_.clear();
+                }
+
+                return *this;
+            }
+
+            ~InstallStagingCachePayloadLease()
+            {
+                releaseActiveEntry();
+            }
+
+            [[nodiscard]] const std::filesystem::path& entryDirectory() const noexcept
+            {
+                return entryDirectory_;
+            }
+
+            [[nodiscard]] const std::filesystem::path& payloadDirectory() const noexcept
+            {
+                return payloadDirectory_;
+            }
+
+        private:
+            void releaseActiveEntry()
+            {
+                if (entryDirectory_.empty())
+                {
+                    return;
+                }
+
+                releaseInstallStagingCacheEntry(entryDirectory_);
+                entryDirectory_.clear();
+            }
+
+            std::filesystem::path entryDirectory_;
+            std::filesystem::path payloadDirectory_;
+            std::shared_ptr<std::mutex> keyMutex_;
+            std::unique_lock<std::mutex> keyLock_;
+        };
+
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        using InstallStagingCacheProducerHook = std::function<void(
+            std::wstring_view,
+            std::wstring_view,
+            const std::filesystem::path&)>;
+
+        std::mutex installStagingCacheProducerHookMutex;
+        InstallStagingCacheProducerHook installStagingCacheProducerHook;
+
+        void runInstallStagingCacheProducerHook(
+            std::wstring_view kind,
+            std::wstring_view key,
+            const std::filesystem::path& payloadDirectory)
+        {
+            InstallStagingCacheProducerHook hook;
+            {
+                std::lock_guard<std::mutex> hookLock(installStagingCacheProducerHookMutex);
+                hook = installStagingCacheProducerHook;
+            }
+
+            if (hook)
+            {
+                hook(kind, key, payloadDirectory);
+            }
+        }
+#endif
+
+        template <typename Producer>
+        [[nodiscard]] InstallStagingCachePayloadLease ensureInstallStagingCachePayload(
+            const std::filesystem::path& downloadsDirectory,
+            std::wstring_view kind,
+            std::wstring_view key,
+            const Logger& logger,
+            Producer producer)
+        {
+            std::shared_ptr<std::mutex> keyMutex = installStagingCacheKeyMutex(kind, key);
+            std::unique_lock<std::mutex> keyLock(*keyMutex);
+
+            std::filesystem::path cacheRoot;
+            std::filesystem::path entryDirectory;
+            std::filesystem::path payloadDirectory;
+            std::filesystem::path temporaryEntryDirectory;
+            std::filesystem::path temporaryPayloadDirectory;
+
+            {
+                std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
+                cacheRoot = prepareInstallStagingCacheRootLocked(downloadsDirectory, logger);
+                entryDirectory = cacheRoot / std::filesystem::path(installStagingCacheEntryName(kind, key));
+                payloadDirectory = installStagingCachePayloadDirectory(entryDirectory);
+                if (isUsableInstallStagingCacheEntry(entryDirectory))
+                {
+                    touchInstallStagingCacheEntry(entryDirectory);
+                    retainInstallStagingCacheEntryLocked(entryDirectory);
+                    logger.write(
+                        LogLevel::Info,
+                        "InstallStagingCache",
+                        "Install staging cache hit. kind=\"" + toUtf8(std::wstring(kind)) +
+                            "\", path=\"" + toUtf8(payloadDirectory.wstring()) + "\"");
+                    return InstallStagingCachePayloadLease{
+                        entryDirectory,
+                        payloadDirectory,
+                        std::move(keyMutex),
+                        std::move(keyLock)};
+                }
+
+                cleanupTemporaryDirectory(entryDirectory, logger, "InstallStagingCache");
+                temporaryEntryDirectory = uniquePath(
+                    cacheRoot,
+                    L".building-" + installStagingCacheEntryName(kind, key));
+                temporaryPayloadDirectory = installStagingCachePayloadDirectory(temporaryEntryDirectory);
+                std::filesystem::create_directories(temporaryPayloadDirectory);
+            }
 
             try
             {
-                std::filesystem::create_directories(temporaryPayloadDirectory);
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+                runInstallStagingCacheProducerHook(kind, key, temporaryPayloadDirectory);
+#endif
                 producer(temporaryPayloadDirectory);
                 validateExtractedDirectoryTree(temporaryPayloadDirectory);
                 writeTextFile(
                     installStagingCacheReadyPath(temporaryEntryDirectory),
                     "ready");
-                std::filesystem::rename(temporaryEntryDirectory, entryDirectory);
-                touchInstallStagingCacheEntry(entryDirectory);
-                logger.write(
-                    LogLevel::Info,
-                    "InstallStagingCache",
-                    "Install staging cache populated. kind=\"" + toUtf8(std::wstring(kind)) +
-                        "\", path=\"" + toUtf8(payloadDirectory.wstring()) + "\"");
+
+                {
+                    std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
+                    if (isUsableInstallStagingCacheEntry(entryDirectory))
+                    {
+                        cleanupTemporaryDirectory(temporaryEntryDirectory, logger, "InstallStagingCache");
+                        touchInstallStagingCacheEntry(entryDirectory);
+                        retainInstallStagingCacheEntryLocked(entryDirectory);
+                        logger.write(
+                            LogLevel::Info,
+                            "InstallStagingCache",
+                            "Install staging cache hit. kind=\"" + toUtf8(std::wstring(kind)) +
+                                "\", path=\"" + toUtf8(payloadDirectory.wstring()) + "\"");
+                        return InstallStagingCachePayloadLease{
+                            entryDirectory,
+                            payloadDirectory,
+                            std::move(keyMutex),
+                            std::move(keyLock)};
+                    }
+
+                    cleanupTemporaryDirectory(entryDirectory, logger, "InstallStagingCache");
+                    std::filesystem::rename(temporaryEntryDirectory, entryDirectory);
+                    touchInstallStagingCacheEntry(entryDirectory);
+                    retainInstallStagingCacheEntryLocked(entryDirectory);
+                    logger.write(
+                        LogLevel::Info,
+                        "InstallStagingCache",
+                        "Install staging cache populated. kind=\"" + toUtf8(std::wstring(kind)) +
+                            "\", path=\"" + toUtf8(payloadDirectory.wstring()) + "\"");
+                    cleanupInstallStagingCacheLocked(cacheRoot, logger, entryDirectory);
+                }
             }
             catch (const std::exception&)
             {
@@ -3803,8 +4204,11 @@ namespace fluxora
                 throw;
             }
 
-            cleanupInstallStagingCacheLocked(cacheRoot, logger, entryDirectory);
-            return payloadDirectory;
+            return InstallStagingCachePayloadLease{
+                entryDirectory,
+                payloadDirectory,
+                std::move(keyMutex),
+                std::move(keyLock)};
         }
 
         [[nodiscard]] std::optional<std::filesystem::path> tryInstallStagingCachePayloadLocked(
@@ -3839,6 +4243,36 @@ namespace fluxora
             return payloadDirectory;
         }
 
+        [[nodiscard]] std::optional<InstallStagingCachePayloadLease> tryInstallStagingCachePayload(
+            const std::filesystem::path& downloadsDirectory,
+            std::wstring_view kind,
+            std::wstring_view key,
+            const Logger& logger)
+        {
+            std::shared_ptr<std::mutex> keyMutex = installStagingCacheKeyMutex(kind, key);
+            std::unique_lock<std::mutex> keyLock(*keyMutex);
+            std::filesystem::path entryDirectory;
+            std::optional<std::filesystem::path> payloadDirectory;
+            {
+                std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
+                const std::filesystem::path cacheRoot = installStagingCacheRoot(downloadsDirectory);
+                entryDirectory = cacheRoot / std::filesystem::path(installStagingCacheEntryName(kind, key));
+                payloadDirectory = tryInstallStagingCachePayloadLocked(downloadsDirectory, kind, key, logger);
+                if (!payloadDirectory.has_value())
+                {
+                    return std::nullopt;
+                }
+
+                retainInstallStagingCacheEntryLocked(entryDirectory);
+            }
+
+            return InstallStagingCachePayloadLease{
+                entryDirectory,
+                payloadDirectory.value(),
+                std::move(keyMutex),
+                std::move(keyLock)};
+        }
+
         void discardInstallStagingCachePayloadLocked(
             const std::filesystem::path& payloadDirectory,
             const Logger& logger)
@@ -3850,6 +4284,14 @@ namespace fluxora
             }
 
             cleanupTemporaryDirectory(payloadDirectory.parent_path(), logger, "InstallStagingCache");
+        }
+
+        void discardInstallStagingCachePayload(
+            const InstallStagingCachePayloadLease& payload,
+            const Logger& logger)
+        {
+            std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
+            discardInstallStagingCachePayloadLocked(payload.payloadDirectory(), logger);
         }
 
         void materializeArchiveInstallCachePayload(
@@ -4125,16 +4567,15 @@ namespace fluxora
             {
                 bool copiedFromCachedPayload = false;
                 {
-                    std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
-                    const std::optional<std::filesystem::path> cachedPayload =
-                        tryInstallStagingCachePayloadLocked(
+                    std::optional<InstallStagingCachePayloadLease> cachedPayload =
+                        tryInstallStagingCachePayload(
                             paths.downloadsDirectory,
                             L"archive-staging",
                             archiveInstallStagingCacheKey(archivePath, existingModMode, safeName),
                             logger);
                     if (cachedPayload.has_value())
                     {
-                        copyDirectoryContentsOverwriting(cachedPayload.value(), stagingDirectory);
+                        copyDirectoryContentsOverwriting(cachedPayload->payloadDirectory(), stagingDirectory);
                         copiedFromCachedPayload = true;
                     }
                 }
@@ -4326,8 +4767,7 @@ namespace fluxora
                 };
 
                 {
-                    std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
-                    packageDirectory = ensureInstallStagingCachePayloadLocked(
+                    InstallStagingCachePayloadLease packagePayload = ensureInstallStagingCachePayload(
                         paths.downloadsDirectory,
                         L"fomod-package",
                         fomodPackageStagingCacheKey(archivePath),
@@ -4339,6 +4779,7 @@ namespace fluxora
                                 throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
                             }
                         });
+                    packageDirectory = packagePayload.payloadDirectory();
 
                     descriptor = FomodInstallerService::analyze(
                         projectDirectory,
@@ -4349,7 +4790,7 @@ namespace fluxora
                         fomodGameDataFoldersForProject(projectDirectory));
                     if (!descriptor.isFomod)
                     {
-                        discardInstallStagingCachePayloadLocked(packageDirectory, logger);
+                        discardInstallStagingCachePayload(packagePayload, logger);
                         throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
                     }
 
@@ -4702,6 +5143,7 @@ namespace fluxora
 
                 std::filesystem::remove(entry.path());
                 std::filesystem::remove(metadataPath(entry.path()));
+                removeDownloadProgressSidecar(entry.path());
                 std::filesystem::remove(cancelMarkerPath(entry.path()));
             }
         }
@@ -4753,6 +5195,66 @@ namespace fluxora
             return result;
         }
     }
+
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+    namespace test_hooks
+    {
+        void setInstallStagingCacheProducerHook(
+            std::function<void(std::wstring_view, std::wstring_view, const std::filesystem::path&)> hook)
+        {
+            std::lock_guard<std::mutex> hookLock(installStagingCacheProducerHookMutex);
+            installStagingCacheProducerHook = std::move(hook);
+        }
+
+        void setActiveDownloadForTest(const std::filesystem::path& path, bool active)
+        {
+            std::lock_guard lock(activeDownloadsMutex);
+            if (active)
+            {
+                activeDownloads.insert(normalizedPathText(path));
+            }
+            else
+            {
+                activeDownloads.erase(normalizedPathText(path));
+            }
+        }
+
+        std::filesystem::path downloadProgressSidecarPathForTest(const std::filesystem::path& path)
+        {
+            return progressSidecarPath(path);
+        }
+
+        void writeDownloadProgressCheckpointForTest(
+            const std::filesystem::path& path,
+            std::uintmax_t bytesReceived,
+            std::uintmax_t totalBytes,
+            std::uintmax_t startedUnix)
+        {
+            updateDownloadProgress(
+                path,
+                readMetadata(path),
+                bytesReceived,
+                totalBytes,
+                startedUnix,
+                DownloadProgressWriteMode::DurableCheckpoint);
+        }
+
+        void writeDownloadProgressSidecarForTest(
+            const std::filesystem::path& path,
+            std::uintmax_t bytesReceived,
+            std::uintmax_t totalBytes,
+            std::uintmax_t startedUnix)
+        {
+            updateDownloadProgress(
+                path,
+                readMetadata(path),
+                bytesReceived,
+                totalBytes,
+                startedUnix,
+                DownloadProgressWriteMode::VolatileOnly);
+        }
+    }
+#endif
 
     DownloadService::DownloadService(
         Logger& logger,
@@ -4840,6 +5342,7 @@ namespace fluxora
 
             const std::wstring pathText = entry.path().wstring();
             if (pathText.ends_with(metadataExtension) ||
+                pathText.ends_with(progressSidecarExtension) ||
                 pathText.ends_with(transientFileExtension) ||
                 pathText.ends_with(partialDownloadExtension) ||
                 isAtomicBackupFile(entry.path()))
@@ -4912,6 +5415,7 @@ namespace fluxora
                 canceledMetadata.status = L"Отменено";
                 canceledMetadata.isDownloading = false;
                 writeMetadata(pendingPath, canceledMetadata);
+                removeDownloadProgressSidecar(pendingPath);
                 std::filesystem::remove(cancelMarkerPath(pendingPath));
                 entries.push_back(buildEntry(pendingPath));
                 continue;
@@ -4924,6 +5428,7 @@ namespace fluxora
                     std::wstring(exception.what(), exception.what() + std::strlen(exception.what()));
                 failedMetadata.isDownloading = false;
                 writeMetadata(pendingPath, failedMetadata);
+                removeDownloadProgressSidecar(pendingPath);
                 entries.push_back(buildEntry(pendingPath));
                 continue;
             }
@@ -4932,6 +5437,7 @@ namespace fluxora
             pendingMetadata.status = L"Ожидает загрузки";
             pendingMetadata.isDownloading = false;
             writeMetadata(pendingPath, pendingMetadata);
+            removeDownloadProgressSidecar(pendingPath);
             entries.push_back(buildEntry(pendingPath));
         }
 
@@ -4986,6 +5492,7 @@ namespace fluxora
 
             std::filesystem::remove(entry.path());
             std::filesystem::remove(metadataPath(entry.path()));
+            removeDownloadProgressSidecar(entry.path());
         }
 
         return captureNxmLinks(projectDirectory, links);
@@ -5057,6 +5564,7 @@ namespace fluxora
         }
         std::filesystem::remove(downloadPath);
         std::filesystem::remove(metadataPath(downloadPath));
+        removeDownloadProgressSidecar(downloadPath);
         std::filesystem::remove(cancelMarkerPath(downloadPath));
         std::filesystem::remove(AtomicFileStore::backupPathFor(downloadPath));
         std::filesystem::remove(AtomicFileStore::backupPathFor(metadataPath(downloadPath)));
@@ -5092,6 +5600,7 @@ namespace fluxora
         requestDownloadCancellation(downloadPath);
         metadata.status = L"Отмена загрузки";
         writeMetadata(downloadPath, metadata);
+        removeDownloadProgressSidecar(downloadPath);
     }
 
     DownloadEntry DownloadService::resumeDownload(
@@ -5169,6 +5678,7 @@ namespace fluxora
             canceledMetadata.status = L"Отменено";
             canceledMetadata.isDownloading = false;
             writeMetadata(downloadPath, canceledMetadata);
+            removeDownloadProgressSidecar(downloadPath);
             std::filesystem::remove(cancelMarkerPath(downloadPath));
             return buildEntry(downloadPath);
         }
@@ -5180,6 +5690,7 @@ namespace fluxora
                 std::wstring(exception.what(), exception.what() + std::strlen(exception.what()));
             failedMetadata.isDownloading = false;
             writeMetadata(downloadPath, failedMetadata);
+            removeDownloadProgressSidecar(downloadPath);
             return buildEntry(downloadPath);
         }
 
@@ -5188,6 +5699,7 @@ namespace fluxora
         pendingMetadata.status = L"Ожидает загрузки";
         pendingMetadata.isDownloading = false;
         writeMetadata(downloadPath, pendingMetadata);
+        removeDownloadProgressSidecar(downloadPath);
         return buildEntry(downloadPath);
     }
 
@@ -5288,21 +5800,19 @@ namespace fluxora
         const std::wstring safeName = sanitizeFileName(fallbackName).empty()
             ? L"download"
             : sanitizeFileName(fallbackName);
-        std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
-        const std::filesystem::path cachedPayload =
-            ensureInstallStagingCachePayloadLocked(
-                paths.downloadsDirectory,
-                L"archive-staging",
-                archiveInstallStagingCacheKey(downloadPath, existingModMode, safeName),
-                logger_,
-                [&](const std::filesystem::path& payloadDirectory)
-                {
-                    materializeArchiveInstallCachePayload(downloadPath, payloadDirectory, safeName);
-                });
+        InstallStagingCachePayloadLease cachedPayload = ensureInstallStagingCachePayload(
+            paths.downloadsDirectory,
+            L"archive-staging",
+            archiveInstallStagingCacheKey(downloadPath, existingModMode, safeName),
+            logger_,
+            [&](const std::filesystem::path& payloadDirectory)
+            {
+                materializeArchiveInstallCachePayload(downloadPath, payloadDirectory, safeName);
+            });
 
         return analyzeContentLayoutForStaging(
             projectDirectory,
-            cachedPayload,
+            cachedPayload.payloadDirectory(),
             existingModMode,
             false,
             fileCacheFingerprint(downloadPath),
@@ -5340,20 +5850,19 @@ namespace fluxora
             ? downloadPath.stem().wstring()
             : trim(metadata.nexusModName);
 
-        std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
-        const std::filesystem::path packageDirectory =
-            ensureInstallStagingCachePayloadLocked(
-                paths.downloadsDirectory,
-                L"fomod-package",
-                fomodPackageStagingCacheKey(downloadPath),
-                logger_,
-                [&](const std::filesystem::path& payloadDirectory)
+        InstallStagingCachePayloadLease packagePayload = ensureInstallStagingCachePayload(
+            paths.downloadsDirectory,
+            L"fomod-package",
+            fomodPackageStagingCacheKey(downloadPath),
+            logger_,
+            [&](const std::filesystem::path& payloadDirectory)
+            {
+                if (!extractArchiveToDirectory(downloadPath, payloadDirectory))
                 {
-                    if (!extractArchiveToDirectory(downloadPath, payloadDirectory))
-                    {
-                        throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
-                    }
-                });
+                    throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
+                }
+            });
+        const std::filesystem::path& packageDirectory = packagePayload.payloadDirectory();
 
         FomodInstallerDescriptor descriptor = FomodInstallerService::analyze(
             projectDirectory,
@@ -5371,7 +5880,7 @@ namespace fluxora
             fomodGameDataFoldersForProject(projectDirectory));
         if (!descriptor.isFomod)
         {
-            discardInstallStagingCachePayloadLocked(packageDirectory, logger_);
+            discardInstallStagingCachePayload(packagePayload, logger_);
             return {};
         }
 
@@ -5445,20 +5954,19 @@ namespace fluxora
             };
 
             {
-                std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
-                const std::filesystem::path packageDirectory =
-                    ensureInstallStagingCachePayloadLocked(
-                        paths.downloadsDirectory,
-                        L"fomod-package",
-                        fomodPackageStagingCacheKey(downloadPath),
-                        logger_,
-                        [&](const std::filesystem::path& payloadDirectory)
+                InstallStagingCachePayloadLease packagePayload = ensureInstallStagingCachePayload(
+                    paths.downloadsDirectory,
+                    L"fomod-package",
+                    fomodPackageStagingCacheKey(downloadPath),
+                    logger_,
+                    [&](const std::filesystem::path& payloadDirectory)
+                    {
+                        if (!extractArchiveToDirectory(downloadPath, payloadDirectory))
                         {
-                            if (!extractArchiveToDirectory(downloadPath, payloadDirectory))
-                            {
-                                throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
-                            }
-                        });
+                            throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
+                        }
+                    });
+                const std::filesystem::path& packageDirectory = packagePayload.payloadDirectory();
 
                 const FomodInstallerDescriptor descriptor = FomodInstallerService::analyze(
                     projectDirectory,
@@ -5469,7 +5977,7 @@ namespace fluxora
                     fomodGameDataFoldersForProject(projectDirectory));
                 if (!descriptor.isFomod)
                 {
-                    discardInstallStagingCachePayloadLocked(packageDirectory, logger_);
+                    discardInstallStagingCachePayload(packagePayload, logger_);
                     throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
                 }
 

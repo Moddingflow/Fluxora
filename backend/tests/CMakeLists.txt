@@ -84,6 +84,11 @@ if(WIN32)
             ../vfs/src/VfsLog.cpp
             ../vfs/src/VfsTree.cpp
     )
+    target_compile_definitions(FluxoraCoreTests PRIVATE
+        FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
+        FLUXORA_VFS_TEST_HOOKS
+    )
 endif()
 
 target_include_directories(FluxoraCoreTests
@@ -115,3 +120,37 @@ endif()
 
 include(GoogleTest)
 gtest_discover_tests(FluxoraCoreTests)
+
+if(WIN32)
+    add_executable(FluxoraInstallerCoreTests
+        InstallerCorePackageTests.cpp
+        TestFilesystem.hpp
+    )
+
+    target_include_directories(FluxoraInstallerCoreTests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+
+    target_compile_features(FluxoraInstallerCoreTests PRIVATE cxx_std_20)
+
+    if(MSVC)
+        target_compile_options(FluxoraInstallerCoreTests PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(FluxoraInstallerCoreTests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    target_link_libraries(FluxoraInstallerCoreTests PRIVATE
+        GTest::gtest_main
+        FluxoraInstallerCore
+        bcrypt)
+
+    add_custom_command(
+        TARGET FluxoraInstallerCoreTests
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:FluxoraInstallerCore>
+            $<TARGET_FILE_DIR:FluxoraInstallerCoreTests>)
+
+    gtest_discover_tests(FluxoraInstallerCoreTests DISCOVERY_MODE PRE_TEST)
+endif()

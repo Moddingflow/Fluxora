@@ -129,11 +129,13 @@ public partial class FomodInstallerWindow : Window
     private void ScrollValidationTargetIntoView()
     {
         FomodGroupViewModel? targetGroup = viewModel.ValidationTargetGroup;
-        if (targetGroup is null)
+        FomodStepRowViewModel? targetRow = viewModel.ValidationTargetRow;
+        if (targetGroup is null || targetRow is null)
         {
             return;
         }
 
+        GroupItemsControl.ScrollIntoView(targetRow);
         GroupItemsControl.UpdateLayout();
         FrameworkElement? targetElement = FindElementForDataContext(GroupItemsControl, targetGroup);
         if (targetElement is null)

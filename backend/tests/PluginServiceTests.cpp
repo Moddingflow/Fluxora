@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -212,6 +213,75 @@ namespace fluxora::tests
         EXPECT_EQ(findPlugin(entries, L"Root.ABC"), nullptr);
         EXPECT_TRUE(std::filesystem::exists(project / L"profiles" / L"Default" / L"enabled.dat"));
         EXPECT_FALSE(std::filesystem::exists(project / L"profiles" / L"Default" / L"plugins.txt"));
+#endif
+    }
+
+    TEST(PluginServiceTests, RepeatedListPluginsUsesRevisionCacheBeforeScanningNestedSearchDirectories)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Cached Plugin Build";
+        const std::filesystem::path mods = project / L"mods";
+        constexpr int modCount = 500;
+        constexpr int sentinelIndex = 237;
+
+        std::vector<InstalledModImportRecord> imports;
+        imports.reserve(modCount);
+        for (int index = 0; index < modCount; ++index)
+        {
+            const std::wstring folderName = L"Mod " + std::to_wstring(index);
+            const std::wstring pluginName = L"Plugin" + std::to_wstring(index) + L".ABC";
+            const std::filesystem::path modDirectory = mods / std::filesystem::path(folderName);
+            writeTextFile(modDirectory / L"Nested" / L"Plugins" / pluginName, "plugin");
+            imports.push_back(InstalledModImportRecord{
+                modDirectory,
+                folderName,
+                {},
+                true,
+                {},
+                false
+            });
+        }
+
+        InstanceMetadataStore::ensureInstance(project, L"customgame");
+        InstanceMetadataStore::registerInstalledMods(project, imports);
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+
+        PluginSupportRules rules = customRules();
+        rules.pluginSearchDirectories = {
+            std::filesystem::path(L"AddOns"),
+            std::filesystem::path(L"Nested") / L"Plugins"
+        };
+        FakePluginRulesProvider provider(std::move(rules));
+        const CapabilitySet caps = capabilities(true, true);
+        const PluginRuleContext context{&provider, &caps, nullptr, L"Default"};
+        const std::wstring sentinelPlugin =
+            L"Plugin" + std::to_wstring(sentinelIndex) + L".ABC";
+        const std::filesystem::path sentinelSearchDirectory =
+            mods / (L"Mod " + std::to_wstring(sentinelIndex)) / L"Nested" / L"Plugins";
+
+        const std::vector<PluginEntry> first = plugins.listPlugins(project, context, L"Default");
+        ASSERT_NE(findPlugin(first, sentinelPlugin), nullptr);
+
+        std::filesystem::remove_all(sentinelSearchDirectory);
+
+        const std::vector<PluginEntry> second = plugins.listPlugins(project, context, L"Default");
+        EXPECT_NE(findPlugin(second, sentinelPlugin), nullptr);
+
+        InstanceMetadataStore::setInstalledModEnabled(
+            project,
+            mods / (L"Mod " + std::to_wstring(sentinelIndex)),
+            false);
+
+        const std::vector<PluginEntry> afterRevisionChange =
+            plugins.listPlugins(project, context, L"Default");
+        EXPECT_EQ(findPlugin(afterRevisionChange, sentinelPlugin), nullptr);
 #endif
     }
 

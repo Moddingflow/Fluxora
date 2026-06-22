@@ -157,6 +157,68 @@ public sealed class FomodInstallerViewModelTests
         Assert.True(optionWithoutImage.HasPreviewImage);
     }
 
+    [Fact]
+    public void VisibleSteps_ReturnsCachedListAndUpdatesInPlaceAfterFlagChange()
+    {
+        FomodInstallerViewModel viewModel = new(CreateInstaller());
+        IReadOnlyList<FomodStepViewModel> visibleSteps = viewModel.VisibleSteps;
+
+        Assert.Same(visibleSteps, viewModel.VisibleSteps);
+        Assert.Contains(visibleSteps, step => step.Id == "step-two");
+
+        viewModel.Steps[0].Groups[0].Options[1].IsSelected = true;
+
+        Assert.Same(visibleSteps, viewModel.VisibleSteps);
+        Assert.DoesNotContain(visibleSteps, step => step.Id == "step-two");
+        Assert.Equal(["step-one-variant-option-b"], viewModel.SelectedOptionIds);
+    }
+
+    [Fact]
+    public void Constructor_WithLargeFomod_BuildsCachedStepRows()
+    {
+        FomodInstallerViewModel viewModel = new(CreateLargeInstaller(stepCount: 25, groupsPerStep: 4, optionsPerGroup: 50));
+
+        Assert.Equal(25, viewModel.StepCount);
+        Assert.Equal(25, viewModel.LastEvaluatedStepCount);
+        Assert.Equal(100, viewModel.LastRefreshedGroupCount);
+        Assert.Equal(5_000, viewModel.LastRefreshedOptionCount);
+        Assert.All(viewModel.Steps, step => Assert.Equal(204, step.Rows.Count));
+        Assert.Same(viewModel.VisibleSteps, viewModel.VisibleSteps);
+    }
+
+    [Fact]
+    public void ToggleOption_WithFiveHundredStaticOptions_SkipsDependencyOptionRefresh()
+    {
+        FomodInstallerViewModel viewModel = new(CreateLargeSingleChoiceInstaller(optionsPerGroup: 500));
+        FomodGroupViewModel group = viewModel.Steps[0].Groups[0];
+
+        group.Options[499].IsSelected = true;
+
+        Assert.False(group.Options[0].IsSelected);
+        Assert.True(group.Options[499].IsSelected);
+        Assert.Equal(["large-choice-option-499"], viewModel.SelectedOptionIds);
+        Assert.Equal(1, viewModel.LastEvaluatedStepCount);
+        Assert.Equal(0, viewModel.LastRefreshedGroupCount);
+        Assert.Equal(0, viewModel.LastRefreshedOptionCount);
+    }
+
+    [Fact]
+    public void ToggleOption_WithoutVisibilityChange_DoesNotRaiseNavigationPropertyChanges()
+    {
+        FomodInstallerViewModel viewModel = new(CreateLargeSingleChoiceInstaller(optionsPerGroup: 500));
+        List<string?> propertyNames = new();
+        viewModel.PropertyChanged += (_, args) => propertyNames.Add(args.PropertyName);
+
+        viewModel.Steps[0].Groups[0].Options[499].IsSelected = true;
+
+        Assert.DoesNotContain(nameof(FomodInstallerViewModel.VisibleSteps), propertyNames);
+        Assert.DoesNotContain(nameof(FomodInstallerViewModel.NavigationSteps), propertyNames);
+        Assert.DoesNotContain(nameof(FomodInstallerViewModel.CurrentStep), propertyNames);
+        Assert.DoesNotContain(nameof(FomodInstallerViewModel.StepCount), propertyNames);
+        Assert.Contains(nameof(FomodInstallerViewModel.SelectedOptionIds), propertyNames);
+        Assert.Contains(nameof(FomodInstallerViewModel.CanPrimaryAction), propertyNames);
+    }
+
     private static FomodInstallerInfo CreateInstaller(bool hasPreviousSelection = false)
     {
         return new FomodInstallerInfo
@@ -472,5 +534,86 @@ public sealed class FomodInstallerViewModelTests
                 }
             }
         };
+    }
+
+    private static FomodInstallerInfo CreateLargeInstaller(int stepCount, int groupsPerStep, int optionsPerGroup)
+    {
+        FomodInstallerInfo installer = new()
+        {
+            IsFomod = true,
+            ModuleName = "Large"
+        };
+
+        for (int stepIndex = 0; stepIndex < stepCount; stepIndex++)
+        {
+            FomodStepInfo step = new()
+            {
+                Id = $"large-step-{stepIndex}",
+                Name = $"Large Step {stepIndex}"
+            };
+            for (int groupIndex = 0; groupIndex < groupsPerStep; groupIndex++)
+            {
+                FomodGroupInfo group = new()
+                {
+                    Id = $"large-step-{stepIndex}-group-{groupIndex}",
+                    Name = $"Group {groupIndex}",
+                    Type = "SelectAny"
+                };
+                for (int optionIndex = 0; optionIndex < optionsPerGroup; optionIndex++)
+                {
+                    group.Options.Add(new FomodOptionInfo
+                    {
+                        Id = $"large-step-{stepIndex}-group-{groupIndex}-option-{optionIndex}",
+                        Name = $"Option {optionIndex}"
+                    });
+                }
+
+                step.Groups.Add(group);
+            }
+
+            installer.Steps.Add(step);
+        }
+
+        return installer;
+    }
+
+    private static FomodInstallerInfo CreateLargeSingleChoiceInstaller(int optionsPerGroup)
+    {
+        FomodInstallerInfo installer = new()
+        {
+            IsFomod = true,
+            ModuleName = "Large Choice",
+            Steps =
+            {
+                new FomodStepInfo
+                {
+                    Id = "large-choice",
+                    Name = "Large Choice",
+                    Groups =
+                    {
+                        new FomodGroupInfo
+                        {
+                            Id = "large-choice-group",
+                            Name = "Large Choice Group",
+                            Type = "SelectExactlyOne"
+                        }
+                    }
+                }
+            }
+        };
+
+        FomodGroupInfo group = installer.Steps[0].Groups[0];
+        for (int optionIndex = 0; optionIndex < optionsPerGroup; optionIndex++)
+        {
+            group.Options.Add(new FomodOptionInfo
+            {
+                Id = $"large-choice-option-{optionIndex}",
+                Name = $"Option {optionIndex}",
+                Type = optionIndex == 0 ? "Recommended" : "Optional",
+                DefaultType = optionIndex == 0 ? "Recommended" : "Optional"
+            });
+        }
+
+        return installer;
     }
 }

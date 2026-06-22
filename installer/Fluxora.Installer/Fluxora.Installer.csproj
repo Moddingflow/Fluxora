@@ -28,10 +28,11 @@
     <Page Include="..\..\frontend\Assets\Icons.xaml" Link="Assets\Icons.xaml" />
     <Resource Include="..\..\frontend\Fonts\*.ttf" LinkBase="Fonts" />
     <Compile Include="..\..\frontend\Controls\LineIcon.cs" Link="Controls\LineIcon.cs" />
+    <Compile Include="..\..\frontend\Services\ProgressUpdateCoalescer.cs" Link="Services\ProgressUpdateCoalescer.cs" />
     <Compile Include="..\..\frontend\Services\WindowChromeService.cs" Link="Services\WindowChromeService.cs" />
     <EmbeddedResource Include="Resources\Legal\**\*.txt" />
-    <EmbeddedResource Include="Resources\Payload\FluxoraPayload.flxpkg"
-                      Condition="Exists('Resources\Payload\FluxoraPayload.flxpkg')" />
+    <EmbeddedResource Include="Resources\Payload\FluxoraPayload.flxpkg.gz"
+                      Condition="Exists('Resources\Payload\FluxoraPayload.flxpkg.gz')" />
   </ItemGroup>
 
   <ItemGroup>

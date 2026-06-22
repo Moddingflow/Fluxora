@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cwctype>
 #include <fstream>
 #include <iterator>
@@ -32,6 +33,9 @@ namespace fluxora
     namespace
     {
         constexpr std::wstring_view launchExecutablesField = L"launchExecutables";
+        constexpr int rootBuilderLaunchCacheManifestSchemaVersion = 1;
+        constexpr std::wstring_view rootBuilderLaunchCacheManifestFileName =
+            L".fluxora-root-launch-cache.json";
 
         struct ProjectExecutableContext
         {
@@ -914,31 +918,312 @@ namespace fluxora
             return roots;
         }
 
-        bool copyDirectoryOverlay(
-            const std::filesystem::path& sourceDirectory,
-            const std::filesystem::path& destinationDirectory,
-            const std::filesystem::path& allowedDestinationRoot,
+        struct RootBuilderBackingLocation
+        {
+            std::filesystem::path modDirectory;
+            std::filesystem::path rootDirectory;
+            std::filesystem::path relativePath;
+        };
+
+        struct RootBuilderLaunchCache
+        {
+            std::filesystem::path executablePath;
+            std::filesystem::path rootDirectory;
+        };
+
+        struct RootBuilderLaunchCacheFileStamp
+        {
+            std::uintmax_t size{0};
+            std::int64_t modifiedTicks{0};
+        };
+
+        struct RootBuilderLaunchCacheDesiredFile
+        {
+            std::filesystem::path relativePath;
+            std::filesystem::path sourcePath;
+            RootBuilderLaunchCacheFileStamp stamp;
+        };
+
+        struct RootBuilderLaunchCacheManifestFile
+        {
+            std::filesystem::path relativePath;
+            std::filesystem::path sourcePath;
+            RootBuilderLaunchCacheFileStamp stamp;
+        };
+
+        struct RootBuilderLaunchCacheManifest
+        {
+            std::wstring revision;
+            std::map<std::wstring, RootBuilderLaunchCacheManifestFile> files;
+        };
+
+        enum class RootBuilderLaunchCacheManifestStatus
+        {
+            Missing,
+            Loaded,
+            Corrupt
+        };
+
+        struct RootBuilderLaunchCacheManifestReadResult
+        {
+            RootBuilderLaunchCacheManifestStatus status{RootBuilderLaunchCacheManifestStatus::Missing};
+            std::optional<RootBuilderLaunchCacheManifest> manifest;
+            std::string reason;
+        };
+
+        struct RootBuilderLaunchCacheDesiredState
+        {
+            std::wstring revision;
+            std::map<std::wstring, RootBuilderLaunchCacheDesiredFile> files;
+            std::map<std::wstring, std::filesystem::path> directories;
+            std::size_t materializedEarlyDataRoots{0};
+        };
+
+        struct RootBuilderLaunchCacheApplyStats
+        {
+            std::size_t copiedFiles{0};
+            std::size_t reusedFiles{0};
+            std::size_t deletedFiles{0};
+            std::size_t deletedDirectories{0};
+            bool rebuilt{false};
+            bool revisionChanged{false};
+        };
+
+        std::wstring rootBuilderLaunchCacheRelativeKey(const std::filesystem::path& relativePath)
+        {
+            std::wstring key = relativePath.lexically_normal().generic_wstring();
+            while (!key.empty() && key.back() == L'/')
+            {
+                key.pop_back();
+            }
+
+#ifdef _WIN32
+            key = toLower(std::move(key));
+#endif
+            return key;
+        }
+
+        std::filesystem::path rootBuilderLaunchCacheManifestPath(
+            const std::filesystem::path& cacheRoot)
+        {
+            return cacheRoot / std::filesystem::path(rootBuilderLaunchCacheManifestFileName);
+        }
+
+        void mixRootBuilderLaunchCacheHash(std::uint64_t& hash, std::uint64_t value)
+        {
+            hash ^= value;
+            hash *= 1099511628211ULL;
+        }
+
+        void mixRootBuilderLaunchCacheHash(std::uint64_t& hash, std::wstring_view value)
+        {
+            for (const wchar_t character : value)
+            {
+                mixRootBuilderLaunchCacheHash(hash, static_cast<std::uint64_t>(character));
+            }
+            mixRootBuilderLaunchCacheHash(hash, 0xffULL);
+        }
+
+        void mixRootBuilderLaunchCacheHash(std::uint64_t& hash, const std::wstring& value)
+        {
+            mixRootBuilderLaunchCacheHash(hash, std::wstring_view(value));
+        }
+
+        void mixRootBuilderLaunchCacheHash(std::uint64_t& hash, const wchar_t* value)
+        {
+            mixRootBuilderLaunchCacheHash(hash, std::wstring_view(value == nullptr ? L"" : value));
+        }
+
+        void mixRootBuilderLaunchCacheHash(
+            std::uint64_t& hash,
+            const std::filesystem::path& path)
+        {
+            mixRootBuilderLaunchCacheHash(hash, comparablePathText(path));
+        }
+
+        std::wstring rootBuilderLaunchCacheRevision(
+            const ProjectExecutableContext& context,
+            const RootBuilderBackingLocation& location,
+            const std::vector<std::filesystem::path>& activeMods,
+            bool executableIsUnderData)
+        {
+            std::uint64_t hash = 1469598103934665603ULL;
+            mixRootBuilderLaunchCacheHash(hash, L"root-builder-launch-cache-v2");
+            mixRootBuilderLaunchCacheHash(hash, context.projectDirectory);
+            mixRootBuilderLaunchCacheHash(hash, context.gamePath);
+            mixRootBuilderLaunchCacheHash(hash, context.gameId.value());
+            mixRootBuilderLaunchCacheHash(hash, context.gameDefinitionVersion);
+            mixRootBuilderLaunchCacheHash(hash, context.templateId);
+            mixRootBuilderLaunchCacheHash(hash, context.defaultProfile);
+            mixRootBuilderLaunchCacheHash(hash, context.dataDirectory);
+            mixRootBuilderLaunchCacheHash(hash, rootBuilderDirectoryName(context));
+            mixRootBuilderLaunchCacheHash(hash, location.modDirectory);
+            mixRootBuilderLaunchCacheHash(hash, location.rootDirectory);
+            mixRootBuilderLaunchCacheHash(hash, location.relativePath.generic_wstring());
+            mixRootBuilderLaunchCacheHash(hash, executableIsUnderData ? 1ULL : 0ULL);
+            for (const std::filesystem::path& mod : activeMods)
+            {
+                mixRootBuilderLaunchCacheHash(hash, L"mod");
+                mixRootBuilderLaunchCacheHash(hash, mod);
+                mixRootBuilderLaunchCacheHash(hash, rootBuilderDirectory(context, mod));
+            }
+            if (!context.overwriteDirectory.empty())
+            {
+                mixRootBuilderLaunchCacheHash(hash, L"overwrite");
+                mixRootBuilderLaunchCacheHash(hash, context.overwriteDirectory);
+                mixRootBuilderLaunchCacheHash(hash, rootBuilderDirectory(context, context.overwriteDirectory));
+            }
+
+            return L"v2:" + std::to_wstring(hash);
+        }
+
+        std::optional<std::uintmax_t> parseUnsignedJsonNumber(const JsonValue& value)
+        {
+            if (!value.isNumber())
+            {
+                return std::nullopt;
+            }
+
+            try
+            {
+                std::size_t consumed = 0;
+                const unsigned long long parsed = std::stoull(value.asNumber(), &consumed, 10);
+                if (consumed != value.asNumber().size())
+                {
+                    return std::nullopt;
+                }
+                return static_cast<std::uintmax_t>(parsed);
+            }
+            catch (...)
+            {
+                return std::nullopt;
+            }
+        }
+
+        std::optional<std::int64_t> parseSignedJsonNumber(const JsonValue& value)
+        {
+            if (!value.isNumber())
+            {
+                return std::nullopt;
+            }
+
+            try
+            {
+                std::size_t consumed = 0;
+                const long long parsed = std::stoll(value.asNumber(), &consumed, 10);
+                if (consumed != value.asNumber().size())
+                {
+                    return std::nullopt;
+                }
+                return static_cast<std::int64_t>(parsed);
+            }
+            catch (...)
+            {
+                return std::nullopt;
+            }
+        }
+
+        std::optional<RootBuilderLaunchCacheFileStamp> rootBuilderLaunchCacheFileStamp(
+            const std::filesystem::path& path,
+            std::string& failure)
+        {
+            std::error_code error;
+            const std::uintmax_t size = std::filesystem::file_size(path, error);
+            if (error)
+            {
+                failure = "could not inspect " + toUtf8(path.wstring()) +
+                    " size (" + filesystemErrorForLog(error) + ")";
+                return std::nullopt;
+            }
+
+            error.clear();
+            const std::filesystem::file_time_type modified =
+                std::filesystem::last_write_time(path, error);
+            if (error)
+            {
+                failure = "could not inspect " + toUtf8(path.wstring()) +
+                    " modified time (" + filesystemErrorForLog(error) + ")";
+                return std::nullopt;
+            }
+
+            return RootBuilderLaunchCacheFileStamp{
+                size,
+                static_cast<std::int64_t>(modified.time_since_epoch().count())
+            };
+        }
+
+        void rememberRootBuilderLaunchCacheDirectory(
+            RootBuilderLaunchCacheDesiredState& state,
+            const std::filesystem::path& relativeDirectory)
+        {
+            const std::filesystem::path normalized = relativeDirectory.lexically_normal();
+            if (normalized.empty() || normalized == L".")
+            {
+                return;
+            }
+
+            std::filesystem::path current;
+            for (const std::filesystem::path& part : normalized)
+            {
+                const std::wstring text = part.wstring();
+                if (text.empty() || text == L"." || text == L"\\" || text == L"/")
+                {
+                    continue;
+                }
+
+                current /= part;
+                state.directories[rootBuilderLaunchCacheRelativeKey(current)] = current;
+            }
+        }
+
+        bool addRootBuilderLaunchCacheDesiredFile(
+            RootBuilderLaunchCacheDesiredState& state,
+            const std::filesystem::path& source,
+            const std::filesystem::path& relativeDestination,
             std::string& failure)
         {
             const PathSafetyService pathSafety;
-            const PathSafetyResult destinationRootSafety =
-                pathSafety.validateWritePath(allowedDestinationRoot, destinationDirectory);
-            if (!destinationRootSafety.safe())
+            const PathSafetyResult relativeSafety =
+                pathSafety.validateRelativePath(relativeDestination);
+            if (!relativeSafety.safe())
             {
-                failure = "unsafe launch cache destination " + toUtf8(destinationDirectory.wstring()) +
-                    " (" + pathSafetyErrorForLog(destinationRootSafety) + ")";
+                failure = "unsafe launch cache relative path " +
+                    toUtf8(relativeDestination.wstring()) +
+                    " (" + pathSafetyErrorForLog(relativeSafety) + ")";
                 return false;
             }
+
+            const std::optional<RootBuilderLaunchCacheFileStamp> stamp =
+                rootBuilderLaunchCacheFileStamp(source, failure);
+            if (!stamp.has_value())
+            {
+                return false;
+            }
+
+            const std::filesystem::path normalizedRelative =
+                relativeDestination.lexically_normal();
+            rememberRootBuilderLaunchCacheDirectory(state, normalizedRelative.parent_path());
+            state.files[rootBuilderLaunchCacheRelativeKey(normalizedRelative)] =
+                RootBuilderLaunchCacheDesiredFile{
+                    normalizedRelative,
+                    std::filesystem::absolute(source).lexically_normal(),
+                    stamp.value()
+                };
+            return true;
+        }
+
+        bool collectRootBuilderLaunchCacheDirectoryOverlay(
+            const std::filesystem::path& sourceDirectory,
+            const std::filesystem::path& destinationRelativeRoot,
+            RootBuilderLaunchCacheDesiredState& state,
+            bool skipDataSubtree,
+            const std::filesystem::path& dataDirectory,
+            std::string& failure)
+        {
+            const PathSafetyService pathSafety;
+            rememberRootBuilderLaunchCacheDirectory(state, destinationRelativeRoot);
 
             std::error_code error;
-            std::filesystem::create_directories(destinationDirectory, error);
-            if (error)
-            {
-                failure = "could not create " + toUtf8(destinationDirectory.wstring()) +
-                    " (" + filesystemErrorForLog(error) + ")";
-                return false;
-            }
-
             std::filesystem::recursive_directory_iterator iterator(
                 sourceDirectory,
                 std::filesystem::directory_options::skip_permission_denied,
@@ -971,59 +1256,58 @@ namespace fluxora
                     continue;
                 }
 
-                const std::filesystem::path destination = destinationDirectory / relative.value();
+                const std::filesystem::path destinationRelative =
+                    (destinationRelativeRoot / relative.value()).lexically_normal();
                 error.clear();
-                if (iterator->is_directory(error))
-                {
-                    const PathSafetyResult destinationSafety =
-                        pathSafety.validateWritePath(allowedDestinationRoot, destination);
-                    if (!destinationSafety.safe())
-                    {
-                        failure = "unsafe launch cache destination " + toUtf8(destination.wstring()) +
-                            " (" + pathSafetyErrorForLog(destinationSafety) + ")";
-                        return false;
-                    }
-                    std::filesystem::create_directories(destination, error);
-                }
-                else if (iterator->is_regular_file(error))
-                {
-                    std::error_code sizeError;
-                    const std::uintmax_t bytes = std::filesystem::file_size(current, sizeError);
-                    if (sizeError)
-                    {
-                        failure = "could not inspect " + toUtf8(current.wstring()) +
-                            " size (" + filesystemErrorForLog(sizeError) + ")";
-                        return false;
-                    }
-
-                    PathSafetyWriteOptions writeOptions;
-                    writeOptions.requiredBytes = bytes;
-                    const PathSafetyResult destinationSafety =
-                        pathSafety.validateWritePath(allowedDestinationRoot, destination, writeOptions);
-                    if (!destinationSafety.safe())
-                    {
-                        failure = "unsafe launch cache destination " + toUtf8(destination.wstring()) +
-                            " (" + pathSafetyErrorForLog(destinationSafety) + ")";
-                        return false;
-                    }
-
-                    std::filesystem::create_directories(destination.parent_path(), error);
-                    if (!error)
-                    {
-                        std::filesystem::copy_file(
-                            current,
-                            destination,
-                            std::filesystem::copy_options::overwrite_existing,
-                            error);
-                    }
-                }
-
+                const bool isDirectoryEntry = iterator->is_directory(error);
                 if (error)
                 {
-                    failure = "could not copy " + toUtf8(current.wstring()) +
-                        " to " + toUtf8(destination.wstring()) +
+                    failure = "could not inspect " + toUtf8(current.wstring()) +
                         " (" + filesystemErrorForLog(error) + ")";
                     return false;
+                }
+
+                if (skipDataSubtree && firstPathComponentEquals(destinationRelative, dataDirectory.wstring()))
+                {
+                    if (isDirectoryEntry)
+                    {
+                        iterator.disable_recursion_pending();
+                    }
+
+                    iterator.increment(error);
+                    if (error)
+                    {
+                        failure = "could not continue enumerating " + toUtf8(sourceDirectory.wstring()) +
+                            " (" + filesystemErrorForLog(error) + ")";
+                        return false;
+                    }
+                    continue;
+                }
+
+                if (isDirectoryEntry)
+                {
+                    rememberRootBuilderLaunchCacheDirectory(state, destinationRelative);
+                }
+                else
+                {
+                    error.clear();
+                    const bool isRegularFile = iterator->is_regular_file(error);
+                    if (error)
+                    {
+                        failure = "could not inspect " + toUtf8(current.wstring()) +
+                            " (" + filesystemErrorForLog(error) + ")";
+                        return false;
+                    }
+
+                    if (isRegularFile &&
+                        !addRootBuilderLaunchCacheDesiredFile(
+                            state,
+                            current,
+                            destinationRelative,
+                            failure))
+                    {
+                        return false;
+                    }
                 }
 
                 iterator.increment(error);
@@ -1039,10 +1323,10 @@ namespace fluxora
             return true;
         }
 
-        std::size_t materializeEarlyLaunchDataDirectories(
+        bool collectEarlyRootBuilderLaunchCacheDataDirectories(
             const ProjectExecutableContext& context,
             const std::vector<std::filesystem::path>& activeMods,
-            const std::filesystem::path& cacheDataDirectory,
+            RootBuilderLaunchCacheDesiredState& state,
             std::string& failure)
         {
             std::vector<std::wstring> earlyRuntimeDirectories;
@@ -1058,7 +1342,6 @@ namespace fluxora
                 }
             }
 
-            std::size_t copiedRoots = 0;
             for (const std::filesystem::path& dataRoot : dataOverlayRoots(context, activeMods))
             {
                 for (const std::wstring& runtimeDirectoryName : earlyRuntimeDirectories)
@@ -1070,32 +1353,659 @@ namespace fluxora
                         continue;
                     }
 
-                    const std::filesystem::path destination =
-                        cacheDataDirectory / std::filesystem::path(runtimeDirectoryName);
-                    if (!copyDirectoryOverlay(source.value(), destination, cacheDataDirectory, failure))
+                    const std::filesystem::path destinationRelative =
+                        dataDirectoryPath(context) / std::filesystem::path(runtimeDirectoryName);
+                    if (!collectRootBuilderLaunchCacheDirectoryOverlay(
+                        source.value(),
+                        destinationRelative,
+                        state,
+                        false,
+                        dataDirectoryPath(context),
+                        failure))
                     {
-                        return copiedRoots;
+                        return false;
                     }
 
-                    ++copiedRoots;
+                    ++state.materializedEarlyDataRoots;
                 }
             }
 
-            return copiedRoots;
+            return true;
         }
 
-        struct RootBuilderBackingLocation
+        std::optional<RootBuilderLaunchCacheDesiredState> collectRootBuilderLaunchCacheDesiredState(
+            const ProjectExecutableContext& context,
+            const RootBuilderBackingLocation& location,
+            bool executableIsUnderData,
+            std::string& failure)
         {
-            std::filesystem::path modDirectory;
-            std::filesystem::path rootDirectory;
-            std::filesystem::path relativePath;
-        };
+            RootBuilderLaunchCacheDesiredState state;
+            const std::vector<std::filesystem::path> activeMods = activeProfileModPaths(context);
+            state.revision = rootBuilderLaunchCacheRevision(
+                context,
+                location,
+                activeMods,
+                executableIsUnderData);
 
-        struct RootBuilderLaunchCache
+            const PathSafetyService pathSafety;
+            if (!context.gamePath.empty())
+            {
+                std::error_code error;
+                std::filesystem::directory_iterator gameIterator(
+                    context.gamePath,
+                    std::filesystem::directory_options::skip_permission_denied,
+                    error);
+                const std::filesystem::directory_iterator gameEnd;
+                if (error)
+                {
+                    failure = "could not enumerate " + toUtf8(context.gamePath.wstring()) +
+                        " (" + filesystemErrorForLog(error) + ")";
+                    return std::nullopt;
+                }
+
+                while (!error && gameIterator != gameEnd)
+                {
+                    const std::filesystem::path current = gameIterator->path();
+                    const PathSafetyResult sourceSafety =
+                        pathSafety.validateContainedPath(context.gamePath, current);
+                    if (!sourceSafety.safe())
+                    {
+                        failure = "unsafe launch cache source " + toUtf8(current.wstring()) +
+                            " (" + pathSafetyErrorForLog(sourceSafety) + ")";
+                        return std::nullopt;
+                    }
+
+                    error.clear();
+                    if (gameIterator->is_regular_file(error))
+                    {
+                        if (!addRootBuilderLaunchCacheDesiredFile(
+                            state,
+                            current,
+                            current.filename(),
+                            failure))
+                        {
+                            return std::nullopt;
+                        }
+                    }
+                    else if (error)
+                    {
+                        failure = "could not inspect " + toUtf8(current.wstring()) +
+                            " (" + filesystemErrorForLog(error) + ")";
+                        return std::nullopt;
+                    }
+
+                    gameIterator.increment(error);
+                }
+
+                if (error)
+                {
+                    failure = "could not continue enumerating " + toUtf8(context.gamePath.wstring()) +
+                        " (" + filesystemErrorForLog(error) + ")";
+                    return std::nullopt;
+                }
+
+                rememberRootBuilderLaunchCacheDirectory(state, dataDirectoryPath(context));
+            }
+
+            if (!executableIsUnderData &&
+                !collectEarlyRootBuilderLaunchCacheDataDirectories(context, activeMods, state, failure))
+            {
+                return std::nullopt;
+            }
+
+            std::vector<std::filesystem::path> overlayRoots;
+            for (const std::filesystem::path& mod : activeMods)
+            {
+                const std::filesystem::path root = rootBuilderDirectory(context, mod);
+                if (isDirectory(root))
+                {
+                    overlayRoots.push_back(root);
+                }
+            }
+            if (!context.overwriteDirectory.empty())
+            {
+                const std::filesystem::path root = rootBuilderDirectory(context, context.overwriteDirectory);
+                if (isDirectory(root))
+                {
+                    overlayRoots.push_back(root);
+                }
+            }
+
+            for (const std::filesystem::path& overlayRoot : overlayRoots)
+            {
+                if (!collectRootBuilderLaunchCacheDirectoryOverlay(
+                    overlayRoot,
+                    {},
+                    state,
+                    !executableIsUnderData,
+                    dataDirectoryPath(context),
+                    failure))
+                {
+                    return std::nullopt;
+                }
+            }
+
+            return state;
+        }
+
+        RootBuilderLaunchCacheManifestReadResult readRootBuilderLaunchCacheManifest(
+            const std::filesystem::path& manifestPath,
+            Logger& logger)
         {
-            std::filesystem::path executablePath;
-            std::filesystem::path rootDirectory;
-        };
+            std::error_code existsError;
+            if (!std::filesystem::exists(manifestPath, existsError))
+            {
+                return RootBuilderLaunchCacheManifestReadResult{};
+            }
+            if (existsError)
+            {
+                return RootBuilderLaunchCacheManifestReadResult{
+                    RootBuilderLaunchCacheManifestStatus::Corrupt,
+                    std::nullopt,
+                    "manifest existence could not be inspected (" + filesystemErrorForLog(existsError) + ")"
+                };
+            }
+
+            try
+            {
+                static_cast<void>(AtomicFileStore().recoverFile(
+                    manifestPath,
+                    AtomicFileWriteOptions{
+                        L"Root Builder launch cache manifest",
+                        ProjectStateValidation::JsonObject
+                    },
+                    &logger));
+
+                const JsonValue root = JsonReader::parse(fromUtf8(readTextFile(manifestPath)));
+                if (!root.isObject())
+                {
+                    throw std::runtime_error("root is not an object");
+                }
+
+                const JsonValue* schemaVersion = root.find(L"schemaVersion");
+                const std::optional<std::uintmax_t> schema =
+                    schemaVersion == nullptr ? std::nullopt : parseUnsignedJsonNumber(*schemaVersion);
+                if (!schema.has_value() ||
+                    schema.value() != static_cast<std::uintmax_t>(rootBuilderLaunchCacheManifestSchemaVersion))
+                {
+                    throw std::runtime_error("schema version is unsupported");
+                }
+
+                const JsonValue* revisionValue = root.find(L"revision");
+                if (revisionValue == nullptr || !revisionValue->isString())
+                {
+                    throw std::runtime_error("revision is missing");
+                }
+
+                const JsonValue* filesValue = root.find(L"files");
+                if (filesValue == nullptr || !filesValue->isArray())
+                {
+                    throw std::runtime_error("files are missing");
+                }
+
+                RootBuilderLaunchCacheManifest manifest;
+                manifest.revision = revisionValue->asString();
+                for (const JsonValue& item : filesValue->asArray())
+                {
+                    if (!item.isObject())
+                    {
+                        throw std::runtime_error("file item is not an object");
+                    }
+
+                    const JsonValue* relativePathValue = item.find(L"relativePath");
+                    const JsonValue* sourcePathValue = item.find(L"sourcePath");
+                    const JsonValue* sizeValue = item.find(L"size");
+                    const JsonValue* modifiedValue = item.find(L"mtimeTicks");
+                    if (relativePathValue == nullptr || !relativePathValue->isString() ||
+                        sourcePathValue == nullptr || !sourcePathValue->isString() ||
+                        sizeValue == nullptr ||
+                        modifiedValue == nullptr)
+                    {
+                        throw std::runtime_error("file item has missing fields");
+                    }
+
+                    const std::filesystem::path relativePath(relativePathValue->asString());
+                    if (!isUsableRelativePath(relativePath))
+                    {
+                        throw std::runtime_error("file item has unsafe relative path");
+                    }
+
+                    const std::optional<std::uintmax_t> size = parseUnsignedJsonNumber(*sizeValue);
+                    const std::optional<std::int64_t> modified = parseSignedJsonNumber(*modifiedValue);
+                    if (!size.has_value() || !modified.has_value())
+                    {
+                        throw std::runtime_error("file item has invalid stamp");
+                    }
+
+                    manifest.files[rootBuilderLaunchCacheRelativeKey(relativePath)] =
+                        RootBuilderLaunchCacheManifestFile{
+                            relativePath.lexically_normal(),
+                            std::filesystem::path(sourcePathValue->asString()),
+                            RootBuilderLaunchCacheFileStamp{
+                                size.value(),
+                                modified.value()
+                            }
+                        };
+                }
+
+                return RootBuilderLaunchCacheManifestReadResult{
+                    RootBuilderLaunchCacheManifestStatus::Loaded,
+                    std::move(manifest),
+                    {}
+                };
+            }
+            catch (const std::exception& exception)
+            {
+                return RootBuilderLaunchCacheManifestReadResult{
+                    RootBuilderLaunchCacheManifestStatus::Corrupt,
+                    std::nullopt,
+                    exception.what()
+                };
+            }
+        }
+
+        void writeRootBuilderLaunchCacheManifest(
+            const std::filesystem::path& manifestPath,
+            const RootBuilderLaunchCacheDesiredState& state)
+        {
+            JsonWriter writer;
+            writer.beginObject()
+                .field(L"schemaVersion", rootBuilderLaunchCacheManifestSchemaVersion)
+                .field(L"revision", state.revision)
+                .key(L"files")
+                .beginArray();
+            for (const auto& [key, file] : state.files)
+            {
+                static_cast<void>(key);
+                writer.beginObject()
+                    .field(L"relativePath", file.relativePath.generic_wstring())
+                    .field(L"sourcePath", file.sourcePath.wstring())
+                    .field(L"size", file.stamp.size)
+                    .key(L"mtimeTicks")
+                    .numberValue(std::to_wstring(file.stamp.modifiedTicks))
+                    .endObject();
+            }
+            writer.endArray().endObject();
+
+            AtomicFileStore().writeTextFile(
+                manifestPath,
+                toUtf8(writer.str()),
+                AtomicFileWriteOptions{
+                    L"Root Builder launch cache manifest",
+                    ProjectStateValidation::JsonObject,
+                    {},
+                    false
+                });
+        }
+
+        bool sameRootBuilderLaunchCacheManifestFile(
+            const RootBuilderLaunchCacheManifestFile& previous,
+            const RootBuilderLaunchCacheDesiredFile& desired)
+        {
+            return comparablePathText(previous.sourcePath) == comparablePathText(desired.sourcePath) &&
+                previous.stamp.size == desired.stamp.size &&
+                previous.stamp.modifiedTicks == desired.stamp.modifiedTicks;
+        }
+
+        bool rootBuilderLaunchCacheDestinationLooksReusable(
+            const std::filesystem::path& destination,
+            const RootBuilderLaunchCacheDesiredFile& desired)
+        {
+            std::error_code error;
+            if (!std::filesystem::is_regular_file(destination, error) || error)
+            {
+                return false;
+            }
+
+            error.clear();
+            const std::uintmax_t size = std::filesystem::file_size(destination, error);
+            return !error && size == desired.stamp.size;
+        }
+
+        bool removeExistingRootBuilderLaunchCachePath(
+            const std::filesystem::path& path,
+            std::string& failure)
+        {
+            std::error_code error;
+            const std::filesystem::file_status status = std::filesystem::symlink_status(path, error);
+            if (error)
+            {
+                if (!std::filesystem::exists(path))
+                {
+                    return true;
+                }
+
+                failure = "could not inspect existing launch cache path " + toUtf8(path.wstring()) +
+                    " (" + filesystemErrorForLog(error) + ")";
+                return false;
+            }
+
+            if (!std::filesystem::exists(status))
+            {
+                return true;
+            }
+
+            if (std::filesystem::is_directory(status) && !std::filesystem::is_symlink(status))
+            {
+                std::filesystem::remove_all(path, error);
+            }
+            else
+            {
+                std::filesystem::remove(path, error);
+            }
+
+            if (error)
+            {
+                failure = "could not remove stale launch cache path " + toUtf8(path.wstring()) +
+                    " (" + filesystemErrorForLog(error) + ")";
+                return false;
+            }
+
+            return true;
+        }
+
+        bool removeStaleRootBuilderLaunchCacheFiles(
+            const std::filesystem::path& cacheRoot,
+            const std::filesystem::path& manifestPath,
+            const RootBuilderLaunchCacheDesiredState& state,
+            RootBuilderLaunchCacheApplyStats& stats,
+            std::string& failure)
+        {
+            if (!isDirectory(cacheRoot))
+            {
+                return true;
+            }
+
+            const PathSafetyService pathSafety;
+            std::error_code error;
+            std::filesystem::recursive_directory_iterator iterator(
+                cacheRoot,
+                std::filesystem::directory_options::skip_permission_denied,
+                error);
+            const std::filesystem::recursive_directory_iterator end;
+            if (error)
+            {
+                failure = "could not enumerate launch cache " + toUtf8(cacheRoot.wstring()) +
+                    " (" + filesystemErrorForLog(error) + ")";
+                return false;
+            }
+
+            while (!error && iterator != end)
+            {
+                const std::filesystem::path current = iterator->path();
+                if (comparablePathText(current) == comparablePathText(manifestPath))
+                {
+                    iterator.increment(error);
+                    continue;
+                }
+
+                error.clear();
+                const bool isFile = iterator->is_regular_file(error);
+                if (error)
+                {
+                    failure = "could not inspect launch cache path " + toUtf8(current.wstring()) +
+                        " (" + filesystemErrorForLog(error) + ")";
+                    return false;
+                }
+
+                if (isFile)
+                {
+                    const std::optional<std::filesystem::path> relative =
+                        relativePathIfInsideLexical(current, cacheRoot);
+                    if (!relative.has_value() ||
+                        state.files.find(rootBuilderLaunchCacheRelativeKey(relative.value())) == state.files.end())
+                    {
+                        const PathSafetyResult destinationSafety =
+                            pathSafety.validateWritePath(cacheRoot, current);
+                        if (!destinationSafety.safe())
+                        {
+                            failure = "unsafe stale launch cache path " + toUtf8(current.wstring()) +
+                                " (" + pathSafetyErrorForLog(destinationSafety) + ")";
+                            return false;
+                        }
+
+                        if (!removeExistingRootBuilderLaunchCachePath(current, failure))
+                        {
+                            return false;
+                        }
+                        ++stats.deletedFiles;
+                    }
+                }
+
+                iterator.increment(error);
+            }
+
+            if (error)
+            {
+                failure = "could not continue enumerating launch cache " + toUtf8(cacheRoot.wstring()) +
+                    " (" + filesystemErrorForLog(error) + ")";
+                return false;
+            }
+
+            return true;
+        }
+
+        bool removeStaleRootBuilderLaunchCacheDirectories(
+            const std::filesystem::path& cacheRoot,
+            const RootBuilderLaunchCacheDesiredState& state,
+            RootBuilderLaunchCacheApplyStats& stats,
+            std::string& failure)
+        {
+            if (!isDirectory(cacheRoot))
+            {
+                return true;
+            }
+
+            std::vector<std::filesystem::path> directories;
+            std::error_code error;
+            std::filesystem::recursive_directory_iterator iterator(
+                cacheRoot,
+                std::filesystem::directory_options::skip_permission_denied,
+                error);
+            const std::filesystem::recursive_directory_iterator end;
+            while (!error && iterator != end)
+            {
+                error.clear();
+                if (iterator->is_directory(error))
+                {
+                    directories.push_back(iterator->path());
+                }
+                if (error)
+                {
+                    failure = "could not inspect launch cache directory " +
+                        toUtf8(iterator->path().wstring()) +
+                        " (" + filesystemErrorForLog(error) + ")";
+                    return false;
+                }
+                iterator.increment(error);
+            }
+            if (error)
+            {
+                failure = "could not continue enumerating launch cache directories under " +
+                    toUtf8(cacheRoot.wstring()) + " (" + filesystemErrorForLog(error) + ")";
+                return false;
+            }
+
+            std::sort(
+                directories.begin(),
+                directories.end(),
+                [](const std::filesystem::path& left, const std::filesystem::path& right)
+                {
+                    return left.wstring().size() > right.wstring().size();
+                });
+
+            for (const std::filesystem::path& directory : directories)
+            {
+                const std::optional<std::filesystem::path> relative =
+                    relativePathIfInsideLexical(directory, cacheRoot);
+                if (!relative.has_value() || relative->empty())
+                {
+                    continue;
+                }
+
+                if (state.directories.find(rootBuilderLaunchCacheRelativeKey(relative.value())) !=
+                    state.directories.end())
+                {
+                    continue;
+                }
+
+                error.clear();
+                if (std::filesystem::is_empty(directory, error))
+                {
+                    std::filesystem::remove(directory, error);
+                    if (!error)
+                    {
+                        ++stats.deletedDirectories;
+                    }
+                }
+                if (error && std::filesystem::exists(directory))
+                {
+                    failure = "could not remove stale launch cache directory " +
+                        toUtf8(directory.wstring()) + " (" + filesystemErrorForLog(error) + ")";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        bool copyRootBuilderLaunchCacheFile(
+            const std::filesystem::path& cacheRoot,
+            const RootBuilderLaunchCacheDesiredFile& desired,
+            std::string& failure)
+        {
+            const PathSafetyService pathSafety;
+            const std::filesystem::path destination = cacheRoot / desired.relativePath;
+            PathSafetyWriteOptions writeOptions;
+            writeOptions.requiredBytes = desired.stamp.size;
+            const PathSafetyResult destinationSafety =
+                pathSafety.validateWritePath(cacheRoot, destination, writeOptions);
+            if (!destinationSafety.safe())
+            {
+                failure = "unsafe launch cache destination " + toUtf8(destination.wstring()) +
+                    " (" + pathSafetyErrorForLog(destinationSafety) + ")";
+                return false;
+            }
+
+            std::error_code error;
+            std::filesystem::create_directories(destination.parent_path(), error);
+            if (error)
+            {
+                failure = "could not create launch cache directory " +
+                    toUtf8(destination.parent_path().wstring()) +
+                    " (" + filesystemErrorForLog(error) + ")";
+                return false;
+            }
+
+            if (!removeExistingRootBuilderLaunchCachePath(destination, failure))
+            {
+                return false;
+            }
+
+            std::filesystem::copy_file(desired.sourcePath, destination, std::filesystem::copy_options::none, error);
+            if (error)
+            {
+                failure = "could not copy " + toUtf8(desired.sourcePath.wstring()) +
+                    " to " + toUtf8(destination.wstring()) +
+                    " (" + filesystemErrorForLog(error) + ")";
+                return false;
+            }
+
+            error.clear();
+            std::filesystem::last_write_time(
+                destination,
+                std::filesystem::file_time_type(
+                    std::filesystem::file_time_type::duration(desired.stamp.modifiedTicks)),
+                error);
+            if (error)
+            {
+                failure = "could not stamp launch cache file " + toUtf8(destination.wstring()) +
+                    " (" + filesystemErrorForLog(error) + ")";
+                return false;
+            }
+
+            return true;
+        }
+
+        bool synchronizeRootBuilderLaunchCache(
+            const std::filesystem::path& cacheRoot,
+            const std::filesystem::path& manifestPath,
+            const RootBuilderLaunchCacheDesiredState& state,
+            const std::optional<RootBuilderLaunchCacheManifest>& previousManifest,
+            RootBuilderLaunchCacheApplyStats& stats,
+            std::string& failure)
+        {
+            if (!removeStaleRootBuilderLaunchCacheFiles(cacheRoot, manifestPath, state, stats, failure))
+            {
+                return false;
+            }
+
+            std::error_code error;
+            for (const auto& [key, directory] : state.directories)
+            {
+                static_cast<void>(key);
+                const std::filesystem::path destination = cacheRoot / directory;
+                const PathSafetyResult destinationSafety =
+                    PathSafetyService().validateWritePath(cacheRoot, destination);
+                if (!destinationSafety.safe())
+                {
+                    failure = "unsafe launch cache directory " + toUtf8(destination.wstring()) +
+                        " (" + pathSafetyErrorForLog(destinationSafety) + ")";
+                    return false;
+                }
+
+                std::filesystem::create_directories(destination, error);
+                if (error)
+                {
+                    failure = "could not create launch cache directory " +
+                        toUtf8(destination.wstring()) +
+                        " (" + filesystemErrorForLog(error) + ")";
+                    return false;
+                }
+            }
+
+            for (const auto& [key, desired] : state.files)
+            {
+                bool reusable = false;
+                if (previousManifest.has_value())
+                {
+                    const auto previous = previousManifest->files.find(key);
+                    reusable = previous != previousManifest->files.end() &&
+                        sameRootBuilderLaunchCacheManifestFile(previous->second, desired) &&
+                        rootBuilderLaunchCacheDestinationLooksReusable(cacheRoot / desired.relativePath, desired);
+                }
+
+                if (reusable)
+                {
+                    ++stats.reusedFiles;
+                    continue;
+                }
+
+                if (!copyRootBuilderLaunchCacheFile(cacheRoot, desired, failure))
+                {
+                    return false;
+                }
+                ++stats.copiedFiles;
+            }
+
+            if (!removeStaleRootBuilderLaunchCacheDirectories(cacheRoot, state, stats, failure))
+            {
+                return false;
+            }
+
+            try
+            {
+                writeRootBuilderLaunchCacheManifest(manifestPath, state);
+            }
+            catch (const std::exception& exception)
+            {
+                failure = "could not write launch cache manifest " + toUtf8(manifestPath.wstring()) +
+                    " (" + exception.what() + ")";
+                return false;
+            }
+
+            return true;
+        }
 
         std::optional<RootBuilderBackingLocation> rootBuilderBackingLocation(
             const ProjectExecutableContext& context,
@@ -1194,13 +2104,28 @@ namespace fluxora
                 return std::nullopt;
             }
 
+            std::string failure;
+            const std::optional<RootBuilderLaunchCacheDesiredState> desiredState =
+                collectRootBuilderLaunchCacheDesiredState(
+                    context,
+                    location.value(),
+                    executableIsUnderData,
+                    failure);
+            if (!desiredState.has_value())
+            {
+                logger.write(
+                    LogLevel::Warning,
+                    "Root Builder launch cache could not be prepared: " + failure + ".");
+                return std::nullopt;
+            }
+
             std::error_code error;
-            std::filesystem::remove_all(cacheRoot, error);
+            const bool cacheRootExisted = std::filesystem::exists(cacheRoot, error);
             if (error)
             {
                 logger.write(
                     LogLevel::Warning,
-                    "Root Builder launch cache could not be cleared: " +
+                    "Root Builder launch cache directory could not be inspected: " +
                         toUtf8(cacheRoot.wstring()) + " (" + filesystemErrorForLog(error) + ").");
                 return std::nullopt;
             }
@@ -1216,289 +2141,63 @@ namespace fluxora
                 return std::nullopt;
             }
 
-            bool failed = false;
-            std::string failure;
-            if (!context.gamePath.empty())
+            const std::filesystem::path manifestPath = rootBuilderLaunchCacheManifestPath(cacheRoot);
+            RootBuilderLaunchCacheManifestReadResult manifestRead =
+                readRootBuilderLaunchCacheManifest(manifestPath, logger);
+            RootBuilderLaunchCacheApplyStats stats;
+            if (manifestRead.status == RootBuilderLaunchCacheManifestStatus::Corrupt ||
+                (manifestRead.status == RootBuilderLaunchCacheManifestStatus::Missing && cacheRootExisted))
             {
-                std::filesystem::directory_iterator gameIterator(
-                    context.gamePath,
-                    std::filesystem::directory_options::skip_permission_denied,
-                    error);
-                const std::filesystem::directory_iterator gameEnd;
+                stats.rebuilt = true;
+                const std::string rebuildReason =
+                    manifestRead.status == RootBuilderLaunchCacheManifestStatus::Corrupt
+                        ? ("manifest was invalid: " + manifestRead.reason)
+                        : "manifest was missing";
+                logger.write(
+                    LogLevel::Info,
+                    "Root Builder launch cache will be rebuilt because " + rebuildReason + ".");
+
+                std::filesystem::remove_all(cacheRoot, error);
                 if (error)
-                {
-                    failed = true;
-                    failure = "could not enumerate " + toUtf8(context.gamePath.wstring()) +
-                        " (" + filesystemErrorForLog(error) + ")";
-                }
-
-                while (!failed && !error && gameIterator != gameEnd)
-                {
-                    const std::filesystem::path current = gameIterator->path();
-                    error.clear();
-                    if (gameIterator->is_regular_file(error))
-                    {
-                        const std::filesystem::path destination = cacheRoot / current.filename();
-                        std::error_code sizeError;
-                        const std::uintmax_t bytes = std::filesystem::file_size(current, sizeError);
-                        if (sizeError)
-                        {
-                            failed = true;
-                            failure = "could not inspect " + toUtf8(current.wstring()) +
-                                " size (" + filesystemErrorForLog(sizeError) + ")";
-                            break;
-                        }
-
-                        PathSafetyWriteOptions writeOptions;
-                        writeOptions.requiredBytes = bytes;
-                        const PathSafetyResult destinationSafety =
-                            pathSafety.validateWritePath(cacheRoot, destination, writeOptions);
-                        if (!destinationSafety.safe())
-                        {
-                            failed = true;
-                            failure = "unsafe launch cache destination " + toUtf8(destination.wstring()) +
-                                " (" + pathSafetyErrorForLog(destinationSafety) + ")";
-                            break;
-                        }
-
-                        std::filesystem::create_directories(destination.parent_path(), error);
-                        if (!error)
-                        {
-                            std::filesystem::copy_file(
-                                current,
-                                destination,
-                                std::filesystem::copy_options::overwrite_existing,
-                                error);
-                        }
-                        if (error)
-                        {
-                            failed = true;
-                            failure = "could not copy " + toUtf8(current.wstring()) +
-                                " to " + toUtf8(destination.wstring()) +
-                                " (" + filesystemErrorForLog(error) + ")";
-                            break;
-                        }
-                    }
-                    else if (error)
-                    {
-                        failed = true;
-                        failure = "could not inspect " + toUtf8(current.wstring()) +
-                            " (" + filesystemErrorForLog(error) + ")";
-                        break;
-                    }
-
-                    gameIterator.increment(error);
-                    if (error)
-                    {
-                        failed = true;
-                        failure = "could not continue enumerating " + toUtf8(context.gamePath.wstring()) +
-                            " (" + filesystemErrorForLog(error) + ")";
-                    }
-                }
-
-                error.clear();
-                const std::filesystem::path cacheDataDirectory = cacheRoot / dataDirectoryPath(context);
-                const PathSafetyResult cacheDataSafety =
-                    pathSafety.validateWritePath(cacheRoot, cacheDataDirectory);
-                if (!cacheDataSafety.safe())
-                {
-                    failed = true;
-                    failure = "unsafe launch cache Data directory " +
-                        toUtf8(cacheDataDirectory.wstring()) +
-                        " (" + pathSafetyErrorForLog(cacheDataSafety) + ")";
-                }
-                else
-                {
-                    std::filesystem::create_directories(cacheDataDirectory, error);
-                }
-                if (error)
-                {
-                    failed = true;
-                    failure = "could not create launch cache Data directory under " +
-                        toUtf8(cacheRoot.wstring()) +
-                        " (" + filesystemErrorForLog(error) + ")";
-                }
-            }
-
-            const std::vector<std::filesystem::path> activeMods = activeProfileModPaths(context);
-            std::vector<std::filesystem::path> overlayRoots;
-            for (const std::filesystem::path& mod : activeMods)
-            {
-                const std::filesystem::path root = rootBuilderDirectory(context, mod);
-                if (isDirectory(root))
-                {
-                    overlayRoots.push_back(root);
-                }
-            }
-            if (!context.overwriteDirectory.empty())
-            {
-                const std::filesystem::path root = rootBuilderDirectory(context, context.overwriteDirectory);
-                if (isDirectory(root))
-                {
-                    overlayRoots.push_back(root);
-                }
-            }
-
-            if (!failed && !executableIsUnderData)
-            {
-                const std::size_t materializedRoots = materializeEarlyLaunchDataDirectories(
-                    context,
-                    activeMods,
-                    cacheRoot / dataDirectoryPath(context),
-                    failure);
-                if (!failure.empty())
-                {
-                    failed = true;
-                }
-                else if (materializedRoots > 0)
                 {
                     logger.write(
-                        LogLevel::Info,
-                        "Root Builder launch cache materialized early Data runtime directories: " +
-                            std::to_string(materializedRoots) + ".");
-                }
-            }
-
-            for (const std::filesystem::path& overlayRoot : overlayRoots)
-            {
-                if (failed)
-                {
-                    break;
+                        LogLevel::Warning,
+                        "Root Builder launch cache could not be cleared for rebuild: " +
+                            toUtf8(cacheRoot.wstring()) + " (" + filesystemErrorForLog(error) + ").");
+                    return std::nullopt;
                 }
 
                 error.clear();
-                std::filesystem::recursive_directory_iterator iterator(
-                    overlayRoot,
-                    std::filesystem::directory_options::skip_permission_denied,
-                    error);
-                const std::filesystem::recursive_directory_iterator end;
+                std::filesystem::create_directories(cacheRoot, error);
                 if (error)
                 {
-                    failed = true;
-                    failure = "could not enumerate " + toUtf8(overlayRoot.wstring()) +
-                        " (" + filesystemErrorForLog(error) + ")";
-                    break;
+                    logger.write(
+                        LogLevel::Warning,
+                        "Root Builder launch cache directory could not be recreated: " +
+                            toUtf8(cacheRoot.wstring()) + " (" + filesystemErrorForLog(error) + ").");
+                    return std::nullopt;
                 }
 
-                while (!error && iterator != end)
-                {
-                    const std::filesystem::path current = iterator->path();
-                    const PathSafetyResult sourceSafety =
-                        pathSafety.validateContainedPath(overlayRoot, current);
-                    if (!sourceSafety.safe())
-                    {
-                        failed = true;
-                        failure = "unsafe launch cache source " + toUtf8(current.wstring()) +
-                            " (" + pathSafetyErrorForLog(sourceSafety) + ")";
-                        break;
-                    }
-
-                    const std::optional<std::filesystem::path> relative =
-                        relativePathIfInsideLexical(current, overlayRoot);
-                    if (!relative.has_value() || relative->empty())
-                    {
-                        iterator.increment(error);
-                        continue;
-                    }
-
-                    if (!executableIsUnderData &&
-                        firstPathComponentEquals(*relative, dataDirectoryPath(context).wstring()))
-                    {
-                        error.clear();
-                        if (iterator->is_directory(error))
-                        {
-                            iterator.disable_recursion_pending();
-                        }
-                        if (error)
-                        {
-                            failed = true;
-                            failure = "could not inspect " + toUtf8(current.wstring()) +
-                                " (" + filesystemErrorForLog(error) + ")";
-                            break;
-                        }
-
-                        iterator.increment(error);
-                        if (error)
-                        {
-                            failed = true;
-                            failure = "could not continue enumerating " + toUtf8(overlayRoot.wstring()) +
-                                " (" + filesystemErrorForLog(error) + ")";
-                        }
-                        continue;
-                    }
-
-                    const std::filesystem::path destination = cacheRoot / relative.value();
-                    error.clear();
-                    if (iterator->is_directory(error))
-                    {
-                        const PathSafetyResult destinationSafety =
-                            pathSafety.validateWritePath(cacheRoot, destination);
-                        if (!destinationSafety.safe())
-                        {
-                            failed = true;
-                            failure = "unsafe launch cache destination " + toUtf8(destination.wstring()) +
-                                " (" + pathSafetyErrorForLog(destinationSafety) + ")";
-                            break;
-                        }
-                        std::filesystem::create_directories(destination, error);
-                    }
-                    else if (iterator->is_regular_file(error))
-                    {
-                        std::error_code sizeError;
-                        const std::uintmax_t bytes = std::filesystem::file_size(current, sizeError);
-                        if (sizeError)
-                        {
-                            failed = true;
-                            failure = "could not inspect " + toUtf8(current.wstring()) +
-                                " size (" + filesystemErrorForLog(sizeError) + ")";
-                            break;
-                        }
-
-                        PathSafetyWriteOptions writeOptions;
-                        writeOptions.requiredBytes = bytes;
-                        const PathSafetyResult destinationSafety =
-                            pathSafety.validateWritePath(cacheRoot, destination, writeOptions);
-                        if (!destinationSafety.safe())
-                        {
-                            failed = true;
-                            failure = "unsafe launch cache destination " + toUtf8(destination.wstring()) +
-                                " (" + pathSafetyErrorForLog(destinationSafety) + ")";
-                            break;
-                        }
-
-                        std::filesystem::create_directories(destination.parent_path(), error);
-                        error.clear();
-                        std::filesystem::copy_file(
-                            current,
-                            destination,
-                            std::filesystem::copy_options::overwrite_existing,
-                            error);
-                    }
-                    if (error)
-                    {
-                        failed = true;
-                        failure = "could not copy " + toUtf8(current.wstring()) +
-                            " to " + toUtf8(destination.wstring()) +
-                            " (" + filesystemErrorForLog(error) + ")";
-                        break;
-                    }
-
-                    iterator.increment(error);
-                    if (error)
-                    {
-                        failed = true;
-                        failure = "could not continue enumerating " + toUtf8(overlayRoot.wstring()) +
-                            " (" + filesystemErrorForLog(error) + ")";
-                    }
-                }
-
-                if (failed)
-                {
-                    break;
-                }
+                manifestRead = RootBuilderLaunchCacheManifestReadResult{};
             }
 
-            if (failed)
+            stats.revisionChanged = manifestRead.manifest.has_value() &&
+                manifestRead.manifest->revision != desiredState->revision;
+            if (desiredState->materializedEarlyDataRoots > 0)
+            {
+                logger.write(
+                    LogLevel::Info,
+                    "Root Builder launch cache materialized early Data runtime directories: " +
+                        std::to_string(desiredState->materializedEarlyDataRoots) + ".");
+            }
+
+            if (!synchronizeRootBuilderLaunchCache(
+                cacheRoot,
+                manifestPath,
+                desiredState.value(),
+                manifestRead.manifest,
+                stats,
+                failure))
             {
                 logger.write(
                     LogLevel::Warning,
@@ -1507,6 +2206,21 @@ namespace fluxora
                 std::filesystem::remove_all(cacheRoot, error);
                 return std::nullopt;
             }
+
+            logger.write(
+                LogLevel::Info,
+                "Root Builder launch cache synchronized: copiedFiles=" +
+                    std::to_string(stats.copiedFiles) +
+                    ", reusedFiles=" +
+                    std::to_string(stats.reusedFiles) +
+                    ", deletedFiles=" +
+                    std::to_string(stats.deletedFiles) +
+                    ", deletedDirectories=" +
+                    std::to_string(stats.deletedDirectories) +
+                    ", rebuilt=" +
+                    std::to_string(stats.rebuilt ? 1 : 0) +
+                    ", revisionChanged=" +
+                    std::to_string(stats.revisionChanged ? 1 : 0) + ".");
 
             const std::filesystem::path cachedExecutable = cacheRoot / location->relativePath;
             if (!isReadableExecutableFile(cachedExecutable))

@@ -3,6 +3,7 @@
 #include "FluxoraVfs/VfsLog.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cwctype>
 #include <utility>
 
@@ -10,6 +11,10 @@ namespace fluxora::vfs
 {
     namespace
     {
+#ifdef FLUXORA_VFS_TEST_HOOKS
+        std::atomic<std::uint64_t> g_attributeProbeCount{0};
+#endif
+
         std::wstring stripTrailingSlashes(std::wstring value)
         {
             while (!value.empty() && (value.back() == L'\\' || value.back() == L'/'))
@@ -42,6 +47,9 @@ namespace fluxora::vfs
 
         bool readAttributes(const std::wstring& path, DWORD& attributes)
         {
+#ifdef FLUXORA_VFS_TEST_HOOKS
+            g_attributeProbeCount.fetch_add(1, std::memory_order_relaxed);
+#endif
             attributes = GetFileAttributesW(path.c_str());
             return attributes != INVALID_FILE_ATTRIBUTES;
         }
@@ -59,6 +67,7 @@ namespace fluxora::vfs
         {
             DirChild child;
             child.name = data.cFileName;
+            child.nameLower = VfsTree::toLower(child.name);
             child.realPath = realPath;
             child.isDirectory = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
             child.attributes = data.dwFileAttributes;
@@ -140,6 +149,18 @@ namespace fluxora::vfs
         return p == pattern.size();
     }
 
+#ifdef FLUXORA_VFS_TEST_HOOKS
+    void VfsTree::resetAttributeProbeCountForTests()
+    {
+        g_attributeProbeCount.store(0, std::memory_order_relaxed);
+    }
+
+    std::uint64_t VfsTree::attributeProbeCountForTests()
+    {
+        return g_attributeProbeCount.load(std::memory_order_relaxed);
+    }
+#endif
+
     std::wstring VfsTree::normalizeRel(std::wstring rel)
     {
         std::replace(rel.begin(), rel.end(), L'/', L'\\');
@@ -173,7 +194,9 @@ namespace fluxora::vfs
             excludedRootNames_ = std::move(other.excludedRootNames_);
             fileMap_ = std::move(other.fileMap_);
             dirMap_ = std::move(other.dirMap_);
+            overlayMissRevisions_ = std::move(other.overlayMissRevisions_);
             built_ = other.built_;
+            revision_ = other.revision_;
 
             other.built_ = false;
             other.target_.clear();
@@ -182,6 +205,8 @@ namespace fluxora::vfs
             other.excludedRootNames_.clear();
             other.fileMap_.clear();
             other.dirMap_.clear();
+            other.overlayMissRevisions_.clear();
+            other.revision_ = 0;
         }
 
         return *this;
@@ -214,13 +239,69 @@ namespace fluxora::vfs
             excludedRootNames_.end();
     }
 
+    bool VfsTree::hasCurrentOverlayMissLocked(const std::wstring& relLower) const
+    {
+        std::wstring key = relLower;
+        while (!key.empty())
+        {
+            const auto miss = overlayMissRevisions_.find(key);
+            if (miss != overlayMissRevisions_.end())
+            {
+                if (miss->second == revision_)
+                {
+                    return true;
+                }
+                overlayMissRevisions_.erase(miss);
+            }
+
+            const std::size_t separator = key.find_last_of(L'\\');
+            if (separator == std::wstring::npos)
+            {
+                break;
+            }
+            key.erase(separator);
+        }
+
+        return false;
+    }
+
+    void VfsTree::cacheOverlayMissLocked(const std::wstring& relLower) const
+    {
+        if (!relLower.empty())
+        {
+            overlayMissRevisions_[relLower] = revision_;
+        }
+    }
+
+    bool VfsTree::directoryListingProvesOverlayMissLocked(const std::wstring& relLower) const
+    {
+        if (relLower.empty())
+        {
+            return false;
+        }
+
+        const std::size_t separator = relLower.find_last_of(L'\\');
+        const std::wstring parentLower = separator == std::wstring::npos
+            ? std::wstring()
+            : relLower.substr(0, separator);
+        const std::wstring nameLower = separator == std::wstring::npos
+            ? relLower
+            : relLower.substr(separator + 1);
+
+        const auto parent = dirMap_.find(parentLower);
+        return parent != dirMap_.end() &&
+            parent->second.childrenBuilt &&
+            parent->second.overlayChildNamesLower.find(nameLower) == parent->second.overlayChildNamesLower.end();
+    }
+
     void VfsTree::mergeDirectoryLocked(
         const std::wstring& relLower,
         const std::wstring& displayRel,
         const std::wstring& directory,
         bool overrideExisting,
         bool applyRootExclusions,
-        std::unordered_map<std::wstring, DirChild>& children) const
+        std::unordered_map<std::wstring, DirChild>& children,
+        std::unordered_set<std::wstring>* overlayChildNamesLower) const
     {
         WIN32_FIND_DATAW data{};
         const HANDLE find = FindFirstFileW((directory + L"\\*").c_str(), &data);
@@ -244,9 +325,13 @@ namespace fluxora::vfs
 
             const std::wstring fullChild = joinPath(directory, name);
             DirChild child = childFromFindData(fullChild, data);
-            const std::wstring key = toLower(child.name);
+            const std::wstring key = child.nameLower;
             if (overrideExisting)
             {
+                if (overlayChildNamesLower != nullptr)
+                {
+                    overlayChildNamesLower->insert(key);
+                }
                 children[key] = std::move(child);
             }
             else
@@ -286,12 +371,14 @@ namespace fluxora::vfs
             DirNode& node = ensureDir(relLower);
             node.openPath = path;
             node.realExists = hasDirectoryAttributes(realPath);
+            overlayMissRevisions_.erase(relLower);
             return PathLookup{PathInfo::Kind::Directory, path, node.realExists};
         };
 
         const auto cacheFile = [&](const std::wstring& path)
         {
             fileMap_[relLower] = path;
+            overlayMissRevisions_.erase(relLower);
             return PathLookup{PathInfo::Kind::File, path, false};
         };
 
@@ -319,13 +406,21 @@ namespace fluxora::vfs
                 }
             }
 
-            for (auto it = mods_.rbegin(); it != mods_.rend(); ++it)
+            if (directoryListingProvesOverlayMissLocked(relLower))
             {
-                if (PathLookup lookup = probe(rel.empty() ? *it : joinPath(*it, rel));
-                    lookup.kind != PathInfo::Kind::Unknown)
+                cacheOverlayMissLocked(relLower);
+            }
+            else if (!hasCurrentOverlayMissLocked(relLower))
+            {
+                for (auto it = mods_.rbegin(); it != mods_.rend(); ++it)
                 {
-                    return lookup;
+                    if (PathLookup lookup = probe(rel.empty() ? *it : joinPath(*it, rel));
+                        lookup.kind != PathInfo::Kind::Unknown)
+                    {
+                        return lookup;
+                    }
                 }
+                cacheOverlayMissLocked(relLower);
             }
         }
 
@@ -353,6 +448,7 @@ namespace fluxora::vfs
         }
 
         std::unordered_map<std::wstring, DirChild> children;
+        std::unordered_set<std::wstring> overlayChildNamesLower;
         const std::wstring displayRel = relLower;
         const std::wstring realDir = relLower.empty() ? target_ : joinPath(target_, displayRel);
         node.realExists = hasDirectoryAttributes(realDir);
@@ -368,7 +464,8 @@ namespace fluxora::vfs
                 realDir,
                 /*overrideExisting=*/false,
                 /*applyRootExclusions=*/false,
-                children);
+                children,
+                nullptr);
         }
 
         if (!isExcludedRelativePath(relLower))
@@ -389,7 +486,8 @@ namespace fluxora::vfs
                     directory,
                     /*overrideExisting=*/true,
                     applyRootExclusions,
-                    children);
+                    children,
+                    &overlayChildNamesLower);
             }
 
             if (!overwrite_.empty())
@@ -404,12 +502,14 @@ namespace fluxora::vfs
                         directory,
                         /*overrideExisting=*/true,
                         applyRootExclusions,
-                        children);
+                        children,
+                        &overlayChildNamesLower);
                 }
             }
         }
 
         node.children.clear();
+        node.overlayChildNamesLower = std::move(overlayChildNamesLower);
         node.children.reserve(children.size());
         for (auto& [nameLower, child] : children)
         {
@@ -430,7 +530,7 @@ namespace fluxora::vfs
         std::sort(node.children.begin(), node.children.end(),
             [](const DirChild& a, const DirChild& b)
             {
-                return toLower(a.name) < toLower(b.name);
+                return a.nameLower < b.nameLower;
             });
         node.childrenBuilt = true;
     }
@@ -464,6 +564,8 @@ namespace fluxora::vfs
 
         fileMap_.clear();
         dirMap_.clear();
+        overlayMissRevisions_.clear();
+        ++revision_;
         ensureDir(L"");
         built_ = true;
 

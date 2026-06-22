@@ -28,7 +28,8 @@ $InstallerProject = Join-Path $ProjectRoot 'installer\Fluxora.Installer\Fluxora.
 $OutputDir = Join-Path $ProjectRoot 'output'
 $InstallerOutputDir = Join-Path $ProjectRoot 'output-installer'
 $InstallerPayloadDir = Join-Path $ProjectRoot 'installer\Fluxora.Installer\Resources\Payload'
-$InstallerPayloadPath = Join-Path $InstallerPayloadDir 'FluxoraPayload.flxpkg'
+$InstallerPayloadPath = Join-Path $InstallerPayloadDir 'FluxoraPayload.flxpkg.gz'
+$LegacyInstallerPayloadPath = Join-Path $InstallerPayloadDir 'FluxoraPayload.flxpkg'
 
 function Assert-Command {
     param(
@@ -197,58 +198,86 @@ function Write-FluxoraPayloadPackage {
         } |
         Sort-Object FullName
 
-    $entryCount = [UInt64]($directories.Count + $files.Count)
+    $fileEntries = [System.Collections.Generic.List[object]]::new()
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
     $totalBytes = [UInt64]0
-    foreach ($file in $files) {
-        $totalBytes += [UInt64]$file.Length
+    try {
+        foreach ($file in $files) {
+            $relative = Get-PortableRelativePath -Root $sourceFullPath -Path $file.FullName
+            $input = [System.IO.File]::OpenRead($file.FullName)
+            try {
+                $hash = $sha256.ComputeHash($input)
+            }
+            finally {
+                $input.Dispose()
+            }
+
+            $fileEntries.Add([pscustomobject]@{
+                File = $file
+                Relative = $relative
+                Hash = $hash
+            })
+            $totalBytes += [UInt64]$file.Length
+        }
+    }
+    finally {
+        $sha256.Dispose()
     }
 
+    $entryCount = [UInt64]($directories.Count + $fileEntries.Count)
     New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($PackagePath)) -Force | Out-Null
 
     $stream = [System.IO.File]::Open($PackagePath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
     try {
-        $writer = [System.IO.BinaryWriter]::new($stream, [System.Text.Encoding]::UTF8, $true)
+        $gzip = [System.IO.Compression.GZipStream]::new($stream, [System.IO.Compression.CompressionLevel]::Optimal, $true)
         try {
-            $writer.Write([byte[]](0x46, 0x4C, 0x58, 0x50, 0x4B, 0x47, 0x31, 0x00))
-            $writer.Write([UInt32]1)
-            $writer.Write($entryCount)
-            $writer.Write($totalBytes)
+            $writer = [System.IO.BinaryWriter]::new($gzip, [System.Text.Encoding]::UTF8, $true)
+            try {
+                $writer.Write([byte[]](0x46, 0x4C, 0x58, 0x50, 0x4B, 0x47, 0x31, 0x00))
+                $writer.Write([UInt32]2)
+                $writer.Write($entryCount)
+                $writer.Write($totalBytes)
 
-            foreach ($directory in $directories) {
-                $relative = Get-PortableRelativePath -Root $sourceFullPath -Path $directory.FullName
-                if ([string]::IsNullOrWhiteSpace($relative) -or $relative -eq '.') {
-                    continue
+                foreach ($directory in $directories) {
+                    $relative = Get-PortableRelativePath -Root $sourceFullPath -Path $directory.FullName
+                    if ([string]::IsNullOrWhiteSpace($relative) -or $relative -eq '.') {
+                        continue
+                    }
+
+                    $pathBytes = [System.Text.Encoding]::UTF8.GetBytes($relative)
+                    $writer.Write([byte]0)
+                    $writer.Write([UInt32]$pathBytes.Length)
+                    $writer.Write($pathBytes)
+                    $writer.Write([UInt64]0)
                 }
 
-                $pathBytes = [System.Text.Encoding]::UTF8.GetBytes($relative)
-                $writer.Write([byte]0)
-                $writer.Write([UInt32]$pathBytes.Length)
-                $writer.Write($pathBytes)
-                $writer.Write([UInt64]0)
-            }
+                $buffer = [byte[]]::new(1024 * 256)
+                foreach ($fileEntry in $fileEntries) {
+                    $file = $fileEntry.File
+                    $pathBytes = [System.Text.Encoding]::UTF8.GetBytes($fileEntry.Relative)
+                    $writer.Write([byte]1)
+                    $writer.Write([UInt32]$pathBytes.Length)
+                    $writer.Write($pathBytes)
+                    $writer.Write([UInt64]$file.Length)
+                    $writer.Write([byte[]]$fileEntry.Hash)
 
-            $buffer = [byte[]]::new(1024 * 256)
-            foreach ($file in $files) {
-                $relative = Get-PortableRelativePath -Root $sourceFullPath -Path $file.FullName
-                $pathBytes = [System.Text.Encoding]::UTF8.GetBytes($relative)
-                $writer.Write([byte]1)
-                $writer.Write([UInt32]$pathBytes.Length)
-                $writer.Write($pathBytes)
-                $writer.Write([UInt64]$file.Length)
-
-                $input = [System.IO.File]::OpenRead($file.FullName)
-                try {
-                    while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                        $writer.Write($buffer, 0, $read)
+                    $input = [System.IO.File]::OpenRead($file.FullName)
+                    try {
+                        while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                            $writer.Write($buffer, 0, $read)
+                        }
+                    }
+                    finally {
+                        $input.Dispose()
                     }
                 }
-                finally {
-                    $input.Dispose()
-                }
+            }
+            finally {
+                $writer.Dispose()
             }
         }
         finally {
-            $writer.Dispose()
+            $gzip.Dispose()
         }
     }
     finally {
@@ -256,7 +285,7 @@ function Write-FluxoraPayloadPackage {
     }
 
     $package = Get-Item -LiteralPath $PackagePath
-    Write-Host "Created installer payload: $($package.FullName) ($([Math]::Round($package.Length / 1MB, 2)) MB)"
+    Write-Host "Created compressed installer payload: $($package.FullName) ($([Math]::Round($package.Length / 1MB, 2)) MB compressed, $([Math]::Round($totalBytes / 1MB, 2)) MB unpacked)"
 }
 
 Assert-Command 'cmake'
@@ -295,6 +324,7 @@ if (-not (Test-Path -LiteralPath $InstallerProject)) {
 Assert-ChildPath -Path $OutputDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $InstallerOutputDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $InstallerPayloadPath -ParentPath $ProjectRoot
+Assert-ChildPath -Path $LegacyInstallerPayloadPath -ParentPath $ProjectRoot
 
 Invoke-BuildStep "Preparing output folders" {
     if ((Test-Path -LiteralPath $OutputDir) -and (-not $NoClean)) {
@@ -308,6 +338,10 @@ Invoke-BuildStep "Preparing output folders" {
     New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $OutputDir 'logs') -Force | Out-Null
     New-Item -ItemType Directory -Path $InstallerOutputDir -Force | Out-Null
+
+    if ((Test-Path -LiteralPath $LegacyInstallerPayloadPath) -and (-not $NoClean)) {
+        Remove-Item -LiteralPath $LegacyInstallerPayloadPath -Force
+    }
 }
 
 Invoke-BuildStep "Configuring C++ backend" {

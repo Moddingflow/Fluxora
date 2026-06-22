@@ -350,6 +350,45 @@
             </Style.Triggers>
         </Style>
 
+        <Style x:Key="FomodVirtualListStyle" TargetType="{x:Type ListBox}">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="ScrollViewer.CanContentScroll" Value="True" />
+            <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True" />
+            <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+            <Setter Property="VirtualizingPanel.ScrollUnit" Value="Pixel" />
+            <Setter Property="ItemsPanel">
+                <Setter.Value>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel />
+                    </ItemsPanelTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="FomodVirtualListItemStyle" TargetType="{x:Type ListBoxItem}">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="IsTabStop" Value="False" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ListBoxItem}">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="ImagePreviewButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
@@ -649,91 +688,92 @@
                                     <ColumnDefinition Width="306" />
                                 </Grid.ColumnDefinitions>
 
-                                <ScrollViewer x:Name="OptionsScrollViewer"
-                                              VerticalScrollBarVisibility="Auto"
-                                              HorizontalScrollBarVisibility="Disabled">
-                                    <ItemsControl x:Name="GroupItemsControl"
-                                                  ItemsSource="{Binding Groups}">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <Border Style="{StaticResource FomodGroupCardStyle}">
+                                <ListBox x:Name="GroupItemsControl"
+                                         Style="{StaticResource FomodVirtualListStyle}"
+                                         ItemContainerStyle="{StaticResource FomodVirtualListItemStyle}"
+                                         ItemsSource="{Binding Rows}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid>
+                                                <Border x:Name="GroupHeader"
+                                                        Style="{StaticResource FomodGroupCardStyle}"
+                                                        DataContext="{Binding Group}"
+                                                        Visibility="Collapsed">
                                                     <StackPanel>
-                                                        <Grid Margin="0,0,0,10">
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="*" />
-                                                            </Grid.ColumnDefinitions>
-                                                            <TextBlock Text="{Binding Name}"
-                                                                       FontWeight="Black"
-                                                                       Foreground="{StaticResource TextBrush}"
-                                                                       TextWrapping="Wrap" />
-                                                        </Grid>
+                                                        <TextBlock Text="{Binding Name}"
+                                                                   FontWeight="Black"
+                                                                   Foreground="{StaticResource TextBrush}"
+                                                                   TextWrapping="Wrap" />
                                                         <TextBlock Text="{Binding ValidationMessage}"
                                                                    Visibility="{Binding IsValidationTarget, Converter={StaticResource BoolToVisibilityConverter}}"
                                                                    Foreground="{StaticResource ErrorBrush}"
                                                                    FontWeight="SemiBold"
-                                                                   Margin="0,0,0,10"
+                                                                   Margin="0,8,0,0"
                                                                    TextWrapping="Wrap" />
-
-                                                        <ItemsControl ItemsSource="{Binding Options}">
-                                                            <ItemsControl.ItemTemplate>
-                                                                <DataTemplate>
-                                                                    <ToggleButton Style="{StaticResource FomodOptionToggleStyle}"
-                                                                                  IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                                                                                  IsEnabled="{Binding CanToggle}"
-                                                                                  MouseEnter="OnOptionPreview"
-                                                                                  GotKeyboardFocus="OnOptionPreview">
-                                                                        <Grid>
-                                                                            <Grid.ColumnDefinitions>
-                                                                                <ColumnDefinition Width="Auto" />
-                                                                                <ColumnDefinition Width="*" />
-                                                                            </Grid.ColumnDefinitions>
-                                                                            <Border x:Name="OptionCheck"
-                                                                                    Width="24"
-                                                                                    Height="24"
-                                                                                    CornerRadius="6"
-                                                                                    Background="{StaticResource PanelBrush}"
-                                                                                    BorderBrush="{StaticResource LineBrush}"
-                                                                                    BorderThickness="1"
-                                                                                    Margin="0,0,12,0"
-                                                                                    VerticalAlignment="Center">
-                                                                                <controls:LineIcon x:Name="OptionGlyph"
-                                                                                                   Data="{StaticResource Icon.Check}"
-                                                                                                   Width="13"
-                                                                                                   Height="13"
-                                                                                                   HorizontalAlignment="Center"
-                                                                                                   VerticalAlignment="Center"
-                                                                                                   Foreground="#F7F4FF"
-                                                                                                   Visibility="Collapsed" />
-                                                                            </Border>
-                                                                            <StackPanel Grid.Column="1">
-                                                                                <TextBlock Text="{Binding Name}"
-                                                                                           FontWeight="Black"
-                                                                                           Foreground="{StaticResource TextBrush}"
-                                                                                           TextWrapping="Wrap" />
-                                                                                <TextBlock Text="{Binding PreviousBadgeText}"
-                                                                                           Visibility="{Binding WasPreviouslySelected, Converter={StaticResource BoolToVisibilityConverter}}"
-                                                                                           Foreground="{StaticResource SuccessBrush}"
-                                                                                           FontWeight="SemiBold"
-                                                                                           Margin="0,7,0,0" />
-                                                                            </StackPanel>
-                                                                        </Grid>
-                                                                    </ToggleButton>
-                                                                    <DataTemplate.Triggers>
-                                                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                                                            <Setter TargetName="OptionGlyph" Property="Visibility" Value="Visible" />
-                                                                            <Setter TargetName="OptionCheck" Property="Background" Value="{StaticResource AccentBrush}" />
-                                                                            <Setter TargetName="OptionCheck" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-                                                                        </DataTrigger>
-                                                                    </DataTemplate.Triggers>
-                                                                </DataTemplate>
-                                                            </ItemsControl.ItemTemplate>
-                                                        </ItemsControl>
                                                     </StackPanel>
                                                 </Border>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </ScrollViewer>
+
+                                                <ToggleButton x:Name="OptionButton"
+                                                              Style="{StaticResource FomodOptionToggleStyle}"
+                                                              DataContext="{Binding Option}"
+                                                              IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                              IsEnabled="{Binding CanToggle}"
+                                                              MouseEnter="OnOptionPreview"
+                                                              GotKeyboardFocus="OnOptionPreview"
+                                                              Visibility="Collapsed">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <Border x:Name="OptionCheck"
+                                                                Width="24"
+                                                                Height="24"
+                                                                CornerRadius="6"
+                                                                Background="{StaticResource PanelBrush}"
+                                                                BorderBrush="{StaticResource LineBrush}"
+                                                                BorderThickness="1"
+                                                                Margin="0,0,12,0"
+                                                                VerticalAlignment="Center">
+                                                            <controls:LineIcon x:Name="OptionGlyph"
+                                                                               Data="{StaticResource Icon.Check}"
+                                                                               Width="13"
+                                                                               Height="13"
+                                                                               HorizontalAlignment="Center"
+                                                                               VerticalAlignment="Center"
+                                                                               Foreground="#F7F4FF"
+                                                                               Visibility="Collapsed" />
+                                                        </Border>
+                                                        <StackPanel Grid.Column="1">
+                                                            <TextBlock Text="{Binding Name}"
+                                                                       FontWeight="Black"
+                                                                       Foreground="{StaticResource TextBrush}"
+                                                                       TextWrapping="Wrap" />
+                                                            <TextBlock Text="{Binding PreviousBadgeText}"
+                                                                       Visibility="{Binding WasPreviouslySelected, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                                       Foreground="{StaticResource SuccessBrush}"
+                                                                       FontWeight="SemiBold"
+                                                                       Margin="0,7,0,0" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </ToggleButton>
+                                            </Grid>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsGroupHeader}" Value="True">
+                                                    <Setter TargetName="GroupHeader" Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsOption}" Value="True">
+                                                    <Setter TargetName="OptionButton" Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Option.IsSelected}" Value="True">
+                                                    <Setter TargetName="OptionGlyph" Property="Visibility" Value="Visible" />
+                                                    <Setter TargetName="OptionCheck" Property="Background" Value="{StaticResource AccentBrush}" />
+                                                    <Setter TargetName="OptionCheck" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
 
                                 <Border Grid.Column="2"
                                         Background="{StaticResource PanelSoftBrush}"
@@ -759,7 +799,8 @@
                                                         Background="{StaticResource PanelBrush}"
                                                         BorderBrush="{StaticResource LineBrush}"
                                                         BorderThickness="1" />
-                                                <Image Source="{Binding PreviewImagePath, Converter={StaticResource FomodImageSourceConverter}, ConverterParameter=720}"
+                                                <Image services:FomodAsyncImage.SourcePath="{Binding PreviewImagePath}"
+                                                       services:FomodAsyncImage.DecodePixelWidth="720"
                                                        Stretch="UniformToFill"
                                                        RenderOptions.BitmapScalingMode="HighQuality" />
                                                 <Border CornerRadius="8"
@@ -854,7 +895,8 @@
               Background="#E6080711"
               MouseLeftButtonDown="OnLightboxBackgroundMouseLeftButtonDown">
             <Image x:Name="LightboxImage"
-                   Source="{Binding PreviewImagePath, Converter={StaticResource FomodImageSourceConverter}, ConverterParameter=1800}"
+                   services:FomodAsyncImage.SourcePath="{Binding PreviewImagePath}"
+                   services:FomodAsyncImage.DecodePixelWidth="1800"
                    Stretch="Uniform"
                    Margin="42"
                    RenderOptions.BitmapScalingMode="HighQuality" />

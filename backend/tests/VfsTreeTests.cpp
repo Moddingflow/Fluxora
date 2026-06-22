@@ -5,6 +5,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 
 namespace fluxora::tests
 {
@@ -30,6 +32,22 @@ namespace fluxora::tests
             EXPECT_EQ(
                 normalized(std::filesystem::path(actual)),
                 normalized(expected));
+        }
+
+        std::vector<std::wstring> createModRoots(
+            const std::filesystem::path& root,
+            const std::size_t count)
+        {
+            std::vector<std::wstring> mods;
+            mods.reserve(count);
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                const std::filesystem::path mod =
+                    root / (std::wstring(L"Mod ") + std::to_wstring(index));
+                std::filesystem::create_directories(mod);
+                mods.push_back(mod.wstring());
+            }
+            return mods;
         }
     }
 
@@ -166,6 +184,133 @@ namespace fluxora::tests
             tree.listing(vfs::VfsTree::toLower(L"textures"));
         EXPECT_TRUE(containsChild(textures, L"actors"));
         EXPECT_TRUE(containsChild(textures, L"base.dds"));
+    }
+
+    TEST(VfsTreeTests, RepeatedMissingPathUsesNegativeCacheAcrossActiveMods)
+    {
+        constexpr std::array<std::size_t, 4> modCounts{50, 250, 500, 1000};
+
+        for (const std::size_t modCount : modCounts)
+        {
+            SCOPED_TRACE(::testing::Message() << "modCount=" << modCount);
+            TempDirectory temp;
+
+            const std::filesystem::path data = temp.path() / L"Game" / L"Data";
+            std::filesystem::create_directories(data);
+            const std::vector<std::wstring> mods = createModRoots(temp.path() / L"mods", modCount);
+
+            vfs::VfsTree tree;
+            tree.build(vfs::VfsMountConfig{
+                data.wstring(),
+                L"",
+                mods,
+                {}
+            });
+
+            vfs::VfsTree::resetAttributeProbeCountForTests();
+
+            const vfs::VfsTree::PathInfo first = tree.classify(L"meshes\\missing.nif");
+            EXPECT_EQ(first.kind, vfs::VfsTree::PathInfo::Kind::Unknown);
+            EXPECT_FALSE(first.parentVirtual);
+            const std::uint64_t probesAfterFirst =
+                vfs::VfsTree::attributeProbeCountForTests();
+            EXPECT_GE(probesAfterFirst, static_cast<std::uint64_t>(modCount));
+
+            const vfs::VfsTree::PathInfo second = tree.classify(L"meshes\\missing.nif");
+            EXPECT_EQ(second.kind, vfs::VfsTree::PathInfo::Kind::Unknown);
+            EXPECT_FALSE(second.parentVirtual);
+            const std::uint64_t probesAfterSecond =
+                vfs::VfsTree::attributeProbeCountForTests();
+            EXPECT_LE(probesAfterSecond - probesAfterFirst, static_cast<std::uint64_t>(1));
+        }
+    }
+
+    TEST(VfsTreeTests, HitProbeCountReflectsLoadOrderPriority)
+    {
+        TempDirectory temp;
+
+        constexpr std::size_t modCount = 64;
+        const std::filesystem::path data = temp.path() / L"Game" / L"Data";
+        std::filesystem::create_directories(data);
+        const std::vector<std::wstring> mods = createModRoots(temp.path() / L"mods", modCount);
+        writeTextFile(std::filesystem::path(mods.front()) / L"textures" / L"bottom.dds", "bottom");
+        writeTextFile(std::filesystem::path(mods.back()) / L"textures" / L"top.dds", "top");
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            data.wstring(),
+            L"",
+            mods,
+            {}
+        });
+
+        vfs::VfsTree::resetAttributeProbeCountForTests();
+        const vfs::VfsTree::PathInfo top = tree.classify(L"textures\\top.dds");
+        ASSERT_EQ(top.kind, vfs::VfsTree::PathInfo::Kind::File);
+        const std::uint64_t topProbes = vfs::VfsTree::attributeProbeCountForTests();
+        EXPECT_LE(topProbes, static_cast<std::uint64_t>(1));
+
+        vfs::VfsTree::resetAttributeProbeCountForTests();
+        const vfs::VfsTree::PathInfo bottom = tree.classify(L"textures\\bottom.dds");
+        ASSERT_EQ(bottom.kind, vfs::VfsTree::PathInfo::Kind::File);
+        const std::uint64_t bottomProbes = vfs::VfsTree::attributeProbeCountForTests();
+        EXPECT_GE(bottomProbes, static_cast<std::uint64_t>(modCount));
+        EXPECT_GT(bottomProbes, topProbes);
+    }
+
+    TEST(VfsTreeTests, MissingChildAfterDirectoryListingSkipsActiveModScan)
+    {
+        TempDirectory temp;
+
+        constexpr std::size_t modCount = 128;
+        const std::filesystem::path data = temp.path() / L"Game" / L"Data";
+        std::filesystem::create_directories(data);
+        const std::vector<std::wstring> mods = createModRoots(temp.path() / L"mods", modCount);
+        writeTextFile(std::filesystem::path(mods.back()) / L"textures" / L"present.dds", "present");
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            data.wstring(),
+            L"",
+            mods,
+            {}
+        });
+
+        const std::vector<vfs::DirChild> textures = tree.listing(L"textures");
+        ASSERT_TRUE(containsChild(textures, L"present.dds"));
+
+        vfs::VfsTree::resetAttributeProbeCountForTests();
+        const vfs::VfsTree::PathInfo missing = tree.classify(L"textures\\missing.dds");
+        EXPECT_EQ(missing.kind, vfs::VfsTree::PathInfo::Kind::Unknown);
+        EXPECT_TRUE(missing.parentVirtual);
+        EXPECT_LE(vfs::VfsTree::attributeProbeCountForTests(), static_cast<std::uint64_t>(1));
+    }
+
+    TEST(VfsTreeTests, NegativeModCacheDoesNotHideNewOverwriteFile)
+    {
+        TempDirectory temp;
+
+        const std::filesystem::path data = temp.path() / L"Game" / L"Data";
+        const std::filesystem::path overwrite = temp.path() / L"overwrite";
+        std::filesystem::create_directories(data);
+        const std::vector<std::wstring> mods = createModRoots(temp.path() / L"mods", 32);
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            data.wstring(),
+            overwrite.wstring(),
+            mods,
+            {}
+        });
+
+        const vfs::VfsTree::PathInfo missing = tree.classify(L"textures\\late.dds");
+        ASSERT_EQ(missing.kind, vfs::VfsTree::PathInfo::Kind::Unknown);
+
+        writeTextFile(overwrite / L"textures" / L"late.dds", "late overwrite");
+
+        const vfs::VfsTree::PathInfo late = tree.classify(L"textures\\late.dds");
+        ASSERT_EQ(late.kind, vfs::VfsTree::PathInfo::Kind::File);
+        expectSamePath(late.winner, overwrite / L"textures" / L"late.dds");
     }
 
     TEST(VfsTreeTests, WildcardMatchSupportsNativeDosStarMasks)

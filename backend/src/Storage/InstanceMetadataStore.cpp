@@ -48,7 +48,25 @@ namespace fluxora
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
 
+#ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
+    void InstanceMetadataStore::resetSqlPrepareCountForTesting()
+    {
+    }
+
+    std::uint64_t InstanceMetadataStore::sqlPrepareCountForTesting()
+    {
+        return 0;
+    }
+#endif
+
     std::vector<InstalledModRecord> InstanceMetadataStore::listInstalledMods(
+        const std::filesystem::path&,
+        const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::refreshInstalledModsFromDisk(
         const std::filesystem::path&,
         const std::filesystem::path&)
     {
@@ -222,8 +240,13 @@ namespace fluxora
         constexpr std::wstring_view profileOrderSeparatorKind = L"separator";
         constexpr std::wstring_view profilePluginOrderPluginKind = L"plugin";
         constexpr std::wstring_view profilePluginOrderSeparatorKind = L"separator";
+        constexpr std::wstring_view modInventoryRevisionKey = L"mod_inventory_revision";
 
         using SqliteDestructor = void (*)(void*);
+
+#ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
+        std::atomic<std::uint64_t> sqlitePrepareCountForTesting{0};
+#endif
 
         std::mutex& metadataStoreMutex()
         {
@@ -550,25 +573,9 @@ namespace fluxora
             }
         }
 
-        bool portableManifestIsMissing(const InstalledModRecord& record)
-        {
-            std::error_code error;
-            return !std::filesystem::is_regular_file(manifestPathForMod(record.path), error);
-        }
-
         bool portableManifestNeedsBulkWrite(const InstalledModRecord& record, bool stateChanged)
         {
-            if (portableManifestIsMissing(record))
-            {
-                return true;
-            }
-
-            if (stateChanged)
-            {
-                return false;
-            }
-
-            return portableManifestNeedsWrite(record, false);
+            return portableManifestNeedsWrite(record, stateChanged);
         }
 
         void mixHash(std::uint64_t& hash, std::uint64_t value)
@@ -882,6 +889,9 @@ namespace fluxora
             Statement(sqlite3* handle, const char* sql)
                 : handle_(handle)
             {
+#ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
+                sqlitePrepareCountForTesting.fetch_add(1, std::memory_order_relaxed);
+#endif
                 const int result = sqlite().prepare(handle_, sql, -1, &statement_, nullptr);
                 if (result != sqliteOk)
                 {
@@ -1381,6 +1391,21 @@ namespace fluxora
             return statement.stepRow() ? statement.columnText(0) : std::wstring{};
         }
 
+        void bumpMetadataRevision(Database& database, std::wstring_view key)
+        {
+            Statement statement = database.prepare(
+                "INSERT INTO instance_metadata(key, value) VALUES(?, '1') "
+                "ON CONFLICT(key) DO UPDATE SET "
+                "value = CAST(COALESCE(NULLIF(value, ''), '0') AS INTEGER) + 1;");
+            statement.bindText(1, key);
+            statement.stepDone();
+        }
+
+        void bumpModInventoryRevision(Database& database)
+        {
+            bumpMetadataRevision(database, modInventoryRevisionKey);
+        }
+
         std::wstring existingUuidForFolder(Database& database, std::wstring_view folderName)
         {
             Statement statement = database.prepare("SELECT uuid FROM mods WHERE folder_name = ? LIMIT 1;");
@@ -1629,6 +1654,7 @@ namespace fluxora
 
             syncSystemTags(database, record);
             recordInstallHistory(database, record);
+            bumpModInventoryRevision(database);
         }
 
         InstalledModRecord readRecordByFolder(
@@ -2243,6 +2269,16 @@ namespace fluxora
                 : std::to_wstring(writeTime.time_since_epoch().count());
         }
 
+        struct FileCacheEntry
+        {
+            std::wstring relativePath;
+            std::wstring parentPath;
+            std::wstring name;
+            std::wstring kind;
+            std::uintmax_t size{0};
+            std::wstring modifiedAt;
+        };
+
         void insertFileCacheEntry(
             Database& database,
             std::int64_t modId,
@@ -2277,15 +2313,12 @@ namespace fluxora
             insert.stepDone();
         }
 
-        void rebuildFileCache(Database& database, InstalledModRecord& record)
+        std::vector<FileCacheEntry> collectFileCacheEntries(const InstalledModRecord& record)
         {
-            Statement remove = database.prepare("DELETE FROM mod_files WHERE mod_id = ?;");
-            remove.bindInt64(1, record.id);
-            remove.stepDone();
-
+            std::vector<FileCacheEntry> entries;
             if (!std::filesystem::exists(record.path) || !std::filesystem::is_directory(record.path))
             {
-                return;
+                return entries;
             }
 
             std::error_code error;
@@ -2318,19 +2351,43 @@ namespace fluxora
                         const std::wstring relativeText = normalizeRelativePath(relative);
                         const std::wstring parentText = normalizeRelativePath(relative.parent_path());
                         const std::uintmax_t size = isFile ? iterator->file_size(sizeError) : 0;
-                        insertFileCacheEntry(
-                            database,
-                            record.id,
+                        entries.push_back(FileCacheEntry{
                             relativeText,
                             parentText,
                             current.filename().wstring(),
                             isDirectory ? L"directory" : L"file",
                             sizeError ? 0 : size,
-                            fileTimeCacheText(*iterator));
+                            fileTimeCacheText(*iterator)
+                        });
                     }
                 }
 
                 iterator.increment(error);
+            }
+
+            return entries;
+        }
+
+        void replaceFileCache(
+            Database& database,
+            std::int64_t modId,
+            const std::vector<FileCacheEntry>& entries)
+        {
+            Statement remove = database.prepare("DELETE FROM mod_files WHERE mod_id = ?;");
+            remove.bindInt64(1, modId);
+            remove.stepDone();
+
+            for (const FileCacheEntry& entry : entries)
+            {
+                insertFileCacheEntry(
+                    database,
+                    modId,
+                    entry.relativePath,
+                    entry.parentPath,
+                    entry.name,
+                    entry.kind,
+                    entry.size,
+                    entry.modifiedAt);
             }
         }
 
@@ -2363,11 +2420,23 @@ namespace fluxora
                 return;
             }
 
-            rebuildFileCache(database, record);
+            const std::vector<FileCacheEntry> entries = collectFileCacheEntries(record);
+            std::wstring contentFingerprint;
             if (record.contentFingerprint.empty())
             {
-                updateRecordContentFingerprint(database, record, computeContentFingerprint(record.path));
+                contentFingerprint = computeContentFingerprint(record.path);
             }
+
+            Transaction transaction(database);
+            if (cachedEntryCount(database, record.id) == 0)
+            {
+                replaceFileCache(database, record.id, entries);
+            }
+            if (!contentFingerprint.empty())
+            {
+                updateRecordContentFingerprint(database, record, std::move(contentFingerprint));
+            }
+            transaction.commit();
         }
 
         struct ConflictOwner
@@ -2376,26 +2445,71 @@ namespace fluxora
             std::wstring displayName;
         };
 
-        std::vector<ConflictOwner> conflictOwnersForPath(Database& database, std::wstring_view key)
+        using ConflictOwnerGroups = std::map<std::wstring, std::vector<ConflictOwner>>;
+
+        int cachedFileCount(Database& database, std::int64_t modId)
         {
             Statement statement = database.prepare(
-                "SELECT f.mod_id, m.display_name "
-                "FROM mod_files f "
-                "JOIN mods m ON m.id = f.mod_id "
-                "WHERE f.path_key = ? AND f.kind = 'file' AND m.state = 'installed' "
-                "ORDER BY m.id ASC;");
-            statement.bindText(1, key);
+                "SELECT COUNT(*) FROM mod_files WHERE mod_id = ? AND kind = 'file';");
+            statement.bindInt64(1, modId);
+            return statement.stepRow() ? statement.columnInt(0) : 0;
+        }
 
-            std::vector<ConflictOwner> owners;
+        ConflictOwnerGroups conflictOwnersForCachedModFiles(Database& database, std::int64_t modId)
+        {
+            Statement statement = database.prepare(
+                "SELECT selected.path_key, owner_file.mod_id, owner_mod.display_name "
+                "FROM mod_files selected "
+                "JOIN mod_files owner_file "
+                "ON owner_file.path_key = selected.path_key AND owner_file.kind = 'file' "
+                "JOIN mods owner_mod ON owner_mod.id = owner_file.mod_id "
+                "WHERE selected.mod_id = ? "
+                "AND selected.kind = 'file' "
+                "AND owner_mod.state = 'installed' "
+                "ORDER BY selected.path_key, owner_file.mod_id ASC;");
+            statement.bindInt64(1, modId);
+
+            ConflictOwnerGroups groups;
             while (statement.stepRow())
             {
-                owners.push_back(ConflictOwner{
-                    std::stoll(statement.columnText(0)),
-                    statement.columnText(1)
+                groups[statement.columnText(0)].push_back(ConflictOwner{
+                    statement.columnInt64(1),
+                    statement.columnText(2)
                 });
             }
 
-            return owners;
+            return groups;
+        }
+
+        ConflictOwnerGroups conflictOwnersForCachedTreeFiles(
+            Database& database,
+            std::int64_t modId,
+            std::wstring_view parentKey)
+        {
+            Statement statement = database.prepare(
+                "SELECT selected.path_key, owner_file.mod_id, owner_mod.display_name "
+                "FROM mod_files selected "
+                "JOIN mod_files owner_file "
+                "ON owner_file.path_key = selected.path_key AND owner_file.kind = 'file' "
+                "JOIN mods owner_mod ON owner_mod.id = owner_file.mod_id "
+                "WHERE selected.mod_id = ? "
+                "AND selected.parent_key = ? "
+                "AND selected.kind = 'file' "
+                "AND owner_mod.state = 'installed' "
+                "ORDER BY selected.path_key, owner_file.mod_id ASC;");
+            statement.bindInt64(1, modId);
+            statement.bindText(2, parentKey);
+
+            ConflictOwnerGroups groups;
+            while (statement.stepRow())
+            {
+                groups[statement.columnText(0)].push_back(ConflictOwner{
+                    statement.columnInt64(1),
+                    statement.columnText(2)
+                });
+            }
+
+            return groups;
         }
 
         std::wstring conflictStateForOwners(
@@ -2440,30 +2554,36 @@ namespace fluxora
             return names;
         }
 
-        struct ConflictFileOwner
+        void applyConflictOwnerSummary(
+            ModFileSummary& summary,
+            const std::vector<ConflictOwner>& owners,
+            std::int64_t modId)
         {
-            std::wstring pathKey;
-            std::wstring relativePath;
-            std::int64_t modId{0};
-        };
+            if (owners.size() <= 1)
+            {
+                return;
+            }
 
-        void insertDetectedConflict(
-            Database& database,
-            const ConflictFileOwner& owner,
-            const ConflictFileOwner& other,
-            std::wstring_view kind,
-            std::wstring_view detectedAt)
-        {
-            Statement insert = database.prepare(
-                "INSERT OR REPLACE INTO mod_conflicts("
-                "mod_id, other_mod_id, relative_path, conflict_kind, source, detected_at"
-                ") VALUES(?, ?, ?, ?, 'scan', ?);");
-            insert.bindInt64(1, owner.modId);
-            insert.bindInt64(2, other.modId);
-            insert.bindText(3, owner.relativePath);
-            insert.bindText(4, kind);
-            insert.bindText(5, detectedAt);
-            insert.stepDone();
+            const std::wstring state = conflictStateForOwners(owners, modId);
+            if (state.empty())
+            {
+                return;
+            }
+
+            ++summary.conflictingFileCount;
+            if (state == L"overwrites")
+            {
+                ++summary.overwritingFileCount;
+            }
+            else if (state == L"overwritten")
+            {
+                ++summary.overwrittenFileCount;
+            }
+            else if (state == L"conflict")
+            {
+                ++summary.overwritingFileCount;
+                ++summary.overwrittenFileCount;
+            }
         }
 
         void refreshDetectedConflicts(Database& database)
@@ -2471,111 +2591,158 @@ namespace fluxora
             Statement remove = database.prepare("DELETE FROM mod_conflicts WHERE source = 'scan';");
             remove.stepDone();
 
-            Statement select = database.prepare(
-                "SELECT f.path_key, f.relative_path, f.mod_id "
-                "FROM mod_files f "
-                "JOIN mods m ON m.id = f.mod_id "
-                "WHERE f.kind = 'file' AND m.state = 'installed' "
-                "ORDER BY f.path_key, f.mod_id;");
-
-            const std::wstring detectedAt = nowUtcText();
-            std::wstring currentKey;
-            std::vector<ConflictFileOwner> owners;
-
-            auto flush = [&]()
-            {
-                if (owners.size() <= 1)
-                {
-                    return;
-                }
-
-                for (std::size_t left = 0; left < owners.size(); ++left)
-                {
-                    for (std::size_t right = 0; right < owners.size(); ++right)
-                    {
-                        if (left == right)
-                        {
-                            continue;
-                        }
-
-                        insertDetectedConflict(
-                            database,
-                            owners[left],
-                            owners[right],
-                            left < right ? L"overwritten-by" : L"overwrites",
-                            detectedAt);
-                    }
-                }
-            };
-
-            while (select.stepRow())
-            {
-                const std::wstring key = select.columnText(0);
-                if (!currentKey.empty() && key != currentKey)
-                {
-                    flush();
-                    owners.clear();
-                }
-
-                currentKey = key;
-                owners.push_back(ConflictFileOwner{
-                    key,
-                    select.columnText(1),
-                    select.columnInt64(2)
-                });
-            }
-
-            flush();
+            Statement insert = database.prepare(
+                "INSERT OR REPLACE INTO mod_conflicts("
+                "mod_id, other_mod_id, relative_path, conflict_kind, source, detected_at"
+                ") "
+                "SELECT owner_file.mod_id, other_file.mod_id, owner_file.relative_path, "
+                "CASE WHEN owner_file.mod_id < other_file.mod_id THEN 'overwritten-by' ELSE 'overwrites' END, "
+                "'scan', ? "
+                "FROM mod_files owner_file "
+                "JOIN mods owner_mod ON owner_mod.id = owner_file.mod_id "
+                "JOIN mod_files other_file "
+                "ON other_file.path_key = owner_file.path_key AND other_file.kind = 'file' "
+                "JOIN mods other_mod ON other_mod.id = other_file.mod_id "
+                "WHERE owner_file.kind = 'file' "
+                "AND owner_mod.state = 'installed' "
+                "AND other_mod.state = 'installed' "
+                "AND owner_file.mod_id <> other_file.mod_id;");
+            insert.bindText(1, nowUtcText());
+            insert.stepDone();
         }
 
-        bool hasCachedChildren(Database& database, std::int64_t modId, std::wstring_view parentKey)
+        std::set<std::wstring> cachedDirectoryPathKeysWithChildren(
+            Database& database,
+            std::int64_t modId,
+            std::wstring_view parentKey)
         {
             Statement statement = database.prepare(
-                "SELECT 1 FROM mod_files WHERE mod_id = ? AND parent_key = ? LIMIT 1;");
+                "SELECT selected.path_key "
+                "FROM mod_files selected "
+                "JOIN mod_files child "
+                "ON child.mod_id = selected.mod_id AND child.parent_key = selected.path_key "
+                "WHERE selected.mod_id = ? "
+                "AND selected.parent_key = ? "
+                "AND selected.kind = 'directory' "
+                "GROUP BY selected.path_key;");
             statement.bindInt64(1, modId);
             statement.bindText(2, parentKey);
-            return statement.stepRow();
+
+            std::set<std::wstring> pathKeys;
+            while (statement.stepRow())
+            {
+                pathKeys.insert(statement.columnText(0));
+            }
+
+            return pathKeys;
         }
 
         ModFileSummary summarizeCachedModFiles(Database& database, const InstalledModRecord& record)
         {
-            Statement statement = database.prepare(
-                "SELECT path_key FROM mod_files WHERE mod_id = ? AND kind = 'file';");
-            statement.bindInt64(1, record.id);
-
             ModFileSummary summary;
-            while (statement.stepRow())
+            summary.fileCount = cachedFileCount(database, record.id);
+            if (record.state == L"disabled")
             {
-                ++summary.fileCount;
-                if (record.state == L"disabled")
-                {
-                    continue;
-                }
+                return summary;
+            }
 
-                const std::vector<ConflictOwner> owners = conflictOwnersForPath(database, statement.columnText(0));
-                if (owners.size() <= 1)
-                {
-                    continue;
-                }
-
-                ++summary.conflictingFileCount;
-                const std::wstring state = conflictStateForOwners(owners, record.id);
-                if (state == L"overwrites")
-                {
-                    ++summary.overwritingFileCount;
-                }
-                else if (state == L"overwritten")
-                {
-                    ++summary.overwrittenFileCount;
-                }
-                else if (state == L"conflict")
-                {
-                    ++summary.overwritingFileCount;
-                    ++summary.overwrittenFileCount;
-                }
+            const ConflictOwnerGroups ownersByPath = conflictOwnersForCachedModFiles(database, record.id);
+            for (const auto& group : ownersByPath)
+            {
+                applyConflictOwnerSummary(summary, group.second, record.id);
             }
 
             return summary;
+        }
+
+        void applyInstalledConflictOwnerGroup(
+            const std::vector<ConflictOwner>& owners,
+            const std::map<std::int64_t, std::size_t>& summaryIndexes,
+            std::vector<ModFileSummaryRecord>& summaries)
+        {
+            if (owners.size() <= 1)
+            {
+                return;
+            }
+
+            for (const ConflictOwner& owner : owners)
+            {
+                const auto summaryIndex = summaryIndexes.find(owner.modId);
+                if (summaryIndex == summaryIndexes.end())
+                {
+                    continue;
+                }
+
+                applyConflictOwnerSummary(summaries[summaryIndex->second].summary, owners, owner.modId);
+            }
+        }
+
+        std::vector<ModFileSummaryRecord> summarizeCachedInstalledModFiles(
+            Database& database,
+            const std::vector<InstalledModRecord>& records)
+        {
+            std::vector<ModFileSummaryRecord> summaries;
+            summaries.reserve(records.size());
+            std::map<std::int64_t, std::size_t> summaryIndexes;
+            for (const InstalledModRecord& record : records)
+            {
+                const std::size_t index = summaries.size();
+                summaryIndexes.emplace(record.id, index);
+                summaries.push_back(ModFileSummaryRecord{
+                    record.folderName,
+                    record.path,
+                    ModFileSummary{}
+                });
+            }
+
+            Statement fileCounts = database.prepare(
+                "SELECT mod_id, COUNT(*) FROM mod_files WHERE kind = 'file' GROUP BY mod_id;");
+            while (fileCounts.stepRow())
+            {
+                const auto summaryIndex = summaryIndexes.find(fileCounts.columnInt64(0));
+                if (summaryIndex != summaryIndexes.end())
+                {
+                    summaries[summaryIndex->second].summary.fileCount = fileCounts.columnInt(1);
+                }
+            }
+
+            Statement owners = database.prepare(
+                "SELECT f.path_key, f.mod_id "
+                "FROM mod_files f "
+                "JOIN mods m ON m.id = f.mod_id "
+                "WHERE f.kind = 'file' "
+                "AND m.state = 'installed' "
+                "ORDER BY f.path_key, f.mod_id ASC;");
+
+            std::wstring currentPathKey;
+            std::vector<ConflictOwner> currentOwners;
+            auto flushOwners = [&]()
+            {
+                applyInstalledConflictOwnerGroup(currentOwners, summaryIndexes, summaries);
+            };
+
+            while (owners.stepRow())
+            {
+                const std::wstring itemPathKey = owners.columnText(0);
+                if (!currentPathKey.empty() && itemPathKey != currentPathKey)
+                {
+                    flushOwners();
+                    currentOwners.clear();
+                }
+
+                currentPathKey = itemPathKey;
+                currentOwners.push_back(ConflictOwner{
+                    owners.columnInt64(1),
+                    {}
+                });
+            }
+
+            if (!currentOwners.empty())
+            {
+                flushOwners();
+            }
+
+            return summaries;
         }
 
         void ensureAllFileCachesPrepared(
@@ -2586,11 +2753,12 @@ namespace fluxora
             syncInstalledModsFromDisk(database, projectDirectory, modsRoot);
             std::vector<InstalledModRecord> records = readInstalledRecords(database, projectDirectory, modsRoot);
 
-            Transaction transaction(database);
             for (InstalledModRecord& record : records)
             {
                 ensureFileCachePrepared(database, record);
             }
+
+            Transaction transaction(database);
             refreshDetectedConflicts(database);
             transaction.commit();
         }
@@ -2772,6 +2940,7 @@ namespace fluxora
                 update.bindText(2, folderName);
                 update.stepDone();
             }
+            bumpModInventoryRevision(database);
         }
 
         bool isTransientModDirectoryName(std::wstring_view folderName)
@@ -2924,7 +3093,27 @@ namespace fluxora
         return readMetadataValue(database, L"game_id");
     }
 
+#ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
+    void InstanceMetadataStore::resetSqlPrepareCountForTesting()
+    {
+        sqlitePrepareCountForTesting.store(0, std::memory_order_relaxed);
+    }
+
+    std::uint64_t InstanceMetadataStore::sqlPrepareCountForTesting()
+    {
+        return sqlitePrepareCountForTesting.load(std::memory_order_relaxed);
+    }
+#endif
+
     std::vector<InstalledModRecord> InstanceMetadataStore::listInstalledMods(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modsRoot)
+    {
+        Database database = openInstanceDatabase(projectDirectory);
+        return readInstalledRecords(database, projectDirectory, modsRoot);
+    }
+
+    void InstanceMetadataStore::refreshInstalledModsFromDisk(
         const std::filesystem::path& projectDirectory,
         const std::filesystem::path& modsRoot)
     {
@@ -2932,7 +3121,6 @@ namespace fluxora
 
         Database database = openInstanceDatabase(projectDirectory);
         syncInstalledModsFromDisk(database, projectDirectory, modsRoot);
-        return readInstalledRecords(database, projectDirectory, modsRoot);
     }
 
     std::vector<ProfileOrderItemRecord> InstanceMetadataStore::listProfileOrderItems(
@@ -3619,6 +3807,7 @@ namespace fluxora
         statement.bindText(1, nowUtcText());
         statement.bindText(2, folderName);
         statement.stepDone();
+        bumpModInventoryRevision(database);
         transaction.commit();
     }
 
@@ -3659,6 +3848,7 @@ namespace fluxora
             statement.bindText(3, folderName);
             statement.bindText(4, record.state);
             statement.stepDone();
+            bumpModInventoryRevision(database);
             transaction.commit();
 
             record = readRecordByFolder(database, projectDirectory, folderName, modPath.parent_path());
@@ -3689,9 +3879,11 @@ namespace fluxora
         const std::wstring updatedAt = nowUtcText();
         std::vector<InstalledModRecord> records = readInstalledRecords(database, projectDirectory, modsRoot);
         std::vector<InstalledModRecord> manifestsToWrite;
+        bool anyStateChanged = false;
         for (InstalledModRecord& record : records)
         {
             const bool stateChanged = record.state != nextState;
+            anyStateChanged = anyStateChanged || stateChanged;
             if (stateChanged)
             {
                 record.state = nextState;
@@ -3712,6 +3904,10 @@ namespace fluxora
         statement.bindText(2, updatedAt);
         statement.bindText(3, nextState);
         statement.stepDone();
+        if (anyStateChanged)
+        {
+            bumpModInventoryRevision(database);
+        }
         transaction.commit();
 
         for (const InstalledModRecord& record : manifestsToWrite)
@@ -3828,8 +4024,8 @@ namespace fluxora
 
         InstalledModRecord record =
             readRecordByFolder(database, projectDirectory, modPath.filename().wstring(), resolvedModsRoot);
-        Transaction transaction(database);
         ensureFileCachePrepared(database, record);
+        Transaction transaction(database);
         refreshDetectedConflicts(database);
         transaction.commit();
         return summarizeCachedModFiles(database, record);
@@ -3849,17 +4045,9 @@ namespace fluxora
         Database database = openInstanceDatabase(projectDirectory);
         ensureAllFileCachesPrepared(database, projectDirectory, modsRoot);
 
-        std::vector<ModFileSummaryRecord> summaries;
-        for (const InstalledModRecord& record : readInstalledRecords(database, projectDirectory, modsRoot))
-        {
-            summaries.push_back(ModFileSummaryRecord{
-                record.folderName,
-                record.path,
-                summarizeCachedModFiles(database, record)
-            });
-        }
-
-        return summaries;
+        const std::vector<InstalledModRecord> records =
+            readInstalledRecords(database, projectDirectory, modsRoot);
+        return summarizeCachedInstalledModFiles(database, records);
     }
 
     std::vector<ModFileSummaryRecord> InstanceMetadataStore::summarizeProfileModFiles(
@@ -3885,8 +4073,6 @@ namespace fluxora
         std::wstring_view relativeDirectory,
         const std::filesystem::path& modsRoot)
     {
-        const std::lock_guard metadataLock(metadataStoreMutex());
-
         if (projectDirectory.empty() || modPath.empty())
         {
             throw std::invalid_argument("Project directory and mod path are required.");
@@ -3907,42 +4093,78 @@ namespace fluxora
 
         Database database = openInstanceDatabase(projectDirectory);
         const std::filesystem::path resolvedModsRoot = modsRoot.empty() ? modPath.parent_path() : modsRoot;
-        syncInstalledModsFromDisk(database, projectDirectory, resolvedModsRoot);
 
         InstalledModRecord record =
             readRecordByFolder(database, projectDirectory, modPath.filename().wstring(), resolvedModsRoot);
 
-        Transaction transaction(database);
         ensureFileCachePrepared(database, record);
-        transaction.commit();
 
+        const std::wstring parentPathKey = pathKey(parent);
         Statement statement = database.prepare(
             "SELECT name, relative_path, kind, size, path_key "
             "FROM mod_files "
             "WHERE mod_id = ? AND parent_key = ? "
             "ORDER BY CASE kind WHEN 'directory' THEN 0 ELSE 1 END, name COLLATE NOCASE;");
         statement.bindInt64(1, record.id);
-        statement.bindText(2, pathKey(parent));
+        statement.bindText(2, parentPathKey);
 
-        std::vector<ModFileTreeEntry> entries;
+        struct CachedTreeRow
+        {
+            ModFileTreeEntry entry;
+            std::wstring pathKey;
+        };
+
+        std::vector<CachedTreeRow> rows;
+        bool hasDirectory = false;
+        bool hasFile = false;
         while (statement.stepRow())
         {
             const std::wstring kind = statement.columnText(2);
             const bool isDirectory = kind == L"directory";
             const std::wstring itemPathKey = statement.columnText(4);
-            std::vector<ConflictOwner> owners = isDirectory
-                ? std::vector<ConflictOwner>()
-                : conflictOwnersForPath(database, itemPathKey);
 
-            entries.push_back(ModFileTreeEntry{
-                statement.columnText(0),
-                statement.columnText(1),
-                isDirectory,
-                isDirectory && hasCachedChildren(database, record.id, itemPathKey),
-                static_cast<std::uintmax_t>(statement.columnInt64(3) < 0 ? 0 : statement.columnInt64(3)),
-                isDirectory ? std::wstring() : conflictStateForOwners(owners, record.id),
-                isDirectory ? std::vector<std::wstring>() : ownerNames(owners)
+            hasDirectory = hasDirectory || isDirectory;
+            hasFile = hasFile || !isDirectory;
+            rows.push_back(CachedTreeRow{
+                ModFileTreeEntry{
+                    statement.columnText(0),
+                    statement.columnText(1),
+                    isDirectory,
+                    false,
+                    static_cast<std::uintmax_t>(statement.columnInt64(3) < 0 ? 0 : statement.columnInt64(3)),
+                    {},
+                    {}
+                },
+                itemPathKey
             });
+        }
+
+        const std::set<std::wstring> pathKeysWithChildren = hasDirectory
+            ? cachedDirectoryPathKeysWithChildren(database, record.id, parentPathKey)
+            : std::set<std::wstring>{};
+        const ConflictOwnerGroups ownersByPath = hasFile
+            ? conflictOwnersForCachedTreeFiles(database, record.id, parentPathKey)
+            : ConflictOwnerGroups{};
+
+        std::vector<ModFileTreeEntry> entries;
+        entries.reserve(rows.size());
+        for (CachedTreeRow& row : rows)
+        {
+            if (row.entry.isDirectory)
+            {
+                row.entry.hasChildren = pathKeysWithChildren.contains(row.pathKey);
+            }
+            else
+            {
+                const auto owners = ownersByPath.find(row.pathKey);
+                if (owners != ownersByPath.end())
+                {
+                    row.entry.conflictState = conflictStateForOwners(owners->second, record.id);
+                    row.entry.conflictOwners = ownerNames(owners->second);
+                }
+            }
+
+            entries.push_back(std::move(row.entry));
         }
 
         return entries;

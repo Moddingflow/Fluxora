@@ -2436,6 +2436,7 @@
                                              Style="{StaticResource ModSearchTextBoxStyle}"
                                              Text="{Binding ModSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                              ToolTip="{Binding ModSearchResultText}"
+                                             AutomationProperties.AutomationId="ModSearchTextBox"
                                              HorizontalAlignment="Stretch"
                                              VerticalAlignment="Center"
                                              Margin="24,0,24,0" />
@@ -2534,6 +2535,7 @@
                                     <DataGrid x:Name="ModsGrid"
                                               ItemsSource="{Binding VisibleMods}"
                                               SelectedItem="{Binding SelectedMod}"
+                                              AutomationProperties.AutomationId="ModsGrid"
                                               SelectionMode="Extended"
                                               SelectionUnit="FullRow"
                                               EnableRowVirtualization="True"
@@ -3137,130 +3139,169 @@
                                 </TabItem>
 
                                 <TabItem Header="Данные">
-                                    <ScrollViewer Margin="0,16,0,0"
-                                                  VerticalScrollBarVisibility="Auto"
-                                                  HorizontalScrollBarVisibility="Disabled">
-                                        <StackPanel>
-                                            <TextBlock Text="Выбранный мод"
-                                                       Style="{StaticResource SectionLabelStyle}" />
-                                            <Border Style="{StaticResource InnerPanelStyle}"
-                                                    Padding="14"
-                                                    Margin="0,0,0,14">
-                                                <StackPanel>
-                                                    <TextBlock Text="{Binding SelectedModTitle}"
-                                                               FontWeight="Black"
-                                                               Foreground="{StaticResource TextBrush}"
-                                                               TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Text="{Binding SelectedModVersionText}"
-                                                               Margin="0,6,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap" />
-                                                    <TextBlock Text="{Binding SelectedModUpdateText}"
-                                                               Margin="0,4,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap" />
-                                                    <TextBlock Text="{Binding SelectedModConflictText}"
-                                                               Margin="0,4,0,0"
-                                                               Foreground="{StaticResource TextSecondaryBrush}"
-                                                               TextWrapping="Wrap" />
-                                                    <TextBlock Text="{Binding SelectedModFileCountText}"
-                                                               Margin="0,4,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap" />
-                                                </StackPanel>
-                                            </Border>
+                                    <Grid Margin="0,16,0,0">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" MinHeight="220" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
 
-                                            <TextBlock Text="Дерево файлов"
-                                                       Style="{StaticResource SectionLabelStyle}" />
-                                            <Border Style="{StaticResource InnerPanelStyle}"
-                                                    Padding="8"
-                                                    Margin="0,0,0,14"
-                                                    MinHeight="220">
-                                                <Grid>
-                                                    <TreeView ItemsSource="{Binding SelectedModFileTree}"
-                                                              Background="Transparent"
-                                                              BorderThickness="0"
-                                                              Foreground="{StaticResource TextBrush}">
-                                                        <TreeView.ItemContainerStyle>
-                                                            <Style TargetType="{x:Type TreeViewItem}">
-                                                                <EventSetter Event="Expanded" Handler="OnModFileTreeItemExpanded" />
-                                                            </Style>
-                                                        </TreeView.ItemContainerStyle>
-                                                        <TreeView.ItemTemplate>
-                                                            <HierarchicalDataTemplate ItemsSource="{Binding Children}">
-                                                                <Grid Margin="0,2">
-                                                                    <Grid.ColumnDefinitions>
-                                                                        <ColumnDefinition Width="20" />
-                                                                        <ColumnDefinition Width="*" />
-                                                                        <ColumnDefinition Width="Auto" />
-                                                                    </Grid.ColumnDefinitions>
-                                                                    <TextBlock FontFamily="Segoe MDL2 Assets"
-                                                                               Text="{Binding IconText}"
-                                                                               FontSize="12"
-                                                                               Foreground="{StaticResource MutedTextBrush}"
-                                                                               VerticalAlignment="Center" />
-                                                                    <StackPanel Grid.Column="1"
-                                                                                Margin="4,0,10,0">
-                                                                        <TextBlock Text="{Binding Name}"
-                                                                                   Foreground="{StaticResource TextBrush}"
-                                                                                   TextTrimming="CharacterEllipsis" />
-                                                                        <TextBlock Text="{Binding ConflictText}"
-                                                                                   FontSize="11"
-                                                                                   Foreground="{StaticResource AccentHoverBrush}"
-                                                                                   TextTrimming="CharacterEllipsis">
-                                                                            <TextBlock.Style>
-                                                                                <Style TargetType="{x:Type TextBlock}">
-                                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                                    <Style.Triggers>
-                                                                                        <DataTrigger Binding="{Binding HasConflict}" Value="False">
-                                                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                                                        </DataTrigger>
-                                                                                    </Style.Triggers>
-                                                                                </Style>
-                                                                            </TextBlock.Style>
-                                                                        </TextBlock>
-                                                                    </StackPanel>
-                                                                    <TextBlock Grid.Column="2"
-                                                                               Text="{Binding SizeText}"
-                                                                               Foreground="{StaticResource MutedTextBrush}"
+                                        <TextBlock Grid.Row="0"
+                                                   Text="Выбранный мод"
+                                                   Style="{StaticResource SectionLabelStyle}" />
+                                        <Border Grid.Row="1"
+                                                Style="{StaticResource InnerPanelStyle}"
+                                                Padding="14"
+                                                Margin="0,0,0,14">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding SelectedModTitle}"
+                                                           FontWeight="Black"
+                                                           Foreground="{StaticResource TextBrush}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding SelectedModVersionText}"
+                                                           Margin="0,6,0,0"
+                                                           Style="{StaticResource MutedTextStyle}"
+                                                           TextWrapping="Wrap" />
+                                                <TextBlock Text="{Binding SelectedModUpdateText}"
+                                                           Margin="0,4,0,0"
+                                                           Style="{StaticResource MutedTextStyle}"
+                                                           TextWrapping="Wrap" />
+                                                <TextBlock Text="{Binding SelectedModConflictText}"
+                                                           Margin="0,4,0,0"
+                                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                                           TextWrapping="Wrap" />
+                                                <TextBlock Text="{Binding SelectedModFileCountText}"
+                                                           Margin="0,4,0,0"
+                                                           Style="{StaticResource MutedTextStyle}"
+                                                           TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <TextBlock Grid.Row="2"
+                                                   Text="Дерево файлов"
+                                                   Style="{StaticResource SectionLabelStyle}" />
+                                        <Border Grid.Row="3"
+                                                Style="{StaticResource InnerPanelStyle}"
+                                                Padding="8"
+                                                Margin="0,0,0,14">
+                                            <Grid>
+                                                <TreeView ItemsSource="{Binding SelectedModFileTree}"
+                                                          Background="Transparent"
+                                                          BorderThickness="0"
+                                                          Foreground="{StaticResource TextBrush}"
+                                                          ScrollViewer.CanContentScroll="True"
+                                                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                          ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                          VirtualizingPanel.CacheLength="1"
+                                                          VirtualizingPanel.IsVirtualizing="True"
+                                                          VirtualizingPanel.VirtualizationMode="Recycling">
+                                                    <TreeView.Resources>
+                                                        <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource WorkspacePanelScrollBarStyle}" />
+                                                    </TreeView.Resources>
+                                                    <TreeView.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <VirtualizingStackPanel />
+                                                        </ItemsPanelTemplate>
+                                                    </TreeView.ItemsPanel>
+                                                    <TreeView.ItemContainerStyle>
+                                                        <Style TargetType="{x:Type TreeViewItem}">
+                                                            <Setter Property="ItemsPanel">
+                                                                <Setter.Value>
+                                                                    <ItemsPanelTemplate>
+                                                                        <VirtualizingStackPanel />
+                                                                    </ItemsPanelTemplate>
+                                                                </Setter.Value>
+                                                            </Setter>
+                                                            <Setter Property="ScrollViewer.CanContentScroll" Value="True" />
+                                                            <Setter Property="VirtualizingPanel.CacheLength" Value="1" />
+                                                            <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True" />
+                                                            <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+                                                            <EventSetter Event="Expanded" Handler="OnModFileTreeItemExpanded" />
+                                                        </Style>
+                                                    </TreeView.ItemContainerStyle>
+                                                    <TreeView.ItemTemplate>
+                                                        <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                                                            <Grid Margin="0,2">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="20" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock FontFamily="Segoe MDL2 Assets"
+                                                                           Text="{Binding IconText}"
+                                                                           FontSize="12"
+                                                                           Foreground="{StaticResource MutedTextBrush}"
+                                                                           VerticalAlignment="Center" />
+                                                                <StackPanel Grid.Column="1"
+                                                                            Margin="4,0,10,0">
+                                                                    <TextBlock Text="{Binding Name}"
+                                                                               Foreground="{StaticResource TextBrush}"
+                                                                               TextTrimming="CharacterEllipsis" />
+                                                                    <TextBlock Text="{Binding ConflictText}"
                                                                                FontSize="11"
-                                                                               VerticalAlignment="Center" />
-                                                                </Grid>
-                                                            </HierarchicalDataTemplate>
-                                                        </TreeView.ItemTemplate>
-                                                    </TreeView>
+                                                                               Foreground="{StaticResource AccentHoverBrush}"
+                                                                               TextTrimming="CharacterEllipsis">
+                                                                        <TextBlock.Style>
+                                                                            <Style TargetType="{x:Type TextBlock}">
+                                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding HasConflict}" Value="False">
+                                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </TextBlock.Style>
+                                                                    </TextBlock>
+                                                                </StackPanel>
+                                                                <TextBlock Grid.Column="2"
+                                                                           Text="{Binding SizeText}"
+                                                                           Foreground="{StaticResource MutedTextBrush}"
+                                                                           FontSize="11"
+                                                                           VerticalAlignment="Center" />
+                                                            </Grid>
+                                                        </HierarchicalDataTemplate>
+                                                    </TreeView.ItemTemplate>
+                                                </TreeView>
 
-                                                    <TextBlock Text="Файлы появятся после выбора мода"
-                                                               HorizontalAlignment="Center"
-                                                               VerticalAlignment="Center">
-                                                        <TextBlock.Style>
-                                                            <Style TargetType="{x:Type TextBlock}" BasedOn="{StaticResource MutedTextStyle}">
-                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding HasSelectedModFileTree}" Value="False">
-                                                                        <Setter Property="Visibility" Value="Visible" />
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </TextBlock.Style>
-                                                    </TextBlock>
-                                                </Grid>
-                                            </Border>
+                                                <TextBlock Text="Файлы появятся после выбора мода"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="{x:Type TextBlock}" BasedOn="{StaticResource MutedTextStyle}">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding HasSelectedModFileTree}" Value="False">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Grid>
+                                        </Border>
 
-                                            <TextBlock Text="Папки сборки"
-                                                       Style="{StaticResource SectionLabelStyle}" />
-                                            <ItemsControl ItemsSource="{Binding SelectedProject.Template.Folders}"
-                                                          ItemsPanel="{StaticResource WrapPanelTemplate}"
-                                                          ItemTemplate="{StaticResource FolderChipTemplate}" />
+                                        <TextBlock Grid.Row="4"
+                                                   Text="Папки сборки"
+                                                   Style="{StaticResource SectionLabelStyle}" />
+                                        <ItemsControl Grid.Row="5"
+                                                      ItemsSource="{Binding SelectedProject.Template.Folders}"
+                                                      ItemsPanel="{StaticResource WrapPanelTemplate}"
+                                                      ItemTemplate="{StaticResource FolderChipTemplate}" />
 
+                                        <StackPanel Grid.Row="6"
+                                                    Margin="0,12,0,0">
                                             <TextBlock Text="Файлы профиля"
                                                        Style="{StaticResource SectionLabelStyle}"
-                                                       Margin="0,12,0,8" />
+                                                       Margin="0,0,0,8" />
                                             <TextBlock Text="{Binding SelectedProjectProfileFilesText}"
                                                        Style="{StaticResource MutedTextStyle}"
                                                        TextWrapping="Wrap" />
                                         </StackPanel>
-                                    </ScrollViewer>
+                                    </Grid>
                                 </TabItem>
 
                                 <TabItem Header="Загрузки">

@@ -9,6 +9,7 @@
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <cwctype>
 #include <fstream>
 #include <iterator>
@@ -45,14 +46,24 @@ namespace fluxora
 
         struct ProfileModFolder
         {
+            std::int64_t id{0};
             std::wstring folderName;
+            std::wstring updatedAt;
+            std::wstring contentFingerprint;
             bool isEnabled{true};
         };
 
         struct PluginScanCacheEntry
         {
+            std::wstring revision;
             std::wstring fingerprint;
             std::map<std::wstring, DetectedPlugin> detected;
+        };
+
+        struct PluginSearchDirectoryStampCacheEntry
+        {
+            std::wstring stamp;
+            std::wstring fingerprint;
         };
 
         std::wstring toLower(std::wstring value)
@@ -571,34 +582,98 @@ namespace fluxora
             return mutex;
         }
 
-        [[nodiscard]] std::wstring pathFingerprint(const std::filesystem::path& path)
+        [[nodiscard]] std::map<std::wstring, PluginSearchDirectoryStampCacheEntry>&
+            pluginSearchDirectoryStampCache()
+        {
+            static std::map<std::wstring, PluginSearchDirectoryStampCacheEntry> cache;
+            return cache;
+        }
+
+        [[nodiscard]] std::mutex& pluginSearchDirectoryStampCacheMutex()
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        [[nodiscard]] std::wstring pluginSearchDirectoryStamp(const std::filesystem::path& path)
         {
             std::error_code error;
-            const bool exists = std::filesystem::exists(path, error) && !error;
-            if (!exists)
+            if (!std::filesystem::exists(path, error) || error)
             {
                 return L"missing";
             }
 
             error.clear();
+            if (!std::filesystem::is_directory(path, error) || error)
+            {
+                return L"not-directory";
+            }
+
+            error.clear();
             const auto timestamp = std::filesystem::last_write_time(path, error);
             const auto timestampCount = error ? 0 : timestamp.time_since_epoch().count();
-            error.clear();
-            const bool regular = std::filesystem::is_regular_file(path, error) && !error;
-            std::uintmax_t size = 0;
-            if (regular)
+            return L"mtime=" + std::to_wstring(timestampCount) + L";kind=directory";
+        }
+
+        [[nodiscard]] std::wstring pluginSearchDirectoryFingerprint(
+            const std::filesystem::path& searchDirectory)
+        {
+            const std::wstring cacheKey =
+                normalizePathComparisonKey(searchDirectory, PathCaseSensitivity::CaseInsensitive);
+            const std::wstring stamp = pluginSearchDirectoryStamp(searchDirectory);
             {
-                error.clear();
-                size = std::filesystem::file_size(path, error);
-                if (error)
+                std::lock_guard<std::mutex> lock(pluginSearchDirectoryStampCacheMutex());
+                const auto cached = pluginSearchDirectoryStampCache().find(cacheKey);
+                if (cached != pluginSearchDirectoryStampCache().end() &&
+                    cached->second.stamp == stamp)
                 {
-                    size = 0;
+                    return cached->second.fingerprint;
                 }
             }
 
-            return L"mtime=" + std::to_wstring(timestampCount) +
-                L";size=" + std::to_wstring(size) +
-                L";kind=" + (regular ? std::wstring(L"file") : std::wstring(L"other"));
+            std::wstring fingerprint = stamp;
+            if (stamp.find(L"kind=directory") != std::wstring::npos)
+            {
+                std::error_code error;
+                std::vector<std::wstring> entries;
+                for (const auto& entry : std::filesystem::directory_iterator(
+                         searchDirectory,
+                         std::filesystem::directory_options::skip_permission_denied,
+                         error))
+                {
+                    if (error)
+                    {
+                        break;
+                    }
+
+                    std::error_code entryError;
+                    const bool regular = entry.is_regular_file(entryError) && !entryError;
+                    entries.push_back(
+                        (regular ? std::wstring(L"file:") : std::wstring(L"other:")) +
+                        normalizePathComparisonKey(
+                            entry.path().filename(),
+                            PathCaseSensitivity::CaseInsensitive));
+                }
+
+                std::sort(entries.begin(), entries.end());
+                for (const std::wstring& entry : entries)
+                {
+                    fingerprint.push_back(L';');
+                    fingerprint.append(entry);
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(pluginSearchDirectoryStampCacheMutex());
+                pluginSearchDirectoryStampCache()[cacheKey] =
+                    PluginSearchDirectoryStampCacheEntry{stamp, fingerprint};
+                while (pluginSearchDirectoryStampCache().size() > 4096)
+                {
+                    pluginSearchDirectoryStampCache().erase(pluginSearchDirectoryStampCache().begin());
+                }
+            }
+
+            return fingerprint;
         }
 
         [[nodiscard]] std::wstring pluginRulesSignature(const PluginSupportRules& rules)
@@ -712,45 +787,34 @@ namespace fluxora
                         searchDirectory,
                         PathCaseSensitivity::CaseInsensitive));
                     fingerprint.push_back(L':');
-                    fingerprint.append(pathFingerprint(searchDirectory));
+                    fingerprint.append(pluginSearchDirectoryFingerprint(searchDirectory));
                     fingerprint.push_back(L';');
-
-                    std::error_code error;
-                    if (!std::filesystem::exists(searchDirectory, error) ||
-                        !std::filesystem::is_directory(searchDirectory, error))
-                    {
-                        continue;
-                    }
-
-                    std::vector<std::wstring> entries;
-                    for (const auto& entry : std::filesystem::directory_iterator(
-                             searchDirectory,
-                             std::filesystem::directory_options::skip_permission_denied,
-                             error))
-                    {
-                        if (error)
-                        {
-                            break;
-                        }
-
-                        entries.push_back(
-                            normalizePathComparisonKey(
-                                entry.path().filename(),
-                                PathCaseSensitivity::CaseInsensitive) +
-                            L":" +
-                            pathFingerprint(entry.path()));
-                    }
-
-                    std::sort(entries.begin(), entries.end());
-                    for (const std::wstring& entry : entries)
-                    {
-                        fingerprint.append(entry);
-                        fingerprint.push_back(L';');
-                    }
                 }
             }
 
             return fingerprint;
+        }
+
+        [[nodiscard]] std::wstring pluginScanRevision(
+            const std::vector<ProfileModFolder>& profileModFolders)
+        {
+            std::wstring revision;
+            for (const ProfileModFolder& folder : profileModFolders)
+            {
+                revision.append(L"mod=");
+                revision.append(std::to_wstring(folder.id));
+                revision.push_back(L':');
+                revision.append(toLower(folder.folderName));
+                revision.push_back(L':');
+                revision.append(folder.isEnabled ? L"enabled" : L"disabled");
+                revision.push_back(L':');
+                revision.append(folder.updatedAt);
+                revision.push_back(L':');
+                revision.append(folder.contentFingerprint);
+                revision.push_back(L';');
+            }
+
+            return revision;
         }
 
         std::string serializeStoredPlugins(const std::vector<StoredPlugin>& plugins)
@@ -791,18 +855,33 @@ namespace fluxora
                 if (item.kind == L"mod" && item.hasMod)
                 {
                     profileModFolders.push_back(ProfileModFolder{
+                        item.mod.id,
                         item.mod.folderName,
+                        item.mod.updatedAt,
+                        item.mod.contentFingerprint,
                         item.mod.state != L"disabled"
                     });
                 }
             }
 
             const std::wstring cacheKey = pluginScanCacheKey(projectDirectory, profileName, rules, directory);
+            const std::wstring revision = pluginScanRevision(profileModFolders);
+            {
+                std::lock_guard<std::mutex> lock(pluginScanCacheMutex());
+                const auto cached = pluginScanCache().find(cacheKey);
+                if (cached != pluginScanCache().end() && cached->second.revision == revision)
+                {
+                    return cached->second.detected;
+                }
+            }
+
             const std::wstring fingerprint = pluginScanFingerprint(directory, rules, profileModFolders);
             {
                 std::lock_guard<std::mutex> lock(pluginScanCacheMutex());
                 const auto cached = pluginScanCache().find(cacheKey);
-                if (cached != pluginScanCache().end() && cached->second.fingerprint == fingerprint)
+                if (cached != pluginScanCache().end() &&
+                    cached->second.revision == revision &&
+                    cached->second.fingerprint == fingerprint)
                 {
                     return cached->second.detected;
                 }
@@ -877,7 +956,7 @@ namespace fluxora
 
             {
                 std::lock_guard<std::mutex> lock(pluginScanCacheMutex());
-                pluginScanCache()[cacheKey] = PluginScanCacheEntry{fingerprint, detected};
+                pluginScanCache()[cacheKey] = PluginScanCacheEntry{revision, fingerprint, detected};
                 while (pluginScanCache().size() > 64)
                 {
                     pluginScanCache().erase(pluginScanCache().begin());

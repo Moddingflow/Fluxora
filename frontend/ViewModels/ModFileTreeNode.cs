@@ -1,10 +1,12 @@
-using System.Collections.ObjectModel;
 using Fluxora.App.Models;
+using Fluxora.App.Services;
 
 namespace Fluxora.App.ViewModels;
 
 public sealed class ModFileTreeNode
 {
+    private string? conflictText;
+
     private ModFileTreeNode(string name)
     {
         Name = name;
@@ -36,7 +38,7 @@ public sealed class ModFileTreeNode
     public IReadOnlyList<string> ConflictOwners { get; } = Array.Empty<string>();
     public bool IsLoaded { get; set; }
     public bool IsPlaceholder { get; }
-    public ObservableCollection<ModFileTreeNode> Children { get; } = new();
+    public BulkObservableCollection<ModFileTreeNode> Children { get; } = new();
 
     public string IconText => IsDirectory ? "\uE8B7" : "\uE8A5";
 
@@ -46,22 +48,8 @@ public sealed class ModFileTreeNode
     {
         get
         {
-            if (string.IsNullOrWhiteSpace(ConflictState))
-            {
-                return string.Empty;
-            }
-
-            string owners = ConflictOwners.Count == 0
-                ? string.Empty
-                : $" · {string.Join(", ", ConflictOwners)}";
-
-            return ConflictState switch
-            {
-                "overwrites" => $"Перекрывает{owners}",
-                "overwritten" => $"Перекрыт{owners}",
-                "conflict" => $"Конфликт{owners}",
-                _ => ConflictState
-            };
+            conflictText ??= BuildConflictText();
+            return conflictText;
         }
     }
 
@@ -70,6 +58,32 @@ public sealed class ModFileTreeNode
     public static ModFileTreeNode CreatePlaceholder()
     {
         return new ModFileTreeNode("Загрузка...");
+    }
+
+    public void ReplaceChildren(IEnumerable<ModFileTreeEntry> entries)
+    {
+        Children.ReplaceAll(entries.Select(entry => new ModFileTreeNode(entry)));
+        IsLoaded = true;
+    }
+
+    private string BuildConflictText()
+    {
+        if (string.IsNullOrWhiteSpace(ConflictState))
+        {
+            return string.Empty;
+        }
+
+        string owners = ConflictOwners.Count == 0
+            ? string.Empty
+            : $" · {string.Join(", ", ConflictOwners)}";
+
+        return ConflictState switch
+        {
+            "overwrites" => $"Перекрывает{owners}",
+            "overwritten" => $"Перекрыт{owners}",
+            "conflict" => $"Конфликт{owners}",
+            _ => ConflictState
+        };
     }
 
     private static string FormatSize(ulong bytes)

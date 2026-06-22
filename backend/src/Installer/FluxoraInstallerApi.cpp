@@ -10,6 +10,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <cwchar>
 #include <cwctype>
 #include <ctime>
@@ -17,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -24,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -34,6 +37,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <bcrypt.h>
 #include <shlobj.h>
 #include <shobjidl.h>
 #endif
@@ -41,8 +45,13 @@
 namespace
 {
     constexpr std::array<unsigned char, 8> PackageMagic{ 'F', 'L', 'X', 'P', 'K', 'G', '1', '\0' };
-    constexpr std::uint32_t PackageVersion = 1;
+    constexpr std::uint32_t MinimumPackageVersion = 1;
+    constexpr std::uint32_t CurrentPackageVersion = 2;
+    constexpr std::uint32_t PackageVersionWithFileHashes = 2;
+    constexpr std::size_t Sha256HashSize = 32;
     constexpr std::size_t CopyBufferSize = 1024 * 256;
+    constexpr std::chrono::milliseconds ProgressCallbackMinimumInterval{100};
+    constexpr double ProgressCallbackMinimumPercentDelta = 0.5;
 
     thread_local std::wstring lastError;
     thread_local std::string currentOperationId;
@@ -62,6 +71,14 @@ namespace
         std::filesystem::path applicationPath;
         std::filesystem::path desktopShortcutPath;
         bool createdDesktopShortcut{false};
+    };
+
+    struct InstallerProgressState
+    {
+        std::chrono::steady_clock::time_point lastReport{};
+        std::wstring lastPhase;
+        double lastPercent{0.0};
+        bool hasReport{false};
     };
 
     bool isBlank(const wchar_t* value)
@@ -254,6 +271,51 @@ namespace
         }
     }
 
+    bool detailedProgressLoggingEnabled()
+    {
+        static const bool enabled = []
+        {
+            const std::wstring value = readEnvironmentVariable(L"FLUXORA_INSTALLER_DEBUG_PROGRESS");
+            return value == L"1" ||
+                value == L"true" ||
+                value == L"TRUE" ||
+                value == L"on" ||
+                value == L"ON";
+        }();
+        return enabled;
+    }
+
+    bool isTerminalProgressPhase(std::wstring_view phase)
+    {
+        return phase == L"completed" ||
+            phase == L"complete" ||
+            phase == L"error" ||
+            phase == L"failed" ||
+            phase == L"failure";
+    }
+
+    void writeProgressDebugLog(
+        std::wstring_view phase,
+        std::wstring_view currentItem,
+        std::uint64_t copiedBytes,
+        std::uint64_t totalBytes,
+        bool emitted)
+    {
+        if (!detailedProgressLoggingEnabled())
+        {
+            return;
+        }
+
+        std::ostringstream stream;
+        stream << "progress-callback "
+               << (emitted ? "emitted" : "coalesced")
+               << ". phase=\"" << toUtf8(std::wstring(phase)) << "\""
+               << ", currentItem=\"" << toUtf8(std::wstring(currentItem)) << "\""
+               << ", copiedBytes=" << copiedBytes
+               << ", totalBytes=" << totalBytes;
+        writeLog("DEBUG", stream.str());
+    }
+
     std::wstring makeAbsoluteString(const std::filesystem::path& path)
     {
         std::error_code error;
@@ -325,6 +387,242 @@ namespace
         return FluxoraInstallerResultOk;
     }
 
+    class PackageReader
+    {
+    public:
+        virtual ~PackageReader() = default;
+
+        virtual std::size_t readSome(char* buffer, std::size_t byteCount) = 0;
+        [[nodiscard]] virtual std::string sourceDescription() const = 0;
+
+        void readExact(char* buffer, std::size_t byteCount, std::string_view label)
+        {
+            std::size_t offset = 0;
+            while (offset < byteCount)
+            {
+                const std::size_t read = readSome(buffer + offset, byteCount - offset);
+                if (read == 0)
+                {
+                    throw std::runtime_error(std::string("Invalid package: failed to read ") + std::string(label) + ".");
+                }
+
+                if (read > byteCount - offset)
+                {
+                    throw std::runtime_error("Invalid package: stream reader returned too many bytes.");
+                }
+
+                offset += read;
+            }
+        }
+    };
+
+    class FilePackageReader final : public PackageReader
+    {
+    public:
+        explicit FilePackageReader(std::filesystem::path packagePath)
+            : packagePath_(std::move(packagePath)),
+              stream_(packagePath_, std::ios::in | std::ios::binary)
+        {
+            if (!stream_)
+            {
+                throw std::runtime_error("Installer package could not be opened.");
+            }
+        }
+
+        std::size_t readSome(char* buffer, std::size_t byteCount) override
+        {
+            if (byteCount == 0)
+            {
+                return 0;
+            }
+
+            const auto request = static_cast<std::streamsize>(
+                std::min<std::size_t>(byteCount, static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max())));
+            stream_.read(buffer, request);
+            const std::streamsize read = stream_.gcount();
+            if (read < 0 || (read == 0 && stream_.bad()))
+            {
+                throw std::runtime_error("Installer package could not be read.");
+            }
+
+            return static_cast<std::size_t>(read);
+        }
+
+        [[nodiscard]] std::string sourceDescription() const override
+        {
+            return toUtf8(packagePath_.wstring());
+        }
+
+    private:
+        std::filesystem::path packagePath_;
+        std::ifstream stream_;
+    };
+
+    class CallbackPackageReader final : public PackageReader
+    {
+    public:
+        CallbackPackageReader(FluxoraInstallerReadCallback readCallback, void* readUserData)
+            : readCallback_(readCallback),
+              readUserData_(readUserData)
+        {
+            if (readCallback_ == nullptr)
+            {
+                throw std::invalid_argument("Installer package stream callback is required.");
+            }
+        }
+
+        std::size_t readSome(char* buffer, std::size_t byteCount) override
+        {
+            if (byteCount == 0)
+            {
+                return 0;
+            }
+
+            const std::int64_t read = readCallback_(
+                buffer,
+                static_cast<std::uint64_t>(byteCount),
+                readUserData_);
+            if (read < 0)
+            {
+                throw std::runtime_error("Installer package stream could not be read.");
+            }
+
+            const auto unsignedRead = static_cast<std::uint64_t>(read);
+            if (unsignedRead > byteCount)
+            {
+                throw std::runtime_error("Installer package stream returned too many bytes.");
+            }
+
+            return static_cast<std::size_t>(unsignedRead);
+        }
+
+        [[nodiscard]] std::string sourceDescription() const override
+        {
+            return "embedded stream";
+        }
+
+    private:
+        FluxoraInstallerReadCallback readCallback_{nullptr};
+        void* readUserData_{nullptr};
+    };
+
+#ifdef _WIN32
+    void requireBCrypt(NTSTATUS status, std::string_view operation)
+    {
+        if (status < 0)
+        {
+            std::ostringstream stream;
+            stream << "SHA-256 integrity check failed during " << operation
+                   << ". status=0x" << std::hex << static_cast<unsigned long>(status);
+            throw std::runtime_error(stream.str());
+        }
+    }
+
+    class Sha256Hasher final
+    {
+    public:
+        Sha256Hasher()
+        {
+            try
+            {
+                requireBCrypt(
+                    BCryptOpenAlgorithmProvider(&algorithm_, BCRYPT_SHA256_ALGORITHM, nullptr, 0),
+                    "algorithm open");
+
+                DWORD objectLength = 0;
+                DWORD propertyLength = 0;
+                requireBCrypt(
+                    BCryptGetProperty(
+                        algorithm_,
+                        BCRYPT_OBJECT_LENGTH,
+                        reinterpret_cast<PUCHAR>(&objectLength),
+                        sizeof(objectLength),
+                        &propertyLength,
+                        0),
+                    "object length lookup");
+
+                hashObject_.resize(objectLength);
+                requireBCrypt(
+                    BCryptCreateHash(
+                        algorithm_,
+                        &hash_,
+                        hashObject_.data(),
+                        static_cast<ULONG>(hashObject_.size()),
+                        nullptr,
+                        0,
+                        0),
+                    "hash creation");
+            }
+            catch (...)
+            {
+                if (hash_ != nullptr)
+                {
+                    BCryptDestroyHash(hash_);
+                    hash_ = nullptr;
+                }
+
+                if (algorithm_ != nullptr)
+                {
+                    BCryptCloseAlgorithmProvider(algorithm_, 0);
+                    algorithm_ = nullptr;
+                }
+
+                throw;
+            }
+        }
+
+        Sha256Hasher(const Sha256Hasher&) = delete;
+        Sha256Hasher& operator=(const Sha256Hasher&) = delete;
+
+        ~Sha256Hasher()
+        {
+            if (hash_ != nullptr)
+            {
+                BCryptDestroyHash(hash_);
+            }
+
+            if (algorithm_ != nullptr)
+            {
+                BCryptCloseAlgorithmProvider(algorithm_, 0);
+            }
+        }
+
+        void append(const char* buffer, std::size_t byteCount)
+        {
+            std::size_t offset = 0;
+            while (offset < byteCount)
+            {
+                const ULONG chunkSize = static_cast<ULONG>(
+                    std::min<std::size_t>(
+                        byteCount - offset,
+                        static_cast<std::size_t>(std::numeric_limits<ULONG>::max())));
+                requireBCrypt(
+                    BCryptHashData(
+                        hash_,
+                        reinterpret_cast<PUCHAR>(const_cast<char*>(buffer + offset)),
+                        chunkSize,
+                        0),
+                    "hash update");
+                offset += chunkSize;
+            }
+        }
+
+        [[nodiscard]] std::array<unsigned char, Sha256HashSize> finish()
+        {
+            std::array<unsigned char, Sha256HashSize> digest{};
+            requireBCrypt(
+                BCryptFinishHash(hash_, digest.data(), static_cast<ULONG>(digest.size()), 0),
+                "hash finish");
+            return digest;
+        }
+
+    private:
+        BCRYPT_ALG_HANDLE algorithm_{nullptr};
+        BCRYPT_HASH_HANDLE hash_{nullptr};
+        std::vector<unsigned char> hashObject_;
+    };
+#endif
+
     std::wstring serializeResult(const InstallResult& result)
     {
         std::wstring json;
@@ -339,32 +637,27 @@ namespace
     }
 
     template <typename T>
-    T readPod(std::ifstream& file, std::string_view label)
+    T readPod(PackageReader& reader, std::string_view label)
     {
         T value{};
-        file.read(reinterpret_cast<char*>(&value), sizeof(T));
-        if (!file)
-        {
-            throw std::runtime_error(std::string("Invalid package: failed to read ") + std::string(label) + ".");
-        }
-
+        reader.readExact(reinterpret_cast<char*>(&value), sizeof(T), label);
         return value;
     }
 
-    PackageHeader readHeader(std::ifstream& file)
+    PackageHeader readHeader(PackageReader& reader)
     {
         std::array<unsigned char, PackageMagic.size()> magic{};
-        file.read(reinterpret_cast<char*>(magic.data()), static_cast<std::streamsize>(magic.size()));
-        if (!file || magic != PackageMagic)
+        reader.readExact(reinterpret_cast<char*>(magic.data()), magic.size(), "package magic");
+        if (magic != PackageMagic)
         {
             throw std::runtime_error("Invalid Fluxora installer package.");
         }
 
         PackageHeader header;
-        header.version = readPod<std::uint32_t>(file, "package version");
-        header.entryCount = readPod<std::uint64_t>(file, "entry count");
-        header.totalBytes = readPod<std::uint64_t>(file, "total bytes");
-        if (header.version != PackageVersion)
+        header.version = readPod<std::uint32_t>(reader, "package version");
+        header.entryCount = readPod<std::uint64_t>(reader, "entry count");
+        header.totalBytes = readPod<std::uint64_t>(reader, "total bytes");
+        if (header.version < MinimumPackageVersion || header.version > CurrentPackageVersion)
         {
             throw std::runtime_error("Unsupported Fluxora installer package version.");
         }
@@ -372,22 +665,24 @@ namespace
         return header;
     }
 
-    std::wstring readRelativePath(std::ifstream& file)
+    std::wstring readRelativePath(PackageReader& reader)
     {
-        const std::uint32_t byteLength = readPod<std::uint32_t>(file, "path length");
+        const std::uint32_t byteLength = readPod<std::uint32_t>(reader, "path length");
         if (byteLength == 0 || byteLength > 32768)
         {
             throw std::runtime_error("Invalid package path length.");
         }
 
         std::string utf8(byteLength, '\0');
-        file.read(utf8.data(), byteLength);
-        if (!file)
-        {
-            throw std::runtime_error("Invalid package: failed to read path.");
-        }
-
+        reader.readExact(utf8.data(), byteLength, "path");
         return fromUtf8(utf8);
+    }
+
+    std::array<unsigned char, Sha256HashSize> readSha256(PackageReader& reader)
+    {
+        std::array<unsigned char, Sha256HashSize> digest{};
+        reader.readExact(reinterpret_cast<char*>(digest.data()), digest.size(), "SHA-256 digest");
+        return digest;
     }
 
     bool isRootDirectory(const std::filesystem::path& path)
@@ -504,19 +799,45 @@ namespace
     void emitProgress(
         FluxoraInstallerProgressCallback callback,
         void* userData,
+        InstallerProgressState& state,
         std::wstring phase,
         std::wstring currentItem,
         std::uint64_t copiedBytes,
-        std::uint64_t totalBytes)
+        std::uint64_t totalBytes,
+        bool force = false)
     {
         if (callback == nullptr)
         {
             return;
         }
 
+        const auto now = std::chrono::steady_clock::now();
         const double percent = totalBytes == 0
             ? 0.0
             : std::min(100.0, (static_cast<double>(copiedBytes) / static_cast<double>(totalBytes)) * 100.0);
+        const bool phaseChanged = !state.hasReport || state.lastPhase != phase;
+        const bool terminal = isTerminalProgressPhase(phase);
+        const bool copyCompleted = totalBytes > 0 && copiedBytes >= totalBytes;
+        const double percentDelta = percent >= state.lastPercent
+            ? percent - state.lastPercent
+            : state.lastPercent - percent;
+        const bool percentAdvanced = percentDelta >= ProgressCallbackMinimumPercentDelta ||
+            (percent >= 100.0 && state.lastPercent < 100.0);
+        if (!force &&
+            !phaseChanged &&
+            !terminal &&
+            !copyCompleted &&
+            state.hasReport &&
+            (now - state.lastReport < ProgressCallbackMinimumInterval || !percentAdvanced))
+        {
+            writeProgressDebugLog(phase, currentItem, copiedBytes, totalBytes, false);
+            return;
+        }
+
+        state.hasReport = true;
+        state.lastReport = now;
+        state.lastPhase = phase;
+        state.lastPercent = percent;
 
         std::wostringstream json;
         json << L"{"
@@ -528,9 +849,10 @@ namespace
              << L"}";
 
         callback(json.str().c_str(), userData);
+        writeProgressDebugLog(phase, currentItem, copiedBytes, totalBytes, true);
     }
 
-    void skipBytes(std::ifstream& file, std::uint64_t byteCount)
+    void skipBytes(PackageReader& reader, std::uint64_t byteCount)
     {
         std::array<char, CopyBufferSize> buffer{};
         std::uint64_t remaining = byteCount;
@@ -538,25 +860,22 @@ namespace
         {
             const std::size_t chunkSize = static_cast<std::size_t>(
                 std::min<std::uint64_t>(remaining, buffer.size()));
-            file.read(buffer.data(), static_cast<std::streamsize>(chunkSize));
-            if (!file)
-            {
-                throw std::runtime_error("Invalid package: unexpected end of file.");
-            }
-
+            reader.readExact(buffer.data(), chunkSize, "entry payload");
             remaining -= chunkSize;
         }
     }
 
     void copyFileFromPackage(
-        std::ifstream& package,
+        PackageReader& package,
         const std::filesystem::path& destination,
         std::uint64_t fileSize,
+        const std::array<unsigned char, Sha256HashSize>* expectedHash,
         std::uint64_t& copiedBytes,
         std::uint64_t totalBytes,
         const std::wstring& currentItem,
         FluxoraInstallerProgressCallback callback,
-        void* userData)
+        void* userData,
+        InstallerProgressState& progressState)
     {
         std::filesystem::create_directories(destination.parent_path());
 
@@ -568,15 +887,18 @@ namespace
 
         std::array<char, CopyBufferSize> buffer{};
         std::uint64_t remaining = fileSize;
+#ifdef _WIN32
+        std::unique_ptr<Sha256Hasher> hasher;
+        if (expectedHash != nullptr)
+        {
+            hasher = std::make_unique<Sha256Hasher>();
+        }
+#endif
         while (remaining > 0)
         {
             const std::size_t chunkSize = static_cast<std::size_t>(
                 std::min<std::uint64_t>(remaining, buffer.size()));
-            package.read(buffer.data(), static_cast<std::streamsize>(chunkSize));
-            if (!package)
-            {
-                throw std::runtime_error("Invalid package: unexpected end of file.");
-            }
+            package.readExact(buffer.data(), chunkSize, "entry payload");
 
             output.write(buffer.data(), static_cast<std::streamsize>(chunkSize));
             if (!output)
@@ -584,10 +906,29 @@ namespace
                 throw std::runtime_error("Failed to write installed file.");
             }
 
+#ifdef _WIN32
+            if (hasher)
+            {
+                hasher->append(buffer.data(), chunkSize);
+            }
+#endif
             remaining -= chunkSize;
             copiedBytes += chunkSize;
-            emitProgress(callback, userData, L"copying", currentItem, copiedBytes, totalBytes);
+            emitProgress(callback, userData, progressState, L"copying", currentItem, copiedBytes, totalBytes);
         }
+
+#ifdef _WIN32
+        if (expectedHash != nullptr && hasher)
+        {
+            const std::array<unsigned char, Sha256HashSize> actualHash = hasher->finish();
+            if (actualHash != *expectedHash)
+            {
+                throw std::runtime_error("Payload integrity check failed for: " + toUtf8(currentItem));
+            }
+        }
+#else
+        (void)expectedHash;
+#endif
     }
 
     std::filesystem::path desktopShortcutPath()
@@ -680,39 +1021,30 @@ namespace
 #endif
     }
 
-    InstallResult installPackage(
-        const std::filesystem::path& packagePath,
+    InstallResult installPackageFromReader(
+        PackageReader& package,
         const std::filesystem::path& installDirectory,
         bool shouldCreateDesktopShortcut,
         FluxoraInstallerProgressCallback callback,
-        void* userData)
+        void* userData,
+        InstallerProgressState& progressState)
     {
         const std::filesystem::path validatedInstallDirectory = validateInstallDirectory(installDirectory);
-        if (packagePath.empty())
-        {
-            throw std::invalid_argument("Installer package path is required.");
-        }
-
-        std::ifstream package(packagePath, std::ios::in | std::ios::binary);
-        if (!package)
-        {
-            throw std::runtime_error("Installer package could not be opened.");
-        }
-
         const PackageHeader header = readHeader(package);
         std::filesystem::create_directories(validatedInstallDirectory);
         {
             std::ostringstream stream;
-            stream << "Installer package validated. package=\""
-                   << toUtf8(packagePath.wstring())
+            stream << "Installer package validated. source=\""
+                   << package.sourceDescription()
                    << "\", installDirectory=\""
                    << toUtf8(validatedInstallDirectory.wstring())
-                   << "\", entries=" << header.entryCount
+                   << "\", version=" << header.version
+                   << ", entries=" << header.entryCount
                    << ", totalBytes=" << header.totalBytes
                    << ", createDesktopShortcut=" << (shouldCreateDesktopShortcut ? "true" : "false");
             writeLog("INFO", stream.str());
         }
-        emitProgress(callback, userData, L"preparing", L"", 0, header.totalBytes);
+        emitProgress(callback, userData, progressState, L"preparing", L"", 0, header.totalBytes, true);
 
         std::uint64_t copiedBytes = 0;
         for (std::uint64_t index = 0; index < header.entryCount; ++index)
@@ -739,15 +1071,30 @@ namespace
                 throw std::runtime_error("Package contains an unknown entry type.");
             }
 
+            std::array<unsigned char, Sha256HashSize> expectedHash{};
+            const std::array<unsigned char, Sha256HashSize>* expectedHashPtr = nullptr;
+            if (header.version >= PackageVersionWithFileHashes)
+            {
+                expectedHash = readSha256(package);
+                expectedHashPtr = &expectedHash;
+            }
+
             copyFileFromPackage(
                 package,
                 destination,
                 byteCount,
+                expectedHashPtr,
                 copiedBytes,
                 header.totalBytes,
                 relativePath,
                 callback,
-                userData);
+                userData,
+                progressState);
+        }
+
+        if (copiedBytes != header.totalBytes)
+        {
+            throw std::runtime_error("Payload manifest byte count does not match copied bytes.");
         }
 
         const std::filesystem::path applicationPath = validatedInstallDirectory / L"FluxoraModding.exe";
@@ -759,7 +1106,7 @@ namespace
         InstallResult result;
         result.installDirectory = validatedInstallDirectory;
         result.applicationPath = applicationPath;
-        emitProgress(callback, userData, L"finalizing", L"FluxoraModding.exe", header.totalBytes, header.totalBytes);
+        emitProgress(callback, userData, progressState, L"finalizing", L"FluxoraModding.exe", header.totalBytes, header.totalBytes, true);
 
         if (shouldCreateDesktopShortcut)
         {
@@ -771,8 +1118,50 @@ namespace
                     toUtf8(result.desktopShortcutPath.wstring()) + "\"");
         }
 
-        emitProgress(callback, userData, L"completed", L"", header.totalBytes, header.totalBytes);
+        emitProgress(callback, userData, progressState, L"completed", L"", header.totalBytes, header.totalBytes, true);
         return result;
+    }
+
+    InstallResult installPackage(
+        const std::filesystem::path& packagePath,
+        const std::filesystem::path& installDirectory,
+        bool shouldCreateDesktopShortcut,
+        FluxoraInstallerProgressCallback callback,
+        void* userData,
+        InstallerProgressState& progressState)
+    {
+        if (packagePath.empty())
+        {
+            throw std::invalid_argument("Installer package path is required.");
+        }
+
+        FilePackageReader package(packagePath);
+        return installPackageFromReader(
+            package,
+            installDirectory,
+            shouldCreateDesktopShortcut,
+            callback,
+            userData,
+            progressState);
+    }
+
+    InstallResult installPackageStream(
+        FluxoraInstallerReadCallback readCallback,
+        void* readUserData,
+        const std::filesystem::path& installDirectory,
+        bool shouldCreateDesktopShortcut,
+        FluxoraInstallerProgressCallback callback,
+        void* userData,
+        InstallerProgressState& progressState)
+    {
+        CallbackPackageReader package(readCallback, readUserData);
+        return installPackageFromReader(
+            package,
+            installDirectory,
+            shouldCreateDesktopShortcut,
+            callback,
+            userData,
+            progressState);
     }
 
     int mapException(const std::exception& exception, int resultCode)
@@ -839,11 +1228,21 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength)
     {
+        InstallerProgressState progressState;
         try
         {
             if (isBlank(packagePath) || isBlank(installDirectory))
             {
                 lastError = L"Package path and install directory are required.";
+                emitProgress(
+                    progressCallback,
+                    progressUserData,
+                    progressState,
+                    L"error",
+                    lastError,
+                    0,
+                    0,
+                    true);
                 return FluxoraInstallerResultInvalidArgument;
             }
 
@@ -853,20 +1252,129 @@ extern "C"
                 std::filesystem::path(installDirectory),
                 createDesktopShortcut != 0,
                 progressCallback,
-                progressUserData);
+                progressUserData,
+                progressState);
             writeLog("INFO", "Fluxora installation completed.");
             return writeToBuffer(serializeResult(result), jsonBuffer, jsonBufferLength);
         }
         catch (const std::invalid_argument& exception)
         {
+            emitProgress(
+                progressCallback,
+                progressUserData,
+                progressState,
+                L"error",
+                fromUtf8(exception.what()),
+                0,
+                0,
+                true);
             return mapException(exception, FluxoraInstallerResultInvalidArgument);
         }
         catch (const std::runtime_error& exception)
         {
+            emitProgress(
+                progressCallback,
+                progressUserData,
+                progressState,
+                L"error",
+                fromUtf8(exception.what()),
+                0,
+                0,
+                true);
             return mapException(exception, FluxoraInstallerResultInstallError);
         }
         catch (const std::exception& exception)
         {
+            emitProgress(
+                progressCallback,
+                progressUserData,
+                progressState,
+                L"error",
+                fromUtf8(exception.what()),
+                0,
+                0,
+                true);
+            return mapException(exception, FluxoraInstallerResultInstallError);
+        }
+    }
+
+    int fluxora_installer_install_package_stream(
+        FluxoraInstallerReadCallback readCallback,
+        void* readUserData,
+        const wchar_t* installDirectory,
+        int createDesktopShortcut,
+        FluxoraInstallerProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        InstallerProgressState progressState;
+        try
+        {
+            if (readCallback == nullptr || isBlank(installDirectory))
+            {
+                lastError = L"Package stream and install directory are required.";
+                emitProgress(
+                    progressCallback,
+                    progressUserData,
+                    progressState,
+                    L"error",
+                    lastError,
+                    0,
+                    0,
+                    true);
+                return FluxoraInstallerResultInvalidArgument;
+            }
+
+            writeLog("INFO", "Starting Fluxora installation from embedded package stream.");
+            const InstallResult result = installPackageStream(
+                readCallback,
+                readUserData,
+                std::filesystem::path(installDirectory),
+                createDesktopShortcut != 0,
+                progressCallback,
+                progressUserData,
+                progressState);
+            writeLog("INFO", "Fluxora installation completed.");
+            return writeToBuffer(serializeResult(result), jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::invalid_argument& exception)
+        {
+            emitProgress(
+                progressCallback,
+                progressUserData,
+                progressState,
+                L"error",
+                fromUtf8(exception.what()),
+                0,
+                0,
+                true);
+            return mapException(exception, FluxoraInstallerResultInvalidArgument);
+        }
+        catch (const std::runtime_error& exception)
+        {
+            emitProgress(
+                progressCallback,
+                progressUserData,
+                progressState,
+                L"error",
+                fromUtf8(exception.what()),
+                0,
+                0,
+                true);
+            return mapException(exception, FluxoraInstallerResultInstallError);
+        }
+        catch (const std::exception& exception)
+        {
+            emitProgress(
+                progressCallback,
+                progressUserData,
+                progressState,
+                L"error",
+                fromUtf8(exception.what()),
+                0,
+                0,
+                true);
             return mapException(exception, FluxoraInstallerResultInstallError);
         }
     }

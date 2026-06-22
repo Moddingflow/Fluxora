@@ -7,6 +7,7 @@ using System.Management;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Data;
 using System.Windows.Input;
 using Fluxora.App.Models;
 using Fluxora.App.Services;
@@ -24,6 +25,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private static readonly TimeSpan FluxPackPackageSplashCompletionHold = TimeSpan.FromMilliseconds(620);
     private static readonly TimeSpan FluxPackInstallSplashCompletionHold = TimeSpan.FromMilliseconds(820);
     private static readonly TimeSpan ModOperationSplashCompletionHold = TimeSpan.FromMilliseconds(520);
+    private static readonly TimeSpan ModSearchDebounceDelay = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan BuildLoadingSplashPhraseInterval = TimeSpan.FromMilliseconds(4350);
     private static readonly TimeSpan BuildLoadingSplashMinimumDuration = TimeSpan.FromMilliseconds(650);
     private static readonly TimeSpan ExecutableLaunchSplashCompletionHold = TimeSpan.FromMilliseconds(650);
@@ -80,7 +82,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private string? modSelectionAnchorId;
     private string? pluginSelectionAnchorId;
     private string? downloadSelectionAnchorId;
-    private ObservableCollection<ModEntry> visibleMods = new();
+    private readonly ICollectionView visibleModsView;
+    private HashSet<string> visibleModFilterKeys = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenSource? modSearchDebounceCancellation;
     private string modSearchText = string.Empty;
     private ObservableCollection<GameTemplateOption> visibleTemplates = new();
     private string gameSearchText = string.Empty;
@@ -104,6 +108,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private readonly FluxPackPackageProcessViewModel fluxPackPackageProcess = new();
     private readonly FluxPackInstallProcessViewModel fluxPackInstallProcess = new();
     private readonly ModOperationProcessViewModel modOperationProcess = new();
+    private readonly ProgressUpdateCoalescer<BuildDeletionProgress> buildDeletionProgressCoalescer;
+    private readonly ProgressUpdateCoalescer<FluxPackInstallProgress> fluxPackInstallProgressCoalescer;
     private readonly ExecutableLaunchProcessViewModel executableLaunchProcess = new();
     private SettingsWindowViewModel? transferViewModel;
     private ModProject? transferReturnProject;
@@ -188,6 +194,23 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         this.fluxPackPickerService = fluxPackPickerService ?? new NullFluxPackPickerService();
         this.confirmDialogService = confirmDialogService ?? new NullConfirmDialogService();
         this.launchSessionStore = launchSessionStore ?? new ExecutableLaunchSessionStore(logService);
+        buildDeletionProgressCoalescer = new ProgressUpdateCoalescer<BuildDeletionProgress>(
+            progress => BuildDeletionProcess.ApplyProgress(progress),
+            RunOnUiThread,
+            (previous, current) => ProgressUpdateCoalescer<BuildDeletionProgress>.ShouldForcePhaseUpdate(
+                previous?.Phase,
+                current.Phase));
+        fluxPackInstallProgressCoalescer = new ProgressUpdateCoalescer<FluxPackInstallProgress>(
+            progress => FluxPackInstallProcess.ApplyProgress(progress),
+            RunOnUiThread,
+            (previous, current) => ProgressUpdateCoalescer<FluxPackInstallProgress>.ShouldForcePhaseUpdate(
+                previous?.Phase,
+                current.Phase));
+        visibleModsView = CollectionViewSource.GetDefaultView(VisibleMods);
+        if (visibleModsView.CanFilter)
+        {
+            visibleModsView.Filter = IsVisibleModRow;
+        }
 
         OpenCreateProjectCommand = new RelayCommand(OpenCreateProject, () => !IsCreatingProject && !IsOpeningProject && !IsTransferPanelOpen && !IsWorkspaceOperationBlocked);
         InstallFluxPackCommand = new RelayCommand(InstallFluxPack, () => !IsCreatingProject && !IsOpeningProject && !IsTransferPanelOpen && !IsWorkspaceOperationBlocked);
@@ -320,17 +343,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public ObservableCollection<ModEntry> Mods { get; } = new();
 
-    public ObservableCollection<ModEntry> VisibleMods
-    {
-        get => visibleMods;
-        private set
-        {
-            if (SetField(ref visibleMods, value))
-            {
-                NotifyVisibleModsChanged();
-            }
-        }
-    }
+    public ObservableCollection<ModEntry> VisibleMods { get; } = new();
+
+    internal ICollectionView VisibleModsView => visibleModsView;
+
+    internal static TimeSpan ModSearchDebounceInterval => ModSearchDebounceDelay;
 
     public string ModSearchText
     {
@@ -343,15 +360,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 return;
             }
 
-            HashSet<string> selectedModIds = SelectedVisibleMods()
-                .Select(ModListItemKey)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            string? selectedModId = SelectedMod is null ? null : ModListItemKey(SelectedMod);
-
             OnPropertyChanged(nameof(IsModSearchActive));
-            RebuildVisibleMods();
-            RestoreModSelection(selectedModIds, selectedModId);
-            RaiseModCommandStateChanged();
+            QueueModSearchRefresh();
         }
     }
 
@@ -359,7 +369,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public ObservableCollection<DownloadEntry> Downloads { get; } = new();
 
-    public ObservableCollection<ModFileTreeNode> SelectedModFileTree { get; } = new();
+    public BulkObservableCollection<ModFileTreeNode> SelectedModFileTree { get; } = new();
 
     public ObservableCollection<string> AvailableProfiles { get; } = new();
 
@@ -524,7 +534,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 RaiseModCommandStateChanged();
                 if (IsProcessingDownload || IsWorkspaceOperationBlocked)
                 {
-                    SelectedModFileTree.Clear();
+                    ClearSelectedModFileTree();
                     OnPropertyChanged(nameof(HasSelectedModFileTree));
                 }
                 else
@@ -928,7 +938,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public bool HasSelectedProject => SelectedProject is not null;
     public bool HasMods => InstalledModCount > 0;
     public bool HasModOrderItems => Mods.Count > 0;
-    public bool HasVisibleModOrderItems => VisibleMods.Count > 0;
+    public bool HasVisibleModOrderItems => VisibleModCount() > 0;
     public bool IsModSearchActive => !string.IsNullOrWhiteSpace(ModSearchText);
     public bool HasPlugins => Plugins.Count > 0;
     public bool HasDownloads => Downloads.Count > 0;
@@ -966,9 +976,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         : F("{0} {1}", InstalledModCount, FormatModWord(InstalledModCount));
 
     public string ModSearchResultText => IsModSearchActive
-        ? VisibleMods.Count == 0
+        ? VisibleModCount() == 0
             ? T("Ничего не найдено")
-            : F("Показано: {0}", VisibleMods.Count)
+            : F("Показано: {0}", VisibleModCount())
         : T("Поиск по модам и разделителям");
 
     public string GameSearchResultText => IsGameSearchActive
@@ -1028,8 +1038,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public void SelectModWithGesture(ModEntry? mod, RangeSelectionGesture gesture)
     {
         ClearSelectionsExcept(SelectionScope.Mods);
+        IReadOnlyList<ModEntry> visibleModRows = VisibleModRows();
         modSelectionAnchorId = RangeSelectionService.Apply(
-            VisibleMods,
+            visibleModRows,
             mod,
             ModListItemKey,
             item => item.IsSelected,
@@ -1042,12 +1053,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public void SelectAllMods()
     {
         ClearSelectionsExcept(SelectionScope.Mods);
+        IReadOnlyList<ModEntry> visibleModRows = VisibleModRows();
         modSelectionAnchorId = RangeSelectionService.SelectAll(
-            VisibleMods,
+            visibleModRows,
             ModListItemKey,
             static (item, value) => item.IsSelected = value,
             SelectedMod is null ? modSelectionAnchorId : ModListItemKey(SelectedMod));
-        FocusModSelection(SelectedMod is { IsSelected: true } ? SelectedMod : VisibleMods.FirstOrDefault());
+        FocusModSelection(SelectedMod is { IsSelected: true } ? SelectedMod : visibleModRows.FirstOrDefault());
     }
 
     public void FocusModSelection(ModEntry? mod)
@@ -1628,12 +1640,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             IsProcessingFluxPack = true;
             ValidationMessage = string.Empty;
             ActivityMessage = "Устанавливаю FluxPack...";
+            fluxPackInstallProgressCoalescer.Reset();
             FluxPackInstallProcess.Start(selectedPath);
 
             FluxPackInstallResult result = await coreBridgeService.InstallFluxPackAsync(
                 selectedPath,
                 settingsService.ProjectsDirectory,
                 DispatchFluxPackInstallProgress);
+            fluxPackInstallProgressCoalescer.Flush();
             FluxPackInstallProcess.Complete(result);
             ActivityMessage = FormatFluxPackInstallMessage(result);
             operation.Complete(
@@ -1656,6 +1670,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         catch (Exception exception)
         {
             operation.Fail(exception);
+            fluxPackInstallProgressCoalescer.Flush();
             FluxPackInstallProcess.Fail(exception.Message);
             ValidationMessage = $"Не удалось установить FluxPack: {exception.Message}";
             ActivityMessage = string.Empty;
@@ -1843,9 +1858,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             ActivityMessage = $"Удаление сборки: {project.Name}";
 
             bool wasSelected = IsSameProject(SelectedProject, project);
+            buildDeletionProgressCoalescer.Reset();
             BuildDeletionProcess.Start();
 
             await projectCatalogService.DeleteProjectAsync(project, DispatchDeletionProgress);
+            buildDeletionProgressCoalescer.Flush();
             BuildDeletionProcess.Complete();
             await Task.Delay(BuildDeletionSplashCompletionHold);
             BuildDeletionProcess.Close();
@@ -1866,6 +1883,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         catch (Exception exception)
         {
             operation.Fail(exception);
+            buildDeletionProgressCoalescer.Flush();
             BuildDeletionProcess.Fail(exception.Message);
             ValidationMessage = "Не удалось удалить сборку.";
             ActivityMessage = string.Empty;
@@ -1878,13 +1896,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private void DispatchDeletionProgress(BuildDeletionProgress progress)
     {
-        System.Windows.Application.Current.Dispatcher.BeginInvoke(
-            () => BuildDeletionProcess.ApplyProgress(progress));
+        buildDeletionProgressCoalescer.Report(progress);
     }
 
     private void DispatchFluxPackInstallProgress(FluxPackInstallProgress progress)
     {
-        RunOnUiThread(() => FluxPackInstallProcess.ApplyProgress(progress));
+        fluxPackInstallProgressCoalescer.Report(progress);
     }
 
     private async Task CompleteModOperationSplashAsync(string currentStep, string statusText)
@@ -3414,7 +3431,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private async Task LoadSelectedModRootFileTreeAsync()
     {
-        SelectedModFileTree.Clear();
+        ClearSelectedModFileTree();
         OnPropertyChanged(nameof(HasSelectedModFileTree));
 
         if (SelectedProject is null || SelectedMod is not { IsMod: true })
@@ -3435,10 +3452,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 return;
             }
 
-            foreach (ModFileTreeEntry entry in entries)
-            {
-                SelectedModFileTree.Add(new ModFileTreeNode(entry));
-            }
+            SelectedModFileTree.ReplaceAll(entries.Select(entry => new ModFileTreeNode(entry)));
 
             OnPropertyChanged(nameof(HasSelectedModFileTree));
         }
@@ -3476,13 +3490,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 return;
             }
 
-            node.Children.Clear();
-            foreach (ModFileTreeEntry entry in entries)
-            {
-                node.Children.Add(new ModFileTreeNode(entry));
-            }
-
-            node.IsLoaded = true;
+            node.ReplaceChildren(entries);
         }
         catch (Exception exception)
         {
@@ -3604,7 +3612,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             AreEquivalentModEntries);
 
         modCollapseService.Apply(Mods);
-        RebuildVisibleMods();
+        SyncVisibleModsWithMods();
 
         RestoreModSelection(selectedModIds, selectedModId);
     }
@@ -3681,7 +3689,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private IReadOnlyList<ModEntry> SelectedVisibleMods()
     {
-        return VisibleMods.Where(mod => mod.IsSelected).ToList();
+        return VisibleModRows()
+            .Where(mod => mod.IsSelected)
+            .ToList();
     }
 
     private IReadOnlyList<PluginEntry> VisiblePlugins()
@@ -3797,7 +3807,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private void RestoreModSelection(IReadOnlySet<string> selectedModIds, string? preferredModId)
     {
-        HashSet<string> visibleModIds = VisibleMods
+        IReadOnlyList<ModEntry> visibleModRows = VisibleModRows();
+        HashSet<string> visibleModIds = visibleModRows
             .Select(ModListItemKey)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -3808,11 +3819,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
 
         ModEntry? focused = !string.IsNullOrWhiteSpace(preferredModId)
-            ? VisibleMods.FirstOrDefault(mod => IsSameModListItem(mod, preferredModId))
+            ? visibleModRows.FirstOrDefault(mod => IsSameModListItem(mod, preferredModId))
             : null;
         focused = focused is { IsSelected: true }
             ? focused
-            : SelectedVisibleMods().FirstOrDefault() ?? focused ?? VisibleMods.FirstOrDefault();
+            : SelectedVisibleMods().FirstOrDefault() ?? focused ?? visibleModRows.FirstOrDefault();
 
         if (focused is not null && !focused.IsSelected)
         {
@@ -3934,9 +3945,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(SelectedModUpdateText));
         OnPropertyChanged(nameof(SelectedModConflictText));
         OnPropertyChanged(nameof(SelectedModFileCountText));
-        SelectedModFileTree.Clear();
+        ClearSelectedModFileTree();
         OnPropertyChanged(nameof(HasSelectedModFileTree));
         RaiseModCommandStateChanged();
+    }
+
+    private void ClearSelectedModFileTree()
+    {
+        SelectedModFileTree.ReplaceAll(Array.Empty<ModFileTreeNode>());
     }
 
     private void ClearPluginSelection()
@@ -4016,20 +4032,134 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private int ResolveFullModInsertionIndex(int visibleInsertionIndex)
     {
-        int clampedVisibleIndex = Math.Clamp(visibleInsertionIndex, 0, VisibleMods.Count);
-        if (clampedVisibleIndex >= VisibleMods.Count)
+        IReadOnlyList<ModEntry> visibleModRows = VisibleModRows();
+        int clampedVisibleIndex = Math.Clamp(visibleInsertionIndex, 0, visibleModRows.Count);
+        if (clampedVisibleIndex >= visibleModRows.Count)
         {
             return Mods.Count;
         }
 
-        int anchorIndex = IndexOfMod(ModListItemKey(VisibleMods[clampedVisibleIndex]));
+        int anchorIndex = IndexOfMod(ModListItemKey(visibleModRows[clampedVisibleIndex]));
         return anchorIndex >= 0 ? anchorIndex : Mods.Count;
     }
 
     private void RebuildVisibleMods()
     {
-        VisibleMods = new ObservableCollection<ModEntry>(
-            ResolveVisibleModsForSearch(Mods, ModSearchText));
+        ApplyVisibleModFilter();
+    }
+
+    private void SyncVisibleModsWithMods()
+    {
+        OrderedCollectionSyncService.Sync(
+            VisibleMods,
+            Mods,
+            ModListItemKey,
+            static (left, right) => ReferenceEquals(left, right));
+        ApplyVisibleModFilter();
+    }
+
+    private void ApplyVisibleModFilter()
+    {
+        visibleModFilterKeys = ResolveVisibleModsForSearch(VisibleMods, ModSearchText)
+            .Select(ModListItemKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        visibleModsView.Refresh();
+        NotifyVisibleModsChanged();
+    }
+
+    private bool IsVisibleModRow(object row)
+    {
+        return row is ModEntry mod &&
+            visibleModFilterKeys.Contains(ModListItemKey(mod));
+    }
+
+    private IReadOnlyList<ModEntry> VisibleModRows()
+    {
+        return visibleModsView.OfType<ModEntry>().ToList();
+    }
+
+    private int VisibleModCount()
+    {
+        return visibleModsView.OfType<ModEntry>().Count();
+    }
+
+    private void QueueModSearchRefresh()
+    {
+        modSearchDebounceCancellation?.Cancel();
+        CancellationTokenSource cancellation = new();
+        modSearchDebounceCancellation = cancellation;
+        _ = ApplyModSearchAfterDebounceAsync(cancellation);
+    }
+
+    private async Task ApplyModSearchAfterDebounceAsync(CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await Task.Delay(ModSearchDebounceDelay, cancellation.Token);
+            await ApplyModSearchOnDispatcherAsync(cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Debug.WriteLine($"Failed to apply mod search filter: {exception}");
+        }
+        finally
+        {
+            if (ReferenceEquals(modSearchDebounceCancellation, cancellation))
+            {
+                modSearchDebounceCancellation = null;
+            }
+
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task ApplyModSearchOnDispatcherAsync(CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
+        System.Windows.Threading.Dispatcher? dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            await dispatcher.InvokeAsync(() => ApplyModSearchFilter(cancellationToken));
+            return;
+        }
+
+        ApplyModSearchFilter(cancellationToken);
+    }
+
+    private void ApplyModSearchFilter(CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
+        HashSet<string> selectedModIds = SelectedVisibleMods()
+            .Select(ModListItemKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        string? selectedModId = SelectedMod is null ? null : ModListItemKey(SelectedMod);
+
+        ApplyVisibleModFilter();
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
+        RestoreModSelection(selectedModIds, selectedModId);
+        RaiseModCommandStateChanged();
+    }
+
+    internal void FlushPendingModSearchFilter()
+    {
+        modSearchDebounceCancellation?.Cancel();
+        modSearchDebounceCancellation = null;
+        ApplyModSearchFilter(CancellationToken.None);
     }
 
     private void RebuildVisibleTemplates()
@@ -4040,16 +4170,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private ModEntry? ResolveVisibleModSelection(string? selectedModId)
     {
+        IReadOnlyList<ModEntry> visibleModRows = VisibleModRows();
         if (!string.IsNullOrWhiteSpace(selectedModId))
         {
-            ModEntry? resolved = VisibleMods.FirstOrDefault(mod => IsSameModListItem(mod, selectedModId));
+            ModEntry? resolved = visibleModRows.FirstOrDefault(mod => IsSameModListItem(mod, selectedModId));
             if (resolved is not null)
             {
                 return resolved;
             }
         }
 
-        return VisibleMods.FirstOrDefault();
+        return visibleModRows.FirstOrDefault();
     }
 
     private int ModOrderMoveSpanLength(int sourceIndex)
@@ -4874,7 +5005,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             IsProcessingDownload = true;
             MoveRange(Mods, sourceIndex, spanLength, destinationIndex);
             modCollapseService.Apply(Mods);
-            RebuildVisibleMods();
+            SyncVisibleModsWithMods();
 
             IReadOnlyList<ModEntry> mods = await modCatalogService.MoveModOrderItemAsync(
                 SelectedProject,
@@ -7196,10 +7327,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private void ClearWorkspaceData()
     {
         Mods.Clear();
-        VisibleMods = new ObservableCollection<ModEntry>();
+        VisibleMods.Clear();
+        ApplyVisibleModFilter();
         Plugins.Clear();
         Downloads.Clear();
-        SelectedModFileTree.Clear();
+        ClearSelectedModFileTree();
         AvailableProfiles.Clear();
         AvailableExecutables.Clear();
         SelectedMod = null;

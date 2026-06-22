@@ -10,6 +10,8 @@ public sealed class FomodInstallerViewModel : INotifyPropertyChanged
 {
     private readonly HashSet<string> previousSelectionIds;
     private readonly IReadOnlyDictionary<string, bool> fileDependencyStates;
+    private readonly List<FomodStepViewModel> visibleSteps = new();
+    private readonly List<string> selectedOptionIds = new();
     private int currentStepIndex;
     private bool isRecalculating;
     private FomodOptionViewModel? detailsOption;
@@ -53,11 +55,11 @@ public sealed class FomodInstallerViewModel : INotifyPropertyChanged
 
     public IReadOnlyList<FomodStepViewModel> NavigationSteps => Steps;
 
-    public IReadOnlyList<FomodStepViewModel> VisibleSteps => Steps.Where(step => step.IsVisible).ToList();
+    public IReadOnlyList<FomodStepViewModel> VisibleSteps => visibleSteps;
 
-    public FomodStepViewModel? CurrentStep => VisibleSteps.Count == 0
+    public FomodStepViewModel? CurrentStep => visibleSteps.Count == 0
         ? null
-        : VisibleSteps[Math.Clamp(currentStepIndex, 0, VisibleSteps.Count - 1)];
+        : visibleSteps[Math.Clamp(currentStepIndex, 0, visibleSteps.Count - 1)];
 
     public string ModuleTitle => string.IsNullOrWhiteSpace(Installer.ModuleName)
         ? "FOMOD"
@@ -77,7 +79,7 @@ public sealed class FomodInstallerViewModel : INotifyPropertyChanged
 
     public int CurrentStepNumber => CurrentStep?.VisibleNumber ?? 0;
 
-    public int StepCount => VisibleSteps.Count;
+    public int StepCount => visibleSteps.Count;
 
     public int NavigationStepCount => Steps.Count;
 
@@ -138,23 +140,25 @@ public sealed class FomodInstallerViewModel : INotifyPropertyChanged
             validationTargetGroup?.SetValidationTarget(true);
             OnPropertyChanged();
             OnPropertyChanged(nameof(HasValidationTargetGroup));
+            OnPropertyChanged(nameof(ValidationTargetRow));
         }
     }
 
     public bool HasValidationTargetGroup => ValidationTargetGroup is not null;
 
+    public FomodStepRowViewModel? ValidationTargetRow => CurrentStep?.FindRowForGroup(ValidationTargetGroup);
+
     public ICommand UsePreviousSelectionsCommand { get; }
     public ICommand PreviousStepCommand { get; }
     public ICommand NextStepCommand { get; }
 
-    public IReadOnlyList<string> SelectedOptionIds => Steps
-        .Where(step => step.IsVisible)
-        .SelectMany(step => step.Groups)
-        .SelectMany(group => group.Options)
-        .Where(option => option.IsSelected)
-        .Select(option => option.Id)
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToList();
+    public IReadOnlyList<string> SelectedOptionIds => selectedOptionIds;
+
+    internal int LastEvaluatedStepCount { get; private set; }
+
+    internal int LastRefreshedGroupCount { get; private set; }
+
+    internal int LastRefreshedOptionCount { get; private set; }
 
     public bool IsPreviouslySelected(string optionId)
     {
@@ -171,14 +175,14 @@ public sealed class FomodInstallerViewModel : INotifyPropertyChanged
         DetailsOption = option;
     }
 
-    public void NotifyOptionChanged()
+    public void NotifyOptionChanged(FomodStepViewModel changedStep)
     {
         if (isRecalculating)
         {
             return;
         }
 
-        Recalculate();
+        Recalculate(changedStep);
     }
 
     public bool MoveNext()
@@ -265,24 +269,56 @@ public sealed class FomodInstallerViewModel : INotifyPropertyChanged
         }
     }
 
-    private void Recalculate()
+    private void Recalculate(FomodStepViewModel? firstDirtyStep = null)
     {
+        FomodStepViewModel? previousCurrentStep = CurrentStep;
+        List<FomodStepViewModel> recalculatedVisibleSteps = new();
+        List<string> recalculatedSelectedOptionIds = new();
+        int evaluatedStepCount = 0;
+        int refreshedGroupCount = 0;
+        int refreshedOptionCount = 0;
+        bool visibleStepsChanged = false;
+        bool selectedOptionIdsChanged = false;
+
         isRecalculating = true;
         try
         {
             Dictionary<string, string> flags = new(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> selectedIds = new(StringComparer.OrdinalIgnoreCase);
+            bool refreshDirtyRange = firstDirtyStep is null;
+            bool forceOptionStateRefresh = firstDirtyStep is null;
+
             foreach (FomodStepViewModel step in Steps)
             {
+                evaluatedStepCount++;
+                if (ReferenceEquals(step, firstDirtyStep))
+                {
+                    refreshDirtyRange = true;
+                }
+
                 step.IsVisible = FomodDependencyEvaluator.IsSatisfied(step.VisibleDependency, flags, fileDependencyStates);
                 if (!step.IsVisible)
                 {
                     continue;
                 }
 
+                recalculatedVisibleSteps.Add(step);
                 foreach (FomodGroupViewModel group in step.Groups)
                 {
-                    group.RefreshOptionStates(flags, fileDependencyStates);
-                    foreach (FomodOptionViewModel option in group.Options.Where(option => option.IsSelected))
+                    if (refreshDirtyRange)
+                    {
+                        int? refreshedOptions = group.RefreshOptionStates(
+                            flags,
+                            fileDependencyStates,
+                            forceOptionStateRefresh);
+                        if (refreshedOptions.HasValue)
+                        {
+                            refreshedGroupCount++;
+                            refreshedOptionCount += refreshedOptions.Value;
+                        }
+                    }
+
+                    foreach (FomodOptionViewModel option in group.SelectedOptions)
                     {
                         foreach (FomodConditionFlagInfo flag in option.Flags)
                         {
@@ -291,13 +327,30 @@ public sealed class FomodInstallerViewModel : INotifyPropertyChanged
                                 flags[flag.Name] = flag.Value;
                             }
                         }
+
+                        if (!string.IsNullOrWhiteSpace(option.Id) && selectedIds.Add(option.Id))
+                        {
+                            recalculatedSelectedOptionIds.Add(option.Id);
+                        }
                     }
                 }
             }
+
+            visibleStepsChanged = !visibleSteps.SequenceEqual(recalculatedVisibleSteps);
+            selectedOptionIdsChanged = !selectedOptionIds.SequenceEqual(
+                recalculatedSelectedOptionIds,
+                StringComparer.OrdinalIgnoreCase);
+            visibleSteps.Clear();
+            visibleSteps.AddRange(recalculatedVisibleSteps);
+            selectedOptionIds.Clear();
+            selectedOptionIds.AddRange(recalculatedSelectedOptionIds);
         }
         finally
         {
             isRecalculating = false;
+            LastEvaluatedStepCount = evaluatedStepCount;
+            LastRefreshedGroupCount = refreshedGroupCount;
+            LastRefreshedOptionCount = refreshedOptionCount;
         }
 
         if (currentStepIndex >= StepCount)
@@ -306,7 +359,9 @@ public sealed class FomodInstallerViewModel : INotifyPropertyChanged
         }
 
         UpdateValidationMessage();
-        RaiseNavigationStateChanged();
+        RaiseNavigationStateChanged(
+            visibleStepsChanged || !ReferenceEquals(previousCurrentStep, CurrentStep),
+            selectedOptionIdsChanged);
         EnsureDetailsOption();
     }
 
@@ -317,24 +372,33 @@ public sealed class FomodInstallerViewModel : INotifyPropertyChanged
         ValidationTargetGroup = currentStep?.FirstInvalidGroup;
     }
 
-    private void RaiseNavigationStateChanged()
+    private void RaiseNavigationStateChanged(bool navigationChanged = true, bool selectedOptionIdsChanged = true)
     {
         UpdateStepNavigationState();
-        OnPropertyChanged(nameof(VisibleSteps));
-        OnPropertyChanged(nameof(NavigationSteps));
-        OnPropertyChanged(nameof(CurrentStep));
-        OnPropertyChanged(nameof(CurrentStepNumber));
-        OnPropertyChanged(nameof(StepCount));
-        OnPropertyChanged(nameof(NavigationStepCount));
-        OnPropertyChanged(nameof(StepCounterText));
-        OnPropertyChanged(nameof(CanMovePrevious));
+        if (navigationChanged)
+        {
+            OnPropertyChanged(nameof(VisibleSteps));
+            OnPropertyChanged(nameof(NavigationSteps));
+            OnPropertyChanged(nameof(CurrentStep));
+            OnPropertyChanged(nameof(ValidationTargetRow));
+            OnPropertyChanged(nameof(CurrentStepNumber));
+            OnPropertyChanged(nameof(StepCount));
+            OnPropertyChanged(nameof(NavigationStepCount));
+            OnPropertyChanged(nameof(StepCounterText));
+            OnPropertyChanged(nameof(CanMovePrevious));
+            OnPropertyChanged(nameof(IsLastStep));
+            OnPropertyChanged(nameof(PrimaryButtonText));
+        }
+
         OnPropertyChanged(nameof(CanMoveNext));
         OnPropertyChanged(nameof(CanFinish));
         OnPropertyChanged(nameof(CanLeaveCurrentStep));
         OnPropertyChanged(nameof(CanPrimaryAction));
-        OnPropertyChanged(nameof(IsLastStep));
-        OnPropertyChanged(nameof(PrimaryButtonText));
-        OnPropertyChanged(nameof(SelectedOptionIds));
+        if (selectedOptionIdsChanged)
+        {
+            OnPropertyChanged(nameof(SelectedOptionIds));
+        }
+
         (PreviousStepCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (NextStepCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (UsePreviousSelectionsCommand as RelayCommand)?.RaiseCanExecuteChanged();
@@ -342,28 +406,46 @@ public sealed class FomodInstallerViewModel : INotifyPropertyChanged
 
     private void EnsureDetailsOption()
     {
-        IReadOnlyList<FomodOptionViewModel> currentOptions = CurrentStep?.Groups
-            .SelectMany(group => group.Options)
-            .ToList() ?? [];
-        if (DetailsOption is not null && currentOptions.Contains(DetailsOption))
+        FomodStepViewModel? currentStep = CurrentStep;
+        if (DetailsOption?.Owner.Step == currentStep)
         {
             return;
         }
 
-        DetailsOption = currentOptions.FirstOrDefault(option => option.IsSelected) ?? currentOptions.FirstOrDefault();
+        if (currentStep is null)
+        {
+            DetailsOption = null;
+            return;
+        }
+
+        FomodOptionViewModel? firstOption = null;
+        foreach (FomodGroupViewModel group in currentStep.Groups)
+        {
+            foreach (FomodOptionViewModel option in group.Options)
+            {
+                firstOption ??= option;
+                if (option.IsSelected)
+                {
+                    DetailsOption = option;
+                    return;
+                }
+            }
+        }
+
+        DetailsOption = firstOption;
     }
 
     private void UpdateStepNavigationState()
     {
-        List<FomodStepViewModel> visibleSteps = VisibleSteps.ToList();
+        int visibleIndex = 0;
         for (int index = 0; index < Steps.Count; index++)
         {
             FomodStepViewModel step = Steps[index];
-            int visibleIndex = visibleSteps.IndexOf(step);
+            int stepVisibleIndex = step.IsVisible ? visibleIndex++ : -1;
             step.SetNavigationState(
                 index + 1,
-                step.IsVisible && visibleIndex == currentStepIndex,
-                step.IsVisible && visibleIndex >= 0 && visibleIndex < currentStepIndex);
+                step.IsVisible && stepVisibleIndex == currentStepIndex,
+                step.IsVisible && stepVisibleIndex >= 0 && stepVisibleIndex < currentStepIndex);
         }
     }
 
@@ -393,6 +475,7 @@ public sealed class FomodInstallerViewModel : INotifyPropertyChanged
 
 public sealed class FomodStepViewModel : INotifyPropertyChanged
 {
+    private readonly Dictionary<FomodGroupViewModel, FomodStepRowViewModel> groupRows = new();
     private bool isVisible = true;
     private bool isCurrent;
     private bool isVisited;
@@ -406,7 +489,15 @@ public sealed class FomodStepViewModel : INotifyPropertyChanged
         VisibleDependency = step.Visible;
         foreach (FomodGroupInfo group in step.Groups)
         {
-            Groups.Add(new FomodGroupViewModel(owner, this, group));
+            FomodGroupViewModel groupViewModel = new(owner, this, group);
+            FomodStepRowViewModel groupRow = FomodStepRowViewModel.ForGroup(groupViewModel);
+            Groups.Add(groupViewModel);
+            Rows.Add(groupRow);
+            groupRows[groupViewModel] = groupRow;
+            foreach (FomodOptionViewModel option in groupViewModel.Options)
+            {
+                Rows.Add(FomodStepRowViewModel.ForOption(option));
+            }
         }
     }
 
@@ -417,6 +508,7 @@ public sealed class FomodStepViewModel : INotifyPropertyChanged
     public string Name { get; }
     public FomodDependencyInfo? VisibleDependency { get; }
     public ObservableCollection<FomodGroupViewModel> Groups { get; } = new();
+    public ObservableCollection<FomodStepRowViewModel> Rows { get; } = new();
 
     public bool IsCurrent
     {
@@ -522,6 +614,13 @@ public sealed class FomodStepViewModel : INotifyPropertyChanged
         OnStateTextChanged();
     }
 
+    public FomodStepRowViewModel? FindRowForGroup(FomodGroupViewModel? group)
+    {
+        return group is not null && groupRows.TryGetValue(group, out FomodStepRowViewModel? row)
+            ? row
+            : null;
+    }
+
     private void OnStateTextChanged()
     {
         OnPropertyChanged(nameof(StepNumberText));
@@ -547,8 +646,36 @@ public sealed class FomodStepViewModel : INotifyPropertyChanged
     }
 }
 
+public sealed class FomodStepRowViewModel
+{
+    private FomodStepRowViewModel(FomodGroupViewModel? group, FomodOptionViewModel? option)
+    {
+        Group = group;
+        Option = option;
+    }
+
+    public FomodGroupViewModel? Group { get; }
+
+    public FomodOptionViewModel? Option { get; }
+
+    public bool IsGroupHeader => Group is not null;
+
+    public bool IsOption => Option is not null;
+
+    public static FomodStepRowViewModel ForGroup(FomodGroupViewModel group)
+    {
+        return new FomodStepRowViewModel(group, null);
+    }
+
+    public static FomodStepRowViewModel ForOption(FomodOptionViewModel option)
+    {
+        return new FomodStepRowViewModel(null, option);
+    }
+}
+
 public sealed class FomodGroupViewModel : INotifyPropertyChanged
 {
+    private readonly HashSet<FomodOptionViewModel> selectedOptions = new();
     private bool isValidationTarget;
 
     public FomodGroupViewModel(FomodInstallerViewModel owner, FomodStepViewModel step, FomodGroupInfo group)
@@ -562,6 +689,8 @@ public sealed class FomodGroupViewModel : INotifyPropertyChanged
         {
             Options.Add(new FomodOptionViewModel(owner, this, option));
         }
+
+        HasDynamicOptionStates = Options.Any(option => option.HasDynamicOptionState);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -572,7 +701,9 @@ public sealed class FomodGroupViewModel : INotifyPropertyChanged
     public string Name { get; }
     public string Type { get; }
     public ObservableCollection<FomodOptionViewModel> Options { get; } = new();
+    public IEnumerable<FomodOptionViewModel> SelectedOptions => selectedOptions;
     public bool IsSelectAll => IsGroupType("SelectAll");
+    public bool HasDynamicOptionStates { get; }
 
     public bool IsValidationTarget
     {
@@ -584,7 +715,7 @@ public sealed class FomodGroupViewModel : INotifyPropertyChanged
     {
         get
         {
-            int selectedCount = Options.Count(option => option.IsSelected && option.IsUsable);
+            int selectedCount = selectedOptions.Count(option => option.IsUsable);
             if (IsExactlyOne)
             {
                 return selectedCount == 1;
@@ -671,15 +802,23 @@ public sealed class FomodGroupViewModel : INotifyPropertyChanged
 
         option.SetSelectedSilently(selected);
         RaiseSelectionStateChanged();
-        Owner.NotifyOptionChanged();
+        Owner.NotifyOptionChanged(Step);
     }
 
-    public void RefreshOptionStates(
+    public int? RefreshOptionStates(
         IReadOnlyDictionary<string, string> flags,
-        IReadOnlyDictionary<string, bool> fileDependencyStates)
+        IReadOnlyDictionary<string, bool> fileDependencyStates,
+        bool forceRefresh)
     {
+        if (!forceRefresh && !HasDynamicOptionStates)
+        {
+            return null;
+        }
+
+        int refreshedOptions = 0;
         foreach (FomodOptionViewModel option in Options)
         {
+            refreshedOptions++;
             option.RefreshEffectiveType(flags, fileDependencyStates);
             if (!option.IsUsable)
             {
@@ -692,11 +831,23 @@ public sealed class FomodGroupViewModel : INotifyPropertyChanged
         }
 
         RaiseSelectionStateChanged();
+        return refreshedOptions;
     }
 
     internal void SetValidationTarget(bool value)
     {
         IsValidationTarget = value;
+    }
+
+    internal void TrackSelectedOption(FomodOptionViewModel option, bool selected)
+    {
+        if (selected)
+        {
+            selectedOptions.Add(option);
+            return;
+        }
+
+        selectedOptions.Remove(option);
     }
 
     private bool IsGroupType(string type)
@@ -758,6 +909,7 @@ public sealed class FomodOptionViewModel : INotifyPropertyChanged
     public IReadOnlyList<FomodConditionFlagInfo> Flags { get; }
     public IReadOnlyList<FomodTypePatternInfo> TypePatterns { get; }
     public bool WasPreviouslySelected { get; }
+    public bool HasDynamicOptionState => TypePatterns.Count > 0;
     public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
     public bool HasMeaningfulDescription => HasDescription &&
         !string.Equals(NormalizeDisplayText(Name), NormalizeDisplayText(Description), StringComparison.OrdinalIgnoreCase);
@@ -859,6 +1011,7 @@ public sealed class FomodOptionViewModel : INotifyPropertyChanged
         }
 
         isSelected = selected;
+        Owner.TrackSelectedOption(this, selected);
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SelectionStateText)));
     }

@@ -4,10 +4,12 @@
 
 #include <windows.h>
 
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace fluxora::vfs
@@ -17,6 +19,7 @@ namespace fluxora::vfs
     struct DirChild
     {
         std::wstring name;       // display name, original case
+        std::wstring nameLower;  // normalized lowercase lookup key
         std::wstring realPath;   // absolute backing path on disk
         bool isDirectory{false};
         ULONG attributes{FILE_ATTRIBUTE_NORMAL};
@@ -85,6 +88,11 @@ namespace fluxora::vfs
         [[nodiscard]] static bool equalsIgnoreCase(const std::wstring& a, const std::wstring& b);
         [[nodiscard]] static bool wildcardMatch(std::wstring_view name, std::wstring_view pattern);
 
+#ifdef FLUXORA_VFS_TEST_HOOKS
+        static void resetAttributeProbeCountForTests();
+        [[nodiscard]] static std::uint64_t attributeProbeCountForTests();
+#endif
+
     private:
         struct DirNode
         {
@@ -92,6 +100,7 @@ namespace fluxora::vfs
             std::wstring openPath;         // an existing directory to back a handle
             bool childrenBuilt{false};
             std::vector<DirChild> children;
+            std::unordered_set<std::wstring> overlayChildNamesLower;
         };
 
         struct PathLookup
@@ -111,13 +120,17 @@ namespace fluxora::vfs
             const std::wstring& directory,
             bool overrideExisting,
             bool applyRootExclusions,
-            std::unordered_map<std::wstring, DirChild>& children) const;
+            std::unordered_map<std::wstring, DirChild>& children,
+            std::unordered_set<std::wstring>* overlayChildNamesLower) const;
         DirNode& ensureDir(const std::wstring& relLower) const;
         [[nodiscard]] bool isExcludedTopLevelName(const std::wstring& name) const;
         [[nodiscard]] bool isExcludedRelativePath(const std::wstring& relLower) const;
         [[nodiscard]] bool hasOverlayDirectoryLocked(
             const std::wstring& rel,
             const std::wstring& relLower) const;
+        [[nodiscard]] bool hasCurrentOverlayMissLocked(const std::wstring& relLower) const;
+        void cacheOverlayMissLocked(const std::wstring& relLower) const;
+        [[nodiscard]] bool directoryListingProvesOverlayMissLocked(const std::wstring& relLower) const;
 
         std::wstring target_;
         std::wstring overwrite_;
@@ -129,7 +142,10 @@ namespace fluxora::vfs
         mutable std::unordered_map<std::wstring, std::wstring> fileMap_;
         // rel(lower) -> directory node. "" is the data root.
         mutable std::unordered_map<std::wstring, DirNode> dirMap_;
+        // rel(lower) -> mount revision where no enabled mod provides this path.
+        mutable std::unordered_map<std::wstring, std::uint64_t> overlayMissRevisions_;
 
         bool built_{false};
+        std::uint64_t revision_{0};
     };
 }

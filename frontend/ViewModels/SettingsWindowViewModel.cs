@@ -24,6 +24,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
     private readonly IFolderPickerService folderPickerService;
     private readonly ModProject? currentProject;
     private readonly bool replaceCurrentProject;
+    private readonly ProgressUpdateCoalescer<ModOrganizerImportProgress> transferProgressCoalescer;
 
     private string selectedSection = ConnectionsSection;
     private bool isNexusBusy;
@@ -78,6 +79,12 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         this.folderPickerService = folderPickerService;
         this.currentProject = currentProject;
         this.replaceCurrentProject = replaceCurrentProject && currentProject is not null;
+        transferProgressCoalescer = new ProgressUpdateCoalescer<ModOrganizerImportProgress>(
+            ApplyProgress,
+            RunOnUiThread,
+            (previous, current) => ProgressUpdateCoalescer<ModOrganizerImportProgress>.ShouldForcePhaseUpdate(
+                previous?.Phase,
+                current.Phase));
 
         SelectConnectionsCommand = new RelayCommand(() => SelectSection(ConnectionsSection), () => !IsTransferProcessVisible);
         SelectLanguagesCommand = new RelayCommand(() => SelectSection(LanguagesSection), () => !IsTransferProcessVisible);
@@ -624,6 +631,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
 
     public void Dispose()
     {
+        transferProgressCoalescer.Dispose();
         LocalizationManager.Current.LanguageChanged -= OnLocalizationChanged;
     }
 
@@ -984,6 +992,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
             $"source=\"{SourceDirectory}\", destinationRoot=\"{DestinationRootDirectory}\", existingConfig=\"{ExistingConfigPath}\", replaceExisting={IsReplaceMode}");
         try
         {
+            transferProgressCoalescer.Reset();
             ResetProgress();
             IsTransferCompleted = false;
             IsTransferRunning = true;
@@ -997,6 +1006,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
                 IsReplaceMode,
                 DispatchProgress);
 
+            transferProgressCoalescer.Flush();
             ImportedProject = project;
             TransferOverallPercent = 100;
             TransferCopyPercent = 100;
@@ -1012,6 +1022,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         catch (Exception exception)
         {
             operation?.Fail(exception);
+            transferProgressCoalescer.Flush();
             TransferError = LocalizeTransferError(exception.Message);
             TransferMessage = "Перенос остановлен.";
             IsTransferCompleted = false;
@@ -1025,7 +1036,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
 
     private void DispatchProgress(ModOrganizerImportProgress progress)
     {
-        System.Windows.Application.Current.Dispatcher.BeginInvoke(() => ApplyProgress(progress));
+        transferProgressCoalescer.Report(progress);
     }
 
     private void ApplyProgress(ModOrganizerImportProgress progress)
@@ -1040,6 +1051,18 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         TransferBytesText = progress.TotalBytes == 0
             ? string.Empty
             : $"{TransferDriveOption.FormatBytes(progress.CopiedBytes)} из {TransferDriveOption.FormatBytes(progress.TotalBytes)}";
+    }
+
+    private static void RunOnUiThread(Action action)
+    {
+        System.Windows.Threading.Dispatcher? dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(action);
+            return;
+        }
+
+        action();
     }
 
     private void RefreshDrives()

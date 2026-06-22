@@ -16,6 +16,124 @@ namespace fluxora::tests
         {
             writeTextFile(path, "MZ executable stub");
         }
+
+        struct RootBuilderLaunchCacheTestProject
+        {
+            std::filesystem::path project;
+            std::filesystem::path config;
+            std::filesystem::path game;
+            std::filesystem::path mods;
+            std::filesystem::path overwrite;
+            std::filesystem::path skseMod;
+            std::filesystem::path runtimeLow;
+            std::filesystem::path runtimeHigh;
+        };
+
+        RootBuilderLaunchCacheTestProject createRootBuilderLaunchCacheTestProject(TempDirectory& temp)
+        {
+            RootBuilderLaunchCacheTestProject paths{
+                temp.path() / L"Imported Build",
+                temp.path() / L"Imported Build" / L"build.json",
+                temp.path() / L"Imported Build" / L"Stock Game",
+                temp.path() / L"Imported Build" / L"mods",
+                temp.path() / L"Imported Build" / L"overwrite",
+                temp.path() / L"Imported Build" / L"mods" / L"Skyrim Script Extender",
+                temp.path() / L"Imported Build" / L"mods" / L"Runtime Low",
+                temp.path() / L"Imported Build" / L"mods" / L"Runtime High"
+            };
+
+            writeExecutableStub(paths.game / L"SkyrimSE.exe");
+            std::filesystem::create_directories(paths.game / L"Data");
+            writeExecutableStub(paths.skseMod / L"root" / L"skse64_loader.exe");
+            writeTextFile(paths.runtimeLow / L"SKSE" / L"Plugins" / L"shared.dll", "low");
+            writeTextFile(paths.runtimeHigh / L"SKSE" / L"Plugins" / L"shared.dll", "high");
+            writeTextFile(paths.runtimeHigh / L"SKSE" / L"Plugins" / L"high-only.dll", "high-only");
+
+            writeTextFile(
+                paths.config,
+                "{"
+                "\"schemaVersion\":\"1\","
+                "\"name\":\"Imported Build\","
+                "\"templateId\":\"skyrimse\","
+                "\"gameName\":\"Skyrim Special Edition\","
+                "\"gamePath\":\"Stock Game\","
+                "\"dataDirectory\":\"Data\","
+                "\"defaultProfile\":\"Default\","
+                "\"scriptExtender\":{\"name\":\"SKSE\",\"loaderExecutable\":\"skse64_loader.exe\",\"website\":\"\"},"
+                "\"launchExecutables\":[{"
+                "\"id\":\"skse\","
+                "\"displayName\":\"SKSE\","
+                "\"executablePath\":\"mods\\\\Skyrim Script Extender\\\\root\\\\skse64_loader.exe\","
+                "\"arguments\":\"\","
+                "\"workingDirectory\":\"\""
+                "}]"
+                "}");
+
+            InstanceMetadataStore::ensureInstance(paths.project, L"skyrimse");
+            InstanceMetadataStore::registerInstalledMods(
+                paths.project,
+                {
+                    InstalledModImportRecord{paths.skseMod, L"Skyrim Script Extender", {}, true, {}},
+                    InstalledModImportRecord{paths.runtimeLow, L"Runtime Low", {}, true, {}},
+                    InstalledModImportRecord{paths.runtimeHigh, L"Runtime High", {}, true, {}}
+                });
+            InstanceMetadataStore::replaceProfileOrderItems(
+                paths.project,
+                L"Default",
+                {
+                    ProfileOrderImportItemRecord{L"mod", L"Skyrim Script Extender", {}},
+                    ProfileOrderImportItemRecord{L"mod", L"Runtime Low", {}},
+                    ProfileOrderImportItemRecord{L"mod", L"Runtime High", {}}
+                });
+
+            return paths;
+        }
+
+        ResolvedExecutableLaunch resolveSkseExecutable(const std::filesystem::path& config)
+        {
+            Logger logger;
+            BuildPathSettingsService pathSettings(logger);
+            ExecutableIconService iconService(logger);
+            ExecutableService service(logger, iconService, pathSettings);
+            return service.resolveExecutable(config, L"skse");
+        }
+
+#ifdef _WIN32
+        class ScopedReadLockedFile final
+        {
+        public:
+            explicit ScopedReadLockedFile(const std::filesystem::path& path)
+                : handle_(CreateFileW(
+                      path.c_str(),
+                      GENERIC_READ,
+                      FILE_SHARE_READ,
+                      nullptr,
+                      OPEN_EXISTING,
+                      FILE_ATTRIBUTE_NORMAL,
+                      nullptr))
+            {
+            }
+
+            ScopedReadLockedFile(const ScopedReadLockedFile&) = delete;
+            ScopedReadLockedFile& operator=(const ScopedReadLockedFile&) = delete;
+
+            ~ScopedReadLockedFile()
+            {
+                if (valid())
+                {
+                    CloseHandle(handle_);
+                }
+            }
+
+            [[nodiscard]] bool valid() const noexcept
+            {
+                return handle_ != INVALID_HANDLE_VALUE;
+            }
+
+        private:
+            HANDLE handle_{INVALID_HANDLE_VALUE};
+        };
+#endif
     }
 
     TEST(ExecutableServiceTests, RootBuilderLaunchCacheMaterializesEarlyDataRuntimeDirectories)
@@ -94,6 +212,114 @@ namespace fluxora::tests
         EXPECT_TRUE(std::filesystem::is_regular_file(
             cacheData / L"NetScriptFramework" / L"Plugins" / L"net.dll"));
         EXPECT_FALSE(std::filesystem::exists(cacheData / L"Interface" / L"not-early.swf"));
+    }
+
+    TEST(ExecutableServiceTests, RootBuilderLaunchCacheSkipsUnchangedFilesOnWarmResolve)
+    {
+        TempDirectory temp;
+        const RootBuilderLaunchCacheTestProject paths = createRootBuilderLaunchCacheTestProject(temp);
+
+        const ResolvedExecutableLaunch cold = resolveSkseExecutable(paths.config);
+
+        ASSERT_FALSE(cold.rootBuilderLaunchCacheDirectory.empty());
+        const std::filesystem::path cachedLoader =
+            cold.rootBuilderLaunchCacheDirectory / L"skse64_loader.exe";
+        ASSERT_TRUE(std::filesystem::is_regular_file(cachedLoader));
+
+#ifdef _WIN32
+        ScopedReadLockedFile lockedLoader(cachedLoader);
+        if (!lockedLoader.valid())
+        {
+            GTEST_SKIP() << "Could not lock cached loader for warm-cache assertion.";
+        }
+#endif
+
+        const ResolvedExecutableLaunch warm = resolveSkseExecutable(paths.config);
+
+        EXPECT_EQ(
+            normalized(warm.rootBuilderLaunchCacheDirectory),
+            normalized(cold.rootBuilderLaunchCacheDirectory));
+        EXPECT_EQ(normalized(warm.resolvedExecutablePath), normalized(cachedLoader));
+        EXPECT_EQ(readTextFile(cachedLoader), "MZ executable stub");
+        EXPECT_EQ(
+            readTextFile(
+                warm.rootBuilderLaunchCacheDirectory / L"Data" / L"SKSE" / L"Plugins" / L"shared.dll"),
+            "high");
+    }
+
+    TEST(ExecutableServiceTests, RootBuilderLaunchCacheRefreshesChangedOverlayFileInPlace)
+    {
+        TempDirectory temp;
+        const RootBuilderLaunchCacheTestProject paths = createRootBuilderLaunchCacheTestProject(temp);
+
+        const ResolvedExecutableLaunch cold = resolveSkseExecutable(paths.config);
+        ASSERT_FALSE(cold.rootBuilderLaunchCacheDirectory.empty());
+        const std::filesystem::path cachedShared =
+            cold.rootBuilderLaunchCacheDirectory / L"Data" / L"SKSE" / L"Plugins" / L"shared.dll";
+        ASSERT_EQ(readTextFile(cachedShared), "high");
+
+        writeTextFile(paths.runtimeHigh / L"SKSE" / L"Plugins" / L"shared.dll", "high-v2");
+
+        const ResolvedExecutableLaunch warm = resolveSkseExecutable(paths.config);
+
+        EXPECT_EQ(
+            normalized(warm.rootBuilderLaunchCacheDirectory),
+            normalized(cold.rootBuilderLaunchCacheDirectory));
+        EXPECT_EQ(readTextFile(cachedShared), "high-v2");
+        EXPECT_EQ(
+            readTextFile(warm.rootBuilderLaunchCacheDirectory / L"skse64_loader.exe"),
+            "MZ executable stub");
+    }
+
+    TEST(ExecutableServiceTests, RootBuilderLaunchCachePrunesDisabledModFilesAndRestoresLowerPriorityOverlay)
+    {
+        TempDirectory temp;
+        const RootBuilderLaunchCacheTestProject paths = createRootBuilderLaunchCacheTestProject(temp);
+
+        const ResolvedExecutableLaunch cold = resolveSkseExecutable(paths.config);
+        ASSERT_FALSE(cold.rootBuilderLaunchCacheDirectory.empty());
+        const std::filesystem::path cachePlugins =
+            cold.rootBuilderLaunchCacheDirectory / L"Data" / L"SKSE" / L"Plugins";
+        ASSERT_EQ(readTextFile(cachePlugins / L"shared.dll"), "high");
+        ASSERT_TRUE(std::filesystem::is_regular_file(cachePlugins / L"high-only.dll"));
+
+        InstanceMetadataStore::setInstalledModEnabled(paths.project, paths.runtimeHigh, false);
+
+        const ResolvedExecutableLaunch warm = resolveSkseExecutable(paths.config);
+
+        EXPECT_EQ(
+            normalized(warm.rootBuilderLaunchCacheDirectory),
+            normalized(cold.rootBuilderLaunchCacheDirectory));
+        EXPECT_EQ(readTextFile(cachePlugins / L"shared.dll"), "low");
+        EXPECT_FALSE(std::filesystem::exists(cachePlugins / L"high-only.dll"));
+    }
+
+    TEST(ExecutableServiceTests, RootBuilderLaunchCacheRefreshesChangedLoadOrderWinner)
+    {
+        TempDirectory temp;
+        const RootBuilderLaunchCacheTestProject paths = createRootBuilderLaunchCacheTestProject(temp);
+
+        const ResolvedExecutableLaunch cold = resolveSkseExecutable(paths.config);
+        ASSERT_FALSE(cold.rootBuilderLaunchCacheDirectory.empty());
+        const std::filesystem::path cachedShared =
+            cold.rootBuilderLaunchCacheDirectory / L"Data" / L"SKSE" / L"Plugins" / L"shared.dll";
+        ASSERT_EQ(readTextFile(cachedShared), "high");
+
+        InstanceMetadataStore::replaceProfileOrderItems(
+            paths.project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"mod", L"Skyrim Script Extender", {}},
+                ProfileOrderImportItemRecord{L"mod", L"Runtime High", {}},
+                ProfileOrderImportItemRecord{L"mod", L"Runtime Low", {}}
+            });
+
+        const ResolvedExecutableLaunch warm = resolveSkseExecutable(paths.config);
+
+        EXPECT_EQ(
+            normalized(warm.rootBuilderLaunchCacheDirectory),
+            normalized(cold.rootBuilderLaunchCacheDirectory));
+        EXPECT_EQ(readTextFile(cachedShared), "low");
     }
 
     TEST(ExecutableServiceTests, SkyrimScriptExtenderLaunchMetadataComesFromDefinitionRules)

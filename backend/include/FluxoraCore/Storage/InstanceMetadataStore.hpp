@@ -142,7 +142,17 @@ namespace fluxora
         [[nodiscard]] static std::wstring gameId(
             const std::filesystem::path& projectDirectory);
 
+#ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
+        static void resetSqlPrepareCountForTesting();
+
+        [[nodiscard]] static std::uint64_t sqlPrepareCountForTesting();
+#endif
+
         [[nodiscard]] static std::vector<InstalledModRecord> listInstalledMods(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modsDirectory = {});
+
+        static void refreshInstalledModsFromDisk(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modsDirectory = {});
 
