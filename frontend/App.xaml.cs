@@ -42,6 +42,7 @@ public partial class App : System.Windows.Application
 
         singleInstanceService.StartListening(HandleExternalActivation);
         base.OnStartup(e);
+        MiddleClickAutoScrollService.Attach();
 
         StartupSplashViewModel splashViewModel = new();
         StartupSplashWindow startupSplash = new()
@@ -102,6 +103,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        MiddleClickAutoScrollService.Detach();
         applicationLogService?.Info("App", $"Application exiting. exitCode={e.ApplicationExitCode}");
         singleInstanceService?.Dispose();
         applicationLogService?.Dispose();
