@@ -1561,6 +1561,37 @@ namespace fluxora::tests
         EXPECT_EQ(findInstalledMod(records, L"Readonly Fomod Package"), nullptr);
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, DeleteInstalledModRemovesNestedDirectoryTree)
+    {
+        const std::filesystem::path modPath = modsDirectory() / L"Nested Tree Package";
+        std::filesystem::path current = modPath;
+        for (int index = 0; index < 12; ++index)
+        {
+            current /= L"level-" + std::to_wstring(index);
+            writeTextFile(current / L"file.txt", "payload");
+        }
+
+        const std::filesystem::path emptyDirectory = current / L"empty";
+        std::filesystem::create_directories(emptyDirectory);
+#ifdef _WIN32
+        ASSERT_NE(SetFileAttributesW(emptyDirectory.c_str(), FILE_ATTRIBUTE_READONLY), 0);
+#endif
+
+        InstanceMetadataStore::registerInstalledMod(
+            project_,
+            modPath,
+            L"Nested Tree Package",
+            L"1.0",
+            ModSourceRecord{L"manual"});
+
+        mods_.deleteInstalledMod(project_, modPath);
+
+        EXPECT_FALSE(std::filesystem::exists(modPath));
+        const std::vector<InstalledModRecord> records =
+            InstanceMetadataStore::listInstalledMods(project_, modsDirectory());
+        EXPECT_EQ(findInstalledMod(records, L"Nested Tree Package"), nullptr);
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, ProfileConflictsUseLoadOrderAndCaseInsensitivePaths)
     {
         std::string firstError;

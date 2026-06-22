@@ -11,6 +11,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -273,6 +274,32 @@ namespace fluxora::tests
         EXPECT_TRUE(std::filesystem::is_regular_file(staging / L"root" / L"skse64_loader.exe"));
         EXPECT_FALSE(std::filesystem::exists(staging / L"Data" / L"SkyUI_SE.esp"));
         EXPECT_FALSE(std::filesystem::exists(staging / L"skse64_loader.exe"));
+    }
+
+    TEST_F(ContentLayoutServiceTests, ApplyPlanMovesRegularFilesInsideSameVolumeStagingDirectory)
+    {
+        TempDirectory temp;
+        const std::filesystem::path staging = temp.path() / L"staging";
+        const std::filesystem::path source = staging / L"Data" / L"SkyUI_SE.esp";
+        writeTextFile(source, "plugin");
+
+        const std::filesystem::path identityLink = temp.path() / L"skyui-identity-link.esp";
+        std::error_code linkError;
+        std::filesystem::create_hard_link(source, identityLink, linkError);
+        if (linkError)
+        {
+            GTEST_SKIP() << "Hard links are not available on this filesystem: " << linkError.message();
+        }
+
+        const PlacementPlan plan = service_.analyzeDirectory(staging, skyrimRequest());
+        ASSERT_TRUE(plan.canInstall());
+
+        service_.applyPlanToDirectory(staging, plan);
+
+        const std::filesystem::path normalized = staging / L"SkyUI_SE.esp";
+        ASSERT_TRUE(std::filesystem::is_regular_file(normalized));
+        EXPECT_TRUE(std::filesystem::equivalent(identityLink, normalized));
+        EXPECT_FALSE(std::filesystem::exists(source));
     }
 
     TEST_F(ContentLayoutServiceTests, SelectedGameRulesDriveDataFolderAndPluginRecognition)

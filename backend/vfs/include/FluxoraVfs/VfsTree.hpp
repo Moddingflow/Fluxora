@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -80,7 +81,9 @@ namespace fluxora::vfs
 
         // Merged, name-sorted children of a virtual directory. Built lazily per
         // directory so hook install does not need to materialize every mod file.
-        [[nodiscard]] std::vector<DirChild> listing(const std::wstring& relLower) const;
+        // The snapshot is immutable and shared by directory enumeration callers.
+        using DirectoryListing = std::shared_ptr<const std::vector<DirChild>>;
+        [[nodiscard]] DirectoryListing listing(const std::wstring& relLower) const;
 
         // Path helpers shared with the hooks.
         [[nodiscard]] static std::wstring toLower(std::wstring value);
@@ -99,7 +102,7 @@ namespace fluxora::vfs
             bool realExists{false};        // the real game directory has this path
             std::wstring openPath;         // an existing directory to back a handle
             bool childrenBuilt{false};
-            std::vector<DirChild> children;
+            DirectoryListing children;
             std::unordered_set<std::wstring> overlayChildNamesLower;
         };
 

@@ -14,7 +14,6 @@
 #include <filesystem>
 #include <iomanip>
 #include <initializer_list>
-#include <iterator>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -882,25 +881,79 @@ namespace fluxora
             }
         }
 
-        std::size_t pathDepth(const std::filesystem::path& path)
+        using DirectoryIterator = std::filesystem::directory_iterator;
+
+        struct DirectoryDeletionFrame
         {
-            return static_cast<std::size_t>(
-                std::distance(path.begin(), path.end()));
+            std::filesystem::path directory;
+            DirectoryIterator iterator;
+        };
+
+        DirectoryIterator openDirectoryForDeletion(const std::filesystem::path& directory)
+        {
+            std::error_code iterateError;
+            DirectoryIterator iterator(
+                directory,
+                std::filesystem::directory_options::skip_permission_denied,
+                iterateError);
+            if (iterateError)
+            {
+                throw std::runtime_error(
+                    "Failed to scan mod directory for deletion \"" +
+                    toUtf8(directory.wstring()) + "\": " + iterateError.message());
+            }
+
+            return iterator;
         }
 
-        void sortDirectoriesDeepestFirst(std::vector<std::filesystem::path>& directories)
+        void removeDirectoryTreePostOrder(const std::filesystem::path& root)
         {
-            std::sort(directories.begin(), directories.end(), [](const auto& left, const auto& right)
+            clearReadonlyAttribute(root);
+
+            const DirectoryIterator end;
+            std::vector<DirectoryDeletionFrame> stack;
+            stack.push_back({root, openDirectoryForDeletion(root)});
+
+            while (!stack.empty())
             {
-                const std::size_t leftDepth = pathDepth(left);
-                const std::size_t rightDepth = pathDepth(right);
-                if (leftDepth != rightDepth)
+                DirectoryDeletionFrame& frame = stack.back();
+                if (frame.iterator == end)
                 {
-                    return leftDepth > rightDepth;
+                    const std::filesystem::path directory = std::move(frame.directory);
+                    stack.pop_back();
+                    removePathWithRetry(directory);
+                    continue;
                 }
 
-                return left.wstring().size() > right.wstring().size();
-            });
+                const std::filesystem::directory_entry entry = *frame.iterator;
+                std::error_code incrementError;
+                frame.iterator.increment(incrementError);
+                if (incrementError)
+                {
+                    throw std::runtime_error(
+                        "Failed to scan mod directory for deletion \"" +
+                        toUtf8(frame.directory.wstring()) + "\": " + incrementError.message());
+                }
+
+                const std::filesystem::path current = entry.path();
+                std::error_code entryError;
+                const std::filesystem::file_status status = entry.symlink_status(entryError);
+                if (entryError)
+                {
+                    throw std::runtime_error(
+                        "Failed to inspect mod item for deletion \"" +
+                        toUtf8(current.wstring()) + "\": " + entryError.message());
+                }
+
+                if (std::filesystem::is_directory(status) && !std::filesystem::is_symlink(status))
+                {
+                    clearReadonlyAttribute(current);
+                    stack.push_back({current, openDirectoryForDeletion(current)});
+                    continue;
+                }
+
+                removePathWithRetry(current);
+            }
         }
 
         void removeModFilesystemPath(const std::filesystem::path& modPath)
@@ -921,58 +974,7 @@ namespace fluxora
                 return;
             }
 
-            clearReadonlyAttribute(nativeRoot);
-
-            std::vector<std::filesystem::path> files;
-            std::vector<std::filesystem::path> directories;
-            std::error_code iterateError;
-            std::filesystem::recursive_directory_iterator iterator(
-                nativeRoot,
-                std::filesystem::directory_options::skip_permission_denied,
-                iterateError);
-            if (iterateError)
-            {
-                throw std::runtime_error("Failed to scan mod directory for deletion: " + iterateError.message());
-            }
-
-            const std::filesystem::recursive_directory_iterator end;
-            for (; iterator != end; iterator.increment(iterateError))
-            {
-                if (iterateError)
-                {
-                    throw std::runtime_error("Failed to scan mod directory for deletion: " + iterateError.message());
-                }
-
-                const std::filesystem::path current = iterator->path();
-                std::error_code entryError;
-                const std::filesystem::file_status status = iterator->symlink_status(entryError);
-                if (entryError)
-                {
-                    throw std::runtime_error("Failed to inspect mod item for deletion: " + entryError.message());
-                }
-
-                if (std::filesystem::is_directory(status) && !std::filesystem::is_symlink(status))
-                {
-                    directories.push_back(current);
-                }
-                else
-                {
-                    files.push_back(current);
-                }
-            }
-
-            for (const std::filesystem::path& file : files)
-            {
-                removePathWithRetry(file);
-            }
-
-            sortDirectoriesDeepestFirst(directories);
-            for (const std::filesystem::path& directory : directories)
-            {
-                removePathWithRetry(directory);
-            }
-
-            removePathWithRetry(nativeRoot);
+            removeDirectoryTreePostOrder(nativeRoot);
         }
 
         ModFileSummary deferredFileSummary()

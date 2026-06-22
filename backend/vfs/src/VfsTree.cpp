@@ -83,6 +83,13 @@ namespace fluxora::vfs
                 : ((child.endOfFile.QuadPart + cluster - 1) / cluster) * cluster;
             return child;
         }
+
+        const VfsTree::DirectoryListing& emptyListing()
+        {
+            static const VfsTree::DirectoryListing empty =
+                std::make_shared<const std::vector<DirChild>>();
+            return empty;
+        }
     }
 
     std::wstring VfsTree::toLower(std::wstring value)
@@ -508,9 +515,9 @@ namespace fluxora::vfs
             }
         }
 
-        node.children.clear();
+        std::vector<DirChild> mergedChildren;
         node.overlayChildNamesLower = std::move(overlayChildNamesLower);
-        node.children.reserve(children.size());
+        mergedChildren.reserve(children.size());
         for (auto& [nameLower, child] : children)
         {
             const std::wstring childRelLower = relLower.empty()
@@ -524,14 +531,15 @@ namespace fluxora::vfs
             {
                 fileMap_[childRelLower] = child.realPath;
             }
-            node.children.push_back(std::move(child));
+            mergedChildren.push_back(std::move(child));
         }
 
-        std::sort(node.children.begin(), node.children.end(),
+        std::sort(mergedChildren.begin(), mergedChildren.end(),
             [](const DirChild& a, const DirChild& b)
             {
                 return a.nameLower < b.nameLower;
             });
+        node.children = std::make_shared<const std::vector<DirChild>>(std::move(mergedChildren));
         node.childrenBuilt = true;
     }
 
@@ -598,14 +606,16 @@ namespace fluxora::vfs
         return hasOverlayDirectoryLocked(rel, key);
     }
 
-    std::vector<DirChild> VfsTree::listing(const std::wstring& relLower) const
+    VfsTree::DirectoryListing VfsTree::listing(const std::wstring& relLower) const
     {
         const std::wstring rel = normalizeRel(relLower);
         const std::wstring key = toLower(rel);
         std::scoped_lock lock(cacheMutex_);
         buildDirectoryLocked(key);
         const auto it = dirMap_.find(key);
-        return it == dirMap_.end() ? std::vector<DirChild>{} : it->second.children;
+        return it == dirMap_.end() || !it->second.children
+            ? emptyListing()
+            : it->second.children;
     }
 
     VfsTree::PathInfo VfsTree::classify(const std::wstring& rel) const

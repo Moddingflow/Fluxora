@@ -23,6 +23,8 @@ namespace Fluxora.App.Services;
 public sealed class PluginOrderDragDropService
 {
     private const string PluginOrderDataFormat = "Fluxora.PluginOrderItem";
+    private const int MaxReorderAnimationSourceItems = 240;
+    private const int MaxAnimatedReorderMoves = 48;
     private static readonly TimeSpan QuickAnimationDuration = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan ReorderAnimationDuration = TimeSpan.FromMilliseconds(260);
 
@@ -264,7 +266,7 @@ public sealed class PluginOrderDragDropService
         isReorderAnimationScheduled = true;
         try
         {
-            await listBox.Dispatcher.InvokeAsync(listBox.UpdateLayout, DispatcherPriority.Loaded);
+            await listBox.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Loaded);
             if (pendingReorderAnimationItems is not null)
             {
                 AnimateItemsFrom(pendingReorderAnimationItems);
@@ -494,11 +496,16 @@ public sealed class PluginOrderDragDropService
             return;
         }
 
-        int animatedItems = 0;
-        for (int index = 0; index < listBox.Items.Count; ++index)
+        List<(int Index, ListBoxItem Item)> realizedItems = GetRealizedItems();
+        if (ShouldSkipReorderAnimation(realizedItems.Count))
         {
-            if (listBox.ItemContainerGenerator.ContainerFromIndex(index) is not ListBoxItem item ||
-                item.DataContext is not PluginEntry plugin ||
+            return;
+        }
+
+        List<(ListBoxItem Item, double DeltaY)> itemAnimations = new();
+        foreach ((_, ListBoxItem item) in realizedItems)
+        {
+            if (item.DataContext is not PluginEntry plugin ||
                 !previousItems.TryGetValue(PluginListItemKey(plugin), out double oldY))
             {
                 continue;
@@ -511,6 +518,15 @@ public sealed class PluginOrderDragDropService
                 continue;
             }
 
+            itemAnimations.Add((item, deltaY));
+            if (itemAnimations.Count > MaxAnimatedReorderMoves)
+            {
+                return;
+            }
+        }
+
+        foreach ((ListBoxItem item, double deltaY) in itemAnimations)
+        {
             TranslateTransform translate = EnsureTranslateTransform(item);
             translate.BeginAnimation(TranslateTransform.YProperty, null);
             translate.Y = deltaY;
@@ -524,13 +540,23 @@ public sealed class PluginOrderDragDropService
                 translate.Y = 0;
             };
             translate.BeginAnimation(TranslateTransform.YProperty, animation, HandoffBehavior.SnapshotAndReplace);
-            ++animatedItems;
         }
 
-        if (animatedItems > 0)
+        if (itemAnimations.Count > 0)
         {
             CompleteItemAnimationsAfterDelay();
         }
+    }
+
+    private bool ShouldSkipReorderAnimation(int realizedItemCount)
+    {
+        if (realizedItemCount == 0)
+        {
+            return true;
+        }
+
+        return listBox.Items.Count > MaxReorderAnimationSourceItems &&
+            listBox.Items.Count > realizedItemCount;
     }
 
     private async void CompleteItemAnimationsAfterDelay()

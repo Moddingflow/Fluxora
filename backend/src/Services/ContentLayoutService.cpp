@@ -847,12 +847,29 @@ namespace fluxora
             return std::filesystem::exists(path, error) && std::filesystem::is_regular_file(path, error);
         }
 
-        void copyPlannedFiles(
+        struct PlannedFileTransfer
+        {
+            std::filesystem::path source;
+            std::filesystem::path destination;
+            bool canRename{false};
+        };
+
+        [[nodiscard]] bool isPlainRegularFile(const std::filesystem::path& path)
+        {
+            std::error_code statusError;
+            return std::filesystem::symlink_status(path, statusError).type() ==
+                std::filesystem::file_type::regular;
+        }
+
+        [[nodiscard]] std::vector<PlannedFileTransfer> plannedFileTransfers(
             const std::filesystem::path& sourceRoot,
             const std::filesystem::path& destinationRoot,
             const PlacementPlan& plan)
         {
             const PathSafetyService safety;
+            std::vector<PlannedFileTransfer> transfers;
+            transfers.reserve(plan.entries.size());
+
             for (const PlacementPlanEntry& entry : plan.entries)
             {
                 if (entry.target == PlacementTarget::Blocked)
@@ -875,11 +892,110 @@ namespace fluxora
                     destination,
                     PathSafetyWriteOptions{sizeError ? 0 : bytes, false})
                     .throwIfUnsafe("Content layout destination path is unsafe");
-                std::filesystem::create_directories(destination.parent_path());
-                std::filesystem::copy_file(
+
+                transfers.push_back(PlannedFileTransfer{
                     source,
                     destination,
-                    std::filesystem::copy_options::overwrite_existing);
+                    isPlainRegularFile(source)
+                });
+            }
+
+            return transfers;
+        }
+
+        void copyThenRemoveFile(
+            const std::filesystem::path& source,
+            const std::filesystem::path& destination)
+        {
+            std::filesystem::copy_file(
+                source,
+                destination,
+                std::filesystem::copy_options::overwrite_existing);
+            std::filesystem::remove(source);
+        }
+
+        void transferFile(
+            const PlannedFileTransfer& transfer)
+        {
+            if (transfer.canRename)
+            {
+                std::error_code renameError;
+                std::filesystem::rename(transfer.source, transfer.destination, renameError);
+                if (!renameError)
+                {
+                    return;
+                }
+            }
+
+            copyThenRemoveFile(transfer.source, transfer.destination);
+        }
+
+        void rollbackTransferredFiles(
+            const std::vector<PlannedFileTransfer>& completedTransfers) noexcept
+        {
+            for (auto it = completedTransfers.rbegin(); it != completedTransfers.rend(); ++it)
+            {
+                std::error_code existsError;
+                if (!std::filesystem::exists(it->destination, existsError) ||
+                    std::filesystem::exists(it->source, existsError))
+                {
+                    continue;
+                }
+
+                std::error_code createError;
+                std::filesystem::create_directories(it->source.parent_path(), createError);
+                if (createError)
+                {
+                    continue;
+                }
+
+                std::error_code restoreError;
+                std::filesystem::rename(it->destination, it->source, restoreError);
+                if (!restoreError)
+                {
+                    continue;
+                }
+
+                restoreError.clear();
+                std::filesystem::copy_file(
+                    it->destination,
+                    it->source,
+                    std::filesystem::copy_options::overwrite_existing,
+                    restoreError);
+                if (!restoreError)
+                {
+                    std::filesystem::remove(it->destination, restoreError);
+                }
+            }
+        }
+
+        void transferPlannedFiles(
+            const std::filesystem::path& sourceRoot,
+            const std::filesystem::path& destinationRoot,
+            const PlacementPlan& plan)
+        {
+            const std::vector<PlannedFileTransfer> transfers =
+                plannedFileTransfers(sourceRoot, destinationRoot, plan);
+
+            for (const PlannedFileTransfer& transfer : transfers)
+            {
+                std::filesystem::create_directories(transfer.destination.parent_path());
+            }
+
+            std::vector<PlannedFileTransfer> completedTransfers;
+            completedTransfers.reserve(transfers.size());
+            try
+            {
+                for (const PlannedFileTransfer& transfer : transfers)
+                {
+                    transferFile(transfer);
+                    completedTransfers.push_back(transfer);
+                }
+            }
+            catch (...)
+            {
+                rollbackTransferredFiles(completedTransfers);
+                throw;
             }
         }
     }
@@ -1365,7 +1481,7 @@ namespace fluxora
 
         try
         {
-            copyPlannedFiles(normalizedDirectory, temporaryDirectory, plan);
+            transferPlannedFiles(normalizedDirectory, temporaryDirectory, plan);
             std::filesystem::remove_all(normalizedDirectory);
             std::filesystem::rename(temporaryDirectory, normalizedDirectory);
         }

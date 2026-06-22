@@ -22,6 +22,8 @@ namespace Fluxora.App.Services;
 public sealed class ModOrderDragDropService
 {
     private const string ModOrderDataFormat = "Fluxora.ModOrderItem";
+    private const int MaxReorderAnimationSourceItems = 240;
+    private const int MaxAnimatedReorderMoves = 48;
     private static readonly TimeSpan QuickAnimationDuration = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan ReorderAnimationDuration = TimeSpan.FromMilliseconds(260);
 
@@ -263,7 +265,7 @@ public sealed class ModOrderDragDropService
         isReorderAnimationScheduled = true;
         try
         {
-            await dataGrid.Dispatcher.InvokeAsync(dataGrid.UpdateLayout, DispatcherPriority.Loaded);
+            await dataGrid.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Loaded);
             if (pendingReorderAnimationRows is not null)
             {
                 AnimateRowsFrom(pendingReorderAnimationRows);
@@ -493,11 +495,16 @@ public sealed class ModOrderDragDropService
             return;
         }
 
-        int animatedRows = 0;
-        for (int index = 0; index < dataGrid.Items.Count; ++index)
+        List<(int Index, DataGridRow Row)> realizedRows = GetRealizedRows();
+        if (ShouldSkipReorderAnimation(realizedRows.Count))
         {
-            if (dataGrid.ItemContainerGenerator.ContainerFromIndex(index) is not DataGridRow row ||
-                row.Item is not ModEntry mod ||
+            return;
+        }
+
+        List<(DataGridRow Row, double DeltaY)> rowAnimations = new();
+        foreach ((_, DataGridRow row) in realizedRows)
+        {
+            if (row.Item is not ModEntry mod ||
                 !previousRows.TryGetValue(ModListItemKey(mod), out double oldY))
             {
                 continue;
@@ -510,6 +517,15 @@ public sealed class ModOrderDragDropService
                 continue;
             }
 
+            rowAnimations.Add((row, deltaY));
+            if (rowAnimations.Count > MaxAnimatedReorderMoves)
+            {
+                return;
+            }
+        }
+
+        foreach ((DataGridRow row, double deltaY) in rowAnimations)
+        {
             TranslateTransform translate = EnsureTranslateTransform(row);
             translate.BeginAnimation(TranslateTransform.YProperty, null);
             translate.Y = deltaY;
@@ -523,13 +539,23 @@ public sealed class ModOrderDragDropService
                 translate.Y = 0;
             };
             translate.BeginAnimation(TranslateTransform.YProperty, animation, HandoffBehavior.SnapshotAndReplace);
-            ++animatedRows;
         }
 
-        if (animatedRows > 0)
+        if (rowAnimations.Count > 0)
         {
             CompleteRowAnimationsAfterDelay();
         }
+    }
+
+    private bool ShouldSkipReorderAnimation(int realizedRowCount)
+    {
+        if (realizedRowCount == 0)
+        {
+            return true;
+        }
+
+        return dataGrid.Items.Count > MaxReorderAnimationSourceItems &&
+            dataGrid.Items.Count > realizedRowCount;
     }
 
     private async void CompleteRowAnimationsAfterDelay()

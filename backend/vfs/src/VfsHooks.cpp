@@ -724,6 +724,7 @@ namespace fluxora::vfs
         {
             DirChild dot;
             dot.name = name;
+            dot.nameLower = VfsTree::toLower(dot.name);
             dot.isDirectory = true;
             dot.attributes = FILE_ATTRIBUTE_DIRECTORY;
             return dot;
@@ -743,6 +744,7 @@ namespace fluxora::vfs
         {
             DirChild child;
             child.name = data.cFileName;
+            child.nameLower = VfsTree::toLower(child.name);
             child.realPath = realPath;
             child.isDirectory = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
             child.attributes = data.dwFileAttributes;
@@ -758,28 +760,49 @@ namespace fluxora::vfs
             return child;
         }
 
-        void upsertMergedEntry(std::vector<DirChild>& entries, DirChild child)
+        void appendIndexedEntry(
+            std::vector<DirChild>& entries,
+            std::unordered_map<std::wstring, std::size_t>& entryIndices,
+            DirChild child)
         {
-            const std::wstring key = VfsTree::toLower(child.name);
-            const auto existing = std::find_if(
-                entries.begin(),
-                entries.end(),
-                [&key](const DirChild& candidate)
-                {
-                    return VfsTree::toLower(candidate.name) == key;
-                });
+            if (child.nameLower.empty())
+            {
+                child.nameLower = VfsTree::toLower(child.name);
+            }
 
-            if (existing == entries.end())
+            const std::size_t index = entries.size();
+            if (entryIndices.try_emplace(child.nameLower, index).second)
             {
                 entries.push_back(std::move(child));
             }
-            else
+        }
+
+        void upsertIndexedEntry(
+            std::vector<DirChild>& entries,
+            std::unordered_map<std::wstring, std::size_t>& entryIndices,
+            DirChild child)
+        {
+            if (child.nameLower.empty())
             {
-                *existing = std::move(child);
+                child.nameLower = VfsTree::toLower(child.name);
+            }
+
+            const auto existing = entryIndices.find(child.nameLower);
+            if (existing == entryIndices.end())
+            {
+                const std::size_t index = entries.size();
+                entryIndices.emplace(child.nameLower, index);
+                entries.push_back(std::move(child));
+            }
+            else if (existing->second < entries.size())
+            {
+                entries[existing->second] = std::move(child);
             }
         }
 
-        void mergeDynamicOverwriteEntries(DirEnumState& state)
+        void mergeDynamicOverwriteEntries(
+            DirEnumState& state,
+            std::unordered_map<std::wstring, std::size_t>& entryIndices)
         {
             if (state.mountIndex >= g_mounts.size())
             {
@@ -813,8 +836,9 @@ namespace fluxora::vfs
                     continue;
                 }
 
-                upsertMergedEntry(
+                upsertIndexedEntry(
                     state.entries,
+                    entryIndices,
                     childFromFindData(joinPath(directory, name), data));
             } while (FindNextFileW(find, &data) != 0);
 
@@ -860,38 +884,43 @@ namespace fluxora::vfs
                 return;
             }
 
-            const std::vector<DirChild> listing =
+            const VfsTree::DirectoryListing listing =
                 g_mounts[state.mountIndex].tree.listing(state.relLower);
+            const std::vector<DirChild>& listingEntries = *listing;
 
             const auto matches = [&state](const std::wstring& nameLower)
             {
                 return state.matchAll || VfsTree::wildcardMatch(nameLower, state.pattern);
             };
 
+            state.entries.reserve(listingEntries.size() + 2);
+            std::unordered_map<std::wstring, std::size_t> entryIndices;
+            entryIndices.reserve(listingEntries.size() + 2);
+
             if (matches(L"."))
             {
-                state.entries.push_back(makeDotEntry(L"."));
+                appendIndexedEntry(state.entries, entryIndices, makeDotEntry(L"."));
             }
             if (matches(L".."))
             {
-                state.entries.push_back(makeDotEntry(L".."));
+                appendIndexedEntry(state.entries, entryIndices, makeDotEntry(L".."));
             }
 
-            if (!listing.empty())
+            if (!listingEntries.empty())
             {
-                for (const DirChild& child : listing)
+                for (const DirChild& child : listingEntries)
                 {
-                    state.entries.push_back(child);
+                    appendIndexedEntry(state.entries, entryIndices, child);
                 }
             }
 
-            mergeDynamicOverwriteEntries(state);
+            mergeDynamicOverwriteEntries(state, entryIndices);
             std::sort(
                 state.entries.begin(),
                 state.entries.end(),
                 [](const DirChild& left, const DirChild& right)
                 {
-                    return VfsTree::toLower(left.name) < VfsTree::toLower(right.name);
+                    return left.nameLower < right.nameLower;
                 });
             state.entries.erase(
                 std::remove_if(
@@ -899,7 +928,7 @@ namespace fluxora::vfs
                     state.entries.end(),
                     [&matches](const DirChild& child)
                     {
-                        return !matches(VfsTree::toLower(child.name));
+                        return !matches(child.nameLower);
                     }),
                 state.entries.end());
 

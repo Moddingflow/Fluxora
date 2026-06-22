@@ -23,12 +23,41 @@ public enum ApplicationLogChannel
 
 public sealed class ApplicationLogService : IAppService, IDisposable
 {
+    private const int DefaultQueueCapacity = 4096;
+    private const int DefaultFlushBatchSize = 128;
+    private static readonly TimeSpan DefaultFlushInterval = TimeSpan.FromMilliseconds(100);
+
     private static readonly AsyncLocal<OperationContext?> CurrentOperation = new();
     private static readonly UTF8Encoding Utf8NoBom = new(false);
 
-    private readonly object syncRoot = new();
+    private readonly object queueSyncRoot = new();
+    private readonly object fileWriteSyncRoot = new();
+    private readonly LinkedList<LogQueueItem> pendingLogItems = new();
+    private readonly int queueCapacity;
+    private readonly int flushBatchSize;
+    private readonly TimeSpan flushInterval;
+
     private bool initialized;
+    private bool acceptingLogItems;
+    private int queuedLogWriteCount;
+    private long droppedLowPriorityLineCount;
     private string logDirectory = string.Empty;
+    private Task? logWorkerTask;
+
+    public ApplicationLogService()
+        : this(DefaultQueueCapacity, DefaultFlushBatchSize, DefaultFlushInterval)
+    {
+    }
+
+    internal ApplicationLogService(
+        int queueCapacity,
+        int flushBatchSize,
+        TimeSpan flushInterval)
+    {
+        this.queueCapacity = Math.Max(1, queueCapacity);
+        this.flushBatchSize = Math.Max(1, flushBatchSize);
+        this.flushInterval = flushInterval < TimeSpan.Zero ? TimeSpan.Zero : flushInterval;
+    }
 
     public string LogPath => UiLogPath;
     public string UiLogPath { get; private set; } = string.Empty;
@@ -37,6 +66,8 @@ public sealed class ApplicationLogService : IAppService, IDisposable
     public string CrashLogPath { get; private set; } = string.Empty;
 
     public static string CurrentOperationId => CurrentOperation.Value?.OperationId ?? string.Empty;
+
+    internal long DroppedLowPriorityLineCount => Interlocked.Read(ref droppedLowPriorityLineCount);
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -54,6 +85,14 @@ public sealed class ApplicationLogService : IAppService, IDisposable
         OperationsLogPath = Path.Combine(logDirectory, $"fluxora-operations-{stamp}.log");
         CrashLogPath = Path.Combine(logDirectory, $"fluxora-crash-{stamp}.log");
 
+        lock (queueSyncRoot)
+        {
+            pendingLogItems.Clear();
+            queuedLogWriteCount = 0;
+            acceptingLogItems = true;
+        }
+
+        logWorkerTask = Task.Run(ProcessLogQueue);
         initialized = true;
         Info("Logging", $"UI logger initialized. path=\"{UiLogPath}\", bridgePath=\"{BridgeLogPath}\", operationsPath=\"{OperationsLogPath}\", crashPath=\"{CrashLogPath}\"");
         return Task.CompletedTask;
@@ -145,6 +184,23 @@ public sealed class ApplicationLogService : IAppService, IDisposable
 
         Info("Logging", "UI logger shut down.");
         initialized = false;
+        StopLogWorker();
+    }
+
+    internal Task FlushAsync(CancellationToken cancellationToken = default)
+    {
+        if (!initialized)
+        {
+            return Task.CompletedTask;
+        }
+
+        TaskCompletionSource<bool> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!EnqueueFlushMarker(completion))
+        {
+            return Task.CompletedTask;
+        }
+
+        return completion.Task.WaitAsync(cancellationToken);
     }
 
     private void Write(
@@ -173,36 +229,315 @@ public sealed class ApplicationLogService : IAppService, IDisposable
             line += Environment.NewLine + exception;
         }
 
-        lock (syncRoot)
+        string path = PathForChannel(channel);
+        if (RequiresImmediateWriteThrough(channel))
         {
-            AppendLine(PathForChannel(channel), line);
-            if (channel != ApplicationLogChannel.Operations && !string.IsNullOrWhiteSpace(operationId))
-            {
-                AppendLine(OperationsLogPath, line);
-            }
+            AppendLines(path, new[] { line }, writeThrough: true);
+        }
+        else
+        {
+            EnqueueLogWrite(new LogQueueItem(path, line, channel, level));
+        }
+
+        if (channel != ApplicationLogChannel.Operations && !string.IsNullOrWhiteSpace(operationId))
+        {
+            EnqueueLogWrite(new LogQueueItem(OperationsLogPath, line, ApplicationLogChannel.Operations, level));
         }
 
         Trace.WriteLine(line);
     }
 
-    private static void AppendLine(string path, string line)
+    private void EnqueueLogWrite(LogQueueItem item)
     {
+        bool writeSynchronously = false;
+
+        lock (queueSyncRoot)
+        {
+            if (!acceptingLogItems)
+            {
+                return;
+            }
+
+            if (queuedLogWriteCount >= queueCapacity)
+            {
+                if (IsLowPriority(item))
+                {
+                    Interlocked.Increment(ref droppedLowPriorityLineCount);
+                    return;
+                }
+
+                if (TryRemoveOldestLowPriorityLocked())
+                {
+                    Interlocked.Increment(ref droppedLowPriorityLineCount);
+                }
+                else
+                {
+                    writeSynchronously = true;
+                }
+            }
+
+            if (!writeSynchronously)
+            {
+                pendingLogItems.AddLast(item);
+                queuedLogWriteCount++;
+                Monitor.Pulse(queueSyncRoot);
+                return;
+            }
+        }
+
+        AppendLines(item.Path, new[] { item.Line }, writeThrough: false);
+    }
+
+    private bool EnqueueFlushMarker(TaskCompletionSource<bool> completion)
+    {
+        lock (queueSyncRoot)
+        {
+            if (!acceptingLogItems)
+            {
+                return false;
+            }
+
+            pendingLogItems.AddLast(new LogQueueItem(completion));
+            Monitor.Pulse(queueSyncRoot);
+            return true;
+        }
+    }
+
+    private void StopLogWorker()
+    {
+        Task? worker;
+        lock (queueSyncRoot)
+        {
+            acceptingLogItems = false;
+            Monitor.PulseAll(queueSyncRoot);
+            worker = logWorkerTask;
+        }
+
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path) ?? string.Empty);
+            worker?.GetAwaiter().GetResult();
+        }
+        catch
+        {
+        }
+    }
+
+    private void ProcessLogQueue()
+    {
+        List<LogQueueItem> batch = new(flushBatchSize);
+
+        while (true)
+        {
+            batch.Clear();
+
+            lock (queueSyncRoot)
+            {
+                while (pendingLogItems.Count == 0 && acceptingLogItems)
+                {
+                    Monitor.Wait(queueSyncRoot);
+                }
+
+                if (pendingLogItems.Count == 0 && !acceptingLogItems)
+                {
+                    return;
+                }
+
+                WaitForBatchReadyLocked();
+
+                DrainBatchLocked(batch);
+            }
+
+            FlushBatch(batch);
+        }
+    }
+
+    private void WaitForBatchReadyLocked()
+    {
+        if (!acceptingLogItems ||
+            queuedLogWriteCount == 0 ||
+            queuedLogWriteCount >= flushBatchSize ||
+            flushInterval <= TimeSpan.Zero ||
+            ContainsFlushMarkerLocked())
+        {
+            return;
+        }
+
+        DateTime deadline = DateTime.UtcNow + flushInterval;
+        while (acceptingLogItems &&
+            queuedLogWriteCount > 0 &&
+            queuedLogWriteCount < flushBatchSize &&
+            !ContainsFlushMarkerLocked())
+        {
+            TimeSpan remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+            {
+                return;
+            }
+
+            Monitor.Wait(queueSyncRoot, remaining);
+        }
+    }
+
+    private void DrainBatchLocked(List<LogQueueItem> batch)
+    {
+        int drainedLogWrites = 0;
+        while (pendingLogItems.First is not null && drainedLogWrites < flushBatchSize)
+        {
+            LogQueueItem item = pendingLogItems.First.Value;
+            pendingLogItems.RemoveFirst();
+            batch.Add(item);
+
+            if (!item.IsFlushMarker)
+            {
+                queuedLogWriteCount--;
+                drainedLogWrites++;
+            }
+        }
+
+        while (pendingLogItems.First?.Value.IsFlushMarker == true)
+        {
+            batch.Add(pendingLogItems.First.Value);
+            pendingLogItems.RemoveFirst();
+        }
+    }
+
+    private void FlushBatch(List<LogQueueItem> batch)
+    {
+        Dictionary<string, List<string>> pendingWrites = new(StringComparer.OrdinalIgnoreCase);
+
+        foreach (LogQueueItem item in batch)
+        {
+            if (item.FlushCompletion is not null)
+            {
+                FlushPendingWrites(pendingWrites);
+                item.FlushCompletion.TrySetResult(true);
+                continue;
+            }
+
+            if (!pendingWrites.TryGetValue(item.Path, out List<string>? lines))
+            {
+                lines = new List<string>();
+                pendingWrites[item.Path] = lines;
+            }
+
+            lines.Add(item.Line);
+        }
+
+        FlushPendingWrites(pendingWrites);
+    }
+
+    private void FlushPendingWrites(Dictionary<string, List<string>> pendingWrites)
+    {
+        if (pendingWrites.Count == 0)
+        {
+            return;
+        }
+
+        lock (fileWriteSyncRoot)
+        {
+            foreach (KeyValuePair<string, List<string>> pendingWrite in pendingWrites)
+            {
+                AppendLinesCore(pendingWrite.Key, pendingWrite.Value, writeThrough: false);
+            }
+        }
+
+        pendingWrites.Clear();
+    }
+
+    private void AppendLines(string path, IReadOnlyCollection<string> lines, bool writeThrough)
+    {
+        lock (fileWriteSyncRoot)
+        {
+            AppendLinesCore(path, lines, writeThrough);
+        }
+    }
+
+    private static void AppendLinesCore(string path, IReadOnlyCollection<string> lines, bool writeThrough)
+    {
+        if (lines.Count == 0 || string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            string? directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            FileOptions options = writeThrough ? FileOptions.WriteThrough : FileOptions.None;
             using FileStream stream = new(
                 path,
                 FileMode.Append,
                 FileAccess.Write,
                 FileShare.ReadWrite,
                 4096,
-                FileOptions.WriteThrough);
+                options);
             using StreamWriter writer = new(stream, Utf8NoBom);
-            writer.WriteLine(line);
+            foreach (string line in lines)
+            {
+                writer.WriteLine(line);
+            }
+
+            writer.Flush();
+            if (writeThrough)
+            {
+                stream.Flush(flushToDisk: true);
+            }
         }
         catch
         {
         }
+    }
+
+    private bool ContainsFlushMarkerLocked()
+    {
+        LinkedListNode<LogQueueItem>? node = pendingLogItems.First;
+        while (node is not null)
+        {
+            if (node.Value.IsFlushMarker)
+            {
+                return true;
+            }
+
+            node = node.Next;
+        }
+
+        return false;
+    }
+
+    private bool TryRemoveOldestLowPriorityLocked()
+    {
+        LinkedListNode<LogQueueItem>? node = pendingLogItems.First;
+        while (node is not null)
+        {
+            LinkedListNode<LogQueueItem>? next = node.Next;
+            if (IsLowPriority(node.Value))
+            {
+                pendingLogItems.Remove(node);
+                queuedLogWriteCount--;
+                return true;
+            }
+
+            node = next;
+        }
+
+        return false;
+    }
+
+    private static bool IsLowPriority(LogQueueItem item)
+    {
+        return !item.IsFlushMarker &&
+            (item.Level == ApplicationLogLevel.Debug ||
+                (item.Level == ApplicationLogLevel.Info &&
+                    item.Channel is ApplicationLogChannel.Ui or ApplicationLogChannel.Bridge));
+    }
+
+    private static bool RequiresImmediateWriteThrough(ApplicationLogChannel channel)
+    {
+        return channel == ApplicationLogChannel.Crash;
     }
 
     private string PathForChannel(ApplicationLogChannel channel)
@@ -293,6 +628,35 @@ public sealed class ApplicationLogService : IAppService, IDisposable
         string OperationId,
         string Name,
         OperationContext? Parent);
+
+    private sealed class LogQueueItem
+    {
+        public LogQueueItem(
+            string path,
+            string line,
+            ApplicationLogChannel channel,
+            ApplicationLogLevel level)
+        {
+            Path = path;
+            Line = line;
+            Channel = channel;
+            Level = level;
+        }
+
+        public LogQueueItem(TaskCompletionSource<bool> flushCompletion)
+        {
+            FlushCompletion = flushCompletion;
+            Path = string.Empty;
+            Line = string.Empty;
+        }
+
+        public string Path { get; }
+        public string Line { get; }
+        public ApplicationLogChannel Channel { get; }
+        public ApplicationLogLevel Level { get; }
+        public TaskCompletionSource<bool>? FlushCompletion { get; }
+        public bool IsFlushMarker => FlushCompletion is not null;
+    }
 
     public sealed class OperationLogScope : IDisposable
     {

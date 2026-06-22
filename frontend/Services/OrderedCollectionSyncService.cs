@@ -4,6 +4,9 @@ namespace Fluxora.App.Services;
 
 public static class OrderedCollectionSyncService
 {
+    private const int BatchResetItemThreshold = 1_024;
+    private const int BatchResetChangeThreshold = 128;
+
     public static void Sync<T>(
         ObservableCollection<T> target,
         IReadOnlyList<T> source,
@@ -15,6 +18,13 @@ public static class OrderedCollectionSyncService
 
         if (IsAlreadySynced(target, source, keySelector, areEquivalent, keyComparer))
         {
+            return;
+        }
+
+        SyncPlan<T> plan = BuildSyncPlan(target, source, keySelector, areEquivalent, keyComparer);
+        if (ShouldUseBatchReset(target, plan))
+        {
+            ((BulkObservableCollection<T>)target).ReplaceAll(plan.Items);
             return;
         }
 
@@ -37,11 +47,12 @@ public static class OrderedCollectionSyncService
         {
             T incoming = source[index];
             string key = keySelector(incoming);
+            T targetItem = plan.Items[index];
             if (index < target.Count && keyComparer.Equals(keySelector(target[index]), key))
             {
-                if (!areEquivalent(target[index], incoming))
+                if (!ReferenceEquals(target[index], targetItem))
                 {
-                    target[index] = incoming;
+                    target[index] = targetItem;
                 }
 
                 targetIndexes[key] = index;
@@ -52,12 +63,12 @@ public static class OrderedCollectionSyncService
             {
                 if (index == target.Count)
                 {
-                    target.Add(incoming);
+                    target.Add(targetItem);
                 }
                 else
                 {
-                    target.Insert(index, incoming);
-                    RefreshTargetIndexes(target, keySelector, targetIndexes, index + 1);
+                    target.Insert(index, targetItem);
+                    ShiftIndexesAfterInsert(targetIndexes, index);
                 }
 
                 targetIndexes[key] = index;
@@ -65,11 +76,11 @@ public static class OrderedCollectionSyncService
             }
 
             target.Move(existingIndex, index);
-            RefreshTargetIndexes(target, keySelector, targetIndexes, Math.Min(existingIndex, index));
+            ShiftIndexesAfterMove(targetIndexes, existingIndex, index);
 
-            if (!areEquivalent(target[index], incoming))
+            if (!ReferenceEquals(target[index], targetItem))
             {
-                target[index] = incoming;
+                target[index] = targetItem;
             }
 
             targetIndexes[key] = index;
@@ -100,6 +111,70 @@ public static class OrderedCollectionSyncService
         return true;
     }
 
+    private static SyncPlan<T> BuildSyncPlan<T>(
+        ObservableCollection<T> target,
+        IReadOnlyList<T> source,
+        Func<T, string> keySelector,
+        Func<T, T, bool> areEquivalent,
+        StringComparer keyComparer)
+    {
+        Dictionary<string, ExistingItem<T>> existingItems = new(keyComparer);
+        List<int> retainedIndexes = new(source.Count);
+        for (int index = 0; index < target.Count; ++index)
+        {
+            string key = keySelector(target[index]);
+            existingItems[key] = new ExistingItem<T>(target[index], index);
+        }
+
+        List<T> items = new(source.Count);
+        int replacementCount = 0;
+        foreach (T incoming in source)
+        {
+            string key = keySelector(incoming);
+            if (!existingItems.TryGetValue(key, out ExistingItem<T> existing))
+            {
+                items.Add(incoming);
+                continue;
+            }
+
+            retainedIndexes.Add(existing.Index);
+            if (areEquivalent(existing.Item, incoming))
+            {
+                items.Add(existing.Item);
+            }
+            else
+            {
+                items.Add(incoming);
+                ++replacementCount;
+            }
+        }
+
+        int retainedCount = retainedIndexes.Count;
+        int additionCount = source.Count - retainedCount;
+        int removalCount = target.Count - retainedCount;
+        int moveCount = retainedCount - CountLongestIncreasingSubsequence(retainedIndexes);
+        int changeCount = additionCount + removalCount + moveCount + replacementCount;
+
+        return new SyncPlan<T>(items, changeCount, Math.Max(target.Count, source.Count));
+    }
+
+    private static bool ShouldUseBatchReset<T>(
+        ObservableCollection<T> target,
+        SyncPlan<T> plan)
+    {
+        if (target is not BulkObservableCollection<T>)
+        {
+            return false;
+        }
+
+        if (plan.MaxItemCount < BatchResetItemThreshold)
+        {
+            return false;
+        }
+
+        return plan.ChangeCount >= BatchResetChangeThreshold;
+    }
+
     private static Dictionary<string, int> BuildTargetIndexes<T>(
         ObservableCollection<T> target,
         Func<T, string> keySelector,
@@ -114,15 +189,88 @@ public static class OrderedCollectionSyncService
         return indexes;
     }
 
-    private static void RefreshTargetIndexes<T>(
-        ObservableCollection<T> target,
-        Func<T, string> keySelector,
-        Dictionary<string, int> targetIndexes,
-        int startIndex)
+    private static int CountLongestIncreasingSubsequence(IReadOnlyList<int> values)
     {
-        for (int index = Math.Max(0, startIndex); index < target.Count; ++index)
+        if (values.Count == 0)
         {
-            targetIndexes[keySelector(target[index])] = index;
+            return 0;
+        }
+
+        List<int> tails = new(values.Count);
+        foreach (int value in values)
+        {
+            int index = tails.BinarySearch(value);
+            if (index < 0)
+            {
+                index = ~index;
+            }
+
+            if (index == tails.Count)
+            {
+                tails.Add(value);
+            }
+            else
+            {
+                tails[index] = value;
+            }
+        }
+
+        return tails.Count;
+    }
+
+    private static void ShiftIndexesAfterInsert(
+        Dictionary<string, int> targetIndexes,
+        int insertIndex)
+    {
+        foreach (string key in KeysWhere(targetIndexes, index => index >= insertIndex))
+        {
+            ++targetIndexes[key];
         }
     }
+
+    private static void ShiftIndexesAfterMove(
+        Dictionary<string, int> targetIndexes,
+        int oldIndex,
+        int newIndex)
+    {
+        if (oldIndex == newIndex)
+        {
+            return;
+        }
+
+        if (oldIndex > newIndex)
+        {
+            foreach (string key in KeysWhere(targetIndexes, index => index >= newIndex && index < oldIndex))
+            {
+                ++targetIndexes[key];
+            }
+
+            return;
+        }
+
+        foreach (string key in KeysWhere(targetIndexes, index => index > oldIndex && index <= newIndex))
+        {
+            --targetIndexes[key];
+        }
+    }
+
+    private static List<string> KeysWhere(
+        Dictionary<string, int> targetIndexes,
+        Func<int, bool> predicate)
+    {
+        List<string> keys = [];
+        foreach (KeyValuePair<string, int> item in targetIndexes)
+        {
+            if (predicate(item.Value))
+            {
+                keys.Add(item.Key);
+            }
+        }
+
+        return keys;
+    }
+
+    private readonly record struct ExistingItem<T>(T Item, int Index);
+
+    private sealed record SyncPlan<T>(List<T> Items, int ChangeCount, int MaxItemCount);
 }

@@ -84,11 +84,11 @@ namespace fluxora::tests
         ASSERT_EQ(highOnly.kind, vfs::VfsTree::PathInfo::Kind::File);
         expectSamePath(highOnly.winner, modHigh / L"meshes" / L"high-only.nif");
 
-        const std::vector<vfs::DirChild> textures =
+        const auto textures =
             tree.listing(vfs::VfsTree::toLower(L"textures"));
-        EXPECT_TRUE(containsChild(textures, L"base.dds"));
-        EXPECT_TRUE(containsChild(textures, L"low-only.dds"));
-        EXPECT_TRUE(containsChild(textures, L"shared.dds"));
+        EXPECT_TRUE(containsChild(*textures, L"base.dds"));
+        EXPECT_TRUE(containsChild(*textures, L"low-only.dds"));
+        EXPECT_TRUE(containsChild(*textures, L"shared.dds"));
     }
 
     TEST(VfsTreeTests, BuildExcludesRootBuilderTopLevelFolderFromDataMount)
@@ -118,10 +118,10 @@ namespace fluxora::tests
         ASSERT_EQ(script.kind, vfs::VfsTree::PathInfo::Kind::File);
         expectSamePath(script.winner, mod / L"Scripts" / L"mod.pex");
 
-        const std::vector<vfs::DirChild> root = tree.listing(L"");
-        EXPECT_FALSE(containsChild(root, L"root"));
-        EXPECT_TRUE(containsChild(root, L"Scripts"));
-        EXPECT_TRUE(containsChild(root, L"Skyrim.esm"));
+        const auto root = tree.listing(L"");
+        EXPECT_FALSE(containsChild(*root, L"root"));
+        EXPECT_TRUE(containsChild(*root, L"Scripts"));
+        EXPECT_TRUE(containsChild(*root, L"Skyrim.esm"));
     }
 
     TEST(VfsTreeTests, BuildSupportsModsWithNestedDataWrapper)
@@ -152,9 +152,9 @@ namespace fluxora::tests
         const vfs::VfsTree::PathInfo leakedPlugin = tree.classify(L"Data\\Wrapped.esp");
         EXPECT_EQ(leakedPlugin.kind, vfs::VfsTree::PathInfo::Kind::Unknown);
 
-        const std::vector<vfs::DirChild> root = tree.listing(L"");
-        EXPECT_FALSE(containsChild(root, L"Data"));
-        EXPECT_TRUE(containsChild(root, L"Wrapped.esp"));
+        const auto root = tree.listing(L"");
+        EXPECT_FALSE(containsChild(*root, L"Data"));
+        EXPECT_TRUE(containsChild(*root, L"Wrapped.esp"));
     }
 
     TEST(VfsTreeTests, DirectClassifyFindsNestedOverlayFileBeforeDirectoryEnumeration)
@@ -180,10 +180,10 @@ namespace fluxora::tests
         ASSERT_EQ(nested.kind, vfs::VfsTree::PathInfo::Kind::File);
         expectSamePath(nested.winner, mod / L"textures" / L"actors" / L"body.dds");
 
-        const std::vector<vfs::DirChild> textures =
+        const auto textures =
             tree.listing(vfs::VfsTree::toLower(L"textures"));
-        EXPECT_TRUE(containsChild(textures, L"actors"));
-        EXPECT_TRUE(containsChild(textures, L"base.dds"));
+        EXPECT_TRUE(containsChild(*textures, L"actors"));
+        EXPECT_TRUE(containsChild(*textures, L"base.dds"));
     }
 
     TEST(VfsTreeTests, RepeatedMissingPathUsesNegativeCacheAcrossActiveMods)
@@ -276,8 +276,8 @@ namespace fluxora::tests
             {}
         });
 
-        const std::vector<vfs::DirChild> textures = tree.listing(L"textures");
-        ASSERT_TRUE(containsChild(textures, L"present.dds"));
+        const auto textures = tree.listing(L"textures");
+        ASSERT_TRUE(containsChild(*textures, L"present.dds"));
 
         vfs::VfsTree::resetAttributeProbeCountForTests();
         const vfs::VfsTree::PathInfo missing = tree.classify(L"textures\\missing.dds");
@@ -320,5 +320,29 @@ namespace fluxora::tests
         EXPECT_TRUE(vfs::VfsTree::wildcardMatch(L"skse64.log", L"*.log"));
         EXPECT_FALSE(vfs::VfsTree::wildcardMatch(L"save1_character_tamriel.skse", L"<.ess"));
         EXPECT_FALSE(vfs::VfsTree::wildcardMatch(L"enginefixes.toml", L"<.dll"));
+    }
+
+    TEST(VfsTreeTests, ListingReusesImmutableSnapshotWithLowercaseKeys)
+    {
+        TempDirectory temp;
+
+        const std::filesystem::path data = temp.path() / L"Game" / L"Data";
+        writeTextFile(data / L"textures" / L"MixedCase.DDS", "texture");
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            data.wstring(),
+            L"",
+            {},
+            {}
+        });
+
+        const auto first = tree.listing(L"textures");
+        const auto second = tree.listing(L"Textures");
+
+        ASSERT_EQ(first.get(), second.get());
+        ASSERT_EQ(first->size(), 1u);
+        EXPECT_EQ(first->front().name, L"MixedCase.DDS");
+        EXPECT_EQ(first->front().nameLower, L"mixedcase.dds");
     }
 }

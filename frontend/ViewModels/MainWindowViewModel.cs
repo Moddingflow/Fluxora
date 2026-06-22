@@ -341,9 +341,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public ObservableCollection<ModProject> Projects { get; } = new();
 
-    public ObservableCollection<ModEntry> Mods { get; } = new();
+    public ObservableCollection<ModEntry> Mods { get; } = new BulkObservableCollection<ModEntry>();
 
-    public ObservableCollection<ModEntry> VisibleMods { get; } = new();
+    public ObservableCollection<ModEntry> VisibleMods { get; } = new BulkObservableCollection<ModEntry>();
 
     internal ICollectionView VisibleModsView => visibleModsView;
 
@@ -365,9 +365,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
-    public ObservableCollection<PluginEntry> Plugins { get; } = new();
+    public ObservableCollection<PluginEntry> Plugins { get; } = new BulkObservableCollection<PluginEntry>();
 
-    public ObservableCollection<DownloadEntry> Downloads { get; } = new();
+    public ObservableCollection<DownloadEntry> Downloads { get; } = new BulkObservableCollection<DownloadEntry>();
 
     public BulkObservableCollection<ModFileTreeNode> SelectedModFileTree { get; } = new();
 
