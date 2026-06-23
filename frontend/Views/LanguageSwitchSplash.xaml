@@ -13,15 +13,6 @@
              UseLayoutRounding="True">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-
-        <SolidColorBrush x:Key="SplashTextBrush" Color="#F4F8FF" />
-        <SolidColorBrush x:Key="SplashSecondaryTextBrush" Color="#C7D4E7" />
-
-        <LinearGradientBrush x:Key="SplashCoreBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#F4F8FF" Offset="0" />
-            <GradientStop Color="#C9DFFF" Offset="0.45" />
-            <GradientStop Color="#6FA5FF" Offset="1" />
-        </LinearGradientBrush>
     </UserControl.Resources>
 
     <UserControl.Style>
@@ -64,9 +55,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F402050A" Offset="0" />
-                <GradientStop Color="#F2050A11" Offset="0.52" />
-                <GradientStop Color="#F508101B" Offset="1" />
+                <GradientStop Color="{DynamicResource ProcessBackdropStartColor}" Offset="0" />
+                <GradientStop Color="{DynamicResource ProcessBackdropMidColor}" Offset="0.52" />
+                <GradientStop Color="{DynamicResource ProcessBackdropEndColor}" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -88,21 +79,21 @@
                   HorizontalAlignment="Center">
                 <Ellipse Width="94"
                          Height="94"
-                         Stroke="#17304F"
+                         Stroke="{DynamicResource SplashRingBrush}"
                          StrokeThickness="7"
                          Opacity="0.9" />
 
                 <Ellipse x:Name="PulseLayer"
                          Width="72"
                          Height="72"
-                         Fill="#091C35"
+                         Fill="{DynamicResource SplashRingFillBrush}"
                          HorizontalAlignment="Center"
                          VerticalAlignment="Center"
                          Opacity="0.08" />
 
                 <Ellipse Width="94"
                          Height="94"
-                         Stroke="#A8CAFF"
+                         Stroke="{DynamicResource TextSecondaryBrush}"
                          StrokeThickness="7"
                          StrokeStartLineCap="Round"
                          StrokeEndLineCap="Round"
@@ -116,7 +107,7 @@
 
                 <Ellipse Width="62"
                          Height="62"
-                         Stroke="#F4F8FF"
+                         Stroke="{DynamicResource PrimaryForegroundBrush}"
                          StrokeThickness="4"
                          StrokeStartLineCap="Round"
                          StrokeEndLineCap="Round"
@@ -132,7 +123,7 @@
                 <Border Width="27"
                         Height="27"
                         CornerRadius="14"
-                        Background="{StaticResource SplashCoreBrush}"
+                        Background="{DynamicResource SplashCoreBrush}"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         RenderTransformOrigin="0.5,0.5">
@@ -146,7 +137,7 @@
                        Text="{Binding LanguageSwitchTitle}"
                        FontSize="28"
                        FontWeight="Black"
-                       Foreground="{StaticResource SplashTextBrush}"
+                       Foreground="{DynamicResource SplashTextBrush}"
                        HorizontalAlignment="Center"
                        TextAlignment="Center"
                        TextWrapping="Wrap" />
@@ -155,7 +146,7 @@
                        Text="{Binding LanguageSwitchSubtitle}"
                        FontSize="13"
                        FontWeight="SemiBold"
-                       Foreground="{StaticResource SplashSecondaryTextBrush}"
+                       Foreground="{DynamicResource SplashSecondaryTextBrush}"
                        HorizontalAlignment="Center"
                        TextAlignment="Center"
                        TextWrapping="Wrap"
@@ -164,7 +155,7 @@
 
         <Border Height="1"
                 VerticalAlignment="Top"
-                Background="#18355A"
+                Background="{DynamicResource PanelHoverBrush}"
                 Opacity="0.36" />
     </Grid>
 </UserControl>

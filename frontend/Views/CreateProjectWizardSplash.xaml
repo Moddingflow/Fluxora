@@ -13,27 +13,6 @@
              IsHitTestVisible="{Binding IsCreateProjectPanelOpen}">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-
-        <SolidColorBrush x:Key="WizardTextBrush" Color="#F4F8FF" />
-        <SolidColorBrush x:Key="WizardSecondaryTextBrush" Color="#D5E2F2" />
-        <SolidColorBrush x:Key="WizardMutedTextBrush" Color="#93A4BC" />
-        <SolidColorBrush x:Key="WizardSubtleTextBrush" Color="#697A91" />
-        <SolidColorBrush x:Key="WizardAccentBrush" Color="#4D8DF7" />
-        <SolidColorBrush x:Key="WizardAccentHoverBrush" Color="#91BDFF" />
-        <SolidColorBrush x:Key="WizardAccentSoftBrush" Color="#091C35" />
-        <SolidColorBrush x:Key="WizardAccentLineBrush" Color="#316DCE" />
-        <SolidColorBrush x:Key="WizardPanelBrush" Color="#0A1018" />
-        <SolidColorBrush x:Key="WizardPanelRaisedBrush" Color="#0F1724" />
-        <SolidColorBrush x:Key="WizardPanelSoftBrush" Color="#050A11" />
-        <SolidColorBrush x:Key="WizardLineBrush" Color="#1E3555" />
-        <SolidColorBrush x:Key="WizardErrorBrush" Color="#FB7185" />
-
-        <LinearGradientBrush x:Key="WizardAccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#91BDFF" Offset="0" />
-            <GradientStop Color="#4D8DF7" Offset="0.58" />
-            <GradientStop Color="#1F5FCE" Offset="1" />
-        </LinearGradientBrush>
-
         <Style x:Key="WizardButtonBaseStyle" TargetType="{x:Type Button}">
             <Setter Property="Height" Value="38" />
             <Setter Property="Padding" Value="16,0" />
@@ -72,26 +51,26 @@
         </Style>
 
         <Style x:Key="WizardPrimaryButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource WizardButtonBaseStyle}">
-            <Setter Property="Background" Value="{StaticResource WizardAccentBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource WizardAccentHoverBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource WizardTextBrush}" />
+            <Setter Property="Background" Value="{DynamicResource WizardAccentBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource WizardAccentHoverBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource WizardTextBrush}" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource WizardAccentHoverBrush}" />
-                    <Setter Property="BorderBrush" Value="#B8D4FF" />
+                    <Setter Property="Background" Value="{DynamicResource WizardAccentHoverBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
 
         <Style x:Key="WizardSecondaryButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource WizardButtonBaseStyle}">
-            <Setter Property="Background" Value="#0A1018" />
-            <Setter Property="BorderBrush" Value="{StaticResource WizardLineBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource WizardSecondaryTextBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource WizardLineBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource WizardSecondaryTextBrush}" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#19263A" />
-                    <Setter Property="BorderBrush" Value="{StaticResource WizardAccentLineBrush}" />
-                    <Setter Property="Foreground" Value="{StaticResource WizardTextBrush}" />
+                    <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource WizardAccentLineBrush}" />
+                    <Setter Property="Foreground" Value="{DynamicResource WizardTextBrush}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -99,12 +78,12 @@
         <Style x:Key="WizardTextBoxStyle" TargetType="{x:Type TextBox}">
             <Setter Property="Height" Value="42" />
             <Setter Property="Padding" Value="13,0" />
-            <Setter Property="Background" Value="#050A11" />
-            <Setter Property="BorderBrush" Value="{StaticResource WizardLineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource WizardLineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Foreground" Value="{StaticResource WizardTextBrush}" />
-            <Setter Property="CaretBrush" Value="{StaticResource WizardTextBrush}" />
-            <Setter Property="SelectionBrush" Value="{StaticResource WizardAccentLineBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource WizardTextBrush}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource WizardTextBrush}" />
+            <Setter Property="SelectionBrush" Value="{DynamicResource WizardAccentLineBrush}" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -119,8 +98,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource WizardAccentHoverBrush}" />
-                                <Setter TargetName="Root" Property="Background" Value="#08101B" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource WizardAccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelSoftBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -138,21 +117,21 @@
         <Style x:Key="WizardBareTextBoxStyle" TargetType="{x:Type TextBox}">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Foreground" Value="{StaticResource WizardTextBrush}" />
-            <Setter Property="CaretBrush" Value="{StaticResource WizardTextBrush}" />
-            <Setter Property="SelectionBrush" Value="{StaticResource WizardAccentLineBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource WizardTextBrush}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource WizardTextBrush}" />
+            <Setter Property="SelectionBrush" Value="{DynamicResource WizardAccentLineBrush}" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         </Style>
 
         <Style x:Key="WizardFieldLabelStyle" TargetType="{x:Type TextBlock}">
-            <Setter Property="Foreground" Value="{StaticResource WizardTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource WizardTextBrush}" />
             <Setter Property="FontWeight" Value="Black" />
             <Setter Property="Margin" Value="0,0,0,8" />
         </Style>
 
         <Style x:Key="WizardHintTextStyle" TargetType="{x:Type TextBlock}">
-            <Setter Property="Foreground" Value="{StaticResource WizardMutedTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource WizardMutedTextBrush}" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
@@ -161,8 +140,8 @@
             <Setter Property="Height" Value="68" />
             <Setter Property="Padding" Value="13" />
             <Setter Property="CornerRadius" Value="13" />
-            <Setter Property="Background" Value="#0A1018" />
-            <Setter Property="BorderBrush" Value="{StaticResource WizardLineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource WizardLineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
 
@@ -191,8 +170,8 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type ListBoxItem}">
                         <Border x:Name="Card"
-                                Background="#0D1420"
-                                BorderBrush="{StaticResource WizardLineBrush}"
+                                Background="{DynamicResource PanelRaisedBrush}"
+                                BorderBrush="{DynamicResource WizardLineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="14"
                                 Padding="0">
@@ -201,12 +180,12 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Card" Property="Background" Value="#0E1A2B" />
-                                <Setter TargetName="Card" Property="BorderBrush" Value="{StaticResource WizardAccentLineBrush}" />
+                                <Setter TargetName="Card" Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+                                <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource WizardAccentLineBrush}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Card" Property="Background" Value="{StaticResource WizardAccentSoftBrush}" />
-                                <Setter TargetName="Card" Property="BorderBrush" Value="{StaticResource WizardAccentHoverBrush}" />
+                                <Setter TargetName="Card" Property="Background" Value="{DynamicResource WizardAccentSoftBrush}" />
+                                <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource WizardAccentHoverBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -249,9 +228,9 @@
     <Grid>
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#FA02050A" Offset="0" />
-                <GradientStop Color="#FC050A11" Offset="0.52" />
-                <GradientStop Color="#FD08101B" Offset="1" />
+                <GradientStop Color="{DynamicResource WizardBackdropStartColor}" Offset="0" />
+                <GradientStop Color="{DynamicResource WizardBackdropMidColor}" Offset="0.52" />
+                <GradientStop Color="{DynamicResource WizardBackdropEndColor}" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -277,16 +256,16 @@
                         <TextBlock Text="Новая сборка"
                                    FontSize="12"
                                    FontWeight="Black"
-                                   Foreground="{StaticResource WizardMutedTextBrush}" />
+                                   Foreground="{DynamicResource WizardMutedTextBrush}" />
                         <TextBlock Text="{Binding CreateProjectStepTitle}"
                                    Margin="0,4,0,0"
                                    FontSize="30"
                                    FontWeight="Black"
-                                   Foreground="{StaticResource WizardTextBrush}" />
+                                   Foreground="{DynamicResource WizardTextBrush}" />
                         <TextBlock Text="{Binding CreateProjectStepSubtitle}"
                                    Margin="0,6,0,0"
                                    FontSize="13"
-                                   Foreground="{StaticResource WizardSecondaryTextBrush}"
+                                   Foreground="{DynamicResource WizardSecondaryTextBrush}"
                                    TextWrapping="Wrap" />
                     </StackPanel>
 
@@ -295,12 +274,12 @@
                             MinWidth="78"
                             Padding="14,0"
                             CornerRadius="15"
-                            Background="{StaticResource WizardAccentSoftBrush}"
-                            BorderBrush="{StaticResource WizardAccentLineBrush}"
+                            Background="{DynamicResource WizardAccentSoftBrush}"
+                            BorderBrush="{DynamicResource WizardAccentLineBrush}"
                             BorderThickness="1"
                             VerticalAlignment="Top">
                         <TextBlock Text="{Binding CreateProjectStepCounter}"
-                                   Foreground="{StaticResource WizardTextBrush}"
+                                   Foreground="{DynamicResource WizardTextBrush}"
                                    FontWeight="Black"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center" />
@@ -324,8 +303,8 @@
                             <Style TargetType="{x:Type Border}" BasedOn="{StaticResource WizardStepCardStyle}">
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding CreateProjectStepIndex}" Value="0">
-                                        <Setter Property="Background" Value="{StaticResource WizardAccentSoftBrush}" />
-                                        <Setter Property="BorderBrush" Value="{StaticResource WizardAccentHoverBrush}" />
+                                        <Setter Property="Background" Value="{DynamicResource WizardAccentSoftBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource WizardAccentHoverBrush}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -338,17 +317,17 @@
                             <Border Width="34"
                                     Height="34"
                                     CornerRadius="10"
-                                    Background="#0F1928"
-                                    BorderBrush="{StaticResource WizardAccentLineBrush}"
+                                    Background="{DynamicResource PanelRaisedBrush}"
+                                    BorderBrush="{DynamicResource WizardAccentLineBrush}"
                                     BorderThickness="1">
                                 <controls:LineIcon Data="{StaticResource Icon.FileText}"
                                                    Width="17"
                                                    Height="17"
-                                                   Foreground="{StaticResource WizardAccentHoverBrush}" />
+                                                   Foreground="{DynamicResource WizardAccentHoverBrush}" />
                             </Border>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="Название" Foreground="{StaticResource WizardTextBrush}" FontWeight="Black" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="Имя папки" Foreground="{StaticResource WizardMutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="Название" Foreground="{DynamicResource WizardTextBrush}" FontWeight="Black" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="Имя папки" Foreground="{DynamicResource WizardMutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -356,7 +335,7 @@
                     <Border Grid.Column="1"
                             Height="1"
                             Margin="6,0"
-                            Background="{StaticResource WizardAccentLineBrush}"
+                            Background="{DynamicResource WizardAccentLineBrush}"
                             Opacity="0.58"
                             VerticalAlignment="Center" />
 
@@ -365,8 +344,8 @@
                             <Style TargetType="{x:Type Border}" BasedOn="{StaticResource WizardStepCardStyle}">
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding CreateProjectStepIndex}" Value="1">
-                                        <Setter Property="Background" Value="{StaticResource WizardAccentSoftBrush}" />
-                                        <Setter Property="BorderBrush" Value="{StaticResource WizardAccentHoverBrush}" />
+                                        <Setter Property="Background" Value="{DynamicResource WizardAccentSoftBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource WizardAccentHoverBrush}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -379,17 +358,17 @@
                             <Border Width="34"
                                     Height="34"
                                     CornerRadius="10"
-                                    Background="{StaticResource IconTileBrush}"
-                                    BorderBrush="{StaticResource IconTileBorderBrush}"
+                                    Background="{DynamicResource IconTileBrush}"
+                                    BorderBrush="{DynamicResource IconTileBorderBrush}"
                                     BorderThickness="1">
                                 <controls:LineIcon Data="{StaticResource Icon.Gamepad}"
                                                    Width="18"
                                                    Height="18"
-                                                   Foreground="{StaticResource IconTileForegroundBrush}" />
+                                                   Foreground="{DynamicResource IconTileForegroundBrush}" />
                             </Border>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="Игра" Foreground="{StaticResource WizardTextBrush}" FontWeight="Black" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="Шаблон" Foreground="{StaticResource WizardMutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="Игра" Foreground="{DynamicResource WizardTextBrush}" FontWeight="Black" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="Шаблон" Foreground="{DynamicResource WizardMutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -397,7 +376,7 @@
                     <Border Grid.Column="3"
                             Height="1"
                             Margin="6,0"
-                            Background="{StaticResource WizardAccentLineBrush}"
+                            Background="{DynamicResource WizardAccentLineBrush}"
                             Opacity="0.58"
                             VerticalAlignment="Center" />
 
@@ -406,8 +385,8 @@
                             <Style TargetType="{x:Type Border}" BasedOn="{StaticResource WizardStepCardStyle}">
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding CreateProjectStepIndex}" Value="2">
-                                        <Setter Property="Background" Value="{StaticResource WizardAccentSoftBrush}" />
-                                        <Setter Property="BorderBrush" Value="{StaticResource WizardAccentHoverBrush}" />
+                                        <Setter Property="Background" Value="{DynamicResource WizardAccentSoftBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource WizardAccentHoverBrush}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -420,17 +399,17 @@
                             <Border Width="34"
                                     Height="34"
                                     CornerRadius="10"
-                                    Background="#0F1928"
-                                    BorderBrush="{StaticResource WizardAccentLineBrush}"
+                                    Background="{DynamicResource PanelRaisedBrush}"
+                                    BorderBrush="{DynamicResource WizardAccentLineBrush}"
                                     BorderThickness="1">
                                 <controls:LineIcon Data="{StaticResource Icon.Open}"
                                                    Width="18"
                                                    Height="18"
-                                                   Foreground="{StaticResource WizardAccentHoverBrush}" />
+                                                   Foreground="{DynamicResource WizardAccentHoverBrush}" />
                             </Border>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="EXE" Foreground="{StaticResource WizardTextBrush}" FontWeight="Black" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="Файл игры" Foreground="{StaticResource WizardMutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="EXE" Foreground="{DynamicResource WizardTextBrush}" FontWeight="Black" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="Файл игры" Foreground="{DynamicResource WizardMutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -438,7 +417,7 @@
                     <Border Grid.Column="5"
                             Height="1"
                             Margin="6,0"
-                            Background="{StaticResource WizardAccentLineBrush}"
+                            Background="{DynamicResource WizardAccentLineBrush}"
                             Opacity="0.58"
                             VerticalAlignment="Center" />
 
@@ -447,8 +426,8 @@
                             <Style TargetType="{x:Type Border}" BasedOn="{StaticResource WizardStepCardStyle}">
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding CreateProjectStepIndex}" Value="3">
-                                        <Setter Property="Background" Value="{StaticResource WizardAccentSoftBrush}" />
-                                        <Setter Property="BorderBrush" Value="{StaticResource WizardAccentHoverBrush}" />
+                                        <Setter Property="Background" Value="{DynamicResource WizardAccentSoftBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource WizardAccentHoverBrush}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -461,17 +440,17 @@
                             <Border Width="34"
                                     Height="34"
                                     CornerRadius="10"
-                                    Background="#0F1928"
-                                    BorderBrush="{StaticResource WizardAccentLineBrush}"
+                                    Background="{DynamicResource PanelRaisedBrush}"
+                                    BorderBrush="{DynamicResource WizardAccentLineBrush}"
                                     BorderThickness="1">
                                 <controls:LineIcon Data="{StaticResource Icon.Folder}"
                                                    Width="18"
                                                    Height="18"
-                                                   Foreground="{StaticResource WizardAccentHoverBrush}" />
+                                                   Foreground="{DynamicResource WizardAccentHoverBrush}" />
                             </Border>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="Папка" Foreground="{StaticResource WizardTextBrush}" FontWeight="Black" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="Установка" Foreground="{StaticResource WizardMutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="Папка" Foreground="{DynamicResource WizardTextBrush}" FontWeight="Black" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="Установка" Foreground="{DynamicResource WizardMutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -483,8 +462,8 @@
                         CornerRadius="18">
                     <Border.Style>
                         <Style TargetType="{x:Type Border}">
-                            <Setter Property="Background" Value="#F0050A11" />
-                            <Setter Property="BorderBrush" Value="{StaticResource WizardLineBrush}" />
+                            <Setter Property="Background" Value="{DynamicResource PanelSoftBrush}" />
+                            <Setter Property="BorderBrush" Value="{DynamicResource WizardLineBrush}" />
                             <Setter Property="BorderThickness" Value="1" />
                             <Setter Property="Padding" Value="28" />
                             <Setter Property="MinHeight" Value="320" />
@@ -529,7 +508,7 @@
                                 <TextBlock Text="Как мы назовём вашу сборку?"
                                            FontSize="27"
                                            FontWeight="Black"
-                                           Foreground="{StaticResource WizardTextBrush}"
+                                           Foreground="{DynamicResource WizardTextBrush}"
                                            TextAlignment="Center"
                                            TextWrapping="Wrap"
                                            Margin="0,0,0,18" />
@@ -559,20 +538,20 @@
                             <Border Grid.Row="1"
                                     Height="46"
                                     Margin="0,14,0,12"
-                                    Background="#050A11"
-                                    BorderBrush="{StaticResource WizardLineBrush}"
+                                    Background="{DynamicResource PanelSoftBrush}"
+                                    BorderBrush="{DynamicResource WizardLineBrush}"
                                     BorderThickness="1"
                                     CornerRadius="12">
                                 <Border.Style>
                                     <Style TargetType="{x:Type Border}">
-                                        <Setter Property="Background" Value="#050A11" />
-                                        <Setter Property="BorderBrush" Value="{StaticResource WizardLineBrush}" />
+                                        <Setter Property="Background" Value="{DynamicResource PanelSoftBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource WizardLineBrush}" />
                                         <Setter Property="BorderThickness" Value="1" />
                                         <Setter Property="CornerRadius" Value="12" />
                                         <Style.Triggers>
                                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                                <Setter Property="Background" Value="#08101B" />
-                                                <Setter Property="BorderBrush" Value="{StaticResource WizardAccentHoverBrush}" />
+                                                <Setter Property="Background" Value="{DynamicResource PanelSoftBrush}" />
+                                                <Setter Property="BorderBrush" Value="{DynamicResource WizardAccentHoverBrush}" />
                                             </Trigger>
                                         </Style.Triggers>
                                     </Style>
@@ -581,14 +560,14 @@
                                     <controls:LineIcon Data="{StaticResource Icon.Search}"
                                                        Width="18"
                                                        Height="18"
-                                                       Foreground="{StaticResource WizardMutedTextBrush}"
+                                                       Foreground="{DynamicResource WizardMutedTextBrush}"
                                                        Margin="15,0,0,0"
                                                        HorizontalAlignment="Left"
                                                        VerticalAlignment="Center" />
                                     <TextBlock Text="Поиск игры"
                                                Margin="45,0,14,0"
                                                VerticalAlignment="Center"
-                                               Foreground="{StaticResource WizardSubtleTextBrush}"
+                                               Foreground="{DynamicResource WizardSubtleTextBrush}"
                                                IsHitTestVisible="False">
                                         <TextBlock.Style>
                                             <Style TargetType="{x:Type TextBlock}">
@@ -627,22 +606,22 @@
                                                     <Border Width="34"
                                                             Height="34"
                                                             CornerRadius="10"
-                                                            Background="{StaticResource IconTileBrush}"
-                                                            BorderBrush="{StaticResource IconTileBorderBrush}"
+                                                            Background="{DynamicResource IconTileBrush}"
+                                                            BorderBrush="{DynamicResource IconTileBorderBrush}"
                                                             BorderThickness="1"
                                                             VerticalAlignment="Top">
                                                         <controls:LineIcon Data="{StaticResource Icon.Gamepad}"
                                                                            Width="17"
                                                                            Height="17"
-                                                                           Foreground="{StaticResource IconTileForegroundBrush}" />
+                                                                           Foreground="{DynamicResource IconTileForegroundBrush}" />
                                                     </Border>
                                                     <StackPanel Grid.Column="1">
                                                         <TextBlock Text="{Binding DisplayName}"
-                                                                   Foreground="{StaticResource WizardTextBrush}"
+                                                                   Foreground="{DynamicResource WizardTextBrush}"
                                                                    FontWeight="Black" />
                                                         <TextBlock Text="{Binding Summary}"
                                                                    Margin="0,7,0,0"
-                                                                   Foreground="{StaticResource WizardMutedTextBrush}"
+                                                                   Foreground="{DynamicResource WizardMutedTextBrush}"
                                                                    FontSize="12"
                                                                    TextWrapping="Wrap" />
                                                     </StackPanel>
@@ -658,8 +637,8 @@
                                                     </Grid.ColumnDefinitions>
                                                     <Border Width="46"
                                                             Height="46"
-                                                            Background="#050A11"
-                                                            BorderBrush="{StaticResource WizardAccentLineBrush}"
+                                                            Background="{DynamicResource PanelSoftBrush}"
+                                                            BorderBrush="{DynamicResource WizardAccentLineBrush}"
                                                             BorderThickness="1"
                                                             CornerRadius="11"
                                                             ClipToBounds="True"
@@ -671,11 +650,11 @@
                                                     <StackPanel Grid.Column="1"
                                                                 VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding DisplayName}"
-                                                                   Foreground="{StaticResource WizardTextBrush}"
+                                                                   Foreground="{DynamicResource WizardTextBrush}"
                                                                    FontWeight="Black" />
                                                         <TextBlock Text="{Binding Summary}"
                                                                    Margin="0,7,0,0"
-                                                                   Foreground="{StaticResource WizardMutedTextBrush}"
+                                                                   Foreground="{DynamicResource WizardMutedTextBrush}"
                                                                    FontSize="12"
                                                                    TextWrapping="Wrap" />
                                                     </StackPanel>
@@ -691,8 +670,8 @@
                                     </ListBox.ItemTemplate>
                                 </ListBox>
 
-                                <Border Background="#0D1420"
-                                        BorderBrush="{StaticResource WizardLineBrush}"
+                                <Border Background="{DynamicResource PanelRaisedBrush}"
+                                        BorderBrush="{DynamicResource WizardLineBrush}"
                                         BorderThickness="1"
                                         CornerRadius="14"
                                         Padding="18"
@@ -709,7 +688,7 @@
                                     </Border.Style>
                                     <StackPanel>
                                         <TextBlock Text="{Binding GameSearchResultText}"
-                                                   Foreground="{StaticResource WizardTextBrush}"
+                                                   Foreground="{DynamicResource WizardTextBrush}"
                                                    FontWeight="Black" />
                                         <TextBlock Text="Попробуйте изменить запрос или проверьте подключение C++ core."
                                                    Margin="0,6,0,0"
@@ -733,12 +712,12 @@
                                 <TextBlock Text="Выберите EXE игры"
                                            FontSize="26"
                                            FontWeight="Black"
-                                           Foreground="{StaticResource WizardTextBrush}"
+                                           Foreground="{DynamicResource WizardTextBrush}"
                                            TextAlignment="Center"
                                            TextWrapping="Wrap"
                                            Margin="0,0,0,8" />
                                 <TextBlock Text="Можно вставить путь вручную или выбрать файл через проводник."
-                                           Foreground="{StaticResource WizardMutedTextBrush}"
+                                           Foreground="{DynamicResource WizardMutedTextBrush}"
                                            TextAlignment="Center"
                                            TextWrapping="Wrap"
                                            Margin="0,0,0,22" />
@@ -761,8 +740,8 @@
                                     </Button>
                                 </Grid>
 
-                                <Border Background="#0A1018"
-                                        BorderBrush="{StaticResource WizardLineBrush}"
+                                <Border Background="{DynamicResource PanelBrush}"
+                                        BorderBrush="{DynamicResource WizardLineBrush}"
                                         BorderThickness="1"
                                         CornerRadius="12"
                                         Padding="14"
@@ -772,13 +751,13 @@
                                         <controls:LineIcon Data="{StaticResource Icon.Gamepad}"
                                                            Width="17"
                                                            Height="17"
-                                                           Foreground="{StaticResource IconTileForegroundBrush}"
+                                                           Foreground="{DynamicResource IconTileForegroundBrush}"
                                                            Margin="0,0,10,0" />
                                         <TextBlock VerticalAlignment="Center" TextWrapping="Wrap">
-                                            <Run Text="Игра: " Foreground="{StaticResource WizardMutedTextBrush}" />
+                                            <Run Text="Игра: " Foreground="{DynamicResource WizardMutedTextBrush}" />
                                             <Run Text="{Binding SelectedResolvedTemplate.DisplayName, Mode=OneWay}"
                                                  FontWeight="Black"
-                                                 Foreground="{StaticResource WizardTextBrush}" />
+                                                 Foreground="{DynamicResource WizardTextBrush}" />
                                         </TextBlock>
                                     </StackPanel>
                                 </Border>
@@ -814,8 +793,8 @@
                                     </Button>
                                 </Grid>
 
-                                <Border Background="#0A1018"
-                                        BorderBrush="{StaticResource WizardLineBrush}"
+                                <Border Background="{DynamicResource PanelBrush}"
+                                        BorderBrush="{DynamicResource WizardLineBrush}"
                                         BorderThickness="1"
                                         CornerRadius="12"
                                         Padding="16"
@@ -823,15 +802,15 @@
                                     <StackPanel>
                                         <TextBlock Text="Итоговый путь"
                                                    FontWeight="Black"
-                                                   Foreground="{StaticResource WizardTextBrush}" />
+                                                   Foreground="{DynamicResource WizardTextBrush}" />
                                         <TextBlock Text="{Binding TargetProjectDirectory}"
                                                    Margin="0,7,0,0"
                                                    Style="{StaticResource WizardHintTextStyle}" />
                                     </StackPanel>
                                 </Border>
 
-                                <Border Background="{StaticResource WizardAccentSoftBrush}"
-                                        BorderBrush="{StaticResource WizardAccentLineBrush}"
+                                <Border Background="{DynamicResource WizardAccentSoftBrush}"
+                                        BorderBrush="{DynamicResource WizardAccentLineBrush}"
                                         BorderThickness="1"
                                         CornerRadius="12"
                                         Padding="16"
@@ -841,13 +820,13 @@
                                         <controls:LineIcon Data="{StaticResource Icon.Layers}"
                                                            Width="17"
                                                            Height="17"
-                                                           Foreground="{StaticResource WizardAccentHoverBrush}"
+                                                           Foreground="{DynamicResource WizardAccentHoverBrush}"
                                                            Margin="0,0,10,0" />
                                         <TextBlock VerticalAlignment="Center" TextWrapping="Wrap">
-                                            <Run Text="Будет развёрнут шаблон: " Foreground="{StaticResource WizardMutedTextBrush}" />
+                                            <Run Text="Будет развёрнут шаблон: " Foreground="{DynamicResource WizardMutedTextBrush}" />
                                             <Run Text="{Binding SelectedResolvedTemplate.DisplayName, Mode=OneWay}"
                                                  FontWeight="Black"
-                                                 Foreground="{StaticResource WizardTextBrush}" />
+                                                 Foreground="{DynamicResource WizardTextBrush}" />
                                         </TextBlock>
                                     </StackPanel>
                                 </Border>
@@ -869,7 +848,7 @@
                         </Grid.ColumnDefinitions>
 
                         <TextBlock Text="{Binding ValidationMessage}"
-                                   Foreground="{StaticResource WizardErrorBrush}"
+                                   Foreground="{DynamicResource WizardErrorBrush}"
                                    TextWrapping="Wrap"
                                    VerticalAlignment="Center" />
 

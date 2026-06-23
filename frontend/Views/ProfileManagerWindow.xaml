@@ -10,7 +10,7 @@
         ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
-        Background="#02050A"
+        Background="{DynamicResource WindowBackgroundBrush}"
         FontFamily="{StaticResource FluxoraFontBody}"
         FontWeight="Medium"
         TextOptions.TextFormattingMode="Display"
@@ -30,42 +30,12 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-
-        <SolidColorBrush x:Key="TextBrush" Color="#F4F8FF" />
-        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C7D4E7" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#8B9AB0" />
-        <SolidColorBrush x:Key="SubtleTextBrush" Color="#697A91" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#4D8DF7" />
-        <SolidColorBrush x:Key="AccentHoverBrush" Color="#6FA5FF" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#091C35" />
-        <SolidColorBrush x:Key="AccentLineBrush" Color="#305B94" />
-        <SolidColorBrush x:Key="PanelBrush" Color="#0A1018" />
-        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#0F1724" />
-        <SolidColorBrush x:Key="PanelSoftBrush" Color="#050A11" />
-        <SolidColorBrush x:Key="PanelHoverBrush" Color="#142033" />
-        <SolidColorBrush x:Key="LineBrush" Color="#1B2B41" />
-        <SolidColorBrush x:Key="LineHoverBrush" Color="#2F4E75" />
-        <SolidColorBrush x:Key="ErrorBrush" Color="#FB7185" />
-        <SolidColorBrush x:Key="DangerSoftBrush" Color="#2A1622" />
-
-        <LinearGradientBrush x:Key="AccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#6FA5FF" Offset="0" />
-            <GradientStop Color="#3F7EEA" Offset="0.62" />
-            <GradientStop Color="#1F5FCE" Offset="1" />
-        </LinearGradientBrush>
-
-        <DropShadowEffect x:Key="PanelShadow"
-                          Color="#03050A"
-                          BlurRadius="30"
-                          ShadowDepth="12"
-                          Opacity="0.34" />
-
         <Style x:Key="CloseButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="Width" Value="32" />
             <Setter Property="Height" Value="32" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Focusable" Value="False" />
@@ -83,8 +53,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.78" />
@@ -99,10 +69,10 @@
             <Setter Property="Width" Value="34" />
             <Setter Property="Height" Value="34" />
             <Setter Property="Padding" Value="0" />
-            <Setter Property="Background" Value="{StaticResource PanelRaisedBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="Template">
@@ -118,9 +88,9 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
-                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.78" />
@@ -137,10 +107,10 @@
         <Style x:Key="ActionButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="Height" Value="38" />
             <Setter Property="Padding" Value="14,0" />
-            <Setter Property="Background" Value="{StaticResource PanelRaisedBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -162,14 +132,14 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.82" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.45" />
@@ -183,28 +153,28 @@
         <Style x:Key="PrimaryActionButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource ActionButtonStyle}">
-            <Setter Property="Background" Value="{StaticResource AccentGradientBrush}" />
-            <Setter Property="BorderBrush" Value="#83B2FF" />
-            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="Background" Value="{DynamicResource AccentGradientBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryForegroundBrush}" />
         </Style>
 
         <Style x:Key="DangerActionButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource ActionButtonStyle}">
-            <Setter Property="Background" Value="{StaticResource DangerSoftBrush}" />
-            <Setter Property="BorderBrush" Value="#6E2B3B" />
-            <Setter Property="Foreground" Value="{StaticResource ErrorBrush}" />
+            <Setter Property="Background" Value="{DynamicResource DangerSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ErrorLineBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource ErrorBrush}" />
         </Style>
 
         <Style x:Key="ProfileTextBoxStyle" TargetType="{x:Type TextBox}">
             <Setter Property="Height" Value="38" />
             <Setter Property="Padding" Value="12,0" />
-            <Setter Property="Background" Value="#0D1420" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="CaretBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="SelectionBrush" Value="#316DCE" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource AccentHoverBrush}" />
+            <Setter Property="SelectionBrush" Value="{DynamicResource AccentLineBrush}" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
@@ -222,10 +192,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -243,15 +213,15 @@
         <Style x:Key="ProfileListBoxItemStyle" TargetType="{x:Type ListBoxItem}">
             <Setter Property="Padding" Value="0" />
             <Setter Property="Margin" Value="0,0,0,8" />
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type ListBoxItem}">
                         <Border x:Name="Root"
-                                Background="#0D1420"
-                                BorderBrush="{StaticResource LineBrush}"
+                                Background="{DynamicResource PanelRaisedBrush}"
+                                BorderBrush="{DynamicResource LineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="11"
                                 Padding="11,9">
@@ -259,13 +229,13 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
-                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -275,13 +245,13 @@
     </Window.Resources>
 
     <Border Margin="0"
-            Background="{StaticResource PanelBrush}"
-            BorderBrush="{StaticResource LineBrush}"
+            Background="{DynamicResource PanelBrush}"
+            BorderBrush="{DynamicResource LineBrush}"
             BorderThickness="1"
             CornerRadius="16"
             MouseLeftButtonDown="OnDragMove">
         <Border.Effect>
-            <DropShadowEffect Color="#03050A"
+            <DropShadowEffect Color="{DynamicResource PanelShadowColor}"
                               BlurRadius="34"
                               ShadowDepth="14"
                               Opacity="0.38" />
@@ -303,23 +273,23 @@
                     <Border Width="42"
                             Height="42"
                             CornerRadius="13"
-                            Background="{StaticResource AccentSoftBrush}"
-                            BorderBrush="{StaticResource AccentLineBrush}"
+                            Background="{DynamicResource AccentSoftBrush}"
+                            BorderBrush="{DynamicResource AccentLineBrush}"
                             BorderThickness="1"
                             Margin="0,0,14,0">
                         <controls:LineIcon Data="{StaticResource Icon.Layers}"
                                            Width="21"
                                            Height="21"
-                                           Foreground="{StaticResource TextBrush}" />
+                                           Foreground="{DynamicResource TextBrush}" />
                     </Border>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="Профили"
-                                   Foreground="{StaticResource TextBrush}"
+                                   Foreground="{DynamicResource TextBrush}"
                                    FontSize="21"
                                    FontWeight="Black" />
                         <TextBlock Text="{Binding ProfileCountText}"
                                    Margin="0,3,0,0"
-                                   Foreground="{StaticResource MutedTextBrush}"
+                                   Foreground="{DynamicResource MutedTextBrush}"
                                    FontSize="11" />
                     </StackPanel>
                 </StackPanel>
@@ -339,8 +309,8 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
-                <Border Background="{StaticResource PanelSoftBrush}"
-                        BorderBrush="{StaticResource LineBrush}"
+                <Border Background="{DynamicResource PanelSoftBrush}"
+                        BorderBrush="{DynamicResource LineBrush}"
                         BorderThickness="1"
                         CornerRadius="13"
                         Padding="12">
@@ -356,7 +326,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="Выбранный профиль"
-                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       Foreground="{DynamicResource TextSecondaryBrush}"
                                        FontSize="11"
                                        FontWeight="SemiBold"
                                        VerticalAlignment="Center" />
@@ -390,13 +360,13 @@
                                         <Border Width="22"
                                                 Height="22"
                                                 CornerRadius="7"
-                                                Background="{StaticResource AccentSoftBrush}"
-                                                BorderBrush="{StaticResource AccentLineBrush}"
+                                                Background="{DynamicResource AccentSoftBrush}"
+                                                BorderBrush="{DynamicResource AccentLineBrush}"
                                                 BorderThickness="1">
                                             <controls:LineIcon Data="{StaticResource Icon.Layers}"
                                                                Width="12"
                                                                Height="12"
-                                                               Foreground="{StaticResource TextSecondaryBrush}" />
+                                                               Foreground="{DynamicResource TextSecondaryBrush}" />
                                         </Border>
                                         <TextBlock Grid.Column="1"
                                                    Text="{Binding}"
@@ -420,8 +390,8 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <Border Background="{StaticResource PanelRaisedBrush}"
-                            BorderBrush="{StaticResource LineBrush}"
+                    <Border Background="{DynamicResource PanelRaisedBrush}"
+                            BorderBrush="{DynamicResource LineBrush}"
                             BorderThickness="1"
                             CornerRadius="13"
                             Padding="16">
@@ -432,12 +402,12 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="Сейчас активен"
-                                           Foreground="{StaticResource MutedTextBrush}"
+                                           Foreground="{DynamicResource MutedTextBrush}"
                                            FontSize="10"
                                            FontWeight="SemiBold" />
                                 <TextBlock Text="{Binding SelectedProfileDisplayText}"
                                            Margin="0,4,0,0"
-                                           Foreground="{StaticResource TextBrush}"
+                                           Foreground="{DynamicResource TextBrush}"
                                            FontSize="18"
                                            FontWeight="Black"
                                            TextTrimming="CharacterEllipsis"
@@ -447,13 +417,13 @@
                                     Width="44"
                                     Height="44"
                                     CornerRadius="13"
-                                    Background="{StaticResource AccentSoftBrush}"
-                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                    Background="{DynamicResource AccentSoftBrush}"
+                                    BorderBrush="{DynamicResource AccentLineBrush}"
                                     BorderThickness="1">
                                 <controls:LineIcon Data="{StaticResource Icon.Layers}"
                                                    Width="21"
                                                    Height="21"
-                                                   Foreground="{StaticResource AccentHoverBrush}" />
+                                                   Foreground="{DynamicResource AccentHoverBrush}" />
                             </Border>
                         </Grid>
                     </Border>
@@ -461,7 +431,7 @@
                     <StackPanel Grid.Row="1"
                                 Margin="0,16,0,0">
                         <TextBlock Text="Имя для нового или измененного профиля"
-                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
                                    FontSize="11"
                                    FontWeight="SemiBold"
                                    Margin="0,0,0,8" />
@@ -568,7 +538,7 @@
 
                     <TextBlock Grid.Row="3"
                                Text="Default-профиль защищен от переименования и удаления."
-                               Foreground="{StaticResource SubtleTextBrush}"
+                               Foreground="{DynamicResource SubtleTextBrush}"
                                FontSize="10.5"
                                TextWrapping="Wrap" />
                 </Grid>
@@ -576,8 +546,8 @@
 
             <Border Grid.Row="2"
                     Margin="0,18,0,0"
-                    Background="#050A11"
-                    BorderBrush="{StaticResource LineBrush}"
+                    Background="{DynamicResource PanelSoftBrush}"
+                    BorderBrush="{DynamicResource LineBrush}"
                     BorderThickness="1"
                     CornerRadius="11"
                     Padding="12,9">
@@ -590,11 +560,11 @@
                                        Width="14"
                                        Height="14"
                                        Margin="0,0,9,0"
-                                       Foreground="{StaticResource MutedTextBrush}"
+                                       Foreground="{DynamicResource MutedTextBrush}"
                                        Visibility="{Binding IsProcessingProfile, Converter={StaticResource BooleanToVisibilityConverter}}" />
                     <TextBlock Grid.Column="1"
                                Text="{Binding ActivityMessage}"
-                               Foreground="{StaticResource MutedTextBrush}"
+                               Foreground="{DynamicResource MutedTextBrush}"
                                FontSize="10.5"
                                TextTrimming="CharacterEllipsis" />
                 </Grid>

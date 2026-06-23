@@ -5,19 +5,15 @@ using System.Windows.Media;
 using Fluxora.App.Models;
 using WpfApplication = System.Windows.Application;
 using WpfBrush = System.Windows.Media.Brush;
-using WpfColor = System.Windows.Media.Color;
 using WpfFontFamily = System.Windows.Media.FontFamily;
 using WpfPen = System.Windows.Media.Pen;
 using WpfPoint = System.Windows.Point;
+using WpfSystemColors = System.Windows.SystemColors;
 
 namespace Fluxora.App.Services;
 
 internal sealed class DragVisualAdorner : Adorner
 {
-    private static readonly WpfBrush BackgroundBrush = new SolidColorBrush(WpfColor.FromRgb(32, 29, 49));
-    private static readonly WpfBrush BorderBrush = new SolidColorBrush(WpfColor.FromRgb(139, 92, 246));
-    private static readonly WpfBrush TextBrush = new SolidColorBrush(WpfColor.FromRgb(247, 244, 255));
-    private static readonly WpfBrush MutedTextBrush = new SolidColorBrush(WpfColor.FromRgb(197, 190, 218));
     private static readonly WpfFontFamily FallbackFontFamily = new(new Uri("pack://application:,,,/"), "./Fonts/#Onest");
 
     private readonly string caption;
@@ -47,8 +43,20 @@ internal sealed class DragVisualAdorner : Adorner
         IsHitTestVisible = false;
         this.caption = caption;
         this.title = title;
-        captionText = CreateText(caption, 10, MutedTextBrush, FontWeights.SemiBold, 520);
-        titleText = CreateText(title, 12, TextBrush, FontWeights.Bold, 520);
+        captionText = CreateText(
+            caption,
+            10,
+            ThemeBrush("MutedTextBrush", WpfSystemColors.GrayTextBrush),
+            FontWeights.SemiBold,
+            520,
+            adornedElement);
+        titleText = CreateText(
+            title,
+            12,
+            ThemeBrush("TextBrush", WpfSystemColors.ControlTextBrush),
+            FontWeights.Bold,
+            520,
+            adornedElement);
     }
 
     public void Move(WpfPoint point)
@@ -73,8 +81,8 @@ internal sealed class DragVisualAdorner : Adorner
 
         drawingContext.PushOpacity(0.94);
         drawingContext.DrawRoundedRectangle(
-            BackgroundBrush,
-            new WpfPen(BorderBrush, 1.2),
+            ThemeBrush("PanelRaisedBrush", WpfSystemColors.ControlBrush),
+            new WpfPen(ThemeBrush("AccentBrush", WpfSystemColors.HighlightBrush), 1.2),
             rect,
             10,
             10);
@@ -91,24 +99,30 @@ internal sealed class DragVisualAdorner : Adorner
         double size,
         WpfBrush brush,
         FontWeight weight,
-        double maxWidth)
+        double maxWidth,
+        Visual dpiSource)
     {
         FormattedText formattedText = new(
             text,
             CultureInfo.CurrentUICulture,
             System.Windows.FlowDirection.LeftToRight,
             new Typeface(
-                WpfApplication.Current.TryFindResource("FluxoraFontBody") as WpfFontFamily
+                WpfApplication.Current?.TryFindResource("FluxoraFontBody") as WpfFontFamily
                     ?? FallbackFontFamily,
                 FontStyles.Normal, weight, FontStretches.Normal),
             size,
             brush,
-            VisualTreeHelper.GetDpi(WpfApplication.Current.MainWindow ?? WpfApplication.Current.Windows[0]).PixelsPerDip)
+            VisualTreeHelper.GetDpi(WpfApplication.Current?.MainWindow ?? dpiSource).PixelsPerDip)
         {
             MaxTextWidth = maxWidth,
             Trimming = TextTrimming.CharacterEllipsis
         };
 
         return formattedText;
+    }
+
+    private static WpfBrush ThemeBrush(string resourceKey, WpfBrush fallback)
+    {
+        return WpfApplication.Current?.TryFindResource(resourceKey) as WpfBrush ?? fallback;
     }
 }

@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Page Include="..\Themes\*.xaml" LinkBase="Themes" />
     <Resource Include="..\Icons\Fluxora.ico" Link="Fluxora.ico" />
     <Resource Include="..\Icons\Fluxora.png" Link="Fluxora.png" />
     <Resource Include="..\Icons\*.svg" LinkBase="Assets\Icons" />

@@ -14,36 +14,18 @@
              UseLayoutRounding="True">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-
-        <SolidColorBrush x:Key="LaunchTextBrush" Color="#F8FAFC" />
-        <SolidColorBrush x:Key="LaunchSecondaryTextBrush" Color="#BFE9E6" />
-        <SolidColorBrush x:Key="LaunchMutedTextBrush" Color="#8AA6A4" />
-        <SolidColorBrush x:Key="LaunchErrorBrush" Color="#FB7185" />
-
-        <LinearGradientBrush x:Key="LaunchCoreBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#F8FAFC" Offset="0" />
-            <GradientStop Color="#5EEAD4" Offset="0.45" />
-            <GradientStop Color="#38BDF8" Offset="1" />
-        </LinearGradientBrush>
-
-        <LinearGradientBrush x:Key="LaunchProgressBrush" StartPoint="0,0" EndPoint="1,0">
-            <GradientStop Color="#5EEAD4" Offset="0" />
-            <GradientStop Color="#38BDF8" Offset="0.58" />
-            <GradientStop Color="#A8CAFF" Offset="1" />
-        </LinearGradientBrush>
-
         <Style x:Key="LaunchProgressBarStyle" TargetType="{x:Type ProgressBar}">
             <Setter Property="Height" Value="9" />
             <Setter Property="Minimum" Value="0" />
             <Setter Property="Maximum" Value="100" />
-            <Setter Property="Foreground" Value="{StaticResource LaunchProgressBrush}" />
-            <Setter Property="Background" Value="#102127" />
+            <Setter Property="Foreground" Value="{DynamicResource LaunchProgressBrush}" />
+            <Setter Property="Background" Value="{DynamicResource LaunchTrackBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type ProgressBar}">
                         <Border Background="{TemplateBinding Background}"
-                                BorderBrush="#24515A"
+                                BorderBrush="{DynamicResource LaunchTrackBorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="5"
                                 ClipToBounds="True">
@@ -59,9 +41,9 @@
                                         Opacity="0">
                                     <Border.Background>
                                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                            <GradientStop Color="#00FFFFFF" Offset="0" />
-                                            <GradientStop Color="#88FFFFFF" Offset="0.48" />
-                                            <GradientStop Color="#00FFFFFF" Offset="1" />
+                                            <GradientStop Color="{DynamicResource ProgressShineTransparentColor}" Offset="0" />
+                                            <GradientStop Color="{DynamicResource ProgressShineMediumColor}" Offset="0.48" />
+                                            <GradientStop Color="{DynamicResource ProgressShineTransparentColor}" Offset="1" />
                                         </LinearGradientBrush>
                                     </Border.Background>
                                     <Border.RenderTransform>
@@ -97,10 +79,10 @@
         <Style x:Key="LaunchGhostButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="Height" Value="38" />
             <Setter Property="Padding" Value="20,0" />
-            <Setter Property="Background" Value="#11242B" />
-            <Setter Property="BorderBrush" Value="#2C5C65" />
+            <Setter Property="Background" Value="{DynamicResource LaunchButtonBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LaunchButtonBorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Foreground" Value="{StaticResource LaunchTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource LaunchTextBrush}" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -122,8 +104,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#17313A" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="#5EEAD4" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource LaunchButtonHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource LaunchButtonHoverBorderBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.82" />
@@ -180,9 +162,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F602050A" Offset="0" />
-                <GradientStop Color="#F1050A11" Offset="0.5" />
-                <GradientStop Color="#F408101B" Offset="1" />
+                <GradientStop Color="{DynamicResource LaunchBackdropStartColor}" Offset="0" />
+                <GradientStop Color="{DynamicResource LaunchBackdropMidColor}" Offset="0.5" />
+                <GradientStop Color="{DynamicResource LaunchBackdropEndColor}" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -206,11 +188,11 @@
                   HorizontalAlignment="Center">
                 <Ellipse Width="100"
                          Height="100"
-                         Stroke="#1C3A42"
+                         Stroke="{DynamicResource LaunchRingBrush}"
                          StrokeThickness="7" />
                 <Ellipse Width="100"
                          Height="100"
-                         Stroke="#5EEAD4"
+                         Stroke="{DynamicResource SuccessBrush}"
                          StrokeThickness="7"
                          StrokeStartLineCap="Round"
                          StrokeEndLineCap="Round"
@@ -222,7 +204,7 @@
                 </Ellipse>
                 <Ellipse Width="66"
                          Height="66"
-                         Stroke="#A8CAFF"
+                         Stroke="{DynamicResource TextSecondaryBrush}"
                          StrokeThickness="4"
                          StrokeStartLineCap="Round"
                          StrokeEndLineCap="Round"
@@ -236,7 +218,7 @@
                 <Border Width="30"
                         Height="30"
                         CornerRadius="15"
-                        Background="{StaticResource LaunchCoreBrush}"
+                        Background="{DynamicResource LaunchCoreBrush}"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         RenderTransformOrigin="0.5,0.5">
@@ -250,7 +232,7 @@
                        Text="{Binding Title}"
                        FontSize="13"
                        FontWeight="SemiBold"
-                       Foreground="{StaticResource LaunchMutedTextBrush}"
+                       Foreground="{DynamicResource LaunchMutedTextBrush}"
                        HorizontalAlignment="Center"
                        TextAlignment="Center" />
 
@@ -258,7 +240,7 @@
                        Text="{Binding CurrentStep}"
                        FontSize="28"
                        FontWeight="Black"
-                       Foreground="{StaticResource LaunchTextBrush}"
+                       Foreground="{DynamicResource LaunchTextBrush}"
                        HorizontalAlignment="Center"
                        TextAlignment="Center"
                        TextWrapping="Wrap"
@@ -268,7 +250,7 @@
                 <TextBlock Text="{Binding StatusText}"
                            FontSize="13"
                            FontWeight="SemiBold"
-                           Foreground="{StaticResource LaunchSecondaryTextBrush}"
+                           Foreground="{DynamicResource LaunchSecondaryTextBrush}"
                            HorizontalAlignment="Center"
                            TextAlignment="Center"
                            TextTrimming="CharacterEllipsis"
@@ -317,15 +299,15 @@
                                  services:SmoothProgressService.TargetValue="{Binding OverallPercent}" />
                 </Grid>
 
-                <Border Background="#2A1220"
-                        BorderBrush="#7F1D3A"
+                <Border Background="{DynamicResource ErrorSurfaceBrush}"
+                        BorderBrush="{DynamicResource ErrorLineBrush}"
                         BorderThickness="1"
                         CornerRadius="10"
                         Padding="12"
                         Margin="0,16,0,0"
                         Visibility="{Binding HasError, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <TextBlock Text="{Binding ErrorMessage}"
-                               Foreground="{StaticResource LaunchErrorBrush}"
+                               Foreground="{DynamicResource LaunchErrorBrush}"
                                TextAlignment="Center"
                                TextWrapping="Wrap" />
                 </Border>
@@ -342,7 +324,7 @@
 
         <Border Height="1"
                 VerticalAlignment="Top"
-                Background="#24515A"
+                Background="{DynamicResource LaunchDividerBrush}"
                 Opacity="0.32" />
     </Grid>
 </UserControl>

@@ -1,16 +1,15 @@
 using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
+using WpfApplication = System.Windows.Application;
 using WpfBrush = System.Windows.Media.Brush;
-using WpfColor = System.Windows.Media.Color;
 using WpfPen = System.Windows.Media.Pen;
+using WpfSystemColors = System.Windows.SystemColors;
 
 namespace Fluxora.App.Services;
 
 internal sealed class MarqueeSelectionAdorner : Adorner
 {
-    private static readonly WpfBrush FillBrush = CreateFrozenBrush(WpfColor.FromArgb(42, 77, 141, 247));
-    private static readonly WpfPen StrokePen = CreateFrozenPen(WpfColor.FromArgb(190, 168, 202, 255), 1.25);
     private const double BoundsEpsilon = 0.25;
 
     private Rect bounds = Rect.Empty;
@@ -43,7 +42,10 @@ internal sealed class MarqueeSelectionAdorner : Adorner
             return;
         }
 
-        drawingContext.DrawRectangle(FillBrush, StrokePen, bounds);
+        drawingContext.DrawRectangle(
+            ThemeBrush("SelectionBrush", WpfSystemColors.HighlightBrush, 0.18),
+            new WpfPen(ThemeBrush("AccentHoverBrush", WpfSystemColors.HighlightBrush, 0.78), 1.25),
+            bounds);
     }
 
     private static bool AreClose(Rect first, Rect second)
@@ -59,17 +61,16 @@ internal sealed class MarqueeSelectionAdorner : Adorner
             Math.Abs(first.Height - second.Height) <= BoundsEpsilon;
     }
 
-    private static WpfBrush CreateFrozenBrush(WpfColor color)
+    private static WpfBrush ThemeBrush(string resourceKey, WpfBrush fallback, double opacity)
     {
-        SolidColorBrush brush = new(color);
-        brush.Freeze();
-        return brush;
-    }
+        WpfBrush brush = WpfApplication.Current?.TryFindResource(resourceKey) as WpfBrush ?? fallback;
+        WpfBrush renderBrush = brush.CloneCurrentValue();
+        renderBrush.Opacity = opacity;
+        if (renderBrush.CanFreeze)
+        {
+            renderBrush.Freeze();
+        }
 
-    private static WpfPen CreateFrozenPen(WpfColor color, double thickness)
-    {
-        WpfPen pen = new(CreateFrozenBrush(color), thickness);
-        pen.Freeze();
-        return pen;
+        return renderBrush;
     }
 }

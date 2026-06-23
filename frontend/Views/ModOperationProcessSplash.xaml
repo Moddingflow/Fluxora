@@ -13,29 +13,12 @@
              UseLayoutRounding="True">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-        <SolidColorBrush x:Key="OperationTextBrush" Color="#F8FAFC" />
-        <SolidColorBrush x:Key="OperationSecondaryTextBrush" Color="#C8D0DD" />
-        <SolidColorBrush x:Key="OperationMutedTextBrush" Color="#8D99AA" />
-        <SolidColorBrush x:Key="OperationErrorBrush" Color="#FB7185" />
-
-        <LinearGradientBrush x:Key="OperationCoreBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#F8FAFC" Offset="0" />
-            <GradientStop Color="#67E8F9" Offset="0.42" />
-            <GradientStop Color="#6FA5FF" Offset="1" />
-        </LinearGradientBrush>
-
-        <LinearGradientBrush x:Key="OperationProgressBrush" StartPoint="0,0" EndPoint="1,0">
-            <GradientStop Color="#67E8F9" Offset="0" />
-            <GradientStop Color="#A8CAFF" Offset="0.58" />
-            <GradientStop Color="#B9D6FF" Offset="1" />
-        </LinearGradientBrush>
-
         <Style x:Key="OperationProgressBarStyle" TargetType="{x:Type ProgressBar}">
             <Setter Property="Height" Value="12" />
             <Setter Property="Minimum" Value="0" />
             <Setter Property="Maximum" Value="100" />
-            <Setter Property="Foreground" Value="{StaticResource OperationProgressBrush}" />
-            <Setter Property="Background" Value="#242A38" />
+            <Setter Property="Foreground" Value="{DynamicResource OperationProgressBrush}" />
+            <Setter Property="Background" Value="{DynamicResource OperationTrackBrush}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type ProgressBar}">
@@ -54,9 +37,9 @@
                                         Opacity="0">
                                     <Border.Background>
                                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                            <GradientStop Color="#00FFFFFF" Offset="0" />
-                                            <GradientStop Color="#AAFFFFFF" Offset="0.5" />
-                                            <GradientStop Color="#00FFFFFF" Offset="1" />
+                                            <GradientStop Color="{DynamicResource ProgressShineTransparentColor}" Offset="0" />
+                                            <GradientStop Color="{DynamicResource ProgressShineBrightColor}" Offset="0.5" />
+                                            <GradientStop Color="{DynamicResource ProgressShineTransparentColor}" Offset="1" />
                                         </LinearGradientBrush>
                                     </Border.Background>
                                     <Border.RenderTransform>
@@ -92,10 +75,10 @@
         <Style x:Key="OperationGhostButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="Height" Value="38" />
             <Setter Property="Padding" Value="18,0" />
-            <Setter Property="Background" Value="#263044" />
-            <Setter Property="BorderBrush" Value="#3B465C" />
+            <Setter Property="Background" Value="{DynamicResource OperationButtonBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource OperationButtonBorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Foreground" Value="{StaticResource OperationTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource OperationTextBrush}" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
@@ -113,11 +96,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#303B52" />
-                                <Setter Property="BorderBrush" Value="#5B6B88" />
+                                <Setter Property="Background" Value="{DynamicResource OperationButtonHoverBrush}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource OperationButtonHoverBorderBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter Property="Background" Value="#1E2636" />
+                                <Setter Property="Background" Value="{DynamicResource OperationButtonPressedBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -167,9 +150,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F602050A" Offset="0" />
-                <GradientStop Color="#F3050A11" Offset="0.52" />
-                <GradientStop Color="#F408101B" Offset="1" />
+                <GradientStop Color="{DynamicResource OperationBackdropStartColor}" Offset="0" />
+                <GradientStop Color="{DynamicResource OperationBackdropMidColor}" Offset="0.52" />
+                <GradientStop Color="{DynamicResource OperationBackdropEndColor}" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -193,11 +176,11 @@
                   HorizontalAlignment="Center">
                 <Ellipse Width="100"
                          Height="100"
-                         Stroke="#273246"
+                         Stroke="{DynamicResource OperationRingBrush}"
                          StrokeThickness="7" />
                 <Ellipse Width="100"
                          Height="100"
-                         Stroke="#67E8F9"
+                         Stroke="{DynamicResource OperationRingAccentBrush}"
                          StrokeThickness="7"
                          StrokeStartLineCap="Round"
                          StrokeEndLineCap="Round"
@@ -209,7 +192,7 @@
                 </Ellipse>
                 <Ellipse Width="66"
                          Height="66"
-                         Stroke="#B9D6FF"
+                         Stroke="{DynamicResource TextSecondaryBrush}"
                          StrokeThickness="4"
                          StrokeStartLineCap="Round"
                          StrokeEndLineCap="Round"
@@ -223,7 +206,7 @@
                 <Border Width="30"
                         Height="30"
                         CornerRadius="15"
-                        Background="{StaticResource OperationCoreBrush}"
+                        Background="{DynamicResource OperationCoreBrush}"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         RenderTransformOrigin="0.5,0.5">
@@ -237,7 +220,7 @@
                        Text="{Binding Title}"
                        FontSize="13"
                        FontWeight="SemiBold"
-                       Foreground="{StaticResource OperationMutedTextBrush}"
+                       Foreground="{DynamicResource OperationMutedTextBrush}"
                        HorizontalAlignment="Center"
                        TextAlignment="Center" />
 
@@ -245,7 +228,7 @@
                        Text="{Binding CurrentStep}"
                        FontSize="28"
                        FontWeight="Black"
-                       Foreground="{StaticResource OperationTextBrush}"
+                       Foreground="{DynamicResource OperationTextBrush}"
                        HorizontalAlignment="Center"
                        TextAlignment="Center"
                        TextWrapping="Wrap"
@@ -255,7 +238,7 @@
                 <TextBlock Text="{Binding StatusText}"
                            FontSize="13"
                            FontWeight="SemiBold"
-                           Foreground="{StaticResource OperationSecondaryTextBrush}"
+                           Foreground="{DynamicResource OperationSecondaryTextBrush}"
                            HorizontalAlignment="Center"
                            TextAlignment="Center"
                            TextWrapping="Wrap"
@@ -270,12 +253,12 @@
                     <TextBlock Text="Прогресс"
                                FontSize="12"
                                FontWeight="SemiBold"
-                               Foreground="{StaticResource OperationMutedTextBrush}" />
+                               Foreground="{DynamicResource OperationMutedTextBrush}" />
                     <TextBlock Grid.Column="1"
                                Text="{Binding Value, ElementName=OverallBar, StringFormat={}{0:0}%}"
                                FontSize="13"
                                FontWeight="Black"
-                               Foreground="{StaticResource OperationTextBrush}" />
+                               Foreground="{DynamicResource OperationTextBrush}" />
                 </Grid>
 
                 <ProgressBar x:Name="OverallBar"
@@ -283,15 +266,15 @@
                              services:ProgressAnimationService.IsActive="{Binding IsRunning}"
                              services:SmoothProgressService.TargetValue="{Binding OverallPercent}" />
 
-                <Border Background="#2A1220"
-                        BorderBrush="#7F1D3A"
+                <Border Background="{DynamicResource ErrorSurfaceBrush}"
+                        BorderBrush="{DynamicResource ErrorLineBrush}"
                         BorderThickness="1"
                         CornerRadius="8"
                         Padding="12"
                         Margin="0,16,0,0"
                         Visibility="{Binding HasError, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <TextBlock Text="{Binding ErrorMessage}"
-                               Foreground="{StaticResource OperationErrorBrush}"
+                               Foreground="{DynamicResource OperationErrorBrush}"
                                TextAlignment="Center"
                                TextWrapping="Wrap" />
                 </Border>

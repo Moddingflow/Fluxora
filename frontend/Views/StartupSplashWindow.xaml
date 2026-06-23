@@ -7,7 +7,7 @@
         ResizeMode="CanMinimize"
         WindowStyle="None"
         AllowsTransparency="False"
-        Background="#040810"
+        Background="{DynamicResource ChromeBrush}"
         ShowInTaskbar="True"
         WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/Fluxora.ico"
@@ -21,26 +21,10 @@
         UseLayoutRounding="True"
         SourceInitialized="OnSourceInitialized">
     <Window.Resources>
-        <SolidColorBrush x:Key="SplashTextBrush" Color="#F4F8FF" />
-        <SolidColorBrush x:Key="SplashSecondaryTextBrush" Color="#C7D4E7" />
-        <SolidColorBrush x:Key="SplashMutedTextBrush" Color="#8C9CB3" />
-
-        <LinearGradientBrush x:Key="SplashWindowBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#10213D" Offset="0" />
-            <GradientStop Color="#040810" Offset="0.52" />
-            <GradientStop Color="#101827" Offset="1" />
-        </LinearGradientBrush>
-
-        <LinearGradientBrush x:Key="SplashAccentBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#F4F8FF" Offset="0" />
-            <GradientStop Color="#C9DFFF" Offset="0.48" />
-            <GradientStop Color="#4D8DF7" Offset="1" />
-        </LinearGradientBrush>
-
         <Style x:Key="StartupProgressBarStyle" TargetType="{x:Type ProgressBar}">
             <Setter Property="Height" Value="7" />
-            <Setter Property="Foreground" Value="{StaticResource SplashAccentBrush}" />
-            <Setter Property="Background" Value="#152033" />
+            <Setter Property="Foreground" Value="{DynamicResource SplashAccentBrush}" />
+            <Setter Property="Background" Value="{DynamicResource SplashProgressTrackBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -62,9 +46,9 @@
         </Style>
     </Window.Resources>
 
-    <Grid Background="{StaticResource SplashWindowBrush}"
+    <Grid Background="{DynamicResource SplashWindowBrush}"
           ClipToBounds="True">
-        <Border BorderBrush="#101A29"
+        <Border BorderBrush="{DynamicResource ChromeLineBrush}"
                 BorderThickness="1" />
 
         <Grid Margin="36,30,36,28">
@@ -90,7 +74,7 @@
                        FontFamily="{StaticResource FluxoraFontDisplay}"
                        FontSize="31"
                        FontWeight="Black"
-                       Foreground="{StaticResource SplashTextBrush}"
+                       Foreground="{DynamicResource SplashTextBrush}"
                        TextAlignment="Center"
                        HorizontalAlignment="Center" />
 
@@ -98,14 +82,14 @@
                 <TextBlock Text="{Binding Title}"
                            FontSize="16"
                            FontWeight="Black"
-                           Foreground="{StaticResource SplashTextBrush}"
+                           Foreground="{DynamicResource SplashTextBrush}"
                            TextAlignment="Center"
                            TextWrapping="Wrap" />
                 <TextBlock Text="{Binding Detail}"
                            Margin="0,7,0,0"
                            FontSize="12.5"
                            FontWeight="SemiBold"
-                           Foreground="{StaticResource SplashSecondaryTextBrush}"
+                           Foreground="{DynamicResource SplashSecondaryTextBrush}"
                            TextAlignment="Center"
                            TextWrapping="Wrap"
                            MaxWidth="360" />
@@ -120,12 +104,12 @@
                 <Grid>
                     <TextBlock Text="Загрузка"
                                FontSize="11"
-                               Foreground="{StaticResource SplashMutedTextBrush}"
+                               Foreground="{DynamicResource SplashMutedTextBrush}"
                                FontWeight="SemiBold"
                                HorizontalAlignment="Left" />
                     <TextBlock Text="{Binding ProgressText}"
                                FontSize="11"
-                               Foreground="{StaticResource SplashSecondaryTextBrush}"
+                               Foreground="{DynamicResource SplashSecondaryTextBrush}"
                                FontWeight="SemiBold"
                                HorizontalAlignment="Right" />
                 </Grid>

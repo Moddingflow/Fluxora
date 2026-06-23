@@ -63,7 +63,6 @@ public sealed class FluxPackInstallProcessViewModelTests
         Assert.DoesNotContain("pending", viewModel.SourceSummaryText, StringComparison.OrdinalIgnoreCase);
         FluxPackInstallProviderViewModel provider = Assert.Single(viewModel.Providers);
         Assert.Equal("nexus", provider.ProviderId);
-        Assert.Equal("#F97316", provider.AccentBrush);
         Assert.Equal("N", provider.IconText);
         Assert.Equal("1/4 установлено, осталось 1, ошибок 2", provider.CountText);
     }

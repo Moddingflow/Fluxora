@@ -5,6 +5,7 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="Assets/Icons.xaml" />
+                <ResourceDictionary Source="pack://application:,,,/FluxoraModding;component/Themes/DefaultTheme.xaml" />
             </ResourceDictionary.MergedDictionaries>
 
             <!-- Brand typography. Embedded TTFs (see Fonts/), full Latin + Cyrillic + German
@@ -13,18 +14,6 @@
                  display face on dense UI text. -->
             <FontFamily x:Key="FluxoraFontBody">./Fonts/#Onest, Segoe UI Variable, Segoe UI</FontFamily>
             <FontFamily x:Key="FluxoraFontDisplay">./Fonts/#Onest, Segoe UI Variable, Segoe UI</FontFamily>
-
-            <SolidColorBrush x:Key="ChromeBrandBrush" Color="#F4F8FF" />
-            <SolidColorBrush x:Key="IconTileBrush" Color="#091C35" />
-            <SolidColorBrush x:Key="IconTileBorderBrush" Color="#305B94" />
-            <SolidColorBrush x:Key="IconTileForegroundBrush" Color="#F4F8FF" />
-            <SolidColorBrush x:Key="ProgressTrackBrush" Color="#0D1420" />
-            <SolidColorBrush x:Key="ProgressTrackBorderBrush" Color="#1E3555" />
-            <SolidColorBrush x:Key="ProgressPulseBorderBrush" Color="#6FA5FF" />
-            <SolidColorBrush x:Key="ToggleOnBrush" Color="#4D8DF7" />
-            <SolidColorBrush x:Key="ToggleOnHoverBrush" Color="#6FA5FF" />
-            <SolidColorBrush x:Key="ToggleOnBorderBrush" Color="#6FA5FF" />
-            <SolidColorBrush x:Key="ToggleThumbOnBrush" Color="#F4F8FF" />
 
             <!-- Keep text rendered as text: fixed hinting, ClearType, and pixel snapping
                  favor sharp small UI labels over bitmap-like scaling artifacts. -->

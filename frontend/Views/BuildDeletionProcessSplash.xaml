@@ -14,30 +14,12 @@
              UseLayoutRounding="True">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-
-        <SolidColorBrush x:Key="DeletionTextBrush" Color="#F4F8FF" />
-        <SolidColorBrush x:Key="DeletionSecondaryTextBrush" Color="#F6C8D1" />
-        <SolidColorBrush x:Key="DeletionMutedTextBrush" Color="#96A8C0" />
-        <SolidColorBrush x:Key="DeletionErrorBrush" Color="#FB7185" />
-
-        <LinearGradientBrush x:Key="DeletionCoreBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#FFF1F4" Offset="0" />
-            <GradientStop Color="#FB7185" Offset="0.48" />
-            <GradientStop Color="#E11D48" Offset="1" />
-        </LinearGradientBrush>
-
-        <LinearGradientBrush x:Key="DeletionProgressBrush" StartPoint="0,0" EndPoint="1,0">
-            <GradientStop Color="#FB7185" Offset="0" />
-            <GradientStop Color="#F43F5E" Offset="0.55" />
-            <GradientStop Color="#BE123C" Offset="1" />
-        </LinearGradientBrush>
-
         <Style x:Key="DeletionProgressBarStyle" TargetType="{x:Type ProgressBar}">
             <Setter Property="Height" Value="8" />
             <Setter Property="Minimum" Value="0" />
             <Setter Property="Maximum" Value="100" />
-            <Setter Property="Foreground" Value="{StaticResource DeletionProgressBrush}" />
-            <Setter Property="Background" Value="#1B111B" />
+            <Setter Property="Foreground" Value="{DynamicResource DeletionProgressBrush}" />
+            <Setter Property="Background" Value="{DynamicResource DeletionTrackBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -47,11 +29,11 @@
                               ClipToBounds="True">
                             <Border x:Name="PART_Track"
                                     Background="{TemplateBinding Background}"
-                                    BorderBrush="#4A2434"
+                                    BorderBrush="{DynamicResource ErrorLineBrush}"
                                     BorderThickness="1"
                                     CornerRadius="4" />
                             <Border x:Name="PulseLayer"
-                                    BorderBrush="#FB7185"
+                                    BorderBrush="{DynamicResource DeletionErrorBrush}"
                                     BorderThickness="1"
                                     CornerRadius="4"
                                     Opacity="0" />
@@ -68,9 +50,9 @@
                                             CornerRadius="4">
                                         <Border.Background>
                                             <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
-                                                <GradientStop Color="#00FFFFFF" Offset="0" />
-                                                <GradientStop Color="#70FFFFFF" Offset="0.48" />
-                                                <GradientStop Color="#00FFFFFF" Offset="1" />
+                                                <GradientStop Color="{DynamicResource ProgressShineTransparentColor}" Offset="0" />
+                                                <GradientStop Color="{DynamicResource ProgressShineSoftColor}" Offset="0.48" />
+                                                <GradientStop Color="{DynamicResource ProgressShineTransparentColor}" Offset="1" />
                                             </LinearGradientBrush>
                                         </Border.Background>
                                         <Border.RenderTransform>
@@ -114,7 +96,7 @@
             <Setter Property="Height" Value="38" />
             <Setter Property="Padding" Value="20,0" />
             <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Foreground" Value="{StaticResource DeletionSecondaryTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource DeletionSecondaryTextBrush}" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -123,8 +105,8 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type Button}">
                         <Border x:Name="Root"
-                                Background="#21131D"
-                                BorderBrush="#5A2336"
+                                Background="{DynamicResource DeletionButtonBrush}"
+                                BorderBrush="{DynamicResource ErrorLineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="9">
                             <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
@@ -135,8 +117,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#2A1622" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="#FB7185" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource DangerSoftBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource DeletionErrorBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.82" />
@@ -232,9 +214,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F702050A" Offset="0" />
-                <GradientStop Color="#F4050A11" Offset="0.52" />
-                <GradientStop Color="#F508101B" Offset="1" />
+                <GradientStop Color="{DynamicResource ProcessBackdropStartColor}" Offset="0" />
+                <GradientStop Color="{DynamicResource ProcessBackdropMidColor}" Offset="0.52" />
+                <GradientStop Color="{DynamicResource ProcessBackdropEndColor}" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -258,7 +240,7 @@
                   HorizontalAlignment="Center">
                 <Ellipse Width="104"
                          Height="104"
-                         Stroke="#3A1F2C"
+                         Stroke="{DynamicResource DeletionRingBrush}"
                          StrokeThickness="7"
                          Opacity="0.9" />
 
@@ -266,7 +248,7 @@
                     <Ellipse x:Name="PulseLayer"
                              Width="78"
                              Height="78"
-                             Fill="#3A1A2A"
+                             Fill="{DynamicResource DeletionRingFillBrush}"
                              Opacity="0.08"
                              RenderTransformOrigin="0.5,0.5">
                         <Ellipse.RenderTransform>
@@ -277,7 +259,7 @@
                     <Ellipse x:Name="MainArc"
                              Width="104"
                              Height="104"
-                             Stroke="#FB7185"
+                             Stroke="{DynamicResource ErrorBrush}"
                              StrokeThickness="7"
                              StrokeStartLineCap="Round"
                              StrokeEndLineCap="Round"
@@ -292,7 +274,7 @@
                     <Ellipse x:Name="EchoArc"
                              Width="68"
                              Height="68"
-                             Stroke="#FFF1F4"
+                             Stroke="{DynamicResource PrimaryForegroundBrush}"
                              StrokeThickness="4"
                              StrokeStartLineCap="Round"
                              StrokeEndLineCap="Round"
@@ -308,7 +290,7 @@
                     <Border Width="28"
                             Height="28"
                             CornerRadius="14"
-                            Background="{StaticResource DeletionCoreBrush}"
+                            Background="{DynamicResource DeletionCoreBrush}"
                             HorizontalAlignment="Center"
                             VerticalAlignment="Center"
                             RenderTransformOrigin="0.5,0.5">
@@ -325,14 +307,14 @@
                       Opacity="0">
                     <Ellipse Width="104"
                              Height="104"
-                             Stroke="#FB7185"
+                             Stroke="{DynamicResource ErrorBrush}"
                              StrokeThickness="7"
                              Opacity="0.9" />
                     <controls:LineIcon x:Name="StateIcon"
                                        Width="38"
                                        Height="38"
                                        Data="{StaticResource Icon.Trash}"
-                                       Foreground="#FFF1F4"
+                                       Foreground="{DynamicResource PrimaryForegroundBrush}"
                                        StrokeThickness="1.9"
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center" />
@@ -343,7 +325,7 @@
                        Grid.Row="2"
                        FontSize="28"
                        FontWeight="Black"
-                       Foreground="{StaticResource DeletionTextBrush}"
+                       Foreground="{DynamicResource DeletionTextBrush}"
                        HorizontalAlignment="Center"
                        TextAlignment="Center"
                        TextWrapping="Wrap"
@@ -357,7 +339,7 @@
                        Text="{Binding StatusText}"
                        FontSize="13"
                        FontWeight="SemiBold"
-                       Foreground="{StaticResource DeletionSecondaryTextBrush}"
+                       Foreground="{DynamicResource DeletionSecondaryTextBrush}"
                        HorizontalAlignment="Center"
                        TextAlignment="Center"
                        TextTrimming="CharacterEllipsis"
@@ -372,13 +354,13 @@
                     <TextBlock Text="Общий прогресс"
                                FontSize="12"
                                FontWeight="SemiBold"
-                               Foreground="{StaticResource DeletionMutedTextBrush}"
+                               Foreground="{DynamicResource DeletionMutedTextBrush}"
                                VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1"
                                Text="{Binding Value, ElementName=OverallBar, StringFormat={}{0:0}%}"
                                FontSize="13"
                                FontWeight="Black"
-                               Foreground="{StaticResource DeletionTextBrush}"
+                               Foreground="{DynamicResource DeletionTextBrush}"
                                VerticalAlignment="Center" />
                 </Grid>
 
@@ -390,7 +372,7 @@
                 <TextBlock Text="{Binding BytesText}"
                            Margin="0,10,0,0"
                            FontSize="11"
-                           Foreground="{StaticResource DeletionMutedTextBrush}"
+                           Foreground="{DynamicResource DeletionMutedTextBrush}"
                            HorizontalAlignment="Center"
                            TextAlignment="Center"
                            TextWrapping="Wrap" />
@@ -398,20 +380,20 @@
                 <TextBlock Text="{Binding EntriesText}"
                            Margin="0,5,0,0"
                            FontSize="11"
-                           Foreground="{StaticResource DeletionMutedTextBrush}"
+                           Foreground="{DynamicResource DeletionMutedTextBrush}"
                            HorizontalAlignment="Center"
                            TextAlignment="Center"
                            TextWrapping="Wrap" />
 
-                <Border Background="#2A1220"
-                        BorderBrush="#7F1D3A"
+                <Border Background="{DynamicResource ErrorSurfaceBrush}"
+                        BorderBrush="{DynamicResource ErrorLineBrush}"
                         BorderThickness="1"
                         CornerRadius="10"
                         Padding="12"
                         Margin="0,16,0,0"
                         Visibility="{Binding HasError, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <TextBlock Text="{Binding ErrorMessage}"
-                               Foreground="{StaticResource DeletionErrorBrush}"
+                               Foreground="{DynamicResource DeletionErrorBrush}"
                                TextAlignment="Center"
                                TextWrapping="Wrap" />
                 </Border>
@@ -428,7 +410,7 @@
 
         <Border Height="1"
                 VerticalAlignment="Top"
-                Background="#4A2434"
+                Background="{DynamicResource ErrorLineBrush}"
                 Opacity="0.34" />
     </Grid>
 </UserControl>

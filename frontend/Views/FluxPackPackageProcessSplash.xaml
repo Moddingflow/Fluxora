@@ -14,32 +14,12 @@
              UseLayoutRounding="True">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-
-        <SolidColorBrush x:Key="PackageTextBrush" Color="#F4F8FF" />
-        <SolidColorBrush x:Key="PackageSecondaryTextBrush" Color="#D6F4EE" />
-        <SolidColorBrush x:Key="PackageMutedTextBrush" Color="#93B4AD" />
-        <SolidColorBrush x:Key="PackageSubtleTextBrush" Color="#6F8B86" />
-        <SolidColorBrush x:Key="PackageErrorBrush" Color="#FB7185" />
-        <SolidColorBrush x:Key="PackageSuccessBrush" Color="#5EEAD4" />
-
-        <LinearGradientBrush x:Key="PackageCoreBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#F4F8FF" Offset="0" />
-            <GradientStop Color="#5EEAD4" Offset="0.42" />
-            <GradientStop Color="#6FA5FF" Offset="1" />
-        </LinearGradientBrush>
-
-        <LinearGradientBrush x:Key="PackageProgressBrush" StartPoint="0,0" EndPoint="1,0">
-            <GradientStop Color="#5EEAD4" Offset="0" />
-            <GradientStop Color="#7DD3FC" Offset="0.48" />
-            <GradientStop Color="#A8CAFF" Offset="1" />
-        </LinearGradientBrush>
-
         <Style x:Key="PackageProgressBarStyle" TargetType="{x:Type ProgressBar}">
             <Setter Property="Height" Value="9" />
             <Setter Property="Minimum" Value="0" />
             <Setter Property="Maximum" Value="100" />
-            <Setter Property="Foreground" Value="{StaticResource PackageProgressBrush}" />
-            <Setter Property="Background" Value="#101A1E" />
+            <Setter Property="Foreground" Value="{DynamicResource PackageProgressBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PackageTrackBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -48,11 +28,11 @@
                               ClipToBounds="True">
                             <Border x:Name="PART_Track"
                                     Background="{TemplateBinding Background}"
-                                    BorderBrush="#25454C"
+                                    BorderBrush="{DynamicResource PackageTrackBorderBrush}"
                                     BorderThickness="1"
                                     CornerRadius="5" />
                             <Border x:Name="PulseLayer"
-                                    BorderBrush="#5EEAD4"
+                                    BorderBrush="{DynamicResource PackagePulseBorderBrush}"
                                     BorderThickness="1"
                                     CornerRadius="5"
                                     Opacity="0" />
@@ -69,9 +49,9 @@
                                             CornerRadius="5">
                                         <Border.Background>
                                             <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
-                                                <GradientStop Color="#00FFFFFF" Offset="0" />
-                                                <GradientStop Color="#80FFFFFF" Offset="0.5" />
-                                                <GradientStop Color="#00FFFFFF" Offset="1" />
+                                                <GradientStop Color="{DynamicResource ProgressShineTransparentColor}" Offset="0" />
+                                                <GradientStop Color="{DynamicResource ProgressShineMediumColor}" Offset="0.5" />
+                                                <GradientStop Color="{DynamicResource ProgressShineTransparentColor}" Offset="1" />
                                             </LinearGradientBrush>
                                         </Border.Background>
                                         <Border.RenderTransform>
@@ -115,7 +95,7 @@
             <Setter Property="Height" Value="38" />
             <Setter Property="Padding" Value="20,0" />
             <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Foreground" Value="{StaticResource PackageSecondaryTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource PackageSecondaryTextBrush}" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -124,8 +104,8 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type Button}">
                         <Border x:Name="Root"
-                                Background="#142228"
-                                BorderBrush="#2F5960"
+                                Background="{DynamicResource PackageButtonBrush}"
+                                BorderBrush="{DynamicResource PackageButtonBorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="9">
                             <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
@@ -136,9 +116,9 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#193138" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="#5EEAD4" />
-                                <Setter Property="Foreground" Value="{StaticResource PackageTextBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PackageButtonHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource PackageButtonHoverBorderBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource PackageTextBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.82" />
@@ -154,8 +134,8 @@
         </Style>
 
         <Style x:Key="PackageStepCardStyle" TargetType="{x:Type Border}">
-            <Setter Property="Background" Value="#111C21" />
-            <Setter Property="BorderBrush" Value="#263B43" />
+            <Setter Property="Background" Value="{DynamicResource PackageStepCardBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource PackageStepCardBorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="10" />
             <Setter Property="Padding" Value="12" />
@@ -166,8 +146,8 @@
             <Setter Property="Width" Value="34" />
             <Setter Property="Height" Value="34" />
             <Setter Property="CornerRadius" Value="9" />
-            <Setter Property="Background" Value="#17252B" />
-            <Setter Property="BorderBrush" Value="#31515A" />
+            <Setter Property="Background" Value="{DynamicResource PackageStatusBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource PackageStatusBorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
     </UserControl.Resources>
@@ -233,9 +213,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F702050A" Offset="0" />
-                <GradientStop Color="#F30B141A" Offset="0.5" />
-                <GradientStop Color="#F508101B" Offset="1" />
+                <GradientStop Color="{DynamicResource PackageBackdropStartColor}" Offset="0" />
+                <GradientStop Color="{DynamicResource PackageBackdropMidColor}" Offset="0.5" />
+                <GradientStop Color="{DynamicResource PackageBackdropEndColor}" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -245,12 +225,12 @@
                 VerticalAlignment="Center"
                 Margin="28"
                 Padding="26"
-                Background="#E808101B"
-                BorderBrush="#31515A"
+                Background="{DynamicResource PackagePanelOverlayBrush}"
+                BorderBrush="{DynamicResource PackageStatusBorderBrush}"
                 BorderThickness="1"
                 CornerRadius="16">
             <Border.Effect>
-                <DropShadowEffect Color="#02070A"
+                <DropShadowEffect Color="{DynamicResource PanelShadowColor}"
                                   BlurRadius="34"
                                   ShadowDepth="14"
                                   Opacity="0.45" />
@@ -279,7 +259,7 @@
                           HorizontalAlignment="Left">
                         <Ellipse Width="94"
                                  Height="94"
-                                 Stroke="#244047"
+                                 Stroke="{DynamicResource PackageRingBrush}"
                                  StrokeThickness="7"
                                  Opacity="0.95" />
 
@@ -287,7 +267,7 @@
                             <Ellipse x:Name="MainArc"
                                      Width="94"
                                      Height="94"
-                                     Stroke="#5EEAD4"
+                                     Stroke="{DynamicResource SuccessBrush}"
                                      StrokeThickness="7"
                                      StrokeStartLineCap="Round"
                                      StrokeEndLineCap="Round"
@@ -302,7 +282,7 @@
                             <Ellipse x:Name="EchoArc"
                                      Width="62"
                                      Height="62"
-                                     Stroke="#F4F8FF"
+                                     Stroke="{DynamicResource PrimaryForegroundBrush}"
                                      StrokeThickness="4"
                                      StrokeStartLineCap="Round"
                                      StrokeEndLineCap="Round"
@@ -318,7 +298,7 @@
                             <Border Width="28"
                                     Height="28"
                                     CornerRadius="14"
-                                    Background="{StaticResource PackageCoreBrush}"
+                                    Background="{DynamicResource PackageCoreBrush}"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Center"
                                     RenderTransformOrigin="0.5,0.5">
@@ -335,14 +315,14 @@
                               Opacity="0">
                             <Ellipse Width="94"
                                      Height="94"
-                                     Stroke="#5EEAD4"
+                                     Stroke="{DynamicResource SuccessBrush}"
                                      StrokeThickness="7"
                                      Opacity="0.92" />
                             <TextBlock x:Name="StateGlyph"
                                        FontFamily="Segoe MDL2 Assets"
                                        Text="&#xE73E;"
                                        FontSize="38"
-                                       Foreground="{StaticResource PackageSuccessBrush}"
+                                       Foreground="{DynamicResource PackageSuccessBrush}"
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center" />
                         </Grid>
@@ -353,13 +333,13 @@
                         <TextBlock Text="Упаковка сборки"
                                    FontSize="12"
                                    FontWeight="SemiBold"
-                                   Foreground="{StaticResource PackageMutedTextBrush}" />
+                                   Foreground="{DynamicResource PackageMutedTextBrush}" />
                         <TextBlock x:Name="StepText"
                                    Text="{Binding CurrentStep}"
                                    Margin="0,5,0,0"
                                    FontSize="29"
                                    FontWeight="Black"
-                                   Foreground="{StaticResource PackageTextBrush}"
+                                   Foreground="{DynamicResource PackageTextBrush}"
                                    TextWrapping="Wrap"
                                    RenderTransformOrigin="0.5,0.5">
                             <TextBlock.RenderTransform>
@@ -370,7 +350,7 @@
                                    Margin="0,8,0,0"
                                    FontSize="13"
                                    FontWeight="SemiBold"
-                                   Foreground="{StaticResource PackageSecondaryTextBrush}"
+                                   Foreground="{DynamicResource PackageSecondaryTextBrush}"
                                    TextWrapping="Wrap" />
                     </StackPanel>
                 </Grid>
@@ -382,8 +362,8 @@
                         <ColumnDefinition Width="1*" />
                     </Grid.ColumnDefinitions>
 
-                    <Border Background="#0D171B"
-                            BorderBrush="#263B43"
+                    <Border Background="{DynamicResource PackageColumnBrush}"
+                            BorderBrush="{DynamicResource PackageStepCardBorderBrush}"
                             BorderThickness="1"
                             CornerRadius="10"
                             Padding="14">
@@ -396,19 +376,19 @@
                             <TextBlock Text="Сборка"
                                        FontSize="11"
                                        FontWeight="SemiBold"
-                                       Foreground="{StaticResource PackageSubtleTextBrush}" />
+                                       Foreground="{DynamicResource PackageSubtleTextBrush}" />
                             <TextBlock Grid.Row="2"
                                        Text="{Binding BuildName}"
                                        FontSize="17"
                                        FontWeight="Black"
-                                       Foreground="{StaticResource PackageTextBrush}"
+                                       Foreground="{DynamicResource PackageTextBrush}"
                                        TextTrimming="CharacterEllipsis" />
                         </Grid>
                     </Border>
 
                     <Border Grid.Column="2"
-                            Background="#0D171B"
-                            BorderBrush="#263B43"
+                            Background="{DynamicResource PackageColumnBrush}"
+                            BorderBrush="{DynamicResource PackageStepCardBorderBrush}"
                             BorderThickness="1"
                             CornerRadius="10"
                             Padding="14">
@@ -421,12 +401,12 @@
                             <TextBlock Text="Состав"
                                        FontSize="11"
                                        FontWeight="SemiBold"
-                                       Foreground="{StaticResource PackageSubtleTextBrush}" />
+                                       Foreground="{DynamicResource PackageSubtleTextBrush}" />
                             <TextBlock Grid.Row="2"
                                        Text="{Binding CompositionText}"
                                        FontSize="13"
                                        FontWeight="Black"
-                                       Foreground="{StaticResource PackageTextBrush}"
+                                       Foreground="{DynamicResource PackageTextBrush}"
                                        TextTrimming="CharacterEllipsis" />
                         </Grid>
                     </Border>
@@ -441,13 +421,13 @@
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding PrepareStepState}" Value="Complete">
                                         <Setter Property="Opacity" Value="1" />
-                                        <Setter Property="Background" Value="#14313A" />
-                                        <Setter Property="BorderBrush" Value="#22D3EE" />
+                                        <Setter Property="Background" Value="{DynamicResource PackageStepCompleteBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource PackageStepCompleteBorderBrush}" />
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding PrepareStepState}" Value="Active">
                                         <Setter Property="Opacity" Value="1" />
-                                        <Setter Property="Background" Value="#192D34" />
-                                        <Setter Property="BorderBrush" Value="#5EEAD4" />
+                                        <Setter Property="Background" Value="{DynamicResource PackageStepActiveBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource PackageButtonHoverBorderBrush}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -457,16 +437,16 @@
                                 <controls:LineIcon Data="{StaticResource Icon.FileText}"
                                                    Width="17"
                                                    Height="17"
-                                                   Foreground="{StaticResource PackageSecondaryTextBrush}" />
+                                                   Foreground="{DynamicResource PackageSecondaryTextBrush}" />
                             </Border>
                             <TextBlock Text="Проверка"
                                        Margin="0,10,0,0"
                                        FontWeight="Black"
-                                       Foreground="{StaticResource PackageTextBrush}" />
+                                       Foreground="{DynamicResource PackageTextBrush}" />
                             <TextBlock Text="Конфиг"
                                        Margin="0,3,0,0"
                                        FontSize="11"
-                                       Foreground="{StaticResource PackageMutedTextBrush}" />
+                                       Foreground="{DynamicResource PackageMutedTextBrush}" />
                         </StackPanel>
                     </Border>
 
@@ -476,13 +456,13 @@
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding CompositionStepState}" Value="Complete">
                                         <Setter Property="Opacity" Value="1" />
-                                        <Setter Property="Background" Value="#14313A" />
-                                        <Setter Property="BorderBrush" Value="#22D3EE" />
+                                        <Setter Property="Background" Value="{DynamicResource PackageStepCompleteBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource PackageStepCompleteBorderBrush}" />
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding CompositionStepState}" Value="Active">
                                         <Setter Property="Opacity" Value="1" />
-                                        <Setter Property="Background" Value="#192D34" />
-                                        <Setter Property="BorderBrush" Value="#5EEAD4" />
+                                        <Setter Property="Background" Value="{DynamicResource PackageStepActiveBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource PackageButtonHoverBorderBrush}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -492,16 +472,16 @@
                                 <controls:LineIcon Data="{StaticResource Icon.Layers}"
                                                    Width="18"
                                                    Height="18"
-                                                   Foreground="{StaticResource PackageSecondaryTextBrush}" />
+                                                   Foreground="{DynamicResource PackageSecondaryTextBrush}" />
                             </Border>
                             <TextBlock Text="Состав"
                                        Margin="0,10,0,0"
                                        FontWeight="Black"
-                                       Foreground="{StaticResource PackageTextBrush}" />
+                                       Foreground="{DynamicResource PackageTextBrush}" />
                             <TextBlock Text="Моды"
                                        Margin="0,3,0,0"
                                        FontSize="11"
-                                       Foreground="{StaticResource PackageMutedTextBrush}" />
+                                       Foreground="{DynamicResource PackageMutedTextBrush}" />
                         </StackPanel>
                     </Border>
 
@@ -511,13 +491,13 @@
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding ExportStepState}" Value="Complete">
                                         <Setter Property="Opacity" Value="1" />
-                                        <Setter Property="Background" Value="#14313A" />
-                                        <Setter Property="BorderBrush" Value="#22D3EE" />
+                                        <Setter Property="Background" Value="{DynamicResource PackageStepCompleteBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource PackageStepCompleteBorderBrush}" />
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding ExportStepState}" Value="Active">
                                         <Setter Property="Opacity" Value="1" />
-                                        <Setter Property="Background" Value="#192D34" />
-                                        <Setter Property="BorderBrush" Value="#5EEAD4" />
+                                        <Setter Property="Background" Value="{DynamicResource PackageStepActiveBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource PackageButtonHoverBorderBrush}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -527,16 +507,16 @@
                                 <controls:LineIcon Data="{StaticResource Icon.Folder}"
                                                    Width="18"
                                                    Height="18"
-                                                   Foreground="{StaticResource PackageSecondaryTextBrush}" />
+                                                   Foreground="{DynamicResource PackageSecondaryTextBrush}" />
                             </Border>
                             <TextBlock Text="Запись"
                                        Margin="0,10,0,0"
                                        FontWeight="Black"
-                                       Foreground="{StaticResource PackageTextBrush}" />
+                                       Foreground="{DynamicResource PackageTextBrush}" />
                             <TextBlock Text="FluxPack"
                                        Margin="0,3,0,0"
                                        FontSize="11"
-                                       Foreground="{StaticResource PackageMutedTextBrush}" />
+                                       Foreground="{DynamicResource PackageMutedTextBrush}" />
                         </StackPanel>
                     </Border>
 
@@ -546,13 +526,13 @@
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding SummaryStepState}" Value="Complete">
                                         <Setter Property="Opacity" Value="1" />
-                                        <Setter Property="Background" Value="#14313A" />
-                                        <Setter Property="BorderBrush" Value="#22D3EE" />
+                                        <Setter Property="Background" Value="{DynamicResource PackageStepCompleteBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource PackageStepCompleteBorderBrush}" />
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding SummaryStepState}" Value="Active">
                                         <Setter Property="Opacity" Value="1" />
-                                        <Setter Property="Background" Value="#192D34" />
-                                        <Setter Property="BorderBrush" Value="#5EEAD4" />
+                                        <Setter Property="Background" Value="{DynamicResource PackageStepActiveBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource PackageButtonHoverBorderBrush}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -562,16 +542,16 @@
                                 <controls:LineIcon Data="{StaticResource Icon.Open}"
                                                    Width="18"
                                                    Height="18"
-                                                   Foreground="{StaticResource PackageSecondaryTextBrush}" />
+                                                   Foreground="{DynamicResource PackageSecondaryTextBrush}" />
                             </Border>
                             <TextBlock Text="Итог"
                                        Margin="0,10,0,0"
                                        FontWeight="Black"
-                                       Foreground="{StaticResource PackageTextBrush}" />
+                                       Foreground="{DynamicResource PackageTextBrush}" />
                             <TextBlock Text="Файл"
                                        Margin="0,3,0,0"
                                        FontSize="11"
-                                       Foreground="{StaticResource PackageMutedTextBrush}" />
+                                       Foreground="{DynamicResource PackageMutedTextBrush}" />
                         </StackPanel>
                     </Border>
                 </UniformGrid>
@@ -585,13 +565,13 @@
                         <TextBlock Text="{Binding OutputPath}"
                                    FontSize="11"
                                    FontWeight="SemiBold"
-                                   Foreground="{StaticResource PackageMutedTextBrush}"
+                                   Foreground="{DynamicResource PackageMutedTextBrush}"
                                    TextTrimming="CharacterEllipsis" />
                         <TextBlock Grid.Column="1"
                                    Text="{Binding Value, ElementName=OverallBar, StringFormat={}{0:0}%}"
                                    FontSize="13"
                                    FontWeight="Black"
-                                   Foreground="{StaticResource PackageTextBrush}" />
+                                   Foreground="{DynamicResource PackageTextBrush}" />
                     </Grid>
 
                     <ProgressBar x:Name="OverallBar"
@@ -602,20 +582,20 @@
                     <TextBlock Text="{Binding SummaryText}"
                                Margin="0,10,0,0"
                                FontSize="11"
-                               Foreground="{StaticResource PackageMutedTextBrush}"
+                               Foreground="{DynamicResource PackageMutedTextBrush}"
                                HorizontalAlignment="Center"
                                TextAlignment="Center"
                                TextWrapping="Wrap" />
 
-                    <Border Background="#2A1220"
-                            BorderBrush="#7F1D3A"
+                    <Border Background="{DynamicResource ErrorSurfaceBrush}"
+                            BorderBrush="{DynamicResource ErrorLineBrush}"
                             BorderThickness="1"
                             CornerRadius="10"
                             Padding="12"
                             Margin="0,16,0,0"
                             Visibility="{Binding HasError, Converter={StaticResource BooleanToVisibilityConverter}}">
                         <TextBlock Text="{Binding ErrorMessage}"
-                                   Foreground="{StaticResource PackageErrorBrush}"
+                                   Foreground="{DynamicResource PackageErrorBrush}"
                                    TextAlignment="Center"
                                    TextWrapping="Wrap" />
                     </Border>
@@ -633,7 +613,7 @@
 
         <Border Height="1"
                 VerticalAlignment="Top"
-                Background="#31515A"
+                Background="{DynamicResource PackageDividerBrush}"
                 Opacity="0.34" />
     </Grid>
 </UserControl>

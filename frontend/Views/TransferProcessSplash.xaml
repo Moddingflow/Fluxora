@@ -12,29 +12,11 @@
              UseLayoutRounding="True">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-
-        <SolidColorBrush x:Key="SplashTextBrush" Color="#F4F8FF" />
-        <SolidColorBrush x:Key="SplashSecondaryTextBrush" Color="#C7D4E7" />
-        <SolidColorBrush x:Key="SplashMutedTextBrush" Color="#8798AE" />
-        <SolidColorBrush x:Key="SplashErrorBrush" Color="#FB7185" />
-
-        <LinearGradientBrush x:Key="SplashCoreBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#F4F8FF" Offset="0" />
-            <GradientStop Color="#C9DFFF" Offset="0.45" />
-            <GradientStop Color="#6FA5FF" Offset="1" />
-        </LinearGradientBrush>
-
-        <LinearGradientBrush x:Key="SplashProgressBrush" StartPoint="0,0" EndPoint="1,0">
-            <GradientStop Color="#34D399" Offset="0" />
-            <GradientStop Color="#4D8DF7" Offset="0.55" />
-            <GradientStop Color="#6FA5FF" Offset="1" />
-        </LinearGradientBrush>
-
         <Style x:Key="SplashProgressBarStyle" TargetType="{x:Type ProgressBar}">
             <Setter Property="Height" Value="8" />
             <Setter Property="Maximum" Value="100" />
-            <Setter Property="Foreground" Value="{StaticResource SplashProgressBrush}" />
-            <Setter Property="Background" Value="#0E1A2B" />
+            <Setter Property="Foreground" Value="{DynamicResource SplashProgressBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -58,7 +40,7 @@
             <Setter Property="Height" Value="38" />
             <Setter Property="Padding" Value="20,0" />
             <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Foreground" Value="{StaticResource SplashSecondaryTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource SplashSecondaryTextBrush}" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -67,8 +49,8 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type Button}">
                         <Border x:Name="Root"
-                                Background="#0E1A2B"
-                                BorderBrush="#2B5288"
+                                Background="{DynamicResource PanelRaisedBrush}"
+                                BorderBrush="{DynamicResource LineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="9">
                             <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
@@ -79,8 +61,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#102B4E" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="#2F4E75" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.82" />
@@ -176,9 +158,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F702050A" Offset="0" />
-                <GradientStop Color="#F4050A11" Offset="0.52" />
-                <GradientStop Color="#F508101B" Offset="1" />
+                <GradientStop Color="{DynamicResource ProcessBackdropStartColor}" Offset="0" />
+                <GradientStop Color="{DynamicResource ProcessBackdropMidColor}" Offset="0.52" />
+                <GradientStop Color="{DynamicResource ProcessBackdropEndColor}" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -203,7 +185,7 @@
                   HorizontalAlignment="Center">
                 <Ellipse Width="104"
                          Height="104"
-                         Stroke="#17304F"
+                         Stroke="{DynamicResource SplashRingBrush}"
                          StrokeThickness="7"
                          Opacity="0.9" />
 
@@ -211,7 +193,7 @@
                     <Ellipse x:Name="PulseLayer"
                              Width="78"
                              Height="78"
-                             Fill="#091C35"
+                             Fill="{DynamicResource SplashRingFillBrush}"
                              Opacity="0.08"
                              RenderTransformOrigin="0.5,0.5">
                         <Ellipse.RenderTransform>
@@ -222,7 +204,7 @@
                     <Ellipse x:Name="MainArc"
                              Width="104"
                              Height="104"
-                             Stroke="#A8CAFF"
+                             Stroke="{DynamicResource TextSecondaryBrush}"
                              StrokeThickness="7"
                              StrokeStartLineCap="Round"
                              StrokeEndLineCap="Round"
@@ -237,7 +219,7 @@
                     <Ellipse x:Name="EchoArc"
                              Width="68"
                              Height="68"
-                             Stroke="#F4F8FF"
+                             Stroke="{DynamicResource PrimaryForegroundBrush}"
                              StrokeThickness="4"
                              StrokeStartLineCap="Round"
                              StrokeEndLineCap="Round"
@@ -253,7 +235,7 @@
                     <Border Width="28"
                             Height="28"
                             CornerRadius="14"
-                            Background="{StaticResource SplashCoreBrush}"
+                            Background="{DynamicResource SplashCoreBrush}"
                             HorizontalAlignment="Center"
                             VerticalAlignment="Center"
                             RenderTransformOrigin="0.5,0.5">
@@ -271,13 +253,13 @@
                       Opacity="0">
                     <Ellipse Width="104"
                              Height="104"
-                             Stroke="#34D399"
+                             Stroke="{DynamicResource SuccessBrush}"
                              StrokeThickness="7"
                              Opacity="0.9" />
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE73E;"
                                FontSize="40"
-                               Foreground="#5EEAD4"
+                               Foreground="{DynamicResource SuccessBrush}"
                                HorizontalAlignment="Center"
                                VerticalAlignment="Center" />
                 </Grid>
@@ -288,7 +270,7 @@
                        Grid.Row="2"
                        FontSize="28"
                        FontWeight="Black"
-                       Foreground="{StaticResource SplashTextBrush}"
+                       Foreground="{DynamicResource SplashTextBrush}"
                        HorizontalAlignment="Center"
                        TextAlignment="Center"
                        TextWrapping="Wrap"
@@ -302,7 +284,7 @@
                        Text="{Binding TransferCurrentItem}"
                        FontSize="13"
                        FontWeight="SemiBold"
-                       Foreground="{StaticResource SplashSecondaryTextBrush}"
+                       Foreground="{DynamicResource SplashSecondaryTextBrush}"
                        HorizontalAlignment="Center"
                        TextAlignment="Center"
                        TextTrimming="CharacterEllipsis"
@@ -318,13 +300,13 @@
                     <TextBlock Text="Общий прогресс"
                                FontSize="12"
                                FontWeight="SemiBold"
-                               Foreground="{StaticResource SplashMutedTextBrush}"
+                               Foreground="{DynamicResource SplashMutedTextBrush}"
                                VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1"
                                Text="{Binding Value, ElementName=OverallBar, StringFormat={}{0:0}%}"
                                FontSize="13"
                                FontWeight="Black"
-                               Foreground="{StaticResource SplashTextBrush}"
+                               Foreground="{DynamicResource SplashTextBrush}"
                                VerticalAlignment="Center" />
                 </Grid>
 
@@ -335,20 +317,20 @@
                 <TextBlock Text="{Binding TransferBytesText}"
                            Margin="0,10,0,0"
                            FontSize="11"
-                           Foreground="{StaticResource SplashMutedTextBrush}"
+                           Foreground="{DynamicResource SplashMutedTextBrush}"
                            HorizontalAlignment="Center"
                            TextAlignment="Center"
                            TextWrapping="Wrap" />
 
-                <Border Background="#2A1220"
-                        BorderBrush="#7F1D3A"
+                <Border Background="{DynamicResource ErrorSurfaceBrush}"
+                        BorderBrush="{DynamicResource ErrorLineBrush}"
                         BorderThickness="1"
                         CornerRadius="10"
                         Padding="12"
                         Margin="0,16,0,0"
                         Visibility="{Binding HasTransferError, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <TextBlock Text="{Binding TransferError}"
-                               Foreground="{StaticResource SplashErrorBrush}"
+                               Foreground="{DynamicResource SplashErrorBrush}"
                                TextAlignment="Center"
                                TextWrapping="Wrap" />
                 </Border>
@@ -365,7 +347,7 @@
 
         <Border Height="1"
                 VerticalAlignment="Top"
-                Background="#18355A"
+                Background="{DynamicResource PanelHoverBrush}"
                 Opacity="0.36" />
     </Grid>
 </UserControl>

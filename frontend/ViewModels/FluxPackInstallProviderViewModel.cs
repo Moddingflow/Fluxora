@@ -9,7 +9,6 @@ public sealed class FluxPackInstallProviderViewModel : INotifyPropertyChanged
     private string providerId = string.Empty;
     private string displayName = string.Empty;
     private string iconText = "?";
-    private string accentBrush = "#A8CAFF";
     private ulong totalCount;
     private ulong completedCount;
     private ulong pendingCount;
@@ -37,12 +36,6 @@ public sealed class FluxPackInstallProviderViewModel : INotifyPropertyChanged
     {
         get => iconText;
         private set => SetField(ref iconText, value);
-    }
-
-    public string AccentBrush
-    {
-        get => accentBrush;
-        private set => SetField(ref accentBrush, value);
     }
 
     public ulong TotalCount
@@ -103,7 +96,6 @@ public sealed class FluxPackInstallProviderViewModel : INotifyPropertyChanged
             ? ResolveDisplayName(id)
             : progress.DisplayName.Trim();
         IconText = ResolveIconText(id);
-        AccentBrush = ResolveAccentBrush(id);
         TotalCount = progress.TotalCount;
         CompletedCount = progress.CompletedCount;
         PendingCount = progress.PendingCount;
@@ -146,16 +138,6 @@ public sealed class FluxPackInstallProviderViewModel : INotifyPropertyChanged
         "modernflow" => "MF",
         "direct" => "DL",
         _ => "?"
-    };
-
-    private static string ResolveAccentBrush(string providerId) => providerId switch
-    {
-        "nexus" => "#F97316",
-        "github" => "#E5E7EB",
-        "mega" => "#EF4444",
-        "modernflow" => "#38BDF8",
-        "direct" => "#22C55E",
-        _ => "#A8CAFF"
     };
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

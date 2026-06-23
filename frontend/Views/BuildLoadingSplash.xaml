@@ -12,20 +12,6 @@
              SnapsToDevicePixels="True"
              UseLayoutRounding="True">
     <UserControl.Resources>
-        <SolidColorBrush x:Key="SplashTextBrush" Color="#F4F8FF" />
-        <SolidColorBrush x:Key="SplashSecondaryTextBrush" Color="#C7D4E7" />
-
-        <LinearGradientBrush x:Key="SplashWindowBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#F702050A" Offset="0" />
-            <GradientStop Color="#F4050A11" Offset="0.52" />
-            <GradientStop Color="#F508101B" Offset="1" />
-        </LinearGradientBrush>
-
-        <LinearGradientBrush x:Key="SplashCoreBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#F4F8FF" Offset="0" />
-            <GradientStop Color="#C9DFFF" Offset="0.45" />
-            <GradientStop Color="#6FA5FF" Offset="1" />
-        </LinearGradientBrush>
     </UserControl.Resources>
 
     <UserControl.Style>
@@ -39,7 +25,7 @@
         </Style>
     </UserControl.Style>
 
-    <Grid Background="{StaticResource SplashWindowBrush}">
+    <Grid Background="{DynamicResource SplashWindowBrush}">
         <services:VisibleStoryboardService.Storyboard>
             <Storyboard RepeatBehavior="Forever">
                         <DoubleAnimation Storyboard.TargetName="MainArcRotate"
@@ -127,14 +113,14 @@
                   HorizontalAlignment="Center">
                 <Ellipse Width="104"
                          Height="104"
-                         Stroke="{StaticResource ProgressTrackBorderBrush}"
+                         Stroke="{DynamicResource ProgressTrackBorderBrush}"
                          StrokeThickness="7"
                          Opacity="0.9" />
 
                 <Ellipse x:Name="PulseLayer"
                          Width="78"
                          Height="78"
-                         Fill="{StaticResource ProgressTrackBrush}"
+                         Fill="{DynamicResource ProgressTrackBrush}"
                          HorizontalAlignment="Center"
                          VerticalAlignment="Center"
                          Opacity="0.08"
@@ -147,7 +133,7 @@
                 <Ellipse x:Name="MainArc"
                          Width="104"
                          Height="104"
-                         Stroke="{StaticResource ChromeBrandBrush}"
+                         Stroke="{DynamicResource ChromeBrandBrush}"
                          StrokeThickness="7"
                          StrokeStartLineCap="Round"
                          StrokeEndLineCap="Round"
@@ -162,7 +148,7 @@
                 <Ellipse x:Name="EchoArc"
                          Width="68"
                          Height="68"
-                         Stroke="{StaticResource SplashSecondaryTextBrush}"
+                         Stroke="{DynamicResource SplashSecondaryTextBrush}"
                          StrokeThickness="4"
                          StrokeStartLineCap="Round"
                          StrokeEndLineCap="Round"
@@ -178,7 +164,7 @@
                 <Border Width="28"
                         Height="28"
                         CornerRadius="14"
-                        Background="{StaticResource SplashCoreBrush}"
+                        Background="{DynamicResource SplashCoreBrush}"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         RenderTransformOrigin="0.5,0.5">
@@ -195,7 +181,7 @@
                        Grid.Row="2"
                        FontSize="28"
                        FontWeight="Black"
-                       Foreground="{StaticResource SplashTextBrush}"
+                       Foreground="{DynamicResource SplashTextBrush}"
                        HorizontalAlignment="Center"
                        TextAlignment="Center"
                        TextWrapping="Wrap"
@@ -209,7 +195,7 @@
                        Text="{Binding BuildLoadingSplashDetail}"
                        FontSize="13"
                        FontWeight="SemiBold"
-                       Foreground="{StaticResource SplashSecondaryTextBrush}"
+                       Foreground="{DynamicResource SplashSecondaryTextBrush}"
                        HorizontalAlignment="Center"
                        TextAlignment="Center"
                        TextWrapping="Wrap"
@@ -218,7 +204,7 @@
 
         <Border Height="1"
                 VerticalAlignment="Top"
-                Background="#18355A"
+                Background="{DynamicResource PanelHoverBrush}"
                 Opacity="0.36" />
     </Grid>
 </UserControl>

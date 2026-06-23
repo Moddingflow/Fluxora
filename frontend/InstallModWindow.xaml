@@ -10,7 +10,7 @@
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
-        Background="#0A1018"
+        Background="{DynamicResource PanelBrush}"
         FontFamily="{StaticResource FluxoraFontBody}"
         FontWeight="Medium"
         TextOptions.TextFormattingMode="Display"
@@ -30,28 +30,14 @@
     </shell:WindowChrome.WindowChrome>
 
     <Window.Resources>
-        <SolidColorBrush x:Key="TextBrush" Color="#F4F8FF" />
-        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C7D4E7" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#8B9AB0" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#4D8DF7" />
-        <SolidColorBrush x:Key="AccentHoverBrush" Color="#6FA5FF" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#091C35" />
-        <SolidColorBrush x:Key="AccentLineBrush" Color="#305B94" />
-        <SolidColorBrush x:Key="PanelBrush" Color="#0A1018" />
-        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#0F1724" />
-        <SolidColorBrush x:Key="PanelSoftBrush" Color="#050A11" />
-        <SolidColorBrush x:Key="PanelHoverBrush" Color="#142033" />
-        <SolidColorBrush x:Key="LineBrush" Color="#1B2B41" />
-        <SolidColorBrush x:Key="LineHoverBrush" Color="#2F4E75" />
-        <SolidColorBrush x:Key="ErrorBrush" Color="#FB7185" />
 
         <Style x:Key="DialogCloseButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="Width" Value="30" />
             <Setter Property="Height" Value="30" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Background" Value="#18E11D48" />
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Background" Value="{DynamicResource DangerGhostBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Focusable" Value="False" />
             <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True" />
@@ -78,11 +64,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#2AE11D48" />
-                                <Setter Property="Foreground" Value="#F4F8FF" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource DangerGhostHoverBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource PrimaryForegroundBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#3BE11D48" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource DangerGhostPressedBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -119,7 +105,7 @@
                                 <Setter TargetName="Root" Property="Opacity" Value="0.82" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.48" />
@@ -134,13 +120,13 @@
         <Style x:Key="PrimaryDialogButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource DialogButtonStyle}">
-            <Setter Property="Background" Value="{StaticResource AccentBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="Foreground" Value="#F4F8FF" />
+            <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryForegroundBrush}" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource AccentHoverBrush}" />
-                    <Setter Property="BorderBrush" Value="#B8D4FF" />
+                    <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -148,13 +134,13 @@
         <Style x:Key="SecondaryDialogButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource DialogButtonStyle}">
-            <Setter Property="Background" Value="{StaticResource PanelRaisedBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                    <Setter Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
+                    <Setter Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -162,12 +148,12 @@
         <Style x:Key="DialogTextBoxStyle" TargetType="{x:Type TextBox}">
             <Setter Property="Height" Value="46" />
             <Setter Property="Padding" Value="12,0" />
-            <Setter Property="Background" Value="{StaticResource PanelSoftBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="CaretBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="SelectionBrush" Value="{StaticResource AccentHoverBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource AccentHoverBrush}" />
+            <Setter Property="SelectionBrush" Value="{DynamicResource AccentHoverBrush}" />
             <Setter Property="SelectionOpacity" Value="0.35" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
@@ -181,7 +167,7 @@
                                 CornerRadius="10">
                             <Grid>
                                 <Border x:Name="FocusWash"
-                                        Background="{StaticResource AccentSoftBrush}"
+                                        Background="{DynamicResource AccentSoftBrush}"
                                         CornerRadius="9"
                                         Opacity="0" />
                                 <ScrollViewer x:Name="PART_ContentHost"
@@ -193,8 +179,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-                                <Setter TargetName="Root" Property="Background" Value="#0D1420" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
                                 <Setter TargetName="FocusWash" Property="Opacity" Value="0.25" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
@@ -209,10 +195,10 @@
         <Style x:Key="ConflictActionButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="MinHeight" Value="84" />
             <Setter Property="Padding" Value="14,12" />
-            <Setter Property="Background" Value="{StaticResource PanelRaisedBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment" Value="Stretch" />
@@ -231,14 +217,14 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.82" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -248,7 +234,7 @@
     </Window.Resources>
 
     <Border x:Name="DialogSurface"
-            Background="{StaticResource PanelBrush}"
+            Background="{DynamicResource PanelBrush}"
             Padding="22,20,22,20">
         <Grid>
             <Grid.RowDefinitions>
@@ -272,14 +258,14 @@
                        Grid.Row="1"
                        Text="Укажите название, под которым мод появится в папке mods."
                        Margin="0,0,0,16"
-                       Foreground="{StaticResource MutedTextBrush}"
+                       Foreground="{DynamicResource MutedTextBrush}"
                        LineHeight="18"
                        TextWrapping="Wrap" />
 
             <Border x:Name="PlacementPreviewPanel"
                     Grid.Row="2"
-                    Background="{StaticResource PanelSoftBrush}"
-                    BorderBrush="{StaticResource LineBrush}"
+                    Background="{DynamicResource PanelSoftBrush}"
+                    BorderBrush="{DynamicResource LineBrush}"
                     BorderThickness="1"
                     CornerRadius="10"
                     Padding="12"
@@ -288,10 +274,10 @@
                 <StackPanel>
                     <TextBlock Text="План размещения"
                                FontWeight="SemiBold"
-                               Foreground="{StaticResource TextBrush}" />
+                               Foreground="{DynamicResource TextBrush}" />
                     <TextBlock x:Name="PlacementPreviewSummaryTextBlock"
                                Margin="0,5,0,0"
-                               Foreground="{StaticResource MutedTextBrush}"
+                               Foreground="{DynamicResource MutedTextBrush}"
                                LineHeight="17"
                                TextWrapping="Wrap" />
                     <ScrollViewer MaxHeight="118"
@@ -302,7 +288,7 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding}"
-                                               Foreground="{StaticResource TextSecondaryBrush}"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
                                                LineHeight="17"
                                                TextWrapping="Wrap"
                                                Margin="0,0,0,5" />
@@ -335,14 +321,14 @@
                             <Border Width="34"
                                     Height="34"
                                     CornerRadius="10"
-                                    Background="{StaticResource AccentSoftBrush}"
-                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                    Background="{DynamicResource AccentSoftBrush}"
+                                    BorderBrush="{DynamicResource AccentLineBrush}"
                                     BorderThickness="1"
                                     Margin="0,0,12,0">
                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                            Text="&#xE8AC;"
                                            FontSize="15"
-                                           Foreground="{StaticResource AccentHoverBrush}"
+                                           Foreground="{DynamicResource AccentHoverBrush}"
                                            HorizontalAlignment="Center"
                                            VerticalAlignment="Center" />
                             </Border>
@@ -350,13 +336,13 @@
                                 <TextBlock Text="Заменить"
                                            FontSize="14"
                                            FontWeight="Black"
-                                           Foreground="{StaticResource TextBrush}" />
+                                           Foreground="{DynamicResource TextBrush}" />
                                 <TextBlock x:Name="ReplaceDescriptionTextBlock"
                                            Text="Полностью удалить старый мод и поставить новый."
                                            Margin="0,5,0,0"
                                            LineHeight="17"
                                            TextWrapping="Wrap"
-                                           Foreground="{StaticResource MutedTextBrush}" />
+                                           Foreground="{DynamicResource MutedTextBrush}" />
                             </StackPanel>
                         </Grid>
                     </Button>
@@ -373,14 +359,14 @@
                             <Border Width="34"
                                     Height="34"
                                     CornerRadius="10"
-                                    Background="#1D2A35"
-                                    BorderBrush="#356B68"
+                                    Background="{DynamicResource SuccessSurfaceBrush}"
+                                    BorderBrush="{DynamicResource SuccessLineBrush}"
                                     BorderThickness="1"
                                     Margin="0,0,12,0">
                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                            Text="&#xE8B3;"
                                            FontSize="15"
-                                           Foreground="#68E1D1"
+                                           Foreground="{DynamicResource SuccessBrush}"
                                            HorizontalAlignment="Center"
                                            VerticalAlignment="Center" />
                             </Border>
@@ -388,13 +374,13 @@
                                 <TextBlock Text="Объединить"
                                            FontSize="14"
                                            FontWeight="Black"
-                                           Foreground="{StaticResource TextBrush}" />
+                                           Foreground="{DynamicResource TextBrush}" />
                                 <TextBlock x:Name="MergeDescriptionTextBlock"
                                            Text="Добавить новые файлы, а совпадающие файлы перезаписать."
                                            Margin="0,5,0,0"
                                            LineHeight="17"
                                            TextWrapping="Wrap"
-                                           Foreground="{StaticResource MutedTextBrush}" />
+                                           Foreground="{DynamicResource MutedTextBrush}" />
                             </StackPanel>
                         </Grid>
                     </Button>
@@ -403,7 +389,7 @@
             <TextBlock x:Name="ValidationMessageTextBlock"
                        Grid.Row="4"
                        Margin="2,7,0,0"
-                       Foreground="{StaticResource ErrorBrush}"
+                       Foreground="{DynamicResource ErrorBrush}"
                        FontSize="12"
                        TextWrapping="Wrap"
                        Visibility="Collapsed" />

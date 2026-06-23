@@ -13,35 +13,19 @@
              UseLayoutRounding="True">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-
-        <SolidColorBrush x:Key="InstallTextBrush" Color="#F4F8FF" />
-        <SolidColorBrush x:Key="InstallSecondaryTextBrush" Color="#DDE7F0" />
-        <SolidColorBrush x:Key="InstallMutedTextBrush" Color="#9BAEC0" />
-        <SolidColorBrush x:Key="InstallPanelBrush" Color="#111A20" />
-        <SolidColorBrush x:Key="InstallPanelSoftBrush" Color="#17232B" />
-        <SolidColorBrush x:Key="InstallBorderBrush" Color="#314555" />
-        <SolidColorBrush x:Key="InstallErrorBrush" Color="#FB7185" />
-        <SolidColorBrush x:Key="InstallSuccessBrush" Color="#5EEAD4" />
-
-        <LinearGradientBrush x:Key="InstallProgressBrush" StartPoint="0,0" EndPoint="1,0">
-            <GradientStop Color="#5EEAD4" Offset="0" />
-            <GradientStop Color="#38BDF8" Offset="0.5" />
-            <GradientStop Color="#A8CAFF" Offset="1" />
-        </LinearGradientBrush>
-
         <Style x:Key="InstallProgressBarStyle" TargetType="{x:Type ProgressBar}">
             <Setter Property="Height" Value="9" />
             <Setter Property="Minimum" Value="0" />
             <Setter Property="Maximum" Value="100" />
-            <Setter Property="Foreground" Value="{StaticResource InstallProgressBrush}" />
-            <Setter Property="Background" Value="#0B1117" />
+            <Setter Property="Foreground" Value="{DynamicResource InstallProgressBrush}" />
+            <Setter Property="Background" Value="{DynamicResource InstallTrackBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type ProgressBar}">
                         <Grid Height="{TemplateBinding Height}" ClipToBounds="True">
                             <Border Background="{TemplateBinding Background}"
-                                    BorderBrush="#263846"
+                                    BorderBrush="{DynamicResource LineBrush}"
                                     BorderThickness="1"
                                     CornerRadius="5" />
                             <Decorator x:Name="PART_Indicator"
@@ -56,11 +40,97 @@
             </Setter>
         </Style>
 
+        <Style x:Key="ProviderAccentBorderStyle" TargetType="{x:Type Border}">
+            <Setter Property="Background" Value="{DynamicResource ProviderDefaultBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding ProviderId}" Value="nexus">
+                    <Setter Property="Background" Value="{DynamicResource ProviderNexusBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="github">
+                    <Setter Property="Background" Value="{DynamicResource ProviderGitHubBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="mega">
+                    <Setter Property="Background" Value="{DynamicResource ProviderMegaBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="modernflow">
+                    <Setter Property="Background" Value="{DynamicResource ProviderModernFlowBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="direct">
+                    <Setter Property="Background" Value="{DynamicResource ProviderDirectBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ProviderAccentForegroundTextStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="Foreground" Value="{DynamicResource ProviderDefaultForegroundBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding ProviderId}" Value="nexus">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderNexusForegroundBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="github">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderGitHubForegroundBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="mega">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderMegaForegroundBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="modernflow">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderModernFlowForegroundBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="direct">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderDirectForegroundBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ProviderAccentTextStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="Foreground" Value="{DynamicResource ProviderDefaultBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding ProviderId}" Value="nexus">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderNexusBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="github">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderGitHubBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="mega">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderMegaBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="modernflow">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderModernFlowBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="direct">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderDirectBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ProviderInstallProgressBarStyle"
+               TargetType="{x:Type ProgressBar}"
+               BasedOn="{StaticResource InstallProgressBarStyle}">
+            <Setter Property="Foreground" Value="{DynamicResource ProviderDefaultBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding ProviderId}" Value="nexus">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderNexusBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="github">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderGitHubBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="mega">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderMegaBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="modernflow">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderModernFlowBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ProviderId}" Value="direct">
+                    <Setter Property="Foreground" Value="{DynamicResource ProviderDirectBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="InstallCloseButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="Height" Value="38" />
             <Setter Property="Padding" Value="18,0" />
             <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Foreground" Value="{StaticResource InstallSecondaryTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource InstallSecondaryTextBrush}" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -69,8 +139,8 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type Button}">
                         <Border x:Name="Root"
-                                Background="#182632"
-                                BorderBrush="{StaticResource InstallBorderBrush}"
+                                Background="{DynamicResource InstallButtonBrush}"
+                                BorderBrush="{DynamicResource InstallBorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="8">
                             <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
@@ -81,9 +151,9 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#203444" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="#5EEAD4" />
-                                <Setter Property="Foreground" Value="{StaticResource InstallTextBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource InstallButtonHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource InstallSuccessBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource InstallTextBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.82" />
@@ -123,9 +193,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F5070B12" Offset="0" />
-                <GradientStop Color="#F0050A11" Offset="0.55" />
-                <GradientStop Color="#F4050A11" Offset="1" />
+                <GradientStop Color="{DynamicResource InstallBackdropStartColor}" Offset="0" />
+                <GradientStop Color="{DynamicResource InstallBackdropMidColor}" Offset="0.55" />
+                <GradientStop Color="{DynamicResource InstallBackdropEndColor}" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -135,12 +205,12 @@
                 VerticalAlignment="Center"
                 Margin="28"
                 Padding="26"
-                Background="{StaticResource InstallPanelBrush}"
-                BorderBrush="{StaticResource InstallBorderBrush}"
+                Background="{DynamicResource InstallPanelBrush}"
+                BorderBrush="{DynamicResource InstallBorderBrush}"
                 BorderThickness="1"
                 CornerRadius="14">
             <Border.Effect>
-                <DropShadowEffect Color="#02070A"
+                <DropShadowEffect Color="{DynamicResource PanelShadowColor}"
                                   BlurRadius="34"
                                   ShadowDepth="14"
                                   Opacity="0.45" />
@@ -164,12 +234,12 @@
                     <Grid Width="62"
                           Height="62"
                           Margin="0,0,18,0">
-                        <Ellipse Stroke="#2C4655"
+                        <Ellipse Stroke="{DynamicResource InstallRingBrush}"
                                  StrokeThickness="2"
-                                 Fill="#111A20" />
+                                 Fill="{DynamicResource InstallRingFillBrush}" />
                         <Path x:Name="InstallSpinnerPath"
                               Data="M 31,6 A 25,25 0 1 1 30.9,6"
-                              Stroke="{StaticResource InstallProgressBrush}"
+                              Stroke="{DynamicResource InstallProgressBrush}"
                               StrokeThickness="3"
                               StrokeStartLineCap="Round"
                               StrokeEndLineCap="Round"
@@ -184,7 +254,7 @@
                                    VerticalAlignment="Center"
                                    FontSize="17"
                                    FontWeight="Black"
-                                   Foreground="{StaticResource InstallTextBrush}" />
+                                   Foreground="{DynamicResource InstallTextBrush}" />
                     </Grid>
 
                     <StackPanel Grid.Column="1"
@@ -192,17 +262,17 @@
                         <TextBlock Text="{Binding CurrentStep}"
                                    FontSize="24"
                                    FontWeight="Black"
-                                   Foreground="{StaticResource InstallTextBrush}"
+                                   Foreground="{DynamicResource InstallTextBrush}"
                                    TextTrimming="CharacterEllipsis" />
                         <TextBlock Text="{Binding StatusText}"
                                    Margin="0,6,0,0"
                                    FontSize="13"
-                                   Foreground="{StaticResource InstallSecondaryTextBrush}"
+                                   Foreground="{DynamicResource InstallSecondaryTextBrush}"
                                    TextWrapping="Wrap" />
                         <TextBlock Text="{Binding CurrentItem}"
                                    Margin="0,3,0,0"
                                    FontSize="12"
-                                   Foreground="{StaticResource InstallMutedTextBrush}"
+                                   Foreground="{DynamicResource InstallMutedTextBrush}"
                                    TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                 </Grid>
@@ -221,14 +291,14 @@
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="{Binding SourceSummaryText}"
                                FontSize="12"
-                               Foreground="{StaticResource InstallMutedTextBrush}"
+                               Foreground="{DynamicResource InstallMutedTextBrush}"
                                TextTrimming="CharacterEllipsis" />
                     <TextBlock Grid.Column="1"
                                Text="{Binding OverallPercent, StringFormat={}{0}%}"
                                Margin="16,0,0,0"
                                FontSize="12"
                                FontWeight="Bold"
-                               Foreground="{StaticResource InstallTextBrush}" />
+                               Foreground="{DynamicResource InstallTextBrush}" />
                 </Grid>
 
                 <ScrollViewer Grid.Row="3"
@@ -239,8 +309,8 @@
                             <DataTemplate>
                                 <Border Margin="0,0,0,10"
                                         Padding="12"
-                                        Background="{StaticResource InstallPanelSoftBrush}"
-                                        BorderBrush="#293C4B"
+                                        Background="{DynamicResource InstallPanelSoftBrush}"
+                                        BorderBrush="{DynamicResource LineBrush}"
                                         BorderThickness="1"
                                         CornerRadius="8">
                                     <Grid>
@@ -252,14 +322,14 @@
                                         <Border Width="38"
                                                 Height="38"
                                                 CornerRadius="19"
-                                                Background="{Binding AccentBrush}"
+                                                Style="{StaticResource ProviderAccentBorderStyle}"
                                                 VerticalAlignment="Top">
                                             <TextBlock Text="{Binding IconText}"
+                                                       Style="{StaticResource ProviderAccentForegroundTextStyle}"
                                                        HorizontalAlignment="Center"
                                                        VerticalAlignment="Center"
                                                        FontSize="12"
-                                                       FontWeight="Black"
-                                                       Foreground="#111827" />
+                                                       FontWeight="Black" />
                                         </Border>
 
                                         <Grid Grid.Column="1"
@@ -277,20 +347,19 @@
                                             <TextBlock Text="{Binding DisplayName}"
                                                        FontSize="14"
                                                        FontWeight="Bold"
-                                                       Foreground="{StaticResource InstallTextBrush}"
+                                                       Foreground="{DynamicResource InstallTextBrush}"
                                                        TextTrimming="CharacterEllipsis" />
                                             <TextBlock Grid.Column="1"
                                                        Text="{Binding CountText}"
                                                        Margin="14,0,0,0"
                                                        FontSize="12"
-                                                       Foreground="{StaticResource InstallMutedTextBrush}" />
+                                                       Foreground="{DynamicResource InstallMutedTextBrush}" />
 
-                                            <ProgressBar Grid.Row="1"
-                                                         Grid.ColumnSpan="2"
-                                                         Margin="0,10,0,7"
-                                                         Style="{StaticResource InstallProgressBarStyle}"
-                                                         Foreground="{Binding AccentBrush}"
-                                                         Value="{Binding ProgressPercent, Mode=OneWay}" />
+                                             <ProgressBar Grid.Row="1"
+                                                          Grid.ColumnSpan="2"
+                                                          Margin="0,10,0,7"
+                                                          Style="{StaticResource ProviderInstallProgressBarStyle}"
+                                                          Value="{Binding ProgressPercent, Mode=OneWay}" />
 
                                             <Grid Grid.Row="2"
                                                   Grid.ColumnSpan="2">
@@ -300,14 +369,14 @@
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Text="{Binding CurrentItem}"
                                                            FontSize="12"
-                                                           Foreground="{StaticResource InstallSecondaryTextBrush}"
+                                                           Foreground="{DynamicResource InstallSecondaryTextBrush}"
                                                            TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Grid.Column="1"
-                                                           Text="{Binding StatusText}"
-                                                           Margin="14,0,0,0"
-                                                           FontSize="12"
-                                                           FontWeight="Bold"
-                                                           Foreground="{Binding AccentBrush}" />
+                                                 <TextBlock Grid.Column="1"
+                                                            Text="{Binding StatusText}"
+                                                            Style="{StaticResource ProviderAccentTextStyle}"
+                                                            Margin="14,0,0,0"
+                                                            FontSize="12"
+                                                            FontWeight="Bold" />
                                             </Grid>
                                         </Grid>
                                     </Grid>
@@ -327,12 +396,12 @@
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="{Binding ResultText}"
                                    FontSize="12"
-                                   Foreground="{StaticResource InstallSuccessBrush}"
+                                   Foreground="{DynamicResource InstallSuccessBrush}"
                                    TextTrimming="CharacterEllipsis" />
                         <TextBlock Text="{Binding ErrorMessage}"
                                    Margin="0,4,0,0"
                                    FontSize="12"
-                                   Foreground="{StaticResource InstallErrorBrush}"
+                                   Foreground="{DynamicResource InstallErrorBrush}"
                                    TextWrapping="Wrap"
                                    Visibility="{Binding HasError, Converter={StaticResource BooleanToVisibilityConverter}}" />
                     </StackPanel>

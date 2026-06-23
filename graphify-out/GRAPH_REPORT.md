@@ -1,16 +1,16 @@
 # Graph Report - Fluxora  (2026-06-23)
 
 ## Corpus Check
-- 352 files · ~326,157 words
+- 353 files · ~322,815 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 9888 nodes · 22111 edges · 518 communities (456 shown, 62 thin omitted)
+- 9820 nodes · 21871 edges · 519 communities (461 shown, 58 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS · INFERRED: 82 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `cdcf6da2`
+- Built from commit: `e1eee46a`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -412,6 +412,7 @@
 - [[_COMMUNITY_Community 395|Community 395]]
 - [[_COMMUNITY_Community 396|Community 396]]
 - [[_COMMUNITY_Community 397|Community 397]]
+- [[_COMMUNITY_Community 398|Community 398]]
 - [[_COMMUNITY_Community 399|Community 399]]
 - [[_COMMUNITY_Community 400|Community 400]]
 - [[_COMMUNITY_Community 401|Community 401]]
@@ -515,13 +516,13 @@
 - [[_COMMUNITY_Community 500|Community 500]]
 - [[_COMMUNITY_Community 510|Community 510]]
 - [[_COMMUNITY_Community 511|Community 511]]
+- [[_COMMUNITY_Community 512|Community 512]]
 - [[_COMMUNITY_Community 513|Community 513]]
 - [[_COMMUNITY_Community 514|Community 514]]
 - [[_COMMUNITY_Community 515|Community 515]]
 - [[_COMMUNITY_Community 516|Community 516]]
 - [[_COMMUNITY_Community 517|Community 517]]
 - [[_COMMUNITY_Community 518|Community 518]]
-- [[_COMMUNITY_Community 519|Community 519]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `MainWindowViewModel` - 392 edges
@@ -550,7 +551,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (518 total, 62 thin omitted)
+## Communities (519 total, 58 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.06
@@ -590,7 +591,7 @@ Nodes (80): BuildTemplate, CapabilitySet, ContentLayoutSupportRules, ExecutableN
 
 ### Community 9 - "Community 9"
 Cohesion: 0.05
-Nodes (32): AdornerLayer, bool, DependencyObject, Dictionary, DragVisualAdorner, DropIndicatorAdorner, EventArgs, Func (+24 more)
+Nodes (33): AdornerLayer, bool, DependencyObject, Dictionary, DragVisualAdorner, DropIndicatorAdorner, EventArgs, Func (+25 more)
 
 ### Community 10 - "Community 10"
 Cohesion: 0.07
@@ -681,16 +682,16 @@ Cohesion: 0.11
 Nodes (10): EventArrivedEventArgs, Action, DateTimeOffset, Exception, ExecutableDisplayMetadata, ExecutableLaunchSession, GameExecutableEntry, GameExecutableLaunchResult (+2 more)
 
 ### Community 32 - "Community 32"
-Cohesion: 0.07
-Nodes (19): FomodDependencyInfo, FomodGroupViewModel, FomodStepRowViewModel, FomodStepViewModel, bool, Dictionary, FomodOptionViewModel, HashSet (+11 more)
+Cohesion: 0.09
+Nodes (13): FomodDependencyInfo, FomodStepViewModel, bool, FomodOptionViewModel, HashSet, IReadOnlyDictionary, List, string (+5 more)
 
 ### Community 33 - "Community 33"
-Cohesion: 0.06
-Nodes (29): AdornerLayer, bool, DataGrid, DataGridRow, Dictionary, DragVisualAdorner, DropIndicatorAdorner, EventArgs (+21 more)
+Cohesion: 0.05
+Nodes (33): AdornerLayer, bool, DataGrid, DataGridRow, DependencyObject, Dictionary, DragVisualAdorner, DropIndicatorAdorner (+25 more)
 
 ### Community 34 - "Community 34"
-Cohesion: 0.08
-Nodes (25): CapabilitySet, ContentLayoutSupportRules, GameId, VfsSupportRules, ResolvedExecutableLaunch, commandLine, contentLayoutRules, dataDirectory (+17 more)
+Cohesion: 0.05
+Nodes (45): CapabilitySet, ContentLayoutSupportRules, GameId, LaunchTrackingKind, path, uint32_t, VfsSupportRules, wstring (+37 more)
 
 ### Community 35 - "Community 35"
 Cohesion: 0.09
@@ -733,8 +734,8 @@ Cohesion: 0.06
 Nodes (29): CompiledGameRules, GameDefinition, DefinitionBackedGameSupport, components_, definition_, rules_, GameSupportComponents, contentLayoutRulesProvider (+21 more)
 
 ### Community 45 - "Community 45"
-Cohesion: 0.13
-Nodes (37): BuildPathSettingsService, GameExecutable, JsonValue, JsonWriter, Logger, ResolvedExecutableLaunch, ExecutableService(), ExecutableIconService (+29 more)
+Cohesion: 0.12
+Nodes (44): BuildPathSettingsService, GameExecutable, JsonValue, JsonWriter, Logger, ExecutableService(), vector, wstring_view (+36 more)
 
 ### Community 46 - "Community 46"
 Cohesion: 0.07
@@ -749,15 +750,15 @@ Cohesion: 0.07
 Nodes (39): string_view, uintmax_t, DownloadProgressWriteMode, currentUnixSeconds(), DownloadMetadata, bytesReceived, destinationFileName, downloadStartedUnix (+31 more)
 
 ### Community 49 - "Community 49"
-Cohesion: 0.11
-Nodes (35): BYTE, HANDLE, string, string_view, T, VfsConfig, wchar_t, wstring_view (+27 more)
+Cohesion: 0.13
+Nodes (23): FILETIME, LARGE_INTEGER, string, string_view, T, VfsConfig, wchar_t, attach() (+15 more)
 
 ### Community 51 - "Community 51"
 Cohesion: 0.14
 Nodes (34): BuildPathSettingsService, DownloadService, Logger, optional, path, ProjectService, FluxPackService(), size_t (+26 more)
 
 ### Community 52 - "Community 52"
-Cohesion: 0.09
+Cohesion: 0.08
 Nodes (23): Adorner, FontWeight, DrawingContext, FormattedText, string, WpfBrush, WpfFontFamily, WpfPoint (+15 more)
 
 ### Community 53 - "Community 53"
@@ -777,8 +778,8 @@ Cohesion: 0.15
 Nodes (28): JsonValue, ModSourceRecord, optional, T, uint64_t, containsToken(), deriveModFlags(), equalsIgnoreCase() (+20 more)
 
 ### Community 57 - "Community 57"
-Cohesion: 0.10
-Nodes (22): CapabilitySet, IPluginRulesProvider, PluginService, wstring, BuildPathSettingsService, GameHealthCheckResult, Logger, PluginRuleContext (+14 more)
+Cohesion: 0.06
+Nodes (35): CapabilitySet, IPluginRulesProvider, PluginService, wstring, BuildPathSettingsService, GameHealthCheckResult, Logger, PluginEntry (+27 more)
 
 ### Community 58 - "Community 58"
 Cohesion: 0.08
@@ -821,8 +822,8 @@ Cohesion: 0.25
 Nodes (28): BuildPathSettingsService, Logger, path, ProfileService(), set, string, vector, wstring (+20 more)
 
 ### Community 68 - "Community 68"
-Cohesion: 0.19
-Nodes (35): DWORD, error_code, GameExecutableLaunchResult, PathSafetyResult, string, wstring, addRootBuilderLaunchCacheDesiredFile(), collectRootBuilderLaunchCacheDesiredState() (+27 more)
+Cohesion: 0.17
+Nodes (37): DWORD, error_code, GameExecutableLaunchResult, PathSafetyResult, ResolvedExecutableLaunch, string, wstring, addRootBuilderLaunchCacheDesiredFile() (+29 more)
 
 ### Community 69 - "Community 69"
 Cohesion: 0.12
@@ -849,8 +850,8 @@ Cohesion: 0.06
 Nodes (34): 10. DEVICE MOCKUP FRAME RULE, 11. ONBOARDING FLOW RULE, 12. FIRST SCREEN CLEANLINESS RULE, 13. SAFE AREA AND SYSTEM REGION RULE, 14. NAVIGATION RULE, 15. CLEAN LAYOUT RULE, 16. CREATIVE IMAGE DIRECTION RULE, 17. BACKGROUND TEXTURE AND SURFACE RULE (+26 more)
 
 ### Community 75 - "Community 75"
-Cohesion: 0.16
-Nodes (34): ACCESS_MASK, BOOLEAN, NTSTATUS, ULONG, FileBasicInformationData, FileNetworkOpenInformationData, PHANDLE, PIO_STATUS_BLOCK (+26 more)
+Cohesion: 0.19
+Nodes (25): BOOLEAN, BYTE, HANDLE, NTSTATUS, ULONG, FileNetworkOpenInformationData, PIO_STATUS_BLOCK, PIoApcRoutine (+17 more)
 
 ### Community 76 - "Community 76"
 Cohesion: 0.13
@@ -861,8 +862,8 @@ Cohesion: 0.09
 Nodes (31): AmbiguousDetectionNeverDefaultsToSkyrim, ContentLayoutSupportRules, SkyrimSpecialEditionSupport, PluginSupportRules, GameDefinition, GameDetectionResult, GameSupportRegistry, path (+23 more)
 
 ### Community 78 - "Community 78"
-Cohesion: 0.16
-Nodes (33): int64_t, optional, path, uintmax_t, activeProfileModPaths(), fromUtf8(), gameRootScriptExtenderLoader(), hasExecutableImageSignature() (+25 more)
+Cohesion: 0.15
+Nodes (35): optional, path, uint64_t, wchar_t, activeProfileModPaths(), comparablePathText(), fromUtf8(), gameRootScriptExtenderLoader() (+27 more)
 
 ### Community 79 - "Community 79"
 Cohesion: 0.10
@@ -933,12 +934,12 @@ Cohesion: 0.08
 Nodes (30): CapabilitySet, ContentLayoutSupportRules, ExecutableSupportRules, GameExecutableDefinition, GameExecutableWorkingDirectoryKind, GameId, LaunchSupportRules, VfsSupportRules (+22 more)
 
 ### Community 96 - "Community 96"
-Cohesion: 0.11
-Nodes (26): LogLevel, mutex, string_view, tm, wchar_t, cleanupDirectoryTreeBestEffort(), clearDirectoryContents(), compactLogTimestamp() (+18 more)
+Cohesion: 0.15
+Nodes (26): error_code, Operation, tm, wchar_t, activateStagedProjectDirectory(), cleanupDirectoryTreeBestEffort(), clearDirectoryContents(), closeProcessesLockingPath() (+18 more)
 
 ### Community 97 - "Community 97"
-Cohesion: 0.16
-Nodes (30): optional, path, areSamePath(), chooseGamePath(), defaultProfileFromProfilesDirectory(), existingGameDirectoryFromCandidate(), existingGameDirectoryFromText(), gameDirectoryFromCustomExecutables() (+22 more)
+Cohesion: 0.19
+Nodes (26): optional, path, ProjectOpenResult, areSamePath(), availableSpaceFor(), buildAnalysis(), chooseGamePath(), defaultProfileFromProfilesDirectory() (+18 more)
 
 ### Community 98 - "Community 98"
 Cohesion: 0.10
@@ -1025,12 +1026,12 @@ Cohesion: 0.11
 Nodes (21): ExecutableName, GameExecutableDefinition, GameExecutableRoles, set, vector, ExecutableSupportRules, executables, roles (+13 more)
 
 ### Community 119 - "Community 119"
-Cohesion: 0.09
-Nodes (26): BuildTemplate, GameExecutable, JsonWriter, ModOrganizerExecutableCopyRoot, ModOrganizerExecutableImportPlan, ProfilePluginOrderImportItemRecord, ProjectDescriptor, ProjectFingerprint (+18 more)
+Cohesion: 0.10
+Nodes (23): BuildTemplate, GameExecutable, JsonWriter, ModOrganizerExecutableImportPlan, ProfileOrderImportItemRecord, ProfilePluginOrderImportItemRecord, ProjectDescriptor, ProjectFingerprint (+15 more)
 
 ### Community 120 - "Community 120"
-Cohesion: 0.09
-Nodes (16): MainWindow, Action, bool, EventArgs, InstallerLogService, int, IReadOnlyList, ProgressUpdateCoalescer (+8 more)
+Cohesion: 0.08
+Nodes (17): MainWindow, Action, bool, DispatcherUnhandledExceptionEventArgs, InstallerLogService, int, IReadOnlyList, MouseButtonEventArgs (+9 more)
 
 ### Community 121 - "Community 121"
 Cohesion: 0.15
@@ -1053,8 +1054,8 @@ Cohesion: 0.23
 Nodes (25): GameDetectionRequest, JsonValue, optional, TemplateCapability, vector, ScriptExtender, applyStringArrayField(), applyStringField() (+17 more)
 
 ### Community 126 - "Community 126"
-Cohesion: 0.16
-Nodes (5): DependencyObject, IEnumerable, MouseButtonEventArgs, T, WpfMouseEventArgs
+Cohesion: 0.13
+Nodes (16): GameId, UiTemplateId, wstring, GameIdentityRules, aliases, defaultProfileName, definitionVersion, displayName (+8 more)
 
 ### Community 127 - "Community 127"
 Cohesion: 0.09
@@ -1077,8 +1078,8 @@ Cohesion: 0.22
 Nodes (23): ContentLayoutSupportRules, Logger, NormalizedExtension, path, set, string, vector, VfsContentPlacementRoots (+15 more)
 
 ### Community 132 - "Community 132"
-Cohesion: 0.12
-Nodes (19): AppSettingsService, BuildPathSettingsService, DownloadService, Logger, ModService, ProfileOrderService, TempDirectory, ScopedEnvironmentVariable (+11 more)
+Cohesion: 0.11
+Nodes (20): AppSettingsService, BuildPathSettingsService, DownloadService, function, Logger, ModService, ProfileOrderService, TempDirectory (+12 more)
 
 ### Community 133 - "Community 133"
 Cohesion: 0.11
@@ -1093,12 +1094,12 @@ Cohesion: 0.09
 Nodes (23): ApplyPlanMovesRegularFilesInsideSameVolumeStagingDirectory, ApplyPlanNormalizesDataAndRootTargetsInStagingDirectory, DuplicateTargetsAfterDataWrapperAreBlocked, ExplicitRootWrapperPlacesRootContentThroughRootTarget, LayoutCacheInvalidatesWhenDefinitionVersionChanges, LogsPlacementDecisionsAndBlockers, LongLayoutAnalysisCanBeCanceled, ManualOverrideBlocksUnsafeTargetPath (+15 more)
 
 ### Community 136 - "Community 136"
-Cohesion: 0.07
-Nodes (26): AppTheme, bool, CancellationToken, Color, DependencyObject, DependencyProperty, DependencyPropertyChangedEventArgs, Dictionary (+18 more)
+Cohesion: 0.23
+Nodes (8): AppTheme, CancellationToken, DependencyObject, ResourceDictionary, SettingsService, Task, ThemeService, Uri
 
 ### Community 137 - "Community 137"
-Cohesion: 0.25
-Nodes (10): ExecutableService, VirtualFileSystemService, BuildPathSettingsService, Logger, ProfileOrderService, initialize, initialized_, isInitialized (+2 more)
+Cohesion: 0.11
+Nodes (19): HookService, ExecutableService, VirtualFileSystemService, initialize, initialized_, isInitialized, shutdown, Logger (+11 more)
 
 ### Community 138 - "Community 138"
 Cohesion: 0.15
@@ -1109,20 +1110,20 @@ Cohesion: 0.17
 Nodes (20): Logger, path, ExecutableIconService(), uint64_t, wchar_t, wstring, CLSID, HICON (+12 more)
 
 ### Community 140 - "Community 140"
-Cohesion: 0.19
-Nodes (22): error_code, Logger, Operation, string, ModOrganizerImportRequest, ModOrganizerImportResult, activateStagedProjectDirectory(), appendWideCharacterAsBytes() (+14 more)
+Cohesion: 0.14
+Nodes (22): Logger, LogLevel, mutex, string, string_view, ModOrganizerImportRequest, ModOrganizerImportResult, appendWideCharacterAsBytes() (+14 more)
 
 ### Community 141 - "Community 141"
 Cohesion: 0.26
 Nodes (22): BuildTemplate, Callback, map, path, ProfilePluginOrderImportItemRecord, string, vector, wstring (+14 more)
 
 ### Community 142 - "Community 142"
-Cohesion: 0.16
-Nodes (21): BOOL, DWORD, HMODULE, LPVOID, wstring, JsonValue, string, vector (+13 more)
+Cohesion: 0.30
+Nodes (14): JsonValue, string, vector, VfsConfig, VfsMountConfig, wchar_t, wstring, fromUtf8() (+6 more)
 
 ### Community 143 - "Community 143"
-Cohesion: 0.11
-Nodes (23): DirChild, size_t, unordered_map, vector, appendIndexedEntry(), buildEnumEntries(), DirEnumState, built (+15 more)
+Cohesion: 0.15
+Nodes (24): DirChild, size_t, unordered_map, vector, WIN32_FIND_DATAW, appendIndexedEntry(), buildEnumEntries(), childFromFindData() (+16 more)
 
 ### Community 144 - "Community 144"
 Cohesion: 0.19
@@ -1161,24 +1162,24 @@ Cohesion: 0.12
 Nodes (31): map, ModFileSummary, ModFileSummaryRecord, size_t, vector, applyConflictOwnerSummary(), applyInstalledConflictOwnerGroup(), applyProfileConflictGroup() (+23 more)
 
 ### Community 153 - "Community 153"
-Cohesion: 0.18
-Nodes (17): DownloadEntry, InstalledMod, InstalledModRecord, ModFileSummaryRecord, optional, ProfileModOrderItem, string, vector (+9 more)
+Cohesion: 0.17
+Nodes (18): DownloadEntry, InstalledMod, InstalledModRecord, ModFileSummaryRecord, optional, ProfileModOrderItem, string, vector (+10 more)
 
 ### Community 154 - "Community 154"
 Cohesion: 0.14
 Nodes (20): DirChild, path, size_t, vector, wstring, BuildExcludesRootBuilderTopLevelFolderFromDataMount, BuildMergesRealModsOverwriteByPriorityAndKeepsBaseSiblings, BuildSupportsModsWithNestedDataWrapper (+12 more)
 
 ### Community 155 - "Community 155"
-Cohesion: 0.18
-Nodes (21): FILETIME, LARGE_INTEGER, WIN32_FIND_DATAW, wstring, childFromFindData(), hasDirectoryAttribute(), isExcludedRelativePath(), joinPath() (+13 more)
+Cohesion: 0.14
+Nodes (30): wstring, wstring_view, dosPathFromObjectAttributes(), dosPathFromRootAndName(), hasDirectoryAttribute(), Hook_NtDeleteFile(), isAbsoluteObjectName(), isExcludedRelativePath() (+22 more)
 
 ### Community 156 - "Community 156"
 Cohesion: 0.16
 Nodes (7): BuildCreationProcessStage, bool, double, int, string, T, BuildCreationProcessViewModel
 
 ### Community 157 - "Community 157"
-Cohesion: 0.07
-Nodes (15): DriveInfo, bool, ExecutableDisplayMetadata, string, T, bool, bool, ulong (+7 more)
+Cohesion: 0.10
+Nodes (11): DriveInfo, bool, bool, bool, ulong, ICollapsibleListItem, INotifyPropertyChanged, DownloadEntry (+3 more)
 
 ### Community 158 - "Community 158"
 Cohesion: 0.16
@@ -1205,8 +1206,8 @@ Cohesion: 0.15
 Nodes (34): DefinitionBackedGameSupport, DetectionConfidence, ExecutableName, GameDefinition, GameId, GameSupportRegistry(), GameSupportLookupMode, GameSupportLookupResult (+26 more)
 
 ### Community 164 - "Community 164"
-Cohesion: 0.13
-Nodes (10): CancellationToken, Task, CancellationToken, CoreBridgeService, Dictionary, List, ResolvedTemplate, Task (+2 more)
+Cohesion: 0.20
+Nodes (7): CancellationToken, CoreBridgeService, Dictionary, List, ResolvedTemplate, Task, TemplateCatalogService
 
 ### Community 165 - "Community 165"
 Cohesion: 0.26
@@ -1237,8 +1238,8 @@ Cohesion: 0.11
 Nodes (19): int64_t, InstalledModRecord, contentFingerprint, displayName, folderName, gameId, id, installedAt (+11 more)
 
 ### Community 172 - "Community 172"
-Cohesion: 0.11
-Nodes (19): map, RootBuilderLaunchCacheManifestStatus, RootBuilderLaunchCacheDesiredFile, relativePath, sourcePath, stamp, rootBuilderLaunchCacheDestinationLooksReusable(), RootBuilderLaunchCacheManifest (+11 more)
+Cohesion: 0.09
+Nodes (23): int64_t, map, uintmax_t, RootBuilderLaunchCacheManifestStatus, RootBuilderLaunchCacheDesiredFile, relativePath, sourcePath, stamp (+15 more)
 
 ### Community 173 - "Community 173"
 Cohesion: 0.13
@@ -1281,8 +1282,8 @@ Cohesion: 0.12
 Nodes (14): NTSTATUS, size_t, vector, BCRYPT_ALG_HANDLE, BCRYPT_HASH_HANDLE, ifstream, FilePackageReader, packagePath_ (+6 more)
 
 ### Community 183 - "Community 183"
-Cohesion: 0.19
-Nodes (12): GameRelativePath, optional, PlacementTarget, Logger, ManualOverrideOption, reason, safeTargets, sourcePath (+4 more)
+Cohesion: 0.14
+Nodes (15): GameId, vector, wstring, PlacementPlan, entries, gameDisplayName, gameId, manualOverrideOptions (+7 more)
 
 ### Community 184 - "Community 184"
 Cohesion: 0.19
@@ -1361,16 +1362,16 @@ Cohesion: 0.12
 Nodes (16): IGameSupport, GameDetectionResult, ambiguousCandidates, canonicalInstallPath, confidence, definition, detected, displayName (+8 more)
 
 ### Community 203 - "Community 203"
-Cohesion: 0.13
-Nodes (16): GameId, UiTemplateId, wstring, GameIdentityRules, aliases, defaultProfileName, definitionVersion, displayName (+8 more)
+Cohesion: 0.16
+Nodes (6): FomodGroupViewModel, FomodStepRowViewModel, Dictionary, int, T, FomodStepViewModel
 
 ### Community 204 - "Community 204"
 Cohesion: 0.12
 Nodes (16): NormalizedExtension, path, ContentLayoutSupportRules, archiveExtensionKeys, archiveExtensions, dataFolder, gameDataDirectories, gameDataDirectoryKeys (+8 more)
 
 ### Community 205 - "Community 205"
-Cohesion: 0.14
-Nodes (15): GameId, vector, wstring, PlacementPlan, entries, gameDisplayName, gameId, manualOverrideOptions (+7 more)
+Cohesion: 0.12
+Nodes (16): PluginSupportRules, activePluginsFileName, basePluginKeys, basePluginLockReason, basePlugins, basePluginSourceLabel, lightPluginExtensionKeys, lightPluginExtensions (+8 more)
 
 ### Community 206 - "Community 206"
 Cohesion: 0.12
@@ -1405,8 +1406,8 @@ Cohesion: 0.12
 Nodes (10): DependencyProperty, DependencyProperty, RoutedEventArgs, DependencyProperty, UserControl, ExecutableLaunchProcessSplash, FluxPackInstallProcessSplash, LanguageSwitchSplash (+2 more)
 
 ### Community 214 - "Community 214"
-Cohesion: 0.12
-Nodes (16): PluginSupportRules, activePluginsFileName, basePluginKeys, basePluginLockReason, basePlugins, basePluginSourceLabel, lightPluginExtensionKeys, lightPluginExtensions (+8 more)
+Cohesion: 0.17
+Nodes (12): wstring, FluxPackInstallProgress, currentItem, currentStep, failedSourceCount, installedSourceCount, overallPercent, pendingSourceCount (+4 more)
 
 ### Community 215 - "Community 215"
 Cohesion: 0.12
@@ -1425,8 +1426,8 @@ Cohesion: 0.13
 Nodes (15): DetectionConfidence, GameDefinition, GameDetectionCandidate, canonicalInstallPath, confidence, definition, displayName, gameId (+7 more)
 
 ### Community 219 - "Community 219"
-Cohesion: 0.09
-Nodes (23): mutex, path, ExecutableIconService, HookService, cacheDirectory_, cacheMutex_, gdiplusToken_, initialize (+15 more)
+Cohesion: 0.15
+Nodes (14): mutex, path, ExecutableIconService, cacheDirectory_, cacheMutex_, gdiplusToken_, initialize, initialized_ (+6 more)
 
 ### Community 220 - "Community 220"
 Cohesion: 0.16
@@ -1449,8 +1450,8 @@ Cohesion: 0.13
 Nodes (15): LARGE_INTEGER, FileBasicInformationData, ChangeTime, CreationTime, FileAttributes, LastAccessTime, LastWriteTime, FileNetworkOpenInformationData (+7 more)
 
 ### Community 225 - "Community 225"
-Cohesion: 0.18
-Nodes (11): 0.A Read these signals first, 0.B Output a one-line "Design Read" before generating, 0. BRIEF INFERENCE (Read the Room Before Anything Else), 0.C If the brief is ambiguous, ask one question, do not guess, 0.D Anti-Default Discipline, 13. OUT OF SCOPE, 14. FINAL PRE-FLIGHT CHECK, 2.A When to reach for a real design system (use official packages) (+3 more)
+Cohesion: 0.13
+Nodes (15): 0.A Read these signals first, 0.B Output a one-line "Design Read" before generating, 0. BRIEF INFERENCE (Read the Room Before Anything Else), 0.C If the brief is ambiguous, ask one question, do not guess, 0.D Anti-Default Discipline, 13. OUT OF SCOPE, 14. FINAL PRE-FLIGHT CHECK, 1.A Dial Inference (design read → dial values) (+7 more)
 
 ### Community 226 - "Community 226"
 Cohesion: 0.13
@@ -1529,8 +1530,8 @@ Cohesion: 0.14
 Nodes (14): FileIdFullDirectoryInformationRecord, AllocationSize, ChangeTime, CreationTime, EaSize, EndOfFile, FileAttributes, FileId (+6 more)
 
 ### Community 246 - "Community 246"
-Cohesion: 0.15
-Nodes (13): PluginEntry, extension, isEnabled, isLight, isLocked, isMaster, kind, lockReason (+5 more)
+Cohesion: 0.17
+Nodes (12): FluxPackInstallResult, appliedConfigCount, appliedProfileOrderItemCount, buildName, configPath, failedSourceCount, hasWarnings, installedSourceCount (+4 more)
 
 ### Community 247 - "Community 247"
 Cohesion: 0.15
@@ -1589,8 +1590,8 @@ Cohesion: 0.21
 Nodes (12): optional, vector, FomodGroup, id, name, options, type, FomodStep (+4 more)
 
 ### Community 262 - "Community 262"
-Cohesion: 0.20
-Nodes (10): ProjectFingerprint, ProjectDescriptor, configPath, fingerprint, gameName, gamePath, installRootDirectory, name (+2 more)
+Cohesion: 0.17
+Nodes (12): FluxPackSummary, buildName, customConfigCount, customPatchCount, formatVersion, generatedAssetCount, generatedAssetsIncluded, installPlanAvailable (+4 more)
 
 ### Community 263 - "Community 263"
 Cohesion: 0.26
@@ -1599,6 +1600,10 @@ Nodes (11): GameDefinition, SkyrimSpecialEditionSupport(), NormalizedExtension, 
 ### Community 264 - "Community 264"
 Cohesion: 0.21
 Nodes (13): BOOL, DWORD, LPVOID, LPCSTR, LPCWSTR, LPPROCESS_INFORMATION, LPSECURITY_ATTRIBUTES, LPSTARTUPINFOA (+5 more)
+
+### Community 265 - "Community 265"
+Cohesion: 0.18
+Nodes (4): Border, TextChangedEventArgs, SelectionChangedEventArgs, TextBlock
 
 ### Community 266 - "Community 266"
 Cohesion: 0.15
@@ -1609,8 +1614,8 @@ Cohesion: 0.22
 Nodes (7): DependencyObject, DependencyProperty, DependencyPropertyChangedEventArgs, ICommand, MouseButtonEventArgs, T, DataGridInteractionService
 
 ### Community 268 - "Community 268"
-Cohesion: 0.14
-Nodes (10): CoreBridgeService, GameExecutableEntry, IReadOnlyList, ThemeService, FomodInstallerInfo, GameExecutableEntry, IReadOnlyList, IExecutableManagerDialogService (+2 more)
+Cohesion: 0.13
+Nodes (11): CoreBridgeService, GameExecutableEntry, IReadOnlyList, ThemeService, FomodInstallerInfo, GameExecutableEntry, IReadOnlyList, IExecutableManagerDialogService (+3 more)
 
 ### Community 269 - "Community 269"
 Cohesion: 0.19
@@ -1629,7 +1634,7 @@ Cohesion: 0.21
 Nodes (7): Action, Fact, IEnumerable, MainWindowViewModel, ModEntry, Trait, MainWindowModSearchUiSmokeTests
 
 ### Community 273 - "Community 273"
-Cohesion: 0.22
+Cohesion: 0.23
 Nodes (6): FluxPackInstallProviderProgress, int, string, T, ulong, FluxPackInstallProviderViewModel
 
 ### Community 274 - "Community 274"
@@ -1637,8 +1642,8 @@ Cohesion: 0.10
 Nodes (9): FluxPackInstallResult, Func, IConfirmDialogService, IFluxPackPickerService, IProfileManagerDialogService, List, NullConfirmDialogService, NullFluxPackPickerService (+1 more)
 
 ### Community 275 - "Community 275"
-Cohesion: 0.20
-Nodes (10): ContentArea, PlacementPlanEntry, classification, contentArea, explanation, manualOverrideAllowed, safeManualTargets, sourcePath (+2 more)
+Cohesion: 0.18
+Nodes (11): uintmax_t, FluxPackProviderProgress, completedCount, currentItem, displayName, failedCount, pendingCount, progressPercent (+3 more)
 
 ### Community 276 - "Community 276"
 Cohesion: 0.15
@@ -1657,16 +1662,16 @@ Cohesion: 0.20
 Nodes (4): Dictionary, IReadOnlyCollection, List, LogQueueItem
 
 ### Community 280 - "Community 280"
-Cohesion: 0.23
-Nodes (15): uint64_t, vector, wchar_t, wstring_view, appendUniqueDirectory(), childDirectoryByName(), collectEarlyRootBuilderLaunchCacheDataDirectories(), comparablePathText() (+7 more)
+Cohesion: 0.19
+Nodes (12): GameRelativePath, optional, PlacementTarget, Logger, ManualOverrideOption, reason, safeTargets, sourcePath (+4 more)
 
 ### Community 281 - "Community 281"
 Cohesion: 0.20
 Nodes (8): vector, wchar_t, wstring, wstring_view, JsonWriter, first_, out_, pendingValue_
 
 ### Community 282 - "Community 282"
-Cohesion: 0.20
-Nodes (12): function, ProfileOrderImportItemRecord, ProjectOpenResult, uintmax_t, availableSpaceFor(), buildAnalysis(), directorySize(), hasUnsafeSourceTargetOverlap() (+4 more)
+Cohesion: 0.15
+Nodes (19): function, ModOrganizerExecutableCopyRoot, uintmax_t, vector, directorySize(), ensureLocalGameDirectoryIsCopied(), isCoveredByDirectoryCopyRoot(), localBuildRoots() (+11 more)
 
 ### Community 283 - "Community 283"
 Cohesion: 0.20
@@ -1689,8 +1694,8 @@ Cohesion: 0.17
 Nodes (12): FileDirectoryInformationRecord, AllocationSize, ChangeTime, CreationTime, EndOfFile, FileAttributes, FileIndex, FileName (+4 more)
 
 ### Community 288 - "Community 288"
-Cohesion: 0.29
-Nodes (7): CancellationToken, CoreBridgeService, ModProject, ProjectCatalogService, string, Task, ProjectOpenService
+Cohesion: 0.18
+Nodes (10): CancellationToken, Task, CancellationToken, CoreBridgeService, ModProject, ProjectCatalogService, string, Task (+2 more)
 
 ### Community 289 - "Community 289"
 Cohesion: 0.30
@@ -1721,8 +1726,8 @@ Cohesion: 0.39
 Nodes (5): optional, wstring, ScopedEnvironmentVariable, name_, previous_
 
 ### Community 296 - "Community 296"
-Cohesion: 0.25
-Nodes (8): ContentLayoutClassification, HealthSeverity, ValidationFinding, blocksInstall, classification, message, path, severity
+Cohesion: 0.20
+Nodes (10): ContentArea, PlacementPlanEntry, classification, contentArea, explanation, manualOverrideAllowed, safeManualTargets, sourcePath (+2 more)
 
 ### Community 297 - "Community 297"
 Cohesion: 0.17
@@ -1745,8 +1750,8 @@ Cohesion: 0.18
 Nodes (11): uintmax_t, directory_entry, collectFileCacheEntries(), FileCacheEntry, kind, modifiedAt, name, parentPath (+3 more)
 
 ### Community 302 - "Community 302"
-Cohesion: 0.29
-Nodes (6): mutex, optional, unordered_map, vector, Logger, TemplateService
+Cohesion: 0.20
+Nodes (10): function, path, FluxPackExportRequest, configPath, includeGeneratedAssets, outputPath, FluxPackInstallRequest, fluxPackPath (+2 more)
 
 ### Community 303 - "Community 303"
 Cohesion: 0.22
@@ -1793,8 +1798,8 @@ Cohesion: 0.18
 Nodes (9): CancellationToken, ConfirmDialogOptions, Func, IBuildDeletionDialogService, IProfileManagerDialogService, MainWindowViewModel, Task, MainWindowViewModelTestFactory (+1 more)
 
 ### Community 314 - "Community 314"
-Cohesion: 0.13
-Nodes (8): ContentLayoutPreview, ExistingModInstallMode, FomodInstallerInfo, GameExecutableEntry, IReadOnlyList, ModInstallDialogResult, NullExecutableManagerDialogService, NullModInstallDialogService
+Cohesion: 0.14
+Nodes (7): ContentLayoutPreview, ExistingModInstallMode, FomodInstallerInfo, GameExecutableEntry, IReadOnlyList, ModInstallDialogResult, NullModInstallDialogService
 
 ### Community 315 - "Community 315"
 Cohesion: 0.18
@@ -1893,8 +1898,8 @@ Cohesion: 0.28
 Nodes (8): ExecutableName, optional, GameExecutableRoles, launcher, primary, scriptExtender, GameLaunchRules, scriptExtender
 
 ### Community 340 - "Community 340"
-Cohesion: 0.25
-Nodes (4): CancellationToken, IEnumerable, Task, TaskCompletionSource
+Cohesion: 0.20
+Nodes (10): ProjectFingerprint, ProjectDescriptor, configPath, fingerprint, gameName, gamePath, installRootDirectory, name (+2 more)
 
 ### Community 341 - "Community 341"
 Cohesion: 0.22
@@ -1913,8 +1918,8 @@ Cohesion: 0.28
 Nodes (5): Duration, DependencyObject, DependencyProperty, DependencyPropertyChangedEventArgs, SmoothProgressService
 
 ### Community 346 - "Community 346"
-Cohesion: 0.18
-Nodes (8): Action, Brush, Color, Fact, GradientBrush, SolidColorBrush, ThemeServiceTests, Style
+Cohesion: 0.20
+Nodes (7): Action, Brush, Fact, IEnumerable, ResourceDictionary, ThemeServiceTests, SolidColorBrush
 
 ### Community 347 - "Community 347"
 Cohesion: 0.31
@@ -1937,8 +1942,8 @@ Cohesion: 0.22
 Nodes (4): IEnumerable, ModFileTreeEntry, string, ModFileTreeNode
 
 ### Community 353 - "Community 353"
-Cohesion: 0.33
-Nodes (3): IBuildConfigPickerService, BuildConfigPickerService, NullBuildConfigPickerService
+Cohesion: 0.25
+Nodes (4): IBuildConfigPickerService, BuildConfigPickerService, NullBuildConfigPickerService, NullBuildConfigPickerService
 
 ### Community 354 - "Community 354"
 Cohesion: 0.25
@@ -1961,8 +1966,8 @@ Cohesion: 0.22
 Nodes (9): extensionArray, items, minItems, type, items, minItems, type, $ref (+1 more)
 
 ### Community 359 - "Community 359"
-Cohesion: 0.25
-Nodes (7): RedirectScope, attributes_, ntPath_, savedName_, savedRoot_, unicode_, UNICODE_STRING
+Cohesion: 0.20
+Nodes (10): FileBasicInformationData, POBJECT_ATTRIBUTES, Hook_NtQueryAttributesFile(), RedirectScope, attributes_, ntPath_, savedName_, savedRoot_ (+2 more)
 
 ### Community 360 - "Community 360"
 Cohesion: 0.25
@@ -1977,16 +1982,16 @@ Cohesion: 0.25
 Nodes (8): file_time_type, ProjectConfigCatalogEntry, lastWriteTime, path, ProjectConfigFileStamp, fileSize, lastWriteTime, readProjectConfigFileStamp()
 
 ### Community 364 - "Community 364"
-Cohesion: 0.29
-Nodes (7): wstring, ProjectCreateRequest, gamePath, installRootDirectory, name, templateId, validateGameDirectory
+Cohesion: 0.25
+Nodes (4): CancellationToken, IEnumerable, Task, TaskCompletionSource
 
 ### Community 365 - "Community 365"
 Cohesion: 0.32
 Nodes (7): path, string, LoggerTests, readFile(), TEST(), WritesOperationDiagnosticsToOperationsLog, WritesOperationIdToCoreLog
 
 ### Community 366 - "Community 366"
-Cohesion: 0.10
-Nodes (14): BuildSettingsWindowViewModel, BuildSettingsWindow, RoutedEventArgs, WindowChromeService, Window, MouseButtonEventArgs, RoutedEventArgs, DllImport (+6 more)
+Cohesion: 0.15
+Nodes (8): BuildSettingsWindowViewModel, BuildSettingsWindow, RoutedEventArgs, WindowChromeService, Window, MouseButtonEventArgs, RoutedEventArgs, ProfileManagerWindow
 
 ### Community 367 - "Community 367"
 Cohesion: 0.25
@@ -2001,8 +2006,8 @@ Cohesion: 0.32
 Nodes (4): DependencyObject, DependencyProperty, DependencyPropertyChangedEventArgs, AnimatedCollapseBehavior
 
 ### Community 370 - "Community 370"
-Cohesion: 0.18
-Nodes (6): ConfirmDialogOptions, ConfirmDialogOptions, IBuildDeletionDialogService, BuildDeletionDialogService, NullBuildConfigPickerService, NullBuildDeletionDialogService
+Cohesion: 0.22
+Nodes (5): ConfirmDialogOptions, ConfirmDialogOptions, IBuildDeletionDialogService, BuildDeletionDialogService, NullBuildDeletionDialogService
 
 ### Community 371 - "Community 371"
 Cohesion: 0.25
@@ -2037,8 +2042,8 @@ Cohesion: 0.25
 Nodes (4): IModArchivePickerService, ModArchivePickerService, NullModArchivePickerService, NullModArchivePickerService
 
 ### Community 381 - "Community 381"
-Cohesion: 0.17
-Nodes (12): LaunchTrackingKind, path, uint32_t, GameExecutableLaunchResult, executable, expectedChildProcessNames, handoffDisplayName, handoffTimeoutMs (+4 more)
+Cohesion: 0.25
+Nodes (8): ContentLayoutClassification, HealthSeverity, ValidationFinding, blocksInstall, classification, message, path, severity
 
 ### Community 382 - "Community 382"
 Cohesion: 0.25
@@ -2065,8 +2070,8 @@ Cohesion: 0.29
 Nodes (7): LaunchTrackingKind, uint32_t, LaunchTrackingMetadata, expectedChildProcessNames, handoffDisplayName, handoffTimeoutMs, kind
 
 ### Community 388 - "Community 388"
-Cohesion: 0.03
-Nodes (70): function, path, FluxPackService, uintmax_t, vector, wstring, BuildPathSettingsService, DownloadService (+62 more)
+Cohesion: 0.19
+Nodes (13): FluxPackService, vector, BuildPathSettingsService, DownloadService, exportProject, initialize, initialized_, inspectFluxPack (+5 more)
 
 ### Community 389 - "Community 389"
 Cohesion: 0.29
@@ -2099,6 +2104,14 @@ Nodes (6): VfsLog, close, isOpen, open, write, writef
 ### Community 396 - "Community 396"
 Cohesion: 0.33
 Nodes (3): string, IFluxPackPickerService, FluxPackPickerService
+
+### Community 397 - "Community 397"
+Cohesion: 0.28
+Nodes (5): DllImport, EventArgs, int, IntPtr, StartupSplashWindow
+
+### Community 398 - "Community 398"
+Cohesion: 0.29
+Nodes (4): ExecutableDisplayMetadata, string, T, GameExecutableEntry
 
 ### Community 399 - "Community 399"
 Cohesion: 0.48
@@ -2149,16 +2162,16 @@ Cohesion: 0.47
 Nodes (3): GameCapability, uint32_t, CapabilitySet
 
 ### Community 413 - "Community 413"
-Cohesion: 0.40
-Nodes (5): function, path, ProjectDeleteRequest, configPath, progress
+Cohesion: 0.29
+Nodes (7): BOOL, DWORD, HMODULE, LPVOID, wstring, currentProcessImage(), DllMain()
 
 ### Community 414 - "Community 414"
 Cohesion: 0.33
 Nodes (6): uint32_t, PackageHeader, entryCount, totalBytes, version, readHeader()
 
 ### Community 416 - "Community 416"
-Cohesion: 0.24
-Nodes (10): ContentLayoutClassification, GameSupportRegistry, path, PlacementPlan, PlacementPlanEntry, string, wstring_view, findEntry() (+2 more)
+Cohesion: 0.27
+Nodes (9): ContentLayoutClassification, path, PlacementPlan, PlacementPlanEntry, string, wstring_view, findEntry(), hasFindingFor() (+1 more)
 
 ### Community 417 - "Community 417"
 Cohesion: 0.47
@@ -2185,12 +2198,12 @@ Cohesion: 0.33
 Nodes (5): FomodInstallerService, analyze, hasXmlInstaller, install, rememberSelection
 
 ### Community 426 - "Community 426"
-Cohesion: 0.33
-Nodes (6): OpenDecision, mountIndex, path, redirect, registerMerge, relLower
+Cohesion: 0.20
+Nodes (14): ACCESS_MASK, PHANDLE, PLARGE_INTEGER, decideOpen(), desiredAccessWrites(), dispositionCreates(), Hook_NtCreateFile(), Hook_NtOpenFile() (+6 more)
 
 ### Community 427 - "Community 427"
-Cohesion: 0.50
-Nodes (4): BuildTemplate, ProjectOpenResult, project, resolvedTemplate
+Cohesion: 0.29
+Nodes (6): mutex, optional, unordered_map, vector, Logger, TemplateService
 
 ### Community 428 - "Community 428"
 Cohesion: 0.40
@@ -2229,8 +2242,8 @@ Cohesion: 0.40
 Nodes (4): JsonSupportTests, ReaderRejectsMalformedJson, TEST(), WriterOutputRoundTripsThroughReader
 
 ### Community 441 - "Community 441"
-Cohesion: 0.50
-Nodes (4): 1.A Dial Inference (design read → dial values), 1.B Use-Case Presets, 1.C How the Dials Drive Output, 1. THE THREE DIALS (Core Configuration)
+Cohesion: 0.29
+Nodes (7): wstring, ProjectCreateRequest, gamePath, installRootDirectory, name, templateId, validateGameDirectory
 
 ### Community 443 - "Community 443"
 Cohesion: 0.40
@@ -2301,16 +2314,24 @@ Cohesion: 0.50
 Nodes (3): ResolvedTemplate, ScriptExtenderInfo, TemplateCapability
 
 ### Community 467 - "Community 467"
-Cohesion: 0.22
-Nodes (7): ContentLayoutAnalysisRequest, GameSupportLookupResult, Test, ContentLayoutServiceTests, lookup_, registry_, service_
+Cohesion: 0.20
+Nodes (8): ContentLayoutAnalysisRequest, GameSupportLookupResult, GameSupportRegistry, Test, ContentLayoutServiceTests, lookup_, registry_, service_
+
+### Community 473 - "Community 473"
+Cohesion: 0.40
+Nodes (5): function, path, ProjectDeleteRequest, configPath, progress
 
 ### Community 477 - "Community 477"
 Cohesion: 0.67
 Nodes (3): RootBuilderLaunchCache, executablePath, rootDirectory
 
+### Community 482 - "Community 482"
+Cohesion: 0.50
+Nodes (4): BuildTemplate, ProjectOpenResult, project, resolvedTemplate
+
 ### Community 510 - "Community 510"
-Cohesion: 0.25
-Nodes (8): wstring, GameExecutable, arguments, displayName, executablePath, iconPath, id, workingDirectory
+Cohesion: 0.50
+Nodes (3): string, TestCollections, WpfApplicationTestCollection
 
 ### Community 513 - "Community 513"
 Cohesion: 0.17
@@ -2333,21 +2354,21 @@ Cohesion: 0.40
 Nodes (5): executableName, minLength, not, type, pattern
 
 ## Knowledge Gaps
-- **3630 isolated node(s):** `initialize`, `shutdown`, `isInitialized`, `unique_ptr`, `logger_` (+3625 more)
+- **3627 isolated node(s):** `initialize`, `shutdown`, `isInitialized`, `unique_ptr`, `logger_` (+3622 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **62 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **58 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `PathSafetyService` connect `Community 5` to `Community 0`, `Community 96`, `Community 4`, `Community 7`, `Community 11`, `Community 45`, `Community 79`, `Community 51`, `Community 22`, `Community 87`, `Community 58`?**
-  _High betweenness centrality (0.113) - this node is a cross-community bridge._
+  _High betweenness centrality (0.118) - this node is a cross-community bridge._
 - **Why does `ContentLayoutService` connect `Community 110` to `Community 416`, `Community 58`, `Community 467`, `Community 87`?**
-  _High betweenness centrality (0.059) - this node is a cross-community bridge._
-- **Why does `IService` connect `Community 219` to `Community 162`, `Community 388`, `Community 293`, `Community 40`, `Community 137`, `Community 109`, `Community 110`, `Community 302`, `Community 117`, `Community 150`, `Community 30`, `Community 21`, `Community 57`, `Community 220`, `Community 222`, `Community 319`?**
-  _High betweenness centrality (0.053) - this node is a cross-community bridge._
+  _High betweenness centrality (0.060) - this node is a cross-community bridge._
+- **Why does `IService` connect `Community 137` to `Community 162`, `Community 388`, `Community 293`, `Community 40`, `Community 427`, `Community 109`, `Community 110`, `Community 117`, `Community 150`, `Community 30`, `Community 21`, `Community 57`, `Community 219`, `Community 220`, `Community 222`, `Community 319`?**
+  _High betweenness centrality (0.054) - this node is a cross-community bridge._
 - **What connects `initialize`, `shutdown`, `isInitialized` to the rest of the system?**
-  _3630 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _3627 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.05867620751341682 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**

@@ -39,51 +39,6 @@
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <services:CollapseGlyphConverter x:Key="CollapseGlyphConverter" />
         <services:ExecutableIconSourceConverter x:Key="ExecutableIconSourceConverter" />
-
-        <SolidColorBrush x:Key="TextBrush" Color="#F4F8FF" />
-        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C7D4E7" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#8B9AB0" />
-        <SolidColorBrush x:Key="SubtleTextBrush" Color="#697A91" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#4D8DF7" />
-        <SolidColorBrush x:Key="AccentHoverBrush" Color="#6FA5FF" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#091C35" />
-        <SolidColorBrush x:Key="AccentLineBrush" Color="#305B94" />
-        <SolidColorBrush x:Key="PanelBrush" Color="#0A1018" />
-        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#0F1724" />
-        <SolidColorBrush x:Key="PanelSoftBrush" Color="#050A11" />
-        <SolidColorBrush x:Key="PanelHoverBrush" Color="#142033" />
-        <SolidColorBrush x:Key="LineBrush" Color="#1B2B41" />
-        <SolidColorBrush x:Key="LineHoverBrush" Color="#2F4E75" />
-        <SolidColorBrush x:Key="ErrorBrush" Color="#FB7185" />
-        <SolidColorBrush x:Key="SuccessBrush" Color="#7DD3FC" />
-        <SolidColorBrush x:Key="ConflictOverwritesBrush" Color="#22C55E" />
-        <SolidColorBrush x:Key="ConflictOverwrittenBrush" Color="#EF4444" />
-        <SolidColorBrush x:Key="ConflictFullyOverwrittenBrush" Color="#9CA3AF" />
-
-        <LinearGradientBrush x:Key="AppBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#02050A" Offset="0" />
-            <GradientStop Color="#050A11" Offset="0.46" />
-            <GradientStop Color="#08101B" Offset="1" />
-        </LinearGradientBrush>
-
-        <LinearGradientBrush x:Key="HeroBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#142A4A" Offset="0" />
-            <GradientStop Color="#0E1A2B" Offset="0.55" />
-            <GradientStop Color="#0A1018" Offset="1" />
-        </LinearGradientBrush>
-
-        <LinearGradientBrush x:Key="AccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#6FA5FF" Offset="0" />
-            <GradientStop Color="#3F7EEA" Offset="0.62" />
-            <GradientStop Color="#1F5FCE" Offset="1" />
-        </LinearGradientBrush>
-
-        <DropShadowEffect x:Key="PanelShadow"
-                          Color="#03060B"
-                          BlurRadius="20"
-                          ShadowDepth="8"
-                          Opacity="0.24" />
-
         <DataTemplate x:Key="ExecutableComboItemTemplate">
             <Grid Height="20">
                 <Grid.ColumnDefinitions>
@@ -94,8 +49,8 @@
                         Height="18"
                         HorizontalAlignment="Left"
                         VerticalAlignment="Center"
-                        Background="#0F1928"
-                        BorderBrush="{StaticResource LineBrush}"
+                        Background="{DynamicResource PanelRaisedBrush}"
+                        BorderBrush="{DynamicResource LineBrush}"
                         BorderThickness="1"
                         CornerRadius="4">
                     <Image Width="14"
@@ -107,7 +62,7 @@
                 <TextBlock Grid.Column="1"
                            Text="{Binding DisplayName}"
                            VerticalAlignment="Center"
-                           Foreground="{StaticResource TextBrush}"
+                           Foreground="{DynamicResource TextBrush}"
                            FontSize="11"
                            TextTrimming="CharacterEllipsis" />
             </Grid>
@@ -123,21 +78,21 @@
                         Height="19"
                         HorizontalAlignment="Left"
                         VerticalAlignment="Center"
-                        Background="{StaticResource AccentSoftBrush}"
-                        BorderBrush="{StaticResource AccentLineBrush}"
+                        Background="{DynamicResource AccentSoftBrush}"
+                        BorderBrush="{DynamicResource AccentLineBrush}"
                         BorderThickness="1"
                         CornerRadius="6">
                     <controls:LineIcon Data="{StaticResource Icon.Layers}"
                                        Width="11"
                                        Height="11"
-                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       Foreground="{DynamicResource TextSecondaryBrush}"
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center" />
                 </Border>
                 <TextBlock Grid.Column="1"
                            Text="{Binding}"
                            VerticalAlignment="Center"
-                           Foreground="{StaticResource TextBrush}"
+                           Foreground="{DynamicResource TextBrush}"
                            FontSize="11"
                            FontWeight="SemiBold"
                            TextTrimming="CharacterEllipsis" />
@@ -149,16 +104,16 @@
         <Style x:Key="PanelBorderStyle"
                TargetType="{x:Type Border}"
                BasedOn="{StaticResource RevealBorderStyle}">
-            <Setter Property="Background" Value="{StaticResource PanelBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="12" />
-            <Setter Property="Effect" Value="{StaticResource PanelShadow}" />
+            <Setter Property="Effect" Value="{DynamicResource PanelShadow}" />
         </Style>
 
         <Style x:Key="InnerPanelStyle" TargetType="{x:Type Border}">
-            <Setter Property="Background" Value="{StaticResource PanelRaisedBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="10" />
         </Style>
@@ -203,13 +158,13 @@
         <Style x:Key="PrimaryButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource BaseButtonStyle}">
-            <Setter Property="Background" Value="{StaticResource AccentBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="Foreground" Value="#F4F8FF" />
+            <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryForegroundBrush}" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource AccentHoverBrush}" />
-                    <Setter Property="BorderBrush" Value="#B8D4FF" />
+                    <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -217,13 +172,13 @@
         <Style x:Key="SecondaryButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource BaseButtonStyle}">
-            <Setter Property="Background" Value="{StaticResource PanelRaisedBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                    <Setter Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
+                    <Setter Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -231,14 +186,14 @@
         <Style x:Key="GhostButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource BaseButtonStyle}">
-            <Setter Property="Background" Value="#050A11" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                    <Setter Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
-                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                    <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
+                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -247,7 +202,7 @@
             <Setter Property="Padding" Value="0" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -263,7 +218,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.78" />
@@ -284,7 +239,7 @@
             <Setter Property="Padding" Value="0" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
             <Setter Property="Cursor" Value="Arrow" />
             <Setter Property="Focusable" Value="False" />
             <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True" />
@@ -303,11 +258,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -330,7 +285,7 @@
         <Style x:Key="CloseCaptionButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource CaptionButtonStyle}">
-            <Setter Property="Foreground" Value="#F4F8FF" />
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryForegroundBrush}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type Button}">
@@ -347,11 +302,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#DC2626" />
-                                <Setter Property="Foreground" Value="#FFFFFF" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource DangerBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource PrimaryForegroundBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#B91C1C" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource DangerHoverBrush}" />
                             </Trigger>
                             <DataTrigger Binding="{Binding WindowState, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                                          Value="Maximized">
@@ -376,9 +331,9 @@
             <Setter Property="Padding" Value="10,0" />
             <Setter Property="FontSize" Value="11" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Background" Value="{StaticResource AccentBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="Foreground" Value="#F4F8FF" />
+            <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryForegroundBrush}" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -400,8 +355,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentHoverBrush}" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="#B8D4FF" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.82" />
@@ -421,9 +376,9 @@
             <Setter Property="Height" Value="30" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Background" Value="#0A1018" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Focusable" Value="False" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -443,9 +398,9 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
-                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.78" />
@@ -463,11 +418,11 @@
         <Style x:Key="TextBoxStyle" TargetType="{x:Type TextBox}">
             <Setter Property="Height" Value="36" />
             <Setter Property="Padding" Value="10,0" />
-            <Setter Property="Background" Value="{StaticResource PanelSoftBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="CaretBrush" Value="{StaticResource AccentHoverBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource AccentHoverBrush}" />
             <Setter Property="FontSize" Value="11" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="Template">
@@ -486,8 +441,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-                                <Setter TargetName="Root" Property="Background" Value="#0D1420" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.5" />
@@ -501,16 +456,16 @@
         <Style x:Key="ComboBoxStyle" TargetType="{x:Type ComboBox}">
             <Setter Property="Height" Value="32" />
             <Setter Property="Padding" Value="9,5" />
-            <Setter Property="Background" Value="{StaticResource PanelSoftBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="MaxDropDownHeight" Value="260" />
             <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
             <Setter Property="ItemContainerStyle">
                 <Setter.Value>
                     <Style TargetType="{x:Type ComboBoxItem}">
-                        <Setter Property="Background" Value="#0D1420" />
-                        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                        <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+                        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                         <Setter Property="Padding" Value="9,6" />
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                         <Setter Property="Template">
@@ -523,12 +478,12 @@
                                     </Border>
                                     <ControlTemplate.Triggers>
                                         <Trigger Property="IsHighlighted" Value="True">
-                                            <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                                            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                                         </Trigger>
                                         <Trigger Property="IsSelected" Value="True">
-                                            <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                                         </Trigger>
                                     </ControlTemplate.Triggers>
                                 </ControlTemplate>
@@ -565,14 +520,14 @@
                                                                   Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
                                                                   ContentTemplate="{Binding ItemTemplate, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
                                                                   ContentStringFormat="{Binding SelectionBoxItemStringFormat, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
-                                                                  TextElement.Foreground="{StaticResource TextBrush}" />
+                                                                  TextElement.Foreground="{DynamicResource TextBrush}" />
                                                 <Path Grid.Column="1"
                                                       Width="8"
                                                       Height="5"
                                                       HorizontalAlignment="Center"
                                                       VerticalAlignment="Center"
                                                       Data="M 0 0 L 4 4 L 8 0"
-                                                      Stroke="{StaticResource TextSecondaryBrush}"
+                                                      Stroke="{DynamicResource TextSecondaryBrush}"
                                                       StrokeThickness="1.6"
                                                       StrokeStartLineCap="Round"
                                                       StrokeEndLineCap="Round"
@@ -581,11 +536,11 @@
                                         </Border>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
+                                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
                                             </Trigger>
                                             <Trigger Property="IsChecked" Value="True">
-                                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                                             </Trigger>
                                             <Trigger Property="IsEnabled" Value="False">
                                                 <Setter TargetName="Root" Property="Opacity" Value="0.5" />
@@ -603,8 +558,8 @@
                                    PopupAnimation="Fade">
                                 <Grid MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
                                       MaxHeight="{TemplateBinding MaxDropDownHeight}">
-                                    <Border Background="{StaticResource PanelSoftBrush}"
-                                            BorderBrush="{StaticResource LineHoverBrush}"
+                                    <Border Background="{DynamicResource PanelSoftBrush}"
+                                            BorderBrush="{DynamicResource LineHoverBrush}"
                                             BorderThickness="1"
                                             CornerRadius="9"
                                             Padding="4"
@@ -620,7 +575,7 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -629,14 +584,14 @@
         </Style>
 
         <Style x:Key="FieldLabelStyle" TargetType="{x:Type TextBlock}">
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="FontSize" Value="11" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Margin" Value="0,0,0,8" />
         </Style>
 
         <Style x:Key="MutedTextStyle" TargetType="{x:Type TextBlock}">
-            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
             <Setter Property="FontSize" Value="11" />
         </Style>
 
@@ -644,27 +599,27 @@
             <Setter Property="Height" Value="30" />
             <Setter Property="MinWidth" Value="170" />
             <Setter Property="MaxWidth" Value="320" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="FontSize" Value="11" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="CaretBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="SelectionBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource AccentHoverBrush}" />
+            <Setter Property="SelectionBrush" Value="{DynamicResource AccentBrush}" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type TextBox}">
                         <Border x:Name="Root"
-                                Background="#08101B"
-                                BorderBrush="{StaticResource LineBrush}"
+                                Background="{DynamicResource PanelSoftBrush}"
+                                BorderBrush="{DynamicResource LineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="9"
                                 SnapsToDevicePixels="True">
                             <Grid>
                                 <Border x:Name="FocusGlow"
-                                        Background="{StaticResource AccentSoftBrush}"
+                                        Background="{DynamicResource AccentSoftBrush}"
                                         CornerRadius="8"
                                         Opacity="0" />
                                 <controls:LineIcon x:Name="SearchIcon"
@@ -672,7 +627,7 @@
                                                    Width="14"
                                                    Height="14"
                                                    StrokeThickness="1.9"
-                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   Foreground="{DynamicResource MutedTextBrush}"
                                                    Opacity="0.72"
                                                    Margin="12,0,0,0"
                                                    HorizontalAlignment="Left"
@@ -688,7 +643,7 @@
                                 <TextBlock x:Name="Placeholder"
                                            Text="Поиск"
                                            Margin="34,0,12,0"
-                                           Foreground="{StaticResource MutedTextBrush}"
+                                           Foreground="{DynamicResource MutedTextBrush}"
                                            FontSize="11"
                                            FontWeight="SemiBold"
                                            Opacity="0"
@@ -754,17 +709,17 @@
                                 <Setter TargetName="Placeholder" Property="Opacity" Value="1" />
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#0D1420" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
                                 <Setter TargetName="SearchIcon" Property="Opacity" Value="0.95" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#121C2B" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                                 <Setter TargetName="FocusGlow" Property="Opacity" Value="0.32" />
-                                <Setter TargetName="SearchIcon" Property="Foreground" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="SearchIcon" Property="Foreground" Value="{DynamicResource AccentHoverBrush}" />
                                 <Setter TargetName="SearchIcon" Property="Opacity" Value="1" />
-                                <Setter TargetName="Placeholder" Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                                <Setter TargetName="Placeholder" Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                 <Setter TargetName="Placeholder" Property="Opacity" Value="0" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
@@ -777,23 +732,23 @@
         </Style>
 
         <Style x:Key="SectionLabelStyle" TargetType="{x:Type TextBlock}">
-            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
             <Setter Property="FontSize" Value="10" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Margin" Value="0,0,0,8" />
         </Style>
 
         <Style x:Key="PillBorderStyle" TargetType="{x:Type Border}">
-            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="14" />
             <Setter Property="Padding" Value="8,4" />
         </Style>
 
         <Style x:Key="CapabilityChipStyle" TargetType="{x:Type Border}">
-            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="14" />
             <Setter Property="Padding" Value="9,6" />
@@ -801,8 +756,8 @@
         </Style>
 
         <Style x:Key="PluginChipStyle" TargetType="{x:Type Border}">
-            <Setter Property="Background" Value="#050A11" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="8" />
             <Setter Property="Padding" Value="8,5" />
@@ -833,12 +788,12 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-                                <Setter TargetName="Root" Property="Background" Value="#102342" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -846,11 +801,10 @@
             </Setter>
         </Style>
 
-        <!-- Custom checkbox: a rounded square that fills with the brand accent and shows a
-             Segoe MDL2 checkmark when ticked. Replaces the default Win32 chrome so the toggle
-             reads as part of the dark theme. -->
+        <!-- Custom checkbox for mod/plugin lists. Keep it visually separate from switch toggles:
+             checked rows stay neutral instead of inheriting ToggleOnBrush. -->
         <Style x:Key="FluxoraCheckBoxStyle" TargetType="{x:Type CheckBox}">
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="Cursor" Value="Hand" />
@@ -862,8 +816,8 @@
                             <Border x:Name="Box"
                                     Width="18"
                                     Height="18"
-                                    Background="{StaticResource PanelSoftBrush}"
-                                    BorderBrush="{StaticResource LineHoverBrush}"
+                                    Background="{DynamicResource PanelBrush}"
+                                    BorderBrush="{DynamicResource LineBrush}"
                                     BorderThickness="1.4"
                                     CornerRadius="5"
                                     SnapsToDevicePixels="True">
@@ -871,7 +825,7 @@
                                            FontFamily="Segoe MDL2 Assets"
                                            Text="&#xE73E;"
                                            FontSize="11"
-                                           Foreground="#FFFFFF"
+                                           Foreground="{DynamicResource TextBrush}"
                                            Opacity="0"
                                            HorizontalAlignment="Center"
                                            VerticalAlignment="Center" />
@@ -879,12 +833,11 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Box" Property="Background" Value="{StaticResource ToggleOnBrush}" />
-                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource ToggleOnBorderBrush}" />
-                                <Setter TargetName="Check" Property="Foreground" Value="{StaticResource ToggleThumbOnBrush}" />
+                                <Setter TargetName="Box" Property="Background" Value="{DynamicResource PanelBrush}" />
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
                                 <Setter TargetName="Check" Property="Opacity" Value="1" />
                             </Trigger>
                             <MultiTrigger>
@@ -892,7 +845,7 @@
                                     <Condition Property="IsChecked" Value="True" />
                                     <Condition Property="IsMouseOver" Value="True" />
                                 </MultiTrigger.Conditions>
-                                <Setter TargetName="Box" Property="Background" Value="{StaticResource ToggleOnHoverBrush}" />
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
                             </MultiTrigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Box" Property="Opacity" Value="0.4" />
@@ -983,7 +936,7 @@
                     <ControlTemplate TargetType="{x:Type Thumb}">
                         <Grid SnapsToDevicePixels="True">
                             <Border x:Name="Bar"
-                                    Background="{StaticResource LineHoverBrush}"
+                                    Background="{DynamicResource LineHoverBrush}"
                                     Width="7"
                                     CornerRadius="3.5"
                                     HorizontalAlignment="Center"
@@ -991,10 +944,10 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bar" Property="Background" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="Bar" Property="Background" Value="{DynamicResource AccentBrush}" />
                             </Trigger>
                             <Trigger Property="IsDragging" Value="True">
-                                <Setter TargetName="Bar" Property="Background" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Bar" Property="Background" Value="{DynamicResource AccentHoverBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1011,7 +964,7 @@
                     <ControlTemplate TargetType="{x:Type Thumb}">
                         <Grid SnapsToDevicePixels="True">
                             <Border x:Name="Bar"
-                                    Background="{StaticResource LineHoverBrush}"
+                                    Background="{DynamicResource LineHoverBrush}"
                                     Height="7"
                                     CornerRadius="3.5"
                                     HorizontalAlignment="Stretch"
@@ -1019,10 +972,10 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bar" Property="Background" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="Bar" Property="Background" Value="{DynamicResource AccentBrush}" />
                             </Trigger>
                             <Trigger Property="IsDragging" Value="True">
-                                <Setter TargetName="Bar" Property="Background" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Bar" Property="Background" Value="{DynamicResource AccentHoverBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1048,19 +1001,19 @@
                                   Data="{TemplateBinding Content}"
                                   Width="8"
                                   Height="5"
-                                  Fill="{StaticResource MutedTextBrush}"
+                                  Fill="{DynamicResource MutedTextBrush}"
                                   Stretch="Uniform"
                                   HorizontalAlignment="Center"
                                   VerticalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                                <Setter TargetName="Arrow" Property="Fill" Value="{StaticResource TextSecondaryBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                                <Setter TargetName="Arrow" Property="Fill" Value="{DynamicResource TextSecondaryBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                <Setter TargetName="Arrow" Property="Fill" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                <Setter TargetName="Arrow" Property="Fill" Value="{DynamicResource AccentHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Arrow" Property="Opacity" Value="0.35" />
@@ -1295,8 +1248,8 @@
         </Style>
 
         <Style x:Key="StepMarkerStyle" TargetType="{x:Type Border}">
-            <Setter Property="Background" Value="{StaticResource PanelRaisedBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="10" />
             <Setter Property="Padding" Value="10,8" />
@@ -1310,7 +1263,7 @@
         </Style>
 
         <Style x:Key="ModernTabItemStyle" TargetType="{x:Type TabItem}">
-            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Padding" Value="12,7" />
             <Setter Property="Template">
@@ -1330,13 +1283,13 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                                <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
-                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1418,8 +1371,8 @@
         </Style>
 
         <Style x:Key="DarkContextMenuStyle" TargetType="{x:Type ContextMenu}">
-            <Setter Property="Background" Value="{StaticResource PanelRaisedBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Padding" Value="4" />
             <Setter Property="SnapsToDevicePixels" Value="True" />
@@ -1442,7 +1395,7 @@
 
         <Style x:Key="DarkMenuItemStyle" TargetType="{x:Type MenuItem}">
             <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="MinWidth" Value="190" />
@@ -1474,15 +1427,15 @@
                                            Text="{TemplateBinding InputGestureText}"
                                            Margin="10,0,2,0"
                                            FontSize="11"
-                                           Foreground="{StaticResource MutedTextBrush}"
+                                           Foreground="{DynamicResource MutedTextBrush}"
                                            VerticalAlignment="Center"
                                            HorizontalAlignment="Right" />
                             </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.45" />
@@ -1506,8 +1459,8 @@
             <Setter Property="MinWidth" Value="178" />
             <Setter Property="MaxWidth" Value="218" />
             <Setter Property="Padding" Value="10,5" />
-            <Setter Property="Background" Value="#0D1420" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
             <Setter Property="MaxDropDownHeight" Value="230" />
         </Style>
 
@@ -1516,8 +1469,8 @@
                BasedOn="{StaticResource IconOnlyButtonStyle}">
             <Setter Property="Width" Value="30" />
             <Setter Property="Height" Value="30" />
-            <Setter Property="Background" Value="#0D1420" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PanelRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
             <Setter Property="ToolTip" Value="Управлять профилями" />
         </Style>
 
@@ -1534,8 +1487,8 @@
         <Style x:Key="ProfileMenuDangerButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource ProfileMenuActionButtonStyle}">
-            <Setter Property="Foreground" Value="{StaticResource ErrorBrush}" />
-            <Setter Property="BorderBrush" Value="#6E2B3B" />
+            <Setter Property="Foreground" Value="{DynamicResource ErrorBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ErrorLineBrush}" />
         </Style>
 
         <ContextMenu x:Key="InstalledModRowContextMenu"
@@ -1549,7 +1502,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE8FB;"
                                FontSize="12"
-                               Foreground="#C9DFFF" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Включить всё"
@@ -1559,7 +1512,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE73E;"
                                FontSize="12"
-                               Foreground="#C9DFFF" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Выключить"
@@ -1570,7 +1523,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE711;"
                                FontSize="12"
-                               Foreground="{StaticResource TextSecondaryBrush}" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Выключить всё"
@@ -1580,7 +1533,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE711;"
                                FontSize="12"
-                               Foreground="{StaticResource TextSecondaryBrush}" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
                 </MenuItem.Icon>
             </MenuItem>
             <Separator Margin="4,4" />
@@ -1592,7 +1545,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE8B7;"
                                FontSize="12"
-                               Foreground="{StaticResource TextSecondaryBrush}" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Создать разделитель..."
@@ -1602,7 +1555,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE8A5;"
                                FontSize="12"
-                               Foreground="{StaticResource AccentHoverBrush}" />
+                               Foreground="{DynamicResource AccentHoverBrush}" />
                 </MenuItem.Icon>
             </MenuItem>
             <Separator Margin="4,4" />
@@ -1615,7 +1568,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE74D;"
                                FontSize="12"
-                               Foreground="{StaticResource ErrorBrush}" />
+                               Foreground="{DynamicResource ErrorBrush}" />
                 </MenuItem.Icon>
             </MenuItem>
         </ContextMenu>
@@ -1631,7 +1584,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE8FB;"
                                FontSize="12"
-                               Foreground="#C9DFFF" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Включить всё"
@@ -1641,7 +1594,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE73E;"
                                FontSize="12"
-                               Foreground="#C9DFFF" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Выключить"
@@ -1652,7 +1605,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE711;"
                                FontSize="12"
-                               Foreground="{StaticResource TextSecondaryBrush}" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Выключить всё"
@@ -1662,7 +1615,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE711;"
                                FontSize="12"
-                               Foreground="{StaticResource TextSecondaryBrush}" />
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
                 </MenuItem.Icon>
             </MenuItem>
             <Separator Margin="4,4" />
@@ -1675,16 +1628,16 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE74D;"
                                FontSize="12"
-                               Foreground="{StaticResource ErrorBrush}" />
+                               Foreground="{DynamicResource ErrorBrush}" />
                 </MenuItem.Icon>
             </MenuItem>
         </ContextMenu>
 
         <Style x:Key="DownloadDataGridRowStyle" TargetType="{x:Type DataGridRow}">
             <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="MinHeight" Value="36" />
-            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
             <Setter Property="BorderThickness" Value="0,0,0,1" />
             <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType={x:Type DataGrid}}}" />
             <Setter Property="ContextMenu">
@@ -1699,7 +1652,7 @@
                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                            Text="&#xE768;"
                                            FontSize="12"
-                                           Foreground="#C9DFFF" />
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
                             </MenuItem.Icon>
                         </MenuItem>
                         <MenuItem Header="Отменить скачивание"
@@ -1711,7 +1664,7 @@
                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                            Text="&#xE711;"
                                            FontSize="12"
-                                           Foreground="{StaticResource ErrorBrush}" />
+                                           Foreground="{DynamicResource ErrorBrush}" />
                             </MenuItem.Icon>
                         </MenuItem>
                         <MenuItem Header="Удалить"
@@ -1723,7 +1676,7 @@
                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                            Text="&#xE74D;"
                                            FontSize="12"
-                                           Foreground="{StaticResource ErrorBrush}" />
+                                           Foreground="{DynamicResource ErrorBrush}" />
                             </MenuItem.Icon>
                         </MenuItem>
                         <MenuItem Header="Установить"
@@ -1734,7 +1687,7 @@
                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                            Text="&#xE896;"
                                            FontSize="12"
-                                           Foreground="#C9DFFF" />
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
                             </MenuItem.Icon>
                         </MenuItem>
                         <MenuItem Header="Открыть в проводнике"
@@ -1745,7 +1698,7 @@
                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                            Text="&#xE8B7;"
                                            FontSize="12"
-                                           Foreground="{StaticResource TextSecondaryBrush}" />
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
                             </MenuItem.Icon>
                         </MenuItem>
                     </ContextMenu>
@@ -1756,10 +1709,10 @@
                     <Setter Property="MinHeight" Value="68" />
                 </DataTrigger>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource PanelHoverBrush}" />
+                    <Setter Property="Background" Value="{DynamicResource PanelHoverBrush}" />
                 </Trigger>
                 <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                    <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                    <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -1770,13 +1723,13 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="{Binding Glyph}"
                                FontSize="13"
-                               Foreground="#C9DFFF"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
                                VerticalAlignment="Center"
                                Margin="0,0,8,0" />
                     <TextBlock Text="{Binding DisplayName}"
                                FontSize="12"
                                FontWeight="SemiBold"
-                               Foreground="{StaticResource TextBrush}"
+                               Foreground="{DynamicResource TextBrush}"
                                VerticalAlignment="Center" />
                 </StackPanel>
             </Border>
@@ -1786,7 +1739,7 @@
             <Border Style="{StaticResource PluginChipStyle}">
                 <TextBlock Text="{Binding}"
                            FontSize="12"
-                           Foreground="{StaticResource TextSecondaryBrush}" />
+                           Foreground="{DynamicResource TextSecondaryBrush}" />
             </Border>
         </DataTemplate>
 
@@ -1796,12 +1749,12 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE8B7;"
                                FontSize="12"
-                               Foreground="#C9DFFF"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
                                VerticalAlignment="Center"
                                Margin="0,0,7,0" />
                     <TextBlock Text="{Binding}"
                                FontSize="12"
-                               Foreground="{StaticResource TextSecondaryBrush}"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
                                VerticalAlignment="Center" />
                 </StackPanel>
             </Border>
@@ -1811,8 +1764,8 @@
             <Setter Property="Height" Value="9" />
             <Setter Property="Minimum" Value="0" />
             <Setter Property="Maximum" Value="100" />
-            <Setter Property="Background" Value="#040810" />
-            <Setter Property="Foreground" Value="{StaticResource AccentHoverBrush}" />
+            <Setter Property="Background" Value="{DynamicResource ChromeBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource AccentHoverBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -1822,11 +1775,11 @@
                               ClipToBounds="True">
                             <Border x:Name="PART_Track"
                                     Background="{TemplateBinding Background}"
-                                    BorderBrush="{StaticResource LineBrush}"
+                                    BorderBrush="{DynamicResource LineBrush}"
                                     BorderThickness="1"
                                     CornerRadius="5" />
                             <Border x:Name="PulseLayer"
-                                    BorderBrush="#91BDFF"
+                                    BorderBrush="{DynamicResource AccentLineBrush}"
                                     BorderThickness="1"
                                     CornerRadius="5"
                                     Opacity="0" />
@@ -1834,7 +1787,7 @@
                                        HorizontalAlignment="Left"
                                        ClipToBounds="True">
                                 <Grid ClipToBounds="True">
-                                    <Border Background="{StaticResource AccentGradientBrush}"
+                                    <Border Background="{DynamicResource AccentGradientBrush}"
                                             CornerRadius="5" />
                                     <Border x:Name="ProgressSheen"
                                             Width="72"
@@ -1843,9 +1796,9 @@
                                             CornerRadius="5">
                                         <Border.Background>
                                             <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
-                                                <GradientStop Color="#00FFFFFF" Offset="0" />
-                                                <GradientStop Color="#78FFFFFF" Offset="0.48" />
-                                                <GradientStop Color="#00FFFFFF" Offset="1" />
+                                                <GradientStop Color="{DynamicResource ProgressShineTransparentColor}" Offset="0" />
+                                                <GradientStop Color="{DynamicResource ProgressShineMediumColor}" Offset="0.48" />
+                                                <GradientStop Color="{DynamicResource ProgressShineTransparentColor}" Offset="1" />
                                             </LinearGradientBrush>
                                         </Border.Background>
                                         <Border.RenderTransform>
@@ -1857,7 +1810,7 @@
                             <Border x:Name="IndeterminateLayer"
                                     Width="76"
                                     HorizontalAlignment="Left"
-                                    Background="{StaticResource AccentGradientBrush}"
+                                    Background="{DynamicResource AccentGradientBrush}"
                                     CornerRadius="5"
                                     Opacity="0.72"
                                     Visibility="Collapsed">
@@ -1919,7 +1872,7 @@
             <TextBlock Text="{Binding Name}"
                        ToolTip="{Binding FileName}"
                        FontWeight="SemiBold"
-                       Foreground="{StaticResource TextBrush}"
+                       Foreground="{DynamicResource TextBrush}"
                        TextTrimming="CharacterEllipsis"
                        VerticalAlignment="Center" />
         </DataTemplate>
@@ -1943,7 +1896,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{Binding DownloadSpeedDisplayText}"
-                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
                                    FontSize="10"
                                    FontWeight="SemiBold"
                                    TextTrimming="CharacterEllipsis"
@@ -1951,7 +1904,7 @@
                                    Visibility="{Binding HasDownloadSpeedDisplay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                         <TextBlock Grid.Column="1"
                                    Text="{Binding ProgressPercentText}"
-                                   Foreground="{StaticResource TextBrush}"
+                                   Foreground="{DynamicResource TextBrush}"
                                    FontSize="10"
                                    FontWeight="Black"
                                    Margin="10,0,0,0" />
@@ -1975,7 +1928,7 @@
                                    TextTrimming="CharacterEllipsis" />
                         <TextBlock Grid.Column="1"
                                    Text="{Binding EtaText}"
-                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
                                    FontSize="10"
                                    FontWeight="SemiBold"
                                    Margin="10,0,0,0" />
@@ -1983,7 +1936,7 @@
                 </Grid>
                 <TextBlock x:Name="NoProgressText"
                            Text="-"
-                           Foreground="{StaticResource SubtleTextBrush}"
+                           Foreground="{DynamicResource SubtleTextBrush}"
                            FontWeight="SemiBold"
                            VerticalAlignment="Center" />
             </Grid>
@@ -2005,7 +1958,7 @@
             <TextBlock Text="{Binding SizeText}"
                        ToolTip="{Binding SizeText}"
                        FontWeight="SemiBold"
-                       Foreground="{StaticResource TextSecondaryBrush}"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
                        HorizontalAlignment="Stretch"
                        TextAlignment="Right"
                        TextTrimming="CharacterEllipsis"
@@ -2014,8 +1967,8 @@
 
         <DataTemplate x:Key="DownloadStatusCellTemplate">
             <Border x:Name="StatusPill"
-                    Background="{StaticResource PanelRaisedBrush}"
-                    BorderBrush="{StaticResource LineBrush}"
+                    Background="{DynamicResource PanelRaisedBrush}"
+                    BorderBrush="{DynamicResource LineBrush}"
                     BorderThickness="1"
                     CornerRadius="10"
                     Padding="10,4"
@@ -2024,17 +1977,17 @@
                            Text="{Binding Status}"
                            FontSize="12"
                            FontWeight="SemiBold"
-                           Foreground="{StaticResource TextSecondaryBrush}"
+                           Foreground="{DynamicResource TextSecondaryBrush}"
                            TextTrimming="CharacterEllipsis" />
             </Border>
             <DataTemplate.Triggers>
                 <DataTrigger Binding="{Binding IsDownloading}" Value="True">
-                    <Setter TargetName="StatusPill" Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                    <Setter TargetName="StatusPill" Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
-                    <Setter TargetName="StatusText" Property="Foreground" Value="#D6E7FF" />
+                    <Setter TargetName="StatusPill" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                    <Setter TargetName="StatusPill" Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
+                    <Setter TargetName="StatusText" Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding CanInstall}" Value="True">
-                    <Setter TargetName="StatusText" Property="Foreground" Value="{StaticResource TextBrush}" />
+                    <Setter TargetName="StatusText" Property="Foreground" Value="{DynamicResource TextBrush}" />
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
@@ -2051,8 +2004,8 @@
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0">
-            <Border Background="#040810"
-                    BorderBrush="#101A29"
+            <Border Background="{DynamicResource ChromeBrush}"
+                    BorderBrush="{DynamicResource ChromeLineBrush}"
                     BorderThickness="0,0,0,1" />
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -2068,8 +2021,8 @@
                     <controls:LineIcon Data="{StaticResource Icon.FluxoraMark}"
                                        Width="18"
                                        Height="18"
-                                       Fill="{StaticResource ChromeBrandBrush}"
-                                       Foreground="{StaticResource ChromeBrandBrush}"
+                                       Fill="{DynamicResource ChromeBrandBrush}"
+                                       Foreground="{DynamicResource ChromeBrandBrush}"
                                        StrokeThickness="0"
                                        Margin="0,0,9,0"
                                        HorizontalAlignment="Center"
@@ -2078,7 +2031,7 @@
                                VerticalAlignment="Center"
                                FontSize="14"
                                FontWeight="Black"
-                               Foreground="{StaticResource TextBrush}" />
+                               Foreground="{DynamicResource TextBrush}" />
                 </StackPanel>
 
                 <StackPanel Grid.Column="2"
@@ -2121,7 +2074,7 @@
         </Grid>
 
         <Border Grid.Row="1"
-                Background="{StaticResource AppBackgroundBrush}" />
+                Background="{DynamicResource AppBackgroundBrush}" />
 
         <Grid Grid.Row="1"
               Margin="20,16,20,20"
@@ -2147,10 +2100,10 @@
                         <TextBlock Text="Сборки"
                                    FontSize="28"
                                    FontWeight="Black"
-                                   Foreground="{StaticResource TextBrush}" />
+                                   Foreground="{DynamicResource TextBrush}" />
                         <TextBlock Text="{Binding ProjectCountText}"
                                    Margin="0,6,0,0"
-                                   Foreground="{StaticResource MutedTextBrush}"
+                                   Foreground="{DynamicResource MutedTextBrush}"
                                    TextWrapping="Wrap" />
                     </StackPanel>
 
@@ -2163,7 +2116,7 @@
                             <TextBlock Text="Библиотека"
                                        FontSize="15"
                                        FontWeight="SemiBold"
-                                       Foreground="{StaticResource TextBrush}"
+                                       Foreground="{DynamicResource TextBrush}"
                                        Margin="0,0,0,10" />
 
                             <Grid Grid.Row="1">
@@ -2182,17 +2135,17 @@
                                         <controls:LineIcon Data="{StaticResource Icon.Layers}"
                                                            Width="34"
                                                            Height="34"
-                                                           Foreground="{StaticResource AccentHoverBrush}"
+                                                           Foreground="{DynamicResource AccentHoverBrush}"
                                                            HorizontalAlignment="Center"
                                                            Margin="0,0,0,14" />
                                         <TextBlock Text="Сборок пока нет"
                                                    FontSize="16"
                                                    FontWeight="SemiBold"
-                                                   Foreground="{StaticResource TextBrush}"
+                                                   Foreground="{DynamicResource TextBrush}"
                                                    TextAlignment="Center" />
                                         <TextBlock Text="Создайте первую сборку, чтобы она появилась в библиотеке."
                                                    Margin="0,8,0,0"
-                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   Foreground="{DynamicResource MutedTextBrush}"
                                                    TextAlignment="Center"
                                                    TextWrapping="Wrap" />
                                     </StackPanel>
@@ -2233,14 +2186,14 @@
                                                 <Border Width="44"
                                                         Height="44"
                                                         CornerRadius="12"
-                                                        Background="{StaticResource IconTileBrush}"
-                                                        BorderBrush="{StaticResource IconTileBorderBrush}"
+                                                        Background="{DynamicResource IconTileBrush}"
+                                                        BorderBrush="{DynamicResource IconTileBorderBrush}"
                                                         BorderThickness="1"
                                                         VerticalAlignment="Top">
                                                     <controls:LineIcon Data="{StaticResource Icon.Gamepad}"
                                                                        Width="22"
                                                                        Height="22"
-                                                                       Foreground="{StaticResource IconTileForegroundBrush}"
+                                                                       Foreground="{DynamicResource IconTileForegroundBrush}"
                                                                        HorizontalAlignment="Center"
                                                                        VerticalAlignment="Center" />
                                                 </Border>
@@ -2249,11 +2202,11 @@
                                                     <TextBlock Text="{Binding Name}"
                                                                FontSize="14"
                                                                FontWeight="SemiBold"
-                                                               Foreground="{StaticResource TextBrush}"
+                                                               Foreground="{DynamicResource TextBrush}"
                                                                TextTrimming="CharacterEllipsis" />
                                                     <TextBlock Text="{Binding GameName}"
                                                                Margin="0,4,0,0"
-                                                               Foreground="{StaticResource MutedTextBrush}"
+                                                               Foreground="{DynamicResource MutedTextBrush}"
                                                                FontSize="12"
                                                                TextTrimming="CharacterEllipsis" />
                                                 </StackPanel>
@@ -2293,7 +2246,7 @@
                                                                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                                Text="&#xE70F;"
                                                                                FontSize="12"
-                                                                               Foreground="#C9DFFF" />
+                                                                               Foreground="{DynamicResource TextSecondaryBrush}" />
                                                                 </MenuItem.Icon>
                                                             </MenuItem>
                                                             <MenuItem Header="Упаковать FluxPack"
@@ -2304,7 +2257,7 @@
                                                                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                                Text="&#xE8A5;"
                                                                                FontSize="12"
-                                                                               Foreground="#C9DFFF" />
+                                                                               Foreground="{DynamicResource TextSecondaryBrush}" />
                                                                 </MenuItem.Icon>
                                                             </MenuItem>
                                                             <MenuItem Header="Удалить"
@@ -2316,7 +2269,7 @@
                                                                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                                Text="&#xE74D;"
                                                                                FontSize="12"
-                                                                               Foreground="{StaticResource ErrorBrush}" />
+                                                                               Foreground="{DynamicResource ErrorBrush}" />
                                                                 </MenuItem.Icon>
                                                             </MenuItem>
                                                         </ContextMenu>
@@ -2330,14 +2283,14 @@
                         </Grid>
 
                     <Border Grid.Row="2"
-                            Background="#050A11"
-                            BorderBrush="{StaticResource LineBrush}"
+                            Background="{DynamicResource PanelSoftBrush}"
+                            BorderBrush="{DynamicResource LineBrush}"
                             BorderThickness="1"
                             CornerRadius="12"
                             Padding="12"
                             Margin="0,16,0,0">
                         <TextBlock Text="{Binding ActivityMessage}"
-                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
                                    FontSize="12"
                                    TextWrapping="Wrap" />
                     </Border>
@@ -2410,11 +2363,11 @@
                                     <TextBlock Text="{Binding WorkspaceTitle}"
                                                FontSize="22"
                                                FontWeight="Black"
-                                               Foreground="{StaticResource TextBrush}"
+                                               Foreground="{DynamicResource TextBrush}"
                                                TextTrimming="CharacterEllipsis" />
                                     <TextBlock Text="{Binding WorkspaceSubtitle}"
                                                Margin="0,2,0,0"
-                                               Foreground="{StaticResource MutedTextBrush}"
+                                               Foreground="{DynamicResource MutedTextBrush}"
                                                FontSize="11"
                                                TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
@@ -2435,9 +2388,9 @@
                                                            Width="13"
                                                            Height="13"
                                                            Margin="0,0,6,0"
-                                                           Foreground="{StaticResource MutedTextBrush}" />
+                                                           Foreground="{DynamicResource MutedTextBrush}" />
                                         <TextBlock Text="Профили"
-                                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
                                                    FontSize="11"
                                                    FontWeight="SemiBold"
                                                    VerticalAlignment="Center" />
@@ -2464,7 +2417,7 @@
                                         VerticalAlignment="Center"
                                         Margin="12,0,0,0">
                                     <TextBlock Text="{Binding ModCountText}"
-                                               Foreground="{StaticResource TextSecondaryBrush}"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
                                                FontWeight="SemiBold"
                                                FontSize="11"
                                                TextTrimming="CharacterEllipsis" />
@@ -2563,7 +2516,7 @@
                                         <TextBlock Text="Моды"
                                                    FontSize="17"
                                                    FontWeight="Black"
-                                                   Foreground="{StaticResource TextBrush}" />
+                                                   Foreground="{DynamicResource TextBrush}" />
                                         <TextBlock Text="{Binding ModCountText}"
                                                    Margin="0,2,0,0"
                                                    Style="{StaticResource MutedTextStyle}" />
@@ -2600,7 +2553,7 @@
                                                              <controls:LineIcon Data="{StaticResource Icon.Open}"
                                                                                 Width="14"
                                                                                 Height="14"
-                                                                                Foreground="{StaticResource AccentHoverBrush}" />
+                                                                                Foreground="{DynamicResource AccentHoverBrush}" />
                                                          </MenuItem.Icon>
                                                      </MenuItem>
                                                      <MenuItem Header="Создать разделитель..."
@@ -2610,7 +2563,7 @@
                                                              <controls:LineIcon Data="{StaticResource Icon.Layers}"
                                                                                 Width="14"
                                                                                 Height="14"
-                                                                                Foreground="{StaticResource AccentHoverBrush}" />
+                                                                                Foreground="{DynamicResource AccentHoverBrush}" />
                                                          </MenuItem.Icon>
                                                      </MenuItem>
                                                      <MenuItem Header="Создать пустой мод..."
@@ -2620,7 +2573,7 @@
                                                              <controls:LineIcon Data="{StaticResource Icon.Plus}"
                                                                                 Width="14"
                                                                                 Height="14"
-                                                                                Foreground="{StaticResource AccentHoverBrush}" />
+                                                                                Foreground="{DynamicResource AccentHoverBrush}" />
                                                          </MenuItem.Icon>
                                                      </MenuItem>
                                                  </ContextMenu>
@@ -2788,8 +2741,8 @@
                                                                 </StackPanel.Style>
 
                                                                 <controls:LineIcon Data="{StaticResource Icon.ConflictDot}"
-                                                                                   Fill="{StaticResource ConflictFullyOverwrittenBrush}"
-                                                                                   Foreground="{StaticResource ConflictFullyOverwrittenBrush}"
+                                                                                   Fill="{DynamicResource ConflictFullyOverwrittenBrush}"
+                                                                                   Foreground="{DynamicResource ConflictFullyOverwrittenBrush}"
                                                                                    StrokeThickness="0"
                                                                                    Width="14"
                                                                                    Height="14">
@@ -2809,7 +2762,7 @@
                                                                 <Border Width="16"
                                                                         Height="16"
                                                                         CornerRadius="8"
-                                                                        Background="{StaticResource ConflictOverwritesBrush}"
+                                                                        Background="{DynamicResource ConflictOverwritesBrush}"
                                                                         Margin="0,0,3,0">
                                                                     <Border.Style>
                                                                         <Style TargetType="{x:Type Border}">
@@ -2822,7 +2775,7 @@
                                                                         </Style>
                                                                     </Border.Style>
                                                                     <controls:LineIcon Data="{StaticResource Icon.ConflictPlus}"
-                                                                                       Foreground="#06140B"
+                                                                                       Foreground="{DynamicResource ConflictOverwritesIconBrush}"
                                                                                        StrokeThickness="2.4"
                                                                                        Width="12"
                                                                                        Height="12"
@@ -2833,7 +2786,7 @@
                                                                 <Border Width="16"
                                                                         Height="16"
                                                                         CornerRadius="8"
-                                                                        Background="{StaticResource ConflictOverwrittenBrush}">
+                                                                        Background="{DynamicResource ConflictOverwrittenBrush}">
                                                                     <Border.Style>
                                                                         <Style TargetType="{x:Type Border}">
                                                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -2845,7 +2798,7 @@
                                                                         </Style>
                                                                     </Border.Style>
                                                                     <controls:LineIcon Data="{StaticResource Icon.ConflictMinus}"
-                                                                                       Foreground="#190707"
+                                                                                       Foreground="{DynamicResource ConflictOverwrittenIconBrush}"
                                                                                        StrokeThickness="2.4"
                                                                                        Width="12"
                                                                                        Height="12"
@@ -2899,7 +2852,7 @@
                                                         <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                    Text="&#xE8A5;"
                                                                    FontSize="12"
-                                                                   Foreground="{StaticResource AccentHoverBrush}" />
+                                                                   Foreground="{DynamicResource AccentHoverBrush}" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                             </ContextMenu>
@@ -2920,7 +2873,7 @@
                                             <controls:LineIcon Width="30"
                                                                Height="30"
                                                                StrokeThickness="1.8"
-                                                               Foreground="{StaticResource AccentHoverBrush}"
+                                                               Foreground="{DynamicResource AccentHoverBrush}"
                                                                HorizontalAlignment="Center"
                                                                Margin="0,0,0,10">
                                                 <controls:LineIcon.Style>
@@ -2938,11 +2891,11 @@
                                             <TextBlock Text="{Binding ModListEmptyTitle}"
                                                        FontSize="17"
                                                        FontWeight="Black"
-                                                       Foreground="{StaticResource TextBrush}"
+                                                       Foreground="{DynamicResource TextBrush}"
                                                        TextAlignment="Center" />
                                             <TextBlock Text="{Binding ModListEmptySubtitle}"
                                                        Margin="0,8,0,0"
-                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Foreground="{DynamicResource MutedTextBrush}"
                                                        TextAlignment="Center"
                                                        TextWrapping="Wrap" />
                                         </StackPanel>
@@ -2984,7 +2937,7 @@
                                                 <TextBlock Text="Порядок загрузки"
                                                            FontSize="12"
                                                            FontWeight="Black"
-                                                           Foreground="{StaticResource TextBrush}" />
+                                                           Foreground="{DynamicResource TextBrush}" />
                                                 <TextBlock Text="{Binding PluginCountText}"
                                                            Margin="0,2,0,0"
                                                            Style="{StaticResource MutedTextStyle}" />
@@ -3038,7 +2991,7 @@
                                                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                            Text="&#xE8A5;"
                                                                            FontSize="12"
-                                                                           Foreground="{StaticResource AccentHoverBrush}" />
+                                                                           Foreground="{DynamicResource AccentHoverBrush}" />
                                                             </MenuItem.Icon>
                                                         </MenuItem>
                                                         <Separator Margin="4,4" />
@@ -3051,7 +3004,7 @@
                                                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                            Text="&#xE74D;"
                                                                            FontSize="12"
-                                                                           Foreground="{StaticResource ErrorBrush}" />
+                                                                           Foreground="{DynamicResource ErrorBrush}" />
                                                             </MenuItem.Icon>
                                                         </MenuItem>
                                                     </ContextMenu>
@@ -3079,7 +3032,7 @@
                                                                             <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                                        Text="&#xE8FB;"
                                                                                        FontSize="12"
-                                                                                       Foreground="#C9DFFF" />
+                                                                                       Foreground="{DynamicResource TextSecondaryBrush}" />
                                                                         </MenuItem.Icon>
                                                                     </MenuItem>
                                                                     <MenuItem Header="Выключить"
@@ -3090,7 +3043,7 @@
                                                                             <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                                        Text="&#xE711;"
                                                                                        FontSize="12"
-                                                                                       Foreground="{StaticResource TextSecondaryBrush}" />
+                                                                                       Foreground="{DynamicResource TextSecondaryBrush}" />
                                                                         </MenuItem.Icon>
                                                                     </MenuItem>
                                                                     <Separator Margin="4,4" />
@@ -3101,7 +3054,7 @@
                                                                             <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                                        Text="&#xE8A5;"
                                                                                        FontSize="12"
-                                                                                       Foreground="{StaticResource AccentHoverBrush}" />
+                                                                                       Foreground="{DynamicResource AccentHoverBrush}" />
                                                                         </MenuItem.Icon>
                                                                     </MenuItem>
                                                                     <Separator Margin="4,4" />
@@ -3114,7 +3067,7 @@
                                                                             <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                                        Text="&#xE74D;"
                                                                                        FontSize="12"
-                                                                                       Foreground="{StaticResource ErrorBrush}" />
+                                                                                       Foreground="{DynamicResource ErrorBrush}" />
                                                                         </MenuItem.Icon>
                                                                     </MenuItem>
                                                                 </ContextMenu>
@@ -3221,7 +3174,7 @@
                                                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                            Text="&#xE8A5;"
                                                                            FontSize="12"
-                                                                           Foreground="{StaticResource AccentHoverBrush}" />
+                                                                           Foreground="{DynamicResource AccentHoverBrush}" />
                                                             </MenuItem.Icon>
                                                         </MenuItem>
                                                     </ContextMenu>
@@ -3242,17 +3195,17 @@
                                                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                Text="&#xE950;"
                                                                FontSize="26"
-                                                               Foreground="{StaticResource AccentHoverBrush}"
+                                                               Foreground="{DynamicResource AccentHoverBrush}"
                                                                HorizontalAlignment="Center"
                                                                Margin="0,0,0,10" />
                                                     <TextBlock Text="Плагины не найдены"
                                                                FontSize="16"
                                                                FontWeight="Black"
-                                                               Foreground="{StaticResource TextBrush}"
+                                                               Foreground="{DynamicResource TextBrush}"
                                                                TextAlignment="Center" />
                                                     <TextBlock Text="{Binding SelectedProjectPluginExtensionsText, StringFormat=Поддерживаемые расширения: {0}}"
                                                                Margin="0,6,0,0"
-                                                               Foreground="{StaticResource MutedTextBrush}"
+                                                               Foreground="{DynamicResource MutedTextBrush}"
                                                                TextAlignment="Center"
                                                                TextWrapping="Wrap" />
                                                 </StackPanel>
@@ -3266,7 +3219,7 @@
                                             <StackPanel>
                                                 <TextBlock Text="{Binding SelectedPluginTitle}"
                                                            FontWeight="Black"
-                                                           Foreground="{StaticResource TextBrush}"
+                                                           Foreground="{DynamicResource TextBrush}"
                                                            TextTrimming="CharacterEllipsis" />
                                                 <TextBlock Text="{Binding SelectedPluginStatusText}"
                                                            Margin="0,4,0,0"
@@ -3299,7 +3252,7 @@
                                             <StackPanel>
                                                 <TextBlock Text="{Binding SelectedModTitle}"
                                                            FontWeight="Black"
-                                                           Foreground="{StaticResource TextBrush}"
+                                                           Foreground="{DynamicResource TextBrush}"
                                                            TextTrimming="CharacterEllipsis" />
                                                 <TextBlock Text="{Binding SelectedModVersionText}"
                                                            Margin="0,6,0,0"
@@ -3311,7 +3264,7 @@
                                                            TextWrapping="Wrap" />
                                                 <TextBlock Text="{Binding SelectedModConflictText}"
                                                            Margin="0,4,0,0"
-                                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                                           Foreground="{DynamicResource TextSecondaryBrush}"
                                                            TextWrapping="Wrap" />
                                                 <TextBlock Text="{Binding SelectedModFileCountText}"
                                                            Margin="0,4,0,0"
@@ -3331,7 +3284,7 @@
                                                 <TreeView ItemsSource="{Binding SelectedModFileTree}"
                                                           Background="Transparent"
                                                           BorderThickness="0"
-                                                          Foreground="{StaticResource TextBrush}"
+                                                          Foreground="{DynamicResource TextBrush}"
                                                           ScrollViewer.CanContentScroll="True"
                                                           ScrollViewer.HorizontalScrollBarVisibility="Auto"
                                                           ScrollViewer.VerticalScrollBarVisibility="Auto"
@@ -3373,16 +3326,16 @@
                                                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                            Text="{Binding IconText}"
                                                                            FontSize="12"
-                                                                           Foreground="{StaticResource MutedTextBrush}"
+                                                                           Foreground="{DynamicResource MutedTextBrush}"
                                                                            VerticalAlignment="Center" />
                                                                 <StackPanel Grid.Column="1"
                                                                             Margin="4,0,10,0">
                                                                     <TextBlock Text="{Binding Name}"
-                                                                               Foreground="{StaticResource TextBrush}"
+                                                                               Foreground="{DynamicResource TextBrush}"
                                                                                TextTrimming="CharacterEllipsis" />
                                                                     <TextBlock Text="{Binding ConflictText}"
                                                                                FontSize="11"
-                                                                               Foreground="{StaticResource AccentHoverBrush}"
+                                                                               Foreground="{DynamicResource AccentHoverBrush}"
                                                                                TextTrimming="CharacterEllipsis">
                                                                         <TextBlock.Style>
                                                                             <Style TargetType="{x:Type TextBlock}">
@@ -3398,7 +3351,7 @@
                                                                 </StackPanel>
                                                                 <TextBlock Grid.Column="2"
                                                                            Text="{Binding SizeText}"
-                                                                           Foreground="{StaticResource MutedTextBrush}"
+                                                                           Foreground="{DynamicResource MutedTextBrush}"
                                                                            FontSize="11"
                                                                            VerticalAlignment="Center" />
                                                             </Grid>
@@ -3452,7 +3405,7 @@
 
                                         <TextBlock Text="{Binding DownloadCountText}"
                                                    FontWeight="Black"
-                                                   Foreground="{StaticResource TextBrush}" />
+                                                   Foreground="{DynamicResource TextBrush}" />
 
                                          <Grid x:Name="DownloadsDropSurface"
                                                Grid.Row="1"
@@ -3528,13 +3481,13 @@
                                                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                Text="&#xE896;"
                                                                FontSize="30"
-                                                               Foreground="{StaticResource AccentHoverBrush}"
+                                                               Foreground="{DynamicResource AccentHoverBrush}"
                                                                HorizontalAlignment="Center"
                                                                Margin="0,0,0,12" />
                                                     <TextBlock Text="Загрузок пока нет"
                                                                FontSize="18"
                                                                FontWeight="Black"
-                                                               Foreground="{StaticResource TextBrush}"
+                                                               Foreground="{DynamicResource TextBrush}"
                                                                TextAlignment="Center" />
                                                 </StackPanel>
                                             </Border>
@@ -3544,8 +3497,8 @@
                                                     Visibility="Collapsed"
                                                     Opacity="0"
                                                     IsHitTestVisible="False"
-                                                    Background="#D008101B"
-                                                    BorderBrush="{StaticResource AccentHoverBrush}"
+                                                    Background="{DynamicResource PanelSoftBrush}"
+                                                    BorderBrush="{DynamicResource AccentHoverBrush}"
                                                     BorderThickness="1.4"
                                                     CornerRadius="10">
                                                 <Grid>
@@ -3560,22 +3513,22 @@
                                                         <Border Width="42"
                                                                 Height="42"
                                                                 CornerRadius="21"
-                                                                Background="{StaticResource AccentSoftBrush}"
-                                                                BorderBrush="{StaticResource AccentLineBrush}"
+                                                                Background="{DynamicResource AccentSoftBrush}"
+                                                                BorderBrush="{DynamicResource AccentLineBrush}"
                                                                 BorderThickness="1"
                                                                 HorizontalAlignment="Center"
                                                                 Margin="0,0,0,12">
                                                             <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                        Text="&#xE896;"
                                                                        FontSize="20"
-                                                                       Foreground="{StaticResource AccentHoverBrush}"
+                                                                       Foreground="{DynamicResource AccentHoverBrush}"
                                                                        HorizontalAlignment="Center"
                                                                        VerticalAlignment="Center" />
                                                         </Border>
                                                         <TextBlock Text="Отпустите, чтобы добавить"
                                                                    FontSize="17"
                                                                    FontWeight="Black"
-                                                                   Foreground="{StaticResource TextBrush}"
+                                                                   Foreground="{DynamicResource TextBrush}"
                                                                    HorizontalAlignment="Center"
                                                                    TextAlignment="Center" />
                                                     </StackPanel>
@@ -3591,8 +3544,8 @@
                     </Grid>
 
                     <Border Grid.Row="2"
-                            Background="#050A11"
-                            BorderBrush="{StaticResource LineBrush}"
+                            Background="{DynamicResource PanelSoftBrush}"
+                            BorderBrush="{DynamicResource LineBrush}"
                             BorderThickness="1"
                             CornerRadius="10"
                             Padding="10"
@@ -3603,12 +3556,12 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="Статус"
-                                       Foreground="{StaticResource MutedTextBrush}"
+                                       Foreground="{DynamicResource MutedTextBrush}"
                                        FontWeight="SemiBold"
                                        Margin="0,0,12,0" />
                             <TextBlock Grid.Column="1"
                                        Text="{Binding ActivityMessage}"
-                                       Foreground="{StaticResource TextBrush}"
+                                       Foreground="{DynamicResource TextBrush}"
                                        TextWrapping="Wrap" />
                         </Grid>
                     </Border>
@@ -3634,7 +3587,7 @@
                     </Grid.ColumnDefinitions>
 
                     <Border Style="{StaticResource PanelBorderStyle}"
-                            Background="{StaticResource HeroBrush}"
+                            Background="{DynamicResource HeroBrush}"
                             Padding="22,16"
                             Margin="0,0,0,12">
                         <Grid>
@@ -3647,12 +3600,12 @@
                                 <TextBlock Text="Страница с проектами"
                                            FontSize="28"
                                            FontWeight="Black"
-                                           Foreground="{StaticResource TextBrush}"
+                                           Foreground="{DynamicResource TextBrush}"
                                            TextWrapping="Wrap" />
                                 <TextBlock Text="Создавайте игровые структуры и держите рабочие папки под рукой."
                                            Margin="0,6,0,0"
                                            FontSize="13"
-                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           Foreground="{DynamicResource TextSecondaryBrush}"
                                            TextWrapping="Wrap"
                                            MaxWidth="560" />
                             </StackPanel>
@@ -3719,25 +3672,25 @@
                                     <Border Width="54"
                                             Height="54"
                                             CornerRadius="15"
-                                            Background="{StaticResource IconTileBrush}"
-                                            BorderBrush="{StaticResource IconTileBorderBrush}"
+                                            Background="{DynamicResource IconTileBrush}"
+                                            BorderBrush="{DynamicResource IconTileBorderBrush}"
                                             BorderThickness="1"
                                             VerticalAlignment="Center">
                                         <controls:LineIcon Data="{StaticResource Icon.Gamepad}"
                                                            Width="27"
                                                            Height="27"
-                                                           Foreground="{StaticResource IconTileForegroundBrush}" />
+                                                           Foreground="{DynamicResource IconTileForegroundBrush}" />
                                     </Border>
 
                                     <StackPanel Grid.Column="2" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding SelectedProject.Name}"
                                                    FontSize="26"
                                                    FontWeight="Black"
-                                                   Foreground="{StaticResource TextBrush}"
+                                                   Foreground="{DynamicResource TextBrush}"
                                                    TextTrimming="CharacterEllipsis" />
                                         <TextBlock Text="{Binding SelectedProject.GameName}"
                                                    Margin="0,4,0,0"
-                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   Foreground="{DynamicResource MutedTextBrush}"
                                                    TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
 
@@ -3766,16 +3719,16 @@
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <Border Width="36" Height="36" CornerRadius="10"
-                                                    Background="{StaticResource AccentSoftBrush}"
-                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    Background="{DynamicResource AccentSoftBrush}"
+                                                    BorderBrush="{DynamicResource AccentLineBrush}"
                                                     BorderThickness="1"
                                                     VerticalAlignment="Top">
                                                 <controls:LineIcon Data="{StaticResource Icon.Folder}" Width="18" Height="18"
-                                                                   Foreground="{StaticResource AccentHoverBrush}" />
+                                                                   Foreground="{DynamicResource AccentHoverBrush}" />
                                             </Border>
                                             <StackPanel Grid.Column="2">
                                                 <TextBlock Text="Папка сборки" FontWeight="SemiBold" FontSize="12"
-                                                           Foreground="{StaticResource TextBrush}"
+                                                           Foreground="{DynamicResource TextBrush}"
                                                            TextWrapping="Wrap" />
                                                 <TextBlock Text="{Binding SelectedProject.ProjectDirectory}"
                                                            Margin="0,3,0,0"
@@ -3799,16 +3752,16 @@
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <Border Width="36" Height="36" CornerRadius="10"
-                                                    Background="{StaticResource AccentSoftBrush}"
-                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    Background="{DynamicResource AccentSoftBrush}"
+                                                    BorderBrush="{DynamicResource AccentLineBrush}"
                                                     BorderThickness="1"
                                                     VerticalAlignment="Top">
                                                 <controls:LineIcon Data="{StaticResource Icon.HardDrive}" Width="18" Height="18"
-                                                                   Foreground="{StaticResource AccentHoverBrush}" />
+                                                                   Foreground="{DynamicResource AccentHoverBrush}" />
                                             </Border>
                                             <StackPanel Grid.Column="2">
                                                 <TextBlock Text="Папка игры" FontWeight="SemiBold" FontSize="12"
-                                                           Foreground="{StaticResource TextBrush}"
+                                                           Foreground="{DynamicResource TextBrush}"
                                                            TextWrapping="Wrap" />
                                                 <TextBlock Text="{Binding SelectedProject.Paths.GameDirectory}"
                                                            Margin="0,3,0,0"
@@ -3829,13 +3782,13 @@
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="Дата добавления"
-                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Foreground="{DynamicResource MutedTextBrush}"
                                                        FontSize="10"
                                                        FontWeight="SemiBold"
                                                        TextWrapping="Wrap" />
                                             <TextBlock Grid.Column="1"
                                                        Text="{Binding SelectedProjectCreatedText}"
-                                                       Foreground="{StaticResource TextBrush}"
+                                                       Foreground="{DynamicResource TextBrush}"
                                                        FontWeight="SemiBold"
                                                        FontSize="12"
                                                        TextWrapping="Wrap" />
@@ -3847,13 +3800,13 @@
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="Размер проекта"
-                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Foreground="{DynamicResource MutedTextBrush}"
                                                        FontSize="10"
                                                        FontWeight="SemiBold"
                                                        TextWrapping="Wrap" />
                                             <TextBlock Grid.Column="1"
                                                        Text="{Binding SelectedProjectSizeText}"
-                                                       Foreground="{StaticResource TextBrush}"
+                                                       Foreground="{DynamicResource TextBrush}"
                                                        FontWeight="Black"
                                                        FontSize="16"
                                                        TextWrapping="Wrap" />
@@ -3865,13 +3818,13 @@
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="Последний запуск"
-                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Foreground="{DynamicResource MutedTextBrush}"
                                                        FontSize="10"
                                                        FontWeight="SemiBold"
                                                        TextWrapping="Wrap" />
                                             <TextBlock Grid.Column="1"
                                                        Text="{Binding SelectedProjectLastLaunchText}"
-                                                       Foreground="{StaticResource TextBrush}"
+                                                       Foreground="{DynamicResource TextBrush}"
                                                        FontWeight="SemiBold"
                                                        FontSize="12"
                                                        TextWrapping="Wrap" />
@@ -3883,13 +3836,13 @@
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="Количество модов"
-                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Foreground="{DynamicResource MutedTextBrush}"
                                                        FontSize="10"
                                                        FontWeight="SemiBold"
                                                        TextWrapping="Wrap" />
                                             <TextBlock Grid.Column="1"
                                                        Text="{Binding ProjectModBreakdownText}"
-                                                       Foreground="{StaticResource TextBrush}"
+                                                       Foreground="{DynamicResource TextBrush}"
                                                        FontWeight="SemiBold"
                                                        FontSize="12"
                                                        TextWrapping="Wrap" />
@@ -3901,13 +3854,13 @@
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="активные"
-                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Foreground="{DynamicResource MutedTextBrush}"
                                                        FontSize="10"
                                                        FontWeight="SemiBold"
                                                        TextWrapping="Wrap" />
                                             <TextBlock Grid.Column="1"
                                                        Text="{Binding ActiveModCountText}"
-                                                       Foreground="{StaticResource TextBrush}"
+                                                       Foreground="{DynamicResource TextBrush}"
                                                        FontWeight="Black"
                                                        FontSize="18"
                                                        TextWrapping="Wrap" />
@@ -3919,13 +3872,13 @@
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="выключенные"
-                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Foreground="{DynamicResource MutedTextBrush}"
                                                        FontSize="10"
                                                        FontWeight="SemiBold"
                                                        TextWrapping="Wrap" />
                                             <TextBlock Grid.Column="1"
                                                        Text="{Binding DisabledModCountText}"
-                                                       Foreground="{StaticResource TextBrush}"
+                                                       Foreground="{DynamicResource TextBrush}"
                                                        FontWeight="Black"
                                                        FontSize="18"
                                                        TextWrapping="Wrap" />
@@ -3955,17 +3908,17 @@
                             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="380">
                                 <controls:LineIcon Data="{StaticResource Icon.Layers}"
                                                    Width="40" Height="40"
-                                                   Foreground="{StaticResource AccentHoverBrush}"
+                                                   Foreground="{DynamicResource AccentHoverBrush}"
                                                    HorizontalAlignment="Center" />
                                 <TextBlock Text="Выберите сборку"
                                            Margin="0,16,0,0"
                                            FontSize="18"
                                            FontWeight="SemiBold"
-                                           Foreground="{StaticResource TextBrush}"
+                                           Foreground="{DynamicResource TextBrush}"
                                            TextAlignment="Center" />
                                 <TextBlock Text="Откройте сборку из библиотеки слева или создайте новую, чтобы увидеть её детали."
                                            Margin="0,8,0,0"
-                                           Foreground="{StaticResource MutedTextBrush}"
+                                           Foreground="{DynamicResource MutedTextBrush}"
                                            TextAlignment="Center"
                                            TextWrapping="Wrap" />
                                 <StackPanel Orientation="Horizontal"
@@ -4015,10 +3968,10 @@
                                         <TextBlock Text="{Binding CreateProjectStepTitle}"
                                                    FontSize="30"
                                                    FontWeight="Black"
-                                                   Foreground="{StaticResource TextBrush}" />
+                                                   Foreground="{DynamicResource TextBrush}" />
                                         <TextBlock Text="{Binding CreateProjectStepSubtitle}"
                                                    Margin="0,7,0,0"
-                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   Foreground="{DynamicResource MutedTextBrush}"
                                                    TextWrapping="Wrap" />
                                     </StackPanel>
 
@@ -4026,7 +3979,7 @@
                                             Style="{StaticResource PillBorderStyle}"
                                             VerticalAlignment="Top">
                                         <TextBlock Text="{Binding CreateProjectStepCounter}"
-                                                   Foreground="{StaticResource TextBrush}"
+                                                   Foreground="{DynamicResource TextBrush}"
                                                    FontWeight="SemiBold" />
                                     </Border>
                                 </Grid>
@@ -4043,15 +3996,15 @@
                                             <Style TargetType="{x:Type Border}" BasedOn="{StaticResource StepMarkerStyle}">
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding CreateProjectStepIndex}" Value="0">
-                                                        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                                        <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                                        <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                                        <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
                                         </Border.Style>
                                         <TextBlock Text="Название"
                                                    FontWeight="SemiBold"
-                                                   Foreground="{StaticResource TextBrush}"
+                                                   Foreground="{DynamicResource TextBrush}"
                                                    TextAlignment="Center" />
                                     </Border>
 
@@ -4060,15 +4013,15 @@
                                             <Style TargetType="{x:Type Border}" BasedOn="{StaticResource StepMarkerStyle}">
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding CreateProjectStepIndex}" Value="1">
-                                                        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                                        <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                                        <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                                        <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
                                         </Border.Style>
                                         <TextBlock Text="Игра"
                                                    FontWeight="SemiBold"
-                                                   Foreground="{StaticResource TextBrush}"
+                                                   Foreground="{DynamicResource TextBrush}"
                                                    TextAlignment="Center" />
                                     </Border>
 
@@ -4078,15 +4031,15 @@
                                                 <Setter Property="Margin" Value="0" />
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding CreateProjectStepIndex}" Value="2">
-                                                        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                                        <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                                        <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                                        <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
                                         </Border.Style>
                                         <TextBlock Text="Папка"
                                                    FontWeight="SemiBold"
-                                                   Foreground="{StaticResource TextBrush}"
+                                                   Foreground="{DynamicResource TextBrush}"
                                                    TextAlignment="Center" />
                                     </Border>
                                 </Grid>
@@ -4114,7 +4067,7 @@
                                                 <StackPanel>
                                                     <TextBlock Text="Папка будет названа так же"
                                                                FontWeight="SemiBold"
-                                                               Foreground="{StaticResource TextBrush}" />
+                                                               Foreground="{DynamicResource TextBrush}" />
                                                     <TextBlock Text="{Binding TargetProjectDirectory}"
                                                                Margin="0,8,0,0"
                                                                Style="{StaticResource MutedTextStyle}"
@@ -4151,8 +4104,8 @@
                                                            Style="{StaticResource MutedTextStyle}"
                                                            TextWrapping="Wrap" />
 
-                                                <Border Background="#2A1F12"
-                                                        BorderBrush="#7C4A16"
+                                                <Border Background="{DynamicResource WarningSurfaceBrush}"
+                                                        BorderBrush="{DynamicResource WarningLineBrush}"
                                                         BorderThickness="1"
                                                         CornerRadius="14"
                                                         Padding="14"
@@ -4168,7 +4121,7 @@
                                                         </Style>
                                                     </Border.Style>
                                                     <TextBlock Text="C++ core не подключён: шаблоны игр недоступны. Соберите backend и положите FluxoraCore.dll рядом с приложением."
-                                                               Foreground="#FBBF24"
+                                                               Foreground="{DynamicResource WarningBrush}"
                                                                FontSize="12"
                                                                TextWrapping="Wrap" />
                                                 </Border>
@@ -4204,14 +4157,14 @@
                                                             <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                        Text="&#xE790;"
                                                                        FontSize="15"
-                                                                       Foreground="#C9DFFF"
+                                                                       Foreground="{DynamicResource TextSecondaryBrush}"
                                                                        VerticalAlignment="Center"
                                                                        Margin="0,0,9,0" />
                                                             <TextBlock VerticalAlignment="Center">
-                                                                <Run Text="Базовый шаблон + " Foreground="{StaticResource MutedTextBrush}" />
+                                                                <Run Text="Базовый шаблон + " Foreground="{DynamicResource MutedTextBrush}" />
                                                                 <Run Text="{Binding SelectedResolvedTemplate.DisplayName, Mode=OneWay}"
                                                                      FontWeight="SemiBold"
-                                                                     Foreground="{StaticResource TextBrush}" />
+                                                                     Foreground="{DynamicResource TextBrush}" />
                                                             </TextBlock>
                                                         </StackPanel>
 
@@ -4238,7 +4191,7 @@
                                                                        Style="{StaticResource MutedTextStyle}">
                                                                 <Run Text="Расширения плагинов: " />
                                                                 <Run Text="{Binding SelectedResolvedTemplate.PluginExtensionsText, Mode=OneWay}"
-                                                                     Foreground="{StaticResource TextSecondaryBrush}" />
+                                                                     Foreground="{DynamicResource TextSecondaryBrush}" />
                                                             </TextBlock>
                                                         </StackPanel>
 
@@ -4250,13 +4203,13 @@
                                                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                            Text="&#xE756;"
                                                                            FontSize="15"
-                                                                           Foreground="#C9DFFF"
+                                                                           Foreground="{DynamicResource TextSecondaryBrush}"
                                                                            VerticalAlignment="Center"
                                                                            Margin="0,0,10,0" />
                                                                 <StackPanel>
                                                                     <TextBlock Text="{Binding SelectedResolvedTemplate.ScriptExtender.Name}"
                                                                                FontWeight="SemiBold"
-                                                                               Foreground="{StaticResource TextBrush}" />
+                                                                               Foreground="{DynamicResource TextBrush}" />
                                                                     <TextBlock Text="{Binding SelectedResolvedTemplate.ScriptExtender.LoaderExecutable}"
                                                                                Style="{StaticResource MutedTextStyle}"
                                                                                Margin="0,4,0,0" />
@@ -4308,7 +4261,7 @@
                                                 <StackPanel>
                                                     <TextBlock Text="Итоговый путь"
                                                                FontWeight="SemiBold"
-                                                               Foreground="{StaticResource TextBrush}" />
+                                                               Foreground="{DynamicResource TextBrush}" />
                                                     <TextBlock Text="{Binding TargetProjectDirectory}"
                                                                Margin="0,8,0,0"
                                                                Style="{StaticResource MutedTextStyle}"
@@ -4317,8 +4270,8 @@
                                             </Border>
 
                                             <Border Style="{StaticResource InnerPanelStyle}"
-                                                    Background="{StaticResource AccentSoftBrush}"
-                                                    BorderBrush="{StaticResource AccentLineBrush}"
+                                                    Background="{DynamicResource AccentSoftBrush}"
+                                                    BorderBrush="{DynamicResource AccentLineBrush}"
                                                     Padding="16"
                                                     Margin="0,14,0,0"
                                                     Visibility="{Binding HasResolvedTemplate, Converter={StaticResource BooleanToVisibilityConverter}}">
@@ -4326,15 +4279,15 @@
                                                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                Text="&#xE790;"
                                                                FontSize="15"
-                                                               Foreground="#C9DFFF"
+                                                               Foreground="{DynamicResource TextSecondaryBrush}"
                                                                VerticalAlignment="Center"
                                                                Margin="0,0,10,0" />
                                                     <TextBlock VerticalAlignment="Center" TextWrapping="Wrap">
-                                                        <Run Text="Будет развёрнут шаблон: " Foreground="{StaticResource MutedTextBrush}" />
-                                                        <Run Text="базовый + " Foreground="{StaticResource TextBrush}" />
+                                                        <Run Text="Будет развёрнут шаблон: " Foreground="{DynamicResource MutedTextBrush}" />
+                                                        <Run Text="базовый + " Foreground="{DynamicResource TextBrush}" />
                                                         <Run Text="{Binding SelectedResolvedTemplate.DisplayName, Mode=OneWay}"
                                                              FontWeight="SemiBold"
-                                                             Foreground="{StaticResource TextBrush}" />
+                                                             Foreground="{DynamicResource TextBrush}" />
                                                     </TextBlock>
                                                 </StackPanel>
                                             </Border>
@@ -4349,15 +4302,15 @@
                                     </Grid.RowDefinitions>
 
                                     <TextBlock Text="{Binding ValidationMessage}"
-                                               Foreground="{StaticResource ErrorBrush}"
+                                               Foreground="{DynamicResource ErrorBrush}"
                                                FontSize="12"
                                                TextWrapping="Wrap" />
 
                                     <ProgressBar Grid.Row="1"
                                                  Height="3"
                                                  IsIndeterminate="True"
-                                                 Foreground="{StaticResource AccentHoverBrush}"
-                                                 Background="#050A11"
+                                                 Foreground="{DynamicResource AccentHoverBrush}"
+                                                 Background="{DynamicResource PanelSoftBrush}"
                                                  BorderThickness="0"
                                                  Margin="0,10,0,0"
                                                  Visibility="{Binding IsCreatingProject, Converter={StaticResource BooleanToVisibilityConverter}}" />
@@ -4450,17 +4403,17 @@
                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                            Text="&#xE7C3;"
                                            FontSize="38"
-                                           Foreground="{StaticResource AccentHoverBrush}"
+                                           Foreground="{DynamicResource AccentHoverBrush}"
                                            HorizontalAlignment="Center"
                                            Margin="0,0,0,16" />
                                 <TextBlock Text="Откройте или создайте сборку"
                                            FontSize="24"
                                            FontWeight="Black"
-                                           Foreground="{StaticResource TextBrush}"
+                                           Foreground="{DynamicResource TextBrush}"
                                            TextAlignment="Center" />
                                 <TextBlock Text="Выберите JSON-конфиг, чтобы загрузить отдельную конфигурацию сборки."
                                            Margin="0,10,0,0"
-                                           Foreground="{StaticResource MutedTextBrush}"
+                                           Foreground="{DynamicResource MutedTextBrush}"
                                            TextAlignment="Center"
                                            TextWrapping="Wrap" />
                                 <StackPanel Orientation="Horizontal"
@@ -4521,10 +4474,10 @@
                                             <TextBlock Text="{Binding TransferStepTitle}"
                                                        FontSize="31"
                                                        FontWeight="Black"
-                                                       Foreground="{StaticResource TextBrush}" />
+                                                       Foreground="{DynamicResource TextBrush}" />
                                             <TextBlock Text="{Binding TransferStepSubtitle}"
                                                        Margin="0,7,0,0"
-                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       Foreground="{DynamicResource MutedTextBrush}"
                                                        TextWrapping="Wrap" />
                                         </StackPanel>
 
@@ -4532,7 +4485,7 @@
                                                 Style="{StaticResource PillBorderStyle}"
                                                 VerticalAlignment="Top">
                                             <TextBlock Text="{Binding TransferStepCounter}"
-                                                       Foreground="{StaticResource TextBrush}"
+                                                       Foreground="{DynamicResource TextBrush}"
                                                        FontWeight="SemiBold" />
                                         </Border>
                                     </Grid>
@@ -4550,15 +4503,15 @@
                                                 <Style TargetType="{x:Type Border}" BasedOn="{StaticResource StepMarkerStyle}">
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding TransferStepIndex}" Value="0">
-                                                            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                                            <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                                            <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
                                             </Border.Style>
                                             <TextBlock Text="Источник"
                                                        FontWeight="SemiBold"
-                                                       Foreground="{StaticResource TextBrush}"
+                                                       Foreground="{DynamicResource TextBrush}"
                                                        TextAlignment="Center" />
                                         </Border>
 
@@ -4567,15 +4520,15 @@
                                                 <Style TargetType="{x:Type Border}" BasedOn="{StaticResource StepMarkerStyle}">
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding TransferStepIndex}" Value="1">
-                                                            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                                            <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                                            <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
                                             </Border.Style>
                                             <TextBlock Text="Назначение"
                                                        FontWeight="SemiBold"
-                                                       Foreground="{StaticResource TextBrush}"
+                                                       Foreground="{DynamicResource TextBrush}"
                                                        TextAlignment="Center" />
                                         </Border>
 
@@ -4585,15 +4538,15 @@
                                                     <Setter Property="Margin" Value="0" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding TransferStepIndex}" Value="2">
-                                                            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                                            <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                                            <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
                                             </Border.Style>
                                             <TextBlock Text="Проверка"
                                                        FontWeight="SemiBold"
-                                                       Foreground="{StaticResource TextBrush}"
+                                                       Foreground="{DynamicResource TextBrush}"
                                                        TextAlignment="Center" />
                                         </Border>
                                     </Grid>
@@ -4631,10 +4584,10 @@
                                                     <StackPanel>
                                                         <TextBlock Text="Что будет перенесено"
                                                                    FontWeight="SemiBold"
-                                                                   Foreground="{StaticResource TextBrush}" />
+                                                                   Foreground="{DynamicResource TextBrush}" />
                                                         <TextBlock Text="C++ core проверит структуру MO2, прочитает профиль, порядок модов и подготовит перенос без удаления исходной папки."
                                                                    Margin="0,8,0,0"
-                                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                                   Foreground="{DynamicResource MutedTextBrush}"
                                                                    TextWrapping="Wrap" />
                                                     </StackPanel>
                                                 </Border>
@@ -4691,14 +4644,14 @@
                                                     <StackPanel>
                                                         <TextBlock Text="Итоговый путь"
                                                                    FontWeight="SemiBold"
-                                                                   Foreground="{StaticResource TextBrush}" />
+                                                                   Foreground="{DynamicResource TextBrush}" />
                                                         <TextBlock Text="{Binding TransferTargetText}"
                                                                    Margin="0,8,0,0"
-                                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                                   Foreground="{DynamicResource MutedTextBrush}"
                                                                    TextWrapping="Wrap" />
                                                         <TextBlock Text="{Binding TransferAvailableText}"
                                                                    Margin="0,8,0,0"
-                                                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                                                   Foreground="{DynamicResource TextSecondaryBrush}"
                                                                    TextWrapping="Wrap" />
                                                     </StackPanel>
                                                 </Border>
@@ -4728,11 +4681,11 @@
                                                                 <TextBlock Text="{Binding TransferProjectName}"
                                                                            FontSize="22"
                                                                            FontWeight="Black"
-                                                                           Foreground="{StaticResource TextBrush}"
+                                                                           Foreground="{DynamicResource TextBrush}"
                                                                            TextWrapping="Wrap" />
                                                                 <TextBlock Text="{Binding TransferMessage}"
                                                                            Margin="0,6,0,0"
-                                                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                                                           Foreground="{DynamicResource TextSecondaryBrush}"
                                                                            TextWrapping="Wrap" />
                                                             </StackPanel>
                                                         </Grid>
@@ -4740,8 +4693,8 @@
                                                         <ProgressBar Grid.Row="1"
                                                                      Height="3"
                                                                      IsIndeterminate="True"
-                                                                     Foreground="{StaticResource AccentHoverBrush}"
-                                                                     Background="#050A11"
+                                                                     Foreground="{DynamicResource AccentHoverBrush}"
+                                                                     Background="{DynamicResource PanelSoftBrush}"
                                                                      BorderThickness="0"
                                                                      Margin="0,14,0,0"
                                                                      Visibility="{Binding IsAnalyzingTransfer, Converter={StaticResource BooleanToVisibilityConverter}}" />
@@ -4755,61 +4708,61 @@
                                                                 <ColumnDefinition Width="12" />
                                                                 <ColumnDefinition Width="*" />
                                                             </Grid.ColumnDefinitions>
-                                                            <Border Background="#0D1420"
-                                                                    BorderBrush="{StaticResource LineBrush}"
+                                                            <Border Background="{DynamicResource PanelRaisedBrush}"
+                                                                    BorderBrush="{DynamicResource LineBrush}"
                                                                     BorderThickness="1"
                                                                     CornerRadius="10"
                                                                     Padding="14">
                                                                 <StackPanel>
                                                                     <TextBlock Text="Моды"
-                                                                               Foreground="{StaticResource MutedTextBrush}"
+                                                                               Foreground="{DynamicResource MutedTextBrush}"
                                                                                FontSize="12" />
                                                                     <TextBlock Text="{Binding TransferModCountText}"
                                                                                Margin="0,5,0,0"
-                                                                               Foreground="{StaticResource TextBrush}"
+                                                                               Foreground="{DynamicResource TextBrush}"
                                                                                FontWeight="Black"
                                                                                TextWrapping="Wrap" />
                                                                 </StackPanel>
                                                             </Border>
                                                             <Border Grid.Column="2"
-                                                                    Background="#0D1420"
-                                                                    BorderBrush="{StaticResource LineBrush}"
+                                                                    Background="{DynamicResource PanelRaisedBrush}"
+                                                                    BorderBrush="{DynamicResource LineBrush}"
                                                                     BorderThickness="1"
                                                                     CornerRadius="10"
                                                                     Padding="14">
                                                                 <StackPanel>
                                                                     <TextBlock Text="Вес"
-                                                                               Foreground="{StaticResource MutedTextBrush}"
+                                                                               Foreground="{DynamicResource MutedTextBrush}"
                                                                                FontSize="12" />
                                                                     <TextBlock Text="{Binding TransferSizeText}"
                                                                                Margin="0,5,0,0"
-                                                                               Foreground="{StaticResource TextBrush}"
+                                                                               Foreground="{DynamicResource TextBrush}"
                                                                                FontWeight="Black" />
                                                                     <TextBlock Text="{Binding TransferAvailableText}"
                                                                                Margin="0,3,0,0"
-                                                                               Foreground="{StaticResource SubtleTextBrush}"
+                                                                               Foreground="{DynamicResource SubtleTextBrush}"
                                                                                FontSize="11"
                                                                                TextWrapping="Wrap" />
                                                                 </StackPanel>
                                                             </Border>
                                                             <Border Grid.Column="4"
-                                                                    Background="#0D1420"
-                                                                    BorderBrush="{StaticResource LineBrush}"
+                                                                    Background="{DynamicResource PanelRaisedBrush}"
+                                                                    BorderBrush="{DynamicResource LineBrush}"
                                                                     BorderThickness="1"
                                                                     CornerRadius="10"
                                                                     Padding="14">
                                                                 <StackPanel>
                                                                     <TextBlock Text="Профиль"
-                                                                               Foreground="{StaticResource MutedTextBrush}"
+                                                                               Foreground="{DynamicResource MutedTextBrush}"
                                                                                FontSize="12" />
                                                                     <TextBlock Text="{Binding TransferProfileText}"
                                                                                Margin="0,5,0,0"
-                                                                               Foreground="{StaticResource TextBrush}"
+                                                                               Foreground="{DynamicResource TextBrush}"
                                                                                FontWeight="Black"
                                                                                TextWrapping="Wrap" />
                                                                     <TextBlock Text="{Binding TransferGameText}"
                                                                                Margin="0,3,0,0"
-                                                                               Foreground="{StaticResource SubtleTextBrush}"
+                                                                               Foreground="{DynamicResource SubtleTextBrush}"
                                                                                FontSize="11"
                                                                                TextWrapping="Wrap" />
                                                                 </StackPanel>
@@ -4818,15 +4771,15 @@
                                                     </Grid>
                                                 </Border>
 
-                                                <Border Background="#241A12"
-                                                        BorderBrush="#6D4D1F"
+                                                <Border Background="{DynamicResource WarningSurfaceBrush}"
+                                                        BorderBrush="{DynamicResource WarningLineBrush}"
                                                         BorderThickness="1"
                                                         CornerRadius="10"
                                                         Padding="12"
                                                         Margin="0,14,0,0"
                                                         Visibility="{Binding HasTransferWarning, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <TextBlock Text="{Binding TransferWarningText}"
-                                                               Foreground="#FDE68A"
+                                                               Foreground="{DynamicResource WarningBrush}"
                                                                TextWrapping="Wrap" />
                                                 </Border>
 
@@ -4835,27 +4788,27 @@
                                                         Visibility="{Binding HasTransferAnalysis, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <Border.Style>
                                                         <Style TargetType="{x:Type Border}">
-                                                            <Setter Property="Background" Value="#2A1220" />
-                                                            <Setter Property="BorderBrush" Value="#7F1D3A" />
+                                                            <Setter Property="Background" Value="{DynamicResource ErrorSurfaceBrush}" />
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource ErrorLineBrush}" />
                                                             <Setter Property="BorderThickness" Value="1" />
                                                             <Setter Property="CornerRadius" Value="10" />
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding HasEnoughSpace}" Value="True">
-                                                                    <Setter Property="Background" Value="#10251D" />
-                                                                    <Setter Property="BorderBrush" Value="#2F9E68" />
+                                                                    <Setter Property="Background" Value="{DynamicResource SuccessSurfaceBrush}" />
+                                                                    <Setter Property="BorderBrush" Value="{DynamicResource SuccessLineBrush}" />
                                                                 </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
                                                     </Border.Style>
                                                     <TextBlock Text="{Binding TransferDiskSpaceText}"
-                                                               Foreground="{StaticResource TextBrush}"
+                                                               Foreground="{DynamicResource TextBrush}"
                                                                FontWeight="SemiBold"
                                                                TextWrapping="Wrap" />
                                                 </Border>
 
                                                 <TextBlock Text="{Binding TransferTargetText}"
                                                            Margin="0,12,0,0"
-                                                           Foreground="{StaticResource MutedTextBrush}"
+                                                           Foreground="{DynamicResource MutedTextBrush}"
                                                            FontSize="11"
                                                            TextWrapping="Wrap" />
                                             </StackPanel>
@@ -4869,15 +4822,15 @@
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
 
-                                        <Border Background="#2A1220"
-                                                BorderBrush="#7F1D3A"
+                                        <Border Background="{DynamicResource ErrorSurfaceBrush}"
+                                                BorderBrush="{DynamicResource ErrorLineBrush}"
                                                 BorderThickness="1"
                                                 CornerRadius="10"
                                                 Padding="12"
                                                 Margin="0,0,0,12"
                                                 Visibility="{Binding HasTransferError, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <TextBlock Text="{Binding TransferError}"
-                                                       Foreground="{StaticResource ErrorBrush}"
+                                                       Foreground="{DynamicResource ErrorBrush}"
                                                        TextWrapping="Wrap" />
                                         </Border>
 
@@ -4968,11 +4921,11 @@
                                         <Border Width="76"
                                                 Height="76"
                                                 CornerRadius="22"
-                                                Background="{StaticResource AccentGradientBrush}">
+                                                Background="{DynamicResource AccentGradientBrush}">
                                             <TextBlock FontFamily="Segoe MDL2 Assets"
                                                        Text="&#xE895;"
                                                        FontSize="31"
-                                                       Foreground="#F4F8FF"
+                                                       Foreground="{DynamicResource PrimaryForegroundBrush}"
                                                        HorizontalAlignment="Center"
                                                        VerticalAlignment="Center" />
                                         </Border>
@@ -4982,17 +4935,17 @@
                                             <TextBlock Text="{Binding TransferProcessTitle}"
                                                        FontSize="34"
                                                        FontWeight="Black"
-                                                       Foreground="{StaticResource TextBrush}" />
+                                                       Foreground="{DynamicResource TextBrush}" />
                                             <TextBlock Text="{Binding TransferProcessSubtitle}"
                                                        Margin="0,8,0,0"
-                                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}"
                                                        TextWrapping="Wrap" />
                                         </StackPanel>
                                     </Grid>
 
                                     <Border Grid.Row="1"
-                                            Background="#08101B"
-                                            BorderBrush="{StaticResource LineBrush}"
+                                            Background="{DynamicResource PanelSoftBrush}"
+                                            BorderBrush="{DynamicResource LineBrush}"
                                             BorderThickness="1"
                                             CornerRadius="12"
                                             Padding="18"
@@ -5006,16 +4959,16 @@
                                                 <TextBlock Text="{Binding TransferCurrentStep}"
                                                            FontSize="20"
                                                            FontWeight="Black"
-                                                           Foreground="{StaticResource TextBrush}"
+                                                           Foreground="{DynamicResource TextBrush}"
                                                            TextWrapping="Wrap" />
                                                 <TextBlock Text="{Binding TransferCurrentItem}"
                                                            Margin="0,6,0,0"
-                                                           Foreground="{StaticResource MutedTextBrush}"
+                                                           Foreground="{DynamicResource MutedTextBrush}"
                                                            TextWrapping="Wrap" />
                                             </StackPanel>
                                             <TextBlock Grid.Column="1"
                                                        Text="{Binding TransferOverallPercent, StringFormat={}{0}%}"
-                                                       Foreground="{StaticResource TextBrush}"
+                                                       Foreground="{DynamicResource TextBrush}"
                                                        FontSize="26"
                                                        FontWeight="Black"
                                                        Margin="18,0,0,0"
@@ -5026,7 +4979,7 @@
                                     <StackPanel Grid.Row="2"
                                                 VerticalAlignment="Top">
                                         <TextBlock Text="Общий прогресс"
-                                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
                                                    FontWeight="SemiBold" />
                                         <ProgressBar Style="{StaticResource DownloadProgressBarStyle}"
                                                      Value="{Binding TransferOverallPercent, Mode=OneWay}"
@@ -5041,41 +4994,41 @@
                                             </Grid.ColumnDefinitions>
                                             <StackPanel>
                                                 <TextBlock Text="Копирование файлов"
-                                                           Foreground="{StaticResource MutedTextBrush}"
+                                                           Foreground="{DynamicResource MutedTextBrush}"
                                                            FontWeight="SemiBold" />
                                                 <ProgressBar Style="{StaticResource DownloadProgressBarStyle}"
                                                              Value="{Binding TransferCopyPercent, Mode=OneWay}"
                                                              Maximum="100"
                                                              Margin="0,9,0,8" />
                                                 <TextBlock Text="{Binding TransferBytesText}"
-                                                           Foreground="{StaticResource SubtleTextBrush}"
+                                                           Foreground="{DynamicResource SubtleTextBrush}"
                                                            FontSize="11"
                                                            TextWrapping="Wrap" />
                                             </StackPanel>
                                             <StackPanel Grid.Column="2">
                                                 <TextBlock Text="База данных"
-                                                           Foreground="{StaticResource MutedTextBrush}"
+                                                           Foreground="{DynamicResource MutedTextBrush}"
                                                            FontWeight="SemiBold" />
                                                 <ProgressBar Style="{StaticResource DownloadProgressBarStyle}"
                                                              Value="{Binding TransferDatabasePercent, Mode=OneWay}"
                                                              Maximum="100"
                                                              Margin="0,9,0,8" />
                                                 <TextBlock Text="meta.ini переносится в instance.db"
-                                                           Foreground="{StaticResource SubtleTextBrush}"
+                                                           Foreground="{DynamicResource SubtleTextBrush}"
                                                            FontSize="11"
                                                            TextWrapping="Wrap" />
                                             </StackPanel>
                                         </Grid>
 
-                                        <Border Background="#2A1220"
-                                                BorderBrush="#7F1D3A"
+                                        <Border Background="{DynamicResource ErrorSurfaceBrush}"
+                                                BorderBrush="{DynamicResource ErrorLineBrush}"
                                                 BorderThickness="1"
                                                 CornerRadius="10"
                                                 Padding="12"
                                                 Margin="0,22,0,0"
                                                 Visibility="{Binding HasTransferError, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <TextBlock Text="{Binding TransferError}"
-                                                       Foreground="{StaticResource ErrorBrush}"
+                                                       Foreground="{DynamicResource ErrorBrush}"
                                                        TextWrapping="Wrap" />
                                         </Border>
                                     </StackPanel>
@@ -5086,7 +5039,7 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Text="{Binding TransferMessage}"
-                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   Foreground="{DynamicResource MutedTextBrush}"
                                                    TextWrapping="Wrap"
                                                    VerticalAlignment="Center" />
                                         <Button Grid.Column="1"

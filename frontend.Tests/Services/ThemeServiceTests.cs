@@ -1,78 +1,88 @@
 using System.IO;
 using System.Runtime.ExceptionServices;
 using System.Windows;
-using System.Threading;
 using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Media;
-using System.Windows.Threading;
+using System.Windows.Media.Effects;
 using Fluxora.App.Models;
 using Fluxora.App.Services;
 
 namespace Fluxora.App.Tests.Services;
 
+[Collection(TestCollections.WpfApplication)]
 public sealed class ThemeServiceTests
 {
     [Fact]
-    public void InitializeAsync_LightThemeRecolorsFrozenBrushesAndUsesGrayscaleResources()
+    public void ThemeResources_HaveMatchingShapeAndUpdateDynamicResources()
     {
         RunOnStaThread(() =>
         {
-            string directory = CreateTempDirectory();
+            bool createdApplication = Application.Current is null;
+            Application application = Application.Current ?? new Application
+            {
+                ShutdownMode = ShutdownMode.OnExplicitShutdown
+            };
+            application.Resources.MergedDictionaries.Clear();
 
+            string directory = CreateTempDirectory();
+            Window? host = null;
             try
             {
+                AssertThemeResourceShapeMatches();
+
+                ResourceDictionary existingDictionary = new();
+                existingDictionary["SentinelResource"] = "kept";
+                application.Resources.MergedDictionaries.Add(existingDictionary);
+
                 SettingsService settingsService = new(directory);
                 settingsService.InitializeAsync(TestContext.Current.CancellationToken).GetAwaiter().GetResult();
-                settingsService.SaveThemeAsync(AppTheme.Light, TestContext.Current.CancellationToken).GetAwaiter().GetResult();
 
-                SolidColorBrush frozenPanelBrush = new(Color.FromRgb(0x0A, 0x10, 0x18));
-                frozenPanelBrush.Freeze();
-                SolidColorBrush frozenTextBrush = new(Color.FromRgb(0xF4, 0xF8, 0xFF));
-                frozenTextBrush.Freeze();
-                SolidColorBrush frozenAccentBrush = new(Color.FromRgb(0x4D, 0x8D, 0xF7));
-                frozenAccentBrush.Freeze();
-                SolidColorBrush frozenWarningBrush = new(Color.FromRgb(0xFB, 0xBF, 0x24));
-                frozenWarningBrush.Freeze();
-                SolidColorBrush frozenSuccessBrush = new(Color.FromRgb(0x7D, 0xD3, 0xFC));
-                frozenSuccessBrush.Freeze();
-                LinearGradientBrush frozenAccentGradient = new(
-                    Color.FromRgb(0x6F, 0xA5, 0xFF),
-                    Color.FromRgb(0x1F, 0x5F, 0xCE),
-                    0);
-                frozenAccentGradient.Freeze();
-
-                TextBlock text = new()
+                Border panel = new();
+                panel.SetResourceReference(Border.BackgroundProperty, "PanelBrush");
+                TextBlock text = new() { Text = "Theme text" };
+                text.SetResourceReference(TextBlock.ForegroundProperty, "TextBrush");
+                panel.Child = text;
+                host = new Window
                 {
-                    Text = "Theme text",
-                    Foreground = frozenTextBrush
+                    Content = panel,
+                    Width = 1,
+                    Height = 1,
+                    ShowInTaskbar = false,
+                    WindowStyle = WindowStyle.None
                 };
-                Border panel = new()
-                {
-                    Background = frozenPanelBrush,
-                    Child = text
-                };
-                panel.Resources["AccentBrush"] = frozenAccentBrush;
-                panel.Resources["WarningBrush"] = frozenWarningBrush;
-                panel.Resources["SuccessBrush"] = frozenSuccessBrush;
-                panel.Resources["AccentGradientBrush"] = frozenAccentGradient;
+                host.Show();
 
+                int themeChangedCount = 0;
                 ThemeService themeService = new(settingsService);
+                themeService.ThemeChanged += (_, _) => themeChangedCount++;
                 themeService.InitializeAsync(TestContext.Current.CancellationToken).GetAwaiter().GetResult();
-                themeService.ApplyCurrentThemeTo(panel);
 
+                Assert.Equal(AppTheme.Dark, themeService.CurrentTheme);
+                Assert.Single(ThemeDictionaries(application.Resources));
+                Assert.Same(existingDictionary, application.Resources.MergedDictionaries[0]);
+                Assert.Equal(Color.FromRgb(0x0A, 0x10, 0x18), Solid(panel.Background).Color);
+                Assert.Equal(Color.FromRgb(0xF4, 0xF8, 0xFF), Solid(text.Foreground).Color);
+
+                themeService.SetThemeAsync(AppTheme.Light, TestContext.Current.CancellationToken).GetAwaiter().GetResult();
+
+                Assert.Equal(AppTheme.Light, themeService.CurrentTheme);
+                Assert.True(themeService.IsLightThemeEnabled);
+                Assert.Equal(1, themeChangedCount);
+                Assert.Equal(AppTheme.Light, settingsService.Theme);
+                Assert.Single(ThemeDictionaries(application.Resources));
+                Assert.Same(existingDictionary, application.Resources.MergedDictionaries[0]);
                 Assert.Equal(Color.FromRgb(0xFF, 0xFF, 0xFF), Solid(panel.Background).Color);
-                Assert.Equal(Color.FromRgb(0x11, 0x11, 0x11), Solid(text.Foreground).Color);
-                AssertGrayscale(Solid(panel.Resources["AccentBrush"]).Color);
-                AssertGrayscale(Solid(panel.Resources["WarningBrush"]).Color);
-                AssertGrayscale(Solid(panel.Resources["SuccessBrush"]).Color);
-                foreach (GradientStop stop in Gradient(panel.Resources["AccentGradientBrush"]).GradientStops)
-                {
-                    AssertGrayscale(stop.Color);
-                }
+                Assert.Equal(Color.FromRgb(0x11, 0x18, 0x27), Solid(text.Foreground).Color);
             }
             finally
             {
+                host?.Close();
+                application.Resources.MergedDictionaries.Clear();
+                if (createdApplication)
+                {
+                    application.Shutdown();
+                }
+
                 if (Directory.Exists(directory))
                 {
                     Directory.Delete(directory, recursive: true);
@@ -81,87 +91,44 @@ public sealed class ThemeServiceTests
         });
     }
 
-    [Fact]
-    public void ApplyCurrentThemeTo_LightThemeRecolorsRecycledSeparatorRows()
+    private static void AssertThemeResourceShapeMatches()
     {
-        RunOnStaThread(() =>
+        ResourceDictionary dark = LoadThemeDictionary("DefaultTheme.xaml");
+        ResourceDictionary light = LoadThemeDictionary("LightTheme.xaml");
+
+        string[] darkKeys = dark.Keys.OfType<string>().Order(StringComparer.Ordinal).ToArray();
+        string[] lightKeys = light.Keys.OfType<string>().Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(darkKeys, lightKeys);
+
+        foreach (string key in darkKeys)
         {
-            string directory = CreateTempDirectory();
+            Assert.Equal(dark[key].GetType(), light[key].GetType());
+        }
 
-            try
-            {
-                SettingsService settingsService = new(directory);
-                settingsService.InitializeAsync(TestContext.Current.CancellationToken).GetAwaiter().GetResult();
-                settingsService.SaveThemeAsync(AppTheme.Light, TestContext.Current.CancellationToken).GetAwaiter().GetResult();
-
-                SolidColorBrush separatorBackground = new(Color.FromRgb(0x05, 0x0A, 0x11));
-                separatorBackground.Freeze();
-                SolidColorBrush separatorForeground = new(Color.FromRgb(0x6F, 0xA5, 0xFF));
-                separatorForeground.Freeze();
-
-                DataGridRow row = new()
-                {
-                    DataContext = new RecycledThemeRow(false),
-                    Style = CreateSeparatorRowStyle(separatorBackground, separatorForeground)
-                };
-
-                ThemeService themeService = new(settingsService);
-                themeService.InitializeAsync(TestContext.Current.CancellationToken).GetAwaiter().GetResult();
-                themeService.ApplyCurrentThemeTo(row);
-
-                row.DataContext = new RecycledThemeRow(true);
-                DrainDispatcher();
-
-                Assert.Equal(Color.FromRgb(0xF2, 0xF2, 0xF2), Solid(row.Background).Color);
-                Assert.Equal(Color.FromRgb(0x00, 0x00, 0x00), Solid(row.Foreground).Color);
-            }
-            finally
-            {
-                if (Directory.Exists(directory))
-                {
-                    Directory.Delete(directory, recursive: true);
-                }
-            }
-        });
+        Assert.IsType<SolidColorBrush>(dark["TextBrush"]);
+        Assert.IsType<SolidColorBrush>(dark["PanelBrush"]);
+        Assert.IsAssignableFrom<GradientBrush>(dark["AppBackgroundBrush"]);
+        Assert.IsAssignableFrom<GradientBrush>(dark["ProgressGradientBrush"]);
+        Assert.IsType<DropShadowEffect>(dark["PanelShadow"]);
     }
 
-    private static Style CreateSeparatorRowStyle(Brush separatorBackground, Brush separatorForeground)
+    private static ResourceDictionary LoadThemeDictionary(string fileName)
     {
-        Style style = new(typeof(DataGridRow));
-        style.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.Transparent));
-        style.Setters.Add(new Setter(Control.ForegroundProperty, new SolidColorBrush(Color.FromRgb(0xF4, 0xF8, 0xFF))));
-
-        DataTrigger separatorTrigger = new()
+        return new ResourceDictionary
         {
-            Binding = new Binding(nameof(RecycledThemeRow.IsSeparator)),
-            Value = true
+            Source = new Uri($"pack://application:,,,/FluxoraModding;component/Themes/{fileName}", UriKind.Absolute)
         };
-        separatorTrigger.Setters.Add(new Setter(Control.BackgroundProperty, separatorBackground));
-        separatorTrigger.Setters.Add(new Setter(Control.ForegroundProperty, separatorForeground));
-        style.Triggers.Add(separatorTrigger);
-
-        return style;
     }
 
-    private static SolidColorBrush Solid(object value)
+    private static IEnumerable<ResourceDictionary> ThemeDictionaries(ResourceDictionary resources)
     {
-        return Assert.IsType<SolidColorBrush>(value);
+        return resources.MergedDictionaries.Where(dictionary =>
+            dictionary.Source?.OriginalString.Contains("/Themes/", StringComparison.OrdinalIgnoreCase) == true);
     }
 
-    private static GradientBrush Gradient(object value)
+    private static SolidColorBrush Solid(Brush? brush)
     {
-        return Assert.IsAssignableFrom<GradientBrush>(value);
-    }
-
-    private static void AssertGrayscale(Color color)
-    {
-        Assert.Equal(color.R, color.G);
-        Assert.Equal(color.G, color.B);
-    }
-
-    private static void DrainDispatcher()
-    {
-        Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+        return Assert.IsType<SolidColorBrush>(brush);
     }
 
     private static void RunOnStaThread(Action test)
@@ -195,6 +162,4 @@ public sealed class ThemeServiceTests
         Directory.CreateDirectory(directory);
         return directory;
     }
-
-    private sealed record RecycledThemeRow(bool IsSeparator);
 }

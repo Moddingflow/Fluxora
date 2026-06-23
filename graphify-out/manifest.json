@@ -755,8 +755,8 @@
     "semantic_hash": ""
   },
   "frontend.Tests/ViewModels/FluxPackInstallProcessViewModelTests.cs": {
-    "mtime": 1781856413.1871014,
-    "ast_hash": "7f7e1581e44977a8d6b1db4512e4233f",
+    "mtime": 1782228312.0312939,
+    "ast_hash": "841bdcb4bc7142e96420bf24ab1296ef",
     "semantic_hash": ""
   },
   "frontend.Tests/ViewModels/FluxPackPackageProcessViewModelTests.cs": {
@@ -875,8 +875,8 @@
     "semantic_hash": ""
   },
   "frontend/Fluxora.App.csproj": {
-    "mtime": 1781766145.3699062,
-    "ast_hash": "de100b2d9982640b6e8bda15dd5dd3b6",
+    "mtime": 1782226976.2902527,
+    "ast_hash": "2dd69a6f3133b1fab2ba8c0bbb9365df",
     "semantic_hash": ""
   },
   "frontend/FomodInstallerWindow.xaml.cs": {
@@ -1110,13 +1110,13 @@
     "semantic_hash": ""
   },
   "frontend/Services/DragVisualAdorner.cs": {
-    "mtime": 1781871548.753811,
-    "ast_hash": "83b679d3d8d76c3f33600f62a653e87c",
+    "mtime": 1782228268.1682143,
+    "ast_hash": "a6e4e72fe3f02930d96ea388784560ef",
     "semantic_hash": ""
   },
   "frontend/Services/DropIndicatorAdorner.cs": {
-    "mtime": 1781766640.087642,
-    "ast_hash": "be8689fbac85b4901b90b22b59fe2a94",
+    "mtime": 1782228287.1903992,
+    "ast_hash": "6b42fa542fa194e90352c5446ead37eb",
     "semantic_hash": ""
   },
   "frontend/Services/ExecutableIconSourceConverter.cs": {
@@ -1245,8 +1245,8 @@
     "semantic_hash": ""
   },
   "frontend/Services/MarqueeSelectionAdorner.cs": {
-    "mtime": 1782220731.9563797,
-    "ast_hash": "cb5fd6df9bf5feba302fba6c08e91620",
+    "mtime": 1782228292.628351,
+    "ast_hash": "2048b2e74893107d0e66883b399374c7",
     "semantic_hash": ""
   },
   "frontend/Services/MarqueeSelectionTracker.cs": {
@@ -1430,8 +1430,8 @@
     "semantic_hash": ""
   },
   "frontend/ViewModels/FluxPackInstallProviderViewModel.cs": {
-    "mtime": 1782220732.2156177,
-    "ast_hash": "98734dd7949468b30c1ebb2529f038ae",
+    "mtime": 1782228101.1233504,
+    "ast_hash": "6f2e7d58a76d20f5db972ec2c0c2c7fe",
     "semantic_hash": ""
   },
   "frontend/ViewModels/FluxPackPackageProcessViewModel.cs": {
@@ -1970,13 +1970,18 @@
     "semantic_hash": ""
   },
   "frontend/Services/ThemeService.cs": {
-    "mtime": 1782225864.9302735,
-    "ast_hash": "0cdbfeedd42ec57b00ed05bf5c02e3a1",
+    "mtime": 1782226961.3533647,
+    "ast_hash": "034fe9a178106af03e5a4cbca408c9c6",
     "semantic_hash": ""
   },
   "frontend.Tests/Services/ThemeServiceTests.cs": {
-    "mtime": 1782224514.8174922,
-    "ast_hash": "03950ea04c1bedae0599eb1e1059f27c",
+    "mtime": 1782227993.7520726,
+    "ast_hash": "25269da56b355aa5a3c4346227ed4ee3",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/WpfApplicationTestCollection.cs": {
+    "mtime": 1782227990.2075915,
+    "ast_hash": "cb4c8afd99fbb0c392b2fa5f0c4bcc27",
     "semantic_hash": ""
   }
 }

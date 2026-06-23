@@ -1,0 +1,327 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="TextBrush" Color="#F4F8FF" />
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C7D4E7" />
+    <SolidColorBrush x:Key="MutedTextBrush" Color="#8B9AB0" />
+    <SolidColorBrush x:Key="SubtleTextBrush" Color="#697A91" />
+    <SolidColorBrush x:Key="PrimaryForegroundBrush" Color="#F4F8FF" />
+    <SolidColorBrush x:Key="IconForegroundBrush" Color="#F4F8FF" />
+    <SolidColorBrush x:Key="BrandIconForegroundBrush" Color="#F4F4F5" />
+    <SolidColorBrush x:Key="OverlayScrimBrush" Color="#E602050A" />
+    <SolidColorBrush x:Key="SelectionBrush" Color="#316DCE" />
+
+    <SolidColorBrush x:Key="AccentBrush" Color="#4D8DF7" />
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="#6FA5FF" />
+    <SolidColorBrush x:Key="AccentSoftBrush" Color="#091C35" />
+    <SolidColorBrush x:Key="AccentLineBrush" Color="#305B94" />
+    <SolidColorBrush x:Key="NavSelectedBrush" Color="#1B2F46" />
+    <SolidColorBrush x:Key="NavSelectedLineBrush" Color="#5C8FE5" />
+
+    <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#02050A" />
+    <SolidColorBrush x:Key="ChromeBrush" Color="#040810" />
+    <SolidColorBrush x:Key="ChromeLineBrush" Color="#101A29" />
+    <SolidColorBrush x:Key="ChromeBrandBrush" Color="#F4F8FF" />
+    <SolidColorBrush x:Key="PanelBrush" Color="#0A1018" />
+    <SolidColorBrush x:Key="PanelRaisedBrush" Color="#0F1724" />
+    <SolidColorBrush x:Key="PanelSoftBrush" Color="#050A11" />
+    <SolidColorBrush x:Key="PanelHoverBrush" Color="#142033" />
+    <SolidColorBrush x:Key="LineBrush" Color="#1B2B41" />
+    <SolidColorBrush x:Key="LineHoverBrush" Color="#2F4E75" />
+
+    <SolidColorBrush x:Key="WarningBrush" Color="#FBBF24" />
+    <SolidColorBrush x:Key="WarningSurfaceBrush" Color="#241A12" />
+    <SolidColorBrush x:Key="WarningLineBrush" Color="#6D4D1F" />
+    <SolidColorBrush x:Key="ErrorBrush" Color="#FB7185" />
+    <SolidColorBrush x:Key="ErrorSurfaceBrush" Color="#2A1220" />
+    <SolidColorBrush x:Key="ErrorLineBrush" Color="#7F1D3A" />
+    <SolidColorBrush x:Key="SuccessBrush" Color="#7DD3FC" />
+    <SolidColorBrush x:Key="SuccessSurfaceBrush" Color="#162622" />
+    <SolidColorBrush x:Key="SuccessLineBrush" Color="#356B68" />
+    <SolidColorBrush x:Key="DangerBrush" Color="#E11D48" />
+    <SolidColorBrush x:Key="DangerHoverBrush" Color="#F43F5E" />
+    <SolidColorBrush x:Key="DangerSoftBrush" Color="#2A1622" />
+    <SolidColorBrush x:Key="DangerIconBrush" Color="#FB7185" />
+    <SolidColorBrush x:Key="DangerGhostBrush" Color="#18E11D48" />
+    <SolidColorBrush x:Key="DangerGhostHoverBrush" Color="#2AE11D48" />
+    <SolidColorBrush x:Key="DangerGhostPressedBrush" Color="#3BE11D48" />
+    <SolidColorBrush x:Key="DangerOverlayBrush" Color="#66D83B4C" />
+
+    <SolidColorBrush x:Key="ConflictOverwritesBrush" Color="#22C55E" />
+    <SolidColorBrush x:Key="ConflictOverwrittenBrush" Color="#EF4444" />
+    <SolidColorBrush x:Key="ConflictFullyOverwrittenBrush" Color="#9CA3AF" />
+    <SolidColorBrush x:Key="ConflictOverwritesIconBrush" Color="#06140B" />
+    <SolidColorBrush x:Key="ConflictOverwrittenIconBrush" Color="#190707" />
+
+    <SolidColorBrush x:Key="AccentGhostBrush" Color="#233766A4" />
+    <SolidColorBrush x:Key="TreeNodeHoverBrush" Color="#171B2738" />
+
+    <SolidColorBrush x:Key="ProviderDefaultBrush" Color="#A8CAFF" />
+    <SolidColorBrush x:Key="ProviderNexusBrush" Color="#F97316" />
+    <SolidColorBrush x:Key="ProviderGitHubBrush" Color="#E5E7EB" />
+    <SolidColorBrush x:Key="ProviderMegaBrush" Color="#EF4444" />
+    <SolidColorBrush x:Key="ProviderModernFlowBrush" Color="#38BDF8" />
+    <SolidColorBrush x:Key="ProviderDirectBrush" Color="#22C55E" />
+    <SolidColorBrush x:Key="ProviderDefaultForegroundBrush" Color="#111827" />
+    <SolidColorBrush x:Key="ProviderNexusForegroundBrush" Color="#111827" />
+    <SolidColorBrush x:Key="ProviderGitHubForegroundBrush" Color="#111827" />
+    <SolidColorBrush x:Key="ProviderMegaForegroundBrush" Color="#190707" />
+    <SolidColorBrush x:Key="ProviderModernFlowForegroundBrush" Color="#06140B" />
+    <SolidColorBrush x:Key="ProviderDirectForegroundBrush" Color="#06140B" />
+
+    <SolidColorBrush x:Key="IconTileBrush" Color="#091C35" />
+    <SolidColorBrush x:Key="IconTileBorderBrush" Color="#305B94" />
+    <SolidColorBrush x:Key="IconTileForegroundBrush" Color="#F4F8FF" />
+    <SolidColorBrush x:Key="ProgressTrackBrush" Color="#0D1420" />
+    <SolidColorBrush x:Key="ProgressTrackBorderBrush" Color="#1E3555" />
+    <SolidColorBrush x:Key="ProgressPulseBorderBrush" Color="#6FA5FF" />
+    <SolidColorBrush x:Key="ToggleOnBrush" Color="#4D8DF7" />
+    <SolidColorBrush x:Key="ToggleOnHoverBrush" Color="#6FA5FF" />
+    <SolidColorBrush x:Key="ToggleOnBorderBrush" Color="#6FA5FF" />
+    <SolidColorBrush x:Key="ToggleThumbOnBrush" Color="#F4F8FF" />
+
+    <SolidColorBrush x:Key="SplashTextBrush" Color="#F4F8FF" />
+    <SolidColorBrush x:Key="SplashSecondaryTextBrush" Color="#C7D4E7" />
+    <SolidColorBrush x:Key="SplashMutedTextBrush" Color="#8C9CB3" />
+    <SolidColorBrush x:Key="SplashErrorBrush" Color="#FB7185" />
+    <SolidColorBrush x:Key="SplashRingBrush" Color="#17304F" />
+    <SolidColorBrush x:Key="SplashRingFillBrush" Color="#091C35" />
+    <SolidColorBrush x:Key="SplashProgressTrackBrush" Color="#152033" />
+
+    <SolidColorBrush x:Key="CreationTextBrush" Color="#F4F8FF" />
+    <SolidColorBrush x:Key="CreationSecondaryTextBrush" Color="#D5E2F2" />
+    <SolidColorBrush x:Key="CreationMutedTextBrush" Color="#93A4BC" />
+    <SolidColorBrush x:Key="CreationSubtleTextBrush" Color="#70839A" />
+    <SolidColorBrush x:Key="CreationErrorBrush" Color="#FB7185" />
+    <SolidColorBrush x:Key="CreationCancelBrush" Color="#FBBF24" />
+    <SolidColorBrush x:Key="CreationSuccessBrush" Color="#7DD3FC" />
+    <SolidColorBrush x:Key="CreationPanelOverlayBrush" Color="#E8121A27" />
+    <SolidColorBrush x:Key="CreationRingBrush" Color="#17304F" />
+    <SolidColorBrush x:Key="CreationSuccessRingBrush" Color="#7DD3FC" />
+    <SolidColorBrush x:Key="CreationStepCompleteBrush" Color="#182638" />
+    <SolidColorBrush x:Key="CreationStepCompleteBorderBrush" Color="#3B82F6" />
+    <SolidColorBrush x:Key="CreationStepActiveBrush" Color="#10213D" />
+    <SolidColorBrush x:Key="CreationStepActiveBorderBrush" Color="#6FA5FF" />
+    <SolidColorBrush x:Key="CreationStepCancelBorderBrush" Color="#F59E0B" />
+
+    <SolidColorBrush x:Key="DeletionTextBrush" Color="#F4F8FF" />
+    <SolidColorBrush x:Key="DeletionSecondaryTextBrush" Color="#F6C8D1" />
+    <SolidColorBrush x:Key="DeletionMutedTextBrush" Color="#96A8C0" />
+    <SolidColorBrush x:Key="DeletionErrorBrush" Color="#FB7185" />
+    <SolidColorBrush x:Key="DeletionTrackBrush" Color="#1B111B" />
+    <SolidColorBrush x:Key="DeletionButtonBrush" Color="#21131D" />
+    <SolidColorBrush x:Key="DeletionRingBrush" Color="#3A1F2C" />
+    <SolidColorBrush x:Key="DeletionRingFillBrush" Color="#3A1A2A" />
+
+    <SolidColorBrush x:Key="OperationTextBrush" Color="#F8FAFC" />
+    <SolidColorBrush x:Key="OperationSecondaryTextBrush" Color="#C8D0DD" />
+    <SolidColorBrush x:Key="OperationMutedTextBrush" Color="#8D99AA" />
+    <SolidColorBrush x:Key="OperationErrorBrush" Color="#FB7185" />
+    <SolidColorBrush x:Key="OperationTrackBrush" Color="#242A38" />
+    <SolidColorBrush x:Key="OperationButtonBrush" Color="#263044" />
+    <SolidColorBrush x:Key="OperationButtonBorderBrush" Color="#3B465C" />
+    <SolidColorBrush x:Key="OperationButtonHoverBrush" Color="#303B52" />
+    <SolidColorBrush x:Key="OperationButtonHoverBorderBrush" Color="#5B6B88" />
+    <SolidColorBrush x:Key="OperationButtonPressedBrush" Color="#1E2636" />
+    <SolidColorBrush x:Key="OperationRingBrush" Color="#273246" />
+    <SolidColorBrush x:Key="OperationRingAccentBrush" Color="#67E8F9" />
+
+    <SolidColorBrush x:Key="LaunchTextBrush" Color="#F8FAFC" />
+    <SolidColorBrush x:Key="LaunchSecondaryTextBrush" Color="#BFE9E6" />
+    <SolidColorBrush x:Key="LaunchMutedTextBrush" Color="#8AA6A4" />
+    <SolidColorBrush x:Key="LaunchErrorBrush" Color="#FB7185" />
+    <SolidColorBrush x:Key="LaunchTrackBrush" Color="#102127" />
+    <SolidColorBrush x:Key="LaunchTrackBorderBrush" Color="#24515A" />
+    <SolidColorBrush x:Key="LaunchButtonBrush" Color="#11242B" />
+    <SolidColorBrush x:Key="LaunchButtonBorderBrush" Color="#2C5C65" />
+    <SolidColorBrush x:Key="LaunchButtonHoverBrush" Color="#17313A" />
+    <SolidColorBrush x:Key="LaunchButtonHoverBorderBrush" Color="#5EEAD4" />
+    <SolidColorBrush x:Key="LaunchRingBrush" Color="#1C3A42" />
+    <SolidColorBrush x:Key="LaunchDividerBrush" Color="#24515A" />
+
+    <SolidColorBrush x:Key="InstallTextBrush" Color="#F4F8FF" />
+    <SolidColorBrush x:Key="InstallSecondaryTextBrush" Color="#DDE7F0" />
+    <SolidColorBrush x:Key="InstallMutedTextBrush" Color="#9BAEC0" />
+    <SolidColorBrush x:Key="InstallPanelBrush" Color="#111A20" />
+    <SolidColorBrush x:Key="InstallPanelSoftBrush" Color="#17232B" />
+    <SolidColorBrush x:Key="InstallBorderBrush" Color="#314555" />
+    <SolidColorBrush x:Key="InstallErrorBrush" Color="#FB7185" />
+    <SolidColorBrush x:Key="InstallSuccessBrush" Color="#5EEAD4" />
+    <SolidColorBrush x:Key="InstallTrackBrush" Color="#0B1117" />
+    <SolidColorBrush x:Key="InstallButtonBrush" Color="#182632" />
+    <SolidColorBrush x:Key="InstallButtonHoverBrush" Color="#203444" />
+    <SolidColorBrush x:Key="InstallRingBrush" Color="#2C4655" />
+    <SolidColorBrush x:Key="InstallRingFillBrush" Color="#111A20" />
+
+    <SolidColorBrush x:Key="PackageTextBrush" Color="#F4F8FF" />
+    <SolidColorBrush x:Key="PackageSecondaryTextBrush" Color="#D6F4EE" />
+    <SolidColorBrush x:Key="PackageMutedTextBrush" Color="#93B4AD" />
+    <SolidColorBrush x:Key="PackageSubtleTextBrush" Color="#6F8B86" />
+    <SolidColorBrush x:Key="PackageErrorBrush" Color="#FB7185" />
+    <SolidColorBrush x:Key="PackageSuccessBrush" Color="#5EEAD4" />
+    <SolidColorBrush x:Key="PackageTrackBrush" Color="#101A1E" />
+    <SolidColorBrush x:Key="PackageTrackBorderBrush" Color="#25454C" />
+    <SolidColorBrush x:Key="PackagePulseBorderBrush" Color="#5EEAD4" />
+    <SolidColorBrush x:Key="PackageButtonBrush" Color="#142228" />
+    <SolidColorBrush x:Key="PackageButtonBorderBrush" Color="#2F5960" />
+    <SolidColorBrush x:Key="PackageButtonHoverBrush" Color="#193138" />
+    <SolidColorBrush x:Key="PackageButtonHoverBorderBrush" Color="#5EEAD4" />
+    <SolidColorBrush x:Key="PackageStepCardBrush" Color="#111C21" />
+    <SolidColorBrush x:Key="PackageStepCardBorderBrush" Color="#263B43" />
+    <SolidColorBrush x:Key="PackageStatusBrush" Color="#17252B" />
+    <SolidColorBrush x:Key="PackageStatusBorderBrush" Color="#31515A" />
+    <SolidColorBrush x:Key="PackagePanelOverlayBrush" Color="#E808101B" />
+    <SolidColorBrush x:Key="PackageRingBrush" Color="#244047" />
+    <SolidColorBrush x:Key="PackageColumnBrush" Color="#0D171B" />
+    <SolidColorBrush x:Key="PackageStepCompleteBrush" Color="#14313A" />
+    <SolidColorBrush x:Key="PackageStepCompleteBorderBrush" Color="#22D3EE" />
+    <SolidColorBrush x:Key="PackageStepActiveBrush" Color="#192D34" />
+    <SolidColorBrush x:Key="PackageStepActiveBorderBrush" Color="#5EEAD4" />
+    <SolidColorBrush x:Key="PackageDividerBrush" Color="#31515A" />
+
+    <SolidColorBrush x:Key="WizardTextBrush" Color="#F4F8FF" />
+    <SolidColorBrush x:Key="WizardSecondaryTextBrush" Color="#D5E2F2" />
+    <SolidColorBrush x:Key="WizardMutedTextBrush" Color="#93A4BC" />
+    <SolidColorBrush x:Key="WizardSubtleTextBrush" Color="#697A91" />
+    <SolidColorBrush x:Key="WizardAccentBrush" Color="#4D8DF7" />
+    <SolidColorBrush x:Key="WizardAccentHoverBrush" Color="#91BDFF" />
+    <SolidColorBrush x:Key="WizardAccentSoftBrush" Color="#091C35" />
+    <SolidColorBrush x:Key="WizardAccentLineBrush" Color="#316DCE" />
+    <SolidColorBrush x:Key="WizardPanelBrush" Color="#0A1018" />
+    <SolidColorBrush x:Key="WizardPanelRaisedBrush" Color="#0F1724" />
+    <SolidColorBrush x:Key="WizardPanelSoftBrush" Color="#050A11" />
+    <SolidColorBrush x:Key="WizardLineBrush" Color="#1E3555" />
+    <SolidColorBrush x:Key="WizardErrorBrush" Color="#FB7185" />
+
+    <Color x:Key="PanelShadowColor">#03050A</Color>
+    <Color x:Key="ProgressShineTransparentColor">#00FFFFFF</Color>
+    <Color x:Key="ProgressShineSoftColor">#70FFFFFF</Color>
+    <Color x:Key="ProgressShineMediumColor">#80FFFFFF</Color>
+    <Color x:Key="ProgressShineBrightColor">#AAFFFFFF</Color>
+    <Color x:Key="ProcessBackdropStartColor">#F702050A</Color>
+    <Color x:Key="ProcessBackdropMidColor">#F4050A11</Color>
+    <Color x:Key="ProcessBackdropEndColor">#F508101B</Color>
+    <Color x:Key="OperationBackdropStartColor">#F602050A</Color>
+    <Color x:Key="OperationBackdropMidColor">#F3050A11</Color>
+    <Color x:Key="OperationBackdropEndColor">#F408101B</Color>
+    <Color x:Key="LaunchBackdropStartColor">#F602050A</Color>
+    <Color x:Key="LaunchBackdropMidColor">#F1050A11</Color>
+    <Color x:Key="LaunchBackdropEndColor">#F408101B</Color>
+    <Color x:Key="InstallBackdropStartColor">#F5070B12</Color>
+    <Color x:Key="InstallBackdropMidColor">#F0050A11</Color>
+    <Color x:Key="InstallBackdropEndColor">#F4050A11</Color>
+    <Color x:Key="PackageBackdropStartColor">#F702050A</Color>
+    <Color x:Key="PackageBackdropMidColor">#F30B141A</Color>
+    <Color x:Key="PackageBackdropEndColor">#F508101B</Color>
+    <Color x:Key="WizardBackdropStartColor">#FA02050A</Color>
+    <Color x:Key="WizardBackdropMidColor">#FC050A11</Color>
+    <Color x:Key="WizardBackdropEndColor">#FD08101B</Color>
+
+    <LinearGradientBrush x:Key="AppBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#02050A" Offset="0" />
+        <GradientStop Color="#050A11" Offset="0.55" />
+        <GradientStop Color="#08101B" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="HeroBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#142A4A" Offset="0" />
+        <GradientStop Color="#0E1A2B" Offset="0.58" />
+        <GradientStop Color="#0A1018" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="AccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#6FA5FF" Offset="0" />
+        <GradientStop Color="#3F7EEA" Offset="0.5" />
+        <GradientStop Color="#1F5FCE" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="ProgressGradientBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#7DD3FC" Offset="0" />
+        <GradientStop Color="#6FA5FF" Offset="0.55" />
+        <GradientStop Color="#9EC5FF" Offset="1" />
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="SplashWindowBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#10213D" Offset="0" />
+        <GradientStop Color="#040810" Offset="0.52" />
+        <GradientStop Color="#101827" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="SplashAccentBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#F4F8FF" Offset="0" />
+        <GradientStop Color="#C9DFFF" Offset="0.45" />
+        <GradientStop Color="#4D8DF7" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="SplashCoreBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#F4F8FF" Offset="0" />
+        <GradientStop Color="#C9DFFF" Offset="0.5" />
+        <GradientStop Color="#6FA5FF" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="SplashProgressBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#34D399" Offset="0" />
+        <GradientStop Color="#4D8DF7" Offset="0.5" />
+        <GradientStop Color="#6FA5FF" Offset="1" />
+    </LinearGradientBrush>
+
+    <LinearGradientBrush x:Key="CreationCoreBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#10213D" Offset="0" />
+        <GradientStop Color="#040810" Offset="0.5" />
+        <GradientStop Color="#101827" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="CreationProgressBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#7DD3FC" Offset="0" />
+        <GradientStop Color="#A8CAFF" Offset="0.5" />
+        <GradientStop Color="#6FA5FF" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="DeletionCoreBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#3A1A2A" Offset="0" />
+        <GradientStop Color="#140914" Offset="0.55" />
+        <GradientStop Color="#22131D" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="DeletionProgressBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#FB7185" Offset="0" />
+        <GradientStop Color="#F6C8D1" Offset="0.5" />
+        <GradientStop Color="#A8CAFF" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="OperationCoreBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#242A38" Offset="0" />
+        <GradientStop Color="#0B1018" Offset="0.55" />
+        <GradientStop Color="#1E2636" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="OperationProgressBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#7DD3FC" Offset="0" />
+        <GradientStop Color="#6FA5FF" Offset="0.5" />
+        <GradientStop Color="#9EC5FF" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="LaunchCoreBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#14313A" Offset="0" />
+        <GradientStop Color="#061217" Offset="0.55" />
+        <GradientStop Color="#102127" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="LaunchProgressBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#5EEAD4" Offset="0" />
+        <GradientStop Color="#7DD3FC" Offset="0.5" />
+        <GradientStop Color="#A8CAFF" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="InstallProgressBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#5EEAD4" Offset="0" />
+        <GradientStop Color="#38BDF8" Offset="0.5" />
+        <GradientStop Color="#A8CAFF" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="PackageCoreBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#14313A" Offset="0" />
+        <GradientStop Color="#081018" Offset="0.55" />
+        <GradientStop Color="#101A1E" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="PackageProgressBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#5EEAD4" Offset="0" />
+        <GradientStop Color="#7DD3FC" Offset="0.5" />
+        <GradientStop Color="#A8CAFF" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="WizardAccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#91BDFF" Offset="0" />
+        <GradientStop Color="#4D8DF7" Offset="0.5" />
+        <GradientStop Color="#316DCE" Offset="1" />
+    </LinearGradientBrush>
+
+    <DropShadowEffect x:Key="PanelShadow"
+                      BlurRadius="28"
+                      Color="#000000"
+                      Opacity="0.34"
+                      ShadowDepth="12" />
+</ResourceDictionary>
