@@ -13,25 +13,25 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
 
-        <SolidColorBrush x:Key="TextBrush" Color="#F7F4FF" />
-        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C5BEDA" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#918AA8" />
-        <SolidColorBrush x:Key="SubtleTextBrush" Color="#736D86" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#7C3AED" />
-        <SolidColorBrush x:Key="AccentHoverBrush" Color="#8B5CF6" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#241A46" />
-        <SolidColorBrush x:Key="AccentLineBrush" Color="#493184" />
-        <SolidColorBrush x:Key="PanelBrush" Color="#171523" />
-        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#201D31" />
-        <SolidColorBrush x:Key="PanelSoftBrush" Color="#11101B" />
-        <SolidColorBrush x:Key="PanelHoverBrush" Color="#27223A" />
-        <SolidColorBrush x:Key="LineBrush" Color="#302B46" />
-        <SolidColorBrush x:Key="LineHoverBrush" Color="#55467D" />
+        <SolidColorBrush x:Key="TextBrush" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C7D4E7" />
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#8B9AB0" />
+        <SolidColorBrush x:Key="SubtleTextBrush" Color="#697A91" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#4D8DF7" />
+        <SolidColorBrush x:Key="AccentHoverBrush" Color="#6FA5FF" />
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#091C35" />
+        <SolidColorBrush x:Key="AccentLineBrush" Color="#305B94" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#0A1018" />
+        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#0F1724" />
+        <SolidColorBrush x:Key="PanelSoftBrush" Color="#050A11" />
+        <SolidColorBrush x:Key="PanelHoverBrush" Color="#142033" />
+        <SolidColorBrush x:Key="LineBrush" Color="#1B2B41" />
+        <SolidColorBrush x:Key="LineHoverBrush" Color="#2F4E75" />
         <SolidColorBrush x:Key="ErrorBrush" Color="#FB7185" />
         <SolidColorBrush x:Key="SuccessBrush" Color="#34D399" />
 
         <DropShadowEffect x:Key="PanelShadow"
-                          Color="#06040D"
+                          Color="#03060B"
                           BlurRadius="22"
                           ShadowDepth="8"
                           Opacity="0.28" />
@@ -105,7 +105,7 @@
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="{StaticResource AccentHoverBrush}" />
-                    <Setter Property="BorderBrush" Value="#B197FC" />
+                    <Setter Property="BorderBrush" Value="#B8D4FF" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -190,7 +190,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-                                <Setter TargetName="Root" Property="Background" Value="#151322" />
+                                <Setter TargetName="Root" Property="Background" Value="#0D1420" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.62" />
@@ -212,7 +212,7 @@
             <Setter Property="ItemContainerStyle">
                 <Setter.Value>
                     <Style TargetType="{x:Type ComboBoxItem}">
-                        <Setter Property="Background" Value="#151322" />
+                        <Setter Property="Background" Value="#0D1420" />
                         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
                         <Setter Property="Padding" Value="9,7" />
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -683,7 +683,7 @@
                                                  Height="3"
                                                  IsIndeterminate="True"
                                                  Foreground="{StaticResource AccentHoverBrush}"
-                                                 Background="#0E0C16"
+                                                 Background="#050A11"
                                                  BorderThickness="0"
                                                  Margin="0,14,0,0"
                                                  Visibility="{Binding IsAnalyzingTransfer, Converter={StaticResource BooleanToVisibilityConverter}}" />
@@ -697,7 +697,7 @@
                                             <ColumnDefinition Width="12" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <Border Background="#151220"
+                                        <Border Background="#0D1420"
                                                 BorderBrush="{StaticResource LineBrush}"
                                                 BorderThickness="1"
                                                 CornerRadius="10"
@@ -714,7 +714,7 @@
                                             </StackPanel>
                                         </Border>
                                         <Border Grid.Column="2"
-                                                Background="#151220"
+                                                Background="#0D1420"
                                                 BorderBrush="{StaticResource LineBrush}"
                                                 BorderThickness="1"
                                                 CornerRadius="10"
@@ -735,7 +735,7 @@
                                             </StackPanel>
                                         </Border>
                                         <Border Grid.Column="4"
-                                                Background="#151220"
+                                                Background="#0D1420"
                                                 BorderBrush="{StaticResource LineBrush}"
                                                 BorderThickness="1"
                                                 CornerRadius="10"

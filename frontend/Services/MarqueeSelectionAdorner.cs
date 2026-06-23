@@ -9,8 +9,8 @@ namespace Fluxora.App.Services;
 
 internal sealed class MarqueeSelectionAdorner : Adorner
 {
-    private static readonly WpfBrush FillBrush = CreateFrozenBrush(WpfColor.FromArgb(42, 124, 92, 255));
-    private static readonly WpfPen StrokePen = CreateFrozenPen(WpfColor.FromArgb(190, 196, 181, 253), 1.25);
+    private static readonly WpfBrush FillBrush = CreateFrozenBrush(WpfColor.FromArgb(42, 77, 141, 247));
+    private static readonly WpfPen StrokePen = CreateFrozenPen(WpfColor.FromArgb(190, 168, 202, 255), 1.25);
     private const double BoundsEpsilon = 0.25;
 
     private Rect bounds = Rect.Empty;

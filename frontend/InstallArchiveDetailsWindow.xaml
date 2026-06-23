@@ -12,7 +12,7 @@
         MinHeight="480"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
-        Background="#171523"
+        Background="#0A1018"
         FontFamily="{StaticResource FluxoraFontBody}"
         FontWeight="Medium"
         TextOptions.TextFormattingMode="Display"
@@ -31,18 +31,18 @@
     </shell:WindowChrome.WindowChrome>
 
     <Window.Resources>
-        <SolidColorBrush x:Key="TextBrush" Color="#F7F4FF" />
-        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C5BEDA" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#918AA8" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#7C3AED" />
-        <SolidColorBrush x:Key="AccentHoverBrush" Color="#8B5CF6" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#241A46" />
-        <SolidColorBrush x:Key="PanelBrush" Color="#171523" />
-        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#201D31" />
-        <SolidColorBrush x:Key="PanelSoftBrush" Color="#11101B" />
-        <SolidColorBrush x:Key="PanelHoverBrush" Color="#27223A" />
-        <SolidColorBrush x:Key="LineBrush" Color="#302B46" />
-        <SolidColorBrush x:Key="LineHoverBrush" Color="#55467D" />
+        <SolidColorBrush x:Key="TextBrush" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C7D4E7" />
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#8B9AB0" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#4D8DF7" />
+        <SolidColorBrush x:Key="AccentHoverBrush" Color="#6FA5FF" />
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#091C35" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#0A1018" />
+        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#0F1724" />
+        <SolidColorBrush x:Key="PanelSoftBrush" Color="#050A11" />
+        <SolidColorBrush x:Key="PanelHoverBrush" Color="#142033" />
+        <SolidColorBrush x:Key="LineBrush" Color="#1B2B41" />
+        <SolidColorBrush x:Key="LineHoverBrush" Color="#2F4E75" />
         <SolidColorBrush x:Key="WarningBrush" Color="#FBBF24" />
 
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
@@ -359,7 +359,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="#2AE11D48" />
-                                <Setter Property="Foreground" Value="#F7F4FF" />
+                                <Setter Property="Foreground" Value="#F4F8FF" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -462,11 +462,11 @@
                                 <Setter TargetName="ItemsHost" Property="Visibility" Value="Collapsed" />
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="NodeSurface" Property="Background" Value="#1727223A" />
+                                <Setter TargetName="NodeSurface" Property="Background" Value="#171B2738" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="NodeSurface" Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                <Setter TargetName="NodeSurface" Property="BorderBrush" Value="#493184" />
+                                <Setter TargetName="NodeSurface" Property="BorderBrush" Value="#305B94" />
                             </Trigger>
                             <DataTrigger Binding="{Binding IsDragOver}" Value="True">
                                 <Setter TargetName="NodeSurface" Property="Background" Value="{StaticResource AccentSoftBrush}" />
@@ -495,7 +495,7 @@
                           Height="20"
                           HorizontalAlignment="Left"
                           VerticalAlignment="Center">
-                        <Border Background="#1B1728"
+                        <Border Background="#0E1A2B"
                                 BorderBrush="{StaticResource LineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="6" />
@@ -531,8 +531,8 @@
                     </StackPanel>
 
                     <Border Grid.Column="2"
-                            Background="#23493284"
-                            BorderBrush="#5840A4"
+                            Background="#233766A4"
+                            BorderBrush="#356FC6"
                             BorderThickness="1"
                             CornerRadius="7"
                             Padding="7,3"
@@ -542,7 +542,7 @@
                         <TextBlock Text="Изменено"
                                    FontSize="11"
                                    FontWeight="Bold"
-                                   Foreground="#D8CEFF" />
+                                   Foreground="#D8E8FF" />
                     </Border>
                 </Grid>
             </Border>

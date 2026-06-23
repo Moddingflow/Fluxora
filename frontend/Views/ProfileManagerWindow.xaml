@@ -10,7 +10,7 @@
         ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
-        Background="#080711"
+        Background="#02050A"
         FontFamily="{StaticResource FluxoraFontBody}"
         FontWeight="Medium"
         TextOptions.TextFormattingMode="Display"
@@ -31,31 +31,31 @@
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
 
-        <SolidColorBrush x:Key="TextBrush" Color="#F7F4FF" />
-        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C5BEDA" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#918AA8" />
-        <SolidColorBrush x:Key="SubtleTextBrush" Color="#736D86" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#7C3AED" />
-        <SolidColorBrush x:Key="AccentHoverBrush" Color="#8B5CF6" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#241A46" />
-        <SolidColorBrush x:Key="AccentLineBrush" Color="#493184" />
-        <SolidColorBrush x:Key="PanelBrush" Color="#171523" />
-        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#201D31" />
-        <SolidColorBrush x:Key="PanelSoftBrush" Color="#11101B" />
-        <SolidColorBrush x:Key="PanelHoverBrush" Color="#27223A" />
-        <SolidColorBrush x:Key="LineBrush" Color="#302B46" />
-        <SolidColorBrush x:Key="LineHoverBrush" Color="#55467D" />
+        <SolidColorBrush x:Key="TextBrush" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C7D4E7" />
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#8B9AB0" />
+        <SolidColorBrush x:Key="SubtleTextBrush" Color="#697A91" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#4D8DF7" />
+        <SolidColorBrush x:Key="AccentHoverBrush" Color="#6FA5FF" />
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#091C35" />
+        <SolidColorBrush x:Key="AccentLineBrush" Color="#305B94" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#0A1018" />
+        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#0F1724" />
+        <SolidColorBrush x:Key="PanelSoftBrush" Color="#050A11" />
+        <SolidColorBrush x:Key="PanelHoverBrush" Color="#142033" />
+        <SolidColorBrush x:Key="LineBrush" Color="#1B2B41" />
+        <SolidColorBrush x:Key="LineHoverBrush" Color="#2F4E75" />
         <SolidColorBrush x:Key="ErrorBrush" Color="#FB7185" />
         <SolidColorBrush x:Key="DangerSoftBrush" Color="#2A1622" />
 
         <LinearGradientBrush x:Key="AccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#8B5CF6" Offset="0" />
-            <GradientStop Color="#6D5DFB" Offset="0.62" />
-            <GradientStop Color="#5B21B6" Offset="1" />
+            <GradientStop Color="#6FA5FF" Offset="0" />
+            <GradientStop Color="#3F7EEA" Offset="0.62" />
+            <GradientStop Color="#1F5FCE" Offset="1" />
         </LinearGradientBrush>
 
         <DropShadowEffect x:Key="PanelShadow"
-                          Color="#05030B"
+                          Color="#03050A"
                           BlurRadius="30"
                           ShadowDepth="12"
                           Opacity="0.34" />
@@ -184,7 +184,7 @@
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource ActionButtonStyle}">
             <Setter Property="Background" Value="{StaticResource AccentGradientBrush}" />
-            <Setter Property="BorderBrush" Value="#9272F8" />
+            <Setter Property="BorderBrush" Value="#83B2FF" />
             <Setter Property="Foreground" Value="#FFFFFF" />
         </Style>
 
@@ -199,12 +199,12 @@
         <Style x:Key="ProfileTextBoxStyle" TargetType="{x:Type TextBox}">
             <Setter Property="Height" Value="38" />
             <Setter Property="Padding" Value="12,0" />
-            <Setter Property="Background" Value="#151322" />
+            <Setter Property="Background" Value="#0D1420" />
             <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
             <Setter Property="CaretBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="SelectionBrush" Value="#5F45B8" />
+            <Setter Property="SelectionBrush" Value="#316DCE" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
@@ -250,7 +250,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type ListBoxItem}">
                         <Border x:Name="Root"
-                                Background="#151322"
+                                Background="#0D1420"
                                 BorderBrush="{StaticResource LineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="11"
@@ -281,7 +281,7 @@
             CornerRadius="16"
             MouseLeftButtonDown="OnDragMove">
         <Border.Effect>
-            <DropShadowEffect Color="#05030B"
+            <DropShadowEffect Color="#03050A"
                               BlurRadius="34"
                               ShadowDepth="14"
                               Opacity="0.38" />
@@ -576,7 +576,7 @@
 
             <Border Grid.Row="2"
                     Margin="0,18,0,0"
-                    Background="#11101B"
+                    Background="#050A11"
                     BorderBrush="{StaticResource LineBrush}"
                     BorderThickness="1"
                     CornerRadius="11"

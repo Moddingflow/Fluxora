@@ -15,9 +15,9 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
 
-        <SolidColorBrush x:Key="DeletionTextBrush" Color="#F7F4FF" />
+        <SolidColorBrush x:Key="DeletionTextBrush" Color="#F4F8FF" />
         <SolidColorBrush x:Key="DeletionSecondaryTextBrush" Color="#F6C8D1" />
-        <SolidColorBrush x:Key="DeletionMutedTextBrush" Color="#A993A3" />
+        <SolidColorBrush x:Key="DeletionMutedTextBrush" Color="#96A8C0" />
         <SolidColorBrush x:Key="DeletionErrorBrush" Color="#FB7185" />
 
         <LinearGradientBrush x:Key="DeletionCoreBrush" StartPoint="0,0" EndPoint="1,1">
@@ -232,9 +232,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F7080711" Offset="0" />
-                <GradientStop Color="#F40D0A18" Offset="0.52" />
-                <GradientStop Color="#F5121022" Offset="1" />
+                <GradientStop Color="#F702050A" Offset="0" />
+                <GradientStop Color="#F4050A11" Offset="0.52" />
+                <GradientStop Color="#F508101B" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 

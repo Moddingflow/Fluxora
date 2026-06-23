@@ -15,7 +15,7 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
 
-        <SolidColorBrush x:Key="PackageTextBrush" Color="#F7F4FF" />
+        <SolidColorBrush x:Key="PackageTextBrush" Color="#F4F8FF" />
         <SolidColorBrush x:Key="PackageSecondaryTextBrush" Color="#D6F4EE" />
         <SolidColorBrush x:Key="PackageMutedTextBrush" Color="#93B4AD" />
         <SolidColorBrush x:Key="PackageSubtleTextBrush" Color="#6F8B86" />
@@ -23,15 +23,15 @@
         <SolidColorBrush x:Key="PackageSuccessBrush" Color="#5EEAD4" />
 
         <LinearGradientBrush x:Key="PackageCoreBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#F7F4FF" Offset="0" />
+            <GradientStop Color="#F4F8FF" Offset="0" />
             <GradientStop Color="#5EEAD4" Offset="0.42" />
-            <GradientStop Color="#8B5CF6" Offset="1" />
+            <GradientStop Color="#6FA5FF" Offset="1" />
         </LinearGradientBrush>
 
         <LinearGradientBrush x:Key="PackageProgressBrush" StartPoint="0,0" EndPoint="1,0">
             <GradientStop Color="#5EEAD4" Offset="0" />
             <GradientStop Color="#7DD3FC" Offset="0.48" />
-            <GradientStop Color="#A78BFA" Offset="1" />
+            <GradientStop Color="#A8CAFF" Offset="1" />
         </LinearGradientBrush>
 
         <Style x:Key="PackageProgressBarStyle" TargetType="{x:Type ProgressBar}">
@@ -233,9 +233,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F7080711" Offset="0" />
+                <GradientStop Color="#F702050A" Offset="0" />
                 <GradientStop Color="#F30B141A" Offset="0.5" />
-                <GradientStop Color="#F5101922" Offset="1" />
+                <GradientStop Color="#F508101B" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -245,12 +245,12 @@
                 VerticalAlignment="Center"
                 Margin="28"
                 Padding="26"
-                Background="#E8111C21"
+                Background="#E808101B"
                 BorderBrush="#31515A"
                 BorderThickness="1"
                 CornerRadius="16">
             <Border.Effect>
-                <DropShadowEffect Color="#03090B"
+                <DropShadowEffect Color="#02070A"
                                   BlurRadius="34"
                                   ShadowDepth="14"
                                   Opacity="0.45" />
@@ -302,7 +302,7 @@
                             <Ellipse x:Name="EchoArc"
                                      Width="62"
                                      Height="62"
-                                     Stroke="#F7F4FF"
+                                     Stroke="#F4F8FF"
                                      StrokeThickness="4"
                                      StrokeStartLineCap="Round"
                                      StrokeEndLineCap="Round"

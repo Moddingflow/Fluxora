@@ -10,7 +10,7 @@
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
-        Background="#171523"
+        Background="#0A1018"
         FontFamily="{StaticResource FluxoraFontBody}"
         FontWeight="Medium"
         TextOptions.TextFormattingMode="Display"
@@ -30,19 +30,19 @@
     </shell:WindowChrome.WindowChrome>
 
     <Window.Resources>
-        <SolidColorBrush x:Key="TextBrush" Color="#F7F4FF" />
-        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C5BEDA" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#918AA8" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#7C3AED" />
-        <SolidColorBrush x:Key="AccentHoverBrush" Color="#8B5CF6" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#241A46" />
-        <SolidColorBrush x:Key="AccentLineBrush" Color="#493184" />
-        <SolidColorBrush x:Key="PanelBrush" Color="#171523" />
-        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#201D31" />
-        <SolidColorBrush x:Key="PanelSoftBrush" Color="#11101B" />
-        <SolidColorBrush x:Key="PanelHoverBrush" Color="#27223A" />
-        <SolidColorBrush x:Key="LineBrush" Color="#302B46" />
-        <SolidColorBrush x:Key="LineHoverBrush" Color="#55467D" />
+        <SolidColorBrush x:Key="TextBrush" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C7D4E7" />
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#8B9AB0" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#4D8DF7" />
+        <SolidColorBrush x:Key="AccentHoverBrush" Color="#6FA5FF" />
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#091C35" />
+        <SolidColorBrush x:Key="AccentLineBrush" Color="#305B94" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#0A1018" />
+        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#0F1724" />
+        <SolidColorBrush x:Key="PanelSoftBrush" Color="#050A11" />
+        <SolidColorBrush x:Key="PanelHoverBrush" Color="#142033" />
+        <SolidColorBrush x:Key="LineBrush" Color="#1B2B41" />
+        <SolidColorBrush x:Key="LineHoverBrush" Color="#2F4E75" />
         <SolidColorBrush x:Key="ErrorBrush" Color="#FB7185" />
 
         <Style x:Key="DialogCloseButtonStyle" TargetType="{x:Type Button}">
@@ -79,7 +79,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="#2AE11D48" />
-                                <Setter Property="Foreground" Value="#F7F4FF" />
+                                <Setter Property="Foreground" Value="#F4F8FF" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="#3BE11D48" />
@@ -136,11 +136,11 @@
                BasedOn="{StaticResource DialogButtonStyle}">
             <Setter Property="Background" Value="{StaticResource AccentBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="Foreground" Value="#F7F4FF" />
+            <Setter Property="Foreground" Value="#F4F8FF" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="{StaticResource AccentHoverBrush}" />
-                    <Setter Property="BorderBrush" Value="#B197FC" />
+                    <Setter Property="BorderBrush" Value="#B8D4FF" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -194,7 +194,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-                                <Setter TargetName="Root" Property="Background" Value="#151322" />
+                                <Setter TargetName="Root" Property="Background" Value="#0D1420" />
                                 <Setter TargetName="FocusWash" Property="Opacity" Value="0.25" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">

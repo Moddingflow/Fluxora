@@ -14,7 +14,7 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
 
-        <SolidColorBrush x:Key="InstallTextBrush" Color="#F7F4FF" />
+        <SolidColorBrush x:Key="InstallTextBrush" Color="#F4F8FF" />
         <SolidColorBrush x:Key="InstallSecondaryTextBrush" Color="#DDE7F0" />
         <SolidColorBrush x:Key="InstallMutedTextBrush" Color="#9BAEC0" />
         <SolidColorBrush x:Key="InstallPanelBrush" Color="#111A20" />
@@ -26,7 +26,7 @@
         <LinearGradientBrush x:Key="InstallProgressBrush" StartPoint="0,0" EndPoint="1,0">
             <GradientStop Color="#5EEAD4" Offset="0" />
             <GradientStop Color="#38BDF8" Offset="0.5" />
-            <GradientStop Color="#A78BFA" Offset="1" />
+            <GradientStop Color="#A8CAFF" Offset="1" />
         </LinearGradientBrush>
 
         <Style x:Key="InstallProgressBarStyle" TargetType="{x:Type ProgressBar}">
@@ -123,9 +123,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F50A0D14" Offset="0" />
-                <GradientStop Color="#F0111820" Offset="0.55" />
-                <GradientStop Color="#F40B1018" Offset="1" />
+                <GradientStop Color="#F5070B12" Offset="0" />
+                <GradientStop Color="#F0050A11" Offset="0.55" />
+                <GradientStop Color="#F4050A11" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -140,7 +140,7 @@
                 BorderThickness="1"
                 CornerRadius="14">
             <Border.Effect>
-                <DropShadowEffect Color="#03090B"
+                <DropShadowEffect Color="#02070A"
                                   BlurRadius="34"
                                   ShadowDepth="14"
                                   Opacity="0.45" />

@@ -40,20 +40,20 @@
         <services:CollapseGlyphConverter x:Key="CollapseGlyphConverter" />
         <services:ExecutableIconSourceConverter x:Key="ExecutableIconSourceConverter" />
 
-        <SolidColorBrush x:Key="TextBrush" Color="#F7F4FF" />
-        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C5BEDA" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#918AA8" />
-        <SolidColorBrush x:Key="SubtleTextBrush" Color="#736D86" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#7C3AED" />
-        <SolidColorBrush x:Key="AccentHoverBrush" Color="#8B5CF6" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#241A46" />
-        <SolidColorBrush x:Key="AccentLineBrush" Color="#493184" />
-        <SolidColorBrush x:Key="PanelBrush" Color="#171523" />
-        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#201D31" />
-        <SolidColorBrush x:Key="PanelSoftBrush" Color="#11101B" />
-        <SolidColorBrush x:Key="PanelHoverBrush" Color="#27223A" />
-        <SolidColorBrush x:Key="LineBrush" Color="#302B46" />
-        <SolidColorBrush x:Key="LineHoverBrush" Color="#55467D" />
+        <SolidColorBrush x:Key="TextBrush" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C7D4E7" />
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#8B9AB0" />
+        <SolidColorBrush x:Key="SubtleTextBrush" Color="#697A91" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#4D8DF7" />
+        <SolidColorBrush x:Key="AccentHoverBrush" Color="#6FA5FF" />
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#091C35" />
+        <SolidColorBrush x:Key="AccentLineBrush" Color="#305B94" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#0A1018" />
+        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#0F1724" />
+        <SolidColorBrush x:Key="PanelSoftBrush" Color="#050A11" />
+        <SolidColorBrush x:Key="PanelHoverBrush" Color="#142033" />
+        <SolidColorBrush x:Key="LineBrush" Color="#1B2B41" />
+        <SolidColorBrush x:Key="LineHoverBrush" Color="#2F4E75" />
         <SolidColorBrush x:Key="ErrorBrush" Color="#FB7185" />
         <SolidColorBrush x:Key="SuccessBrush" Color="#7DD3FC" />
         <SolidColorBrush x:Key="ConflictOverwritesBrush" Color="#22C55E" />
@@ -61,25 +61,25 @@
         <SolidColorBrush x:Key="ConflictFullyOverwrittenBrush" Color="#9CA3AF" />
 
         <LinearGradientBrush x:Key="AppBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#080711" Offset="0" />
-            <GradientStop Color="#0D0A18" Offset="0.46" />
-            <GradientStop Color="#121022" Offset="1" />
+            <GradientStop Color="#02050A" Offset="0" />
+            <GradientStop Color="#050A11" Offset="0.46" />
+            <GradientStop Color="#08101B" Offset="1" />
         </LinearGradientBrush>
 
         <LinearGradientBrush x:Key="HeroBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#2A2545" Offset="0" />
-            <GradientStop Color="#19172A" Offset="0.55" />
-            <GradientStop Color="#141221" Offset="1" />
+            <GradientStop Color="#142A4A" Offset="0" />
+            <GradientStop Color="#0E1A2B" Offset="0.55" />
+            <GradientStop Color="#0A1018" Offset="1" />
         </LinearGradientBrush>
 
         <LinearGradientBrush x:Key="AccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#8B5CF6" Offset="0" />
-            <GradientStop Color="#6D5DFB" Offset="0.62" />
-            <GradientStop Color="#5B21B6" Offset="1" />
+            <GradientStop Color="#6FA5FF" Offset="0" />
+            <GradientStop Color="#3F7EEA" Offset="0.62" />
+            <GradientStop Color="#1F5FCE" Offset="1" />
         </LinearGradientBrush>
 
         <DropShadowEffect x:Key="PanelShadow"
-                          Color="#06040D"
+                          Color="#03060B"
                           BlurRadius="20"
                           ShadowDepth="8"
                           Opacity="0.24" />
@@ -94,7 +94,7 @@
                         Height="18"
                         HorizontalAlignment="Left"
                         VerticalAlignment="Center"
-                        Background="#211B32"
+                        Background="#0F1928"
                         BorderBrush="{StaticResource LineBrush}"
                         BorderThickness="1"
                         CornerRadius="4">
@@ -205,11 +205,11 @@
                BasedOn="{StaticResource BaseButtonStyle}">
             <Setter Property="Background" Value="{StaticResource AccentBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="Foreground" Value="#F7F4FF" />
+            <Setter Property="Foreground" Value="#F4F8FF" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="{StaticResource AccentHoverBrush}" />
-                    <Setter Property="BorderBrush" Value="#B197FC" />
+                    <Setter Property="BorderBrush" Value="#B8D4FF" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -231,7 +231,7 @@
         <Style x:Key="GhostButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource BaseButtonStyle}">
-            <Setter Property="Background" Value="#0F0D18" />
+            <Setter Property="Background" Value="#050A11" />
             <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
             <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
             <Style.Triggers>
@@ -330,7 +330,7 @@
         <Style x:Key="CloseCaptionButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource CaptionButtonStyle}">
-            <Setter Property="Foreground" Value="#F7F4FF" />
+            <Setter Property="Foreground" Value="#F4F8FF" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type Button}">
@@ -378,7 +378,7 @@
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background" Value="{StaticResource AccentBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="Foreground" Value="#F7F4FF" />
+            <Setter Property="Foreground" Value="#F4F8FF" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -401,7 +401,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentHoverBrush}" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="#B197FC" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="#B8D4FF" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.82" />
@@ -421,7 +421,7 @@
             <Setter Property="Height" Value="30" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Background" Value="#171322" />
+            <Setter Property="Background" Value="#0A1018" />
             <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
             <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
             <Setter Property="Cursor" Value="Hand" />
@@ -487,7 +487,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-                                <Setter TargetName="Root" Property="Background" Value="#151322" />
+                                <Setter TargetName="Root" Property="Background" Value="#0D1420" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.5" />
@@ -509,7 +509,7 @@
             <Setter Property="ItemContainerStyle">
                 <Setter.Value>
                     <Style TargetType="{x:Type ComboBoxItem}">
-                        <Setter Property="Background" Value="#151322" />
+                        <Setter Property="Background" Value="#0D1420" />
                         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
                         <Setter Property="Padding" Value="9,6" />
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -657,7 +657,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type TextBox}">
                         <Border x:Name="Root"
-                                Background="#12101D"
+                                Background="#08101B"
                                 BorderBrush="{StaticResource LineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="9"
@@ -754,12 +754,12 @@
                                 <Setter TargetName="Placeholder" Property="Opacity" Value="1" />
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#151323" />
+                                <Setter TargetName="Root" Property="Background" Value="#0D1420" />
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
                                 <Setter TargetName="SearchIcon" Property="Opacity" Value="0.95" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#171329" />
+                                <Setter TargetName="Root" Property="Background" Value="#121C2B" />
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
                                 <Setter TargetName="FocusGlow" Property="Opacity" Value="0.32" />
                                 <Setter TargetName="SearchIcon" Property="Foreground" Value="{StaticResource AccentHoverBrush}" />
@@ -801,7 +801,7 @@
         </Style>
 
         <Style x:Key="PluginChipStyle" TargetType="{x:Type Border}">
-            <Setter Property="Background" Value="#11101B" />
+            <Setter Property="Background" Value="#050A11" />
             <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="8" />
@@ -824,8 +824,8 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type ListBoxItem}">
                         <Border x:Name="Root"
-                                Background="{StaticResource PanelRaisedBrush}"
-                                BorderBrush="{StaticResource LineBrush}"
+                                Background="{DynamicResource PanelRaisedBrush}"
+                                BorderBrush="{DynamicResource LineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="10"
                                 Padding="10">
@@ -838,7 +838,7 @@
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-                                <Setter TargetName="Root" Property="Background" Value="#23193F" />
+                                <Setter TargetName="Root" Property="Background" Value="#102342" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -882,8 +882,9 @@
                                 <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Box" Property="Background" Value="{StaticResource AccentBrush}" />
-                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Box" Property="Background" Value="{StaticResource ToggleOnBrush}" />
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource ToggleOnBorderBrush}" />
+                                <Setter TargetName="Check" Property="Foreground" Value="{StaticResource ToggleThumbOnBrush}" />
                                 <Setter TargetName="Check" Property="Opacity" Value="1" />
                             </Trigger>
                             <MultiTrigger>
@@ -891,7 +892,7 @@
                                     <Condition Property="IsChecked" Value="True" />
                                     <Condition Property="IsMouseOver" Value="True" />
                                 </MultiTrigger.Conditions>
-                                <Setter TargetName="Box" Property="Background" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Box" Property="Background" Value="{StaticResource ToggleOnHoverBrush}" />
                             </MultiTrigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Box" Property="Opacity" Value="0.4" />
@@ -910,7 +911,7 @@
             <Setter Property="Height" Value="20" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Foreground" Value="{StaticResource AccentHoverBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource AccentHoverBrush}" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="ToolTip" Value="Свернуть / развернуть" />
             <Setter Property="Template">
@@ -929,7 +930,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1258,8 +1259,8 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type ListBoxItem}">
                         <Border x:Name="Root"
-                                Background="{StaticResource PanelRaisedBrush}"
-                                BorderBrush="{StaticResource LineBrush}"
+                                Background="{DynamicResource PanelRaisedBrush}"
+                                BorderBrush="{DynamicResource LineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="9"
                                 Margin="0,0,0,6"
@@ -1268,17 +1269,17 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <DataTrigger Binding="{Binding IsSeparator}" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelSoftBrush}" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelSoftBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
                                 <Setter TargetName="Root" Property="Padding" Value="9,7" />
                             </DataTrigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource PanelHoverBrush}" />
                             </Trigger>
                             <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-                                <Setter TargetName="Root" Property="Background" Value="#23193F" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
                             </DataTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1346,7 +1347,7 @@
         <Style x:Key="DarkDataGridStyle" TargetType="{x:Type DataGrid}">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="GridLinesVisibility" Value="None" />
             <Setter Property="RowHeaderWidth" Value="0" />
             <Setter Property="HeadersVisibility" Value="Column" />
@@ -1357,9 +1358,9 @@
             <Setter Property="ColumnHeaderStyle">
                 <Setter.Value>
                     <Style TargetType="{x:Type DataGridColumnHeader}">
-                        <Setter Property="Background" Value="{StaticResource PanelSoftBrush}" />
-                        <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
-                        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+                        <Setter Property="Background" Value="{DynamicResource PanelSoftBrush}" />
+                        <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
+                        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
                         <Setter Property="BorderThickness" Value="0,0,0,1" />
                         <Setter Property="Padding" Value="10,8" />
                         <Setter Property="FontSize" Value="10" />
@@ -1371,16 +1372,16 @@
                 <Setter.Value>
                     <Style TargetType="{x:Type DataGridRow}">
                         <Setter Property="Background" Value="Transparent" />
-                        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                         <Setter Property="MinHeight" Value="36" />
-                        <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+                        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
                         <Setter Property="BorderThickness" Value="0,0,0,1" />
                         <Style.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="{StaticResource PanelHoverBrush}" />
+                                <Setter Property="Background" Value="{DynamicResource PanelHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                                <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
                             </Trigger>
                         </Style.Triggers>
                     </Style>
@@ -1391,7 +1392,7 @@
                     <Style TargetType="{x:Type DataGridCell}">
                         <Setter Property="Background" Value="Transparent" />
                         <Setter Property="BorderThickness" Value="0" />
-                        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                         <Setter Property="Padding" Value="12,7" />
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                         <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -1505,7 +1506,7 @@
             <Setter Property="MinWidth" Value="178" />
             <Setter Property="MaxWidth" Value="218" />
             <Setter Property="Padding" Value="10,5" />
-            <Setter Property="Background" Value="#151322" />
+            <Setter Property="Background" Value="#0D1420" />
             <Setter Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
             <Setter Property="MaxDropDownHeight" Value="230" />
         </Style>
@@ -1515,7 +1516,7 @@
                BasedOn="{StaticResource IconOnlyButtonStyle}">
             <Setter Property="Width" Value="30" />
             <Setter Property="Height" Value="30" />
-            <Setter Property="Background" Value="#151322" />
+            <Setter Property="Background" Value="#0D1420" />
             <Setter Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
             <Setter Property="ToolTip" Value="Управлять профилями" />
         </Style>
@@ -1548,7 +1549,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE8FB;"
                                FontSize="12"
-                               Foreground="#C4B5FD" />
+                               Foreground="#C9DFFF" />
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Включить всё"
@@ -1558,7 +1559,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE73E;"
                                FontSize="12"
-                               Foreground="#C4B5FD" />
+                               Foreground="#C9DFFF" />
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Выключить"
@@ -1630,7 +1631,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE8FB;"
                                FontSize="12"
-                               Foreground="#C4B5FD" />
+                               Foreground="#C9DFFF" />
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Включить всё"
@@ -1640,7 +1641,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE73E;"
                                FontSize="12"
-                               Foreground="#C4B5FD" />
+                               Foreground="#C9DFFF" />
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Header="Выключить"
@@ -1698,7 +1699,7 @@
                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                            Text="&#xE768;"
                                            FontSize="12"
-                                           Foreground="#C4B5FD" />
+                                           Foreground="#C9DFFF" />
                             </MenuItem.Icon>
                         </MenuItem>
                         <MenuItem Header="Отменить скачивание"
@@ -1733,7 +1734,7 @@
                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                            Text="&#xE896;"
                                            FontSize="12"
-                                           Foreground="#C4B5FD" />
+                                           Foreground="#C9DFFF" />
                             </MenuItem.Icon>
                         </MenuItem>
                         <MenuItem Header="Открыть в проводнике"
@@ -1769,7 +1770,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="{Binding Glyph}"
                                FontSize="13"
-                               Foreground="#C4B5FD"
+                               Foreground="#C9DFFF"
                                VerticalAlignment="Center"
                                Margin="0,0,8,0" />
                     <TextBlock Text="{Binding DisplayName}"
@@ -1795,7 +1796,7 @@
                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                Text="&#xE8B7;"
                                FontSize="12"
-                               Foreground="#C4B5FD"
+                               Foreground="#C9DFFF"
                                VerticalAlignment="Center"
                                Margin="0,0,7,0" />
                     <TextBlock Text="{Binding}"
@@ -1810,7 +1811,7 @@
             <Setter Property="Height" Value="9" />
             <Setter Property="Minimum" Value="0" />
             <Setter Property="Maximum" Value="100" />
-            <Setter Property="Background" Value="#0B0913" />
+            <Setter Property="Background" Value="#040810" />
             <Setter Property="Foreground" Value="{StaticResource AccentHoverBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
@@ -1825,7 +1826,7 @@
                                     BorderThickness="1"
                                     CornerRadius="5" />
                             <Border x:Name="PulseLayer"
-                                    BorderBrush="#9D7BFF"
+                                    BorderBrush="#91BDFF"
                                     BorderThickness="1"
                                     CornerRadius="5"
                                     Opacity="0" />
@@ -2030,7 +2031,7 @@
                 <DataTrigger Binding="{Binding IsDownloading}" Value="True">
                     <Setter TargetName="StatusPill" Property="Background" Value="{StaticResource AccentSoftBrush}" />
                     <Setter TargetName="StatusPill" Property="BorderBrush" Value="{StaticResource AccentLineBrush}" />
-                    <Setter TargetName="StatusText" Property="Foreground" Value="#DDD6FE" />
+                    <Setter TargetName="StatusText" Property="Foreground" Value="#D6E7FF" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding CanInstall}" Value="True">
                     <Setter TargetName="StatusText" Property="Foreground" Value="{StaticResource TextBrush}" />
@@ -2050,8 +2051,8 @@
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0">
-            <Border Background="#0B0913"
-                    BorderBrush="#211C33"
+            <Border Background="#040810"
+                    BorderBrush="#101A29"
                     BorderThickness="0,0,0,1" />
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -2067,8 +2068,8 @@
                     <controls:LineIcon Data="{StaticResource Icon.FluxoraMark}"
                                        Width="18"
                                        Height="18"
-                                       Fill="{StaticResource TextBrush}"
-                                       Foreground="{StaticResource TextBrush}"
+                                       Fill="{StaticResource ChromeBrandBrush}"
+                                       Foreground="{StaticResource ChromeBrandBrush}"
                                        StrokeThickness="0"
                                        Margin="0,0,9,0"
                                        HorizontalAlignment="Center"
@@ -2232,12 +2233,14 @@
                                                 <Border Width="44"
                                                         Height="44"
                                                         CornerRadius="12"
-                                                        Background="{StaticResource AccentGradientBrush}"
+                                                        Background="{StaticResource IconTileBrush}"
+                                                        BorderBrush="{StaticResource IconTileBorderBrush}"
+                                                        BorderThickness="1"
                                                         VerticalAlignment="Top">
                                                     <controls:LineIcon Data="{StaticResource Icon.Gamepad}"
                                                                        Width="22"
                                                                        Height="22"
-                                                                       Foreground="#F7F4FF"
+                                                                       Foreground="{StaticResource IconTileForegroundBrush}"
                                                                        HorizontalAlignment="Center"
                                                                        VerticalAlignment="Center" />
                                                 </Border>
@@ -2290,7 +2293,7 @@
                                                                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                                Text="&#xE70F;"
                                                                                FontSize="12"
-                                                                               Foreground="#C4B5FD" />
+                                                                               Foreground="#C9DFFF" />
                                                                 </MenuItem.Icon>
                                                             </MenuItem>
                                                             <MenuItem Header="Упаковать FluxPack"
@@ -2301,7 +2304,7 @@
                                                                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                                Text="&#xE8A5;"
                                                                                FontSize="12"
-                                                                               Foreground="#C4B5FD" />
+                                                                               Foreground="#C9DFFF" />
                                                                 </MenuItem.Icon>
                                                             </MenuItem>
                                                             <MenuItem Header="Удалить"
@@ -2327,7 +2330,7 @@
                         </Grid>
 
                     <Border Grid.Row="2"
-                            Background="#0E0C16"
+                            Background="#050A11"
                             BorderBrush="{StaticResource LineBrush}"
                             BorderThickness="1"
                             CornerRadius="12"
@@ -2698,9 +2701,9 @@
                                         <DataGrid.RowStyle>
                                             <Style TargetType="{x:Type DataGridRow}">
                                                 <Setter Property="Background" Value="Transparent" />
-                                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                                                 <Setter Property="MinHeight" Value="36" />
-                                                <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+                                                <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
                                                 <Setter Property="BorderThickness" Value="0,0,0,1" />
                                                 <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType={x:Type DataGrid}}}" />
                                                 <Setter Property="ContextMenu" Value="{StaticResource InstalledModRowContextMenu}" />
@@ -2713,17 +2716,17 @@
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding IsSeparator}" Value="True">
                                                         <Setter Property="MinHeight" Value="34" />
-                                                        <Setter Property="Background" Value="{StaticResource PanelSoftBrush}" />
-                                                        <Setter Property="Foreground" Value="{StaticResource AccentHoverBrush}" />
+                                                        <Setter Property="Background" Value="{DynamicResource PanelSoftBrush}" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource AccentHoverBrush}" />
                                                         <Setter Property="FontWeight" Value="Bold" />
                                                         <Setter Property="Template" Value="{StaticResource ModSeparatorRowTemplate}" />
                                                         <Setter Property="ContextMenu" Value="{StaticResource ModSeparatorRowContextMenu}" />
                                                     </DataTrigger>
                                                     <Trigger Property="IsMouseOver" Value="True">
-                                                        <Setter Property="Background" Value="{StaticResource PanelHoverBrush}" />
+                                                        <Setter Property="Background" Value="{DynamicResource PanelHoverBrush}" />
                                                     </Trigger>
                                                     <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                                        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                                                        <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -2856,11 +2859,11 @@
                                                                        VerticalAlignment="Center">
                                                                 <TextBlock.Style>
                                                                     <Style TargetType="{x:Type TextBlock}">
-                                                                        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                                                        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                                                                         <Setter Property="FontWeight" Value="SemiBold" />
                                                                         <Style.Triggers>
                                                                             <DataTrigger Binding="{Binding IsSeparator}" Value="True">
-                                                                                <Setter Property="Foreground" Value="{StaticResource AccentHoverBrush}" />
+                                                                                <Setter Property="Foreground" Value="{DynamicResource AccentHoverBrush}" />
                                                                                 <Setter Property="FontWeight" Value="Black" />
                                                                             </DataTrigger>
                                                                         </Style.Triggers>
@@ -3076,7 +3079,7 @@
                                                                             <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                                        Text="&#xE8FB;"
                                                                                        FontSize="12"
-                                                                                       Foreground="#C4B5FD" />
+                                                                                       Foreground="#C9DFFF" />
                                                                         </MenuItem.Icon>
                                                                     </MenuItem>
                                                                     <MenuItem Header="Выключить"
@@ -3145,7 +3148,7 @@
                                                             <TextBlock Grid.Column="1"
                                                                        Text="{Binding OrderText}"
                                                                        FontWeight="Bold"
-                                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                                       Foreground="{DynamicResource MutedTextBrush}"
                                                                        VerticalAlignment="Center" />
 
                                                             <StackPanel Grid.Column="2"
@@ -3154,11 +3157,11 @@
                                                                            TextTrimming="CharacterEllipsis">
                                                                     <TextBlock.Style>
                                                                         <Style TargetType="{x:Type TextBlock}">
-                                                                            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                                                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                                                                             <Setter Property="FontWeight" Value="SemiBold" />
                                                                             <Style.Triggers>
                                                                                 <DataTrigger Binding="{Binding IsSeparator}" Value="True">
-                                                                                    <Setter Property="Foreground" Value="{StaticResource AccentHoverBrush}" />
+                                                                                    <Setter Property="Foreground" Value="{DynamicResource AccentHoverBrush}" />
                                                                                     <Setter Property="FontWeight" Value="Black" />
                                                                                 </DataTrigger>
                                                                             </Style.Triggers>
@@ -3173,7 +3176,7 @@
                                                                             <Setter Property="Visibility" Value="Visible" />
                                                                             <Style.Triggers>
                                                                                 <DataTrigger Binding="{Binding IsSeparator}" Value="True">
-                                                                                    <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                                                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                                                                 </DataTrigger>
                                                                             </Style.Triggers>
                                                                         </Style>
@@ -3182,8 +3185,8 @@
                                                             </StackPanel>
 
                                                             <Border Grid.Column="3"
-                                                                    Background="{StaticResource PanelSoftBrush}"
-                                                                    BorderBrush="{StaticResource LineBrush}"
+                                                                    Background="{DynamicResource PanelSoftBrush}"
+                                                                    BorderBrush="{DynamicResource LineBrush}"
                                                                     BorderThickness="1"
                                                                     CornerRadius="9"
                                                                     Padding="7,3"
@@ -3201,7 +3204,7 @@
                                                                 <TextBlock Text="{Binding TypeText}"
                                                                            FontSize="10"
                                                                            FontWeight="SemiBold"
-                                                                           Foreground="{StaticResource TextSecondaryBrush}" />
+                                                                           Foreground="{DynamicResource TextSecondaryBrush}" />
                                                             </Border>
                                                         </Grid>
                                                     </DataTemplate>
@@ -3541,7 +3544,7 @@
                                                     Visibility="Collapsed"
                                                     Opacity="0"
                                                     IsHitTestVisible="False"
-                                                    Background="#D0121020"
+                                                    Background="#D008101B"
                                                     BorderBrush="{StaticResource AccentHoverBrush}"
                                                     BorderThickness="1.4"
                                                     CornerRadius="10">
@@ -3588,7 +3591,7 @@
                     </Grid>
 
                     <Border Grid.Row="2"
-                            Background="#0E0C16"
+                            Background="#050A11"
                             BorderBrush="{StaticResource LineBrush}"
                             BorderThickness="1"
                             CornerRadius="10"
@@ -3716,12 +3719,14 @@
                                     <Border Width="54"
                                             Height="54"
                                             CornerRadius="15"
-                                            Background="{StaticResource AccentGradientBrush}"
+                                            Background="{StaticResource IconTileBrush}"
+                                            BorderBrush="{StaticResource IconTileBorderBrush}"
+                                            BorderThickness="1"
                                             VerticalAlignment="Center">
                                         <controls:LineIcon Data="{StaticResource Icon.Gamepad}"
                                                            Width="27"
                                                            Height="27"
-                                                           Foreground="#F7F4FF" />
+                                                           Foreground="{StaticResource IconTileForegroundBrush}" />
                                     </Border>
 
                                     <StackPanel Grid.Column="2" VerticalAlignment="Center">
@@ -4199,7 +4204,7 @@
                                                             <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                        Text="&#xE790;"
                                                                        FontSize="15"
-                                                                       Foreground="#C4B5FD"
+                                                                       Foreground="#C9DFFF"
                                                                        VerticalAlignment="Center"
                                                                        Margin="0,0,9,0" />
                                                             <TextBlock VerticalAlignment="Center">
@@ -4245,7 +4250,7 @@
                                                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                            Text="&#xE756;"
                                                                            FontSize="15"
-                                                                           Foreground="#C4B5FD"
+                                                                           Foreground="#C9DFFF"
                                                                            VerticalAlignment="Center"
                                                                            Margin="0,0,10,0" />
                                                                 <StackPanel>
@@ -4321,7 +4326,7 @@
                                                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                                                Text="&#xE790;"
                                                                FontSize="15"
-                                                               Foreground="#C4B5FD"
+                                                               Foreground="#C9DFFF"
                                                                VerticalAlignment="Center"
                                                                Margin="0,0,10,0" />
                                                     <TextBlock VerticalAlignment="Center" TextWrapping="Wrap">
@@ -4352,7 +4357,7 @@
                                                  Height="3"
                                                  IsIndeterminate="True"
                                                  Foreground="{StaticResource AccentHoverBrush}"
-                                                 Background="#0E0C16"
+                                                 Background="#050A11"
                                                  BorderThickness="0"
                                                  Margin="0,10,0,0"
                                                  Visibility="{Binding IsCreatingProject, Converter={StaticResource BooleanToVisibilityConverter}}" />
@@ -4736,7 +4741,7 @@
                                                                      Height="3"
                                                                      IsIndeterminate="True"
                                                                      Foreground="{StaticResource AccentHoverBrush}"
-                                                                     Background="#0E0C16"
+                                                                     Background="#050A11"
                                                                      BorderThickness="0"
                                                                      Margin="0,14,0,0"
                                                                      Visibility="{Binding IsAnalyzingTransfer, Converter={StaticResource BooleanToVisibilityConverter}}" />
@@ -4750,7 +4755,7 @@
                                                                 <ColumnDefinition Width="12" />
                                                                 <ColumnDefinition Width="*" />
                                                             </Grid.ColumnDefinitions>
-                                                            <Border Background="#151220"
+                                                            <Border Background="#0D1420"
                                                                     BorderBrush="{StaticResource LineBrush}"
                                                                     BorderThickness="1"
                                                                     CornerRadius="10"
@@ -4767,7 +4772,7 @@
                                                                 </StackPanel>
                                                             </Border>
                                                             <Border Grid.Column="2"
-                                                                    Background="#151220"
+                                                                    Background="#0D1420"
                                                                     BorderBrush="{StaticResource LineBrush}"
                                                                     BorderThickness="1"
                                                                     CornerRadius="10"
@@ -4788,7 +4793,7 @@
                                                                 </StackPanel>
                                                             </Border>
                                                             <Border Grid.Column="4"
-                                                                    Background="#151220"
+                                                                    Background="#0D1420"
                                                                     BorderBrush="{StaticResource LineBrush}"
                                                                     BorderThickness="1"
                                                                     CornerRadius="10"
@@ -4967,7 +4972,7 @@
                                             <TextBlock FontFamily="Segoe MDL2 Assets"
                                                        Text="&#xE895;"
                                                        FontSize="31"
-                                                       Foreground="#F7F4FF"
+                                                       Foreground="#F4F8FF"
                                                        HorizontalAlignment="Center"
                                                        VerticalAlignment="Center" />
                                         </Border>
@@ -4986,7 +4991,7 @@
                                     </Grid>
 
                                     <Border Grid.Row="1"
-                                            Background="#12101C"
+                                            Background="#08101B"
                                             BorderBrush="{StaticResource LineBrush}"
                                             BorderThickness="1"
                                             CornerRadius="12"

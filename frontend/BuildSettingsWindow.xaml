@@ -12,7 +12,7 @@
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
         ResizeMode="CanResize"
-        Background="#080711"
+        Background="#02050A"
         FontFamily="{StaticResource FluxoraFontBody}"
         FontWeight="Medium"
         TextOptions.TextFormattingMode="Display"
@@ -33,36 +33,36 @@
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <services:InverseBooleanConverter x:Key="InverseBooleanConverter" />
 
-        <SolidColorBrush x:Key="TextBrush" Color="#F7F4FF" />
-        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C5BEDA" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#918AA8" />
-        <SolidColorBrush x:Key="SubtleTextBrush" Color="#736D86" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#7C3AED" />
-        <SolidColorBrush x:Key="AccentHoverBrush" Color="#8B5CF6" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#241A46" />
-        <SolidColorBrush x:Key="AccentLineBrush" Color="#493184" />
-        <SolidColorBrush x:Key="PanelBrush" Color="#171523" />
-        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#201D31" />
-        <SolidColorBrush x:Key="PanelSoftBrush" Color="#11101B" />
-        <SolidColorBrush x:Key="PanelHoverBrush" Color="#27223A" />
-        <SolidColorBrush x:Key="LineBrush" Color="#302B46" />
-        <SolidColorBrush x:Key="LineHoverBrush" Color="#55467D" />
+        <SolidColorBrush x:Key="TextBrush" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C7D4E7" />
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#8B9AB0" />
+        <SolidColorBrush x:Key="SubtleTextBrush" Color="#697A91" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#4D8DF7" />
+        <SolidColorBrush x:Key="AccentHoverBrush" Color="#6FA5FF" />
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#091C35" />
+        <SolidColorBrush x:Key="AccentLineBrush" Color="#305B94" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#0A1018" />
+        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#0F1724" />
+        <SolidColorBrush x:Key="PanelSoftBrush" Color="#050A11" />
+        <SolidColorBrush x:Key="PanelHoverBrush" Color="#142033" />
+        <SolidColorBrush x:Key="LineBrush" Color="#1B2B41" />
+        <SolidColorBrush x:Key="LineHoverBrush" Color="#2F4E75" />
         <SolidColorBrush x:Key="ErrorBrush" Color="#FB7185" />
 
         <LinearGradientBrush x:Key="AppBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#080711" Offset="0" />
-            <GradientStop Color="#0D0A18" Offset="0.48" />
-            <GradientStop Color="#121022" Offset="1" />
+            <GradientStop Color="#02050A" Offset="0" />
+            <GradientStop Color="#050A11" Offset="0.48" />
+            <GradientStop Color="#08101B" Offset="1" />
         </LinearGradientBrush>
 
         <LinearGradientBrush x:Key="AccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#8B5CF6" Offset="0" />
-            <GradientStop Color="#6D5DFB" Offset="0.62" />
-            <GradientStop Color="#5B21B6" Offset="1" />
+            <GradientStop Color="#6FA5FF" Offset="0" />
+            <GradientStop Color="#3F7EEA" Offset="0.62" />
+            <GradientStop Color="#1F5FCE" Offset="1" />
         </LinearGradientBrush>
 
         <DropShadowEffect x:Key="PanelShadow"
-                          Color="#05030B"
+                          Color="#03050A"
                           BlurRadius="30"
                           ShadowDepth="12"
                           Opacity="0.36" />
@@ -114,7 +114,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="#BE123C" />
-                                <Setter Property="Foreground" Value="#F7F4FF" />
+                                <Setter Property="Foreground" Value="#F4F8FF" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="#9F1239" />
@@ -170,11 +170,11 @@
                BasedOn="{StaticResource BaseButtonStyle}">
             <Setter Property="Background" Value="{StaticResource AccentBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="Foreground" Value="#F7F4FF" />
+            <Setter Property="Foreground" Value="#F4F8FF" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="{StaticResource AccentHoverBrush}" />
-                    <Setter Property="BorderBrush" Value="#B197FC" />
+                    <Setter Property="BorderBrush" Value="#B8D4FF" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -195,8 +195,8 @@
         <Style x:Key="NavButtonStyle" TargetType="{x:Type Button}">
             <Setter Property="Height" Value="38" />
             <Setter Property="Padding" Value="20,0,10,0" />
-            <Setter Property="Background" Value="#332B47" />
-            <Setter Property="BorderBrush" Value="#7A63B8" />
+            <Setter Property="Background" Value="#1B2F46" />
+            <Setter Property="BorderBrush" Value="#5C8FE5" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
             <Setter Property="FontWeight" Value="Bold" />
@@ -516,8 +516,8 @@
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0">
-            <Border Background="#0B0913"
-                    BorderBrush="#211C33"
+            <Border Background="#040810"
+                    BorderBrush="#101A29"
                     BorderThickness="0,0,0,1" />
             <Grid>
                 <TextBlock Text="Настройки сборки"

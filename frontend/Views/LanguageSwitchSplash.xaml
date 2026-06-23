@@ -14,13 +14,13 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
 
-        <SolidColorBrush x:Key="SplashTextBrush" Color="#F7F4FF" />
-        <SolidColorBrush x:Key="SplashSecondaryTextBrush" Color="#C5BEDA" />
+        <SolidColorBrush x:Key="SplashTextBrush" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="SplashSecondaryTextBrush" Color="#C7D4E7" />
 
         <LinearGradientBrush x:Key="SplashCoreBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#F7F4FF" Offset="0" />
-            <GradientStop Color="#C4B5FD" Offset="0.45" />
-            <GradientStop Color="#8B5CF6" Offset="1" />
+            <GradientStop Color="#F4F8FF" Offset="0" />
+            <GradientStop Color="#C9DFFF" Offset="0.45" />
+            <GradientStop Color="#6FA5FF" Offset="1" />
         </LinearGradientBrush>
     </UserControl.Resources>
 
@@ -64,9 +64,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F4080711" Offset="0" />
-                <GradientStop Color="#F20D0A18" Offset="0.52" />
-                <GradientStop Color="#F5121022" Offset="1" />
+                <GradientStop Color="#F402050A" Offset="0" />
+                <GradientStop Color="#F2050A11" Offset="0.52" />
+                <GradientStop Color="#F508101B" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -88,21 +88,21 @@
                   HorizontalAlignment="Center">
                 <Ellipse Width="94"
                          Height="94"
-                         Stroke="#2B2444"
+                         Stroke="#17304F"
                          StrokeThickness="7"
                          Opacity="0.9" />
 
                 <Ellipse x:Name="PulseLayer"
                          Width="72"
                          Height="72"
-                         Fill="#241A46"
+                         Fill="#091C35"
                          HorizontalAlignment="Center"
                          VerticalAlignment="Center"
                          Opacity="0.08" />
 
                 <Ellipse Width="94"
                          Height="94"
-                         Stroke="#A78BFA"
+                         Stroke="#A8CAFF"
                          StrokeThickness="7"
                          StrokeStartLineCap="Round"
                          StrokeEndLineCap="Round"
@@ -116,7 +116,7 @@
 
                 <Ellipse Width="62"
                          Height="62"
-                         Stroke="#F7F4FF"
+                         Stroke="#F4F8FF"
                          StrokeThickness="4"
                          StrokeStartLineCap="Round"
                          StrokeEndLineCap="Round"
@@ -164,7 +164,7 @@
 
         <Border Height="1"
                 VerticalAlignment="Top"
-                Background="#2E2550"
+                Background="#18355A"
                 Opacity="0.36" />
     </Grid>
 </UserControl>

@@ -5,10 +5,12 @@ namespace Fluxora.App.Services;
 public sealed class ExecutableManagerDialogService : IExecutableManagerDialogService
 {
     private readonly CoreBridgeService coreBridgeService;
+    private readonly ThemeService themeService;
 
-    public ExecutableManagerDialogService(CoreBridgeService coreBridgeService)
+    public ExecutableManagerDialogService(CoreBridgeService coreBridgeService, ThemeService themeService)
     {
         this.coreBridgeService = coreBridgeService;
+        this.themeService = themeService;
     }
 
     public IReadOnlyList<GameExecutableEntry>? EditExecutables(
@@ -24,6 +26,7 @@ public sealed class ExecutableManagerDialogService : IExecutableManagerDialogSer
         {
             Owner = System.Windows.Application.Current?.MainWindow
         };
+        themeService.ApplyCurrentThemeTo(dialog);
 
         return dialog.ShowDialog() == true ? dialog.ResultExecutables : null;
     }

@@ -29,7 +29,7 @@
         <LinearGradientBrush x:Key="LaunchProgressBrush" StartPoint="0,0" EndPoint="1,0">
             <GradientStop Color="#5EEAD4" Offset="0" />
             <GradientStop Color="#38BDF8" Offset="0.58" />
-            <GradientStop Color="#A78BFA" Offset="1" />
+            <GradientStop Color="#A8CAFF" Offset="1" />
         </LinearGradientBrush>
 
         <Style x:Key="LaunchProgressBarStyle" TargetType="{x:Type ProgressBar}">
@@ -180,9 +180,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F6070A12" Offset="0" />
-                <GradientStop Color="#F10A161B" Offset="0.5" />
-                <GradientStop Color="#F40D1424" Offset="1" />
+                <GradientStop Color="#F602050A" Offset="0" />
+                <GradientStop Color="#F1050A11" Offset="0.5" />
+                <GradientStop Color="#F408101B" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -222,7 +222,7 @@
                 </Ellipse>
                 <Ellipse Width="66"
                          Height="66"
-                         Stroke="#A78BFA"
+                         Stroke="#A8CAFF"
                          StrokeThickness="4"
                          StrokeStartLineCap="Round"
                          StrokeEndLineCap="Round"

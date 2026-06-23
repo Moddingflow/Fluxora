@@ -18,6 +18,7 @@ public partial class App : System.Windows.Application
     private CoreBridgeService? coreBridgeService;
     private SettingsService? settingsService;
     private LanguageCatalogService? languageCatalogService;
+    private ThemeService? themeService;
     private MainWindow? mainWindow;
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -44,30 +45,42 @@ public partial class App : System.Windows.Application
         base.OnStartup(e);
         MiddleClickAutoScrollService.Attach();
 
-        StartupSplashViewModel splashViewModel = new();
-        StartupSplashWindow startupSplash = new()
-        {
-            DataContext = splashViewModel
-        };
-        startupSplash.Show();
-
+        StartupSplashWindow? startupSplash = null;
         DateTimeOffset splashShownAt = DateTimeOffset.Now;
 
         try
         {
-            StartupInitializationService startupInitializationService = new(applicationLogService);
+            settingsService = new SettingsService();
+            await settingsService.InitializeAsync();
+            themeService = new ThemeService(settingsService);
+            await themeService.InitializeAsync();
+
+            StartupSplashViewModel splashViewModel = new();
+            startupSplash = new StartupSplashWindow
+            {
+                DataContext = splashViewModel
+            };
+            themeService.ApplyCurrentThemeTo(startupSplash);
+            startupSplash.Show();
+            splashShownAt = DateTimeOffset.Now;
+
+            StartupInitializationService startupInitializationService = new(
+                applicationLogService,
+                settingsService,
+                themeService);
             StartupInitializationResult startup = await startupInitializationService.InitializeAsync(splashViewModel);
 
             coreBridgeService = startup.CoreBridgeService;
             settingsService = startup.SettingsService;
             languageCatalogService = startup.LanguageCatalogService;
+            themeService = startup.ThemeService;
 
             splashViewModel.Report(new StartupProgress(
                 "Создаем интерфейс",
                 "Подготавливаем главное окно",
                 84));
 
-            mainWindow = new MainWindow(coreBridgeService, settingsService, languageCatalogService, applicationLogService);
+            mainWindow = new MainWindow(coreBridgeService, settingsService, languageCatalogService, themeService, applicationLogService);
             MainWindow = mainWindow;
 
             splashViewModel.Report(new StartupProgress(
@@ -88,7 +101,7 @@ public partial class App : System.Windows.Application
         catch (Exception exception)
         {
             applicationLogService.CrashError("Startup", "Application startup failed.", exception);
-            startupSplash.Close();
+            startupSplash?.Close();
             System.Windows.MessageBox.Show(
                 exception.Message,
                 "Fluxora",

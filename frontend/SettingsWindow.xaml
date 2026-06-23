@@ -15,7 +15,7 @@
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
         ResizeMode="CanResize"
-        Background="#080711"
+        Background="#02050A"
         FontFamily="{StaticResource FluxoraFontBody}"
         FontWeight="Medium"
         TextOptions.TextFormattingMode="Display"
@@ -36,46 +36,46 @@
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <services:InverseBooleanConverter x:Key="InverseBooleanConverter" />
 
-        <SolidColorBrush x:Key="TextBrush" Color="#F7F4FF" />
-        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C5BEDA" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#918AA8" />
-        <SolidColorBrush x:Key="SubtleTextBrush" Color="#736D86" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#7C3AED" />
-        <SolidColorBrush x:Key="AccentHoverBrush" Color="#8B5CF6" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#241A46" />
-        <SolidColorBrush x:Key="AccentLineBrush" Color="#493184" />
-        <SolidColorBrush x:Key="NavSelectedBrush" Color="#332B47" />
-        <SolidColorBrush x:Key="NavSelectedLineBrush" Color="#7A63B8" />
-        <SolidColorBrush x:Key="PanelBrush" Color="#171523" />
-        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#201D31" />
-        <SolidColorBrush x:Key="PanelSoftBrush" Color="#11101B" />
-        <SolidColorBrush x:Key="PanelHoverBrush" Color="#27223A" />
-        <SolidColorBrush x:Key="LineBrush" Color="#302B46" />
-        <SolidColorBrush x:Key="LineHoverBrush" Color="#55467D" />
+        <SolidColorBrush x:Key="TextBrush" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C7D4E7" />
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#8B9AB0" />
+        <SolidColorBrush x:Key="SubtleTextBrush" Color="#697A91" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#4D8DF7" />
+        <SolidColorBrush x:Key="AccentHoverBrush" Color="#6FA5FF" />
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#091C35" />
+        <SolidColorBrush x:Key="AccentLineBrush" Color="#305B94" />
+        <SolidColorBrush x:Key="NavSelectedBrush" Color="#1B2F46" />
+        <SolidColorBrush x:Key="NavSelectedLineBrush" Color="#5C8FE5" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#0A1018" />
+        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#0F1724" />
+        <SolidColorBrush x:Key="PanelSoftBrush" Color="#050A11" />
+        <SolidColorBrush x:Key="PanelHoverBrush" Color="#142033" />
+        <SolidColorBrush x:Key="LineBrush" Color="#1B2B41" />
+        <SolidColorBrush x:Key="LineHoverBrush" Color="#2F4E75" />
         <SolidColorBrush x:Key="WarningBrush" Color="#FBBF24" />
         <SolidColorBrush x:Key="ErrorBrush" Color="#FB7185" />
         <SolidColorBrush x:Key="SuccessBrush" Color="#7DD3FC" />
 
         <LinearGradientBrush x:Key="AppBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#080711" Offset="0" />
-            <GradientStop Color="#0D0A18" Offset="0.48" />
-            <GradientStop Color="#121022" Offset="1" />
+            <GradientStop Color="#02050A" Offset="0" />
+            <GradientStop Color="#050A11" Offset="0.48" />
+            <GradientStop Color="#08101B" Offset="1" />
         </LinearGradientBrush>
 
         <LinearGradientBrush x:Key="AccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#8B5CF6" Offset="0" />
-            <GradientStop Color="#6D5DFB" Offset="0.62" />
-            <GradientStop Color="#5B21B6" Offset="1" />
+            <GradientStop Color="#6FA5FF" Offset="0" />
+            <GradientStop Color="#3F7EEA" Offset="0.62" />
+            <GradientStop Color="#1F5FCE" Offset="1" />
         </LinearGradientBrush>
 
         <LinearGradientBrush x:Key="ProgressGradientBrush" StartPoint="0,0" EndPoint="1,0">
             <GradientStop Color="#7DD3FC" Offset="0" />
-            <GradientStop Color="#8B5CF6" Offset="0.55" />
-            <GradientStop Color="#C084FC" Offset="1" />
+            <GradientStop Color="#6FA5FF" Offset="0.55" />
+            <GradientStop Color="#9EC5FF" Offset="1" />
         </LinearGradientBrush>
 
         <DropShadowEffect x:Key="PanelShadow"
-                          Color="#05030B"
+                          Color="#03050A"
                           BlurRadius="30"
                           ShadowDepth="12"
                           Opacity="0.36" />
@@ -175,7 +175,7 @@
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="#2A1220" />
                                 <Setter TargetName="Root" Property="BorderBrush" Value="#7F1D3A" />
-                                <Setter Property="Foreground" Value="#F7F4FF" />
+                                <Setter Property="Foreground" Value="#F4F8FF" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="#3A1023" />
@@ -233,11 +233,11 @@
                BasedOn="{StaticResource BaseButtonStyle}">
             <Setter Property="Background" Value="{StaticResource AccentBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="Foreground" Value="#F7F4FF" />
+            <Setter Property="Foreground" Value="#F4F8FF" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="{StaticResource AccentHoverBrush}" />
-                    <Setter Property="BorderBrush" Value="#B197FC" />
+                    <Setter Property="BorderBrush" Value="#B8D4FF" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -478,13 +478,13 @@
                               Width="{TemplateBinding Width}"
                               Height="{TemplateBinding Height}">
                             <Border x:Name="Track"
-                                    Background="#161322"
+                                    Background="#0A1018"
                                     BorderBrush="{StaticResource LineBrush}"
                                     BorderThickness="1"
                                     CornerRadius="16" />
                             <Border x:Name="TrackAccent"
-                                    Background="{StaticResource AccentBrush}"
-                                    BorderBrush="{StaticResource AccentHoverBrush}"
+                                    Background="{StaticResource ToggleOnBrush}"
+                                    BorderBrush="{StaticResource ToggleOnBorderBrush}"
                                     BorderThickness="1"
                                     CornerRadius="16"
                                     Opacity="0" />
@@ -500,7 +500,7 @@
                                     <TranslateTransform X="0" />
                                 </Ellipse.RenderTransform>
                                 <Ellipse.Effect>
-                                    <DropShadowEffect Color="#06040D"
+                                    <DropShadowEffect Color="#03060B"
                                                       BlurRadius="12"
                                                       ShadowDepth="2"
                                                       Opacity="0.45" />
@@ -509,7 +509,7 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Thumb" Property="Fill" Value="#F7F4FF" />
+                                <Setter TargetName="Thumb" Property="Fill" Value="{StaticResource ToggleThumbOnBrush}" />
                                 <Trigger.EnterActions>
                                     <BeginStoryboard>
                                         <Storyboard>
@@ -550,6 +550,14 @@
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
                             </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsChecked" Value="True" />
+                                    <Condition Property="IsMouseOver" Value="True" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="TrackAccent" Property="Background" Value="{StaticResource ToggleOnHoverBrush}" />
+                                <Setter TargetName="TrackAccent" Property="BorderBrush" Value="{StaticResource ToggleOnBorderBrush}" />
+                            </MultiTrigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.5" />
                                 <Setter Property="Cursor" Value="Arrow" />
@@ -566,7 +574,7 @@
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
             <Setter Property="CaretBrush" Value="{StaticResource TextBrush}" />
-            <Setter Property="Background" Value="#12101C" />
+            <Setter Property="Background" Value="#08101B" />
             <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Template">
@@ -599,7 +607,7 @@
         <Style x:Key="TransferComboBoxStyle" TargetType="{x:Type ComboBox}">
             <Setter Property="Height" Value="40" />
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="Background" Value="#12101C" />
+            <Setter Property="Background" Value="#08101B" />
             <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
             <Setter Property="Padding" Value="10,0" />
             <Setter Property="ItemContainerStyle">
@@ -681,7 +689,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="{StaticResource PanelHoverBrush}" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="#3B3158" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="#294775" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentSoftBrush}" />
@@ -832,7 +840,7 @@
         <Style x:Key="RoundedProgressBarStyle" TargetType="{x:Type ProgressBar}">
             <Setter Property="Height" Value="8" />
             <Setter Property="Foreground" Value="{StaticResource ProgressGradientBrush}" />
-            <Setter Property="Background" Value="#10101A" />
+            <Setter Property="Background" Value="{StaticResource ProgressTrackBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -860,7 +868,7 @@
                              ViewportUnits="Absolute">
                     <VisualBrush.Visual>
                         <Grid Width="96" Height="96">
-                            <Path Stroke="#39325C"
+                            <Path Stroke="#294775"
                                   StrokeThickness="1"
                                   Data="M 0 0 H 96 M 0 0 V 96" />
                         </Grid>
@@ -876,8 +884,8 @@
             </Grid.RowDefinitions>
 
             <Border Grid.Row="0"
-                    Background="#0B0913"
-                    BorderBrush="#211C33"
+                    Background="#040810"
+                    BorderBrush="#101A29"
                     BorderThickness="0,0,0,1">
                 <Grid Margin="22,0,0,0">
                     <Grid.ColumnDefinitions>
@@ -891,7 +899,7 @@
                                            Width="24"
                                            Height="24"
                                            StrokeThickness="2"
-                                           Foreground="#C4B5FD"
+                                           Foreground="#C9DFFF"
                                            Margin="0,0,12,0" />
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock Text="Настройки"
@@ -952,6 +960,23 @@
                                                    Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
                                                    Margin="0,0,11,0" />
                                 <TextBlock Text="Языки"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </ToggleButton>
+
+                        <ToggleButton Style="{StaticResource SectionNavButtonStyle}"
+                                      Command="{Binding SelectCustomizationCommand}"
+                                      IsChecked="{Binding IsCustomizationSelected, Mode=OneWay}"
+                                      AutomationProperties.Name="Кастомизация">
+                            <StackPanel Orientation="Horizontal"
+                                        VerticalAlignment="Center">
+                                <controls:LineIcon Data="{StaticResource Icon.Palette}"
+                                                   Width="17"
+                                                   Height="17"
+                                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
+                                                   Margin="0,0,11,0" />
+                                <TextBlock Text="Кастомизация"
                                            FontWeight="SemiBold"
                                            VerticalAlignment="Center" />
                             </StackPanel>
@@ -1057,7 +1082,7 @@
                                          VerticalAlignment="Top"
                                          IsIndeterminate="True"
                                          Foreground="{StaticResource AccentHoverBrush}"
-                                         Background="#0E0C16"
+                                         Background="#050A11"
                                          BorderThickness="0"
                                          Margin="0,12,0,0"
                                          Visibility="{Binding IsNexusBusy, Converter={StaticResource BooleanToVisibilityConverter}}" />
@@ -1124,6 +1149,117 @@
 
                     <Border Style="{StaticResource ContentPanelStyle}"
                             Padding="22"
+                            Visibility="{Binding IsCustomizationSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel>
+                                <TextBlock Text="Кастомизация"
+                                           FontSize="32"
+                                           FontWeight="Black"
+                                           Foreground="{StaticResource TextBrush}" />
+                                <TextBlock Text="Внешний вид Fluxora"
+                                           Margin="0,8,0,0"
+                                           Foreground="{StaticResource MutedTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <Border Grid.Row="1"
+                                    Style="{StaticResource InnerPanelStyle}"
+                                    Padding="18"
+                                    Margin="0,22,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="48" />
+                                        <ColumnDefinition Width="14" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Width="42"
+                                            Height="42"
+                                            Background="{StaticResource AccentSoftBrush}"
+                                            BorderBrush="{StaticResource AccentLineBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="12"
+                                            HorizontalAlignment="Left"
+                                            VerticalAlignment="Center">
+                                        <controls:LineIcon Data="{StaticResource Icon.Palette}"
+                                                           Width="20"
+                                                           Height="20"
+                                                           Foreground="{StaticResource AccentHoverBrush}"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center" />
+                                    </Border>
+
+                                    <StackPanel Grid.Column="2"
+                                                VerticalAlignment="Center">
+                                        <TextBlock Text="Светлая тема"
+                                                   FontSize="17"
+                                                   FontWeight="Black"
+                                                   Foreground="{StaticResource TextBrush}" />
+                                        <TextBlock Text="{Binding ThemeModeText}"
+                                                   Margin="0,5,0,0"
+                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   FontSize="12" />
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="3"
+                                                Orientation="Horizontal"
+                                                VerticalAlignment="Center"
+                                                Margin="18,0,0,0">
+                                        <TextBlock Text="{Binding LightThemeToggleText}"
+                                                   MinWidth="36"
+                                                   TextAlignment="Right"
+                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,12,0" />
+                                        <ToggleButton Style="{StaticResource SwitchToggleStyle}"
+                                                      IsChecked="{Binding IsLightThemeEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      IsEnabled="{Binding IsLightThemeToggleEnabled}"
+                                                      ToolTip="Светлая тема"
+                                                      AutomationProperties.Name="Светлая тема" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <ProgressBar Grid.Row="2"
+                                         Height="3"
+                                         IsIndeterminate="True"
+                                         Foreground="{StaticResource AccentHoverBrush}"
+                                         Background="{StaticResource PanelSoftBrush}"
+                                         BorderThickness="0"
+                                         Margin="0,12,0,0"
+                                         Visibility="{Binding IsThemeSwitching, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                            <StackPanel Grid.Row="3"
+                                        Margin="0,14,0,0">
+                                <TextBlock Text="{Binding ThemeStatus}"
+                                           Foreground="{StaticResource MutedTextBrush}"
+                                           TextWrapping="Wrap" />
+
+                                <Border Background="#2A1220"
+                                        BorderBrush="#7F1D3A"
+                                        BorderThickness="1"
+                                        CornerRadius="10"
+                                        Padding="12"
+                                        Margin="0,12,0,0"
+                                        Visibility="{Binding HasThemeError, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <TextBlock Text="{Binding ThemeError}"
+                                               Foreground="{StaticResource ErrorBrush}"
+                                               TextWrapping="Wrap" />
+                                </Border>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource ContentPanelStyle}"
+                            Padding="22"
                             Visibility="{Binding IsTransferMenuVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                         <Grid>
                             <Grid.RowDefinitions>
@@ -1181,12 +1317,12 @@
                                                 Padding="14,10">
                                             <StackPanel Orientation="Horizontal">
                                                 <TextBlock Text="Перенести сборку"
-                                                           Foreground="#F7F4FF"
+                                                           Foreground="#F4F8FF"
                                                            FontWeight="SemiBold" />
                                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                                            Text="&#xE72A;"
                                                            FontSize="12"
-                                                           Foreground="#F7F4FF"
+                                                           Foreground="#F4F8FF"
                                                            Margin="8,1,0,0" />
                                             </StackPanel>
                                         </Border>
@@ -1427,7 +1563,7 @@
                                                              Height="3"
                                                              IsIndeterminate="True"
                                                              Foreground="{StaticResource AccentHoverBrush}"
-                                                             Background="#0E0C16"
+                                                             Background="#050A11"
                                                              BorderThickness="0"
                                                              Margin="0,14,0,0"
                                                              Visibility="{Binding IsAnalyzingTransfer, Converter={StaticResource BooleanToVisibilityConverter}}" />
@@ -1441,7 +1577,7 @@
                                                         <ColumnDefinition Width="12" />
                                                         <ColumnDefinition Width="*" />
                                                     </Grid.ColumnDefinitions>
-                                                    <Border Background="#151220"
+                                                    <Border Background="#0D1420"
                                                             BorderBrush="{StaticResource LineBrush}"
                                                             BorderThickness="1"
                                                             CornerRadius="10"
@@ -1458,7 +1594,7 @@
                                                         </StackPanel>
                                                     </Border>
                                                     <Border Grid.Column="2"
-                                                            Background="#151220"
+                                                            Background="#0D1420"
                                                             BorderBrush="{StaticResource LineBrush}"
                                                             BorderThickness="1"
                                                             CornerRadius="10"
@@ -1479,7 +1615,7 @@
                                                         </StackPanel>
                                                     </Border>
                                                     <Border Grid.Column="4"
-                                                            Background="#151220"
+                                                            Background="#0D1420"
                                                             BorderBrush="{StaticResource LineBrush}"
                                                             BorderThickness="1"
                                                             CornerRadius="10"
@@ -1665,7 +1801,7 @@
                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                            Text="&#xE895;"
                                            FontSize="31"
-                                           Foreground="#F7F4FF"
+                                           Foreground="#F4F8FF"
                                            HorizontalAlignment="Center"
                                            VerticalAlignment="Center"
                                            RenderTransformOrigin="0.5,0.5">
@@ -1701,7 +1837,7 @@
                         </Grid>
 
                         <Border Grid.Row="1"
-                                Background="#12101C"
+                                Background="#08101B"
                                 BorderBrush="{StaticResource LineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="12"

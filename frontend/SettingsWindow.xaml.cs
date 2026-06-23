@@ -16,11 +16,13 @@ public partial class SettingsWindow : Window
         CoreBridgeService coreBridgeService,
         SettingsService settingsService,
         LanguageCatalogService languageCatalogService,
+        ThemeService themeService,
         IFolderPickerService folderPickerService,
         ModProject? currentProject,
         bool replaceCurrentProject)
     {
         InitializeComponent();
+        themeService.ApplyCurrentThemeTo(this);
         windowChromeService = new WindowChromeService(this);
         windowChromeService.Attach();
         viewModel = new SettingsWindowViewModel(
@@ -30,7 +32,8 @@ public partial class SettingsWindow : Window
             null,
             folderPickerService,
             currentProject,
-            replaceCurrentProject);
+            replaceCurrentProject,
+            themeService);
         viewModel.PropertyChanged += OnViewModelPropertyChanged;
         DataContext = viewModel;
     }

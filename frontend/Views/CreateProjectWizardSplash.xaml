@@ -14,24 +14,24 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
 
-        <SolidColorBrush x:Key="WizardTextBrush" Color="#F7F4FF" />
-        <SolidColorBrush x:Key="WizardSecondaryTextBrush" Color="#D8D2EB" />
-        <SolidColorBrush x:Key="WizardMutedTextBrush" Color="#9B93B4" />
-        <SolidColorBrush x:Key="WizardSubtleTextBrush" Color="#736D86" />
-        <SolidColorBrush x:Key="WizardAccentBrush" Color="#7C3AED" />
-        <SolidColorBrush x:Key="WizardAccentHoverBrush" Color="#9D7BFF" />
-        <SolidColorBrush x:Key="WizardAccentSoftBrush" Color="#241A46" />
-        <SolidColorBrush x:Key="WizardAccentLineBrush" Color="#5B3EA0" />
-        <SolidColorBrush x:Key="WizardPanelBrush" Color="#171523" />
-        <SolidColorBrush x:Key="WizardPanelRaisedBrush" Color="#201D31" />
-        <SolidColorBrush x:Key="WizardPanelSoftBrush" Color="#11101B" />
-        <SolidColorBrush x:Key="WizardLineBrush" Color="#332D4B" />
+        <SolidColorBrush x:Key="WizardTextBrush" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="WizardSecondaryTextBrush" Color="#D5E2F2" />
+        <SolidColorBrush x:Key="WizardMutedTextBrush" Color="#93A4BC" />
+        <SolidColorBrush x:Key="WizardSubtleTextBrush" Color="#697A91" />
+        <SolidColorBrush x:Key="WizardAccentBrush" Color="#4D8DF7" />
+        <SolidColorBrush x:Key="WizardAccentHoverBrush" Color="#91BDFF" />
+        <SolidColorBrush x:Key="WizardAccentSoftBrush" Color="#091C35" />
+        <SolidColorBrush x:Key="WizardAccentLineBrush" Color="#316DCE" />
+        <SolidColorBrush x:Key="WizardPanelBrush" Color="#0A1018" />
+        <SolidColorBrush x:Key="WizardPanelRaisedBrush" Color="#0F1724" />
+        <SolidColorBrush x:Key="WizardPanelSoftBrush" Color="#050A11" />
+        <SolidColorBrush x:Key="WizardLineBrush" Color="#1E3555" />
         <SolidColorBrush x:Key="WizardErrorBrush" Color="#FB7185" />
 
         <LinearGradientBrush x:Key="WizardAccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#9D7BFF" Offset="0" />
-            <GradientStop Color="#7C3AED" Offset="0.58" />
-            <GradientStop Color="#5B21B6" Offset="1" />
+            <GradientStop Color="#91BDFF" Offset="0" />
+            <GradientStop Color="#4D8DF7" Offset="0.58" />
+            <GradientStop Color="#1F5FCE" Offset="1" />
         </LinearGradientBrush>
 
         <Style x:Key="WizardButtonBaseStyle" TargetType="{x:Type Button}">
@@ -78,18 +78,18 @@
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="{StaticResource WizardAccentHoverBrush}" />
-                    <Setter Property="BorderBrush" Value="#B197FC" />
+                    <Setter Property="BorderBrush" Value="#B8D4FF" />
                 </Trigger>
             </Style.Triggers>
         </Style>
 
         <Style x:Key="WizardSecondaryButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource WizardButtonBaseStyle}">
-            <Setter Property="Background" Value="#171421" />
+            <Setter Property="Background" Value="#0A1018" />
             <Setter Property="BorderBrush" Value="{StaticResource WizardLineBrush}" />
             <Setter Property="Foreground" Value="{StaticResource WizardSecondaryTextBrush}" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#241F34" />
+                    <Setter Property="Background" Value="#19263A" />
                     <Setter Property="BorderBrush" Value="{StaticResource WizardAccentLineBrush}" />
                     <Setter Property="Foreground" Value="{StaticResource WizardTextBrush}" />
                 </Trigger>
@@ -99,7 +99,7 @@
         <Style x:Key="WizardTextBoxStyle" TargetType="{x:Type TextBox}">
             <Setter Property="Height" Value="42" />
             <Setter Property="Padding" Value="13,0" />
-            <Setter Property="Background" Value="#0E0C16" />
+            <Setter Property="Background" Value="#050A11" />
             <Setter Property="BorderBrush" Value="{StaticResource WizardLineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Foreground" Value="{StaticResource WizardTextBrush}" />
@@ -120,7 +120,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource WizardAccentHoverBrush}" />
-                                <Setter TargetName="Root" Property="Background" Value="#12101C" />
+                                <Setter TargetName="Root" Property="Background" Value="#08101B" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -161,7 +161,7 @@
             <Setter Property="Height" Value="68" />
             <Setter Property="Padding" Value="13" />
             <Setter Property="CornerRadius" Value="13" />
-            <Setter Property="Background" Value="#16131F" />
+            <Setter Property="Background" Value="#0A1018" />
             <Setter Property="BorderBrush" Value="{StaticResource WizardLineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
@@ -191,7 +191,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type ListBoxItem}">
                         <Border x:Name="Card"
-                                Background="#15131F"
+                                Background="#0D1420"
                                 BorderBrush="{StaticResource WizardLineBrush}"
                                 BorderThickness="1"
                                 CornerRadius="14"
@@ -201,7 +201,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Card" Property="Background" Value="#1B1729" />
+                                <Setter TargetName="Card" Property="Background" Value="#0E1A2B" />
                                 <Setter TargetName="Card" Property="BorderBrush" Value="{StaticResource WizardAccentLineBrush}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
@@ -249,9 +249,9 @@
     <Grid>
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#FA080711" Offset="0" />
-                <GradientStop Color="#FC0D0A18" Offset="0.52" />
-                <GradientStop Color="#FD121022" Offset="1" />
+                <GradientStop Color="#FA02050A" Offset="0" />
+                <GradientStop Color="#FC050A11" Offset="0.52" />
+                <GradientStop Color="#FD08101B" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -338,7 +338,7 @@
                             <Border Width="34"
                                     Height="34"
                                     CornerRadius="10"
-                                    Background="#211B32"
+                                    Background="#0F1928"
                                     BorderBrush="{StaticResource WizardAccentLineBrush}"
                                     BorderThickness="1">
                                 <controls:LineIcon Data="{StaticResource Icon.FileText}"
@@ -379,13 +379,13 @@
                             <Border Width="34"
                                     Height="34"
                                     CornerRadius="10"
-                                    Background="#211B32"
-                                    BorderBrush="{StaticResource WizardAccentLineBrush}"
+                                    Background="{StaticResource IconTileBrush}"
+                                    BorderBrush="{StaticResource IconTileBorderBrush}"
                                     BorderThickness="1">
                                 <controls:LineIcon Data="{StaticResource Icon.Gamepad}"
                                                    Width="18"
                                                    Height="18"
-                                                   Foreground="{StaticResource WizardAccentHoverBrush}" />
+                                                   Foreground="{StaticResource IconTileForegroundBrush}" />
                             </Border>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                 <TextBlock Text="Игра" Foreground="{StaticResource WizardTextBrush}" FontWeight="Black" TextTrimming="CharacterEllipsis" />
@@ -420,7 +420,7 @@
                             <Border Width="34"
                                     Height="34"
                                     CornerRadius="10"
-                                    Background="#211B32"
+                                    Background="#0F1928"
                                     BorderBrush="{StaticResource WizardAccentLineBrush}"
                                     BorderThickness="1">
                                 <controls:LineIcon Data="{StaticResource Icon.Open}"
@@ -461,7 +461,7 @@
                             <Border Width="34"
                                     Height="34"
                                     CornerRadius="10"
-                                    Background="#211B32"
+                                    Background="#0F1928"
                                     BorderBrush="{StaticResource WizardAccentLineBrush}"
                                     BorderThickness="1">
                                 <controls:LineIcon Data="{StaticResource Icon.Folder}"
@@ -483,7 +483,7 @@
                         CornerRadius="18">
                     <Border.Style>
                         <Style TargetType="{x:Type Border}">
-                            <Setter Property="Background" Value="#F011101B" />
+                            <Setter Property="Background" Value="#F0050A11" />
                             <Setter Property="BorderBrush" Value="{StaticResource WizardLineBrush}" />
                             <Setter Property="BorderThickness" Value="1" />
                             <Setter Property="Padding" Value="28" />
@@ -559,19 +559,19 @@
                             <Border Grid.Row="1"
                                     Height="46"
                                     Margin="0,14,0,12"
-                                    Background="#0E0C16"
+                                    Background="#050A11"
                                     BorderBrush="{StaticResource WizardLineBrush}"
                                     BorderThickness="1"
                                     CornerRadius="12">
                                 <Border.Style>
                                     <Style TargetType="{x:Type Border}">
-                                        <Setter Property="Background" Value="#0E0C16" />
+                                        <Setter Property="Background" Value="#050A11" />
                                         <Setter Property="BorderBrush" Value="{StaticResource WizardLineBrush}" />
                                         <Setter Property="BorderThickness" Value="1" />
                                         <Setter Property="CornerRadius" Value="12" />
                                         <Style.Triggers>
                                             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-                                                <Setter Property="Background" Value="#12101C" />
+                                                <Setter Property="Background" Value="#08101B" />
                                                 <Setter Property="BorderBrush" Value="{StaticResource WizardAccentHoverBrush}" />
                                             </Trigger>
                                         </Style.Triggers>
@@ -627,14 +627,14 @@
                                                     <Border Width="34"
                                                             Height="34"
                                                             CornerRadius="10"
-                                                            Background="#211B32"
-                                                            BorderBrush="{StaticResource WizardAccentLineBrush}"
+                                                            Background="{StaticResource IconTileBrush}"
+                                                            BorderBrush="{StaticResource IconTileBorderBrush}"
                                                             BorderThickness="1"
                                                             VerticalAlignment="Top">
                                                         <controls:LineIcon Data="{StaticResource Icon.Gamepad}"
                                                                            Width="17"
                                                                            Height="17"
-                                                                           Foreground="{StaticResource WizardAccentHoverBrush}" />
+                                                                           Foreground="{StaticResource IconTileForegroundBrush}" />
                                                     </Border>
                                                     <StackPanel Grid.Column="1">
                                                         <TextBlock Text="{Binding DisplayName}"
@@ -658,7 +658,7 @@
                                                     </Grid.ColumnDefinitions>
                                                     <Border Width="46"
                                                             Height="46"
-                                                            Background="#0E0C16"
+                                                            Background="#050A11"
                                                             BorderBrush="{StaticResource WizardAccentLineBrush}"
                                                             BorderThickness="1"
                                                             CornerRadius="11"
@@ -691,7 +691,7 @@
                                     </ListBox.ItemTemplate>
                                 </ListBox>
 
-                                <Border Background="#15131F"
+                                <Border Background="#0D1420"
                                         BorderBrush="{StaticResource WizardLineBrush}"
                                         BorderThickness="1"
                                         CornerRadius="14"
@@ -761,7 +761,7 @@
                                     </Button>
                                 </Grid>
 
-                                <Border Background="#171421"
+                                <Border Background="#0A1018"
                                         BorderBrush="{StaticResource WizardLineBrush}"
                                         BorderThickness="1"
                                         CornerRadius="12"
@@ -772,7 +772,7 @@
                                         <controls:LineIcon Data="{StaticResource Icon.Gamepad}"
                                                            Width="17"
                                                            Height="17"
-                                                           Foreground="{StaticResource WizardAccentHoverBrush}"
+                                                           Foreground="{StaticResource IconTileForegroundBrush}"
                                                            Margin="0,0,10,0" />
                                         <TextBlock VerticalAlignment="Center" TextWrapping="Wrap">
                                             <Run Text="Игра: " Foreground="{StaticResource WizardMutedTextBrush}" />
@@ -814,7 +814,7 @@
                                     </Button>
                                 </Grid>
 
-                                <Border Background="#171421"
+                                <Border Background="#0A1018"
                                         BorderBrush="{StaticResource WizardLineBrush}"
                                         BorderThickness="1"
                                         CornerRadius="12"

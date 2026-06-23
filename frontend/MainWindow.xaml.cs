@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private readonly CoreBridgeService coreBridgeService;
     private readonly SettingsService settingsService;
     private readonly LanguageCatalogService languageCatalogService;
+    private readonly ThemeService themeService;
     private readonly ApplicationLogService logService;
     private readonly IFolderPickerService folderPickerService;
     private readonly IExecutablePickerService executablePickerService;
@@ -37,17 +38,21 @@ public partial class MainWindow : Window
         CoreBridgeService coreBridgeService,
         SettingsService settingsService,
         LanguageCatalogService languageCatalogService,
+        ThemeService themeService,
         ApplicationLogService logService)
     {
         InitializeComponent();
 
-        windowChromeService = new WindowChromeService(this);
-        windowChromeService.Attach();
-
         this.coreBridgeService = coreBridgeService;
         this.settingsService = settingsService;
         this.languageCatalogService = languageCatalogService;
+        this.themeService = themeService;
         this.logService = logService;
+        this.themeService.ApplyCurrentThemeTo(this);
+
+        windowChromeService = new WindowChromeService(this);
+        windowChromeService.Attach();
+
         folderPickerService = new FolderPickerService();
         executablePickerService = new ExecutablePickerService();
         DownloadCatalogService downloadCatalogService = new(this.coreBridgeService);
@@ -80,8 +85,8 @@ public partial class MainWindow : Window
             new BuildConfigPickerService(),
             new ModArchivePickerService(),
             new ModInstallDialogService(),
-            new ExecutableManagerDialogService(coreBridgeService),
-            new BuildSettingsDialogService(coreBridgeService, folderPickerService, executablePickerService),
+            new ExecutableManagerDialogService(coreBridgeService, themeService),
+            new BuildSettingsDialogService(coreBridgeService, folderPickerService, executablePickerService, themeService),
             new BuildDeletionDialogService(),
             launchSessionStore,
             new FluxPackPickerService(),
@@ -270,6 +275,7 @@ public partial class MainWindow : Window
             coreBridgeService,
             settingsService,
             languageCatalogService,
+            themeService,
             folderPickerService,
             currentProject,
             currentProject is not null)

@@ -7,7 +7,7 @@
         ResizeMode="CanMinimize"
         WindowStyle="None"
         AllowsTransparency="False"
-        Background="#0B0914"
+        Background="#040810"
         ShowInTaskbar="True"
         WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/Fluxora.ico"
@@ -21,26 +21,26 @@
         UseLayoutRounding="True"
         SourceInitialized="OnSourceInitialized">
     <Window.Resources>
-        <SolidColorBrush x:Key="SplashTextBrush" Color="#F7F4FF" />
-        <SolidColorBrush x:Key="SplashSecondaryTextBrush" Color="#C5BEDA" />
-        <SolidColorBrush x:Key="SplashMutedTextBrush" Color="#928BAA" />
+        <SolidColorBrush x:Key="SplashTextBrush" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="SplashSecondaryTextBrush" Color="#C7D4E7" />
+        <SolidColorBrush x:Key="SplashMutedTextBrush" Color="#8C9CB3" />
 
         <LinearGradientBrush x:Key="SplashWindowBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#21183A" Offset="0" />
-            <GradientStop Color="#0B0914" Offset="0.52" />
-            <GradientStop Color="#171124" Offset="1" />
+            <GradientStop Color="#10213D" Offset="0" />
+            <GradientStop Color="#040810" Offset="0.52" />
+            <GradientStop Color="#101827" Offset="1" />
         </LinearGradientBrush>
 
         <LinearGradientBrush x:Key="SplashAccentBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#F7F4FF" Offset="0" />
-            <GradientStop Color="#C4B5FD" Offset="0.48" />
-            <GradientStop Color="#7C3AED" Offset="1" />
+            <GradientStop Color="#F4F8FF" Offset="0" />
+            <GradientStop Color="#C9DFFF" Offset="0.48" />
+            <GradientStop Color="#4D8DF7" Offset="1" />
         </LinearGradientBrush>
 
         <Style x:Key="StartupProgressBarStyle" TargetType="{x:Type ProgressBar}">
             <Setter Property="Height" Value="7" />
             <Setter Property="Foreground" Value="{StaticResource SplashAccentBrush}" />
-            <Setter Property="Background" Value="#211B34" />
+            <Setter Property="Background" Value="#152033" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -64,7 +64,7 @@
 
     <Grid Background="{StaticResource SplashWindowBrush}"
           ClipToBounds="True">
-        <Border BorderBrush="#27203B"
+        <Border BorderBrush="#101A29"
                 BorderThickness="1" />
 
         <Grid Margin="36,30,36,28">

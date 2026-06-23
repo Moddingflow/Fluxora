@@ -14,12 +14,14 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
 {
     private const string ConnectionsSection = "connections";
     private const string LanguagesSection = "languages";
+    private const string CustomizationSection = "customization";
     private const string TransferSection = "transfer";
     private static readonly TimeSpan LanguageSwitchMinimumDuration = TimeSpan.FromMilliseconds(520);
 
     private readonly CoreBridgeService coreBridgeService;
     private readonly SettingsService settingsService;
     private readonly LanguageCatalogService languageCatalogService;
+    private readonly ThemeService? themeService;
     private readonly ApplicationLogService? logService;
     private readonly IFolderPickerService folderPickerService;
     private readonly ModProject? currentProject;
@@ -39,6 +41,10 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
     private bool isLanguageSwitching;
     private string languageStatus = "Выберите язык интерфейса. Будет загружен только выбранный конфиг.";
     private string languageError = string.Empty;
+    private bool isLightThemeEnabled;
+    private bool isThemeSwitching;
+    private string themeStatus = "Темная тема включена.";
+    private string themeError = string.Empty;
 
     private TransferDriveOption? selectedDrive;
     private string sourceDirectory = string.Empty;
@@ -70,11 +76,13 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         ApplicationLogService? logService,
         IFolderPickerService folderPickerService,
         ModProject? currentProject,
-        bool replaceCurrentProject)
+        bool replaceCurrentProject,
+        ThemeService? themeService = null)
     {
         this.coreBridgeService = coreBridgeService;
         this.settingsService = settingsService;
         this.languageCatalogService = languageCatalogService;
+        this.themeService = themeService;
         this.logService = logService;
         this.folderPickerService = folderPickerService;
         this.currentProject = currentProject;
@@ -88,6 +96,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
 
         SelectConnectionsCommand = new RelayCommand(() => SelectSection(ConnectionsSection), () => !IsTransferProcessVisible);
         SelectLanguagesCommand = new RelayCommand(() => SelectSection(LanguagesSection), () => !IsTransferProcessVisible);
+        SelectCustomizationCommand = new RelayCommand(() => SelectSection(CustomizationSection), () => !IsTransferProcessVisible);
         SelectTransferCommand = new RelayCommand(() => SelectSection(TransferSection), () => !IsTransferProcessVisible);
         ToggleNexusModsCommand = new AsyncRelayCommand(ToggleNexusModsAsync, () => IsNexusModsToggleEnabled);
         OpenModOrganizerTransferCommand = new RelayCommand(OpenModOrganizerTransfer, () => !IsBusy);
@@ -110,6 +119,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
 
     public ICommand SelectConnectionsCommand { get; }
     public ICommand SelectLanguagesCommand { get; }
+    public ICommand SelectCustomizationCommand { get; }
     public ICommand SelectTransferCommand { get; }
     public ICommand ToggleNexusModsCommand { get; }
     public ICommand OpenModOrganizerTransferCommand { get; }
@@ -136,6 +146,8 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
     public bool IsConnectionsSelected => selectedSection == ConnectionsSection;
 
     public bool IsLanguagesSelected => selectedSection == LanguagesSection;
+
+    public bool IsCustomizationSelected => selectedSection == CustomizationSection;
 
     public bool IsTransferSelected => selectedSection == TransferSection;
 
@@ -269,6 +281,60 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
     public string LanguageSwitchSubtitle => SelectedLanguage is null
         ? T("Загружаю конфиг интерфейса...")
         : F("Загружаю {0}", SelectedLanguage.DisplayName);
+
+    public bool IsLightThemeEnabled
+    {
+        get => isLightThemeEnabled;
+        set
+        {
+            if (!SetField(ref isLightThemeEnabled, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(LightThemeToggleText));
+            OnPropertyChanged(nameof(ThemeModeText));
+            _ = ChangeThemeAsync(value);
+        }
+    }
+
+    public bool IsThemeSwitching
+    {
+        get => isThemeSwitching;
+        private set
+        {
+            if (SetField(ref isThemeSwitching, value))
+            {
+                OnPropertyChanged(nameof(IsLightThemeToggleEnabled));
+            }
+        }
+    }
+
+    public bool IsLightThemeToggleEnabled => themeService is not null && !IsThemeSwitching;
+
+    public bool HasThemeError => !string.IsNullOrWhiteSpace(ThemeError);
+
+    public string LightThemeToggleText => IsLightThemeEnabled ? T("Вкл") : T("Выкл");
+
+    public string ThemeModeText => IsLightThemeEnabled ? T("Светлая") : T("Темная");
+
+    public string ThemeStatus
+    {
+        get => T(themeStatus);
+        private set => SetField(ref themeStatus, value);
+    }
+
+    public string ThemeError
+    {
+        get => T(themeError);
+        private set
+        {
+            if (SetField(ref themeError, value))
+            {
+                OnPropertyChanged(nameof(HasThemeError));
+            }
+        }
+    }
 
     public TransferDriveOption? SelectedDrive
     {
@@ -621,6 +687,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
 
     public Task InitializeAsync()
     {
+        ApplyInitialThemeState();
         LoadLanguages();
         RefreshDrives();
         ApplyInitialDestination();
@@ -645,8 +712,61 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         selectedSection = section;
         OnPropertyChanged(nameof(IsConnectionsSelected));
         OnPropertyChanged(nameof(IsLanguagesSelected));
+        OnPropertyChanged(nameof(IsCustomizationSelected));
         OnPropertyChanged(nameof(IsTransferSelected));
         RaiseTransferSurfaceStateChanged();
+    }
+
+    private void ApplyInitialThemeState()
+    {
+        isLightThemeEnabled = settingsService.Theme == AppTheme.Light;
+        ThemeStatus = IsLightThemeEnabled
+            ? "Светлая тема включена."
+            : "Темная тема включена.";
+        ThemeError = string.Empty;
+        OnPropertyChanged(nameof(IsLightThemeEnabled));
+        OnPropertyChanged(nameof(LightThemeToggleText));
+        OnPropertyChanged(nameof(ThemeModeText));
+        OnPropertyChanged(nameof(IsLightThemeToggleEnabled));
+    }
+
+    private async Task ChangeThemeAsync(bool enableLightTheme)
+    {
+        if (themeService is null || IsThemeSwitching)
+        {
+            return;
+        }
+
+        AppTheme nextTheme = enableLightTheme ? AppTheme.Light : AppTheme.Dark;
+        try
+        {
+            IsThemeSwitching = true;
+            ThemeError = string.Empty;
+            ThemeStatus = enableLightTheme
+                ? "Включаю светлую тему..."
+                : "Возвращаю темную тему...";
+
+            await themeService.SetThemeAsync(nextTheme);
+
+            ThemeStatus = enableLightTheme
+                ? "Светлая тема включена."
+                : "Темная тема включена.";
+        }
+        catch (Exception exception)
+        {
+            bool actualLightTheme = settingsService.Theme == AppTheme.Light;
+            SetField(ref isLightThemeEnabled, actualLightTheme, nameof(IsLightThemeEnabled));
+            OnPropertyChanged(nameof(LightThemeToggleText));
+            OnPropertyChanged(nameof(ThemeModeText));
+            ThemeError = F("Не удалось сохранить тему: {0}", exception.Message);
+            ThemeStatus = actualLightTheme
+                ? "Светлая тема включена, но настройка может не сохраниться."
+                : "Оставляю темную тему.";
+        }
+        finally
+        {
+            IsThemeSwitching = false;
+        }
     }
 
     private void LoadLanguages()
@@ -1281,6 +1401,10 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         OnPropertyChanged(nameof(SelectedLanguageText));
         OnPropertyChanged(nameof(LanguageSwitchTitle));
         OnPropertyChanged(nameof(LanguageSwitchSubtitle));
+        OnPropertyChanged(nameof(LightThemeToggleText));
+        OnPropertyChanged(nameof(ThemeModeText));
+        OnPropertyChanged(nameof(ThemeStatus));
+        OnPropertyChanged(nameof(ThemeError));
         OnPropertyChanged(nameof(TransferMessage));
         OnPropertyChanged(nameof(TransferError));
         OnPropertyChanged(nameof(TransferCurrentStep));
@@ -1323,6 +1447,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         (StartTransferCommand as AsyncRelayCommand)?.RaiseCanExecuteChanged();
         (SelectConnectionsCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SelectLanguagesCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (SelectCustomizationCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SelectTransferCommand as RelayCommand)?.RaiseCanExecuteChanged();
     }
 

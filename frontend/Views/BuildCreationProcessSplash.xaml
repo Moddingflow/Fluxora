@@ -15,24 +15,24 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
 
-        <SolidColorBrush x:Key="CreationTextBrush" Color="#F7F4FF" />
-        <SolidColorBrush x:Key="CreationSecondaryTextBrush" Color="#D8D2EB" />
-        <SolidColorBrush x:Key="CreationMutedTextBrush" Color="#9B93B4" />
-        <SolidColorBrush x:Key="CreationSubtleTextBrush" Color="#756D8E" />
+        <SolidColorBrush x:Key="CreationTextBrush" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="CreationSecondaryTextBrush" Color="#D5E2F2" />
+        <SolidColorBrush x:Key="CreationMutedTextBrush" Color="#93A4BC" />
+        <SolidColorBrush x:Key="CreationSubtleTextBrush" Color="#70839A" />
         <SolidColorBrush x:Key="CreationErrorBrush" Color="#FB7185" />
         <SolidColorBrush x:Key="CreationCancelBrush" Color="#FBBF24" />
         <SolidColorBrush x:Key="CreationSuccessBrush" Color="#7DD3FC" />
 
         <LinearGradientBrush x:Key="CreationCoreBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#F7F4FF" Offset="0" />
+            <GradientStop Color="#F4F8FF" Offset="0" />
             <GradientStop Color="#93C5FD" Offset="0.42" />
-            <GradientStop Color="#8B5CF6" Offset="1" />
+            <GradientStop Color="#6FA5FF" Offset="1" />
         </LinearGradientBrush>
 
         <LinearGradientBrush x:Key="CreationProgressBrush" StartPoint="0,0" EndPoint="1,0">
             <GradientStop Color="#7DD3FC" Offset="0" />
-            <GradientStop Color="#A78BFA" Offset="0.58" />
-            <GradientStop Color="#8B5CF6" Offset="1" />
+            <GradientStop Color="#A8CAFF" Offset="0.58" />
+            <GradientStop Color="#6FA5FF" Offset="1" />
         </LinearGradientBrush>
 
         <Style x:Key="CreationProgressBarStyle" TargetType="{x:Type ProgressBar}">
@@ -40,7 +40,7 @@
             <Setter Property="Minimum" Value="0" />
             <Setter Property="Maximum" Value="100" />
             <Setter Property="Foreground" Value="{StaticResource CreationProgressBrush}" />
-            <Setter Property="Background" Value="#151222" />
+            <Setter Property="Background" Value="#0D1420" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -49,11 +49,11 @@
                               ClipToBounds="True">
                             <Border x:Name="PART_Track"
                                     Background="{TemplateBinding Background}"
-                                    BorderBrush="#322A4B"
+                                    BorderBrush="#1E3555"
                                     BorderThickness="1"
                                     CornerRadius="5" />
                             <Border x:Name="PulseLayer"
-                                    BorderBrush="#8B5CF6"
+                                    BorderBrush="#6FA5FF"
                                     BorderThickness="1"
                                     CornerRadius="5"
                                     Opacity="0" />
@@ -125,8 +125,8 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type Button}">
                         <Border x:Name="Root"
-                                Background="#1B1730"
-                                BorderBrush="#3B315D"
+                                Background="#0E1A2B"
+                                BorderBrush="#2B5288"
                                 BorderThickness="1"
                                 CornerRadius="9">
                             <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
@@ -137,8 +137,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="#241D40" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="#6D5DFB" />
+                                <Setter TargetName="Root" Property="Background" Value="#102B4E" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="#3F7EEA" />
                                 <Setter Property="Foreground" Value="{StaticResource CreationTextBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
@@ -155,8 +155,8 @@
         </Style>
 
         <Style x:Key="CreationStepCardStyle" TargetType="{x:Type Border}">
-            <Setter Property="Background" Value="#151321" />
-            <Setter Property="BorderBrush" Value="#302B46" />
+            <Setter Property="Background" Value="#0D1420" />
+            <Setter Property="BorderBrush" Value="#1B2B41" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="10" />
             <Setter Property="Padding" Value="12" />
@@ -167,8 +167,8 @@
             <Setter Property="Width" Value="34" />
             <Setter Property="Height" Value="34" />
             <Setter Property="CornerRadius" Value="9" />
-            <Setter Property="Background" Value="#1F1A2E" />
-            <Setter Property="BorderBrush" Value="#393052" />
+            <Setter Property="Background" Value="{StaticResource IconTileBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource IconTileBorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
     </UserControl.Resources>
@@ -234,9 +234,9 @@
 
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F7080711" Offset="0" />
-                <GradientStop Color="#F30D0A18" Offset="0.52" />
-                <GradientStop Color="#F5121022" Offset="1" />
+                <GradientStop Color="#F702050A" Offset="0" />
+                <GradientStop Color="#F3050A11" Offset="0.52" />
+                <GradientStop Color="#F508101B" Offset="1" />
             </LinearGradientBrush>
         </Grid.Background>
 
@@ -246,12 +246,12 @@
                 VerticalAlignment="Center"
                 Margin="28"
                 Padding="26"
-                Background="#E8151321"
-                BorderBrush="#3A3157"
+                Background="#E8121A27"
+                BorderBrush="#294775"
                 BorderThickness="1"
                 CornerRadius="16">
             <Border.Effect>
-                <DropShadowEffect Color="#05030B"
+                <DropShadowEffect Color="#03050A"
                                   BlurRadius="34"
                                   ShadowDepth="14"
                                   Opacity="0.45" />
@@ -280,7 +280,7 @@
                           HorizontalAlignment="Left">
                         <Ellipse Width="94"
                                  Height="94"
-                                 Stroke="#2B2444"
+                                 Stroke="#17304F"
                                  StrokeThickness="7"
                                  Opacity="0.95" />
 
@@ -288,7 +288,7 @@
                             <Ellipse x:Name="MainArc"
                                      Width="94"
                                      Height="94"
-                                     Stroke="#A78BFA"
+                                     Stroke="#A8CAFF"
                                      StrokeThickness="7"
                                      StrokeStartLineCap="Round"
                                      StrokeEndLineCap="Round"
@@ -303,7 +303,7 @@
                             <Ellipse x:Name="EchoArc"
                                      Width="62"
                                      Height="62"
-                                     Stroke="#F7F4FF"
+                                     Stroke="#F4F8FF"
                                      StrokeThickness="4"
                                      StrokeStartLineCap="Round"
                                      StrokeEndLineCap="Round"
@@ -383,8 +383,8 @@
                         <ColumnDefinition Width="1*" />
                     </Grid.ColumnDefinitions>
 
-                    <Border Background="#11101B"
-                            BorderBrush="#302B46"
+                    <Border Background="#050A11"
+                            BorderBrush="#1B2B41"
                             BorderThickness="1"
                             CornerRadius="10"
                             Padding="14">
@@ -408,8 +408,8 @@
                     </Border>
 
                     <Border Grid.Column="2"
-                            Background="#11101B"
-                            BorderBrush="#302B46"
+                            Background="#050A11"
+                            BorderBrush="#1B2B41"
                             BorderThickness="1"
                             CornerRadius="10"
                             Padding="14">
@@ -447,8 +447,8 @@
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding DataStepState}" Value="Active">
                                         <Setter Property="Opacity" Value="1" />
-                                        <Setter Property="Background" Value="#211A3A" />
-                                        <Setter Property="BorderBrush" Value="#8B5CF6" />
+                                        <Setter Property="Background" Value="#10213D" />
+                                        <Setter Property="BorderBrush" Value="#6FA5FF" />
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding DataStepState}" Value="Canceling">
                                         <Setter Property="Opacity" Value="1" />
@@ -487,8 +487,8 @@
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding TemplateStepState}" Value="Active">
                                         <Setter Property="Opacity" Value="1" />
-                                        <Setter Property="Background" Value="#211A3A" />
-                                        <Setter Property="BorderBrush" Value="#8B5CF6" />
+                                        <Setter Property="Background" Value="#10213D" />
+                                        <Setter Property="BorderBrush" Value="#6FA5FF" />
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding TemplateStepState}" Value="Canceling">
                                         <Setter Property="Opacity" Value="1" />
@@ -503,7 +503,7 @@
                                 <controls:LineIcon Data="{StaticResource Icon.Gamepad}"
                                                    Width="18"
                                                    Height="18"
-                                                   Foreground="{StaticResource CreationSecondaryTextBrush}" />
+                                                   Foreground="{StaticResource IconTileForegroundBrush}" />
                             </Border>
                             <TextBlock Text="Игра"
                                        Margin="0,10,0,0"
@@ -527,8 +527,8 @@
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding FilesStepState}" Value="Active">
                                         <Setter Property="Opacity" Value="1" />
-                                        <Setter Property="Background" Value="#211A3A" />
-                                        <Setter Property="BorderBrush" Value="#8B5CF6" />
+                                        <Setter Property="Background" Value="#10213D" />
+                                        <Setter Property="BorderBrush" Value="#6FA5FF" />
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding FilesStepState}" Value="Canceling">
                                         <Setter Property="Opacity" Value="1" />
@@ -567,8 +567,8 @@
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding CatalogStepState}" Value="Active">
                                         <Setter Property="Opacity" Value="1" />
-                                        <Setter Property="Background" Value="#211A3A" />
-                                        <Setter Property="BorderBrush" Value="#8B5CF6" />
+                                        <Setter Property="Background" Value="#10213D" />
+                                        <Setter Property="BorderBrush" Value="#6FA5FF" />
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding CatalogStepState}" Value="Canceling">
                                         <Setter Property="Opacity" Value="1" />
@@ -662,7 +662,7 @@
 
         <Border Height="1"
                 VerticalAlignment="Top"
-                Background="#2E2550"
+                Background="#18355A"
                 Opacity="0.36" />
     </Grid>
 </UserControl>

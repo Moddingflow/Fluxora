@@ -3,6 +3,8 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Fluxora.App.Models;
+using WpfApplication = System.Windows.Application;
 
 namespace Fluxora.App.Services;
 
@@ -19,6 +21,7 @@ namespace Fluxora.App.Services;
 public sealed class WindowChromeService
 {
     private readonly Window window;
+    private static AppTheme currentTheme = AppTheme.Dark;
 
     public WindowChromeService(Window window)
     {
@@ -136,11 +139,38 @@ public sealed class WindowChromeService
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
 
+    public static void SetTheme(AppTheme theme)
+    {
+        currentTheme = theme;
+
+        if (WpfApplication.Current is null)
+        {
+            return;
+        }
+
+        foreach (Window window in WpfApplication.Current.Windows.OfType<Window>())
+        {
+            ApplyTheme(window, theme);
+        }
+    }
+
+    public static void ApplyTheme(Window window, AppTheme theme)
+    {
+        IntPtr handle = new WindowInteropHelper(window).Handle;
+        if (handle == IntPtr.Zero)
+        {
+            return;
+        }
+
+        currentTheme = theme;
+        ApplyDwmTheme(handle);
+    }
+
     private static void ApplyDwmTheme(IntPtr handle)
     {
         ApplyRoundedCorners(handle);
-        ApplyDarkCaption(handle);
-        ApplyCaptionColors(handle);
+        ApplyDarkCaption(handle, currentTheme);
+        ApplyCaptionColors(handle, currentTheme);
     }
 
     private static void ApplyRoundedCorners(IntPtr handle)
@@ -149,9 +179,9 @@ public sealed class WindowChromeService
         _ = DwmSetWindowAttribute(handle, DwmWindowCornerPreferenceAttribute, ref preference, sizeof(int));
     }
 
-    private static void ApplyDarkCaption(IntPtr handle)
+    private static void ApplyDarkCaption(IntPtr handle, AppTheme theme)
     {
-        int enabled = 1;
+        int enabled = theme == AppTheme.Light ? 0 : 1;
         int result = DwmSetWindowAttribute(
             handle,
             DwmUseImmersiveDarkModeAttribute,
@@ -168,11 +198,17 @@ public sealed class WindowChromeService
         }
     }
 
-    private static void ApplyCaptionColors(IntPtr handle)
+    private static void ApplyCaptionColors(IntPtr handle, AppTheme theme)
     {
-        int borderColor = ToColorRef(0x21, 0x1C, 0x33);
-        int captionColor = ToColorRef(0x0B, 0x09, 0x13);
-        int textColor = ToColorRef(0xF7, 0xF4, 0xFF);
+        int borderColor = theme == AppTheme.Light
+            ? ToColorRef(0xD0, 0xD0, 0xD0)
+            : ToColorRef(0x10, 0x1A, 0x29);
+        int captionColor = theme == AppTheme.Light
+            ? ToColorRef(0xFF, 0xFF, 0xFF)
+            : ToColorRef(0x04, 0x08, 0x10);
+        int textColor = theme == AppTheme.Light
+            ? ToColorRef(0x11, 0x11, 0x11)
+            : ToColorRef(0xF4, 0xF8, 0xFF);
 
         _ = DwmSetWindowAttribute(handle, DwmWindowBorderColorAttribute, ref borderColor, sizeof(int));
         _ = DwmSetWindowAttribute(handle, DwmWindowCaptionColorAttribute, ref captionColor, sizeof(int));

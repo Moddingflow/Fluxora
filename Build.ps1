@@ -432,6 +432,7 @@ function New-FluxoraInstallerManifest {
         (Join-Path $ProjectRoot 'Icons\Fluxora.png'),
         (Join-Path $ProjectRoot 'frontend\Assets\Icons.xaml'),
         (Join-Path $ProjectRoot 'frontend\Controls\LineIcon.cs'),
+        (Join-Path $ProjectRoot 'frontend\Models\AppTheme.cs'),
         (Join-Path $ProjectRoot 'frontend\Services\ProgressUpdateCoalescer.cs'),
         (Join-Path $ProjectRoot 'frontend\Services\WindowChromeService.cs'),
         $NativeInstallerCorePath

@@ -12,7 +12,7 @@
         ResizeMode="CanResize"
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
-        Background="#14111E"
+        Background="#111925"
         FontFamily="{StaticResource FluxoraFontBody}"
         FontWeight="Medium"
         TextOptions.TextFormattingMode="Display"
@@ -34,26 +34,26 @@
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
         <Geometry x:Key="Icon.Check">M20 6 9 17l-5-5</Geometry>
 
-        <SolidColorBrush x:Key="TextBrush" Color="#F7F4FF" />
-        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C5BEDA" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#918AA8" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#7C3AED" />
-        <SolidColorBrush x:Key="AccentHoverBrush" Color="#8B5CF6" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#241A46" />
-        <SolidColorBrush x:Key="AccentLineBrush" Color="#493184" />
-        <SolidColorBrush x:Key="PanelBrush" Color="#171523" />
-        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#211E32" />
-        <SolidColorBrush x:Key="PanelSoftBrush" Color="#11101B" />
-        <SolidColorBrush x:Key="PanelHoverBrush" Color="#29243D" />
-        <SolidColorBrush x:Key="LineBrush" Color="#302B46" />
-        <SolidColorBrush x:Key="LineHoverBrush" Color="#55467D" />
+        <SolidColorBrush x:Key="TextBrush" Color="#F4F8FF" />
+        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C7D4E7" />
+        <SolidColorBrush x:Key="MutedTextBrush" Color="#8B9AB0" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#4D8DF7" />
+        <SolidColorBrush x:Key="AccentHoverBrush" Color="#6FA5FF" />
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#091C35" />
+        <SolidColorBrush x:Key="AccentLineBrush" Color="#305B94" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#0A1018" />
+        <SolidColorBrush x:Key="PanelRaisedBrush" Color="#0F1724" />
+        <SolidColorBrush x:Key="PanelSoftBrush" Color="#050A11" />
+        <SolidColorBrush x:Key="PanelHoverBrush" Color="#132238" />
+        <SolidColorBrush x:Key="LineBrush" Color="#1B2B41" />
+        <SolidColorBrush x:Key="LineHoverBrush" Color="#2F4E75" />
         <SolidColorBrush x:Key="SuccessBrush" Color="#68E1D1" />
         <SolidColorBrush x:Key="ErrorBrush" Color="#FB7185" />
 
         <LinearGradientBrush x:Key="AccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#8B5CF6" Offset="0" />
-            <GradientStop Color="#6D5DFB" Offset="0.62" />
-            <GradientStop Color="#5B21B6" Offset="1" />
+            <GradientStop Color="#6FA5FF" Offset="0" />
+            <GradientStop Color="#3F7EEA" Offset="0.62" />
+            <GradientStop Color="#1F5FCE" Offset="1" />
         </LinearGradientBrush>
 
         <Style x:Key="CaptionButtonStyle" TargetType="{x:Type Button}">
@@ -82,7 +82,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Foreground" Value="#F7F4FF" />
+                                <Setter Property="Foreground" Value="#F4F8FF" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.72" />
@@ -145,11 +145,11 @@
                BasedOn="{StaticResource DialogButtonStyle}">
             <Setter Property="Background" Value="{StaticResource AccentBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
-            <Setter Property="Foreground" Value="#F7F4FF" />
+            <Setter Property="Foreground" Value="#F4F8FF" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="{StaticResource AccentHoverBrush}" />
-                    <Setter Property="BorderBrush" Value="#B197FC" />
+                    <Setter Property="BorderBrush" Value="#B8D4FF" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -326,8 +326,8 @@
                     <Setter Property="BorderBrush" Value="{StaticResource SuccessBrush}" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding IsVisible}" Value="False">
-                    <Setter Property="Background" Value="#171421" />
-                    <Setter Property="BorderBrush" Value="#29233B" />
+                    <Setter Property="Background" Value="#0A1018" />
+                    <Setter Property="BorderBrush" Value="#132238" />
                     <Setter Property="Opacity" Value="0.46" />
                 </DataTrigger>
             </Style.Triggers>
@@ -456,8 +456,8 @@
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="Background" Value="{StaticResource ToggleOnBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource ToggleOnBorderBrush}" />
                             </Trigger>
                             <DataTrigger Binding="{Binding WasPreviouslySelected}" Value="True">
                                 <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource SuccessBrush}" />
@@ -467,7 +467,7 @@
                                     <Condition Binding="{Binding WasPreviouslySelected}" Value="True" />
                                     <Condition Binding="{Binding IsSelected}" Value="True" />
                                 </MultiDataTrigger.Conditions>
-                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
+                                <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource ToggleOnBorderBrush}" />
                             </MultiDataTrigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Root" Property="Opacity" Value="0.56" />
@@ -523,7 +523,7 @@
                             <controls:LineIcon Data="{StaticResource Icon.Layers}"
                                                Width="18"
                                                Height="18"
-                                               Foreground="#F7F4FF" />
+                                               Foreground="#F4F8FF" />
                         </Border>
                         <StackPanel MaxWidth="780">
                             <TextBlock Text="{Binding ModuleTitle}"
@@ -740,7 +740,7 @@
                                                                                Height="13"
                                                                                HorizontalAlignment="Center"
                                                                                VerticalAlignment="Center"
-                                                                               Foreground="#F7F4FF"
+                                                                               Foreground="#F4F8FF"
                                                                                Visibility="Collapsed" />
                                                         </Border>
                                                         <StackPanel Grid.Column="1">
@@ -803,7 +803,7 @@
                                                        Stretch="UniformToFill"
                                                        RenderOptions.BitmapScalingMode="HighQuality" />
                                                 <Border CornerRadius="8"
-                                                        Background="#99080711">
+                                                        Background="#9902050A">
                                                     <Border.Style>
                                                         <Style TargetType="{x:Type Border}">
                                                             <Setter Property="Opacity" Value="0" />
@@ -891,7 +891,7 @@
 
         <Grid x:Name="ImageLightboxOverlay"
               Visibility="Collapsed"
-              Background="#E6080711"
+              Background="#E602050A"
               MouseLeftButtonDown="OnLightboxBackgroundMouseLeftButtonDown">
             <Image x:Name="LightboxImage"
                    services:FomodAsyncImage.SourcePath="{Binding PreviewImagePath}"

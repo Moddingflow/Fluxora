@@ -4453,7 +4453,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
 
         System.Windows.Threading.Dispatcher? dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher is not null && !dispatcher.CheckAccess())
+        if (dispatcher is not null &&
+            !dispatcher.HasShutdownStarted &&
+            !dispatcher.HasShutdownFinished &&
+            !dispatcher.CheckAccess())
         {
             await dispatcher.InvokeAsync(() => ApplyModSearchFilter(cancellationToken));
             return;
@@ -7631,7 +7634,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private static void RunOnUiThread(Action action)
     {
         System.Windows.Threading.Dispatcher? dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher is not null && !dispatcher.CheckAccess())
+        if (dispatcher is not null &&
+            !dispatcher.HasShutdownStarted &&
+            !dispatcher.HasShutdownFinished &&
+            !dispatcher.CheckAccess())
         {
             dispatcher.BeginInvoke(action);
             return;
