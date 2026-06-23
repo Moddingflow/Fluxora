@@ -965,9 +965,10 @@ namespace fluxora
 
     GameExecutableLaunchResult VirtualFileSystemService::launchExecutable(
         const std::filesystem::path& configPath,
-        std::wstring_view executableId) const
+        std::wstring_view executableId,
+        std::wstring_view profileName) const
     {
-        const ResolvedExecutableLaunch resolved = executables_.resolveExecutable(configPath, executableId);
+        const ResolvedExecutableLaunch resolved = executables_.resolveExecutable(configPath, executableId, profileName);
         logger_.writeOperation(
             LogLevel::Info,
             "VfsDiagnostics",
@@ -984,7 +985,7 @@ namespace fluxora
             "vfsOperation fallback selectedGameId=\"" + toUtf8(resolved.gameId.value()) +
                 "\", definitionVersion=\"" + toUtf8(resolved.gameDefinitionVersion) +
                 "\", reason=\"Fluxora was built without VFS support for this platform.\".");
-        return executables_.launchProjectExecutable(configPath, executableId);
+                return executables_.launchProjectExecutable(configPath, executableId, profileName);
 #else
         const auto fallbackPlainLaunch = [&](const std::string& reason) -> GameExecutableLaunchResult
         {
@@ -997,7 +998,7 @@ namespace fluxora
                     "\", appliedVfsRules=\"" +
                     vfsRulesSummary(resolved.vfsRules.has_value() ? &resolved.vfsRules->rules : nullptr) +
                     "\", reason=\"" + reason + "\".");
-            return executables_.launchProjectExecutable(configPath, executableId);
+            return executables_.launchProjectExecutable(configPath, executableId, profileName);
         };
         const auto failVfsLaunch = [&](const std::string& reason) -> GameExecutableLaunchResult
         {

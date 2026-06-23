@@ -1,0 +1,1962 @@
+{
+  ".codex/hooks.json": {
+    "mtime": 1782210938.6812668,
+    "ast_hash": "2a2872e14a60827416e76b2b4d273595",
+    "semantic_hash": ""
+  },
+  "Build.ps1": {
+    "mtime": 1782197379.6252015,
+    "ast_hash": "d22f22a74f8e1622ac7284704740bc87",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Core.hpp": {
+    "mtime": 1782216870.2558007,
+    "ast_hash": "1206b2223dbc2a617a59e00613db793a",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/FluxoraCoreApi.hpp": {
+    "mtime": 1782216891.9653795,
+    "ast_hash": "9408346d5a4f3f560a1fd6904dd23c88",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/GameSupport/DefinitionBackedGameSupport.hpp": {
+    "mtime": 1781714419.7123487,
+    "ast_hash": "606ee7427be3d42c77c289e3858e42b7",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/GameSupport/GameDefinition.hpp": {
+    "mtime": 1781723102.5362163,
+    "ast_hash": "ed6cc41eff392076d0f8cf5f54a2a7bf",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/GameSupport/GameDefinitionLoader.hpp": {
+    "mtime": 1781712867.467475,
+    "ast_hash": "c57cd208266a4478600bbbbc20acfc63",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/GameSupport/GameDetectionService.hpp": {
+    "mtime": 1781731766.6433773,
+    "ast_hash": "a1aa17ffbad231a5c4b739a682d215d7",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/GameSupport/GameHealthCheckService.hpp": {
+    "mtime": 1781716695.2268372,
+    "ast_hash": "071ada36d0dcdef4d3871d03223e3a66",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/GameSupport/GameSupportRegistry.h": {
+    "mtime": 1781713966.3320866,
+    "ast_hash": "ac3dd85c95cd475bfc307550cbed7782",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/GameSupport/GameSupportRegistry.hpp": {
+    "mtime": 1781731213.6003447,
+    "ast_hash": "1013e39b795150f20dc249ef4ab4518d",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/GameSupport/GameTypes.hpp": {
+    "mtime": 1781723001.6443143,
+    "ast_hash": "ca649a74151537a362ff13fd13d4be91",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/GameSupport/IGameSupport.h": {
+    "mtime": 1781713963.5883057,
+    "ast_hash": "976e48d2aedfc83b5e17f6db4638d57f",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/GameSupport/IGameSupport.hpp": {
+    "mtime": 1781731174.6627164,
+    "ast_hash": "3923830a5bfc67cdb9822712b05dd22c",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/GameSupport/ProjectFingerprint.hpp": {
+    "mtime": 1781716705.0939138,
+    "ast_hash": "202ea161d0dbdc7c5512920b5f987a59",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/GameSupport/SkyrimSpecialEditionSupport.hpp": {
+    "mtime": 1781736928.5323727,
+    "ast_hash": "a4c9caf5e3ea03f349ac8cf74465ed19",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/AppSettingsService.hpp": {
+    "mtime": 1781858708.4142072,
+    "ast_hash": "7632c7926725d2a4c24d2e815d9ba759",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/BuildPathSettingsService.hpp": {
+    "mtime": 1781524647.8236656,
+    "ast_hash": "c3ec456e4f302dd1f182bfa3fb5e69cc",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/BulkFileCopyService.hpp": {
+    "mtime": 1781516840.2133634,
+    "ast_hash": "2bc5eb03e9410862d2ea3c8346c69410",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/ContentLayoutService.hpp": {
+    "mtime": 1781872839.4516954,
+    "ast_hash": "3c9befe49a60b7bbfda4e59bd8447333",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/DownloadService.hpp": {
+    "mtime": 1781868602.4639008,
+    "ast_hash": "42bd5694d7ca177e87db240c1ab50339",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/ExecutableIconService.hpp": {
+    "mtime": 1781521354.5895226,
+    "ast_hash": "a21776323998e8475c48dbb4fa49d8e8",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/ExecutableService.hpp": {
+    "mtime": 1782216963.0289829,
+    "ast_hash": "bb824d147710e583b7e4abc8da46168e",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/FluxPackService.hpp": {
+    "mtime": 1781776000.9528236,
+    "ast_hash": "4a52018975cb5dbcb7b1217971c45e28",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/FomodInstallerService.hpp": {
+    "mtime": 1781730715.0175612,
+    "ast_hash": "b46deea8b179b5f4b3f10fa5a38f6b19",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/HookService.hpp": {
+    "mtime": 1781302425.707747,
+    "ast_hash": "499ff82d10b1794b783558cdedf1ac80",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/IService.hpp": {
+    "mtime": 1781302425.707747,
+    "ast_hash": "ac0f8bac82afebc7526b0e247e2f0e5c",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/Logger.hpp": {
+    "mtime": 1781732085.6083124,
+    "ast_hash": "5502211e81e32a4999563e64a169b9e4",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/ModOrganizerExecutableImportService.hpp": {
+    "mtime": 1781519374.9358895,
+    "ast_hash": "5478eb237120a4ce5c6a42fed59c4160",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/ModOrganizerImportService.hpp": {
+    "mtime": 1781852385.5904717,
+    "ast_hash": "00800d621977295bd4c1701a6bbfa2d2",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/ModOrganizerPluginGroupService.hpp": {
+    "mtime": 1781509785.194406,
+    "ast_hash": "f96210a235fcff37558e02da99d787b4",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/ModOrganizerProfileOrderService.hpp": {
+    "mtime": 1781465811.8816562,
+    "ast_hash": "b4efbe300c499495e446f5220eb60baa",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/ModService.hpp": {
+    "mtime": 1781866246.0434487,
+    "ast_hash": "977bb2a7a2daccc5dfd3113dc67ed24b",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/NexusModsAuthService.hpp": {
+    "mtime": 1781336140.659113,
+    "ast_hash": "f7e89f4714f594c1f67b6e9d9147911f",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/PathSafetyService.hpp": {
+    "mtime": 1781719165.903005,
+    "ast_hash": "b4214a95636b6fb8bcfdd598e438af2a",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/PluginService.hpp": {
+    "mtime": 1781732467.9745526,
+    "ast_hash": "39697257ef11cb1c0ae2641af7d188a1",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/ProfileOrderService.hpp": {
+    "mtime": 1781865389.6443808,
+    "ast_hash": "39d95bd71517a83353672f2893b63e35",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/ProjectService.hpp": {
+    "mtime": 1781949009.426282,
+    "ast_hash": "79f45a2047e91c5b60f34c45fbfbad0c",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/TemplateService.hpp": {
+    "mtime": 1781716034.4319372,
+    "ast_hash": "f71174fb52ce69e58e9cfcf1fb35734e",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/VfsContentPlacementAnalyzer.hpp": {
+    "mtime": 1781949512.7137942,
+    "ast_hash": "fcc79d8295071edca1c2d1628b973c73",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/VirtualFileSystemService.hpp": {
+    "mtime": 1782216950.015206,
+    "ast_hash": "cb515a89085de513cd383363ae7e7a84",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Storage/AtomicFileStore.hpp": {
+    "mtime": 1781720814.175082,
+    "ast_hash": "032c00b6f999d9f266ee38a9a31f72a0",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Storage/InstanceMetadataStore.hpp": {
+    "mtime": 1782216678.1118636,
+    "ast_hash": "0591eb97f73e7b9105a9574ea031e4b2",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Storage/ProjectStateTransaction.hpp": {
+    "mtime": 1781720943.1597762,
+    "ast_hash": "d811106d61db8716e7c9e2d230840d00",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Support/JsonReader.hpp": {
+    "mtime": 1781334644.2416465,
+    "ast_hash": "f44839d0e24fe0799c12c65dbcabdb47",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Support/JsonWriter.hpp": {
+    "mtime": 1781366486.7855523,
+    "ast_hash": "d20f7beb41d4aa5c1cdfe2dac6da52db",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraInstaller/FluxoraInstallerApi.hpp": {
+    "mtime": 1782143655.4695177,
+    "ast_hash": "1ccb9ff93394598aa60d52d710714fb7",
+    "semantic_hash": ""
+  },
+  "backend/resources/GameDefinitions/skyrimse.json": {
+    "mtime": 1781723125.3372364,
+    "ast_hash": "2b061b5a005a7f135742a0bb0298dfbd",
+    "semantic_hash": ""
+  },
+  "backend/resources/Schemas/game-definition.schema.json": {
+    "mtime": 1781734131.9914725,
+    "ast_hash": "b7091a7e43261f75f32aa2cac4479bfd",
+    "semantic_hash": ""
+  },
+  "backend/src/Core.cpp": {
+    "mtime": 1782216877.826429,
+    "ast_hash": "0789d297f5fafdf4be6a5e939cebf5f9",
+    "semantic_hash": ""
+  },
+  "backend/src/FluxoraCoreApi.cpp": {
+    "mtime": 1782216945.2734494,
+    "ast_hash": "a85a2f7ddbf381e915e6fe8a501f8f70",
+    "semantic_hash": ""
+  },
+  "backend/src/GameSupport/DefinitionBackedGameSupport.cpp": {
+    "mtime": 1781731192.019227,
+    "ast_hash": "9cd4f15d1a7ed036446ec50569e8ef88",
+    "semantic_hash": ""
+  },
+  "backend/src/GameSupport/GameDefinitionLoader.cpp": {
+    "mtime": 1781734252.2498477,
+    "ast_hash": "692cc90dc004fdf81557bd93953e12f4",
+    "semantic_hash": ""
+  },
+  "backend/src/GameSupport/GameDetectionService.cpp": {
+    "mtime": 1781731788.7110074,
+    "ast_hash": "269a025e040119cc3a63f1508612bcd2",
+    "semantic_hash": ""
+  },
+  "backend/src/GameSupport/GameHealthCheckService.cpp": {
+    "mtime": 1781731552.54251,
+    "ast_hash": "a5dcddc6f6dd5f543a221fcaee5f2e95",
+    "semantic_hash": ""
+  },
+  "backend/src/GameSupport/GameSupportRegistry.cpp": {
+    "mtime": 1781731217.649002,
+    "ast_hash": "99f7f0057fce68b1e35c528023ca652a",
+    "semantic_hash": ""
+  },
+  "backend/src/GameSupport/ProjectFingerprint.cpp": {
+    "mtime": 1781716902.0979118,
+    "ast_hash": "e1f9eddd74a0969a1d5aa56dd35997c1",
+    "semantic_hash": ""
+  },
+  "backend/src/GameSupport/SkyrimSpecialEditionSupport.cpp": {
+    "mtime": 1781736932.639876,
+    "ast_hash": "69c3ece8ef082f96c4c08df4040fea65",
+    "semantic_hash": ""
+  },
+  "backend/src/Installer/FluxoraInstallerApi.cpp": {
+    "mtime": 1782144517.660926,
+    "ast_hash": "ca31664e4d081d58dbd0cec3f1f2e878",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/AppSettingsService.cpp": {
+    "mtime": 1781858708.4142072,
+    "ast_hash": "6e9f0aac83ede74136745f44c1934fea",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/BuildPathSettingsService.cpp": {
+    "mtime": 1781731235.849952,
+    "ast_hash": "695f653d036cc3ed5c8f4e56f5f26b1d",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/BulkFileCopyService.cpp": {
+    "mtime": 1781849644.3424942,
+    "ast_hash": "56607376c42babb682e8fd418c6fd844",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/ContentLayoutService.cpp": {
+    "mtime": 1782145481.7159662,
+    "ast_hash": "a12b4af5eddec9e01c31e373248cf21a",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/DownloadService.cpp": {
+    "mtime": 1782149837.7955294,
+    "ast_hash": "1ac0ace0615103a8fa3851f4b4465388",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/ExecutableIconService.cpp": {
+    "mtime": 1781521804.3869083,
+    "ast_hash": "e737dd7871fa8f865bfb062ac4929ff2",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/ExecutableService.cpp": {
+    "mtime": 1782216969.7656944,
+    "ast_hash": "3a9ab01b0978ab050cff53affc76b045",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/FluxPackService.cpp": {
+    "mtime": 1781865236.2471213,
+    "ast_hash": "75152fd80f1d6ec772801bfab62a10cf",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/FomodInstallerService.cpp": {
+    "mtime": 1781730755.8492868,
+    "ast_hash": "7793ba830fa72dac816df45b505f5b57",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/HookService.cpp": {
+    "mtime": 1781302425.7087486,
+    "ast_hash": "8cd341805218574a37aa7975977f8b43",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/Logger.cpp": {
+    "mtime": 1781732098.1912148,
+    "ast_hash": "b6c46fed1ab7dc1f3afe2fed8daaf6a7",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/ModOrganizerExecutableImportService.cpp": {
+    "mtime": 1781731248.4642088,
+    "ast_hash": "f172408f4a44793b5ce809eb8cb27395",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/ModOrganizerImportService.cpp": {
+    "mtime": 1781865451.7845836,
+    "ast_hash": "c498da6b1f182d104b2572ccf59bf7d2",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/ModOrganizerPluginGroupService.cpp": {
+    "mtime": 1781522514.5051925,
+    "ast_hash": "2a7f9e34507a63c55455614a6a5e2ac2",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/ModOrganizerProfileOrderService.cpp": {
+    "mtime": 1781465886.5994518,
+    "ast_hash": "90907e94b0007c9f724f207da98004b1",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/ModService.cpp": {
+    "mtime": 1782146094.9395921,
+    "ast_hash": "7f8592f3510776f7d8479c0d5121e8dd",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/NexusModsAuthService.cpp": {
+    "mtime": 1781860571.0509796,
+    "ast_hash": "431a761c28550cd854ae3f3bbb7750cf",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/PathSafetyService.cpp": {
+    "mtime": 1781719582.6716878,
+    "ast_hash": "4c6aaac1643529532995339f90448702",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/PluginService.cpp": {
+    "mtime": 1782138318.1501248,
+    "ast_hash": "3b1ddef6f02cdc21a846ca428288e5a2",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/ProfileOrderService.cpp": {
+    "mtime": 1781865408.6605008,
+    "ast_hash": "bb27939585ef9b3152ff0cbdef3452fe",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/ProjectService.cpp": {
+    "mtime": 1782149837.7940173,
+    "ast_hash": "72b9414787ec77e106cc93f7c311a8e9",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/TemplateService.cpp": {
+    "mtime": 1781759581.328036,
+    "ast_hash": "df5754b48cc3ef075e6894e44bb6e2d1",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/VfsContentPlacementAnalyzer.cpp": {
+    "mtime": 1781949720.0156415,
+    "ast_hash": "b0a3dbac3d222bd1a0ef2e2a4c4f5108",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/VirtualFileSystemService.cpp": {
+    "mtime": 1782216955.9979744,
+    "ast_hash": "454f3c4b9980bd50e84c2572180dd2b8",
+    "semantic_hash": ""
+  },
+  "backend/src/Storage/AtomicFileStore.cpp": {
+    "mtime": 1781762449.9636543,
+    "ast_hash": "a0534bda81c699bc7999bf65b49f621c",
+    "semantic_hash": ""
+  },
+  "backend/src/Storage/InstanceMetadataStore.cpp": {
+    "mtime": 1782216748.8042572,
+    "ast_hash": "0a1efa0a21d0cd52f7cd4a0efc1a42b2",
+    "semantic_hash": ""
+  },
+  "backend/src/Storage/ProjectStateTransaction.cpp": {
+    "mtime": 1781732689.868023,
+    "ast_hash": "c42a9afb2cb0f2c89e6504a91a468074",
+    "semantic_hash": ""
+  },
+  "backend/tests/AppSettingsServiceTests.cpp": {
+    "mtime": 1781858708.4152822,
+    "ast_hash": "25585730e1504dc08f29259237728d9d",
+    "semantic_hash": ""
+  },
+  "backend/tests/AtomicFileStoreTests.cpp": {
+    "mtime": 1781762411.274771,
+    "ast_hash": "13a5d0f573b9283afbc7d005f2d767bd",
+    "semantic_hash": ""
+  },
+  "backend/tests/BuildPathSettingsServiceTests.cpp": {
+    "mtime": 1781719789.6037908,
+    "ast_hash": "b67ce72cd4f609fb46e696521ae8b6a8",
+    "semantic_hash": ""
+  },
+  "backend/tests/ContentLayoutServiceTests.cpp": {
+    "mtime": 1782145492.2190142,
+    "ast_hash": "0ff38f61d0b7a7ff9a9a066adc67f30e",
+    "semantic_hash": ""
+  },
+  "backend/tests/DownloadServiceTests.cpp": {
+    "mtime": 1782149868.0693305,
+    "ast_hash": "5970d583e174d0adeec0ba67aaaff47f",
+    "semantic_hash": ""
+  },
+  "backend/tests/ExecutableServiceTests.cpp": {
+    "mtime": 1782135097.0797615,
+    "ast_hash": "a6d2674505db6339bbe63feb23ce6934",
+    "semantic_hash": ""
+  },
+  "backend/tests/FluxPackServiceTests.cpp": {
+    "mtime": 1781857440.7262213,
+    "ast_hash": "d465372ac1ca7d7653db85bdfc22e43b",
+    "semantic_hash": ""
+  },
+  "backend/tests/FomodInstallerServiceTests.cpp": {
+    "mtime": 1781730804.9851851,
+    "ast_hash": "2f44d57c84d4b63c84a20f296d102038",
+    "semantic_hash": ""
+  },
+  "backend/tests/GameDefinitionLoaderTests.cpp": {
+    "mtime": 1782209642.1177084,
+    "ast_hash": "5c5c9d05fac0a67ddf014f3e054ef080",
+    "semantic_hash": ""
+  },
+  "backend/tests/GameDetectionHealthServiceTests.cpp": {
+    "mtime": 1781759504.6572523,
+    "ast_hash": "75020719d9a94f068c1144c085153404",
+    "semantic_hash": ""
+  },
+  "backend/tests/GameSupportRegistryTests.cpp": {
+    "mtime": 1781735075.0032828,
+    "ast_hash": "0b94b54eecd84526d29ed7ca988658ff",
+    "semantic_hash": ""
+  },
+  "backend/tests/GameTypesTests.cpp": {
+    "mtime": 1781712461.47149,
+    "ast_hash": "e588334688f02f8cd7bc8e7b82a3c25b",
+    "semantic_hash": ""
+  },
+  "backend/tests/HookServiceTests.cpp": {
+    "mtime": 1781603814.1720665,
+    "ast_hash": "8438af973970dd8ae02e8e398d30e144",
+    "semantic_hash": ""
+  },
+  "backend/tests/InstallerCorePackageTests.cpp": {
+    "mtime": 1782144191.8455837,
+    "ast_hash": "0b4a9f980350da6b8a2f9114fe38411d",
+    "semantic_hash": ""
+  },
+  "backend/tests/InstanceMetadataStoreTests.cpp": {
+    "mtime": 1782217681.7525792,
+    "ast_hash": "6938ec82954bf96e6071b9929abeada0",
+    "semantic_hash": ""
+  },
+  "backend/tests/JsonSupportTests.cpp": {
+    "mtime": 1781603814.1720665,
+    "ast_hash": "06e3edc81c96d8b3a4eb3a68f619da4b",
+    "semantic_hash": ""
+  },
+  "backend/tests/LoggerTests.cpp": {
+    "mtime": 1781732105.9113963,
+    "ast_hash": "268936c76514d18448826cb561c635d1",
+    "semantic_hash": ""
+  },
+  "backend/tests/ModFileOperationsIntegrationTests.cpp": {
+    "mtime": 1782146106.4032362,
+    "ast_hash": "1fbb8a217f3d490745466c2f939730b4",
+    "semantic_hash": ""
+  },
+  "backend/tests/ModOrganizerImportServiceTests.cpp": {
+    "mtime": 1781865326.6976233,
+    "ast_hash": "a666d2b23d40741350dd1b8a86f77b8f",
+    "semantic_hash": ""
+  },
+  "backend/tests/ModOrganizerPluginGroupServiceTests.cpp": {
+    "mtime": 1781603457.997924,
+    "ast_hash": "6e178df734b35cbffb3e9330973071f7",
+    "semantic_hash": ""
+  },
+  "backend/tests/ModOrganizerProfileOrderServiceTests.cpp": {
+    "mtime": 1781603457.997924,
+    "ast_hash": "581019b181d18635b158a371eb852c8d",
+    "semantic_hash": ""
+  },
+  "backend/tests/NexusModsAuthServiceTests.cpp": {
+    "mtime": 1781860533.7843919,
+    "ast_hash": "bf7806a94f0e826bc69f5ceb232c5740",
+    "semantic_hash": ""
+  },
+  "backend/tests/PathSafetyServiceTests.cpp": {
+    "mtime": 1781720123.8726509,
+    "ast_hash": "0ed6e23cc16a4d5e2352dfdc55b96b11",
+    "semantic_hash": ""
+  },
+  "backend/tests/PluginServiceTests.cpp": {
+    "mtime": 1782138278.020859,
+    "ast_hash": "3a9112e3d5eab912d8b7316798573f0a",
+    "semantic_hash": ""
+  },
+  "backend/tests/ProjectServiceTests.cpp": {
+    "mtime": 1782149975.2342424,
+    "ast_hash": "26a1aaccc5db4244cf5adb4163df3aec",
+    "semantic_hash": ""
+  },
+  "backend/tests/ProjectStateTransactionTests.cpp": {
+    "mtime": 1781721453.1704972,
+    "ast_hash": "dd51eb8d599fbf723a2414b963b0dcdb",
+    "semantic_hash": ""
+  },
+  "backend/tests/TemplateServiceTests.cpp": {
+    "mtime": 1781716123.203233,
+    "ast_hash": "1ea696a7812543efc6958c422efd1f84",
+    "semantic_hash": ""
+  },
+  "backend/tests/TestFilesystem.hpp": {
+    "mtime": 1781720103.2101555,
+    "ast_hash": "f28983e0f1d3f0a6dc018393cdf7ba91",
+    "semantic_hash": ""
+  },
+  "backend/tests/VfsContentPlacementAnalyzerTests.cpp": {
+    "mtime": 1781949658.531927,
+    "ast_hash": "5f4da134c7df1d0c78481e761f74fabd",
+    "semantic_hash": ""
+  },
+  "backend/tests/VfsTreeTests.cpp": {
+    "mtime": 1782145781.4640417,
+    "ast_hash": "e69260fa78a236f077aeb35d98c71f34",
+    "semantic_hash": ""
+  },
+  "backend/vfs/include/FluxoraVfs/NtApi.hpp": {
+    "mtime": 1781677705.0433416,
+    "ast_hash": "b63f2501f1ac941f2c88ee4f21b03f3d",
+    "semantic_hash": ""
+  },
+  "backend/vfs/include/FluxoraVfs/VfsConfig.hpp": {
+    "mtime": 1781595000.2831304,
+    "ast_hash": "40515cdbffb93dd848756d427f27ab22",
+    "semantic_hash": ""
+  },
+  "backend/vfs/include/FluxoraVfs/VfsHooks.hpp": {
+    "mtime": 1781369049.1624162,
+    "ast_hash": "9963da9dd462ee2436ee61ffb130a83b",
+    "semantic_hash": ""
+  },
+  "backend/vfs/include/FluxoraVfs/VfsLog.hpp": {
+    "mtime": 1781368546.9639397,
+    "ast_hash": "bf19c61a54ec090f9630e6980233be6d",
+    "semantic_hash": ""
+  },
+  "backend/vfs/include/FluxoraVfs/VfsProtocol.hpp": {
+    "mtime": 1781550789.4063413,
+    "ast_hash": "e129daa267045f44d87bf22f2ac1fd33",
+    "semantic_hash": ""
+  },
+  "backend/vfs/include/FluxoraVfs/VfsTree.hpp": {
+    "mtime": 1782145706.799984,
+    "ast_hash": "cfbd123ef0a0ff7b46b89ad38d8af00f",
+    "semantic_hash": ""
+  },
+  "backend/vfs/src/DllMain.cpp": {
+    "mtime": 1781369204.9710464,
+    "ast_hash": "fc0af893d3f8ff1cd14011158d764379",
+    "semantic_hash": ""
+  },
+  "backend/vfs/src/VfsConfig.cpp": {
+    "mtime": 1781595004.070429,
+    "ast_hash": "cd1f6f9ea08fcd35069e16eed5c2ec47",
+    "semantic_hash": ""
+  },
+  "backend/vfs/src/VfsHooks.cpp": {
+    "mtime": 1782145762.055375,
+    "ast_hash": "cb10e54ccade7f38152fcf19ae4fbdf3",
+    "semantic_hash": ""
+  },
+  "backend/vfs/src/VfsLog.cpp": {
+    "mtime": 1781368561.6670463,
+    "ast_hash": "c6ac7f29b9e504d83b73384dd6fd8916",
+    "semantic_hash": ""
+  },
+  "backend/vfs/src/VfsTree.cpp": {
+    "mtime": 1782145719.5744295,
+    "ast_hash": "ccbbb109bf2111650e391cb24d0eeb29",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Fluxora.App.Tests.csproj": {
+    "mtime": 1781604924.7769194,
+    "ast_hash": "aa57c4e4262e5502c7f0577cc8d62363",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Models/ConfirmDialogOptionsTests.cs": {
+    "mtime": 1782199572.299881,
+    "ast_hash": "5c73290db06ae75ba3842a1df572ac6f",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Models/DownloadEntryTests.cs": {
+    "mtime": 1781604880.4108357,
+    "ast_hash": "d3f810fa7106154b38b69cc054cbc7e5",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Models/ModEntryTests.cs": {
+    "mtime": 1781763311.133033,
+    "ast_hash": "edfd98ceea726511b505322fef2780f5",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Models/TemplateBridgeShapeTests.cs": {
+    "mtime": 1781873213.3424706,
+    "ast_hash": "fb007401e224759d70bfe15b58ca48b0",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/ApplicationLogServiceTests.cs": {
+    "mtime": 1782146656.6024861,
+    "ast_hash": "72b2cfaf8814a3e086fa79bb447932ea",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/BulkObservableCollectionTests.cs": {
+    "mtime": 1782143255.000407,
+    "ast_hash": "56618ade4079447fd90cd897513a30f6",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/ContextMenuGestureServiceTests.cs": {
+    "mtime": 1782200801.1179895,
+    "ast_hash": "074be6d521d147ca94cc10b12dba857c",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/ExecutableLaunchSessionStoreTests.cs": {
+    "mtime": 1781730209.1825986,
+    "ast_hash": "9bc994ac07e2c62a55cf34abe697614e",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/FomodImageSourceConverterTests.cs": {
+    "mtime": 1782147911.7939239,
+    "ast_hash": "2e8aacfa28b6f9ffba88ea88a654224b",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/GameCapabilityResolverTests.cs": {
+    "mtime": 1781737830.1702478,
+    "ast_hash": "5d77c1f82716b0c6a1726468e341adcf",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/MarqueeSelectionTrackerTests.cs": {
+    "mtime": 1781940041.0839255,
+    "ast_hash": "30bf75c05b4ad7f89d50e7fc544fcf58",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/MiddleClickAutoScrollCalculatorTests.cs": {
+    "mtime": 1782122654.6038327,
+    "ast_hash": "a282e5ea31060158482db13008a5a355",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/ModArchiveFileFilterTests.cs": {
+    "mtime": 1781618231.732731,
+    "ast_hash": "0f7fc0ced947ac32e38fdfb128393bb5",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/OrderedCollectionSyncServiceTests.cs": {
+    "mtime": 1782146968.901541,
+    "ast_hash": "8941c3cf07da3e7ab4329deca34c7026",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/ProgressUpdateCoalescerTests.cs": {
+    "mtime": 1782142662.316486,
+    "ast_hash": "ca282792dbca1a6cec7e1c7154826512",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/ProjectCatalogServiceTests.cs": {
+    "mtime": 1782198144.4578452,
+    "ast_hash": "12ca8cfa17c400fdd49179769ea065a3",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/RangeSelectionServiceTests.cs": {
+    "mtime": 1781702466.9082394,
+    "ast_hash": "92634397a835c71641145286d613d538",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/SelectionInputServiceTests.cs": {
+    "mtime": 1782198538.9284487,
+    "ast_hash": "21e4432ee79218d927d91651a61c3b19",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Services/SeparatorCollapseServiceTests.cs": {
+    "mtime": 1781604880.4098332,
+    "ast_hash": "476a954b3e9e04922d47a7987dd9a507",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/BuildCreationProcessViewModelTests.cs": {
+    "mtime": 1781767908.4010336,
+    "ast_hash": "400e5350fb8cbcf0dd53e2123c08aa18",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/BuildDeletionProcessViewModelTests.cs": {
+    "mtime": 1781604963.3306572,
+    "ast_hash": "bdca087edc2325c5740fd92d23219de0",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/ExecutableLaunchProcessViewModelTests.cs": {
+    "mtime": 1781733609.8556392,
+    "ast_hash": "7e71952cc0d5b464a4e7715cd14e7057",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/ExecutableMenuItemTests.cs": {
+    "mtime": 1781604880.4098332,
+    "ast_hash": "8b77c8d79855a063884e9843ac4fbf3f",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/FluxPackInstallProcessViewModelTests.cs": {
+    "mtime": 1781856413.1871014,
+    "ast_hash": "7f7e1581e44977a8d6b1db4512e4233f",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/FluxPackPackageProcessViewModelTests.cs": {
+    "mtime": 1781775214.6996222,
+    "ast_hash": "10c0ca09849e4afe1d08b5a5c7da2da7",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/FomodInstallerViewModelTests.cs": {
+    "mtime": 1782142031.4264483,
+    "ast_hash": "14f6f4045affccc655e09a31cc17e7fb",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/InstallArchiveDetailsViewModelTests.cs": {
+    "mtime": 1781949301.2843325,
+    "ast_hash": "d9737b53998d22119cd009ca4dca6b56",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/MainWindowViewModelBuildInfoTests.cs": {
+    "mtime": 1781763311.1340322,
+    "ast_hash": "a5a78a25a23088e8bf9d58ccc7e78bb9",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/MainWindowViewModelCapabilityTests.cs": {
+    "mtime": 1782216015.440987,
+    "ast_hash": "779a5ba61e99034e1bbc71c3b5b89f4c",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/MainWindowViewModelDownloadSyncTests.cs": {
+    "mtime": 1781949301.2843325,
+    "ast_hash": "c07aeae3a42251aa136b41c90ca9bb2b",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/MainWindowViewModelGameTemplateSearchTests.cs": {
+    "mtime": 1781769918.9190843,
+    "ast_hash": "9f5fcbabb9a54f5e6ab345cea5268908",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/MainWindowViewModelModInstallPlacementTests.cs": {
+    "mtime": 1781866850.2686024,
+    "ast_hash": "99a23992c1c2c34782518757c9f3f746",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/MainWindowViewModelModSearchTests.cs": {
+    "mtime": 1781703532.7763398,
+    "ast_hash": "74a21c06ba9d4f18cb8a4ff3f8c2986f",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/MainWindowViewModelModSearchViewTests.cs": {
+    "mtime": 1782141074.6623278,
+    "ast_hash": "0473a4a35e3e17fc9a966bd89dc13ec8",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/MainWindowViewModelProjectDeletionTests.cs": {
+    "mtime": 1782203635.8457038,
+    "ast_hash": "e70912f46d794931fe639485455921ab",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/MainWindowViewModelProjectDirectoryPreviewTests.cs": {
+    "mtime": 1782150645.8922646,
+    "ast_hash": "1b55a44c3ad66a16548eab647e680781",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/MainWindowViewModelTestFactory.cs": {
+    "mtime": 1782218805.9279745,
+    "ast_hash": "22b89ec17027598191593bfcc2da1316",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/ModFileTreeNodeTests.cs": {
+    "mtime": 1782143255.001407,
+    "ast_hash": "d3b179de5469c7689e60d2e7413eb2fc",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/ModOperationProcessViewModelTests.cs": {
+    "mtime": 1781613747.137042,
+    "ast_hash": "b13fa9c2c0f4a3c1dc41016731959616",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/RelayCommandTests.cs": {
+    "mtime": 1782203626.0810525,
+    "ast_hash": "a320981f13c57f3aa5d1b57580da97c7",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/StartupSplashViewModelTests.cs": {
+    "mtime": 1781604880.40783,
+    "ast_hash": "69445a03ffcff7c2bf5381285d769868",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Views/MainWindowModSearchUiSmokeTests.cs": {
+    "mtime": 1782141160.1341932,
+    "ast_hash": "4e7c6abe29bc1c9927c6c98985040551",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Views/ProgressBarBindingModeTests.cs": {
+    "mtime": 1781777507.3861105,
+    "ast_hash": "7e80583886153ea0773bea6b89db2ef5",
+    "semantic_hash": ""
+  },
+  "frontend/App.xaml.cs": {
+    "mtime": 1782198036.1079392,
+    "ast_hash": "c3c1961cc8e8ad480108186c71e11f97",
+    "semantic_hash": ""
+  },
+  "frontend/BuildSettingsWindow.xaml.cs": {
+    "mtime": 1781549236.7413268,
+    "ast_hash": "01a703a16fd809677a7553663717f166",
+    "semantic_hash": ""
+  },
+  "frontend/Controls/LineIcon.cs": {
+    "mtime": 1781515155.0115345,
+    "ast_hash": "a8a43b2c4f0ecaa152d949b1a265a764",
+    "semantic_hash": ""
+  },
+  "frontend/ExecutableManagerWindow.xaml.cs": {
+    "mtime": 1781521612.4429102,
+    "ast_hash": "3c41c5eed4af30c000093d5c98496f99",
+    "semantic_hash": ""
+  },
+  "frontend/Fluxora.App.csproj": {
+    "mtime": 1781766145.3699062,
+    "ast_hash": "de100b2d9982640b6e8bda15dd5dd3b6",
+    "semantic_hash": ""
+  },
+  "frontend/FomodInstallerWindow.xaml.cs": {
+    "mtime": 1782147840.289973,
+    "ast_hash": "8bb0bea63c2242cde623c1381f6015dc",
+    "semantic_hash": ""
+  },
+  "frontend/InstallArchiveDetailsWindow.xaml.cs": {
+    "mtime": 1781875227.3919015,
+    "ast_hash": "5b5c6aa1cafdd332113b32b7533a4616",
+    "semantic_hash": ""
+  },
+  "frontend/InstallModWindow.xaml.cs": {
+    "mtime": 1781875227.3934052,
+    "ast_hash": "3aecfdb8d46d5171d427aca4fbacd72e",
+    "semantic_hash": ""
+  },
+  "frontend/MainWindow.xaml.cs": {
+    "mtime": 1782218805.9269745,
+    "ast_hash": "bec88221f254bcd3587a46cd76641b87",
+    "semantic_hash": ""
+  },
+  "frontend/Models/BuildDeletionProgress.cs": {
+    "mtime": 1781463863.345855,
+    "ast_hash": "e8807a51dc4449fe7b703940887babde",
+    "semantic_hash": ""
+  },
+  "frontend/Models/BuildPathSettings.cs": {
+    "mtime": 1781525799.1730855,
+    "ast_hash": "54c9ca85eb9e5db4830ffdb933dfe9be",
+    "semantic_hash": ""
+  },
+  "frontend/Models/BuildSettingsResult.cs": {
+    "mtime": 1781549217.3680923,
+    "ast_hash": "0add12161b1423a67ab57d36ee406688",
+    "semantic_hash": ""
+  },
+  "frontend/Models/ConfirmDialogOptions.cs": {
+    "mtime": 1782217246.5012448,
+    "ast_hash": "03c92ffe99002e88c7ad9e2e6421a955",
+    "semantic_hash": ""
+  },
+  "frontend/Models/DownloadEntry.cs": {
+    "mtime": 1781698115.7841835,
+    "ast_hash": "4ef88ff93c98939e0bd9d4944c20f497",
+    "semantic_hash": ""
+  },
+  "frontend/Models/ExecutableLaunchSession.cs": {
+    "mtime": 1781729742.6523023,
+    "ast_hash": "2f61ee7b0b058e915930a4cbbbbd0c50",
+    "semantic_hash": ""
+  },
+  "frontend/Models/FluxPackInstallProgress.cs": {
+    "mtime": 1781776284.3989658,
+    "ast_hash": "7d5f079b353ee4c0f64e79f37a6bb3e4",
+    "semantic_hash": ""
+  },
+  "frontend/Models/FluxPackInstallProviderProgress.cs": {
+    "mtime": 1781776277.39906,
+    "ast_hash": "045ac646e35602b344cbabdf4af0bcd7",
+    "semantic_hash": ""
+  },
+  "frontend/Models/FluxPackInstallResult.cs": {
+    "mtime": 1781776290.1264408,
+    "ast_hash": "3e997ccc121f00ac4da32750f89ae40e",
+    "semantic_hash": ""
+  },
+  "frontend/Models/FluxPackSummary.cs": {
+    "mtime": 1781773874.4319654,
+    "ast_hash": "403790822fc4eb28531661a60a0fb46c",
+    "semantic_hash": ""
+  },
+  "frontend/Models/FomodInstallerInfo.cs": {
+    "mtime": 1781621388.9570992,
+    "ast_hash": "da029ed333c8de1d788777c7027c9ddb",
+    "semantic_hash": ""
+  },
+  "frontend/Models/GameDefinitionBridgeModels.cs": {
+    "mtime": 1781872864.6151137,
+    "ast_hash": "02383b30266be914a5ca10593ecf8e41",
+    "semantic_hash": ""
+  },
+  "frontend/Models/GameExecutableEntry.cs": {
+    "mtime": 1781724406.2017028,
+    "ast_hash": "06bf819b73a58dd76b94bd42d97b56a0",
+    "semantic_hash": ""
+  },
+  "frontend/Models/GameExecutableLaunchResult.cs": {
+    "mtime": 1781724414.9859066,
+    "ast_hash": "53d2b3174aaf2a882fdc777aeab580bb",
+    "semantic_hash": ""
+  },
+  "frontend/Models/GameTemplateOption.cs": {
+    "mtime": 1781759510.934193,
+    "ast_hash": "4648a4124ce8bca22ff847dcb28a538f",
+    "semantic_hash": ""
+  },
+  "frontend/Models/ICollapsibleListItem.cs": {
+    "mtime": 1781501636.652691,
+    "ast_hash": "32d41bdd38c1e8880b02491ec31f419c",
+    "semantic_hash": ""
+  },
+  "frontend/Models/LanguageOption.cs": {
+    "mtime": 1781455775.128937,
+    "ast_hash": "7db3758ea629fb9e96f8c035e100c130",
+    "semantic_hash": ""
+  },
+  "frontend/Models/ModEntry.cs": {
+    "mtime": 1781865434.3918743,
+    "ast_hash": "b77aae9961416ee16899bc25086da06a",
+    "semantic_hash": ""
+  },
+  "frontend/Models/ModFileTreeEntry.cs": {
+    "mtime": 1781356628.6118195,
+    "ast_hash": "c0f152aa6d705370feb293c79d25731b",
+    "semantic_hash": ""
+  },
+  "frontend/Models/ModOrganizerImportAnalysis.cs": {
+    "mtime": 1781852385.5944757,
+    "ast_hash": "25c26cac337e00228ac3800b9018b0da",
+    "semantic_hash": ""
+  },
+  "frontend/Models/ModOrganizerImportProgress.cs": {
+    "mtime": 1781371577.5615106,
+    "ast_hash": "169582838096ac5d3797f3d482f1d348",
+    "semantic_hash": ""
+  },
+  "frontend/Models/ModProject.cs": {
+    "mtime": 1781724398.2970812,
+    "ast_hash": "63ab322d2d341c62ab89ee2f7a2381db",
+    "semantic_hash": ""
+  },
+  "frontend/Models/NexusModsAuthStatus.cs": {
+    "mtime": 1781334925.1222844,
+    "ast_hash": "d9564e3c91d62775f8cf0730df1eaa3a",
+    "semantic_hash": ""
+  },
+  "frontend/Models/PluginEntry.cs": {
+    "mtime": 1781698115.7831838,
+    "ast_hash": "0dc6878969574f17586812902ccece97",
+    "semantic_hash": ""
+  },
+  "frontend/Models/ResolvedTemplate.cs": {
+    "mtime": 1781759516.8636868,
+    "ast_hash": "2fee74f5039302623b6e7c654c6f988b",
+    "semantic_hash": ""
+  },
+  "frontend/Models/StartupProgress.cs": {
+    "mtime": 1781512925.917555,
+    "ast_hash": "2953993d9f6e920edec18a955e00feaf",
+    "semantic_hash": ""
+  },
+  "frontend/Models/TransferDriveOption.cs": {
+    "mtime": 1781377670.7975452,
+    "ast_hash": "ad2e20837aebe9fd02f5583a007ff205",
+    "semantic_hash": ""
+  },
+  "frontend/Properties/AssemblyInfo.cs": {
+    "mtime": 1781611734.2454927,
+    "ast_hash": "a43642e115e09dac26790bea1cba6308",
+    "semantic_hash": ""
+  },
+  "frontend/Services/AnimatedCollapseBehavior.cs": {
+    "mtime": 1781693088.6629493,
+    "ast_hash": "3dbc0207e589052ecd04a48bc865c3ef",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ApplicationLogService.cs": {
+    "mtime": 1782146572.3834105,
+    "ast_hash": "2c2405b08369264ad154775527cbc5c1",
+    "semantic_hash": ""
+  },
+  "frontend/Services/BuildConfigPickerService.cs": {
+    "mtime": 1781336694.7905674,
+    "ast_hash": "da98cd341e348e655e20bcb8d0812dcb",
+    "semantic_hash": ""
+  },
+  "frontend/Services/BuildDeletionDialogService.cs": {
+    "mtime": 1781511134.0495772,
+    "ast_hash": "dd236ab6d68268aa88d7d31eac587c8f",
+    "semantic_hash": ""
+  },
+  "frontend/Services/BuildSettingsDialogService.cs": {
+    "mtime": 1781549232.3071415,
+    "ast_hash": "f5b7384d3be7374d535838136ef75a49",
+    "semantic_hash": ""
+  },
+  "frontend/Services/BulkObservableCollection.cs": {
+    "mtime": 1782143097.1191063,
+    "ast_hash": "083f7710df2514ce3fb47c51d81fa899",
+    "semantic_hash": ""
+  },
+  "frontend/Services/CollapseGlyphConverter.cs": {
+    "mtime": 1781501742.6199028,
+    "ast_hash": "e6ecef504a0b666c0d8a8b5895a79929",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ConfirmDialogService.cs": {
+    "mtime": 1781442138.5913534,
+    "ast_hash": "8cdda546b3eb9561c9f25928533fe7c6",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ContextMenuGestureService.cs": {
+    "mtime": 1782200874.6313257,
+    "ast_hash": "356237e0af68267c88160f6a1aeb504e",
+    "semantic_hash": ""
+  },
+  "frontend/Services/CoreBridgeService.cs": {
+    "mtime": 1782217052.3036795,
+    "ast_hash": "4b1458d2b255e060e112cd3b8894efc0",
+    "semantic_hash": ""
+  },
+  "frontend/Services/DataGridInteractionService.cs": {
+    "mtime": 1781875227.3934052,
+    "ast_hash": "fda72c99945e9db2dfbf4dd86be59a55",
+    "semantic_hash": ""
+  },
+  "frontend/Services/DownloadCatalogService.cs": {
+    "mtime": 1781869109.690693,
+    "ast_hash": "61b98ec88330f2b46c7839a8a5959cce",
+    "semantic_hash": ""
+  },
+  "frontend/Services/DownloadDragDropService.cs": {
+    "mtime": 1781764468.062617,
+    "ast_hash": "e9d010cba3a31bac9bc9b02b9c07431b",
+    "semantic_hash": ""
+  },
+  "frontend/Services/DownloadMarqueeSelectionService.cs": {
+    "mtime": 1781940003.6109169,
+    "ast_hash": "46850ca159bb7d37b95a1f453a19dff0",
+    "semantic_hash": ""
+  },
+  "frontend/Services/DragVisualAdorner.cs": {
+    "mtime": 1781871548.753811,
+    "ast_hash": "83b679d3d8d76c3f33600f62a653e87c",
+    "semantic_hash": ""
+  },
+  "frontend/Services/DropIndicatorAdorner.cs": {
+    "mtime": 1781766640.087642,
+    "ast_hash": "be8689fbac85b4901b90b22b59fe2a94",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ExecutableIconSourceConverter.cs": {
+    "mtime": 1781544023.0387764,
+    "ast_hash": "30b52ee7ac79b013f5787ab9ff8ca0e2",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ExecutableLaunchSessionStore.cs": {
+    "mtime": 1781687314.153874,
+    "ast_hash": "1c51e878b05e9efabf43414bfa549398",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ExecutableManagerDialogService.cs": {
+    "mtime": 1781521586.642453,
+    "ast_hash": "7ff372d535b1e60da914fb6c2e6f3af6",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ExecutablePickerService.cs": {
+    "mtime": 1781549169.9559884,
+    "ast_hash": "686cf1b1c8c78368504196eae703e5bf",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ExistingModInstallMode.cs": {
+    "mtime": 1781615557.0213928,
+    "ast_hash": "c933c4097d55a9d052abfc5c8127c14b",
+    "semantic_hash": ""
+  },
+  "frontend/Services/FluxPackPickerService.cs": {
+    "mtime": 1781773889.1744792,
+    "ast_hash": "a5c07be3adb099edb8b2a76afdac8ae6",
+    "semantic_hash": ""
+  },
+  "frontend/Services/FolderPickerService.cs": {
+    "mtime": 1781328597.813723,
+    "ast_hash": "89bf6f5474453755c0565b2759682a38",
+    "semantic_hash": ""
+  },
+  "frontend/Services/FomodAsyncImage.cs": {
+    "mtime": 1782147886.5352035,
+    "ast_hash": "2fc023e260e72a5b7fe71317591b0aab",
+    "semantic_hash": ""
+  },
+  "frontend/Services/FomodImageSourceConverter.cs": {
+    "mtime": 1782147908.4018857,
+    "ast_hash": "bae01f860992dacaf842ba276f322f66",
+    "semantic_hash": ""
+  },
+  "frontend/Services/GameCapabilityResolver.cs": {
+    "mtime": 1781737830.1702478,
+    "ast_hash": "934b91e1afc7bab8d1031d203b234aff",
+    "semantic_hash": ""
+  },
+  "frontend/Services/IAppService.cs": {
+    "mtime": 1781302425.7127485,
+    "ast_hash": "ce582e4b61a770890f8c8a5eb1330f1a",
+    "semantic_hash": ""
+  },
+  "frontend/Services/IBuildConfigPickerService.cs": {
+    "mtime": 1781331689.8792496,
+    "ast_hash": "556b6098c2254df5c2c7b48459a9d22c",
+    "semantic_hash": ""
+  },
+  "frontend/Services/IBuildDeletionDialogService.cs": {
+    "mtime": 1781511134.0495772,
+    "ast_hash": "56cdc65dfe654dc510ff3dfa9d7bbf46",
+    "semantic_hash": ""
+  },
+  "frontend/Services/IBuildSettingsDialogService.cs": {
+    "mtime": 1781549220.676201,
+    "ast_hash": "3a061d4d8a9ef8f3b6a86a3e83616c10",
+    "semantic_hash": ""
+  },
+  "frontend/Services/IConfirmDialogService.cs": {
+    "mtime": 1781442131.4185028,
+    "ast_hash": "847ac5d6b9d1180bf9a27cb865a9951b",
+    "semantic_hash": ""
+  },
+  "frontend/Services/IExecutableManagerDialogService.cs": {
+    "mtime": 1781366776.9750755,
+    "ast_hash": "1226ef2223df17ff0a2e36e4b5462bf5",
+    "semantic_hash": ""
+  },
+  "frontend/Services/IExecutablePickerService.cs": {
+    "mtime": 1781549162.3159456,
+    "ast_hash": "69097630bdb3dec885b1a370d3a2b977",
+    "semantic_hash": ""
+  },
+  "frontend/Services/IFluxPackPickerService.cs": {
+    "mtime": 1781773878.1654148,
+    "ast_hash": "344bdae20babc6c0353a20a8aa151149",
+    "semantic_hash": ""
+  },
+  "frontend/Services/IFolderPickerService.cs": {
+    "mtime": 1781328597.813723,
+    "ast_hash": "0f4f1e0aa16883d5d9bb8bdad0e498e9",
+    "semantic_hash": ""
+  },
+  "frontend/Services/IModArchivePickerService.cs": {
+    "mtime": 1781340926.4857266,
+    "ast_hash": "2f10cceb452d5fe86155e099a77b5093",
+    "semantic_hash": ""
+  },
+  "frontend/Services/IModInstallDialogService.cs": {
+    "mtime": 1781875227.39441,
+    "ast_hash": "0f79c9637e721f3f5abe4f6960aafc77",
+    "semantic_hash": ""
+  },
+  "frontend/Services/InverseBooleanConverter.cs": {
+    "mtime": 1781456546.9586089,
+    "ast_hash": "f02fa5b6cb4d504a8bdcbdfad86200a9",
+    "semantic_hash": ""
+  },
+  "frontend/Services/LanguageCatalogService.cs": {
+    "mtime": 1781457405.1271298,
+    "ast_hash": "e817de728cd0aa462c42bc6bcae53215",
+    "semantic_hash": ""
+  },
+  "frontend/Services/LocalizationManager.cs": {
+    "mtime": 1781457388.7033856,
+    "ast_hash": "97e7ce3d4989b643fecdc94e1273884d",
+    "semantic_hash": ""
+  },
+  "frontend/Services/LocalizationScope.cs": {
+    "mtime": 1781456956.1898322,
+    "ast_hash": "9d18200e87726f062a6922a56f063f68",
+    "semantic_hash": ""
+  },
+  "frontend/Services/MarqueeSelectionAdorner.cs": {
+    "mtime": 1781939874.5637991,
+    "ast_hash": "792fdfad4abd2f83bdb3ab0c2dce6f68",
+    "semantic_hash": ""
+  },
+  "frontend/Services/MarqueeSelectionTracker.cs": {
+    "mtime": 1781939863.7741387,
+    "ast_hash": "0cc2717223aa5550f375590fce3dbf81",
+    "semantic_hash": ""
+  },
+  "frontend/Services/MiddleClickAutoScrollCalculator.cs": {
+    "mtime": 1782122654.6023273,
+    "ast_hash": "79db543f1dc0d21c9a8c88e277046974",
+    "semantic_hash": ""
+  },
+  "frontend/Services/MiddleClickAutoScrollService.cs": {
+    "mtime": 1782123105.5038834,
+    "ast_hash": "cdd156b4850e39464721359d737a832b",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ModArchiveFileFilter.cs": {
+    "mtime": 1781610066.0995605,
+    "ast_hash": "e93ca6fa35c91bf07b5f9f833467f0a1",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ModArchivePickerService.cs": {
+    "mtime": 1781866943.4474947,
+    "ast_hash": "474752c140046a5c7323a97dcfb09c52",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ModCatalogService.cs": {
+    "mtime": 1781866570.5301502,
+    "ast_hash": "0786f7c6156e91deb271f2a17b54d7bb",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ModInstallDialogResult.cs": {
+    "mtime": 1781875227.39441,
+    "ast_hash": "1f57f430a89a3467b8254575eca81cb7",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ModInstallDialogService.cs": {
+    "mtime": 1781875227.3954139,
+    "ast_hash": "2e616ee4ee6f54e509b3ec09cc5dac60",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ModOrderDragDropService.cs": {
+    "mtime": 1782147226.8069417,
+    "ast_hash": "0720051a724bad4e8417496f592ed4ac",
+    "semantic_hash": ""
+  },
+  "frontend/Services/NxmProtocolService.cs": {
+    "mtime": 1781341303.9842358,
+    "ast_hash": "1a2261cf4037b34a06724ba06b5bdeef",
+    "semantic_hash": ""
+  },
+  "frontend/Services/OrderedCollectionSyncService.cs": {
+    "mtime": 1782147015.0278568,
+    "ast_hash": "8999860b03dce5cb9d21b0ec3870675c",
+    "semantic_hash": ""
+  },
+  "frontend/Services/PluginCatalogService.cs": {
+    "mtime": 1781363871.2194097,
+    "ast_hash": "0cf5f29a1c0fd467719dd8f3c72ca6bf",
+    "semantic_hash": ""
+  },
+  "frontend/Services/PluginOrderDragDropService.cs": {
+    "mtime": 1782147226.8079407,
+    "ast_hash": "d391e32e8ae6528d7f54dbcc7a25e48b",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ProgressAnimationService.cs": {
+    "mtime": 1781351119.0670478,
+    "ast_hash": "7aa2ceab3210ca8e0ad6db203f1fda87",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ProgressUpdateCoalescer.cs": {
+    "mtime": 1782142508.0387814,
+    "ast_hash": "2b94048ff0290a51441f32edb0c023a4",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ProjectCatalogService.cs": {
+    "mtime": 1782198119.2317998,
+    "ast_hash": "0c6fbb67cdb8c9be103657f6b2a915be",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ProjectOpenService.cs": {
+    "mtime": 1781333062.702366,
+    "ast_hash": "397d3474ae73d28531b8e2123a3d2163",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ProjectWorkspaceLoadService.cs": {
+    "mtime": 1781949273.0710287,
+    "ast_hash": "81ac8ebe8c909385e1017ede07f033a6",
+    "semantic_hash": ""
+  },
+  "frontend/Services/RangeSelectionService.cs": {
+    "mtime": 1781698104.2477853,
+    "ast_hash": "efcaf6e266e199d1b3e903df1be7a9cb",
+    "semantic_hash": ""
+  },
+  "frontend/Services/SelectionInputService.cs": {
+    "mtime": 1782198538.9274507,
+    "ast_hash": "09a0df7053a1f84a9ed5d2d5fbb631d7",
+    "semantic_hash": ""
+  },
+  "frontend/Services/SeparatorCollapseService.cs": {
+    "mtime": 1781501683.8307266,
+    "ast_hash": "04861f6105b1c56b69a513241d0dad5f",
+    "semantic_hash": ""
+  },
+  "frontend/Services/SettingsService.cs": {
+    "mtime": 1781336644.577335,
+    "ast_hash": "ca606abdce765a8ea2d160ae8916bc4d",
+    "semantic_hash": ""
+  },
+  "frontend/Services/SingleInstanceService.cs": {
+    "mtime": 1781343311.6900718,
+    "ast_hash": "bc793c0445f4e8a329b814aaf299152e",
+    "semantic_hash": ""
+  },
+  "frontend/Services/SmoothProgressService.cs": {
+    "mtime": 1781446068.7041895,
+    "ast_hash": "becbc73b5f3113d7bcf6f159a52b0901",
+    "semantic_hash": ""
+  },
+  "frontend/Services/StartupInitializationService.cs": {
+    "mtime": 1781513039.4357605,
+    "ast_hash": "578b56c5e84ee44421e97313b06ca15d",
+    "semantic_hash": ""
+  },
+  "frontend/Services/StartupIntegrityService.cs": {
+    "mtime": 1781513039.43476,
+    "ast_hash": "21535c74c6cd7de5d13d9b466629c9c1",
+    "semantic_hash": ""
+  },
+  "frontend/Services/TemplateCatalogService.cs": {
+    "mtime": 1781330040.9321425,
+    "ast_hash": "bfca77eb613b43875f327a304a1ace20",
+    "semantic_hash": ""
+  },
+  "frontend/Services/VisibleStoryboardService.cs": {
+    "mtime": 1781949005.6354089,
+    "ast_hash": "51610135f61cf7e7d860a56fd770924f",
+    "semantic_hash": ""
+  },
+  "frontend/Services/WindowChromeService.cs": {
+    "mtime": 1781518353.953354,
+    "ast_hash": "7e5cc22597e80bbe72098afcf6550453",
+    "semantic_hash": ""
+  },
+  "frontend/SettingsWindow.xaml.cs": {
+    "mtime": 1781607747.357824,
+    "ast_hash": "55eeaaf00473fdc72f1919b4372bf220",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/BuildCreationProcessViewModel.cs": {
+    "mtime": 1781767908.4000328,
+    "ast_hash": "d586498da4c519df678f343cceff6c6f",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/BuildDeletionProcessViewModel.cs": {
+    "mtime": 1781511432.6551232,
+    "ast_hash": "a69a328ebcafc4884f472022cd17ee3f",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/BuildSettingsWindowViewModel.cs": {
+    "mtime": 1781730151.550208,
+    "ast_hash": "81a41c567ba895d25be92924d283ba02",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/ExecutableLaunchProcessViewModel.cs": {
+    "mtime": 1781729758.859809,
+    "ast_hash": "5716dde4083214bab4941f1a7b9bcf6e",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/ExecutableMenuItem.cs": {
+    "mtime": 1781521540.8168952,
+    "ast_hash": "1042dd29445b4bac07b106e90c5f6592",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/FluxPackInstallProcessViewModel.cs": {
+    "mtime": 1781856355.227154,
+    "ast_hash": "d478b8cad892a40080ca54662a3cc893",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/FluxPackInstallProviderViewModel.cs": {
+    "mtime": 1781856343.8025663,
+    "ast_hash": "284dc9716a4bb1384b83eda24a96f311",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/FluxPackPackageProcessViewModel.cs": {
+    "mtime": 1781775183.0957322,
+    "ast_hash": "980bc793b8296be679f4517002c02b27",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/FomodInstallerViewModel.cs": {
+    "mtime": 1782142014.6386118,
+    "ast_hash": "f66da992cdeaf4c1e7f1d2ec6802c642",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/InstallArchiveDetailsViewModel.cs": {
+    "mtime": 1781949340.430161,
+    "ast_hash": "f8887638b8aaf1f956ef0fc69028d94f",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/MainWindowViewModel.cs": {
+    "mtime": 1782218607.2840266,
+    "ast_hash": "53a1b9cb3d9e6f1db0d104bfca96fe9d",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/ModFileTreeNode.cs": {
+    "mtime": 1782143294.5966012,
+    "ast_hash": "e9835a31ba773c6810bea2345323b0eb",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/ModOperationProcessViewModel.cs": {
+    "mtime": 1781613472.8365104,
+    "ast_hash": "545ac43e142d817fe505f80fb704b487",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/RelayCommand.cs": {
+    "mtime": 1782203671.7259228,
+    "ast_hash": "b228c88c027b289d7052d096c98145b9",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/SettingsWindowViewModel.cs": {
+    "mtime": 1782142543.120654,
+    "ast_hash": "b55f0ba4db3b235b28dcf5b2710a2cb0",
+    "semantic_hash": ""
+  },
+  "frontend/ViewModels/StartupSplashViewModel.cs": {
+    "mtime": 1781512925.918555,
+    "ast_hash": "825c154c535d68978eabdd03b5a0b420",
+    "semantic_hash": ""
+  },
+  "frontend/Views/BuildCreationProcessSplash.xaml.cs": {
+    "mtime": 1781768084.5609448,
+    "ast_hash": "91527b386ca024c4b855a2fe797f2c58",
+    "semantic_hash": ""
+  },
+  "frontend/Views/BuildDeletionProcessSplash.xaml.cs": {
+    "mtime": 1781511457.3802164,
+    "ast_hash": "faa70124dcb61a66ce0a9424d7a05acd",
+    "semantic_hash": ""
+  },
+  "frontend/Views/BuildLoadingSplash.xaml.cs": {
+    "mtime": 1781431985.6538064,
+    "ast_hash": "bdc863accb06a34de4c215bea2cc8d77",
+    "semantic_hash": ""
+  },
+  "frontend/Views/ConfirmDialogWindow.xaml.cs": {
+    "mtime": 1781442125.3058748,
+    "ast_hash": "f0f3f49dcb261b695cbd0731b5c69b30",
+    "semantic_hash": ""
+  },
+  "frontend/Views/CreateProjectWizardSplash.xaml.cs": {
+    "mtime": 1781770062.6517513,
+    "ast_hash": "043698d98953f71b09984042c1c5fc82",
+    "semantic_hash": ""
+  },
+  "frontend/Views/ExecutableLaunchProcessSplash.xaml.cs": {
+    "mtime": 1781687446.365018,
+    "ast_hash": "687abe16f1d3ce8668c15a16b4564f33",
+    "semantic_hash": ""
+  },
+  "frontend/Views/FluxPackInstallProcessSplash.xaml.cs": {
+    "mtime": 1781776488.8837903,
+    "ast_hash": "422c97bf73cf43fa4b494de178fc9516",
+    "semantic_hash": ""
+  },
+  "frontend/Views/FluxPackPackageProcessSplash.xaml.cs": {
+    "mtime": 1781775383.4518175,
+    "ast_hash": "2609cd5de83ada472859b2d65cd704d3",
+    "semantic_hash": ""
+  },
+  "frontend/Views/LanguageSwitchSplash.xaml.cs": {
+    "mtime": 1781456595.0505562,
+    "ast_hash": "c508dfaf49da6ed3d110b0afb84a80ec",
+    "semantic_hash": ""
+  },
+  "frontend/Views/ModOperationProcessSplash.xaml.cs": {
+    "mtime": 1781613540.792585,
+    "ast_hash": "071b5a5c9f51e9390e9acb3ed6798da0",
+    "semantic_hash": ""
+  },
+  "frontend/Views/ModOrganizerTransferView.xaml.cs": {
+    "mtime": 1781375419.089331,
+    "ast_hash": "cded4a94766d656b0efea978fe00ec28",
+    "semantic_hash": ""
+  },
+  "frontend/Views/StartupSplashWindow.xaml.cs": {
+    "mtime": 1781513878.8596094,
+    "ast_hash": "9f7127754097e2411997e6a773c64494",
+    "semantic_hash": ""
+  },
+  "frontend/Views/TransferProcessSplash.xaml.cs": {
+    "mtime": 1781445890.79987,
+    "ast_hash": "c865a9c7e668537c5fce9a668e3efe63",
+    "semantic_hash": ""
+  },
+  "frontend/lang/de.json": {
+    "mtime": 1781866829.3917124,
+    "ast_hash": "f58a188ee3365dba211c997617e6f564",
+    "semantic_hash": ""
+  },
+  "frontend/lang/en.json": {
+    "mtime": 1781866829.3907094,
+    "ast_hash": "a05ecd45bffa37f32eef68e6a7bc64e3",
+    "semantic_hash": ""
+  },
+  "frontend/lang/ru.json": {
+    "mtime": 1781457444.9414375,
+    "ast_hash": "edca171cb7bd473ee9194cde57f3415f",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/App.xaml.cs": {
+    "mtime": 1781532618.2726364,
+    "ast_hash": "829efa4dd1a8305b005a496d00f2a96d",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Fluxora.Installer.csproj": {
+    "mtime": 1782148578.421775,
+    "ast_hash": "753dbea84ab09b948906fb7483577ff1",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/MainWindow.xaml.cs": {
+    "mtime": 1782148755.4740696,
+    "ast_hash": "660bee8952e66ce64a872737cde919c5",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Models/InstallerLanguage.cs": {
+    "mtime": 1781541038.484309,
+    "ast_hash": "d1196f70c266320ff04bb633bdba9dba",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Models/InstallerProgress.cs": {
+    "mtime": 1781532113.4221125,
+    "ast_hash": "f52604fd81a1a4408fdb9c9f3ebb03dc",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Models/InstallerResult.cs": {
+    "mtime": 1781532113.4221125,
+    "ast_hash": "dd3587e719ba1b982c78a3ac42e67182",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Services/InstallerLogService.cs": {
+    "mtime": 1781608372.8010147,
+    "ast_hash": "db89616c3395d5e3f61e7d44fad602ea",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Services/InstallerNativeBridge.cs": {
+    "mtime": 1782144216.9497857,
+    "ast_hash": "69dfdf571338ddb70625b7def0da58c5",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Services/InstallerText.cs": {
+    "mtime": 1781861781.4596128,
+    "ast_hash": "0f99faf7f3fbc2a146898378b15fbdb9",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Services/LegalDocumentService.cs": {
+    "mtime": 1781532113.4251127,
+    "ast_hash": "b063580780018abe3acc3bb19769b686",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Services/PayloadResourceService.cs": {
+    "mtime": 1782143921.0377743,
+    "ast_hash": "f7362e214a2ed4c797d65e5dfe0ded66",
+    "semantic_hash": ""
+  },
+  "skills-lock.json": {
+    "mtime": 1781862678.0386136,
+    "ast_hash": "c5591b4ca83132924ceb6be0437950d8",
+    "semantic_hash": ""
+  },
+  ".agents/PROJECT_RULES.md": {
+    "mtime": 1782211041.9134364,
+    "ast_hash": "a64d1092d97b389ecb4ba6ba58c6396a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/brandkit/SKILL.md": {
+    "mtime": 1781862712.0688062,
+    "ast_hash": "7b8b29b7dcd3f0dd057ea58f45cb8e4a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/design-taste-frontend-v1/SKILL.md": {
+    "mtime": 1781862712.0698056,
+    "ast_hash": "3e2782223a15e1e689b90209be38921f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/design-taste-frontend/SKILL.md": {
+    "mtime": 1781862712.0758166,
+    "ast_hash": "648c8bf98f84fbe7f14bf2da035c57fe",
+    "semantic_hash": ""
+  },
+  ".agents/skills/full-output-enforcement/SKILL.md": {
+    "mtime": 1781862712.0768204,
+    "ast_hash": "2072dc2c1357dc9cd6384d1f441e05c3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/gpt-taste/SKILL.md": {
+    "mtime": 1781862712.0768204,
+    "ast_hash": "34cad44544686b4f5a9723fcb723b046",
+    "semantic_hash": ""
+  },
+  ".agents/skills/high-end-visual-design/SKILL.md": {
+    "mtime": 1781862712.07782,
+    "ast_hash": "131b8769ddde0f18f3f7e5ab2e1869c9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/image-to-code/SKILL.md": {
+    "mtime": 1781862712.079822,
+    "ast_hash": "67f872220aa2aed521667a9890f44b5c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/imagegen-frontend-mobile/SKILL.md": {
+    "mtime": 1781862712.0833344,
+    "ast_hash": "ad7a12bc184ddfa6a0b4b3b21eff70bb",
+    "semantic_hash": ""
+  },
+  ".agents/skills/imagegen-frontend-web/SKILL.md": {
+    "mtime": 1781862712.0866015,
+    "ast_hash": "728f55ab7e44330e78aac4ca8331d83a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/industrial-brutalist-ui/SKILL.md": {
+    "mtime": 1781862712.0866015,
+    "ast_hash": "da7f92d7e3b8b526ecbd71009fe973ca",
+    "semantic_hash": ""
+  },
+  ".agents/skills/minimalist-ui/SKILL.md": {
+    "mtime": 1781862712.087601,
+    "ast_hash": "2eb8e57c5ac1323102a48c8bc1e82d86",
+    "semantic_hash": ""
+  },
+  ".agents/skills/redesign-existing-projects/SKILL.md": {
+    "mtime": 1781862712.0896015,
+    "ast_hash": "c8d729e3e807df37dcd5e6262c9b8843",
+    "semantic_hash": ""
+  },
+  ".agents/skills/stitch-design-taste/DESIGN.md": {
+    "mtime": 1781862712.0896015,
+    "ast_hash": "7f8c91aeecc8983b687965c2fc23438c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/stitch-design-taste/SKILL.md": {
+    "mtime": 1781862712.0921123,
+    "ast_hash": "fcbb4f37d67a66a53013b484dcfc9f25",
+    "semantic_hash": ""
+  },
+  "AGENTS.md": {
+    "mtime": 1782210959.8774083,
+    "ast_hash": "ec6ed0aab4b7f598e24ce3d9a0a94983",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1782148325.9089413,
+    "ast_hash": "b2fc2c2738f2ea99da4a8d469ee48d23",
+    "semantic_hash": ""
+  },
+  "backend/CMakeLists.txt": {
+    "mtime": 1782216860.758401,
+    "ast_hash": "2a1ffd1825d0b76d7a18ac8c4691b64d",
+    "semantic_hash": ""
+  },
+  "backend/tests/CMakeLists.txt": {
+    "mtime": 1782216864.1301093,
+    "ast_hash": "a9c54531ba19196dc7a1833bcdc32e5f",
+    "semantic_hash": ""
+  },
+  "backend/vfs/README.md": {
+    "mtime": 1781369990.417632,
+    "ast_hash": "23e3e67ac9b36cf27168904b21fe8130",
+    "semantic_hash": ""
+  },
+  "frontend/Fonts/Onest-LICENSE.txt": {
+    "mtime": 1781766117.5374296,
+    "ast_hash": "d149dcc0c616468fbfaf761cd8c36391",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Resources/Legal/de/privacy.txt": {
+    "mtime": 1782143993.3230963,
+    "ast_hash": "44f70bed64841e4b6bb5ca1d93c78ac1",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Resources/Legal/de/terms.txt": {
+    "mtime": 1781861781.4606125,
+    "ast_hash": "990140f59010a46380696535e872256b",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Resources/Legal/en/privacy.txt": {
+    "mtime": 1782143993.3220973,
+    "ast_hash": "a22ff0534606370f54d0707ef6a1897d",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Resources/Legal/en/terms.txt": {
+    "mtime": 1781861781.4596128,
+    "ast_hash": "0c1815a0eb2bcbdce9d9fa04e8a24b31",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Resources/Legal/ru/privacy.txt": {
+    "mtime": 1782143993.3230963,
+    "ast_hash": "d88451c4b5cd9206bcf0bcf86fd41692",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Resources/Legal/ru/terms.txt": {
+    "mtime": 1781861781.461612,
+    "ast_hash": "64e9eb6cf9d84da3b5119b8a9079fdaf",
+    "semantic_hash": ""
+  },
+  "Icons/Fluxora.png": {
+    "mtime": 1781545285.897429,
+    "ast_hash": "271e17e80b849575d0833ad9c2f88d3b",
+    "semantic_hash": ""
+  },
+  "Icons/Fluxora.svg": {
+    "mtime": 1781548503.2996004,
+    "ast_hash": "a7d69d62aab26cff1930f6d739fdbc6a",
+    "semantic_hash": ""
+  },
+  "Icons/alert-triangle.svg": {
+    "mtime": 1781515120.2213886,
+    "ast_hash": "b06b3295d684ced587bd8c254088ca4c",
+    "semantic_hash": ""
+  },
+  "Icons/auto-scroll.svg": {
+    "mtime": 1782122654.5992076,
+    "ast_hash": "f945cd4607b89d77dfa12280070a8aa8",
+    "semantic_hash": ""
+  },
+  "Icons/back.svg": {
+    "mtime": 1781433371.821484,
+    "ast_hash": "712066d8975c0598e1f0b569c904c59d",
+    "semantic_hash": ""
+  },
+  "Icons/calendar.svg": {
+    "mtime": 1781433364.7982204,
+    "ast_hash": "5f9286e59585fd9d3307c33e585f837c",
+    "semantic_hash": ""
+  },
+  "Icons/conflict-fully-overwritten-dot.svg": {
+    "mtime": 1781514654.716873,
+    "ast_hash": "b7621d8dcdf492ba7ae15a198c8c6a72",
+    "semantic_hash": ""
+  },
+  "Icons/conflict-overwrites-plus.svg": {
+    "mtime": 1781514654.7158732,
+    "ast_hash": "da8f9941f2e5bb222da3ef034dd8ff8d",
+    "semantic_hash": ""
+  },
+  "Icons/conflict-overwritten-minus.svg": {
+    "mtime": 1781514654.716873,
+    "ast_hash": "2dbdd64b1589db7a4d4cbb75083f0321",
+    "semantic_hash": ""
+  },
+  "Icons/file-text.svg": {
+    "mtime": 1781515120.2213886,
+    "ast_hash": "c78f3767aef264dcf0a41c6adbbf0f80",
+    "semantic_hash": ""
+  },
+  "Icons/folder.svg": {
+    "mtime": 1781433362.214007,
+    "ast_hash": "bb05eb4c49438b1fa526a0d92a52df30",
+    "semantic_hash": ""
+  },
+  "Icons/gamepad.svg": {
+    "mtime": 1781433357.0882783,
+    "ast_hash": "f415d26402d903dfae5c16110139161e",
+    "semantic_hash": ""
+  },
+  "Icons/hard-drive.svg": {
+    "mtime": 1781433363.241246,
+    "ast_hash": "5ec09f0b4b4d789bb4a3c05f1180f2fe",
+    "semantic_hash": ""
+  },
+  "Icons/image-expand.svg": {
+    "mtime": 1781624912.6217813,
+    "ast_hash": "6ba34026bb29974396e3c53926d2b366",
+    "semantic_hash": ""
+  },
+  "Icons/language.svg": {
+    "mtime": 1781515120.2223885,
+    "ast_hash": "0cc5c0d9710737bf2a15c8445f3d7210",
+    "semantic_hash": ""
+  },
+  "Icons/layers.svg": {
+    "mtime": 1781433367.9479532,
+    "ast_hash": "35feecbda0a00ba98658d2080a55b3fe",
+    "semantic_hash": ""
+  },
+  "Icons/link.svg": {
+    "mtime": 1781515120.2233887,
+    "ast_hash": "05d2218fa2fa6fb21547491f123751ae",
+    "semantic_hash": ""
+  },
+  "Icons/more-horizontal.svg": {
+    "mtime": 1781866789.5420997,
+    "ast_hash": "2b92d42e6c2150090cb7741f440e09af",
+    "semantic_hash": ""
+  },
+  "Icons/open.svg": {
+    "mtime": 1781433345.292255,
+    "ast_hash": "475136e36ddfe4d097a8043c628240ab",
+    "semantic_hash": ""
+  },
+  "Icons/plus.svg": {
+    "mtime": 1781433343.3194375,
+    "ast_hash": "dd266b43c6a466cbc2967fa571adcb94",
+    "semantic_hash": ""
+  },
+  "Icons/refresh.svg": {
+    "mtime": 1781433370.3264568,
+    "ast_hash": "db051462e767a03276e55ce64c1bc879",
+    "semantic_hash": ""
+  },
+  "Icons/search.svg": {
+    "mtime": 1781703322.5050905,
+    "ast_hash": "e767806eee2d97e4d89660d2599f7348",
+    "semantic_hash": ""
+  },
+  "Icons/settings.svg": {
+    "mtime": 1781529942.255798,
+    "ast_hash": "c8bab56a62c17a26b68ab5a7d7a9f7d6",
+    "semantic_hash": ""
+  },
+  "Icons/transfer.svg": {
+    "mtime": 1781515120.2233887,
+    "ast_hash": "8ca36636d819d1af3baeca67fc2fd8f9",
+    "semantic_hash": ""
+  },
+  "Icons/trash.svg": {
+    "mtime": 1781515120.2233887,
+    "ast_hash": "a015940f3b1d6e813169a832438f5d0e",
+    "semantic_hash": ""
+  },
+  "Icons/window-close.svg": {
+    "mtime": 1781327505.282809,
+    "ast_hash": "7bf9a8ec806d07170ba9b0c90ea4a5b1",
+    "semantic_hash": ""
+  },
+  "Icons/window-maximize.svg": {
+    "mtime": 1781327505.2817342,
+    "ast_hash": "643f34c8d76796f80a3244b365f307e7",
+    "semantic_hash": ""
+  },
+  "Icons/window-minimize.svg": {
+    "mtime": 1781327505.2817342,
+    "ast_hash": "c59f62d3c78c4377db52770312d51f03",
+    "semantic_hash": ""
+  },
+  "Icons/window-restore.svg": {
+    "mtime": 1781515120.2243874,
+    "ast_hash": "9e398940aaf3f3d178039a6ccbbf9fcb",
+    "semantic_hash": ""
+  },
+  "frontend/Assets/Images/SkyrimSpecialEditionIcon.png": {
+    "mtime": 1781771450.6633663,
+    "ast_hash": "e4f25ad5e0698241caef3ca9c6c7198e",
+    "semantic_hash": ""
+  },
+  "frontend/Assets/Images/app-icon-placeholder.png": {
+    "mtime": 1781522061.0613542,
+    "ast_hash": "d5150a804e172d61e2e4dbff0ad20729",
+    "semantic_hash": ""
+  },
+  "frontend/Assets/Images/mod-organizer-2.png": {
+    "mtime": 1781512430.5353694,
+    "ast_hash": "a1f679b52465992572b798ef23689c35",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Assets/Emoji/flag_de.svg": {
+    "mtime": 1781541419.6790051,
+    "ast_hash": "939afd91bea7074f84f4a328ca095295",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Assets/Emoji/flag_ru.svg": {
+    "mtime": 1781541419.7968967,
+    "ast_hash": "01efcb4dcb5b464a6859688f7e48907f",
+    "semantic_hash": ""
+  },
+  "installer/Fluxora.Installer/Assets/Emoji/flag_us.svg": {
+    "mtime": 1781541419.5534465,
+    "ast_hash": "d788b9231ed2028dc29245f76cf0a415",
+    "semantic_hash": ""
+  },
+  "backend/include/FluxoraCore/Services/ProfileService.hpp": {
+    "mtime": 1782216761.0903995,
+    "ast_hash": "e5d4cdb99f9deb1266c236d04de0cbec",
+    "semantic_hash": ""
+  },
+  "backend/src/Services/ProfileService.cpp": {
+    "mtime": 1782216856.4317985,
+    "ast_hash": "4fd0f00b805c8b31201a9e67744535f0",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/ViewModels/MainWindowViewModelProfileTests.cs": {
+    "mtime": 1782218873.188081,
+    "ast_hash": "9ea4f705f2b451f7a594f091a53b9e7e",
+    "semantic_hash": ""
+  },
+  "frontend/Services/IProfileManagerDialogService.cs": {
+    "mtime": 1782218587.7715285,
+    "ast_hash": "99368da749d397c812b8c996738bd988",
+    "semantic_hash": ""
+  },
+  "frontend/Services/ProfileManagerDialogService.cs": {
+    "mtime": 1782218587.7725286,
+    "ast_hash": "6bc328336072490be42a0a9288f25878",
+    "semantic_hash": ""
+  },
+  "frontend/Views/ProfileManagerWindow.xaml.cs": {
+    "mtime": 1782218742.3285296,
+    "ast_hash": "cb00ce8d172469ea54cea4e25e6ccc44",
+    "semantic_hash": ""
+  }
+}

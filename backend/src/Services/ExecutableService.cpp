@@ -2944,7 +2944,8 @@ namespace fluxora
 
     ResolvedExecutableLaunch ExecutableService::resolveExecutable(
         const std::filesystem::path& configPath,
-        std::wstring_view executableId) const
+        std::wstring_view executableId,
+        std::wstring_view profileName) const
     {
         if (executableId.empty())
         {
@@ -2952,6 +2953,10 @@ namespace fluxora
         }
 
         ProjectExecutableContext context = readProjectExecutableContext(configPath, &logger_);
+        if (!profileName.empty())
+        {
+            context.defaultProfile = std::wstring(profileName);
+        }
         const BuildPathSettings settings = pathSettings_.loadForConfig(configPath);
         context.gamePath = settings.gameDirectory;
         context.modsDirectory = settings.modsDirectory;
@@ -3070,9 +3075,10 @@ namespace fluxora
 
     GameExecutableLaunchResult ExecutableService::launchProjectExecutable(
         const std::filesystem::path& configPath,
-        std::wstring_view executableId) const
+        std::wstring_view executableId,
+        std::wstring_view profileName) const
     {
-        const ResolvedExecutableLaunch resolved = resolveExecutable(configPath, executableId);
+        const ResolvedExecutableLaunch resolved = resolveExecutable(configPath, executableId, profileName);
         logger_.writeOperation(
             LogLevel::Info,
             "LaunchDiagnostics",

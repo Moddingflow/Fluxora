@@ -161,6 +161,29 @@ namespace fluxora
             std::wstring_view profileName,
             const std::filesystem::path& modsDirectory = {});
 
+        [[nodiscard]] static std::vector<std::wstring> listProfileNames(
+            const std::filesystem::path& projectDirectory);
+
+        static void ensureProfileState(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName,
+            const std::filesystem::path& modsDirectory = {});
+
+        static void cloneProfileState(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view sourceProfileName,
+            std::wstring_view targetProfileName,
+            const std::filesystem::path& modsDirectory = {});
+
+        static void renameProfileState(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view sourceProfileName,
+            std::wstring_view targetProfileName);
+
+        static void deleteProfileState(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName);
+
         [[nodiscard]] static std::vector<ProfileOrderItemRecord> createProfileOrderSeparator(
             const std::filesystem::path& projectDirectory,
             std::wstring_view profileName,

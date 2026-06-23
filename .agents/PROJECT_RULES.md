@@ -26,6 +26,13 @@ These rules are project-specific and apply to all Codex/agent work in this repos
 - Keep changes scoped to the requested behavior and avoid unrelated refactors.
 - Preserve user changes already present in the worktree.
 
+## Graphify-First Navigation
+
+- Before any broad repository search for files, symbols, features, bugs, ownership, or architecture, run `graphify query "<question>"` when `graphify-out/graph.json` exists.
+- Use `graphify explain "<concept>"` for known concepts and `graphify path "<A>" "<B>"` for relationships between areas.
+- Use `rg`, recursive directory listings, and other global searches only after Graphify has narrowed the likely files/folders, or when Graphify returns no useful result. If falling back to raw search, explain why.
+- After modifying code, project instructions, or agent configuration, run `graphify update .`.
+
 ## Validation Expectations
 
 - Backend changes should be validated with the relevant CMake build and targeted Google Test/CTest run when available.

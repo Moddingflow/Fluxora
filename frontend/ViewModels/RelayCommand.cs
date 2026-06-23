@@ -22,6 +22,11 @@ public sealed class RelayCommand : ICommand
 
     public void Execute(object? parameter)
     {
+        if (!CanExecute(parameter))
+        {
+            return;
+        }
+
         execute();
     }
 
@@ -51,7 +56,13 @@ public sealed class RelayCommand<T> : ICommand
 
     public void Execute(object? parameter)
     {
-        execute(ConvertParameter(parameter));
+        T? value = ConvertParameter(parameter);
+        if (canExecute?.Invoke(value) == false)
+        {
+            return;
+        }
+
+        execute(value);
     }
 
     public void RaiseCanExecuteChanged()

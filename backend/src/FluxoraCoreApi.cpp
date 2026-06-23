@@ -17,6 +17,7 @@
 #include "FluxoraCore/Services/NexusModsAuthService.hpp"
 #include "FluxoraCore/Services/PluginService.hpp"
 #include "FluxoraCore/Services/ProfileOrderService.hpp"
+#include "FluxoraCore/Services/ProfileService.hpp"
 #include "FluxoraCore/Services/ProjectService.hpp"
 #include "FluxoraCore/Services/TemplateService.hpp"
 #include "FluxoraCore/Services/VirtualFileSystemService.hpp"
@@ -1551,6 +1552,18 @@ namespace
         return values;
     }
 
+    std::wstring serializeStringArray(const std::vector<std::wstring>& values)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginArray();
+        for (const std::wstring& value : values)
+        {
+            writer.value(value);
+        }
+        writer.endArray();
+        return writer.str();
+    }
+
     std::vector<fluxora::PlacementOverride> parsePlacementOverridesJson(const wchar_t* json)
     {
         if (isBlank(json))
@@ -2691,6 +2704,7 @@ extern "C"
     int fluxora_launch_game_executable(
         const wchar_t* configPath,
         const wchar_t* executableId,
+        const wchar_t* profileName,
         wchar_t* jsonBuffer,
         int jsonBufferLength)
     {
@@ -2712,11 +2726,13 @@ extern "C"
                 "Launch",
                 std::string("Launch executable requested. configPath=\"") +
                     pathForLog(std::filesystem::path(configPath)) + "\", executableId=\"" +
-                    textForLog(executableId) + "\"");
+                    textForLog(executableId) + "\", profile=\"" +
+                    textForLog(isBlank(profileName) ? L"" : profileName) + "\"");
             const std::wstring json = serializeGameExecutableLaunch(
                 core().virtualFileSystem().launchExecutable(
                     std::filesystem::path(configPath),
-                    executableId));
+                    executableId,
+                    isBlank(profileName) ? L"" : std::wstring_view(profileName)));
             logOperation(fluxora::LogLevel::Info, "Launch", "Launch executable completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
@@ -2858,6 +2874,154 @@ extern "C"
 
             const std::wstring json = serializeInstalledModList(
                 core().mods().listInstalledMods(std::filesystem::path(projectDirectory)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_profiles(
+        const wchar_t* projectDirectory,
+        const wchar_t* defaultProfileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeStringArray(
+                core().profiles().listProfiles(
+                    std::filesystem::path(projectDirectory),
+                    isBlank(defaultProfileName) ? L"" : std::wstring_view(defaultProfileName)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_create_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* defaultProfileName,
+        const wchar_t* profileFilesJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(profileName))
+            {
+                lastError = L"Project directory and profile name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            logBridge(fluxora::LogLevel::Info, "fluxora_create_profile started.");
+            const std::wstring json = serializeStringArray(
+                core().profiles().createProfile(
+                    std::filesystem::path(projectDirectory),
+                    profileName,
+                    isBlank(defaultProfileName) ? L"" : std::wstring_view(defaultProfileName),
+                    parseStringArrayJson(profileFilesJson)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_clone_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* sourceProfileName,
+        const wchar_t* targetProfileName,
+        const wchar_t* defaultProfileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(sourceProfileName) || isBlank(targetProfileName))
+            {
+                lastError = L"Project directory, source profile, and target profile are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            logBridge(fluxora::LogLevel::Info, "fluxora_clone_profile started.");
+            const std::wstring json = serializeStringArray(
+                core().profiles().cloneProfile(
+                    std::filesystem::path(projectDirectory),
+                    sourceProfileName,
+                    targetProfileName,
+                    isBlank(defaultProfileName) ? L"" : std::wstring_view(defaultProfileName)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_rename_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* sourceProfileName,
+        const wchar_t* targetProfileName,
+        const wchar_t* defaultProfileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(sourceProfileName) || isBlank(targetProfileName))
+            {
+                lastError = L"Project directory, source profile, and target profile are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            logBridge(fluxora::LogLevel::Info, "fluxora_rename_profile started.");
+            const std::wstring json = serializeStringArray(
+                core().profiles().renameProfile(
+                    std::filesystem::path(projectDirectory),
+                    sourceProfileName,
+                    targetProfileName,
+                    isBlank(defaultProfileName) ? L"" : std::wstring_view(defaultProfileName)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_delete_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* defaultProfileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(profileName))
+            {
+                lastError = L"Project directory and profile name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            logBridge(fluxora::LogLevel::Info, "fluxora_delete_profile started.");
+            const std::wstring json = serializeStringArray(
+                core().profiles().deleteProfile(
+                    std::filesystem::path(projectDirectory),
+                    profileName,
+                    isBlank(defaultProfileName) ? L"" : std::wstring_view(defaultProfileName)));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)

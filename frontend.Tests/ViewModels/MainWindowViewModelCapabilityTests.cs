@@ -15,13 +15,6 @@ public sealed class MainWindowViewModelCapabilityTests
 
         Assert.False(viewModel.CanShowPluginsPanel);
         Assert.False(viewModel.CanShowLoadOrderPanel);
-        Assert.False(viewModel.CanShowIniPanel);
-        Assert.False(viewModel.CanShowSavePanel);
-        Assert.False(viewModel.CanShowScriptExtenderPanel);
-        Assert.False(viewModel.CanShowRootFilesPanel);
-        Assert.False(viewModel.CanShowExecutablePanel);
-        Assert.False(viewModel.CanShowContentLayoutReviewPanel);
-        Assert.False(viewModel.CanShowHealthDiagnosticsPanel);
     }
 
     [Fact]
@@ -32,110 +25,13 @@ public sealed class MainWindowViewModelCapabilityTests
             new GameCapabilities
             {
                 SupportsPlugins = true,
-                SupportsLoadOrder = true,
-                SupportsIniProfiles = true,
-                SupportsSaveProfiles = true,
-                SupportsScriptExtender = true,
-                SupportsRootFiles = true,
-                SupportsContentLayoutRules = true
-            },
-            new ResolvedTemplate
-            {
-                Id = "skyrimse",
-                UiTemplateId = "skyrimse",
-                PluginExtensions = [".esm", ".esp", ".esl"],
-                ScriptExtender = new ScriptExtenderInfo
-                {
-                    Name = "Skyrim Script Extender (SKSE64)",
-                    LoaderExecutable = "skse64_loader.exe"
-                }
+                SupportsLoadOrder = true
             });
-        project.Executables =
-        [
-            new GameExecutableEntry
-            {
-                Id = "skse",
-                DisplayName = "SKSE64",
-                ExecutablePath = "skse64_loader.exe"
-            }
-        ];
-        project.ContentLayoutSummary = new ContentLayoutSummary
-        {
-            Supported = true,
-            DataFolder = "Data",
-            RootFileWrapperDirectory = "root"
-        };
-        project.GameHealthSummary = new GameHealthSummary
-        {
-            Status = "warning",
-            Summary = "Script extender loader is optional."
-        };
 
         viewModel.SelectedProject = project;
 
         Assert.True(viewModel.CanShowPluginsPanel);
         Assert.True(viewModel.CanShowLoadOrderPanel);
-        Assert.True(viewModel.CanShowIniPanel);
-        Assert.True(viewModel.CanShowSavePanel);
-        Assert.True(viewModel.CanShowScriptExtenderPanel);
-        Assert.True(viewModel.CanShowRootFilesPanel);
-        Assert.True(viewModel.CanShowExecutablePanel);
-        Assert.True(viewModel.CanShowContentLayoutReviewPanel);
-        Assert.True(viewModel.CanShowHealthDiagnosticsPanel);
-    }
-
-    [Fact]
-    public void ContentLayoutReviewRendersWarningsAndBlockers()
-    {
-        MainWindowViewModel viewModel = CreateViewModel();
-        ModProject project = ProjectWithCapabilities(new GameCapabilities());
-        project.ContentLayoutSummary = new ContentLayoutSummary
-        {
-            HasWarnings = true,
-            HasBlockers = true,
-            Summary = "Content layout requires review.",
-            Details = ["Plugin content is placed under Data."],
-            Warnings = ["Unknown root file requires review."],
-            Blockers = ["Path traversal was blocked."]
-        };
-
-        viewModel.SelectedProject = project;
-
-        Assert.True(viewModel.CanShowContentLayoutReviewPanel);
-        Assert.Equal("Content layout requires review.", viewModel.SelectedProjectContentLayoutSummaryText);
-        Assert.Contains("Plugin content is placed under Data.", viewModel.SelectedProjectContentLayoutDetails);
-        Assert.Contains("Unknown root file requires review.", viewModel.SelectedProjectContentLayoutWarnings);
-        Assert.Contains("Path traversal was blocked.", viewModel.SelectedProjectContentLayoutBlockers);
-    }
-
-    [Fact]
-    public void UnsupportedWorkspaceCoercesHiddenBuildTab()
-    {
-        MainWindowViewModel viewModel = CreateViewModel();
-        viewModel.SelectedProject = ProjectWithCapabilities(new GameCapabilities());
-
-        viewModel.SelectedWorkspaceTabIndex = 3;
-
-        Assert.Equal(1, viewModel.SelectedWorkspaceTabIndex);
-        Assert.False(viewModel.CanShowBuildOverviewPanel);
-    }
-
-    [Fact]
-    public void ContentLayoutReviewHidesEmptyDataFolderText()
-    {
-        MainWindowViewModel viewModel = CreateViewModel();
-        ModProject project = ProjectWithCapabilities(new GameCapabilities());
-        project.ContentLayoutSummary = new ContentLayoutSummary
-        {
-            HasWarnings = true,
-            Warnings = ["Layout needs review."]
-        };
-
-        viewModel.SelectedProject = project;
-
-        Assert.True(viewModel.CanShowContentLayoutReviewPanel);
-        Assert.True(viewModel.CanShowBuildOverviewPanel);
-        Assert.False(viewModel.HasSelectedProjectContentLayoutDataFolder);
     }
 
     private static MainWindowViewModel CreateViewModel()

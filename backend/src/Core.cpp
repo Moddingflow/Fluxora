@@ -13,6 +13,7 @@
 #include "FluxoraCore/Services/NexusModsAuthService.hpp"
 #include "FluxoraCore/Services/PluginService.hpp"
 #include "FluxoraCore/Services/ProfileOrderService.hpp"
+#include "FluxoraCore/Services/ProfileService.hpp"
 #include "FluxoraCore/Services/ProjectService.hpp"
 #include "FluxoraCore/Services/TemplateService.hpp"
 #include "FluxoraCore/Services/VirtualFileSystemService.hpp"
@@ -27,6 +28,7 @@ namespace fluxora
           mods_(std::make_unique<ModService>(*logger_, *settings_, *buildPathSettings_)),
           plugins_(std::make_unique<PluginService>(*logger_, *buildPathSettings_)),
           profileOrder_(std::make_unique<ProfileOrderService>(*logger_, *mods_, *buildPathSettings_)),
+          profiles_(std::make_unique<ProfileService>(*logger_, *buildPathSettings_)),
           downloads_(std::make_unique<DownloadService>(*logger_, *settings_, *buildPathSettings_)),
           executableIcons_(std::make_unique<ExecutableIconService>(*logger_)),
           executables_(std::make_unique<ExecutableService>(*logger_, *executableIcons_, *buildPathSettings_)),
@@ -58,6 +60,7 @@ namespace fluxora
         mods_->initialize();
         plugins_->initialize();
         profileOrder_->initialize();
+        profiles_->initialize();
         downloads_->initialize();
         executableIcons_->initialize();
         executables_->initialize();
@@ -88,6 +91,7 @@ namespace fluxora
         executables_->shutdown();
         executableIcons_->shutdown();
         downloads_->shutdown();
+        profiles_->shutdown();
         profileOrder_->shutdown();
         plugins_->shutdown();
         mods_->shutdown();
@@ -133,6 +137,11 @@ namespace fluxora
     ProfileOrderService& Core::profileOrder() noexcept
     {
         return *profileOrder_;
+    }
+
+    ProfileService& Core::profiles() noexcept
+    {
+        return *profiles_;
     }
 
     DownloadService& Core::downloads() noexcept

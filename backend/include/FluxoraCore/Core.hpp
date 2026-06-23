@@ -10,6 +10,7 @@ namespace fluxora
     class ModOrganizerImportService;
     class PluginService;
     class ProfileOrderService;
+    class ProfileService;
     class DownloadService;
     class ExecutableService;
     class ExecutableIconService;
@@ -41,6 +42,7 @@ namespace fluxora
         [[nodiscard]] ModOrganizerImportService& modOrganizerImport() noexcept;
         [[nodiscard]] PluginService& plugins() noexcept;
         [[nodiscard]] ProfileOrderService& profileOrder() noexcept;
+        [[nodiscard]] ProfileService& profiles() noexcept;
         [[nodiscard]] DownloadService& downloads() noexcept;
         [[nodiscard]] ExecutableService& executables() noexcept;
         [[nodiscard]] ExecutableIconService& executableIcons() noexcept;
@@ -60,6 +62,7 @@ namespace fluxora
         std::unique_ptr<ModService> mods_;
         std::unique_ptr<PluginService> plugins_;
         std::unique_ptr<ProfileOrderService> profileOrder_;
+        std::unique_ptr<ProfileService> profiles_;
         std::unique_ptr<DownloadService> downloads_;
         std::unique_ptr<ExecutableIconService> executableIcons_;
         std::unique_ptr<ExecutableService> executables_;

@@ -193,6 +193,73 @@ namespace fluxora::tests
         EXPECT_EQ(order[0].position, 0);
     }
 
+    TEST(InstanceMetadataStoreTests, CloneRenameAndDeleteProfileStatePreservesScopedOrder)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path skyUi = mods / L"SkyUI";
+
+        writeTextFile(skyUi / L"Data" / L"SkyUI.esp", "plugin");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{skyUi, L"SkyUI", {}, true, {}}
+            });
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"separator", {}, L"Interface"},
+                ProfileOrderImportItemRecord{L"mod", L"SkyUI", {}}
+            });
+        InstanceMetadataStore::replaceProfilePluginOrderItems(
+            project,
+            L"Default",
+            {
+                ProfilePluginOrderImportItemRecord{L"separator", {}, L"Core"},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"SkyUI.esp", {}}
+            });
+
+        InstanceMetadataStore::cloneProfileState(project, L"Default", L"Testing", mods);
+
+        std::vector<ProfileOrderItemRecord> modOrder =
+            InstanceMetadataStore::listProfileOrderItems(project, L"Testing", mods);
+        ASSERT_EQ(modOrder.size(), 2U);
+        EXPECT_EQ(modOrder[0].kind, L"separator");
+        EXPECT_EQ(modOrder[0].separatorTitle, L"Interface");
+        ASSERT_TRUE(modOrder[1].hasMod);
+        EXPECT_EQ(modOrder[1].mod.folderName, L"SkyUI");
+
+        std::vector<ProfilePluginOrderItemRecord> pluginOrder =
+            InstanceMetadataStore::listProfilePluginOrderItems(project, L"Testing", {L"SkyUI.esp"});
+        ASSERT_EQ(pluginOrder.size(), 2U);
+        EXPECT_EQ(pluginOrder[0].kind, L"separator");
+        EXPECT_EQ(pluginOrder[0].separatorTitle, L"Core");
+        EXPECT_EQ(pluginOrder[1].pluginName, L"SkyUI.esp");
+
+        InstanceMetadataStore::renameProfileState(project, L"Testing", L"Gameplay");
+        std::vector<std::wstring> profileNames = InstanceMetadataStore::listProfileNames(project);
+        EXPECT_NE(std::find(profileNames.begin(), profileNames.end(), L"Gameplay"), profileNames.end());
+        EXPECT_EQ(std::find(profileNames.begin(), profileNames.end(), L"Testing"), profileNames.end());
+
+        modOrder = InstanceMetadataStore::listProfileOrderItems(project, L"Gameplay", mods);
+        ASSERT_EQ(modOrder.size(), 2U);
+        EXPECT_EQ(modOrder[0].separatorTitle, L"Interface");
+        ASSERT_TRUE(modOrder[1].hasMod);
+        EXPECT_EQ(modOrder[1].mod.folderName, L"SkyUI");
+
+        InstanceMetadataStore::deleteProfileState(project, L"Gameplay");
+        profileNames = InstanceMetadataStore::listProfileNames(project);
+        EXPECT_EQ(std::find(profileNames.begin(), profileNames.end(), L"Gameplay"), profileNames.end());
+#endif
+    }
+
     TEST(InstanceMetadataStoreTests, SetAllInstalledModsEnabledKeepsPortableManifestsCurrent)
     {
 #ifndef _WIN32

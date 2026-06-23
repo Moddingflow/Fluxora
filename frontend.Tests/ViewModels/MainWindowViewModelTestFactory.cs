@@ -7,7 +7,9 @@ namespace Fluxora.App.Tests.ViewModels;
 internal static class MainWindowViewModelTestFactory
 {
     public static MainWindowViewModel Create(
-        Func<string, string, CancellationToken, Task<string>>? projectDirectoryPreviewBuilder = null)
+        Func<string, string, CancellationToken, Task<string>>? projectDirectoryPreviewBuilder = null,
+        IBuildDeletionDialogService? buildDeletionDialogService = null,
+        IProfileManagerDialogService? profileManagerDialogService = null)
     {
         ApplicationLogService logService = new();
         CoreBridgeService coreBridgeService = new(logService);
@@ -47,7 +49,8 @@ internal static class MainWindowViewModelTestFactory
             new NullModInstallDialogService(),
             new NullExecutableManagerDialogService(),
             new NullBuildSettingsDialogService(),
-            new NullBuildDeletionDialogService());
+            buildDeletionDialogService ?? new NullBuildDeletionDialogService(),
+            profileManagerDialogService: profileManagerDialogService);
     }
 
     private sealed class NullFolderPickerService : IFolderPickerService

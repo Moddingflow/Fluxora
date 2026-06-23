@@ -113,6 +113,37 @@
             </Grid>
         </DataTemplate>
 
+        <DataTemplate x:Key="ProfileComboItemTemplate">
+            <Grid Height="22">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="26" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border Width="19"
+                        Height="19"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Center"
+                        Background="{StaticResource AccentSoftBrush}"
+                        BorderBrush="{StaticResource AccentLineBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <controls:LineIcon Data="{StaticResource Icon.Layers}"
+                                       Width="11"
+                                       Height="11"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                </Border>
+                <TextBlock Grid.Column="1"
+                           Text="{Binding}"
+                           VerticalAlignment="Center"
+                           Foreground="{StaticResource TextBrush}"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           TextTrimming="CharacterEllipsis" />
+            </Grid>
+        </DataTemplate>
+
         <Style x:Key="RevealBorderStyle" TargetType="{x:Type Border}" />
 
         <Style x:Key="PanelBorderStyle"
@@ -344,7 +375,7 @@
             <Setter Property="Height" Value="30" />
             <Setter Property="Padding" Value="10,0" />
             <Setter Property="FontSize" Value="11" />
-            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background" Value="{StaticResource AccentBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}" />
             <Setter Property="Foreground" Value="#F7F4FF" />
@@ -389,7 +420,7 @@
             <Setter Property="Width" Value="30" />
             <Setter Property="Height" Value="30" />
             <Setter Property="Padding" Value="0" />
-            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Background" Value="#171322" />
             <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
             <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
@@ -532,7 +563,7 @@
                                                                   VerticalAlignment="Center"
                                                                   ClipToBounds="True"
                                                                   Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
-                                                                  ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
+                                                                  ContentTemplate="{Binding ItemTemplate, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
                                                                   ContentStringFormat="{Binding SelectionBoxItemStringFormat, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
                                                                   TextElement.Foreground="{StaticResource TextBrush}" />
                                                 <Path Grid.Column="1"
@@ -1467,6 +1498,45 @@
             </Setter>
         </Style>
 
+        <Style x:Key="ProfileSelectorComboBoxStyle"
+               TargetType="{x:Type ComboBox}"
+               BasedOn="{StaticResource ComboBoxStyle}">
+            <Setter Property="Height" Value="34" />
+            <Setter Property="MinWidth" Value="178" />
+            <Setter Property="MaxWidth" Value="218" />
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Background" Value="#151322" />
+            <Setter Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
+            <Setter Property="MaxDropDownHeight" Value="230" />
+        </Style>
+
+        <Style x:Key="ProfileMenuButtonStyle"
+               TargetType="{x:Type Button}"
+               BasedOn="{StaticResource IconOnlyButtonStyle}">
+            <Setter Property="Width" Value="30" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Background" Value="#151322" />
+            <Setter Property="BorderBrush" Value="{StaticResource LineHoverBrush}" />
+            <Setter Property="ToolTip" Value="Управлять профилями" />
+        </Style>
+
+        <Style x:Key="ProfileMenuActionButtonStyle"
+               TargetType="{x:Type Button}"
+               BasedOn="{StaticResource SecondaryButtonStyle}">
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
+
+        <Style x:Key="ProfileMenuDangerButtonStyle"
+               TargetType="{x:Type Button}"
+               BasedOn="{StaticResource ProfileMenuActionButtonStyle}">
+            <Setter Property="Foreground" Value="{StaticResource ErrorBrush}" />
+            <Setter Property="BorderBrush" Value="#6E2B3B" />
+        </Style>
+
         <ContextMenu x:Key="InstalledModRowContextMenu"
                      x:Shared="False"
                      Style="{StaticResource DarkContextMenuStyle}">
@@ -2331,6 +2401,7 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel>
                                     <TextBlock Text="{Binding WorkspaceTitle}"
@@ -2344,7 +2415,48 @@
                                                FontSize="11"
                                                TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <Border Grid.Column="1"
+                                <Grid Grid.Column="1"
+                                      Margin="14,0,0,0"
+                                      VerticalAlignment="Center">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="6" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Orientation="Horizontal"
+                                                VerticalAlignment="Center"
+                                                Margin="0,0,0,1">
+                                        <controls:LineIcon Data="{StaticResource Icon.Layers}"
+                                                           Width="13"
+                                                           Height="13"
+                                                           Margin="0,0,6,0"
+                                                           Foreground="{StaticResource MutedTextBrush}" />
+                                        <TextBlock Text="Профили"
+                                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <ComboBox Style="{StaticResource ProfileSelectorComboBoxStyle}"
+                                              Grid.Column="2"
+                                              ItemsSource="{Binding AvailableProfiles}"
+                                              SelectedItem="{Binding SelectedProfile, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              ItemTemplate="{StaticResource ProfileComboItemTemplate}"
+                                              ToolTip="{Binding SelectedProfileDisplayText}"
+                                              AutomationProperties.Name="Профиль сборки" />
+                                    <Button Grid.Column="4"
+                                            Style="{StaticResource ProfileMenuButtonStyle}"
+                                            Command="{Binding OpenProfileManagerCommand}"
+                                            AutomationProperties.Name="Управлять профилями">
+                                        <controls:LineIcon Data="{StaticResource Icon.Edit}"
+                                                           Width="13"
+                                                           Height="13"
+                                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" />
+                                    </Button>
+                                </Grid>
+                                <Border Grid.Column="2"
                                         Style="{StaticResource PillBorderStyle}"
                                         VerticalAlignment="Center"
                                         Margin="12,0,0,0">
@@ -2640,7 +2752,8 @@
                                                             </Grid.ColumnDefinitions>
                                                             <CheckBox Grid.Column="0"
                                                                       IsChecked="{Binding IsEnabled, Mode=OneWay}"
-                                                                      IsHitTestVisible="False"
+                                                                      Command="{Binding DataContext.ToggleModEnabledCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                                                      CommandParameter="{Binding}"
                                                                       Focusable="False"
                                                                       VerticalAlignment="Center"
                                                                       Margin="0,0,9,0">
@@ -3470,183 +3583,6 @@
                                     </Grid>
                                 </TabItem>
 
-                                <TabItem Header="Сборка">
-                                    <TabItem.Style>
-                                        <Style TargetType="{x:Type TabItem}" BasedOn="{StaticResource ModernTabItemStyle}">
-                                            <Setter Property="Visibility" Value="Collapsed" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding CanShowBuildOverviewPanel}" Value="True">
-                                                    <Setter Property="Visibility" Value="Visible" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TabItem.Style>
-                                    <ScrollViewer Margin="0,16,0,0"
-                                                  VerticalScrollBarVisibility="Auto"
-                                                  HorizontalScrollBarVisibility="Disabled">
-                                        <StackPanel>
-                                            <TextBlock Text="Функциональные модули"
-                                                       Style="{StaticResource SectionLabelStyle}" />
-                                            <ItemsControl ItemsSource="{Binding SelectedProject.Template.Capabilities}"
-                                                          ItemsPanel="{StaticResource WrapPanelTemplate}"
-                                                          ItemTemplate="{StaticResource CapabilityChipTemplate}" />
-
-                                            <Border Style="{StaticResource InnerPanelStyle}"
-                                                    Padding="12"
-                                                    Margin="0,14,0,0"
-                                                    Visibility="{Binding CanShowExecutablePanel, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                <StackPanel>
-                                                    <TextBlock Text="Исполняемые файлы"
-                                                               FontWeight="SemiBold"
-                                                               Foreground="{StaticResource TextBrush}" />
-                                                    <TextBlock Text="{Binding SelectedProjectExecutablesText}"
-                                                               Margin="0,5,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap" />
-                                                </StackPanel>
-                                            </Border>
-
-                                            <Border Style="{StaticResource InnerPanelStyle}"
-                                                    Padding="12"
-                                                    Margin="0,10,0,0"
-                                                    Visibility="{Binding CanShowIniPanel, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                <StackPanel>
-                                                    <TextBlock Text="INI-профили"
-                                                               FontWeight="SemiBold"
-                                                               Foreground="{StaticResource TextBrush}" />
-                                                    <TextBlock Text="{Binding SelectedProjectIniProfilesText}"
-                                                               Margin="0,5,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap" />
-                                                </StackPanel>
-                                            </Border>
-
-                                            <Border Style="{StaticResource InnerPanelStyle}"
-                                                    Padding="12"
-                                                    Margin="0,10,0,0"
-                                                    Visibility="{Binding CanShowSavePanel, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                <StackPanel>
-                                                    <TextBlock Text="Сохранения"
-                                                               FontWeight="SemiBold"
-                                                               Foreground="{StaticResource TextBrush}" />
-                                                    <TextBlock Text="{Binding SelectedProjectSaveProfilesText}"
-                                                               Margin="0,5,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap" />
-                                                </StackPanel>
-                                            </Border>
-
-                                            <Border Style="{StaticResource InnerPanelStyle}"
-                                                    Padding="12"
-                                                    Margin="0,10,0,0"
-                                                    Visibility="{Binding CanShowScriptExtenderPanel, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                <StackPanel>
-                                                    <TextBlock Text="Script extender"
-                                                               FontWeight="SemiBold"
-                                                               Foreground="{StaticResource TextBrush}" />
-                                                    <TextBlock Text="{Binding SelectedProjectScriptExtenderText}"
-                                                               Margin="0,5,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap" />
-                                                </StackPanel>
-                                            </Border>
-
-                                            <Border Style="{StaticResource InnerPanelStyle}"
-                                                    Padding="12"
-                                                    Margin="0,10,0,0"
-                                                    Visibility="{Binding CanShowRootFilesPanel, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                <StackPanel>
-                                                    <TextBlock Text="Root-файлы"
-                                                               FontWeight="SemiBold"
-                                                               Foreground="{StaticResource TextBrush}" />
-                                                    <TextBlock Text="{Binding SelectedProjectRootFilesText}"
-                                                               Margin="0,5,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap" />
-                                                </StackPanel>
-                                            </Border>
-
-                                            <Border Style="{StaticResource InnerPanelStyle}"
-                                                    Padding="12"
-                                                    Margin="0,10,0,0"
-                                                    Visibility="{Binding CanShowContentLayoutReviewPanel, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                <StackPanel>
-                                                    <TextBlock Text="Размещение контента"
-                                                               FontWeight="SemiBold"
-                                                               Foreground="{StaticResource TextBrush}" />
-                                                    <TextBlock Text="{Binding SelectedProjectContentLayoutSummaryText}"
-                                                               Margin="0,5,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap" />
-                                                    <TextBlock Text="{Binding SelectedProjectContentLayoutDataFolder, StringFormat=Data folder: {0}}"
-                                                               Margin="0,5,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap"
-                                                               Visibility="{Binding HasSelectedProjectContentLayoutDataFolder, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                                    <ItemsControl ItemsSource="{Binding SelectedProjectContentLayoutDetails}"
-                                                                  Margin="0,7,0,0">
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate>
-                                                                <TextBlock Text="{Binding}"
-                                                                           Style="{StaticResource MutedTextStyle}"
-                                                                           TextWrapping="Wrap"
-                                                                           Margin="0,0,0,4" />
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                    <ItemsControl ItemsSource="{Binding SelectedProjectContentLayoutWarnings}"
-                                                                  Margin="0,5,0,0">
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate>
-                                                                <TextBlock Text="{Binding StringFormat=Предупреждение: {0}}"
-                                                                           Style="{StaticResource MutedTextStyle}"
-                                                                           TextWrapping="Wrap"
-                                                                           Margin="0,0,0,4" />
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                    <ItemsControl ItemsSource="{Binding SelectedProjectContentLayoutBlockers}"
-                                                                  Margin="0,5,0,0">
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate>
-                                                                <TextBlock Text="{Binding StringFormat=Блокер: {0}}"
-                                                                           Style="{StaticResource MutedTextStyle}"
-                                                                           TextWrapping="Wrap"
-                                                                           Margin="0,0,0,4" />
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                </StackPanel>
-                                            </Border>
-
-                                            <Border Style="{StaticResource InnerPanelStyle}"
-                                                    Padding="12"
-                                                    Margin="0,10,0,0"
-                                                    Visibility="{Binding CanShowHealthDiagnosticsPanel, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                <StackPanel>
-                                                    <TextBlock Text="Диагностика игры"
-                                                               FontWeight="SemiBold"
-                                                               Foreground="{StaticResource TextBrush}" />
-                                                    <TextBlock Text="{Binding SelectedProjectHealthStatusText}"
-                                                               Margin="0,5,0,0"
-                                                               Style="{StaticResource MutedTextStyle}"
-                                                               TextWrapping="Wrap" />
-                                                    <ItemsControl ItemsSource="{Binding SelectedProjectHealthFindings}"
-                                                                  Margin="0,7,0,0">
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate>
-                                                                <TextBlock Text="{Binding Message}"
-                                                                           Style="{StaticResource MutedTextStyle}"
-                                                                           TextWrapping="Wrap"
-                                                                           Margin="0,0,0,4" />
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                </StackPanel>
-                                            </Border>
-                                        </StackPanel>
-                                    </ScrollViewer>
-                                </TabItem>
                             </TabControl>
                         </Border>
                     </Grid>

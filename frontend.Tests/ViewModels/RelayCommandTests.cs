@@ -25,6 +25,17 @@ public sealed class RelayCommandTests
     }
 
     [Fact]
+    public void RelayCommand_DoesNotExecuteWhenCanExecuteIsFalse()
+    {
+        int executions = 0;
+        RelayCommand command = new(() => executions++, () => false);
+
+        command.Execute(null);
+
+        Assert.Equal(0, executions);
+    }
+
+    [Fact]
     public void RelayCommandOfT_PassesMatchingParameterAndDefaultsWrongType()
     {
         string? received = "not executed";
@@ -35,6 +46,17 @@ public sealed class RelayCommandTests
 
         command.Execute(42);
         Assert.Null(received);
+    }
+
+    [Fact]
+    public void RelayCommandOfT_DoesNotExecuteWhenCanExecuteIsFalse()
+    {
+        int executions = 0;
+        RelayCommand<string> command = new(_ => executions++, _ => false);
+
+        command.Execute("Skyrim.esm");
+
+        Assert.Equal(0, executions);
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Media;
 
@@ -63,6 +64,36 @@ public sealed class ConfirmDialogOptions
             Highlight = $"«{project.Name}»",
             Details = details,
             ConfirmText = "Удалить сборку",
+            IsDestructive = true
+        };
+    }
+
+    /// <summary>Confirmation for permanently deleting a profile folder and its stored order state.</summary>
+    public static ConfirmDialogOptions DeleteProfile(ModProject project, string profileName)
+    {
+        List<ConfirmDialogDetail> details = new()
+        {
+            new ConfirmDialogDetail
+            {
+                Icon = ConfirmDialogDetail.IconFromResource("Icon.FileText"),
+                Label = "Профиль",
+                Value = profileName
+            },
+            new ConfirmDialogDetail
+            {
+                Icon = ConfirmDialogDetail.IconFromResource("Icon.Folder"),
+                Label = "Папка",
+                Value = Path.Combine(project.Paths.ProfilesDirectory, profileName)
+            }
+        };
+
+        return new ConfirmDialogOptions
+        {
+            Heading = "Удалить профиль?",
+            Message = $"Профиль «{profileName}» и его порядок модов, плагины и файлы состояния будут удалены. Отменить это действие нельзя.",
+            Highlight = $"«{profileName}»",
+            Details = details,
+            ConfirmText = "Удалить профиль",
             IsDestructive = true
         };
     }

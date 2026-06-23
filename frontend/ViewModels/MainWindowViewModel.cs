@@ -19,7 +19,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private const int PluginsWorkspaceTabIndex = 0;
     private const int DataWorkspaceTabIndex = 1;
     private const int DownloadsWorkspaceTabIndex = 2;
-    private const int BuildWorkspaceTabIndex = 3;
     private static readonly TimeSpan BuildDeletionSplashCompletionHold = TimeSpan.FromMilliseconds(620);
     private static readonly TimeSpan BuildCreationSplashCompletionHold = TimeSpan.FromMilliseconds(620);
     private static readonly TimeSpan FluxPackPackageSplashCompletionHold = TimeSpan.FromMilliseconds(620);
@@ -68,6 +67,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private readonly IExecutableManagerDialogService executableManagerDialogService;
     private readonly IBuildSettingsDialogService buildSettingsDialogService;
     private readonly IBuildDeletionDialogService buildDeletionDialogService;
+    private readonly IProfileManagerDialogService profileManagerDialogService;
     private readonly IFluxPackPickerService fluxPackPickerService;
     private readonly IConfirmDialogService confirmDialogService;
     private readonly ExecutableLaunchSessionStore launchSessionStore;
@@ -98,7 +98,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private bool isCreateProjectPanelOpen;
     private bool isCreatingProject;
     private bool isOpeningProject;
+    private bool isDeletingProject;
     private bool isProcessingDownload;
+    private bool isProcessingProfile;
     private bool isProcessingPlugins;
     private bool isCheckingModUpdates;
     private bool isProcessingFluxPack;
@@ -129,6 +131,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private string gamePath = string.Empty;
     private string installRootDirectory = string.Empty;
     private string selectedProfile = string.Empty;
+    private string profileActionName = string.Empty;
+    private bool isProfileMenuOpen;
     private ExecutableMenuItem? selectedExecutable;
     private string lastSelectedExecutableId = string.Empty;
     private string validationMessage = string.Empty;
@@ -151,6 +155,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private int? selectedProjectActiveModCount;
     private int? selectedProjectDisabledModCount;
     private bool selectedProjectModCountUnavailable;
+    private bool isSelectedProjectModCountRefreshDeferred;
 
     public MainWindowViewModel(
         ProjectCatalogService projectCatalogService,
@@ -175,7 +180,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         IBuildDeletionDialogService buildDeletionDialogService,
         ExecutableLaunchSessionStore? launchSessionStore = null,
         IFluxPackPickerService? fluxPackPickerService = null,
-        IConfirmDialogService? confirmDialogService = null)
+        IConfirmDialogService? confirmDialogService = null,
+        IProfileManagerDialogService? profileManagerDialogService = null)
     {
         this.projectCatalogService = projectCatalogService;
         this.projectOpenService = projectOpenService;
@@ -199,6 +205,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         this.buildDeletionDialogService = buildDeletionDialogService;
         this.fluxPackPickerService = fluxPackPickerService ?? new NullFluxPackPickerService();
         this.confirmDialogService = confirmDialogService ?? new NullConfirmDialogService();
+        this.profileManagerDialogService = profileManagerDialogService ?? new NullProfileManagerDialogService();
         this.launchSessionStore = launchSessionStore ?? new ExecutableLaunchSessionStore(logService);
         buildDeletionProgressCoalescer = new ProgressUpdateCoalescer<BuildDeletionProgress>(
             progress => BuildDeletionProcess.ApplyProgress(progress),
@@ -242,6 +249,30 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         OpenHomeGameDirectoryCommand = new RelayCommand(OpenGameDirectory, () => HasSelectedProject && !IsWorkspaceOperationBlocked);
         OpenModsDirectoryCommand = new RelayCommand(OpenModsDirectory, () => IsProjectWorkspaceOpen && HasSelectedProject && !IsWorkspaceOperationBlocked);
         OpenProfilesDirectoryCommand = new RelayCommand(OpenProfilesDirectory, () => IsProjectWorkspaceOpen && HasSelectedProject && !IsWorkspaceOperationBlocked);
+        OpenProfileManagerCommand = new RelayCommand(
+            OpenProfileManager,
+            () => IsProjectWorkspaceOpen && HasSelectedProject && !IsWorkspaceOperationBlocked);
+        ToggleProfileMenuCommand = new RelayCommand(
+            ToggleProfileMenu,
+            () => IsProjectWorkspaceOpen && HasSelectedProject && !IsWorkspaceOperationBlocked);
+        RefreshProfilesCommand = new RelayCommand(
+            RefreshProfiles,
+            () => CanRunProfileAction(allowBlankName: true));
+        CreateProfileCommand = new RelayCommand(
+            CreateProfile,
+            () => CanRunProfileAction() && !HasProfile(ProfileActionName));
+        CloneProfileCommand = new RelayCommand(
+            CloneProfile,
+            () => CanRunProfileAction() && !string.IsNullOrWhiteSpace(SelectedProfile) && !HasProfile(ProfileActionName));
+        RenameProfileCommand = new RelayCommand(
+            RenameProfile,
+            () => CanRunProfileAction() &&
+                CanRenameSelectedProfile &&
+                !HasProfile(ProfileActionName) &&
+                !string.Equals(SelectedProfileDisplayText, NormalizeProfileInput(ProfileActionName), StringComparison.OrdinalIgnoreCase));
+        DeleteProfileCommand = new RelayCommand(
+            DeleteProfile,
+            () => CanDeleteSelectedProfile);
         OpenDownloadsDirectoryCommand = new RelayCommand(OpenDownloadsDirectory, () => IsProjectWorkspaceOpen && HasSelectedProject && !IsWorkspaceOperationBlocked);
         AddDownloadFileCommand = new RelayCommand(AddDownloadFile, () => IsProjectWorkspaceOpen && HasSelectedProject && !IsProcessingDownload && !IsWorkspaceOperationBlocked);
         InstallModFromArchiveCommand = new RelayCommand(InstallModFromArchive, CanRunModCreationAction);
@@ -264,6 +295,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         DeleteSelectedModCommand = new RelayCommand<ModEntry>(
             DeleteSelectedMod,
             CanDeleteSelectedMod);
+        ToggleModEnabledCommand = new RelayCommand<ModEntry>(
+            ToggleModEnabled,
+            mod => IsProjectWorkspaceOpen &&
+                HasSelectedProject &&
+                mod is { IsMod: true } &&
+                !IsProcessingDownload &&
+                !IsWorkspaceOperationBlocked);
         EnableSelectedModCommand = new RelayCommand<ModEntry>(
             mod => SetSelectedModEnabled(mod, true),
             mod => CanSetSelectedModEnabled(mod, true));
@@ -432,6 +470,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public ICommand OpenHomeGameDirectoryCommand { get; }
     public ICommand OpenModsDirectoryCommand { get; }
     public ICommand OpenProfilesDirectoryCommand { get; }
+    public ICommand OpenProfileManagerCommand { get; }
+    public ICommand ToggleProfileMenuCommand { get; }
+    public ICommand RefreshProfilesCommand { get; }
+    public ICommand CreateProfileCommand { get; }
+    public ICommand CloneProfileCommand { get; }
+    public ICommand RenameProfileCommand { get; }
+    public ICommand DeleteProfileCommand { get; }
     public ICommand OpenDownloadsDirectoryCommand { get; }
     public ICommand AddDownloadFileCommand { get; }
     public ICommand InstallModFromArchiveCommand { get; }
@@ -444,6 +489,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public ICommand MoveSelectedModUpCommand { get; }
     public ICommand MoveSelectedModDownCommand { get; }
     public ICommand DeleteSelectedModCommand { get; }
+    public ICommand ToggleModEnabledCommand { get; }
     public ICommand EnableSelectedModCommand { get; }
     public ICommand EnableAllModsCommand { get; }
     public ICommand DisableSelectedModCommand { get; }
@@ -500,11 +546,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 OnPropertyChanged(nameof(SelectedProjectCreatedText));
                 OnPropertyChanged(nameof(SelectedProjectLastLaunchText));
                 OnPropertyChanged(nameof(SelectedProjectConfigText));
-                OnPropertyChanged(nameof(SelectedProjectExecutablesText));
                 OnPropertyChanged(nameof(SelectedProjectPluginExtensionsText));
                 OnPropertyChanged(nameof(WorkspaceTitle));
                 OnPropertyChanged(nameof(WorkspaceSubtitle));
                 OnPropertyChanged(nameof(SelectedProjectProfileFilesText));
+                OnPropertyChanged(nameof(SelectedProfileDisplayText));
+                OnPropertyChanged(nameof(CanRenameSelectedProfile));
+                OnPropertyChanged(nameof(CanDeleteSelectedProfile));
                 NotifyCapabilityPropertiesChanged();
                 OnPropertyChanged(nameof(ActiveModCountText));
                 OnPropertyChanged(nameof(DisabledModCountText));
@@ -700,6 +748,23 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
+    private bool IsDeletingProject
+    {
+        get => isDeletingProject;
+        set
+        {
+            if (SetField(ref isDeletingProject, value))
+            {
+                RaiseBusyCommandStateChanged();
+                if (!value && isSelectedProjectModCountRefreshDeferred)
+                {
+                    isSelectedProjectModCountRefreshDeferred = false;
+                    RefreshSelectedProjectModCounts();
+                }
+            }
+        }
+    }
+
     public bool IsProcessingDownload
     {
         get => isProcessingDownload;
@@ -802,6 +867,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public ExecutableLaunchProcessViewModel ExecutableLaunchProcess => executableLaunchProcess;
 
     private bool IsWorkspaceOperationBlocked =>
+        IsDeletingProject ||
         BuildCreationProcess.IsVisible ||
         ModOperationProcess.IsVisible ||
         ExecutableLaunchProcess.IsVisible ||
@@ -809,6 +875,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         FluxPackPackageProcess.IsVisible ||
         FluxPackInstallProcess.IsVisible ||
         IsProcessingFluxPack ||
+        IsProcessingProfile ||
         IsBuildLoadingSplashVisible;
 
     public int CreateProjectStepIndex
@@ -896,13 +963,70 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         get => selectedProfile;
         set
         {
-            if (SetField(ref selectedProfile, value))
+            string nextValue = string.IsNullOrWhiteSpace(value) ? DefaultProfileName(SelectedProject) : value.Trim();
+            if (SetField(ref selectedProfile, nextValue))
             {
                 OnPropertyChanged(nameof(WorkspaceSubtitle));
+                OnPropertyChanged(nameof(SelectedProfileDisplayText));
+                OnPropertyChanged(nameof(CanRenameSelectedProfile));
+                OnPropertyChanged(nameof(CanDeleteSelectedProfile));
+                RaiseProfileCommandStateChanged();
                 RefreshProfileScopedLists();
             }
         }
     }
+
+    public string SelectedProfileDisplayText =>
+        string.IsNullOrWhiteSpace(SelectedProfile) ? DefaultProfileName(SelectedProject) : SelectedProfile;
+
+    public string ProfileCountText => AvailableProfiles.Count switch
+    {
+        0 => "Профили",
+        1 => "1 профиль",
+        _ => $"{AvailableProfiles.Count} профиля"
+    };
+
+    public bool IsProcessingProfile
+    {
+        get => isProcessingProfile;
+        private set
+        {
+            if (SetField(ref isProcessingProfile, value))
+            {
+                RaiseProfileCommandStateChanged();
+                RaiseWorkspaceCommandStateChanged();
+            }
+        }
+    }
+
+    public string ProfileActionName
+    {
+        get => profileActionName;
+        set
+        {
+            if (SetField(ref profileActionName, value ?? string.Empty))
+            {
+                RaiseProfileCommandStateChanged();
+            }
+        }
+    }
+
+    public bool IsProfileMenuOpen
+    {
+        get => isProfileMenuOpen;
+        set => SetField(ref isProfileMenuOpen, value);
+    }
+
+    public bool CanRenameSelectedProfile =>
+        HasSelectedProject &&
+        !string.IsNullOrWhiteSpace(SelectedProfile) &&
+        !IsDefaultProfile(SelectedProject, SelectedProfile);
+
+    public bool CanDeleteSelectedProfile =>
+        CanRenameSelectedProfile &&
+        AvailableProfiles.Count > 1 &&
+        !IsProcessingProfile &&
+        !IsWorkspaceOperationBlocked;
 
     public ExecutableMenuItem? SelectedExecutable
     {
@@ -957,21 +1081,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public bool HasResolvedTemplate => SelectedResolvedTemplate is not null;
     public bool CanShowPluginsPanel => SelectedProjectCapabilities.SupportsPluginSection;
     public bool CanShowLoadOrderPanel => SelectedProjectCapabilities.SupportsLoadOrder;
-    public bool CanShowIniPanel => SelectedProjectCapabilities.SupportsIniProfiles;
-    public bool CanShowSavePanel => SelectedProjectCapabilities.SupportsSaveProfiles;
-    public bool CanShowScriptExtenderPanel => SelectedProjectCapabilities.SupportsScriptExtender;
-    public bool CanShowRootFilesPanel => SelectedProjectCapabilities.SupportsRootFiles;
-    public bool CanShowExecutablePanel => SelectedProjectCapabilities.SupportsExecutablePanel;
-    public bool CanShowContentLayoutReviewPanel => SelectedProjectCapabilities.SupportsContentLayoutReview;
-    public bool CanShowHealthDiagnosticsPanel => SelectedProjectCapabilities.SupportsHealthDiagnostics;
-    public bool CanShowBuildOverviewPanel =>
-        CanShowExecutablePanel ||
-        CanShowIniPanel ||
-        CanShowSavePanel ||
-        CanShowScriptExtenderPanel ||
-        CanShowRootFilesPanel ||
-        CanShowContentLayoutReviewPanel ||
-        CanShowHealthDiagnosticsPanel;
     public bool IsNameStep => CreateProjectStepIndex == 0;
     public bool IsGameStep => CreateProjectStepIndex == 1;
     public bool IsGameExeStep => CreateProjectStepIndex == 2;
@@ -1555,114 +1664,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public string SelectedProjectConfigText => SelectedProject?.ConfigPath ?? string.Empty;
 
-    public string SelectedProjectExecutablesText => SelectedProject?.Executables is { Count: > 0 } executables
-        ? string.Join("  ·  ", executables.Select(executable => executable.DisplayTitle))
-        : string.Empty;
-
     public string SelectedProjectPluginExtensionsText => SelectedProject?.Template?.PluginExtensionsText ?? string.Empty;
-
-    public string SelectedProjectContentLayoutSummaryText
-    {
-        get
-        {
-            ContentLayoutSummary? summary = SelectedProject?.ContentLayoutSummary;
-            if (summary is null || string.IsNullOrWhiteSpace(summary.Summary))
-            {
-                summary = SelectedProject?.Template?.ContentLayoutSummary;
-            }
-
-            return string.IsNullOrWhiteSpace(summary?.Summary)
-                ? T("Решения о размещении будут показаны после анализа архива.")
-                : summary.Summary;
-        }
-    }
-
-    public IReadOnlyList<string> SelectedProjectContentLayoutDetails =>
-        SelectedProject?.ContentLayoutSummary?.Details is { Count: > 0 } projectDetails
-            ? projectDetails
-            : (IReadOnlyList<string>?)SelectedProject?.Template?.ContentLayoutSummary?.Details ?? Array.Empty<string>();
-
-    public IReadOnlyList<string> SelectedProjectContentLayoutWarnings =>
-        SelectedProject?.ContentLayoutSummary?.Warnings is { Count: > 0 } projectWarnings
-            ? projectWarnings
-            : (IReadOnlyList<string>?)SelectedProject?.Template?.ContentLayoutSummary?.Warnings ?? Array.Empty<string>();
-
-    public IReadOnlyList<string> SelectedProjectContentLayoutBlockers =>
-        SelectedProject?.ContentLayoutSummary?.Blockers is { Count: > 0 } projectBlockers
-            ? projectBlockers
-            : (IReadOnlyList<string>?)SelectedProject?.Template?.ContentLayoutSummary?.Blockers ?? Array.Empty<string>();
-
-    public string SelectedProjectContentLayoutDataFolder =>
-        SelectedProject?.ContentLayoutSummary?.DataFolder is { Length: > 0 } projectDataFolder
-            ? projectDataFolder
-            : SelectedProject?.Template?.ContentLayoutSummary?.DataFolder ?? string.Empty;
-
-    public bool HasSelectedProjectContentLayoutDataFolder =>
-        !string.IsNullOrWhiteSpace(SelectedProjectContentLayoutDataFolder);
-
-    public string SelectedProjectRootFilesText
-    {
-        get
-        {
-            ContentLayoutSummary? summary = SelectedProject?.ContentLayoutSummary;
-            if (summary is null || string.IsNullOrWhiteSpace(summary.RootFileWrapperDirectory))
-            {
-                summary = SelectedProject?.Template?.ContentLayoutSummary;
-            }
-
-            return string.IsNullOrWhiteSpace(summary?.RootFileWrapperDirectory)
-                ? T("Root-файлы поддерживаются правилами выбранной игры.")
-                : F("Root-файлы изолируются через: {0}", summary.RootFileWrapperDirectory);
-        }
-    }
-
-    public string SelectedProjectScriptExtenderText
-    {
-        get
-        {
-            ScriptExtenderInfo? scriptExtender = SelectedProject?.Template?.ScriptExtender;
-            if (scriptExtender is not null && !string.IsNullOrWhiteSpace(scriptExtender.Name))
-            {
-                return string.IsNullOrWhiteSpace(scriptExtender.LoaderExecutable)
-                    ? scriptExtender.Name
-                    : $"{scriptExtender.Name} · {scriptExtender.LoaderExecutable}";
-            }
-
-            IReadOnlyList<string> loaders = SelectedProject?.ContentLayoutSummary?.ScriptExtenderLoaders is { Count: > 0 } projectLoaders
-                ? projectLoaders
-                : (IReadOnlyList<string>?)SelectedProject?.Template?.ContentLayoutSummary?.ScriptExtenderLoaders ?? Array.Empty<string>();
-            return loaders.Count == 0
-                ? T("Script extender поддерживается выбранной игрой.")
-                : string.Join("  ·  ", loaders);
-        }
-    }
-
-    public string SelectedProjectIniProfilesText => CanShowIniPanel
-        ? T("INI-профили подключаются только для игр с соответствующей capability.")
-        : string.Empty;
-
-    public string SelectedProjectSaveProfilesText => CanShowSavePanel
-        ? T("Профили сохранений подключаются только для игр с соответствующей capability.")
-        : string.Empty;
-
-    public string SelectedProjectHealthStatusText
-    {
-        get
-        {
-            GameHealthSummary? health = SelectedProject?.GameHealthSummary;
-            if (health is null)
-            {
-                return string.Empty;
-            }
-
-            return string.IsNullOrWhiteSpace(health.Summary)
-                ? health.Status
-                : $"{health.Status}: {health.Summary}";
-        }
-    }
-
-    public IReadOnlyList<GameHealthFinding> SelectedProjectHealthFindings =>
-        (IReadOnlyList<GameHealthFinding>?)SelectedProject?.GameHealthSummary?.Findings ?? Array.Empty<GameHealthFinding>();
 
     public async Task InitializeAsync(
         IEnumerable<string>? startupNxmLinks = null,
@@ -2031,59 +2033,69 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private async void DeleteProject(ModProject? project)
     {
-        if (project is null)
+        if (project is null || IsDeletingProject)
         {
             return;
         }
 
-        if (!buildDeletionDialogService.Confirm(ConfirmDialogOptions.DeleteBuild(project)))
-        {
-            return;
-        }
-
-        using var operation = logService.BeginOperation(
-            "DeleteProject",
-            $"project=\"{project.Name}\", configPath=\"{project.ConfigPath}\", projectDirectory=\"{project.ProjectDirectory}\"");
+        IsDeletingProject = true;
+        isSelectedProjectModCountRefreshDeferred = IsSameProject(SelectedProject, project);
+        CancelSelectedProjectModCountRefresh();
         try
         {
-            IsOpeningProject = true;
-            ValidationMessage = string.Empty;
-            ActivityMessage = $"Удаление сборки: {project.Name}";
-
-            bool wasSelected = IsSameProject(SelectedProject, project);
-            buildDeletionProgressCoalescer.Reset();
-            BuildDeletionProcess.Start();
-
-            await projectCatalogService.DeleteProjectAsync(project, DispatchDeletionProgress);
-            buildDeletionProgressCoalescer.Flush();
-            BuildDeletionProcess.Complete();
-            await Task.Delay(BuildDeletionSplashCompletionHold);
-            BuildDeletionProcess.Close();
-
-            ForgetProjectSize(project);
-            RemoveProject(project);
-
-            if (wasSelected)
+            if (!buildDeletionDialogService.Confirm(ConfirmDialogOptions.DeleteBuild(project)))
             {
-                IsProjectWorkspaceOpen = false;
-                ClearWorkspaceData();
-                SelectedProject = Projects.FirstOrDefault();
+                return;
             }
 
-            ActivityMessage = $"Сборка удалена: {project.Name}";
-            operation.Complete($"project=\"{project.Name}\"");
-        }
-        catch (Exception exception)
-        {
-            operation.Fail(exception);
-            buildDeletionProgressCoalescer.Flush();
-            BuildDeletionProcess.Fail(exception.Message);
-            ValidationMessage = "Не удалось удалить сборку.";
-            ActivityMessage = string.Empty;
+            using var operation = logService.BeginOperation(
+                "DeleteProject",
+                $"project=\"{project.Name}\", configPath=\"{project.ConfigPath}\", projectDirectory=\"{project.ProjectDirectory}\"");
+            try
+            {
+                IsOpeningProject = true;
+                ValidationMessage = string.Empty;
+                ActivityMessage = $"Удаление сборки: {project.Name}";
+
+                bool wasSelected = IsSameProject(SelectedProject, project);
+                buildDeletionProgressCoalescer.Reset();
+                BuildDeletionProcess.Start();
+
+                await projectCatalogService.DeleteProjectAsync(project, DispatchDeletionProgress);
+                buildDeletionProgressCoalescer.Flush();
+                BuildDeletionProcess.Complete();
+                await Task.Delay(BuildDeletionSplashCompletionHold);
+                BuildDeletionProcess.Close();
+
+                ForgetProjectSize(project);
+                RemoveProject(project);
+
+                if (wasSelected)
+                {
+                    IsProjectWorkspaceOpen = false;
+                    ClearWorkspaceData();
+                    SelectedProject = Projects.FirstOrDefault();
+                }
+
+                ActivityMessage = $"Сборка удалена: {project.Name}";
+                operation.Complete($"project=\"{project.Name}\"");
+            }
+            catch (Exception exception)
+            {
+                operation.Fail(exception);
+                buildDeletionProgressCoalescer.Flush();
+                BuildDeletionProcess.Fail(exception.Message);
+                ValidationMessage = "Не удалось удалить сборку.";
+                ActivityMessage = string.Empty;
+            }
+            finally
+            {
+                IsOpeningProject = false;
+            }
         }
         finally
         {
-            IsOpeningProject = false;
+            IsDeletingProject = false;
         }
     }
 
@@ -2561,7 +2573,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         UpdateBuildLoadingSplashDetail("Подготавливаем профили и запуск");
         ClearWorkspaceData();
-        PrepareWorkspaceOptions(project);
+        await PrepareWorkspaceOptionsAsync(project, DefaultProfileName(project));
         UpdateBuildLoadingSplashDetail("Загружаем моды, плагины и загрузки");
         await StartWorkspaceLoad(project, importPendingDownloads);
         UpdateBuildLoadingSplashDetail("Открываем рабочую область");
@@ -2878,7 +2890,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
 
         ModProject project = SelectedProject;
-        PrepareWorkspaceOptions(project);
+        await PrepareWorkspaceOptionsAsync(project, SelectedProfile);
         await StartWorkspaceLoad(project, importPendingDownloads: true);
         if (IsSameProject(SelectedProject, project))
         {
@@ -2930,25 +2942,61 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
-    private void PrepareWorkspaceOptions(ModProject project)
+    private async Task PrepareWorkspaceOptionsAsync(ModProject project, string? preferredProfileName)
     {
-        AvailableProfiles.Clear();
-        AvailableProfiles.Add(DefaultProfileName(project));
-        SelectedProfile = AvailableProfiles.FirstOrDefault() ?? string.Empty;
+        IReadOnlyList<string> profiles;
+        try
+        {
+            profiles = await coreBridgeService.GetProfilesAsync(project);
+        }
+        catch (Exception exception)
+        {
+            profiles = new[] { DefaultProfileName(project) };
+            ActivityMessage = $"Не удалось прочитать профили: {exception.Message}";
+        }
+
+        ApplyAvailableProfiles(profiles, preferredProfileName);
 
         SyncExecutableMenu(project.Executables, lastSelectedExecutableId);
         CoerceSelectedWorkspaceTabForCapabilities();
     }
 
+    private void ApplyAvailableProfiles(IReadOnlyList<string> profiles, string? preferredProfileName)
+    {
+        string defaultProfile = DefaultProfileName(SelectedProject);
+        List<string> normalizedProfiles = new();
+        AddProfileName(normalizedProfiles, defaultProfile);
+        foreach (string profile in profiles)
+        {
+            AddProfileName(normalizedProfiles, profile);
+        }
+
+        string preferred = string.IsNullOrWhiteSpace(preferredProfileName)
+            ? defaultProfile
+            : preferredProfileName.Trim();
+        string selected = normalizedProfiles.FirstOrDefault(
+                profile => string.Equals(profile, preferred, StringComparison.OrdinalIgnoreCase))
+            ?? normalizedProfiles.FirstOrDefault(
+                profile => string.Equals(profile, defaultProfile, StringComparison.OrdinalIgnoreCase))
+            ?? normalizedProfiles.FirstOrDefault()
+            ?? defaultProfile;
+
+        AvailableProfiles.Clear();
+        foreach (string profile in normalizedProfiles)
+        {
+            AvailableProfiles.Add(profile);
+        }
+
+        SelectedProfile = selected;
+        OnPropertyChanged(nameof(ProfileCountText));
+        OnPropertyChanged(nameof(CanRenameSelectedProfile));
+        OnPropertyChanged(nameof(CanDeleteSelectedProfile));
+        RaiseProfileCommandStateChanged();
+    }
+
     private void CoerceSelectedWorkspaceTabForCapabilities()
     {
         if (SelectedWorkspaceTabIndex == PluginsWorkspaceTabIndex && !CanShowPluginsPanel)
-        {
-            SelectedWorkspaceTabIndex = DataWorkspaceTabIndex;
-            return;
-        }
-
-        if (SelectedWorkspaceTabIndex == BuildWorkspaceTabIndex && !CanShowBuildOverviewPanel)
         {
             SelectedWorkspaceTabIndex = DataWorkspaceTabIndex;
         }
@@ -2975,7 +3023,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             string.Equals(item.Id, preferredExecutableId, StringComparison.OrdinalIgnoreCase));
 
         SelectedExecutable = preferred ?? AvailableExecutables.FirstOrDefault(item => !item.OpensManager);
-        OnPropertyChanged(nameof(SelectedProjectExecutablesText));
     }
 
     private void RestorePreviousExecutableSelection()
@@ -3019,7 +3066,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 edited);
             SelectedProject.Executables = saved.ToList();
             SyncExecutableMenu(SelectedProject.Executables, lastSelectedExecutableId);
-            OnPropertyChanged(nameof(SelectedProjectExecutablesText));
             ActivityMessage = saved.Count == 0
                 ? "Список исполняемых файлов очищен."
                 : $"Исполняемые файлы сохранены: {saved.Count}.";
@@ -3048,11 +3094,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         SyncExecutableMenu(SelectedProject.Executables, lastSelectedExecutableId);
         OnPropertyChanged(nameof(WorkspaceSubtitle));
         OnPropertyChanged(nameof(SelectedProjectConfigText));
-        OnPropertyChanged(nameof(SelectedProjectExecutablesText));
         NotifyCapabilityPropertiesChanged();
         ActivityMessage = "Пути сборки сохранены. Обновляю рабочую область...";
 
-        PrepareWorkspaceOptions(SelectedProject);
+        await PrepareWorkspaceOptionsAsync(SelectedProject, SelectedProfile);
         await StartWorkspaceLoad(SelectedProject, importPendingDownloads: false);
         if (SelectedProject is not null)
         {
@@ -3276,7 +3321,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private void RefreshSelectedProjectModCounts()
     {
-        projectModCountCalculationCancellation?.Cancel();
+        CancelSelectedProjectModCountRefresh();
 
         if (SelectedProject is null)
         {
@@ -3288,6 +3333,20 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(ProjectModBreakdownText));
             return;
         }
+
+        if (IsDeletingProject)
+        {
+            isSelectedProjectModCountRefreshDeferred = true;
+            selectedProjectActiveModCount = null;
+            selectedProjectDisabledModCount = null;
+            selectedProjectModCountUnavailable = false;
+            OnPropertyChanged(nameof(ActiveModCountText));
+            OnPropertyChanged(nameof(DisabledModCountText));
+            OnPropertyChanged(nameof(ProjectModBreakdownText));
+            return;
+        }
+
+        isSelectedProjectModCountRefreshDeferred = false;
 
         if (IsProjectWorkspaceOpen && Mods.Count > 0)
         {
@@ -3307,6 +3366,19 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         CancellationTokenSource cancellation = new();
         projectModCountCalculationCancellation = cancellation;
         _ = RefreshSelectedProjectModCountsAsync(project, profileName, cancellation);
+    }
+
+    private void CancelSelectedProjectModCountRefresh()
+    {
+        try
+        {
+            projectModCountCalculationCancellation?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        projectModCountCalculationCancellation = null;
     }
 
     private async Task RefreshSelectedProjectModCountsAsync(
@@ -3556,10 +3628,74 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             : fallback;
     }
 
-    private static string DefaultProfileName(ModProject project)
+    private static string DefaultProfileName(ModProject? project)
     {
-        string defaultProfile = project.Template?.DefaultProfile ?? string.Empty;
+        string defaultProfile = project?.Template?.DefaultProfile ?? string.Empty;
         return string.IsNullOrWhiteSpace(defaultProfile) ? "Default" : defaultProfile;
+    }
+
+    private static bool IsDefaultProfile(ModProject? project, string profileName)
+    {
+        return string.Equals(
+            DefaultProfileName(project),
+            profileName,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeProfileInput(string value)
+    {
+        return (value ?? string.Empty).Trim();
+    }
+
+    private static void AddProfileName(List<string> profiles, string profileName)
+    {
+        profileName = NormalizeProfileInput(profileName);
+        if (string.IsNullOrWhiteSpace(profileName))
+        {
+            return;
+        }
+
+        if (profiles.Any(existing => string.Equals(existing, profileName, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        profiles.Add(profileName);
+    }
+
+    private bool HasProfile(string profileName)
+    {
+        profileName = NormalizeProfileInput(profileName);
+        return AvailableProfiles.Any(profile => string.Equals(profile, profileName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool CanRunProfileAction(bool allowBlankName = false)
+    {
+        return IsProjectWorkspaceOpen &&
+            HasSelectedProject &&
+            !IsProcessingProfile &&
+            !IsWorkspaceOperationBlocked &&
+            (allowBlankName || !string.IsNullOrWhiteSpace(ProfileActionName));
+    }
+
+    private string NextProfileName(string baseName)
+    {
+        string normalizedBase = string.IsNullOrWhiteSpace(baseName) ? "Profile" : baseName.Trim();
+        if (!HasProfile(normalizedBase))
+        {
+            return normalizedBase;
+        }
+
+        for (int index = 2; index < 1000; ++index)
+        {
+            string candidate = $"{normalizedBase} {index}";
+            if (!HasProfile(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return $"{normalizedBase} {DateTimeOffset.Now:HHmmss}";
     }
 
     private async Task LoadModsFromProjectAsync(ModProject project)
@@ -4650,6 +4786,225 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private void OpenProfilesDirectory()
     {
         OpenProjectSubdirectory("profiles", "Папка профилей открыта.");
+    }
+
+    private void ToggleProfileMenu()
+    {
+        IsProfileMenuOpen = !IsProfileMenuOpen;
+        if (IsProfileMenuOpen && string.IsNullOrWhiteSpace(ProfileActionName))
+        {
+            ProfileActionName = NextProfileName("Profile");
+        }
+    }
+
+    private void OpenProfileManager()
+    {
+        if (SelectedProject is null)
+        {
+            return;
+        }
+
+        IsProfileMenuOpen = false;
+        string normalizedActionName = NormalizeProfileInput(ProfileActionName);
+        if (string.IsNullOrWhiteSpace(normalizedActionName) ||
+            HasProfile(normalizedActionName) ||
+            string.Equals(normalizedActionName, SelectedProfileDisplayText, StringComparison.OrdinalIgnoreCase))
+        {
+            ProfileActionName = NextProfileName(SelectedProfileDisplayText);
+        }
+
+        profileManagerDialogService.Show(this);
+    }
+
+    private async void RefreshProfiles()
+    {
+        if (SelectedProject is null)
+        {
+            return;
+        }
+
+        await RefreshProfilesAsync(SelectedProject, SelectedProfile, "Профили обновлены.");
+    }
+
+    private async void CreateProfile()
+    {
+        if (SelectedProject is null)
+        {
+            return;
+        }
+
+        string targetProfileName = NormalizeProfileInput(ProfileActionName);
+        if (string.IsNullOrWhiteSpace(targetProfileName))
+        {
+            ActivityMessage = "Введите имя профиля.";
+            return;
+        }
+
+        if (HasProfile(targetProfileName))
+        {
+            ActivityMessage = $"Профиль уже существует: {targetProfileName}";
+            return;
+        }
+
+        await RunProfileMutationAsync(
+            "CreateProfile",
+            targetProfileName,
+            project => coreBridgeService.CreateProfileAsync(project, targetProfileName),
+            targetProfileName,
+            $"Профиль создан: {targetProfileName}");
+    }
+
+    private async void CloneProfile()
+    {
+        if (SelectedProject is null)
+        {
+            return;
+        }
+
+        string sourceProfileName = SelectedProfileDisplayText;
+        string targetProfileName = NormalizeProfileInput(ProfileActionName);
+        if (string.IsNullOrWhiteSpace(targetProfileName))
+        {
+            ActivityMessage = "Введите имя нового профиля.";
+            return;
+        }
+
+        if (HasProfile(targetProfileName))
+        {
+            ActivityMessage = $"Профиль уже существует: {targetProfileName}";
+            return;
+        }
+
+        await RunProfileMutationAsync(
+            "CloneProfile",
+            targetProfileName,
+            project => coreBridgeService.CloneProfileAsync(project, sourceProfileName, targetProfileName),
+            targetProfileName,
+            $"Профиль склонирован: {targetProfileName}");
+    }
+
+    private async void RenameProfile()
+    {
+        if (SelectedProject is null || !CanRenameSelectedProfile)
+        {
+            return;
+        }
+
+        string sourceProfileName = SelectedProfileDisplayText;
+        string targetProfileName = NormalizeProfileInput(ProfileActionName);
+        if (string.IsNullOrWhiteSpace(targetProfileName))
+        {
+            ActivityMessage = "Введите новое имя профиля.";
+            return;
+        }
+
+        if (string.Equals(sourceProfileName, targetProfileName, StringComparison.OrdinalIgnoreCase))
+        {
+            ActivityMessage = "Профиль уже называется так.";
+            return;
+        }
+
+        if (HasProfile(targetProfileName))
+        {
+            ActivityMessage = $"Профиль уже существует: {targetProfileName}";
+            return;
+        }
+
+        await RunProfileMutationAsync(
+            "RenameProfile",
+            sourceProfileName,
+            project => coreBridgeService.RenameProfileAsync(project, sourceProfileName, targetProfileName),
+            targetProfileName,
+            $"Профиль переименован: {targetProfileName}");
+    }
+
+    private async void DeleteProfile()
+    {
+        if (SelectedProject is null || !CanDeleteSelectedProfile)
+        {
+            return;
+        }
+
+        ModProject project = SelectedProject;
+        string profileName = SelectedProfileDisplayText;
+        if (!confirmDialogService.Confirm(ConfirmDialogOptions.DeleteProfile(project, profileName)))
+        {
+            return;
+        }
+
+        string fallbackProfile = AvailableProfiles.FirstOrDefault(
+                profile => !string.Equals(profile, profileName, StringComparison.OrdinalIgnoreCase) &&
+                    IsDefaultProfile(project, profile))
+            ?? AvailableProfiles.FirstOrDefault(
+                profile => !string.Equals(profile, profileName, StringComparison.OrdinalIgnoreCase))
+            ?? DefaultProfileName(project);
+
+        await RunProfileMutationAsync(
+            "DeleteProfile",
+            profileName,
+            selectedProject => coreBridgeService.DeleteProfileAsync(selectedProject, profileName),
+            fallbackProfile,
+            $"Профиль удалён: {profileName}");
+    }
+
+    private async Task RefreshProfilesAsync(
+        ModProject project,
+        string preferredProfileName,
+        string successMessage)
+    {
+        try
+        {
+            IsProcessingProfile = true;
+            IReadOnlyList<string> profiles = await coreBridgeService.GetProfilesAsync(project);
+            ApplyAvailableProfiles(profiles, preferredProfileName);
+            ActivityMessage = successMessage;
+        }
+        catch (Exception exception)
+        {
+            ActivityMessage = $"Не удалось обновить профили: {exception.Message}";
+        }
+        finally
+        {
+            IsProcessingProfile = false;
+        }
+    }
+
+    private async Task RunProfileMutationAsync(
+        string operationName,
+        string profileNameForLog,
+        Func<ModProject, Task<IReadOnlyList<string>>> mutate,
+        string preferredProfileName,
+        string successMessage)
+    {
+        if (SelectedProject is null)
+        {
+            return;
+        }
+
+        ModProject project = SelectedProject;
+        using var operation = logService.BeginOperation(
+            operationName,
+            $"project=\"{project.Name}\", profile=\"{profileNameForLog}\"");
+        try
+        {
+            IsProcessingProfile = true;
+            ActivityMessage = "Обновляем профили...";
+            IReadOnlyList<string> profiles = await mutate(project);
+            ApplyAvailableProfiles(profiles, preferredProfileName);
+            ProfileActionName = string.Empty;
+            IsProfileMenuOpen = false;
+            ActivityMessage = successMessage;
+            operation.Complete($"selectedProfile=\"{SelectedProfileDisplayText}\"");
+        }
+        catch (Exception exception)
+        {
+            operation.Fail(exception);
+            ActivityMessage = $"Не удалось выполнить действие с профилем: {exception.Message}";
+        }
+        finally
+        {
+            IsProcessingProfile = false;
+        }
     }
 
     private void OpenDownloadsDirectory()
@@ -5849,6 +6204,48 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
+    private async void ToggleModEnabled(ModEntry? mod)
+    {
+        if (SelectedProject is null || mod is not { IsMod: true })
+        {
+            return;
+        }
+
+        bool isEnabled = !mod.IsEnabled;
+        FocusModSelection(mod);
+
+        using var operation = logService.BeginOperation(
+            "SetInstalledModEnabled",
+            $"project=\"{SelectedProject.Name}\", profile=\"{SelectedProfile}\", mod=\"{mod.Name}\", enabled={isEnabled}");
+        try
+        {
+            IsProcessingDownload = true;
+            await modCatalogService.SetInstalledModEnabledAsync(SelectedProject, mod, isEnabled);
+            await LoadModsFromProjectAsync(SelectedProject);
+            await LoadPluginsFromProjectAsync(SelectedProject);
+            RefreshSelectedProjectSizeAfterMutation();
+            ActivityMessage = isEnabled
+                ? $"Мод включён: {mod.Name}"
+                : $"Мод выключен: {mod.Name}";
+            operation.Complete($"mod=\"{mod.Id}\", enabled={isEnabled}");
+        }
+        catch (Exception exception)
+        {
+            operation.Fail(exception);
+            ActivityMessage = isEnabled
+                ? $"Не удалось включить мод: {exception.Message}"
+                : $"Не удалось выключить мод: {exception.Message}";
+            if (SelectedProject is not null)
+            {
+                await LoadModsFromProjectAsync(SelectedProject);
+            }
+        }
+        finally
+        {
+            IsProcessingDownload = false;
+        }
+    }
+
     private async void SetAllModsEnabled(bool isEnabled)
     {
         if (SelectedProject is null)
@@ -6371,12 +6768,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
         using var operation = logService.BeginOperation(
             "LaunchExecutable",
-            $"project=\"{project.Name}\", configPath=\"{project.ConfigPath}\", executableId=\"{executable.Id}\"");
+            $"project=\"{project.Name}\", profile=\"{SelectedProfile}\", configPath=\"{project.ConfigPath}\", executableId=\"{executable.Id}\"");
         try
         {
             GameExecutableLaunchResult result = await coreBridgeService.LaunchGameExecutableAsync(
                 project.ConfigPath,
-                executable.Id);
+                executable.Id,
+                SelectedProfile);
             project.LastLaunchedAt = DateTimeOffset.Now;
             OnPropertyChanged(nameof(SelectedProjectLastLaunchText));
             AttachLaunchedExecutable(result, project, executable);
@@ -7376,26 +7774,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         OnPropertyChanged(nameof(CanShowPluginsPanel));
         OnPropertyChanged(nameof(CanShowLoadOrderPanel));
-        OnPropertyChanged(nameof(CanShowIniPanel));
-        OnPropertyChanged(nameof(CanShowSavePanel));
-        OnPropertyChanged(nameof(CanShowScriptExtenderPanel));
-        OnPropertyChanged(nameof(CanShowRootFilesPanel));
-        OnPropertyChanged(nameof(CanShowExecutablePanel));
-        OnPropertyChanged(nameof(CanShowContentLayoutReviewPanel));
-        OnPropertyChanged(nameof(CanShowHealthDiagnosticsPanel));
-        OnPropertyChanged(nameof(CanShowBuildOverviewPanel));
-        OnPropertyChanged(nameof(SelectedProjectContentLayoutSummaryText));
-        OnPropertyChanged(nameof(SelectedProjectContentLayoutDetails));
-        OnPropertyChanged(nameof(SelectedProjectContentLayoutWarnings));
-        OnPropertyChanged(nameof(SelectedProjectContentLayoutBlockers));
-        OnPropertyChanged(nameof(SelectedProjectContentLayoutDataFolder));
-        OnPropertyChanged(nameof(HasSelectedProjectContentLayoutDataFolder));
-        OnPropertyChanged(nameof(SelectedProjectRootFilesText));
-        OnPropertyChanged(nameof(SelectedProjectScriptExtenderText));
-        OnPropertyChanged(nameof(SelectedProjectIniProfilesText));
-        OnPropertyChanged(nameof(SelectedProjectSaveProfilesText));
-        OnPropertyChanged(nameof(SelectedProjectHealthStatusText));
-        OnPropertyChanged(nameof(SelectedProjectHealthFindings));
     }
 
     private void RaiseWorkspaceCommandStateChanged()
@@ -7410,6 +7788,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         (PackageProjectCommand as RelayCommand<ModProject>)?.RaiseCanExecuteChanged();
         (OpenModsDirectoryCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (OpenProfilesDirectoryCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (OpenProfileManagerCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        RaiseProfileCommandStateChanged();
         (OpenDownloadsDirectoryCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (AddDownloadFileCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (InstallModFromArchiveCommand as RelayCommand)?.RaiseCanExecuteChanged();
@@ -7423,12 +7803,23 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         (LaunchSelectedExecutableCommand as RelayCommand)?.RaiseCanExecuteChanged();
     }
 
+    private void RaiseProfileCommandStateChanged()
+    {
+        (ToggleProfileMenuCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (RefreshProfilesCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (CreateProfileCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (CloneProfileCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (RenameProfileCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (DeleteProfileCommand as RelayCommand)?.RaiseCanExecuteChanged();
+    }
+
     private void RaiseModCommandStateChanged()
     {
         (MoveSelectedModUpCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (MoveSelectedModDownCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (DeleteSelectedModCommand as RelayCommand<ModEntry>)?.RaiseCanExecuteChanged();
         (OpenModInExplorerCommand as RelayCommand<ModEntry>)?.RaiseCanExecuteChanged();
+        (ToggleModEnabledCommand as RelayCommand<ModEntry>)?.RaiseCanExecuteChanged();
         (EnableSelectedModCommand as RelayCommand<ModEntry>)?.RaiseCanExecuteChanged();
         (EnableAllModsCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (DisableSelectedModCommand as RelayCommand<ModEntry>)?.RaiseCanExecuteChanged();
@@ -7536,6 +7927,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         ClearSelectedModFileTree();
         AvailableProfiles.Clear();
         AvailableExecutables.Clear();
+        selectedProfile = string.Empty;
+        ProfileActionName = string.Empty;
+        IsProfileMenuOpen = false;
         SelectedMod = null;
         SelectedPlugin = null;
         SelectedDownload = null;
@@ -7549,6 +7943,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(HasSelectedModFileTree));
         OnPropertyChanged(nameof(PluginCountText));
         OnPropertyChanged(nameof(DownloadCountText));
+        OnPropertyChanged(nameof(SelectedProfile));
+        OnPropertyChanged(nameof(SelectedProfileDisplayText));
+        OnPropertyChanged(nameof(ProfileCountText));
+        OnPropertyChanged(nameof(CanRenameSelectedProfile));
+        OnPropertyChanged(nameof(CanDeleteSelectedProfile));
+        RaiseProfileCommandStateChanged();
     }
 
     private static bool IsSamePath(string left, string right)
@@ -8027,5 +8427,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private sealed class NullConfirmDialogService : IConfirmDialogService
     {
         public bool Confirm(ConfirmDialogOptions options) => false;
+    }
+
+    private sealed class NullProfileManagerDialogService : IProfileManagerDialogService
+    {
+        public void Show(MainWindowViewModel viewModel)
+        {
+        }
     }
 }

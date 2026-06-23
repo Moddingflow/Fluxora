@@ -85,7 +85,8 @@ public partial class MainWindow : Window
             new BuildDeletionDialogService(),
             launchSessionStore,
             new FluxPackPickerService(),
-            new ConfirmDialogService());
+            new ConfirmDialogService(),
+            new ProfileManagerDialogService());
 
         DataContext = viewModel;
 

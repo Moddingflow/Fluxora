@@ -185,6 +185,7 @@ extern "C"
     FLUXORA_CORE_API int fluxora_launch_game_executable(
         const wchar_t* configPath,
         const wchar_t* executableId,
+        const wchar_t* profileName,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
@@ -228,6 +229,43 @@ extern "C"
 
     FLUXORA_CORE_API int fluxora_get_installed_mods(
         const wchar_t* projectDirectory,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_get_profiles(
+        const wchar_t* projectDirectory,
+        const wchar_t* defaultProfileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_create_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* defaultProfileName,
+        const wchar_t* profileFilesJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_clone_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* sourceProfileName,
+        const wchar_t* targetProfileName,
+        const wchar_t* defaultProfileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_rename_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* sourceProfileName,
+        const wchar_t* targetProfileName,
+        const wchar_t* defaultProfileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_delete_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* defaultProfileName,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 

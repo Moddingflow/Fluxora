@@ -84,12 +84,14 @@ namespace fluxora
 
         [[nodiscard]] GameExecutableLaunchResult launchProjectExecutable(
             const std::filesystem::path& configPath,
-            std::wstring_view executableId) const;
+            std::wstring_view executableId,
+            std::wstring_view profileName = {}) const;
 
         // Resolve (but do not launch) an executable from the build config.
         [[nodiscard]] ResolvedExecutableLaunch resolveExecutable(
             const std::filesystem::path& configPath,
-            std::wstring_view executableId) const;
+            std::wstring_view executableId,
+            std::wstring_view profileName = {}) const;
 
         [[nodiscard]] bool isInitialized() const noexcept;
 

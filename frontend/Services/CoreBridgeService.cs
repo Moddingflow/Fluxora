@@ -11,6 +11,9 @@ public sealed class CoreBridgeService : IAppService
     private const int NativeJsonInitialBufferLength = 32 * 1024;
     private const int MaxNativeJsonBufferLength = 16 * 1024 * 1024;
     private readonly ApplicationLogService? logger;
+    // The native core is process-wide; keep bridge calls serialized so background
+    // refreshes cannot overlap destructive operations such as build deletion.
+    private readonly object nativeCallSyncRoot = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -52,22 +55,25 @@ public sealed class CoreBridgeService : IAppService
 
     private T RunNative<T>(string operationName, Func<T> action)
     {
-        ApplyNativeOperationContext();
-        logger?.BridgeInfo("NativeBridge", $"{operationName} native call started.");
-        try
+        lock (nativeCallSyncRoot)
         {
-            T result = action();
-            logger?.BridgeInfo("NativeBridge", $"{operationName} native call completed.");
-            return result;
-        }
-        catch (Exception exception)
-        {
-            logger?.BridgeError("NativeBridge", $"{operationName} native call failed.", exception);
-            throw;
-        }
-        finally
-        {
-            ClearNativeOperationContext();
+            ApplyNativeOperationContext();
+            logger?.BridgeInfo("NativeBridge", $"{operationName} native call started.");
+            try
+            {
+                T result = action();
+                logger?.BridgeInfo("NativeBridge", $"{operationName} native call completed.");
+                return result;
+            }
+            catch (Exception exception)
+            {
+                logger?.BridgeError("NativeBridge", $"{operationName} native call failed.", exception);
+                throw;
+            }
+            finally
+            {
+                ClearNativeOperationContext();
+            }
         }
     }
 
@@ -84,17 +90,20 @@ public sealed class CoreBridgeService : IAppService
 
     private string ReadNativeJson(Func<StringBuilder, int> invoke, string operationName)
     {
-        ApplyNativeOperationContext();
-        logger?.BridgeInfo("NativeBridge", $"{operationName} native call started.");
-        try
+        lock (nativeCallSyncRoot)
         {
-            string json = ReadNativeJsonBuffer(invoke, operationName);
-            logger?.BridgeInfo("NativeBridge", $"{operationName} native call completed.");
-            return json;
-        }
-        finally
-        {
-            ClearNativeOperationContext();
+            ApplyNativeOperationContext();
+            logger?.BridgeInfo("NativeBridge", $"{operationName} native call started.");
+            try
+            {
+                string json = ReadNativeJsonBuffer(invoke, operationName);
+                logger?.BridgeInfo("NativeBridge", $"{operationName} native call completed.");
+                return json;
+            }
+            finally
+            {
+                ClearNativeOperationContext();
+            }
         }
     }
 
@@ -928,6 +937,7 @@ public sealed class CoreBridgeService : IAppService
     public Task<GameExecutableLaunchResult> LaunchGameExecutableAsync(
         string configPath,
         string executableId,
+        string profileName,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -953,7 +963,12 @@ public sealed class CoreBridgeService : IAppService
                     () =>
                     {
                         string json = ReadNativeJsonBuffer(
-                            buffer => NativeMethods.LaunchGameExecutable(configPath, executableId, buffer, buffer.Capacity),
+                            buffer => NativeMethods.LaunchGameExecutable(
+                                configPath,
+                                executableId,
+                                profileName,
+                                buffer,
+                                buffer.Capacity),
                             "LaunchGameExecutable");
                         return DeserializeGameExecutableLaunchResult(json);
                     });
@@ -1087,6 +1102,145 @@ public sealed class CoreBridgeService : IAppService
                     buffer => NativeMethods.GetInstalledMods(projectDirectory, buffer, buffer.Capacity),
                     "GetInstalledMods");
                 return DeserializeMods(json);
+            },
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<string>> GetProfilesAsync(
+        ModProject project,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureCoreAvailable();
+
+        return Task.Run(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                string json = ReadNativeJson(
+                    buffer => NativeMethods.GetProfiles(
+                        project.ProjectDirectory,
+                        DefaultProfileName(project),
+                        buffer,
+                        buffer.Capacity),
+                    "GetProfiles");
+                return DeserializeProfiles(json);
+            },
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<string>> CreateProfileAsync(
+        ModProject project,
+        string profileName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureCoreAvailable();
+
+        return Task.Run(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string profileFilesJson = JsonSerializer.Serialize(project.Template?.ProfileFiles ?? new List<string>(), JsonOptions);
+
+                string json = ReadNativeJson(
+                    buffer => NativeMethods.CreateProfile(
+                        project.ProjectDirectory,
+                        profileName,
+                        DefaultProfileName(project),
+                        profileFilesJson,
+                        buffer,
+                        buffer.Capacity),
+                    "CreateProfile");
+                return DeserializeProfiles(json);
+            },
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<string>> CloneProfileAsync(
+        ModProject project,
+        string sourceProfileName,
+        string targetProfileName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureCoreAvailable();
+
+        return Task.Run(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                string json = ReadNativeJson(
+                    buffer => NativeMethods.CloneProfile(
+                        project.ProjectDirectory,
+                        sourceProfileName,
+                        targetProfileName,
+                        DefaultProfileName(project),
+                        buffer,
+                        buffer.Capacity),
+                    "CloneProfile");
+                return DeserializeProfiles(json);
+            },
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<string>> RenameProfileAsync(
+        ModProject project,
+        string sourceProfileName,
+        string targetProfileName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureCoreAvailable();
+
+        return Task.Run(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                string json = ReadNativeJson(
+                    buffer => NativeMethods.RenameProfile(
+                        project.ProjectDirectory,
+                        sourceProfileName,
+                        targetProfileName,
+                        DefaultProfileName(project),
+                        buffer,
+                        buffer.Capacity),
+                    "RenameProfile");
+                return DeserializeProfiles(json);
+            },
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<string>> DeleteProfileAsync(
+        ModProject project,
+        string profileName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        cancellationToken.ThrowIfCancellationRequested();
+        EnsureCoreAvailable();
+
+        return Task.Run(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                string json = ReadNativeJson(
+                    buffer => NativeMethods.DeleteProfile(
+                        project.ProjectDirectory,
+                        profileName,
+                        DefaultProfileName(project),
+                        buffer,
+                        buffer.Capacity),
+                    "DeleteProfile");
+                return DeserializeProfiles(json);
             },
             cancellationToken);
     }
@@ -2150,6 +2304,25 @@ public sealed class CoreBridgeService : IAppService
         }
     }
 
+    private static IReadOnlyList<string> DeserializeProfiles(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json, JsonOptions)
+                ?? new List<string>();
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidOperationException("Native core returned an invalid profile list.", exception);
+        }
+    }
+
+    private static string DefaultProfileName(ModProject project)
+    {
+        string defaultProfile = project.Template?.DefaultProfile ?? string.Empty;
+        return string.IsNullOrWhiteSpace(defaultProfile) ? "Default" : defaultProfile;
+    }
+
     private static IReadOnlyList<PluginEntry> DeserializePlugins(string json)
     {
         try
@@ -2413,6 +2586,7 @@ public sealed class CoreBridgeService : IAppService
         public static extern int LaunchGameExecutable(
             string configPath,
             string executableId,
+            string profileName,
             StringBuilder jsonBuffer,
             int jsonBufferLength);
 
@@ -2455,6 +2629,48 @@ public sealed class CoreBridgeService : IAppService
         [DllImport("FluxoraCore", EntryPoint = "fluxora_get_installed_mods", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
         public static extern int GetInstalledMods(
             string projectDirectory,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_get_profiles", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int GetProfiles(
+            string projectDirectory,
+            string defaultProfileName,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_create_profile", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int CreateProfile(
+            string projectDirectory,
+            string profileName,
+            string defaultProfileName,
+            string profileFilesJson,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_clone_profile", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int CloneProfile(
+            string projectDirectory,
+            string sourceProfileName,
+            string targetProfileName,
+            string defaultProfileName,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_rename_profile", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int RenameProfile(
+            string projectDirectory,
+            string sourceProfileName,
+            string targetProfileName,
+            string defaultProfileName,
+            StringBuilder jsonBuffer,
+            int jsonBufferLength);
+
+        [DllImport("FluxoraCore", EntryPoint = "fluxora_delete_profile", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+        public static extern int DeleteProfile(
+            string projectDirectory,
+            string profileName,
+            string defaultProfileName,
             StringBuilder jsonBuffer,
             int jsonBufferLength);
 

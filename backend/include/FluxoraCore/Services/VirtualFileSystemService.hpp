@@ -37,7 +37,8 @@ namespace fluxora
         // launch when there is nothing to virtualize or the hook is unavailable.
         [[nodiscard]] GameExecutableLaunchResult launchExecutable(
             const std::filesystem::path& configPath,
-            std::wstring_view executableId) const;
+            std::wstring_view executableId,
+            std::wstring_view profileName = {}) const;
 
         [[nodiscard]] bool isInitialized() const noexcept;
 

@@ -81,6 +81,44 @@ namespace fluxora
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
 
+    std::vector<std::wstring> InstanceMetadataStore::listProfileNames(
+        const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::ensureProfileState(
+        const std::filesystem::path&,
+        std::wstring_view,
+        const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::cloneProfileState(
+        const std::filesystem::path&,
+        std::wstring_view,
+        std::wstring_view,
+        const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::renameProfileState(
+        const std::filesystem::path&,
+        std::wstring_view,
+        std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::deleteProfileState(
+        const std::filesystem::path&,
+        std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
     std::vector<ProfileOrderItemRecord> InstanceMetadataStore::createProfileOrderSeparator(
         const std::filesystem::path&,
         std::wstring_view,
@@ -2087,6 +2125,137 @@ namespace fluxora
             return records;
         }
 
+        bool profileRowsExist(Database& database, const char* tableName, std::wstring_view profileName)
+        {
+            const std::string sql = std::string("SELECT 1 FROM ") + tableName +
+                " WHERE profile_name = ? LIMIT 1;";
+            Statement select = database.prepare(sql.c_str());
+            select.bindText(1, profileName);
+            return select.stepRow();
+        }
+
+        void addProfileName(
+            std::vector<std::wstring>& profiles,
+            std::set<std::wstring>& seen,
+            std::wstring profileName)
+        {
+            profileName = profileNameOrDefault(profileName);
+            const std::wstring key = toLower(profileName);
+            if (seen.insert(key).second)
+            {
+                profiles.push_back(std::move(profileName));
+            }
+        }
+
+        void appendProfileNamesFromTable(
+            Database& database,
+            const char* tableName,
+            std::vector<std::wstring>& profiles,
+            std::set<std::wstring>& seen)
+        {
+            const std::string sql = std::string("SELECT DISTINCT profile_name FROM ") + tableName +
+                " WHERE profile_name <> '' ORDER BY profile_name COLLATE NOCASE;";
+            Statement select = database.prepare(sql.c_str());
+            while (select.stepRow())
+            {
+                addProfileName(profiles, seen, select.columnText(0));
+            }
+        }
+
+        void removeProfileRows(Database& database, const char* tableName, std::wstring_view profileName)
+        {
+            const std::string sql = std::string("DELETE FROM ") + tableName +
+                " WHERE profile_name = ?;";
+            Statement remove = database.prepare(sql.c_str());
+            remove.bindText(1, profileName);
+            remove.stepDone();
+        }
+
+        void renameProfileRows(
+            Database& database,
+            const char* tableName,
+            std::wstring_view sourceProfileName,
+            std::wstring_view targetProfileName)
+        {
+            const std::string sql = std::string("UPDATE ") + tableName +
+                " SET profile_name = ?, updated_at = ? WHERE profile_name = ?;";
+            Statement update = database.prepare(sql.c_str());
+            update.bindText(1, targetProfileName);
+            update.bindText(2, nowUtcText());
+            update.bindText(3, sourceProfileName);
+            update.stepDone();
+        }
+
+        void copyProfileOrderRows(
+            Database& database,
+            std::wstring_view sourceProfileName,
+            std::wstring_view targetProfileName)
+        {
+            Statement select = database.prepare(
+                "SELECT kind, mod_id, separator_title, position "
+                "FROM profile_order_items "
+                "WHERE profile_name = ? "
+                "ORDER BY position, rowid;");
+            select.bindText(1, sourceProfileName);
+
+            const std::wstring now = nowUtcText();
+            while (select.stepRow())
+            {
+                const std::wstring kind = select.columnText(0);
+                Statement insert = database.prepare(
+                    "INSERT INTO profile_order_items("
+                    "id, profile_name, kind, mod_id, separator_title, position, created_at, updated_at"
+                    ") VALUES(?, ?, ?, ?, ?, ?, ?, ?);");
+                insert.bindText(1, generateUuid());
+                insert.bindText(2, targetProfileName);
+                insert.bindText(3, kind);
+                if (kind == profileOrderModKind)
+                {
+                    insert.bindInt64(4, select.columnInt64(1));
+                }
+                else
+                {
+                    insert.bindNull(4);
+                }
+                insert.bindText(5, select.columnText(2));
+                insert.bindInt(6, select.columnInt(3));
+                insert.bindText(7, now);
+                insert.bindText(8, now);
+                insert.stepDone();
+            }
+        }
+
+        void copyProfilePluginOrderRows(
+            Database& database,
+            std::wstring_view sourceProfileName,
+            std::wstring_view targetProfileName)
+        {
+            Statement select = database.prepare(
+                "SELECT kind, plugin_name, separator_title, position "
+                "FROM profile_plugin_order_items "
+                "WHERE profile_name = ? "
+                "ORDER BY position, rowid;");
+            select.bindText(1, sourceProfileName);
+
+            const std::wstring now = nowUtcText();
+            while (select.stepRow())
+            {
+                Statement insert = database.prepare(
+                    "INSERT INTO profile_plugin_order_items("
+                    "id, profile_name, kind, plugin_name, separator_title, position, created_at, updated_at"
+                    ") VALUES(?, ?, ?, ?, ?, ?, ?, ?);");
+                insert.bindText(1, generateUuid());
+                insert.bindText(2, targetProfileName);
+                insert.bindText(3, select.columnText(0));
+                insert.bindText(4, select.columnText(1));
+                insert.bindText(5, select.columnText(2));
+                insert.bindInt(6, select.columnInt(3));
+                insert.bindText(7, now);
+                insert.bindText(8, now);
+                insert.stepDone();
+            }
+        }
+
         struct ProfileOrderStorageItem
         {
             std::wstring id;
@@ -3144,6 +3313,145 @@ namespace fluxora
         transaction.commit();
 
         return readProfileOrderItems(database, projectDirectory, normalizedProfileName, modsRoot);
+    }
+
+    std::vector<std::wstring> InstanceMetadataStore::listProfileNames(
+        const std::filesystem::path& projectDirectory)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+
+        std::vector<std::wstring> profiles;
+        std::set<std::wstring> seen;
+        appendProfileNamesFromTable(database, "profile_order_items", profiles, seen);
+        appendProfileNamesFromTable(database, "profile_plugin_order_items", profiles, seen);
+        return profiles;
+    }
+
+    void InstanceMetadataStore::ensureProfileState(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName,
+        const std::filesystem::path& modsRoot)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const std::wstring normalizedProfileName = profileNameOrDefault(profileName);
+        Database database = openInstanceDatabase(projectDirectory);
+        syncInstalledModsFromDisk(database, projectDirectory, modsRoot);
+
+        Transaction transaction(database);
+        syncProfileOrderItems(database, normalizedProfileName);
+        transaction.commit();
+    }
+
+    void InstanceMetadataStore::cloneProfileState(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view sourceProfileName,
+        std::wstring_view targetProfileName,
+        const std::filesystem::path& modsRoot)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const std::wstring normalizedSourceProfileName = profileNameOrDefault(sourceProfileName);
+        const std::wstring normalizedTargetProfileName = profileNameOrDefault(targetProfileName);
+        if (toLower(normalizedSourceProfileName) == toLower(normalizedTargetProfileName))
+        {
+            throw std::invalid_argument("Source and target profiles must be different.");
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        syncInstalledModsFromDisk(database, projectDirectory, modsRoot);
+
+        Transaction transaction(database);
+        syncProfileOrderItems(database, normalizedSourceProfileName);
+
+        if (profileRowsExist(database, "profile_order_items", normalizedTargetProfileName) ||
+            profileRowsExist(database, "profile_plugin_order_items", normalizedTargetProfileName))
+        {
+            throw std::invalid_argument("Target profile already has stored state.");
+        }
+
+        copyProfileOrderRows(database, normalizedSourceProfileName, normalizedTargetProfileName);
+        copyProfilePluginOrderRows(database, normalizedSourceProfileName, normalizedTargetProfileName);
+        appendMissingProfileModItems(database, normalizedTargetProfileName);
+        compactProfileOrderPositions(database, normalizedTargetProfileName);
+        compactProfilePluginOrderPositions(database, normalizedTargetProfileName);
+        transaction.commit();
+    }
+
+    void InstanceMetadataStore::renameProfileState(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view sourceProfileName,
+        std::wstring_view targetProfileName)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const std::wstring normalizedSourceProfileName = profileNameOrDefault(sourceProfileName);
+        const std::wstring normalizedTargetProfileName = profileNameOrDefault(targetProfileName);
+        if (toLower(normalizedSourceProfileName) == toLower(normalizedTargetProfileName))
+        {
+            return;
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        Transaction transaction(database);
+        if (profileRowsExist(database, "profile_order_items", normalizedTargetProfileName) ||
+            profileRowsExist(database, "profile_plugin_order_items", normalizedTargetProfileName))
+        {
+            throw std::invalid_argument("Target profile already has stored state.");
+        }
+
+        renameProfileRows(
+            database,
+            "profile_order_items",
+            normalizedSourceProfileName,
+            normalizedTargetProfileName);
+        renameProfileRows(
+            database,
+            "profile_plugin_order_items",
+            normalizedSourceProfileName,
+            normalizedTargetProfileName);
+        transaction.commit();
+    }
+
+    void InstanceMetadataStore::deleteProfileState(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const std::wstring normalizedProfileName = profileNameOrDefault(profileName);
+        Database database = openInstanceDatabase(projectDirectory);
+        Transaction transaction(database);
+        removeProfileRows(database, "profile_order_items", normalizedProfileName);
+        removeProfileRows(database, "profile_plugin_order_items", normalizedProfileName);
+        transaction.commit();
     }
 
     std::vector<ProfileOrderItemRecord> InstanceMetadataStore::createProfileOrderSeparator(

@@ -117,6 +117,7 @@ add_library(FluxoraCore SHARED
     src/Services/PathSafetyService.cpp
     src/Services/PluginService.cpp
     src/Services/ProfileOrderService.cpp
+    src/Services/ProfileService.cpp
     src/Services/ProjectService.cpp
     src/Services/TemplateService.cpp
     src/Services/VfsContentPlacementAnalyzer.cpp
