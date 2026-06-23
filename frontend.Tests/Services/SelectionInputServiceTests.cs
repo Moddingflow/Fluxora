@@ -30,6 +30,25 @@ public sealed class SelectionInputServiceTests
         Assert.False(SelectionInputService.IsSelectAllGesture(Key.A, Key.None, ModifierKeys.None));
     }
 
+    [Fact]
+    public void IsDeleteGesture_RecognizesPlainDelete()
+    {
+        Assert.True(SelectionInputService.IsDeleteGesture(Key.Delete, Key.None, ModifierKeys.None));
+    }
+
+    [Theory]
+    [InlineData(Key.Back, Key.None, ModifierKeys.None)]
+    [InlineData(Key.Delete, Key.None, ModifierKeys.Control)]
+    [InlineData(Key.Delete, Key.None, ModifierKeys.Shift)]
+    [InlineData(Key.None, Key.Delete, ModifierKeys.Alt)]
+    public void IsDeleteGesture_RejectsNonPlainDelete(
+        Key key,
+        Key systemKey,
+        ModifierKeys modifiers)
+    {
+        Assert.False(SelectionInputService.IsDeleteGesture(key, systemKey, modifiers));
+    }
+
     [Theory]
     [InlineData(ModifierKeys.None, false)]
     [InlineData(ModifierKeys.Alt, false)]

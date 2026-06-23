@@ -67,6 +67,206 @@ public sealed class ConfirmDialogOptions
         };
     }
 
+    /// <summary>Confirmation for permanently deleting installed mods or removing mod separators.</summary>
+    public static ConfirmDialogOptions DeleteModItems(IReadOnlyList<ModEntry> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        if (items.Count == 0)
+        {
+            throw new ArgumentException("At least one mod item is required.", nameof(items));
+        }
+
+        int modCount = items.Count(item => item.IsMod);
+        int separatorCount = items.Count(item => item.IsSeparator);
+        string highlight = items.Count == 1
+            ? $"«{items[0].DisplayName}»"
+            : RussianCount(items.Count, "элемент", "элемента", "элементов");
+
+        List<ConfirmDialogDetail> details = new()
+        {
+            new ConfirmDialogDetail
+            {
+                Icon = ConfirmDialogDetail.IconFromResource(modCount > 0 ? "Icon.Layers" : "Icon.FileText"),
+                Label = items.Count == 1
+                    ? items[0].IsSeparator ? "Разделитель" : "Мод"
+                    : "Выбрано",
+                Value = items.Count == 1 ? items[0].DisplayName : SelectedNamesSummary(items)
+            }
+        };
+
+        if (items.Count > 1)
+        {
+            if (modCount > 0)
+            {
+                details.Add(new ConfirmDialogDetail
+                {
+                    Icon = ConfirmDialogDetail.IconFromResource("Icon.Layers"),
+                    Label = "Моды",
+                    Value = modCount.ToString()
+                });
+            }
+
+            if (separatorCount > 0)
+            {
+                details.Add(new ConfirmDialogDetail
+                {
+                    Icon = ConfirmDialogDetail.IconFromResource("Icon.FileText"),
+                    Label = "Разделители",
+                    Value = separatorCount.ToString()
+                });
+            }
+        }
+
+        return new ConfirmDialogOptions
+        {
+            Heading = DeleteModItemsHeading(items.Count, modCount, separatorCount),
+            Message = DeleteModItemsMessage(items, modCount, separatorCount, highlight),
+            Highlight = highlight,
+            Details = details,
+            ConfirmText = DeleteModItemsConfirmText(items.Count, modCount, separatorCount),
+            IsDestructive = true
+        };
+    }
+
+    /// <summary>Confirmation for permanently deleting download files from disk.</summary>
+    public static ConfirmDialogOptions DeleteDownloads(IReadOnlyList<DownloadEntry> downloads)
+    {
+        ArgumentNullException.ThrowIfNull(downloads);
+        if (downloads.Count == 0)
+        {
+            throw new ArgumentException("At least one download is required.", nameof(downloads));
+        }
+
+        string highlight = downloads.Count == 1
+            ? $"«{DownloadDisplayName(downloads[0])}»"
+            : RussianCount(downloads.Count, "файл", "файла", "файлов");
+
+        List<ConfirmDialogDetail> details = new()
+        {
+            new ConfirmDialogDetail
+            {
+                Icon = ConfirmDialogDetail.IconFromResource("Icon.FileText"),
+                Label = downloads.Count == 1 ? "Файл" : "Выбрано",
+                Value = downloads.Count == 1 ? DownloadDisplayName(downloads[0]) : SelectedNamesSummary(downloads)
+            }
+        };
+
+        if (downloads.Count == 1 && !string.IsNullOrWhiteSpace(downloads[0].LocalPath))
+        {
+            details.Add(new ConfirmDialogDetail
+            {
+                Icon = ConfirmDialogDetail.IconFromResource("Icon.Folder"),
+                Label = "Путь",
+                Value = downloads[0].LocalPath
+            });
+        }
+
+        return new ConfirmDialogOptions
+        {
+            Heading = downloads.Count == 1 ? "Удалить файл загрузки?" : "Удалить выбранные загрузки?",
+            Message = downloads.Count == 1
+                ? $"{highlight} будет безвозвратно удалён из загрузок. Отменить это действие нельзя."
+                : $"Выбранные файлы ({highlight}) будут безвозвратно удалены из загрузок. Отменить это действие нельзя.",
+            Highlight = highlight,
+            Details = details,
+            ConfirmText = downloads.Count == 1 ? "Удалить файл" : "Удалить загрузки",
+            IsDestructive = true
+        };
+    }
+
+    private static string DeleteModItemsHeading(int itemCount, int modCount, int separatorCount)
+    {
+        if (itemCount == 1)
+        {
+            return modCount == 1 ? "Удалить мод?" : "Удалить разделитель?";
+        }
+
+        return modCount > 0 && separatorCount > 0
+            ? "Удалить выбранные элементы?"
+            : modCount > 0
+                ? "Удалить выбранные моды?"
+                : "Удалить выбранные разделители?";
+    }
+
+    private static string DeleteModItemsMessage(
+        IReadOnlyList<ModEntry> items,
+        int modCount,
+        int separatorCount,
+        string highlight)
+    {
+        if (items.Count == 1)
+        {
+            return modCount == 1
+                ? $"{highlight} и все его файлы будут безвозвратно удалены с диска. Отменить это действие нельзя."
+                : $"{highlight} будет удалён из порядка модов. Отменить это действие нельзя.";
+        }
+
+        if (modCount > 0 && separatorCount > 0)
+        {
+            return $"{highlight}: моды будут удалены с диска, а разделители удалены из порядка модов. Отменить это действие нельзя.";
+        }
+
+        return modCount > 0
+            ? $"{highlight} будут безвозвратно удалены с диска. Отменить это действие нельзя."
+            : $"{highlight} будут удалены из порядка модов. Отменить это действие нельзя.";
+    }
+
+    private static string DeleteModItemsConfirmText(int itemCount, int modCount, int separatorCount)
+    {
+        if (itemCount == 1)
+        {
+            return modCount == 1 ? "Удалить мод" : "Удалить разделитель";
+        }
+
+        return modCount > 0 && separatorCount > 0
+            ? "Удалить выбранное"
+            : modCount > 0
+                ? "Удалить моды"
+                : "Удалить разделители";
+    }
+
+    private static string SelectedNamesSummary(IReadOnlyList<ModEntry> items)
+    {
+        const int visibleNameLimit = 3;
+        string names = string.Join(", ", items.Take(visibleNameLimit).Select(item => item.DisplayName));
+        return items.Count <= visibleNameLimit
+            ? names
+            : $"{names} и ещё {items.Count - visibleNameLimit}";
+    }
+
+    private static string SelectedNamesSummary(IReadOnlyList<DownloadEntry> downloads)
+    {
+        const int visibleNameLimit = 3;
+        string names = string.Join(", ", downloads.Take(visibleNameLimit).Select(DownloadDisplayName));
+        return downloads.Count <= visibleNameLimit
+            ? names
+            : $"{names} и ещё {downloads.Count - visibleNameLimit}";
+    }
+
+    private static string DownloadDisplayName(DownloadEntry download)
+    {
+        return !string.IsNullOrWhiteSpace(download.FileName)
+            ? download.FileName
+            : download.Name;
+    }
+
+    private static string RussianCount(int count, string one, string few, string many)
+    {
+        int absolute = Math.Abs(count);
+        int modulo100 = absolute % 100;
+        if (modulo100 is >= 11 and <= 14)
+        {
+            return $"{count} {many}";
+        }
+
+        return (absolute % 10) switch
+        {
+            1 => $"{count} {one}",
+            >= 2 and <= 4 => $"{count} {few}",
+            _ => $"{count} {many}"
+        };
+    }
+
     public static ConfirmDialogOptions IncludeGeneratedFluxPackAssets(ModProject project)
     {
         List<ConfirmDialogDetail> details = new()

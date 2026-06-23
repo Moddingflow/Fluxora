@@ -15,6 +15,12 @@ public static class SelectionInputService
             (modifiers & ModifierKeys.Control) == ModifierKeys.Control;
     }
 
+    public static bool IsDeleteGesture(Key key, Key systemKey, ModifierKeys modifiers)
+    {
+        return (key == Key.Delete || systemKey == Key.Delete) &&
+            modifiers == ModifierKeys.None;
+    }
+
     public static RangeSelectionGesture ResolveGesture(ModifierKeys modifiers)
     {
         if ((modifiers & ModifierKeys.Shift) == ModifierKeys.Shift)

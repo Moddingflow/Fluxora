@@ -75,7 +75,9 @@ public partial class App : System.Windows.Application
                 "Считываем шаблоны и каталог сборок",
                 91));
 
+            applicationLogService.Info("Startup", "Main window initialization started.");
             await mainWindow.InitializeAsync(StartupNxmLinks);
+            applicationLogService.Info("Startup", "Main window initialization completed.");
 
             splashViewModel.Report(new StartupProgress(
                 "Готово",
@@ -97,6 +99,7 @@ public partial class App : System.Windows.Application
         }
 
         mainWindow.Show();
+        mainWindow.Activate();
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         startupSplash.Close();
     }

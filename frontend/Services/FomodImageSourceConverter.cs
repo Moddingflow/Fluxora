@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Threading;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
@@ -14,12 +16,19 @@ public sealed class FomodImageSourceConverter : IValueConverter
     private static readonly object CacheGate = new();
     private static readonly Dictionary<string, LinkedListNode<CacheEntry>> Cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly LinkedList<CacheEntry> CacheOrder = new();
+    private static readonly Dictionary<string, Task<ImageSource?>> PendingLoads = new(StringComparer.OrdinalIgnoreCase);
 
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
     {
         string imagePath = value as string ?? string.Empty;
-        ImageSource? source = LoadImageSource(imagePath, DecodePixelWidth(parameter));
-        return source ?? DependencyProperty.UnsetValue;
+        int decodePixelWidth = DecodePixelWidth(parameter);
+        if (TryGetCachedImageSource(imagePath, decodePixelWidth, out ImageSource? source))
+        {
+            return source;
+        }
+
+        _ = PrewarmImageAsync(imagePath, decodePixelWidth);
+        return DependencyProperty.UnsetValue;
     }
 
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
@@ -41,41 +50,93 @@ public sealed class FomodImageSourceConverter : IValueConverter
 
     internal static ImageSource? LoadImageSource(string path, int decodePixelWidth)
     {
-        return LoadImage(path, decodePixelWidth);
+        return TryGetCachedImageSource(path, decodePixelWidth, out ImageSource? source)
+            ? source
+            : null;
     }
 
     internal static Task<ImageSource?> LoadImageAsync(string path, int decodePixelWidth)
     {
-        return Task.Run(() => LoadImage(path, decodePixelWidth));
+        return QueueImageLoad(path, NormalizeDecodePixelWidth(decodePixelWidth));
     }
 
-    private static ImageSource? LoadImage(string path, int decodePixelWidth)
+    internal static Task<ImageSource?> PrewarmImageAsync(string path, int decodePixelWidth)
     {
-        if (string.IsNullOrWhiteSpace(path))
+        return QueueImageLoad(path, NormalizeDecodePixelWidth(decodePixelWidth));
+    }
+
+    internal static bool TryGetCachedImageSource(
+        string path,
+        int decodePixelWidth,
+        [NotNullWhen(true)] out ImageSource? source)
+    {
+        string? cacheKey = TryBuildCacheKey(path, NormalizeDecodePixelWidth(decodePixelWidth));
+        if (cacheKey is null)
         {
-            return null;
+            source = null;
+            return false;
         }
 
-        FileInfo fileInfo;
-        try
+        lock (CacheGate)
         {
-            fileInfo = new FileInfo(path);
-            if (!fileInfo.Exists)
-            {
-                return null;
-            }
+            return TryGetCached(cacheKey, out source);
         }
-        catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
+    }
+
+    private static Task<ImageSource?> QueueImageLoad(string path, int decodePixelWidth)
+    {
+        string? cacheKey = TryBuildCacheKey(path, decodePixelWidth);
+        if (cacheKey is null)
         {
-            return null;
+            return Task.FromResult<ImageSource?>(null);
         }
 
-        string cacheKey = BuildCacheKey(fileInfo, decodePixelWidth);
         lock (CacheGate)
         {
             if (TryGetCached(cacheKey, out ImageSource? cached))
             {
-                return cached;
+                return Task.FromResult<ImageSource?>(cached);
+            }
+
+            if (PendingLoads.TryGetValue(cacheKey, out Task<ImageSource?>? pending))
+            {
+                return pending;
+            }
+
+            Task<ImageSource?> load = Task.Run(() => LoadImage(cacheKey, path, decodePixelWidth));
+            PendingLoads[cacheKey] = load;
+            _ = load.ContinueWith(
+                _ =>
+                {
+                    lock (CacheGate)
+                    {
+                        PendingLoads.Remove(cacheKey);
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            return load;
+        }
+    }
+
+    private static ImageSource? LoadImage(string cacheKey, string path, int decodePixelWidth)
+    {
+        if (!TryGetFileInfo(path, out FileInfo fileInfo))
+        {
+            return null;
+        }
+
+        lock (CacheGate)
+        {
+            if (TryGetCached(cacheKey, out CacheEntry? cachedEntry))
+            {
+                if (cachedEntry.Matches(fileInfo))
+                {
+                    return cachedEntry.Source;
+                }
+
+                RemoveCached(cacheKey);
             }
         }
 
@@ -87,43 +148,116 @@ public sealed class FomodImageSourceConverter : IValueConverter
 
         lock (CacheGate)
         {
-            if (TryGetCached(cacheKey, out ImageSource? cached))
+            if (TryGetCached(cacheKey, out CacheEntry? cachedEntry) &&
+                cachedEntry.Matches(fileInfo))
             {
-                return cached;
+                return cachedEntry.Source;
             }
 
-            AddCached(cacheKey, source);
+            AddCached(cacheKey, source, fileInfo);
             return source;
         }
     }
 
-    private static string BuildCacheKey(FileInfo fileInfo, int decodePixelWidth)
+    private static bool TryGetFileInfo(string path, out FileInfo fileInfo)
     {
-        return string.Join(
-            '|',
-            fileInfo.FullName,
-            decodePixelWidth.ToString(CultureInfo.InvariantCulture),
-            fileInfo.Length.ToString(CultureInfo.InvariantCulture),
-            fileInfo.LastWriteTimeUtc.Ticks.ToString(CultureInfo.InvariantCulture));
+        try
+        {
+            fileInfo = new FileInfo(path);
+            return fileInfo.Exists;
+        }
+        catch (Exception exception) when (IsRecoverableFileException(exception))
+        {
+            fileInfo = null!;
+            return false;
+        }
     }
 
-    private static bool TryGetCached(string cacheKey, out ImageSource? source)
+    private static string? TryBuildCacheKey(string path, int decodePixelWidth)
     {
-        if (!Cache.TryGetValue(cacheKey, out LinkedListNode<CacheEntry>? node))
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        string trimmedPath = path.Trim();
+        string normalizedPath;
+        try
+        {
+            normalizedPath = Path.GetFullPath(trimmedPath);
+        }
+        catch (Exception exception) when (IsRecoverableFileException(exception))
+        {
+            normalizedPath = trimmedPath;
+        }
+
+        return string.Join(
+            '|',
+            normalizedPath,
+            decodePixelWidth.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private static int NormalizeDecodePixelWidth(int decodePixelWidth)
+    {
+        return Math.Max(1, decodePixelWidth);
+    }
+
+    private static bool IsRecoverableFileException(Exception exception)
+    {
+        return exception is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException;
+    }
+
+    private static bool IsRecoverableImageException(Exception exception)
+    {
+        return exception is ArgumentException or IOException or InvalidOperationException or NotSupportedException or UnauthorizedAccessException or UriFormatException;
+    }
+
+    private static bool TryGetCached(string cacheKey, [NotNullWhen(true)] out ImageSource? source)
+    {
+        if (!TryGetCached(cacheKey, out CacheEntry? entry))
         {
             source = null;
             return false;
         }
 
-        CacheOrder.Remove(node);
-        CacheOrder.AddFirst(node);
-        source = node.Value.Source;
+        source = entry.Source;
         return true;
     }
 
-    private static void AddCached(string cacheKey, ImageSource source)
+    private static bool TryGetCached(string cacheKey, [NotNullWhen(true)] out CacheEntry? entry)
     {
-        LinkedListNode<CacheEntry> node = new(new CacheEntry(cacheKey, source));
+        if (!Cache.TryGetValue(cacheKey, out LinkedListNode<CacheEntry>? node))
+        {
+            entry = null;
+            return false;
+        }
+
+        CacheOrder.Remove(node);
+        CacheOrder.AddFirst(node);
+        entry = node.Value;
+        return true;
+    }
+
+    private static void RemoveCached(string cacheKey)
+    {
+        if (!Cache.TryGetValue(cacheKey, out LinkedListNode<CacheEntry>? node))
+        {
+            return;
+        }
+
+        CacheOrder.Remove(node);
+        Cache.Remove(cacheKey);
+    }
+
+    private static void AddCached(string cacheKey, ImageSource source, FileInfo fileInfo)
+    {
+        RemoveCached(cacheKey);
+
+        LinkedListNode<CacheEntry> node = new(new CacheEntry(
+            cacheKey,
+            source,
+            fileInfo.Length,
+            fileInfo.LastWriteTimeUtc.Ticks));
         CacheOrder.AddFirst(node);
         Cache[cacheKey] = node;
 
@@ -149,19 +283,7 @@ public sealed class FomodImageSourceConverter : IValueConverter
             image.Freeze();
             return image;
         }
-        catch (IOException)
-        {
-            return null;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return null;
-        }
-        catch (NotSupportedException)
-        {
-            return null;
-        }
-        catch (UriFormatException)
+        catch (Exception exception) when (IsRecoverableImageException(exception))
         {
             return null;
         }
@@ -169,14 +291,33 @@ public sealed class FomodImageSourceConverter : IValueConverter
 
     private sealed class CacheEntry
     {
-        public CacheEntry(string key, ImageSource source)
+        public CacheEntry(string key, ImageSource source, long length, long lastWriteTimeUtcTicks)
         {
             Key = key;
             Source = source;
+            Length = length;
+            LastWriteTimeUtcTicks = lastWriteTimeUtcTicks;
         }
 
         public string Key { get; }
 
         public ImageSource Source { get; }
+
+        private long Length { get; }
+
+        private long LastWriteTimeUtcTicks { get; }
+
+        public bool Matches(FileInfo fileInfo)
+        {
+            try
+            {
+                return Length == fileInfo.Length &&
+                    LastWriteTimeUtcTicks == fileInfo.LastWriteTimeUtc.Ticks;
+            }
+            catch (Exception exception) when (IsRecoverableFileException(exception))
+            {
+                return false;
+            }
+        }
     }
 }

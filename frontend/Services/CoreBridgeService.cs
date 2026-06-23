@@ -282,23 +282,41 @@ public sealed class CoreBridgeService : IAppService
         }
     }
 
-    public string BuildProjectDirectoryPreview(string projectName, string installRootDirectory)
+    public Task<string> BuildProjectDirectoryPreviewAsync(
+        string projectName,
+        string installRootDirectory,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (!CanCreateProjectsNatively ||
             string.IsNullOrWhiteSpace(projectName) ||
             string.IsNullOrWhiteSpace(installRootDirectory))
         {
-            return string.Empty;
+            return Task.FromResult(string.Empty);
         }
 
-        StringBuilder buffer = new(NativePathBufferLength);
-        int result = NativeMethods.PreviewProjectDirectory(
-            projectName,
-            installRootDirectory,
-            buffer,
-            buffer.Capacity);
+        return Task.Run(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string preview = RunNative(
+                    "PreviewProjectDirectory",
+                    () =>
+                    {
+                        StringBuilder buffer = new(NativePathBufferLength);
+                        int result = NativeMethods.PreviewProjectDirectory(
+                            projectName,
+                            installRootDirectory,
+                            buffer,
+                            buffer.Capacity);
 
-        return result == NativeResult.Ok ? buffer.ToString() : string.Empty;
+                        return result == NativeResult.Ok ? buffer.ToString() : string.Empty;
+                    });
+                cancellationToken.ThrowIfCancellationRequested();
+                return preview;
+            },
+            cancellationToken);
     }
 
     public Task<ModProject> CreateProjectAsync(

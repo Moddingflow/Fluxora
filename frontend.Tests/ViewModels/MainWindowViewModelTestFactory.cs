@@ -6,13 +6,16 @@ namespace Fluxora.App.Tests.ViewModels;
 
 internal static class MainWindowViewModelTestFactory
 {
-    public static MainWindowViewModel Create()
+    public static MainWindowViewModel Create(
+        Func<string, string, CancellationToken, Task<string>>? projectDirectoryPreviewBuilder = null)
     {
         ApplicationLogService logService = new();
         CoreBridgeService coreBridgeService = new(logService);
         SettingsService settingsService = new();
         LanguageCatalogService languageCatalogService = new(coreBridgeService);
-        ProjectCatalogService projectCatalogService = new(coreBridgeService, settingsService);
+        ProjectCatalogService projectCatalogService = projectDirectoryPreviewBuilder is null
+            ? new ProjectCatalogService(coreBridgeService, settingsService)
+            : new ProjectCatalogService(coreBridgeService, settingsService, projectDirectoryPreviewBuilder);
         ProjectOpenService projectOpenService = new(projectCatalogService, coreBridgeService);
         ModCatalogService modCatalogService = new(coreBridgeService);
         PluginCatalogService pluginCatalogService = new(coreBridgeService);

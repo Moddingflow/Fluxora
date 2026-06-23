@@ -54,7 +54,7 @@ public partial class MainWindow : Window
         NxmProtocolService nxmProtocolService = new(this.coreBridgeService);
         ModCatalogService modCatalogService = new(this.coreBridgeService);
         PluginCatalogService pluginCatalogService = new(this.coreBridgeService);
-        ProjectCatalogService projectCatalogService = new(this.coreBridgeService, this.settingsService);
+        ProjectCatalogService projectCatalogService = new(this.coreBridgeService, this.settingsService, logService);
         ProjectOpenService projectOpenService = new(projectCatalogService, this.coreBridgeService);
         ExecutableLaunchSessionStore launchSessionStore = new(logService);
         ProjectWorkspaceLoadService projectWorkspaceLoadService = new(
@@ -437,7 +437,10 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             ApplySelection(viewModel.SelectAllMods, SelectionScope.Mods);
+            return;
         }
+
+        HandleDeleteGesture(e, viewModel.DeleteSelectedModCommand);
     }
 
     private void OnPluginsListPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -446,7 +449,10 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             ApplySelection(viewModel.SelectAllPlugins, SelectionScope.Plugins);
+            return;
         }
+
+        HandleDeleteGesture(e, viewModel.DeleteSelectedPluginCommand);
     }
 
     private void OnDownloadsGridPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -455,7 +461,19 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             ApplySelection(viewModel.SelectAllDownloads, SelectionScope.Downloads);
+            return;
         }
+
+        HandleDeleteGesture(e, viewModel.DeleteSelectedDownloadCommand);
+    }
+
+    private void OnProjectsListPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        object? selectedProject = sender is System.Windows.Controls.ListBox listBox
+            ? listBox.SelectedItem
+            : viewModel.SelectedProject;
+
+        HandleDeleteGesture(e, viewModel.DeleteProjectCommand, selectedProject);
     }
 
     private void OnProjectActionsButtonClick(object sender, RoutedEventArgs e)
@@ -465,9 +483,24 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (button.DataContext is ModProject project)
+        {
+            viewModel.SelectedProject = project;
+        }
+
+        button.Focus();
         button.ContextMenu.PlacementTarget = button;
         button.ContextMenu.IsOpen = true;
         e.Handled = true;
+    }
+
+    private void OnContextMenuPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (sender is ItemsControl menu &&
+            ContextMenuGestureService.TryExecuteDeleteGesture(menu, e.Key, e.SystemKey, Keyboard.Modifiers))
+        {
+            e.Handled = true;
+        }
     }
 
     private async void OnModFileTreeItemExpanded(object sender, RoutedEventArgs e)
@@ -482,6 +515,20 @@ public partial class MainWindow : Window
     private static bool IsSelectAllGesture(System.Windows.Input.KeyEventArgs e)
     {
         return SelectionInputService.IsSelectAllGesture(e.Key, e.SystemKey, Keyboard.Modifiers);
+    }
+
+    private static void HandleDeleteGesture(System.Windows.Input.KeyEventArgs e, ICommand command, object? parameter = null)
+    {
+        if (!SelectionInputService.IsDeleteGesture(e.Key, e.SystemKey, Keyboard.Modifiers))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (command.CanExecute(parameter))
+        {
+            command.Execute(parameter);
+        }
     }
 
     private void SynchronizeSelection(SelectionScope activeScope)

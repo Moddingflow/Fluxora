@@ -101,6 +101,13 @@ namespace fluxora
         constexpr std::array<std::wstring_view, 1> rawModArchiveExtensions{
             L".ba2"
         };
+
+        struct DownloadFileCatalogEntry
+        {
+            std::filesystem::path path;
+            std::filesystem::file_time_type lastWriteTime{};
+        };
+
         std::mutex activeDownloadsMutex;
         std::set<std::wstring> activeDownloads;
         std::mutex installStagingCacheMutex;
@@ -5332,10 +5339,11 @@ namespace fluxora
         const std::filesystem::path directory = pathSettings_.downloadsDirectory(projectDirectory);
         std::filesystem::create_directories(directory);
 
-        std::vector<std::filesystem::path> files;
+        std::vector<DownloadFileCatalogEntry> files;
         for (const auto& entry : std::filesystem::directory_iterator(directory))
         {
-            if (!entry.is_regular_file())
+            std::error_code statusError;
+            if (!entry.is_regular_file(statusError))
             {
                 continue;
             }
@@ -5350,19 +5358,29 @@ namespace fluxora
                 continue;
             }
 
-            files.push_back(entry.path());
+            std::error_code timeError;
+            const std::filesystem::file_time_type lastWriteTime = entry.last_write_time(timeError);
+            files.push_back(DownloadFileCatalogEntry{
+                entry.path(),
+                timeError ? (std::filesystem::file_time_type::min)() : lastWriteTime
+            });
         }
 
         std::sort(files.begin(), files.end(), [](const auto& left, const auto& right)
         {
-            return std::filesystem::last_write_time(left) > std::filesystem::last_write_time(right);
+            if (left.lastWriteTime != right.lastWriteTime)
+            {
+                return left.lastWriteTime > right.lastWriteTime;
+            }
+
+            return left.path.wstring() < right.path.wstring();
         });
 
         std::vector<DownloadEntry> entries;
         entries.reserve(files.size());
         for (const auto& file : files)
         {
-            entries.push_back(buildEntry(file));
+            entries.push_back(buildEntry(file.path));
         }
 
         return entries;

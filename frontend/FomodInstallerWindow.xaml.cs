@@ -12,6 +12,18 @@ namespace Fluxora.App;
 
 public partial class FomodInstallerWindow : Window
 {
+    private const int PreviewDecodePixelWidth = 720;
+    private const int DefaultLightboxDecodePixelWidth = 1200;
+    private const int MinLightboxDecodePixelWidth = 720;
+    private const int MaxLightboxDecodePixelWidth = 1800;
+    private const double LightboxHorizontalMargin = 84;
+
+    public static readonly DependencyProperty LightboxDecodePixelWidthProperty = DependencyProperty.Register(
+        nameof(LightboxDecodePixelWidth),
+        typeof(int),
+        typeof(FomodInstallerWindow),
+        new PropertyMetadata(DefaultLightboxDecodePixelWidth));
+
     private readonly WindowChromeService windowChromeService;
     private readonly FomodInstallerViewModel viewModel;
 
@@ -22,12 +34,19 @@ public partial class FomodInstallerWindow : Window
         DataContext = viewModel;
         viewModel.PropertyChanged += OnViewModelPropertyChanged;
         Loaded += OnLoaded;
+        SizeChanged += OnWindowSizeChanged;
         windowChromeService = new WindowChromeService(this);
         windowChromeService.Attach();
         Title = viewModel.ModuleTitle;
     }
 
     public IReadOnlyList<string> SelectedOptionIds => viewModel.SelectedOptionIds;
+
+    public int LightboxDecodePixelWidth
+    {
+        get => (int)GetValue(LightboxDecodePixelWidthProperty);
+        set => SetValue(LightboxDecodePixelWidthProperty, value);
+    }
 
     private void OnPrimaryClick(object sender, RoutedEventArgs e)
     {
@@ -58,6 +77,8 @@ public partial class FomodInstallerWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        UpdateLightboxDecodePixelWidth();
+        PrewarmPreviewImages();
         ScrollValidationTargetIntoView();
     }
 
@@ -66,6 +87,11 @@ public partial class FomodInstallerWindow : Window
         if (e.PropertyName is nameof(FomodInstallerViewModel.ValidationTargetGroup) or nameof(FomodInstallerViewModel.CurrentStep))
         {
             Dispatcher.BeginInvoke(ScrollValidationTargetIntoView, DispatcherPriority.Loaded);
+        }
+
+        if (e.PropertyName is nameof(FomodInstallerViewModel.DetailsOption) or nameof(FomodInstallerViewModel.CurrentStep))
+        {
+            Dispatcher.BeginInvoke(PrewarmPreviewImages, DispatcherPriority.Background);
         }
     }
 
@@ -84,10 +110,16 @@ public partial class FomodInstallerWindow : Window
             return;
         }
 
+        UpdateLightboxDecodePixelWidth();
         LightboxImage.DataContext = option;
         DialogSurface.Effect = new BlurEffect { Radius = 8 };
         ImageLightboxOverlay.Visibility = Visibility.Visible;
         LightboxCloseButton.Focus();
+    }
+
+    private void OnWindowSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateLightboxDecodePixelWidth();
     }
 
     private void OnLightboxCloseClick(object sender, RoutedEventArgs e)
@@ -122,8 +154,80 @@ public partial class FomodInstallerWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         Loaded -= OnLoaded;
+        SizeChanged -= OnWindowSizeChanged;
         viewModel.PropertyChanged -= OnViewModelPropertyChanged;
         base.OnClosed(e);
+    }
+
+    private void PrewarmPreviewImages()
+    {
+        FomodOptionViewModel? currentOption = viewModel.DetailsOption;
+        PrewarmPreviewImage(currentOption, PreviewDecodePixelWidth);
+
+        FomodOptionViewModel? nextOption = FindNextPreviewOption(currentOption);
+        if (!ReferenceEquals(currentOption, nextOption))
+        {
+            PrewarmPreviewImage(nextOption, PreviewDecodePixelWidth);
+        }
+    }
+
+    private static void PrewarmPreviewImage(FomodOptionViewModel? option, int decodePixelWidth)
+    {
+        if (option?.HasPreviewImage != true)
+        {
+            return;
+        }
+
+        _ = FomodImageSourceConverter.PrewarmImageAsync(option.PreviewImagePath, decodePixelWidth);
+    }
+
+    private FomodOptionViewModel? FindNextPreviewOption(FomodOptionViewModel? currentOption)
+    {
+        FomodStepViewModel? currentStep = viewModel.CurrentStep;
+        if (currentStep is null)
+        {
+            return null;
+        }
+
+        bool returnNextPreview = currentOption is null;
+        foreach (FomodGroupViewModel group in currentStep.Groups)
+        {
+            foreach (FomodOptionViewModel option in group.Options)
+            {
+                if (!option.HasPreviewImage)
+                {
+                    continue;
+                }
+
+                if (returnNextPreview)
+                {
+                    return option;
+                }
+
+                if (ReferenceEquals(option, currentOption))
+                {
+                    returnNextPreview = true;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private void UpdateLightboxDecodePixelWidth()
+    {
+        double availableWidth = ActualWidth - LightboxHorizontalMargin;
+        if (double.IsNaN(availableWidth) || availableWidth <= 0)
+        {
+            availableWidth = DefaultLightboxDecodePixelWidth;
+        }
+
+        double dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        int decodePixelWidth = (int)Math.Ceiling(availableWidth * dpiScale);
+        LightboxDecodePixelWidth = Math.Clamp(
+            decodePixelWidth,
+            MinLightboxDecodePixelWidth,
+            MaxLightboxDecodePixelWidth);
     }
 
     private void ScrollValidationTargetIntoView()

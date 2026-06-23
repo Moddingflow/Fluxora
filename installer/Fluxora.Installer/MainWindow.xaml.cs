@@ -6,10 +6,10 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using Fluxora.App.Services;
 using Fluxora.Installer.Models;
 using Fluxora.Installer.Services;
-using Forms = System.Windows.Forms;
 
 namespace Fluxora.Installer;
 
@@ -400,16 +400,20 @@ public partial class MainWindow : Window
 
     private void OnBrowseClick(object sender, RoutedEventArgs e)
     {
-        using Forms.FolderBrowserDialog dialog = new()
+        string initialDirectory = Directory.Exists(InstallPathTextBox.Text)
+            ? InstallPathTextBox.Text
+            : DefaultInstallPath();
+
+        OpenFolderDialog dialog = new()
         {
-            Description = T("TargetLabel"),
-            UseDescriptionForTitle = true,
-            SelectedPath = Directory.Exists(InstallPathTextBox.Text) ? InstallPathTextBox.Text : DefaultInstallPath()
+            Title = T("TargetLabel"),
+            InitialDirectory = initialDirectory,
+            Multiselect = false
         };
 
-        if (dialog.ShowDialog() == Forms.DialogResult.OK)
+        if (dialog.ShowDialog(this) == true)
         {
-            InstallPathTextBox.Text = NormalizeInstallPath(dialog.SelectedPath);
+            InstallPathTextBox.Text = NormalizeInstallPath(dialog.FolderName);
         }
     }
 

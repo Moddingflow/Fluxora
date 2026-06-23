@@ -1391,6 +1391,7 @@
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Padding" Value="4" />
             <Setter Property="SnapsToDevicePixels" Value="True" />
+            <EventSetter Event="PreviewKeyDown" Handler="OnContextMenuPreviewKeyDown" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type ContextMenu}">
@@ -1426,15 +1427,24 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="18" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <ContentPresenter ContentSource="Icon"
                                                   HorizontalAlignment="Center"
                                                   VerticalAlignment="Center" />
                                 <ContentPresenter Grid.Column="1"
                                                   ContentSource="Header"
-                                                  Margin="9,0,2,0"
+                                                  Margin="9,0,12,0"
                                                   RecognizesAccessKey="True"
                                                   VerticalAlignment="Center" />
+                                <TextBlock x:Name="GestureText"
+                                           Grid.Column="2"
+                                           Text="{TemplateBinding InputGestureText}"
+                                           Margin="10,0,2,0"
+                                           FontSize="11"
+                                           Foreground="{StaticResource MutedTextBrush}"
+                                           VerticalAlignment="Center"
+                                           HorizontalAlignment="Right" />
                             </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -1444,6 +1454,12 @@
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                            <Trigger Property="InputGestureText" Value="">
+                                <Setter TargetName="GestureText" Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                            <Trigger Property="InputGestureText" Value="{x:Null}">
+                                <Setter TargetName="GestureText" Property="Visibility" Value="Collapsed" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1521,6 +1537,7 @@
             <Separator Margin="4,4" />
             <MenuItem Header="Удалить"
                       Style="{StaticResource DarkMenuItemStyle}"
+                      InputGestureText="Del"
                       Command="{Binding PlacementTarget.Tag.DeleteSelectedModCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
                       CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
                 <MenuItem.Icon>
@@ -1580,6 +1597,7 @@
             <Separator Margin="4,4" />
             <MenuItem Header="Удалить"
                       Style="{StaticResource DarkMenuItemStyle}"
+                      InputGestureText="Del"
                       Command="{Binding PlacementTarget.Tag.DeleteSelectedModCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
                       CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
                 <MenuItem.Icon>
@@ -1627,6 +1645,7 @@
                         </MenuItem>
                         <MenuItem Header="Удалить"
                                   Style="{StaticResource DarkMenuItemStyle}"
+                                  InputGestureText="Del"
                                   Command="{Binding PlacementTarget.Tag.DeleteSelectedDownloadCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
                                   CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
                             <MenuItem.Icon>
@@ -2110,7 +2129,8 @@
 
                                 <ListBox ItemsSource="{Binding Projects}"
                                          SelectedItem="{Binding SelectedProject}"
-                                         ItemContainerStyle="{StaticResource ProjectListBoxItemStyle}">
+                                         ItemContainerStyle="{StaticResource ProjectListBoxItemStyle}"
+                                         PreviewKeyDown="OnProjectsListPreviewKeyDown">
                                     <ListBox.Resources>
                                         <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource HomeProjectListScrollBarStyle}" />
                                     </ListBox.Resources>
@@ -2216,6 +2236,7 @@
                                                             </MenuItem>
                                                             <MenuItem Header="Удалить"
                                                                       Style="{StaticResource DarkMenuItemStyle}"
+                                                                      InputGestureText="Del"
                                                                       Command="{Binding PlacementTarget.Tag.DeleteProjectCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
                                                                       CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
                                                                 <MenuItem.Icon>
@@ -2907,6 +2928,7 @@
                                                         <Separator Margin="4,4" />
                                                         <MenuItem Header="Удалить разделитель"
                                                                   Style="{StaticResource DarkMenuItemStyle}"
+                                                                  InputGestureText="Del"
                                                                   Command="{Binding PlacementTarget.DataContext.DeleteSelectedPluginCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
                                                                   CommandParameter="{Binding PlacementTarget.DataContext.SelectedPlugin, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
                                                             <MenuItem.Icon>
@@ -2969,6 +2991,7 @@
                                                                     <Separator Margin="4,4" />
                                                                     <MenuItem Header="Удалить разделитель"
                                                                               Style="{StaticResource DarkMenuItemStyle}"
+                                                                              InputGestureText="Del"
                                                                               Command="{Binding PlacementTarget.Tag.DeleteSelectedPluginCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
                                                                               CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
                                                                         <MenuItem.Icon>

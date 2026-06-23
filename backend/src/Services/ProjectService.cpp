@@ -49,6 +49,12 @@ namespace fluxora
             std::uintmax_t fileSize{0};
         };
 
+        struct ProjectConfigCatalogEntry
+        {
+            std::filesystem::path path;
+            std::filesystem::file_time_type lastWriteTime{};
+        };
+
 #ifdef _WIN32
         std::wstring readEnvironmentVariable(const wchar_t* name)
         {
@@ -2372,7 +2378,7 @@ namespace fluxora
             return summaries;
         }
 
-        std::vector<std::filesystem::directory_entry> entries;
+        std::vector<ProjectConfigCatalogEntry> entries;
         for (const auto& entry : std::filesystem::directory_iterator(
                  buildConfigsDirectory,
                  std::filesystem::directory_options::skip_permission_denied,
@@ -2390,14 +2396,22 @@ namespace fluxora
                 continue;
             }
 
-            entries.push_back(entry);
+            std::error_code timeError;
+            const std::filesystem::file_time_type lastWriteTime = entry.last_write_time(timeError);
+            entries.push_back(ProjectConfigCatalogEntry{
+                entry.path(),
+                timeError ? (std::filesystem::file_time_type::min)() : lastWriteTime
+            });
         }
 
         std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right)
         {
-            std::error_code leftError;
-            std::error_code rightError;
-            return left.last_write_time(leftError) > right.last_write_time(rightError);
+            if (left.lastWriteTime != right.lastWriteTime)
+            {
+                return left.lastWriteTime > right.lastWriteTime;
+            }
+
+            return left.path.wstring() < right.path.wstring();
         });
 
         summaries.reserve(entries.size());
@@ -2405,7 +2419,7 @@ namespace fluxora
         {
             try
             {
-                summaries.push_back(readCachedProjectConfigSummary(entry.path()));
+                summaries.push_back(readCachedProjectConfigSummary(entry.path));
             }
             catch (const std::exception&)
             {

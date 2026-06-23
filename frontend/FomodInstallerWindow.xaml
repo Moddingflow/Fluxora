@@ -32,7 +32,6 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
-        <services:FomodImageSourceConverter x:Key="FomodImageSourceConverter" />
         <Geometry x:Key="Icon.Check">M20 6 9 17l-5-5</Geometry>
 
         <SolidColorBrush x:Key="TextBrush" Color="#F7F4FF" />
@@ -896,7 +895,7 @@
               MouseLeftButtonDown="OnLightboxBackgroundMouseLeftButtonDown">
             <Image x:Name="LightboxImage"
                    services:FomodAsyncImage.SourcePath="{Binding PreviewImagePath}"
-                   services:FomodAsyncImage.DecodePixelWidth="1800"
+                   services:FomodAsyncImage.DecodePixelWidth="{Binding LightboxDecodePixelWidth, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                    Stretch="Uniform"
                    Margin="42"
                    RenderOptions.BitmapScalingMode="HighQuality" />

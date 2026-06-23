@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -461,5 +462,57 @@ namespace fluxora::tests
         ASSERT_EQ(summaries.size(), 1U);
         EXPECT_EQ(summaries[0].project.name, L"Updated Legacy Skyrim Build");
         EXPECT_EQ(readTextFile(configPath).find("\"projectFingerprint\""), std::string::npos);
+    }
+
+    TEST(ProjectServiceTests, ListProjectConfigSummariesSortsByCachedLastWriteTime)
+    {
+        TempDirectory temp;
+        const std::filesystem::path catalogDirectory = temp.path() / L"Build Catalog";
+        const std::filesystem::path olderConfigPath = catalogDirectory / L"older.build.json";
+        const std::filesystem::path newerConfigPath = catalogDirectory / L"newer.build.json";
+
+        writeTextFile(
+            olderConfigPath,
+            R"json({
+                "schemaVersion": "1",
+                "name": "Older Build",
+                "gameId": "skyrimse",
+                "gameName": "Skyrim Special Edition",
+                "gamePath": "OlderGame",
+                "installRoot": "..",
+                "projectDirectory": ".",
+                "dataDirectory": "Data",
+                "defaultProfile": "Default"
+            })json");
+        writeTextFile(
+            newerConfigPath,
+            R"json({
+                "schemaVersion": "1",
+                "name": "Newer Build",
+                "gameId": "skyrimse",
+                "gameName": "Skyrim Special Edition",
+                "gamePath": "NewerGame",
+                "installRoot": "..",
+                "projectDirectory": ".",
+                "dataDirectory": "Data",
+                "defaultProfile": "Default"
+            })json");
+
+        const std::filesystem::file_time_type now = std::filesystem::file_time_type::clock::now();
+        std::filesystem::last_write_time(olderConfigPath, now - std::chrono::hours(2));
+        std::filesystem::last_write_time(newerConfigPath, now - std::chrono::hours(1));
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        const std::vector<ProjectOpenResult> summaries =
+            projects.listProjectConfigSummaries(catalogDirectory);
+
+        ASSERT_EQ(summaries.size(), 2U);
+        EXPECT_EQ(summaries[0].project.name, L"Newer Build");
+        EXPECT_EQ(summaries[1].project.name, L"Older Build");
     }
 }

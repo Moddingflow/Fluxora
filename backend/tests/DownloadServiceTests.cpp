@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -161,6 +162,43 @@ namespace fluxora::tests
 
         ASSERT_EQ(entries.size(), 1U);
         EXPECT_EQ(entries.front().fileName, L"Ready.zip");
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+    }
+
+    TEST(DownloadServiceTests, ListDownloadsSortsFilesByCachedLastWriteTime)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadService downloads(logger, settings, pathSettings);
+        downloads.initialize();
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        const std::filesystem::path downloadsDirectory = projectDirectory / L"downloads";
+        const std::filesystem::path olderPath = downloadsDirectory / L"Older.zip";
+        const std::filesystem::path newerPath = downloadsDirectory / L"Newer.zip";
+        writeTextFile(olderPath, "old archive");
+        writeTextFile(newerPath, "new archive");
+
+        const std::filesystem::file_time_type now = std::filesystem::file_time_type::clock::now();
+        std::filesystem::last_write_time(olderPath, now - std::chrono::hours(2));
+        std::filesystem::last_write_time(newerPath, now - std::chrono::hours(1));
+
+        const std::vector<DownloadEntry> entries = downloads.listDownloads(projectDirectory);
+
+        ASSERT_EQ(entries.size(), 2U);
+        EXPECT_EQ(entries[0].fileName, L"Newer.zip");
+        EXPECT_EQ(entries[1].fileName, L"Older.zip");
 
         downloads.shutdown();
         pathSettings.shutdown();

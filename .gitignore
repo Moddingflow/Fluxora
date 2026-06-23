@@ -16,6 +16,7 @@ build/
 out/
 Output/
 output/
+output-symbols/
 output-installer/
 installer/Fluxora.Installer/Resources/Payload/
 CMakeUserPresets.json

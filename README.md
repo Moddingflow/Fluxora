@@ -64,6 +64,8 @@ The script creates:
 - `output/` - local application payload staging. It is used only to assemble the installer payload and must not be published as a release artifact.
 - `output-installer/` - `FluxoraSetup.exe`, the branded installer that embeds the application payload, asks for language, privacy policy and terms acceptance, lets the user choose the installation folder, and installs Fluxora through the native C++ installer core.
 
+By default, `FluxoraSetup.exe` is self-contained while the embedded application payload is framework-dependent, avoiding a second copy of the .NET/WPF desktop runtime in the installer. That default expects the target machine to have the .NET 8 Desktop Runtime for the installed app; use `./Build.ps1 -SelfContained` when you intentionally need a full offline app payload.
+
 ## Release Policy
 
 Fluxora releases are installer-only. Publish only `output-installer/FluxoraSetup.exe`; do not commit, push, upload, attach, zip, or otherwise distribute `output/` or any portable build.

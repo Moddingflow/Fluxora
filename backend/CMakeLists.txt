@@ -35,7 +35,8 @@ set(FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER
     "${FLUXORA_GENERATED_INCLUDE_DIR}/FluxoraCore/GameSupport/EmbeddedGameDefinitions.hpp")
 list(LENGTH FLUXORA_GAME_DEFINITION_JSON FLUXORA_GAME_DEFINITION_COUNT)
 file(MAKE_DIRECTORY "${FLUXORA_GENERATED_INCLUDE_DIR}/FluxoraCore/GameSupport")
-file(WRITE "${FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER}"
+set(FLUXORA_EMBEDDED_GAME_DEFINITIONS_CONTENT "")
+string(APPEND FLUXORA_EMBEDDED_GAME_DEFINITIONS_CONTENT
     "#pragma once\n\n"
     "#include <array>\n"
     "#include <string_view>\n\n"
@@ -54,17 +55,34 @@ foreach(definition_file IN LISTS FLUXORA_GAME_DEFINITION_JSON)
             "Game definition '${definition_name}' contains the embedded raw-string delimiter.")
     endif()
 
-    file(APPEND "${FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER}"
+    string(APPEND FLUXORA_EMBEDDED_GAME_DEFINITIONS_CONTENT
         "            LR\"FLUXGDJSON(\n")
-    file(APPEND "${FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER}" "${definition_json}")
-    file(APPEND "${FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER}"
+    string(APPEND FLUXORA_EMBEDDED_GAME_DEFINITIONS_CONTENT "${definition_json}")
+    string(APPEND FLUXORA_EMBEDDED_GAME_DEFINITIONS_CONTENT
         "\n)FLUXGDJSON\", // ${definition_name}\n")
 endforeach()
 
-file(APPEND "${FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER}"
+string(APPEND FLUXORA_EMBEDDED_GAME_DEFINITIONS_CONTENT
     "        };\n"
     "    }\n"
     "}\n")
+
+set(FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER_TMP
+    "${FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER}.tmp")
+file(WRITE
+    "${FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER_TMP}"
+    "${FLUXORA_EMBEDDED_GAME_DEFINITIONS_CONTENT}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER_TMP}"
+        "${FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER}"
+    RESULT_VARIABLE FLUXORA_EMBEDDED_GAME_DEFINITIONS_COPY_RESULT)
+file(REMOVE "${FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER_TMP}")
+if(NOT FLUXORA_EMBEDDED_GAME_DEFINITIONS_COPY_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "Failed to update embedded game definitions header "
+        "'${FLUXORA_EMBEDDED_GAME_DEFINITIONS_HEADER}'.")
+endif()
 
 # --------------------------------------------------------------------------
 # FluxoraCore: the C++ core / business logic exposed to the C# UI over a C ABI.

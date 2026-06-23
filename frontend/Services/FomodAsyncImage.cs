@@ -25,6 +25,7 @@ public static class FomodAsyncImage
         typeof(FomodAsyncImage),
         new PropertyMetadata(0L));
 
+    private static readonly ImageSource PlaceholderSource = CreatePlaceholderSource();
     private static long nextLoadVersion;
 
     public static void SetSourcePath(DependencyObject element, string value)
@@ -34,7 +35,7 @@ public static class FomodAsyncImage
 
     public static string GetSourcePath(DependencyObject element)
     {
-        return (string)element.GetValue(SourcePathProperty);
+        return (string?)element.GetValue(SourcePathProperty) ?? string.Empty;
     }
 
     public static void SetDecodePixelWidth(DependencyObject element, int value)
@@ -61,12 +62,20 @@ public static class FomodAsyncImage
         int decodePixelWidth = Math.Max(1, GetDecodePixelWidth(image));
         long loadVersion = Interlocked.Increment(ref nextLoadVersion);
         image.SetValue(LoadVersionProperty, loadVersion);
-        image.Source = null;
 
         if (string.IsNullOrWhiteSpace(path))
         {
+            image.Source = null;
             return;
         }
+
+        if (FomodImageSourceConverter.TryGetCachedImageSource(path, decodePixelWidth, out ImageSource? cached))
+        {
+            image.Source = cached;
+            return;
+        }
+
+        image.Source = PlaceholderSource;
 
         ImageSource? source;
         try
@@ -85,6 +94,16 @@ public static class FomodAsyncImage
             return;
         }
 
-        image.Source = source;
+        image.Source = source ?? PlaceholderSource;
+    }
+
+    private static ImageSource CreatePlaceholderSource()
+    {
+        DrawingImage image = new(new GeometryDrawing(
+            System.Windows.Media.Brushes.Transparent,
+            null,
+            new RectangleGeometry(new Rect(0, 0, 1, 1))));
+        image.Freeze();
+        return image;
     }
 }

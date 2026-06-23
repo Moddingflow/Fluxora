@@ -26,6 +26,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private static readonly TimeSpan FluxPackInstallSplashCompletionHold = TimeSpan.FromMilliseconds(820);
     private static readonly TimeSpan ModOperationSplashCompletionHold = TimeSpan.FromMilliseconds(520);
     private static readonly TimeSpan ModSearchDebounceDelay = TimeSpan.FromMilliseconds(150);
+    private static readonly TimeSpan TargetProjectDirectoryPreviewDebounceDelay = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan BuildLoadingSplashPhraseInterval = TimeSpan.FromMilliseconds(4350);
     private static readonly TimeSpan BuildLoadingSplashMinimumDuration = TimeSpan.FromMilliseconds(650);
     private static readonly TimeSpan ExecutableLaunchSplashCompletionHold = TimeSpan.FromMilliseconds(650);
@@ -86,6 +87,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private HashSet<string> visibleModFilterKeys = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? modSearchDebounceCancellation;
     private string modSearchText = string.Empty;
+    private readonly Dictionary<string, string> targetProjectDirectoryPreviewCache = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenSource? targetProjectDirectoryPreviewCancellation;
+    private long targetProjectDirectoryPreviewVersion;
+    private string targetProjectDirectoryPreview = string.Empty;
+    private bool isTargetProjectDirectoryPreviewUnavailable;
     private ObservableCollection<GameTemplateOption> visibleTemplates = new();
     private string gameSearchText = string.Empty;
     private bool isProjectWorkspaceOpen;
@@ -348,6 +354,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     internal ICollectionView VisibleModsView => visibleModsView;
 
     internal static TimeSpan ModSearchDebounceInterval => ModSearchDebounceDelay;
+
+    internal static TimeSpan TargetProjectDirectoryPreviewDebounceInterval => TargetProjectDirectoryPreviewDebounceDelay;
 
     public string ModSearchText
     {
@@ -823,7 +831,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             if (SetField(ref projectName, value))
             {
                 ValidationMessage = string.Empty;
-                OnPropertyChanged(nameof(TargetProjectDirectory));
+                QueueTargetProjectDirectoryPreviewRefresh();
             }
         }
     }
@@ -878,7 +886,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             if (SetField(ref installRootDirectory, value))
             {
                 ValidationMessage = string.Empty;
-                OnPropertyChanged(nameof(TargetProjectDirectory));
+                QueueTargetProjectDirectoryPreviewRefresh();
             }
         }
     }
@@ -1310,26 +1318,211 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public string CreateProjectStepCounter => F("{0} из 4", CreateProjectStepIndex + 1);
 
-    public string TargetProjectDirectory
-    {
-        get
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(ProjectName) || string.IsNullOrWhiteSpace(InstallRootDirectory))
-                {
-                    return string.Empty;
-                }
+    public string TargetProjectDirectory => targetProjectDirectoryPreview;
 
-                string preview = projectCatalogService.BuildProjectDirectoryPreview(ProjectName, InstallRootDirectory);
-                return string.IsNullOrWhiteSpace(preview)
-                    ? T("C++ core рассчитает путь после подключения.")
-                    : preview;
-            }
-            catch (Exception)
+    private void QueueTargetProjectDirectoryPreviewRefresh()
+    {
+        long version = Interlocked.Increment(ref targetProjectDirectoryPreviewVersion);
+        targetProjectDirectoryPreviewCancellation?.Cancel();
+
+        string projectNameSnapshot = ProjectName.Trim();
+        string installRootDirectorySnapshot = InstallRootDirectory.Trim();
+        if (string.IsNullOrWhiteSpace(projectNameSnapshot) ||
+            string.IsNullOrWhiteSpace(installRootDirectorySnapshot))
+        {
+            targetProjectDirectoryPreviewCancellation = null;
+            SetTargetProjectDirectoryPreview(string.Empty);
+            return;
+        }
+
+        string cacheKey = TargetProjectDirectoryPreviewCacheKey(projectNameSnapshot, installRootDirectorySnapshot);
+        if (targetProjectDirectoryPreviewCache.TryGetValue(cacheKey, out string? cachedPreview))
+        {
+            targetProjectDirectoryPreviewCancellation = null;
+            SetTargetProjectDirectoryPreview(cachedPreview);
+            return;
+        }
+
+        CancellationTokenSource cancellation = new();
+        targetProjectDirectoryPreviewCancellation = cancellation;
+        _ = RefreshTargetProjectDirectoryPreviewAfterDebounceAsync(
+            projectNameSnapshot,
+            installRootDirectorySnapshot,
+            cacheKey,
+            version,
+            cancellation);
+    }
+
+    private async Task RefreshTargetProjectDirectoryPreviewAfterDebounceAsync(
+        string projectNameSnapshot,
+        string installRootDirectorySnapshot,
+        string cacheKey,
+        long version,
+        CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await Task.Delay(TargetProjectDirectoryPreviewDebounceDelay, cancellation.Token);
+            await RefreshTargetProjectDirectoryPreviewAsync(
+                projectNameSnapshot,
+                installRootDirectorySnapshot,
+                cacheKey,
+                version,
+                cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Debug.WriteLine($"Failed to refresh target project directory preview: {exception}");
+            ApplyTargetProjectDirectoryPreviewFailure(projectNameSnapshot, installRootDirectorySnapshot, version);
+        }
+        finally
+        {
+            if (ReferenceEquals(targetProjectDirectoryPreviewCancellation, cancellation))
             {
-                return string.Empty;
+                targetProjectDirectoryPreviewCancellation = null;
             }
+
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task RefreshTargetProjectDirectoryPreviewAsync(
+        string projectNameSnapshot,
+        string installRootDirectorySnapshot,
+        string cacheKey,
+        long version,
+        CancellationToken cancellationToken)
+    {
+        string preview = await projectCatalogService.BuildProjectDirectoryPreviewAsync(
+            projectNameSnapshot,
+            installRootDirectorySnapshot,
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        RunOnUiThread(() =>
+            ApplyTargetProjectDirectoryPreview(
+                projectNameSnapshot,
+                installRootDirectorySnapshot,
+                cacheKey,
+                version,
+                preview));
+    }
+
+    private void ApplyTargetProjectDirectoryPreview(
+        string projectNameSnapshot,
+        string installRootDirectorySnapshot,
+        string cacheKey,
+        long version,
+        string preview)
+    {
+        if (!IsCurrentTargetProjectDirectoryPreviewRequest(
+            projectNameSnapshot,
+            installRootDirectorySnapshot,
+            version))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(preview))
+        {
+            SetTargetProjectDirectoryPreview(TargetProjectDirectoryPreviewUnavailableText(), isUnavailable: true);
+            return;
+        }
+
+        targetProjectDirectoryPreviewCache[cacheKey] = preview;
+        SetTargetProjectDirectoryPreview(preview);
+    }
+
+    private void ApplyTargetProjectDirectoryPreviewFailure(
+        string projectNameSnapshot,
+        string installRootDirectorySnapshot,
+        long version)
+    {
+        RunOnUiThread(() =>
+        {
+            if (IsCurrentTargetProjectDirectoryPreviewRequest(
+                projectNameSnapshot,
+                installRootDirectorySnapshot,
+                version))
+            {
+                SetTargetProjectDirectoryPreview(string.Empty);
+            }
+        });
+    }
+
+    private bool IsCurrentTargetProjectDirectoryPreviewRequest(
+        string projectNameSnapshot,
+        string installRootDirectorySnapshot,
+        long version)
+    {
+        return version == Interlocked.Read(ref targetProjectDirectoryPreviewVersion) &&
+            string.Equals(ProjectName.Trim(), projectNameSnapshot, StringComparison.Ordinal) &&
+            string.Equals(InstallRootDirectory.Trim(), installRootDirectorySnapshot, StringComparison.Ordinal);
+    }
+
+    private void SetTargetProjectDirectoryPreview(string? preview, bool isUnavailable = false)
+    {
+        preview ??= string.Empty;
+        isTargetProjectDirectoryPreviewUnavailable = isUnavailable;
+        if (string.Equals(targetProjectDirectoryPreview, preview, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        targetProjectDirectoryPreview = preview;
+        OnPropertyChanged(nameof(TargetProjectDirectory));
+    }
+
+    private static string TargetProjectDirectoryPreviewCacheKey(
+        string projectName,
+        string installRootDirectory)
+    {
+        return $"{projectName.Trim()}\u001F{installRootDirectory.Trim()}";
+    }
+
+    private static string TargetProjectDirectoryPreviewUnavailableText()
+    {
+        return T("C++ core рассчитает путь после подключения.");
+    }
+
+    internal async Task FlushPendingTargetProjectDirectoryPreviewAsync()
+    {
+        targetProjectDirectoryPreviewCancellation?.Cancel();
+        targetProjectDirectoryPreviewCancellation = null;
+
+        string projectNameSnapshot = ProjectName.Trim();
+        string installRootDirectorySnapshot = InstallRootDirectory.Trim();
+        long version = Interlocked.Increment(ref targetProjectDirectoryPreviewVersion);
+        if (string.IsNullOrWhiteSpace(projectNameSnapshot) ||
+            string.IsNullOrWhiteSpace(installRootDirectorySnapshot))
+        {
+            SetTargetProjectDirectoryPreview(string.Empty);
+            return;
+        }
+
+        string cacheKey = TargetProjectDirectoryPreviewCacheKey(projectNameSnapshot, installRootDirectorySnapshot);
+        if (targetProjectDirectoryPreviewCache.TryGetValue(cacheKey, out string? cachedPreview))
+        {
+            SetTargetProjectDirectoryPreview(cachedPreview);
+            return;
+        }
+
+        try
+        {
+            await RefreshTargetProjectDirectoryPreviewAsync(
+                projectNameSnapshot,
+                installRootDirectorySnapshot,
+                cacheKey,
+                version,
+                CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            Debug.WriteLine($"Failed to flush target project directory preview: {exception}");
+            SetTargetProjectDirectoryPreview(string.Empty);
         }
     }
 
@@ -5707,6 +5900,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
         int modCount = itemsToDelete.Count(item => item.IsMod);
         int separatorCount = itemsToDelete.Count(item => item.IsSeparator);
+        if (!confirmDialogService.Confirm(ConfirmDialogOptions.DeleteModItems(itemsToDelete)))
+        {
+            return;
+        }
+
         using var operation = logService.BeginOperation(
             "DeleteSelectedModItems",
             $"project=\"{SelectedProject.Name}\", profile=\"{SelectedProfile}\", count={itemsToDelete.Count}, mods={modCount}, separators={separatorCount}");
@@ -5997,6 +6195,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
 
         FocusDownloadSelection(downloadsToDelete[0]);
+        if (!confirmDialogService.Confirm(ConfirmDialogOptions.DeleteDownloads(downloadsToDelete)))
+        {
+            return;
+        }
 
         using var operation = logService.BeginOperation(
             "DeleteDownloads",
@@ -7778,7 +7980,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CreateProjectStepTitle));
         OnPropertyChanged(nameof(CreateProjectStepSubtitle));
         OnPropertyChanged(nameof(CreateProjectStepCounter));
-        OnPropertyChanged(nameof(TargetProjectDirectory));
+        if (isTargetProjectDirectoryPreviewUnavailable)
+        {
+            SetTargetProjectDirectoryPreview(TargetProjectDirectoryPreviewUnavailableText(), isUnavailable: true);
+        }
+        else
+        {
+            OnPropertyChanged(nameof(TargetProjectDirectory));
+        }
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
