@@ -175,8 +175,8 @@
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/Services/PluginService.hpp": {
-    "mtime": 1781732467.9745526,
-    "ast_hash": "39697257ef11cb1c0ae2641af7d188a1",
+    "mtime": 1782279572.0384865,
+    "ast_hash": "98c53a62d760835a08c44d3bbf6067df",
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/Services/ProfileOrderService.hpp": {
@@ -250,8 +250,8 @@
     "semantic_hash": ""
   },
   "backend/src/FluxoraCoreApi.cpp": {
-    "mtime": 1782216945.2734494,
-    "ast_hash": "a85a2f7ddbf381e915e6fe8a501f8f70",
+    "mtime": 1782285256.4947028,
+    "ast_hash": "5efc524a52e584a93be17ed08b441845",
     "semantic_hash": ""
   },
   "backend/src/GameSupport/DefinitionBackedGameSupport.cpp": {
@@ -385,8 +385,8 @@
     "semantic_hash": ""
   },
   "backend/src/Services/PluginService.cpp": {
-    "mtime": 1782138318.1501248,
-    "ast_hash": "3b1ddef6f02cdc21a846ca428288e5a2",
+    "mtime": 1782280998.9812002,
+    "ast_hash": "612916a471ce3eac390ca9c3d9c977c1",
     "semantic_hash": ""
   },
   "backend/src/Services/ProfileOrderService.cpp": {
@@ -395,8 +395,8 @@
     "semantic_hash": ""
   },
   "backend/src/Services/ProjectService.cpp": {
-    "mtime": 1782149837.7940173,
-    "ast_hash": "72b9414787ec77e106cc93f7c311a8e9",
+    "mtime": 1782286639.4035342,
+    "ast_hash": "e36fb4d8eea12f5639c0adade6c8599e",
     "semantic_hash": ""
   },
   "backend/src/Services/TemplateService.cpp": {
@@ -545,13 +545,13 @@
     "semantic_hash": ""
   },
   "backend/tests/PluginServiceTests.cpp": {
-    "mtime": 1782138278.020859,
-    "ast_hash": "3a9112e3d5eab912d8b7316798573f0a",
+    "mtime": 1782281027.2302387,
+    "ast_hash": "c6907f42ba14259e1761afcd01075ead",
     "semantic_hash": ""
   },
   "backend/tests/ProjectServiceTests.cpp": {
-    "mtime": 1782149975.2342424,
-    "ast_hash": "26a1aaccc5db4244cf5adb4163df3aec",
+    "mtime": 1782286594.10029,
+    "ast_hash": "610a668efc18205432226b904a8dc20c",
     "semantic_hash": ""
   },
   "backend/tests/ProjectStateTransactionTests.cpp": {
@@ -710,8 +710,8 @@
     "semantic_hash": ""
   },
   "frontend.Tests/Services/ProgressUpdateCoalescerTests.cs": {
-    "mtime": 1782142662.316486,
-    "ast_hash": "ca282792dbca1a6cec7e1c7154826512",
+    "mtime": 1782282658.13508,
+    "ast_hash": "e0eb580ae199c42c36d34966ebc5fb71",
     "semantic_hash": ""
   },
   "frontend.Tests/Services/ProjectCatalogServiceTests.cs": {
@@ -855,8 +855,8 @@
     "semantic_hash": ""
   },
   "frontend/App.xaml.cs": {
-    "mtime": 1782224273.9520607,
-    "ast_hash": "f13fd4fe5dddafbd8aab763e1d2dc903",
+    "mtime": 1782285140.7844548,
+    "ast_hash": "51fd2e5121be9c32d04832da9f0f70ce",
     "semantic_hash": ""
   },
   "frontend/BuildSettingsWindow.xaml.cs": {
@@ -1015,8 +1015,8 @@
     "semantic_hash": ""
   },
   "frontend/Models/PluginEntry.cs": {
-    "mtime": 1781698115.7831838,
-    "ast_hash": "0dc6878969574f17586812902ccece97",
+    "mtime": 1782279693.555169,
+    "ast_hash": "7d1d978e241660cad0c0f67255cda407",
     "semantic_hash": ""
   },
   "frontend/Models/ResolvedTemplate.cs": {
@@ -1320,8 +1320,8 @@
     "semantic_hash": ""
   },
   "frontend/Services/ProgressUpdateCoalescer.cs": {
-    "mtime": 1782142508.0387814,
-    "ast_hash": "2b94048ff0290a51441f32edb0c023a4",
+    "mtime": 1782282649.7937164,
+    "ast_hash": "f05d193841adc3d16902eb6b8ab2a86e",
     "semantic_hash": ""
   },
   "frontend/Services/ProjectCatalogService.cs": {
@@ -1450,8 +1450,8 @@
     "semantic_hash": ""
   },
   "frontend/ViewModels/MainWindowViewModel.cs": {
-    "mtime": 1782223600.542534,
-    "ast_hash": "e0824193204b5c0d161dcb331e65c6f4",
+    "mtime": 1782282035.7902267,
+    "ast_hash": "18880f0bf00b9bd717cc51bf0b2371bb",
     "semantic_hash": ""
   },
   "frontend/ViewModels/ModFileTreeNode.cs": {
@@ -1485,8 +1485,8 @@
     "semantic_hash": ""
   },
   "frontend/Views/BuildDeletionProcessSplash.xaml.cs": {
-    "mtime": 1781511457.3802164,
-    "ast_hash": "faa70124dcb61a66ce0a9424d7a05acd",
+    "mtime": 1782286609.5492418,
+    "ast_hash": "cabcd88dd6e9576cb0acc696e7d4176f",
     "semantic_hash": ""
   },
   "frontend/Views/BuildLoadingSplash.xaml.cs": {
@@ -1982,6 +1982,21 @@
   "frontend.Tests/WpfApplicationTestCollection.cs": {
     "mtime": 1782227990.2075915,
     "ast_hash": "cb4c8afd99fbb0c392b2fa5f0c4bcc27",
+    "semantic_hash": ""
+  },
+  "frontend.Tests/Models/PluginEntryTests.cs": {
+    "mtime": 1782279831.837358,
+    "ast_hash": "f0e6fe8f2d1f0f77878c7c0dec3da3c5",
+    "semantic_hash": ""
+  },
+  "frontend/Assets/Images/Source/missing-master-warning-1024.png": {
+    "mtime": 1782279721.5545518,
+    "ast_hash": "b8bb01a54e77309d88461c606890dd65",
+    "semantic_hash": ""
+  },
+  "frontend/Assets/Images/missing-master-warning.png": {
+    "mtime": 1782279721.5620642,
+    "ast_hash": "de3980130de0057b2fefc8e9be908478",
     "semantic_hash": ""
   }
 }

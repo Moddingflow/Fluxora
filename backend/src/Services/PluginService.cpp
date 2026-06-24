@@ -9,6 +9,7 @@
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cwctype>
 #include <fstream>
@@ -29,12 +30,14 @@ namespace fluxora
         constexpr std::wstring_view fallbackProfileName = L"Default";
         constexpr std::wstring_view pluginKind = L"plugin";
         constexpr std::wstring_view separatorKind = L"separator";
+        constexpr std::wstring_view stockGameSourceLabel = L"Stock Game";
 
         struct DetectedPlugin
         {
             std::wstring name;
             NormalizedExtension extension;
             std::wstring sourceMod;
+            std::vector<std::wstring> masterFiles;
             bool sourceModEnabled{true};
         };
 
@@ -128,6 +131,134 @@ namespace fluxora
 
             const auto last = value.find_last_not_of(L" \t\r\n");
             return value.substr(first, last - first + 1);
+        }
+
+        [[nodiscard]] std::uint16_t readLittleEndian16(std::string_view bytes, std::size_t offset)
+        {
+            if (offset + 2 > bytes.size())
+            {
+                return 0;
+            }
+
+            return static_cast<std::uint16_t>(
+                static_cast<std::uint8_t>(bytes[offset]) |
+                (static_cast<std::uint16_t>(static_cast<std::uint8_t>(bytes[offset + 1])) << 8));
+        }
+
+        [[nodiscard]] std::uint32_t readLittleEndian32(std::string_view bytes, std::size_t offset)
+        {
+            if (offset + 4 > bytes.size())
+            {
+                return 0;
+            }
+
+            return static_cast<std::uint32_t>(
+                static_cast<std::uint8_t>(bytes[offset]) |
+                (static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[offset + 1])) << 8) |
+                (static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[offset + 2])) << 16) |
+                (static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[offset + 3])) << 24));
+        }
+
+        [[nodiscard]] bool hasFieldType(std::string_view bytes, std::size_t offset, std::string_view type)
+        {
+            return offset + type.size() <= bytes.size() &&
+                bytes.compare(offset, type.size(), type) == 0;
+        }
+
+        [[nodiscard]] std::wstring pluginFieldString(std::string_view bytes)
+        {
+            const std::size_t end = bytes.find('\0');
+            const std::size_t limit = end == std::string_view::npos ? bytes.size() : end;
+            std::wstring value;
+            value.reserve(limit);
+            for (std::size_t index = 0; index < limit; ++index)
+            {
+                value.push_back(static_cast<wchar_t>(static_cast<unsigned char>(bytes[index])));
+            }
+
+            return trim(std::move(value));
+        }
+
+        [[nodiscard]] std::vector<std::wstring> readPluginMasterFiles(const std::filesystem::path& path)
+        {
+            constexpr std::size_t tes4RecordHeaderSize = 24;
+            constexpr std::uint32_t maxHeaderPayloadBytes = 8 * 1024 * 1024;
+
+            std::ifstream file(path, std::ios::in | std::ios::binary);
+            if (!file)
+            {
+                return {};
+            }
+
+            std::array<char, tes4RecordHeaderSize> header{};
+            file.read(header.data(), static_cast<std::streamsize>(header.size()));
+            if (file.gcount() != static_cast<std::streamsize>(header.size()))
+            {
+                return {};
+            }
+
+            const std::string_view headerView(header.data(), header.size());
+            if (!hasFieldType(headerView, 0, "TES4"))
+            {
+                return {};
+            }
+
+            const std::uint32_t payloadSize = readLittleEndian32(headerView, 4);
+            if (payloadSize == 0 || payloadSize > maxHeaderPayloadBytes)
+            {
+                return {};
+            }
+
+            std::string payload(payloadSize, '\0');
+            file.read(payload.data(), static_cast<std::streamsize>(payload.size()));
+            if (file.gcount() != static_cast<std::streamsize>(payload.size()))
+            {
+                return {};
+            }
+
+            std::vector<std::wstring> masters;
+            std::set<std::wstring> seen;
+            std::uint32_t nextExtendedSize = 0;
+            std::size_t offset = 0;
+            while (offset + 6 <= payload.size())
+            {
+                const std::string_view fieldType(payload.data() + offset, 4);
+                std::uint32_t fieldSize = readLittleEndian16(payload, offset + 4);
+                offset += 6;
+
+                if (fieldType == "XXXX" && fieldSize == 4 && offset + 4 <= payload.size())
+                {
+                    nextExtendedSize = readLittleEndian32(payload, offset);
+                    offset += fieldSize;
+                    continue;
+                }
+
+                if (nextExtendedSize != 0)
+                {
+                    fieldSize = nextExtendedSize;
+                    nextExtendedSize = 0;
+                }
+
+                if (offset + fieldSize > payload.size())
+                {
+                    break;
+                }
+
+                if (fieldType == "MAST")
+                {
+                    std::wstring master = pluginFieldString(
+                        std::string_view(payload.data() + offset, fieldSize));
+                    const std::wstring key = toLower(master);
+                    if (!key.empty() && seen.insert(key).second)
+                    {
+                        masters.push_back(std::move(master));
+                    }
+                }
+
+                offset += fieldSize;
+            }
+
+            return masters;
         }
 
         bool equalsIgnoreCase(std::wstring_view left, std::wstring_view right)
@@ -516,6 +647,63 @@ namespace fluxora
                 containsExtension(rules.masterPluginExtensions, rules.masterPluginExtensionKeys, extension);
         }
 
+        [[nodiscard]] std::set<std::wstring> availablePluginKeys(
+            const PluginSupportRules& rules,
+            const std::map<std::wstring, DetectedPlugin>& detected)
+        {
+            std::set<std::wstring> available;
+            for (const std::wstring& basePlugin : rules.basePlugins)
+            {
+                const std::wstring key = toLower(basePlugin);
+                if (!key.empty())
+                {
+                    available.insert(key);
+                }
+            }
+
+            for (const auto& [key, plugin] : detected)
+            {
+                if (plugin.sourceModEnabled)
+                {
+                    available.insert(key);
+                }
+            }
+
+            return available;
+        }
+
+        [[nodiscard]] std::map<std::wstring, std::vector<std::wstring>> missingMastersByPlugin(
+            const PluginSupportRules& rules,
+            const std::map<std::wstring, DetectedPlugin>& detected)
+        {
+            std::map<std::wstring, std::vector<std::wstring>> result;
+            const std::set<std::wstring> available = availablePluginKeys(rules, detected);
+            for (const auto& [pluginKey, plugin] : detected)
+            {
+                if (!plugin.sourceModEnabled || plugin.masterFiles.empty())
+                {
+                    continue;
+                }
+
+                std::vector<std::wstring> missing;
+                for (const std::wstring& master : plugin.masterFiles)
+                {
+                    const std::wstring masterKey = toLower(master);
+                    if (!masterKey.empty() && !available.contains(masterKey))
+                    {
+                        missing.push_back(master);
+                    }
+                }
+
+                if (!missing.empty())
+                {
+                    result.emplace(pluginKey, std::move(missing));
+                }
+            }
+
+            return result;
+        }
+
         std::vector<StoredPlugin> readStoredPlugins(const std::filesystem::path& path)
         {
             recoverPluginStateFile(path);
@@ -648,11 +836,25 @@ namespace fluxora
 
                     std::error_code entryError;
                     const bool regular = entry.is_regular_file(entryError) && !entryError;
-                    entries.push_back(
+                    std::wstring item =
                         (regular ? std::wstring(L"file:") : std::wstring(L"other:")) +
                         normalizePathComparisonKey(
                             entry.path().filename(),
-                            PathCaseSensitivity::CaseInsensitive));
+                            PathCaseSensitivity::CaseInsensitive);
+                    if (regular)
+                    {
+                        entryError.clear();
+                        const std::uintmax_t size = std::filesystem::file_size(entry.path(), entryError);
+                        item.append(L":size=");
+                        item.append(entryError ? L"unknown" : std::to_wstring(size));
+
+                        entryError.clear();
+                        const auto timestamp = std::filesystem::last_write_time(entry.path(), entryError);
+                        item.append(L":mtime=");
+                        item.append(entryError ? L"unknown" : std::to_wstring(timestamp.time_since_epoch().count()));
+                    }
+
+                    entries.push_back(std::move(item));
                 }
 
                 std::sort(entries.begin(), entries.end());
@@ -795,6 +997,51 @@ namespace fluxora
             return fingerprint;
         }
 
+        [[nodiscard]] bool directoryExists(const std::filesystem::path& path)
+        {
+            std::error_code error;
+            return std::filesystem::exists(path, error) &&
+                !error &&
+                std::filesystem::is_directory(path, error) &&
+                !error;
+        }
+
+        [[nodiscard]] std::filesystem::path pluginSearchDirectory(
+            const std::filesystem::path& rootDirectory,
+            const std::filesystem::path& relativeSearchDirectory)
+        {
+            return relativeSearchDirectory.empty() || relativeSearchDirectory == std::filesystem::path(L".")
+                ? rootDirectory
+                : rootDirectory / relativeSearchDirectory;
+        }
+
+        [[nodiscard]] std::wstring stockGamePluginRevision(
+            const std::filesystem::path& gameDirectory,
+            const PluginSupportRules& rules)
+        {
+            if (gameDirectory.empty())
+            {
+                return L"stock=none;";
+            }
+
+            std::wstring revision =
+                L"stock=" + normalizePathComparisonKey(gameDirectory, PathCaseSensitivity::CaseInsensitive) + L";";
+            for (const std::filesystem::path& relativeSearchDirectory : rules.pluginSearchDirectories)
+            {
+                const std::filesystem::path searchDirectory =
+                    pluginSearchDirectory(gameDirectory, relativeSearchDirectory);
+                revision.append(L"search=");
+                revision.append(normalizePathComparisonKey(
+                    searchDirectory,
+                    PathCaseSensitivity::CaseInsensitive));
+                revision.push_back(L':');
+                revision.append(pluginSearchDirectoryFingerprint(searchDirectory));
+                revision.push_back(L';');
+            }
+
+            return revision;
+        }
+
         [[nodiscard]] std::wstring pluginScanRevision(
             const std::vector<ProfileModFolder>& profileModFolders)
         {
@@ -842,30 +1089,34 @@ namespace fluxora
         {
             const PluginSupportRules& rules = context.rulesProvider->pluginRules();
             std::map<std::wstring, DetectedPlugin> detected;
-            const std::filesystem::path directory = pathSettings.modsDirectory(projectDirectory);
-            if (!std::filesystem::exists(directory))
-            {
-                return detected;
-            }
+            const BuildPathSettings pathSettingsForProject =
+                pathSettings.loadForProjectDirectory(projectDirectory);
+            const std::filesystem::path directory = pathSettingsForProject.modsDirectory;
+            const std::filesystem::path gameDirectory = pathSettingsForProject.gameDirectory;
 
             std::vector<ProfileModFolder> profileModFolders;
-            for (const ProfileOrderItemRecord& item :
-                 InstanceMetadataStore::listProfileOrderItems(projectDirectory, profileName, directory))
+            if (directoryExists(directory))
             {
-                if (item.kind == L"mod" && item.hasMod)
+                for (const ProfileOrderItemRecord& item :
+                     InstanceMetadataStore::listProfileOrderItems(projectDirectory, profileName, directory))
                 {
-                    profileModFolders.push_back(ProfileModFolder{
-                        item.mod.id,
-                        item.mod.folderName,
-                        item.mod.updatedAt,
-                        item.mod.contentFingerprint,
-                        item.mod.state != L"disabled"
-                    });
+                    if (item.kind == L"mod" && item.hasMod)
+                    {
+                        profileModFolders.push_back(ProfileModFolder{
+                            item.mod.id,
+                            item.mod.folderName,
+                            item.mod.updatedAt,
+                            item.mod.contentFingerprint,
+                            item.mod.state != L"disabled"
+                        });
+                    }
                 }
             }
 
             const std::wstring cacheKey = pluginScanCacheKey(projectDirectory, profileName, rules, directory);
-            const std::wstring revision = pluginScanRevision(profileModFolders);
+            const std::wstring revision =
+                pluginScanRevision(profileModFolders) +
+                stockGamePluginRevision(gameDirectory, rules);
             {
                 std::lock_guard<std::mutex> lock(pluginScanCacheMutex());
                 const auto cached = pluginScanCache().find(cacheKey);
@@ -914,14 +1165,42 @@ namespace fluxora
                     fileName,
                     extension,
                     sourceMod,
+                    readPluginMasterFiles(entry.path()),
                     sourceModEnabled
                 };
             };
 
+            if (directoryExists(gameDirectory))
+            {
+                for (const std::filesystem::path& relativeSearchDirectory : rules.pluginSearchDirectories)
+                {
+                    const std::filesystem::path searchDirectory =
+                        pluginSearchDirectory(gameDirectory, relativeSearchDirectory);
+                    if (!directoryExists(searchDirectory))
+                    {
+                        continue;
+                    }
+
+                    std::error_code searchError;
+                    for (const auto& entry : std::filesystem::directory_iterator(
+                             searchDirectory,
+                             std::filesystem::directory_options::skip_permission_denied,
+                             searchError))
+                    {
+                        if (searchError)
+                        {
+                            break;
+                        }
+
+                        addPlugin(entry, std::wstring(stockGameSourceLabel), true);
+                    }
+                }
+            }
+
             for (const ProfileModFolder& folder : profileModFolders)
             {
                 const std::filesystem::path modDirectory = directory / std::filesystem::path(folder.folderName);
-                if (!std::filesystem::exists(modDirectory) || !std::filesystem::is_directory(modDirectory))
+                if (!directoryExists(modDirectory))
                 {
                     continue;
                 }
@@ -929,16 +1208,13 @@ namespace fluxora
                 for (const std::filesystem::path& relativeSearchDirectory : rules.pluginSearchDirectories)
                 {
                     const std::filesystem::path searchDirectory =
-                        relativeSearchDirectory.empty() || relativeSearchDirectory == std::filesystem::path(L".")
-                            ? modDirectory
-                            : modDirectory / relativeSearchDirectory;
-                    std::error_code searchError;
-                    if (!std::filesystem::exists(searchDirectory, searchError) ||
-                        !std::filesystem::is_directory(searchDirectory, searchError))
+                        pluginSearchDirectory(modDirectory, relativeSearchDirectory);
+                    if (!directoryExists(searchDirectory))
                     {
                         continue;
                     }
 
+                    std::error_code searchError;
                     for (const auto& entry : std::filesystem::directory_iterator(
                              searchDirectory,
                              std::filesystem::directory_options::skip_permission_denied,
@@ -1109,6 +1385,8 @@ namespace fluxora
             (void)projectDirectory;
             const PluginSupportRules& rules = context.rulesProvider->pluginRules();
             const std::map<std::wstring, StoredPlugin> storedByName = storedPluginsByName(stored);
+            const std::map<std::wstring, std::vector<std::wstring>> missingMasters =
+                missingMastersByPlugin(rules, detected);
 
             std::vector<PluginEntry> entries;
             entries.reserve(orderRecords.size());
@@ -1158,6 +1436,7 @@ namespace fluxora
                 const bool enabled = locked || (
                     plugin.isEnabled &&
                     (detectedPlugin == detected.end() || detectedPlugin->second.sourceModEnabled));
+                const auto pluginMissingMasters = missingMasters.find(key);
 
                 entries.push_back(PluginEntry{
                     record.id,
@@ -1176,7 +1455,10 @@ namespace fluxora
                     locked ? (rules.basePluginLockReason.empty()
                         ? std::wstring(L"Plugin is locked by the selected game's load-order rules.")
                         : rules.basePluginLockReason) : std::wstring(),
-                    {}
+                    {},
+                    pluginMissingMasters == missingMasters.end()
+                        ? std::vector<std::wstring>()
+                        : pluginMissingMasters->second
                 });
             }
 

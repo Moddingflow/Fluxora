@@ -20,7 +20,7 @@
 #include <cstdlib>
 #include <exception>
 #include <fstream>
-#include <iterator>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -694,18 +694,11 @@ namespace fluxora
             }
         }
 
-        struct DeleteFileTask
-        {
-            std::filesystem::path path;
-            std::uintmax_t bytes{0};
-        };
-
         struct DeletePlan
         {
-            std::vector<DeleteFileTask> files;
-            std::vector<std::filesystem::path> directories;
             std::uintmax_t totalBytes{0};
             std::uintmax_t totalEntries{1};
+            std::uintmax_t fileCount{0};
         };
 
         struct DeleteProgressState
@@ -717,6 +710,7 @@ namespace fluxora
             std::chrono::steady_clock::time_point lastReport{};
             std::uintmax_t lastReportedBytes{0};
             std::uintmax_t lastReportedEntries{0};
+            int lastReportedPercent{0};
         };
 
         bool isSameOrInsidePath(
@@ -803,6 +797,62 @@ namespace fluxora
             });
         }
 
+        void logDeleteProgressCallbackFailure(
+            Logger& logger,
+            std::string_view reason) noexcept
+        {
+            try
+            {
+                const std::string message =
+                    std::string("Project delete progress callback failed and was disabled. reason=\"") +
+                    std::string(reason) +
+                    "\"";
+                logger.write(LogLevel::Warning, "ProjectDeletion", message);
+                logger.writeOperation(LogLevel::Warning, "ProjectDeletion", message);
+            }
+            catch (...)
+            {
+            }
+        }
+
+        std::function<void(const ProjectDeleteProgress&)> makeSafeDeleteProgressCallback(
+            const std::function<void(const ProjectDeleteProgress&)>& progress,
+            Logger& logger)
+        {
+            if (!progress)
+            {
+                return {};
+            }
+
+            auto disabled = std::make_shared<std::atomic_bool>(false);
+            return [&logger, progress, disabled](const ProjectDeleteProgress& update)
+            {
+                if (disabled->load(std::memory_order_relaxed))
+                {
+                    return;
+                }
+
+                try
+                {
+                    progress(update);
+                }
+                catch (const std::exception& exception)
+                {
+                    if (!disabled->exchange(true, std::memory_order_relaxed))
+                    {
+                        logDeleteProgressCallbackFailure(logger, exception.what());
+                    }
+                }
+                catch (...)
+                {
+                    if (!disabled->exchange(true, std::memory_order_relaxed))
+                    {
+                        logDeleteProgressCallbackFailure(logger, "unknown exception");
+                    }
+                }
+            };
+        }
+
         std::uintmax_t regularFileSize(
             const std::filesystem::path& path,
             const std::filesystem::file_status& status)
@@ -819,11 +869,6 @@ namespace fluxora
 
         void clearReadOnlyAttribute(const std::filesystem::path& path);
 
-        std::size_t pathDepth(const std::filesystem::path& path)
-        {
-            return static_cast<std::size_t>(std::distance(path.begin(), path.end()));
-        }
-
         void publishScanProgress(
             const std::function<void(const ProjectDeleteProgress&)>& progress,
             const std::filesystem::path& root,
@@ -838,9 +883,7 @@ namespace fluxora
             }
 
             const auto now = std::chrono::steady_clock::now();
-            if (!force &&
-                scannedEntries % 512 != 0 &&
-                now - lastReport < std::chrono::milliseconds(250))
+            if (!force && now - lastReport < std::chrono::milliseconds(250))
             {
                 return;
             }
@@ -856,21 +899,6 @@ namespace fluxora
                 0,
                 scannedEntries,
                 0);
-        }
-
-        void sortDirectoriesDeepestFirst(std::vector<std::filesystem::path>& directories)
-        {
-            std::sort(directories.begin(), directories.end(), [](const auto& left, const auto& right)
-            {
-                const std::size_t leftDepth = pathDepth(left);
-                const std::size_t rightDepth = pathDepth(right);
-                if (leftDepth != rightDepth)
-                {
-                    return leftDepth > rightDepth;
-                }
-
-                return left.wstring().size() > right.wstring().size();
-            });
         }
 
         DeletePlan collectDeletePlan(
@@ -936,14 +964,10 @@ namespace fluxora
                 }
 
                 const std::filesystem::path path = root / relative;
-                if (isDirectory)
-                {
-                    plan.directories.push_back(path);
-                }
-                else
+                if (!isDirectory)
                 {
                     plan.totalBytes += bytes;
-                    plan.files.push_back(DeleteFileTask{path, bytes});
+                    ++plan.fileCount;
                 }
 
                 publishScanProgress(
@@ -955,7 +979,6 @@ namespace fluxora
                     false);
             }
 
-            sortDirectoriesDeepestFirst(plan.directories);
             publishScanProgress(
                 progress,
                 root,
@@ -1015,19 +1038,6 @@ namespace fluxora
             }
         }
 
-        std::size_t deleteWorkerCount(std::size_t fileCount)
-        {
-            if (fileCount == 0)
-            {
-                return 0;
-            }
-
-            const unsigned int hardwareThreads = std::thread::hardware_concurrency();
-            const std::size_t detectedWorkers = hardwareThreads == 0 ? 4 : hardwareThreads;
-            const std::size_t workerLimit = (std::min<std::size_t>)(detectedWorkers, 4);
-            return (std::max<std::size_t>)(1, (std::min)(workerLimit, fileCount));
-        }
-
         void publishDeleteStateProgress(
             DeleteProgressState& state,
             const std::function<void(const ProjectDeleteProgress&)>& progress,
@@ -1043,8 +1053,6 @@ namespace fluxora
                 return;
             }
 
-            const std::uintmax_t deletedBytes = state.deletedBytes.load(std::memory_order_relaxed);
-            const std::uintmax_t deletedEntries = state.deletedEntries.load(std::memory_order_relaxed);
             const auto now = std::chrono::steady_clock::now();
             constexpr std::uintmax_t minByteInterval = 32ull * 1024ull * 1024ull;
             constexpr std::uintmax_t minEntryInterval = 128;
@@ -1053,8 +1061,16 @@ namespace fluxora
             std::unique_lock<std::mutex> callbackLock;
             {
                 std::lock_guard lock(state.mutex);
-                const bool enoughBytes = deletedBytes - state.lastReportedBytes >= minByteInterval;
-                const bool enoughEntries = deletedEntries - state.lastReportedEntries >= minEntryInterval;
+                const std::uintmax_t deletedBytes = state.deletedBytes.load(std::memory_order_relaxed);
+                const std::uintmax_t deletedEntries = state.deletedEntries.load(std::memory_order_relaxed);
+                const std::uintmax_t byteDelta = deletedBytes >= state.lastReportedBytes
+                    ? deletedBytes - state.lastReportedBytes
+                    : 0;
+                const std::uintmax_t entryDelta = deletedEntries >= state.lastReportedEntries
+                    ? deletedEntries - state.lastReportedEntries
+                    : 0;
+                const bool enoughBytes = byteDelta >= minByteInterval;
+                const bool enoughEntries = entryDelta >= minEntryInterval;
                 if (!force &&
                     !enoughBytes &&
                     !enoughEntries &&
@@ -1063,15 +1079,21 @@ namespace fluxora
                     return;
                 }
 
+                const int calculatedPercent =
+                    calculateDeletePercent(deletedBytes, totalBytes, deletedEntries, totalEntries);
+                const int progressPercent = (std::max)(
+                    state.lastReportedPercent,
+                    (std::max)(1, calculatedPercent));
                 state.lastReportedBytes = deletedBytes;
                 state.lastReportedEntries = deletedEntries;
+                state.lastReportedPercent = progressPercent;
                 state.lastReport = now;
                 callbackLock = std::unique_lock<std::mutex>(state.callbackMutex);
                 update = ProjectDeleteProgress{
                     L"delete",
                     std::wstring(currentStep),
                     relativeDisplayPath(root, currentItem),
-                    calculateDeletePercent(deletedBytes, totalBytes, deletedEntries, totalEntries),
+                    progressPercent,
                     deletedBytes,
                     totalBytes,
                     deletedEntries,
@@ -1109,21 +1131,6 @@ namespace fluxora
                 force);
         }
 
-        void rememberDeleteException(
-            std::exception_ptr& firstError,
-            std::mutex& errorMutex,
-            std::atomic<bool>& shouldStop)
-        {
-            {
-                std::lock_guard lock(errorMutex);
-                if (!firstError)
-                {
-                    firstError = std::current_exception();
-                }
-            }
-            shouldStop.store(true, std::memory_order_relaxed);
-        }
-
         void deleteFilesFromPlan(
             const DeletePlan& plan,
             DeleteProgressState& state,
@@ -1132,86 +1139,134 @@ namespace fluxora
             std::uintmax_t totalBytes,
             std::uintmax_t totalEntries)
         {
-            const std::size_t workerCount = deleteWorkerCount(plan.files.size());
-            if (workerCount == 0)
+            if (plan.fileCount == 0)
             {
                 return;
             }
 
-            std::atomic<std::size_t> nextIndex{0};
-            std::atomic<bool> shouldStop{false};
-            std::exception_ptr firstError;
-            std::mutex errorMutex;
-
-            std::vector<std::thread> workers;
-            workers.reserve(workerCount);
-            for (std::size_t worker = 0; worker < workerCount; ++worker)
+            std::error_code error;
+            const std::filesystem::path nativeRoot = nativeDeletePath(root);
+            std::filesystem::recursive_directory_iterator iterator(
+                nativeRoot,
+                std::filesystem::directory_options::skip_permission_denied,
+                error);
+            if (error)
             {
-                workers.emplace_back([&]()
+                throw std::runtime_error(
+                    "Failed to scan build folder for deletion: " + error.message());
+            }
+
+            const std::filesystem::recursive_directory_iterator end;
+            for (; iterator != end; iterator.increment(error))
+            {
+                if (error)
                 {
-                    while (!shouldStop.load(std::memory_order_relaxed))
-                    {
-                        const std::size_t index = nextIndex.fetch_add(1, std::memory_order_relaxed);
-                        if (index >= plan.files.size())
-                        {
-                            break;
-                        }
+                    throw std::runtime_error(
+                        "Failed to scan build folder for deletion: " + error.message());
+                }
 
-                        const DeleteFileTask& task = plan.files[index];
-                        try
-                        {
-                            removePathWithRetry(task.path);
-                            recordDeletedEntry(
-                                state,
-                                progress,
-                                root,
-                                task.path,
-                                task.bytes,
-                                totalBytes,
-                                totalEntries,
-                                L"Удаляю файлы сборки");
-                        }
-                        catch (...)
-                        {
-                            rememberDeleteException(firstError, errorMutex, shouldStop);
-                            break;
-                        }
-                    }
-                });
-            }
+                const std::filesystem::path nativePath = iterator->path();
+                const std::filesystem::file_status status = iterator->symlink_status(error);
+                if (error)
+                {
+                    throw std::runtime_error(
+                        "Failed to inspect build item for deletion: " + error.message());
+                }
 
-            for (std::thread& worker : workers)
-            {
-                worker.join();
-            }
+                const bool isDirectory = std::filesystem::is_directory(status) &&
+                    !std::filesystem::is_symlink(status);
+                if (isDirectory)
+                {
+                    continue;
+                }
 
-            if (firstError)
-            {
-                std::rethrow_exception(firstError);
+                const std::uintmax_t bytes = regularFileSize(nativePath, status);
+                const std::filesystem::path relative = std::filesystem::relative(nativePath, nativeRoot, error);
+                if (error)
+                {
+                    throw std::runtime_error(
+                        "Failed to resolve build item for deletion: " + error.message());
+                }
+
+                const std::filesystem::path path = root / relative;
+                removePathWithRetry(path);
+                recordDeletedEntry(
+                    state,
+                    progress,
+                    root,
+                    path,
+                    bytes,
+                    totalBytes,
+                    totalEntries,
+                    L"Удаляю файлы сборки");
             }
         }
 
-        void deleteDirectoriesFromPlan(
-            const DeletePlan& plan,
+        void recordDeletedEntries(
+            DeleteProgressState& state,
+            const std::function<void(const ProjectDeleteProgress&)>& progress,
+            const std::filesystem::path& root,
+            const std::filesystem::path& currentItem,
+            std::uintmax_t count,
+            std::uintmax_t totalBytes,
+            std::uintmax_t totalEntries,
+            std::wstring_view currentStep)
+        {
+            if (count > 0)
+            {
+                state.deletedEntries.fetch_add(count, std::memory_order_relaxed);
+            }
+
+            publishDeleteStateProgress(
+                state,
+                progress,
+                root,
+                currentItem,
+                totalBytes,
+                totalEntries,
+                currentStep,
+                true);
+        }
+
+        void removeRemainingDirectoryTree(
             DeleteProgressState& state,
             const std::function<void(const ProjectDeleteProgress&)>& progress,
             const std::filesystem::path& root,
             std::uintmax_t totalBytes,
             std::uintmax_t totalEntries)
         {
-            for (const std::filesystem::path& directory : plan.directories)
+            publishDeleteStateProgress(
+                state,
+                progress,
+                root,
+                root,
+                totalBytes,
+                totalEntries,
+                L"Удаляю папки сборки",
+                true);
+
+            clearReadOnlyAttribute(root);
+            std::error_code error;
+            const std::uintmax_t removedEntries =
+                std::filesystem::remove_all(nativeDeletePath(root), error);
+            if (error)
             {
-                removePathWithRetry(directory);
-                recordDeletedEntry(
-                    state,
-                    progress,
-                    root,
-                    directory,
-                    0,
-                    totalBytes,
-                    totalEntries,
-                    L"Удаляю папки сборки");
+                throw std::runtime_error(
+                    "Failed to delete build folder tree \"" +
+                    toUtf8(root.wstring()) +
+                    "\": " +
+                    error.message());
             }
+
+            recordDeletedEntries(
+                state,
+                progress,
+                root,
+                root,
+                removedEntries,
+                totalBytes,
+                totalEntries,
+                L"Завершаю удаление");
         }
 
         std::vector<std::filesystem::path> collectExternalConfigTargets(
@@ -2567,113 +2622,153 @@ namespace fluxora
             throw std::invalid_argument("Build config path is required.");
         }
 
-        const auto requestedConfigPath = std::filesystem::absolute(request.configPath);
-        ProjectOpenResult current = openProjectConfig(requestedConfigPath);
-        ensureSafeDeleteTarget(current.project);
+        const std::string requestedConfigText = toUtf8(request.configPath.wstring());
+        logger_.writeOperation(
+            LogLevel::Info,
+            "ProjectDeletion",
+            std::string("Project delete started. configPath=\"") + requestedConfigText + "\"");
 
-        const std::filesystem::path projectDirectory =
-            std::filesystem::absolute(current.project.projectDirectory).lexically_normal();
-        DeletePlan deletePlan = collectDeletePlan(projectDirectory, request.progress);
-        std::vector<std::filesystem::path> configTargets =
-            collectExternalConfigTargets(requestedConfigPath, current.project);
-
-        std::uintmax_t totalBytes = deletePlan.totalBytes;
-        std::uintmax_t totalEntries = deletePlan.totalEntries + configTargets.size();
-
-        for (const std::filesystem::path& configTarget : configTargets)
+        try
         {
-            std::error_code error;
-            const std::uintmax_t configBytes = std::filesystem::file_size(configTarget, error);
-            if (!error)
+            const std::function<void(const ProjectDeleteProgress&)> deleteProgress =
+                makeSafeDeleteProgressCallback(request.progress, logger_);
+            const auto requestedConfigPath = std::filesystem::absolute(request.configPath);
+            ProjectOpenResult current = openProjectConfig(requestedConfigPath);
+            ensureSafeDeleteTarget(current.project);
+
+            const std::filesystem::path projectDirectory =
+                std::filesystem::absolute(current.project.projectDirectory).lexically_normal();
+            logger_.writeOperation(
+                LogLevel::Info,
+                "ProjectDeletion",
+                std::string("Project delete target resolved. projectDirectory=\"") +
+                    toUtf8(projectDirectory.wstring()) + "\"");
+
+            DeletePlan deletePlan = collectDeletePlan(projectDirectory, deleteProgress);
+            const std::string planMessage =
+                std::string("Project delete plan collected. projectDirectory=\"") +
+                toUtf8(projectDirectory.wstring()) +
+                "\", files=" + std::to_string(deletePlan.fileCount) +
+                ", totalBytes=" + std::to_string(deletePlan.totalBytes) +
+                ", totalEntries=" + std::to_string(deletePlan.totalEntries);
+            logger_.write(LogLevel::Info, "ProjectDeletion", planMessage);
+            logger_.writeOperation(LogLevel::Info, "ProjectDeletion", planMessage);
+
+            std::vector<std::filesystem::path> configTargets =
+                collectExternalConfigTargets(requestedConfigPath, current.project);
+
+            std::uintmax_t totalBytes = deletePlan.totalBytes;
+            std::uintmax_t totalEntries = deletePlan.totalEntries + configTargets.size();
+
+            for (const std::filesystem::path& configTarget : configTargets)
             {
-                totalBytes += configBytes;
+                std::error_code error;
+                const std::uintmax_t configBytes = std::filesystem::file_size(configTarget, error);
+                if (!error)
+                {
+                    totalBytes += configBytes;
+                }
             }
-        }
 
-        publishDeleteProgress(
-            request.progress,
-            L"delete",
-            L"Удаляю файлы сборки",
-            projectDirectory.filename().wstring(),
-            1,
-            0,
-            totalBytes,
-            0,
-            totalEntries);
+            publishDeleteProgress(
+                deleteProgress,
+                L"delete",
+                L"Удаляю файлы сборки",
+                projectDirectory.filename().wstring(),
+                1,
+                0,
+                totalBytes,
+                0,
+                totalEntries);
 
-        DeleteProgressState deleteState;
-        deleteFilesFromPlan(
-            deletePlan,
-            deleteState,
-            request.progress,
-            projectDirectory,
-            totalBytes,
-            totalEntries);
-        deleteDirectoriesFromPlan(
-            deletePlan,
-            deleteState,
-            request.progress,
-            projectDirectory,
-            totalBytes,
-            totalEntries);
-
-        removePathWithRetry(projectDirectory);
-        recordDeletedEntry(
-            deleteState,
-            request.progress,
-            projectDirectory,
-            projectDirectory,
-            0,
-            totalBytes,
-            totalEntries,
-            L"Завершаю удаление",
-            true);
-
-        for (const std::filesystem::path& configTarget : configTargets)
-        {
-            std::error_code error;
-            const std::uintmax_t configBytes = std::filesystem::file_size(configTarget, error);
-            removePathWithRetry(configTarget);
-            recordDeletedEntry(
+            DeleteProgressState deleteState;
+            deleteFilesFromPlan(
+                deletePlan,
                 deleteState,
-                request.progress,
+                deleteProgress,
                 projectDirectory,
-                configTarget,
-                error ? 0 : configBytes,
+                totalBytes,
+                totalEntries);
+            removeRemainingDirectoryTree(
+                deleteState,
+                deleteProgress,
+                projectDirectory,
+                totalBytes,
+                totalEntries);
+
+            for (const std::filesystem::path& configTarget : configTargets)
+            {
+                std::error_code error;
+                const std::uintmax_t configBytes = std::filesystem::file_size(configTarget, error);
+                removePathWithRetry(configTarget);
+                recordDeletedEntry(
+                    deleteState,
+                    deleteProgress,
+                    projectDirectory,
+                    configTarget,
+                    error ? 0 : configBytes,
+                    totalBytes,
+                    totalEntries,
+                    L"Завершаю удаление",
+                    true);
+            }
+
+            projects_.erase(
+                std::remove_if(
+                    projects_.begin(),
+                    projects_.end(),
+                    [&current](const ProjectDescriptor& candidate)
+                    {
+                        return isSamePath(candidate.configPath, current.project.configPath) ||
+                            isSamePath(candidate.projectDirectory, current.project.projectDirectory);
+                    }),
+                projects_.end());
+            invalidateProjectSummaryCache(current.project.configPath);
+            for (const std::filesystem::path& configTarget : configTargets)
+            {
+                invalidateProjectSummaryCache(configTarget);
+            }
+
+            publishDeleteProgress(
+                deleteProgress,
+                L"complete",
+                L"Удаление завершено",
+                current.project.name,
+                100,
+                totalBytes,
                 totalBytes,
                 totalEntries,
-                L"Завершаю удаление",
-                true);
-        }
+                totalEntries);
 
-        projects_.erase(
-            std::remove_if(
-                projects_.begin(),
-                projects_.end(),
-                [&current](const ProjectDescriptor& candidate)
-                {
-                    return isSamePath(candidate.configPath, current.project.configPath) ||
-                        isSamePath(candidate.projectDirectory, current.project.projectDirectory);
-                }),
-            projects_.end());
-        invalidateProjectSummaryCache(current.project.configPath);
-        for (const std::filesystem::path& configTarget : configTargets)
+            logger_.writeOperation(
+                LogLevel::Info,
+                "ProjectDeletion",
+                std::string("Project delete completed. projectDirectory=\"") +
+                    toUtf8(projectDirectory.wstring()) + "\"");
+            logger_.write(LogLevel::Info, "Project deleted.");
+        }
+        catch (const std::exception& exception)
         {
-            invalidateProjectSummaryCache(configTarget);
+            const std::string message =
+                std::string("Project delete failed. configPath=\"") +
+                requestedConfigText +
+                "\", error=\"" +
+                exception.what() +
+                "\"";
+            logger_.write(LogLevel::Error, "ProjectDeletion", message);
+            logger_.writeOperation(LogLevel::Error, "ProjectDeletion", message);
+            throw;
         }
-
-        publishDeleteProgress(
-            request.progress,
-            L"complete",
-            L"Удаление завершено",
-            current.project.name,
-            100,
-            totalBytes,
-            totalBytes,
-            totalEntries,
-            totalEntries);
-
-        logger_.write(LogLevel::Info, "Project deleted.");
+        catch (...)
+        {
+            const std::string message =
+                std::string("Project delete failed with an unknown native exception. configPath=\"") +
+                requestedConfigText +
+                "\"";
+            logger_.write(LogLevel::Error, "ProjectDeletion", message);
+            logger_.writeOperation(LogLevel::Error, "ProjectDeletion", message);
+            throw;
+        }
     }
 
     void ProjectService::materializeTemplate(

@@ -1410,6 +1410,7 @@ namespace
         writer.field(L"isLight", plugin.isLight);
         writer.field(L"isLocked", plugin.isLocked);
         writer.field(L"lockReason", plugin.lockReason);
+        writer.stringArray(L"missingMasters", plugin.missingMasters);
         writer.endObject();
     }
 
@@ -1979,6 +1980,19 @@ namespace
             : FluxoraCoreResultCoreError;
     }
 
+    int mapUnknownException(std::string_view operation)
+    {
+        lastRequiredBufferLength = 0;
+        lastBufferedOutput.clear();
+        hasLastBufferedOutput = false;
+        const std::string message =
+            std::string("Unknown native exception during ") + std::string(operation) + ".";
+        lastError = messageToWide(message);
+        logBridge(fluxora::LogLevel::Error, message);
+        logOperation(fluxora::LogLevel::Error, "NativeApi", message);
+        return FluxoraCoreResultCoreError;
+    }
+
     int installDownloadWithMode(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
@@ -2347,6 +2361,10 @@ extern "C"
         {
             return mapException(exception);
         }
+        catch (...)
+        {
+            return mapUnknownException("delete project");
+        }
     }
 
     int fluxora_delete_project_with_progress(
@@ -2386,6 +2404,10 @@ extern "C"
         catch (const std::exception& exception)
         {
             return mapException(exception);
+        }
+        catch (...)
+        {
+            return mapUnknownException("delete project with progress");
         }
     }
 

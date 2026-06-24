@@ -212,13 +212,21 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             RunOnUiThread,
             (previous, current) => ProgressUpdateCoalescer<BuildDeletionProgress>.ShouldForcePhaseUpdate(
                 previous?.Phase,
-                current.Phase));
+                current.Phase),
+            reportException: exception => logService.Warning(
+                "BuildDeletion",
+                "Build deletion progress UI update failed and was ignored.",
+                exception));
         fluxPackInstallProgressCoalescer = new ProgressUpdateCoalescer<FluxPackInstallProgress>(
             progress => FluxPackInstallProcess.ApplyProgress(progress),
             RunOnUiThread,
             (previous, current) => ProgressUpdateCoalescer<FluxPackInstallProgress>.ShouldForcePhaseUpdate(
                 previous?.Phase,
-                current.Phase));
+                current.Phase),
+            reportException: exception => logService.Warning(
+                "FluxPackInstall",
+                "FluxPack install progress UI update failed and was ignored.",
+                exception));
         visibleModsView = CollectionViewSource.GetDefaultView(VisibleMods);
         if (visibleModsView.CanFilter)
         {
@@ -8258,7 +8266,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             left.IsMaster == right.IsMaster &&
             left.IsLight == right.IsLight &&
             left.IsLocked == right.IsLocked &&
-            string.Equals(left.LockReason, right.LockReason, StringComparison.Ordinal);
+            string.Equals(left.LockReason, right.LockReason, StringComparison.Ordinal) &&
+            left.MissingMasters.SequenceEqual(right.MissingMasters, StringComparer.OrdinalIgnoreCase);
     }
 
     private static string FormatBuildCount(int count)

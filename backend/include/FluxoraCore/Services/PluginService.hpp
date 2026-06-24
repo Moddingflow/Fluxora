@@ -29,6 +29,7 @@ namespace fluxora
         bool isLocked{false};
         std::wstring lockReason;
         std::wstring separatorTitle;
+        std::vector<std::wstring> missingMasters;
     };
 
     struct PluginRuleContext

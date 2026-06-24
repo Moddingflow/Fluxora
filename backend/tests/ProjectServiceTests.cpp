@@ -7,10 +7,12 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fluxora::tests
@@ -399,6 +401,143 @@ namespace fluxora::tests
             EXPECT_FALSE(AtomicFileStore::isManagedTempFileFor(configPath, entry.path()))
                 << entry.path().string();
         }
+#endif
+    }
+
+    TEST(ProjectServiceTests, DeleteProjectStreamsLargeBuildTreeAndReportsProgress)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Deleting a project initializes the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Large Skyrim Build";
+        const std::filesystem::path configPath = projectDirectory / L"fluxora.build.json";
+        writeTextFile(projectDirectory / L"Game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(projectDirectory / L"Game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(projectDirectory / L"profiles" / L"Default" / L"plugins.txt", "*Skyrim.esm\n");
+        writeTextFile(projectDirectory / L"profiles" / L"Default" / L"loadorder.txt", "Skyrim.esm\n");
+        writeTextFile(configPath, std::string(LegacySkyrimManifest));
+
+        constexpr int modCount = 120;
+        constexpr int filesPerMod = 20;
+        constexpr std::size_t fileBytes = 1024;
+        const std::string content(fileBytes, 'x');
+        for (int modIndex = 0; modIndex < modCount; ++modIndex)
+        {
+            const std::filesystem::path modRoot =
+                projectDirectory /
+                L"mods" /
+                (L"Mod " + std::to_wstring(modIndex)) /
+                L"textures" /
+                L"actors" /
+                L"nested";
+            for (int fileIndex = 0; fileIndex < filesPerMod; ++fileIndex)
+            {
+                writeTextFile(
+                    modRoot / (L"file-" + std::to_wstring(fileIndex) + L".bin"),
+                    content);
+            }
+        }
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        std::vector<ProjectDeleteProgress> progressEvents;
+        std::vector<std::thread::id> progressThreadIds;
+        ProjectDeleteProgress lastProgress;
+        const std::thread::id callerThreadId = std::this_thread::get_id();
+        projects.deleteProject(ProjectDeleteRequest{
+            configPath,
+            [&progressEvents, &progressThreadIds, &lastProgress](const ProjectDeleteProgress& progress)
+            {
+                progressThreadIds.push_back(std::this_thread::get_id());
+                progressEvents.push_back(progress);
+                lastProgress = progress;
+            }
+        });
+
+        EXPECT_FALSE(std::filesystem::exists(projectDirectory));
+        EXPECT_TRUE(std::any_of(progressEvents.begin(), progressEvents.end(), [](const ProjectDeleteProgress& progress)
+        {
+            return progress.phase == L"scan";
+        }));
+        EXPECT_TRUE(std::any_of(progressEvents.begin(), progressEvents.end(), [](const ProjectDeleteProgress& progress)
+        {
+            return progress.phase == L"delete";
+        }));
+
+        int previousPercent = 0;
+        std::uintmax_t previousDeletedEntries = 0;
+        std::uintmax_t previousDeletedBytes = 0;
+        for (const ProjectDeleteProgress& progress : progressEvents)
+        {
+            if (progress.phase == L"scan")
+            {
+                continue;
+            }
+
+            EXPECT_GE(progress.overallPercent, previousPercent);
+            EXPECT_GE(progress.deletedEntries, previousDeletedEntries);
+            EXPECT_GE(progress.deletedBytes, previousDeletedBytes);
+            previousPercent = progress.overallPercent;
+            previousDeletedEntries = progress.deletedEntries;
+            previousDeletedBytes = progress.deletedBytes;
+        }
+
+        EXPECT_EQ(lastProgress.phase, L"complete");
+        EXPECT_EQ(lastProgress.overallPercent, 100);
+        EXPECT_GE(lastProgress.totalBytes, static_cast<std::uintmax_t>(modCount * filesPerMod * fileBytes));
+        EXPECT_GE(lastProgress.totalEntries, static_cast<std::uintmax_t>(modCount * filesPerMod));
+        EXPECT_TRUE(std::all_of(progressThreadIds.begin(), progressThreadIds.end(), [callerThreadId](std::thread::id threadId)
+        {
+            return threadId == callerThreadId;
+        }));
+#endif
+    }
+
+    TEST(ProjectServiceTests, DeleteProjectContinuesWhenProgressCallbackFailsDuringScan)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Deleting a project initializes the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Large Skyrim Build";
+        const std::filesystem::path configPath = projectDirectory / L"fluxora.build.json";
+        writeTextFile(projectDirectory / L"Game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(projectDirectory / L"Game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(projectDirectory / L"profiles" / L"Default" / L"plugins.txt", "*Skyrim.esm\n");
+        writeTextFile(projectDirectory / L"profiles" / L"Default" / L"loadorder.txt", "Skyrim.esm\n");
+        writeTextFile(projectDirectory / L"mods" / L"Heavy Mod" / L"textures" / L"payload.bin", "payload");
+        writeTextFile(configPath, std::string(LegacySkyrimManifest));
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        int progressCalls = 0;
+        projects.deleteProject(ProjectDeleteRequest{
+            configPath,
+            [&progressCalls](const ProjectDeleteProgress& progress)
+            {
+                ++progressCalls;
+                if (progress.phase == L"scan")
+                {
+                    throw std::runtime_error("disposed deletion progress view");
+                }
+            }
+        });
+
+        EXPECT_EQ(progressCalls, 1);
+        EXPECT_FALSE(std::filesystem::exists(projectDirectory));
 #endif
     }
 

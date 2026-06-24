@@ -12,6 +12,7 @@ internal sealed class ProgressUpdateCoalescer<T> : IDisposable
     private readonly TimeSpan minimumInterval;
     private readonly Func<DateTimeOffset> getNow;
     private readonly Action<TimeSpan, Action> scheduleDelayed;
+    private readonly Action<Exception>? reportException;
 
     private T? pendingUpdate;
     private T? lastObservedUpdate;
@@ -27,7 +28,8 @@ internal sealed class ProgressUpdateCoalescer<T> : IDisposable
         Func<T?, T, bool>? shouldForceEmit = null,
         TimeSpan? minimumInterval = null,
         Func<DateTimeOffset>? getNow = null,
-        Action<TimeSpan, Action>? scheduleDelayed = null)
+        Action<TimeSpan, Action>? scheduleDelayed = null,
+        Action<Exception>? reportException = null)
     {
         this.emit = emit ?? throw new ArgumentNullException(nameof(emit));
         this.dispatch = dispatch ?? throw new ArgumentNullException(nameof(dispatch));
@@ -35,6 +37,7 @@ internal sealed class ProgressUpdateCoalescer<T> : IDisposable
         this.minimumInterval = minimumInterval ?? DefaultMinimumInterval;
         this.getNow = getNow ?? (() => DateTimeOffset.UtcNow);
         this.scheduleDelayed = scheduleDelayed ?? ScheduleDelayedOnThreadPool;
+        this.reportException = reportException;
 
         if (this.minimumInterval <= TimeSpan.Zero)
         {
@@ -83,12 +86,12 @@ internal sealed class ProgressUpdateCoalescer<T> : IDisposable
 
         if (emitAction is not null)
         {
-            dispatch(emitAction);
+            DispatchSafely(emitAction);
         }
 
         if (shouldSchedule)
         {
-            scheduleDelayed(delay, () => FlushScheduled(scheduledVersion));
+            ScheduleDelayedSafely(delay, scheduledVersion);
         }
     }
 
@@ -109,7 +112,7 @@ internal sealed class ProgressUpdateCoalescer<T> : IDisposable
 
         if (emitAction is not null)
         {
-            dispatch(emitAction);
+            DispatchSafely(emitAction);
         }
     }
 
@@ -191,12 +194,12 @@ internal sealed class ProgressUpdateCoalescer<T> : IDisposable
 
         if (emitAction is not null)
         {
-            dispatch(emitAction);
+            DispatchSafely(emitAction);
         }
 
         if (shouldSchedule)
         {
-            scheduleDelayed(delay, () => FlushScheduled(scheduledVersion));
+            ScheduleDelayedSafely(delay, scheduledVersion);
         }
     }
 
@@ -213,6 +216,53 @@ internal sealed class ProgressUpdateCoalescer<T> : IDisposable
         delayedFlushScheduled = false;
         lastEmitAt = now;
         return () => emit(update);
+    }
+
+    private void ScheduleDelayedSafely(TimeSpan delay, int scheduledVersion)
+    {
+        try
+        {
+            scheduleDelayed(delay, () => FlushScheduled(scheduledVersion));
+        }
+        catch (Exception exception)
+        {
+            ReportException(exception);
+        }
+    }
+
+    private void DispatchSafely(Action emitAction)
+    {
+        try
+        {
+            dispatch(() => RunEmitSafely(emitAction));
+        }
+        catch (Exception exception)
+        {
+            ReportException(exception);
+        }
+    }
+
+    private void RunEmitSafely(Action emitAction)
+    {
+        try
+        {
+            emitAction();
+        }
+        catch (Exception exception)
+        {
+            ReportException(exception);
+        }
+    }
+
+    private void ReportException(Exception exception)
+    {
+        try
+        {
+            reportException?.Invoke(exception);
+        }
+        catch
+        {
+        }
     }
 
     private TimeSpan ElapsedSinceLastEmit(DateTimeOffset now)

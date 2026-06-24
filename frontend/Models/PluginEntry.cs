@@ -18,10 +18,17 @@ public sealed class PluginEntry : ICollapsibleListItem, INotifyPropertyChanged
     public bool IsLight { get; init; }
     public bool IsLocked { get; init; }
     public string LockReason { get; init; } = string.Empty;
+    public IReadOnlyList<string> MissingMasters { get; init; } = Array.Empty<string>();
 
     public bool IsSeparator => string.Equals(Kind, "separator", StringComparison.OrdinalIgnoreCase);
 
     public bool IsPlugin => !IsSeparator;
+
+    public bool HasMissingMasters => IsPlugin && MissingMasters.Count > 0;
+
+    public string MissingMastersTooltip => HasMissingMasters
+        ? $"Отсутствуют мастер-файлы:{Environment.NewLine}{string.Join(Environment.NewLine, MissingMasters.Select(master => $"- {master}"))}"
+        : string.Empty;
 
     public string CollapseKey => string.IsNullOrWhiteSpace(OrderId) ? Id : OrderId;
 

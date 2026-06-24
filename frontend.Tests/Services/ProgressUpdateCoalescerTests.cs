@@ -87,6 +87,64 @@ public sealed class ProgressUpdateCoalescerTests
         Assert.Equal(9_999, emitted[^1]);
     }
 
+    [Fact]
+    public void Report_CapturesEmitExceptionsWithoutEscaping()
+    {
+        ManualScheduler scheduler = new();
+        List<Exception> captured = new();
+        using ProgressUpdateCoalescer<ProgressSample> coalescer = new(
+            _ => throw new InvalidOperationException("broken progress view"),
+            action => action(),
+            minimumInterval: ProgressUpdateCoalescer<ProgressSample>.DefaultMinimumInterval,
+            getNow: () => scheduler.Now,
+            scheduleDelayed: scheduler.Schedule,
+            reportException: captured.Add);
+
+        coalescer.Report(new ProgressSample("copying", 1));
+
+        Exception exception = Assert.Single(captured);
+        Assert.IsType<InvalidOperationException>(exception);
+    }
+
+    [Fact]
+    public void Report_CapturesDispatchExceptionsWithoutEscaping()
+    {
+        ManualScheduler scheduler = new();
+        List<Exception> captured = new();
+        using ProgressUpdateCoalescer<ProgressSample> coalescer = new(
+            _ => { },
+            _ => throw new InvalidOperationException("dispatcher unavailable"),
+            minimumInterval: ProgressUpdateCoalescer<ProgressSample>.DefaultMinimumInterval,
+            getNow: () => scheduler.Now,
+            scheduleDelayed: scheduler.Schedule,
+            reportException: captured.Add);
+
+        coalescer.Report(new ProgressSample("copying", 1));
+
+        Exception exception = Assert.Single(captured);
+        Assert.IsType<InvalidOperationException>(exception);
+    }
+
+    [Fact]
+    public void Report_CapturesDelayedScheduleExceptionsWithoutEscaping()
+    {
+        ManualScheduler scheduler = new();
+        List<Exception> captured = new();
+        using ProgressUpdateCoalescer<ProgressSample> coalescer = new(
+            _ => { },
+            action => action(),
+            minimumInterval: ProgressUpdateCoalescer<ProgressSample>.DefaultMinimumInterval,
+            getNow: () => scheduler.Now,
+            scheduleDelayed: (_, _) => throw new InvalidOperationException("timer unavailable"),
+            reportException: captured.Add);
+
+        coalescer.Report(new ProgressSample("copying", 1));
+        coalescer.Report(new ProgressSample("copying", 2));
+
+        Exception exception = Assert.Single(captured);
+        Assert.IsType<InvalidOperationException>(exception);
+    }
+
     private static ProgressUpdateCoalescer<ProgressSample> CreateCoalescer(
         ManualScheduler scheduler,
         Action<ProgressSample> emit)

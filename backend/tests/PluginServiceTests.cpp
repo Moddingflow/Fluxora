@@ -8,9 +8,11 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -79,6 +81,49 @@ namespace fluxora::tests
             rules.basePluginSourceLabel = L"Custom Game";
             rules.basePluginLockReason = L"Custom base plugin lock";
             return rules;
+        }
+
+        void appendLittleEndian16(std::string& value, std::uint16_t number)
+        {
+            value.push_back(static_cast<char>(number & 0xFF));
+            value.push_back(static_cast<char>((number >> 8) & 0xFF));
+        }
+
+        void appendLittleEndian32(std::string& value, std::uint32_t number)
+        {
+            value.push_back(static_cast<char>(number & 0xFF));
+            value.push_back(static_cast<char>((number >> 8) & 0xFF));
+            value.push_back(static_cast<char>((number >> 16) & 0xFF));
+            value.push_back(static_cast<char>((number >> 24) & 0xFF));
+        }
+
+        void appendPluginSubrecord(std::string& value, std::string_view type, std::string data)
+        {
+            value.append(type.data(), type.size());
+            appendLittleEndian16(value, static_cast<std::uint16_t>(data.size()));
+            value.append(data);
+        }
+
+        void writeBethesdaPluginFile(
+            const std::filesystem::path& path,
+            const std::vector<std::string_view>& masters)
+        {
+            std::string payload;
+            appendPluginSubrecord(payload, "HEDR", std::string(12, '\0'));
+            for (std::string_view master : masters)
+            {
+                std::string masterData(master);
+                masterData.push_back('\0');
+                appendPluginSubrecord(payload, "MAST", std::move(masterData));
+                appendPluginSubrecord(payload, "DATA", std::string(8, '\0'));
+            }
+
+            std::string file;
+            file.append("TES4", 4);
+            appendLittleEndian32(file, static_cast<std::uint32_t>(payload.size()));
+            file.append(16, '\0');
+            file.append(payload);
+            writeTextFile(path, file);
         }
     }
 
@@ -164,6 +209,73 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(PluginServiceTests, SkyrimRulesIncludeStockGameDataPlugins)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service parity test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Skyrim Stock Build";
+        const std::filesystem::path stockGame = project / L"Stock Game";
+        const std::filesystem::path mods = project / L"mods";
+
+        writeTextFile(stockGame / L"SkyrimSE.exe", "exe");
+        writeTextFile(stockGame / L"Data" / L"Skyrim.esm", "base");
+        writeTextFile(stockGame / L"Data" / L"ccBGSSSE001-Fish.esm", "creation club master");
+        writeTextFile(stockGame / L"Data" / L"ccQDRSSE001-SurvivalMode.esl", "creation club light");
+        writeTextFile(
+            mods / L"Survival Override" / L"Data" / L"ccQDRSSE001-SurvivalMode.esl",
+            "mod override");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{mods / L"Survival Override", L"Survival Override", {}, true, {}}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        GameSupportRegistry registry;
+        registry.loadEmbeddedDefinitions();
+        const GameSupportLookupResult lookup = registry.lookupById(L"skyrimse");
+        ASSERT_TRUE(lookup.supported);
+        ASSERT_NE(lookup.support, nullptr);
+        ASSERT_NE(lookup.support->components().pluginRulesProvider, nullptr);
+
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+
+        const std::vector<PluginEntry> entries =
+            plugins.listPlugins(
+                project,
+                PluginRuleContext{
+                    lookup.support->components().pluginRulesProvider,
+                    &lookup.support->capabilities(),
+                    nullptr,
+                    lookup.support->identity().defaultProfileName
+                },
+                L"Default");
+
+        const PluginEntry* base = findPlugin(entries, L"Skyrim.esm");
+        ASSERT_NE(base, nullptr);
+        EXPECT_TRUE(base->isLocked);
+        EXPECT_EQ(base->sourceMod, L"Skyrim Special Edition");
+
+        const PluginEntry* stockMaster = findPlugin(entries, L"ccBGSSSE001-Fish.esm");
+        ASSERT_NE(stockMaster, nullptr);
+        EXPECT_TRUE(stockMaster->isEnabled);
+        EXPECT_TRUE(stockMaster->isMaster);
+        EXPECT_FALSE(stockMaster->isLocked);
+        EXPECT_EQ(stockMaster->sourceMod, L"Stock Game");
+
+        const PluginEntry* overriddenLight = findPlugin(entries, L"ccQDRSSE001-SurvivalMode.esl");
+        ASSERT_NE(overriddenLight, nullptr);
+        EXPECT_TRUE(overriddenLight->isLight);
+        EXPECT_EQ(overriddenLight->sourceMod, L"Survival Override");
+#endif
+    }
+
     TEST(PluginServiceTests, ProviderRulesDriveExtensionsSearchPathsAndStateFilesWithoutSkyrimFallback)
     {
 #ifndef _WIN32
@@ -213,6 +325,58 @@ namespace fluxora::tests
         EXPECT_EQ(findPlugin(entries, L"Root.ABC"), nullptr);
         EXPECT_TRUE(std::filesystem::exists(project / L"profiles" / L"Default" / L"enabled.dat"));
         EXPECT_FALSE(std::filesystem::exists(project / L"profiles" / L"Default" / L"plugins.txt"));
+#endif
+    }
+
+    TEST(PluginServiceTests, PluginEntriesReportMissingMasterFiles)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Master Warning Build";
+        const std::filesystem::path mods = project / L"mods";
+        writeBethesdaPluginFile(mods / L"Required Master" / L"AddOns" / L"Existing.master", {});
+        writeBethesdaPluginFile(mods / L"Disabled Master" / L"AddOns" / L"Disabled.master", {});
+        writeBethesdaPluginFile(
+            mods / L"Patch" / L"AddOns" / L"Patch.ABC",
+            {
+                "Base.master",
+                "Existing.master",
+                "Missing.master",
+                "Disabled.master"
+            });
+
+        InstanceMetadataStore::ensureInstance(project, L"customgame");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{mods / L"Required Master", L"Required Master", {}, true, {}},
+                InstalledModImportRecord{mods / L"Disabled Master", L"Disabled Master", {}, false, {}},
+                InstalledModImportRecord{mods / L"Patch", L"Patch", {}, true, {}}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+
+        FakePluginRulesProvider provider(customRules());
+        const CapabilitySet caps = capabilities(true, true);
+        const std::vector<PluginEntry> entries = plugins.listPlugins(
+            project,
+            PluginRuleContext{&provider, &caps, nullptr, L"Default"},
+            L"Default");
+
+        const PluginEntry* patch = findPlugin(entries, L"Patch.ABC");
+        ASSERT_NE(patch, nullptr);
+        ASSERT_EQ(patch->missingMasters.size(), 2);
+        EXPECT_EQ(patch->missingMasters[0], L"Missing.master");
+        EXPECT_EQ(patch->missingMasters[1], L"Disabled.master");
+
+        const PluginEntry* existing = findPlugin(entries, L"Existing.master");
+        ASSERT_NE(existing, nullptr);
+        EXPECT_TRUE(existing->missingMasters.empty());
 #endif
     }
 

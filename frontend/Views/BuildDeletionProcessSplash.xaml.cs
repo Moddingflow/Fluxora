@@ -57,12 +57,12 @@ public partial class BuildDeletionProcessSplash : System.Windows.Controls.UserCo
         switch (e.PropertyName)
         {
             case nameof(BuildDeletionProcessViewModel.CurrentStep):
-                Dispatcher.Invoke(() => AnimateStepChange(GetStepFromDataContext()));
+                RunOnDispatcherSafely(() => AnimateStepChange(GetStepFromDataContext()));
                 break;
             case nameof(BuildDeletionProcessViewModel.IsVisible):
             case nameof(BuildDeletionProcessViewModel.IsCompleted):
             case nameof(BuildDeletionProcessViewModel.HasError):
-                Dispatcher.Invoke(() => SyncState(animate: true));
+                RunOnDispatcherSafely(() => SyncState(animate: true));
                 break;
         }
     }
@@ -163,5 +163,30 @@ public partial class BuildDeletionProcessSplash : System.Windows.Controls.UserCo
         StateIcon.Data = (Geometry?)FindResource(viewModel.HasError ? "Icon.AlertTriangle" : "Icon.Trash");
         StateIcon.Foreground = (System.Windows.Media.Brush)FindResource(
             viewModel.HasError ? "DeletionErrorBrush" : "DeletionTextBrush");
+    }
+
+    private void RunOnDispatcherSafely(Action action)
+    {
+        try
+        {
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+            {
+                return;
+            }
+
+            if (Dispatcher.CheckAccess())
+            {
+                action();
+                return;
+            }
+
+            _ = Dispatcher.BeginInvoke(action);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (TaskCanceledException)
+        {
+        }
     }
 }

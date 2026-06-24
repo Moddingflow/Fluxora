@@ -29,11 +29,11 @@
                               ClipToBounds="True">
                             <Border x:Name="PART_Track"
                                     Background="{TemplateBinding Background}"
-                                    BorderBrush="{DynamicResource ErrorLineBrush}"
+                                    BorderBrush="{DynamicResource ProgressTrackBorderBrush}"
                                     BorderThickness="1"
                                     CornerRadius="4" />
                             <Border x:Name="PulseLayer"
-                                    BorderBrush="{DynamicResource DeletionErrorBrush}"
+                                    BorderBrush="{DynamicResource ProgressPulseBorderBrush}"
                                     BorderThickness="1"
                                     CornerRadius="4"
                                     Opacity="0" />
@@ -259,7 +259,7 @@
                     <Ellipse x:Name="MainArc"
                              Width="104"
                              Height="104"
-                             Stroke="{DynamicResource ErrorBrush}"
+                             Stroke="{DynamicResource DeletionProgressBrush}"
                              StrokeThickness="7"
                              StrokeStartLineCap="Round"
                              StrokeEndLineCap="Round"

@@ -3117,6 +3117,9 @@
                                                                 <Style TargetType="{x:Type Grid}">
                                                                     <Setter Property="ContextMenu" Value="{StaticResource InstalledPluginRowContextMenu}" />
                                                                     <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding HasMissingMasters}" Value="True">
+                                                                            <Setter Property="ToolTip" Value="{Binding MissingMastersTooltip}" />
+                                                                        </DataTrigger>
                                                                         <DataTrigger Binding="{Binding IsSeparator}" Value="True">
                                                                             <Setter Property="ContextMenu" Value="{StaticResource PluginSeparatorRowContextMenu}" />
                                                                         </DataTrigger>
@@ -3205,28 +3208,58 @@
                                                                 </TextBlock>
                                                             </StackPanel>
 
-                                                            <Border Grid.Column="3"
-                                                                    Background="{DynamicResource PanelSoftBrush}"
-                                                                    BorderBrush="{DynamicResource LineBrush}"
-                                                                    BorderThickness="1"
-                                                                    CornerRadius="9"
-                                                                    Padding="7,3"
-                                                                    VerticalAlignment="Center">
-                                                                <Border.Style>
-                                                                    <Style TargetType="{x:Type Border}">
-                                                                        <Setter Property="Visibility" Value="Visible" />
-                                                                        <Style.Triggers>
-                                                                            <DataTrigger Binding="{Binding IsSeparator}" Value="True">
-                                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                                            </DataTrigger>
-                                                                        </Style.Triggers>
-                                                                    </Style>
-                                                                </Border.Style>
-                                                                <TextBlock Text="{Binding TypeText}"
-                                                                           FontSize="10"
-                                                                           FontWeight="SemiBold"
-                                                                           Foreground="{DynamicResource TextSecondaryBrush}" />
-                                                            </Border>
+                                                            <StackPanel Grid.Column="3"
+                                                                        Orientation="Horizontal"
+                                                                        VerticalAlignment="Center">
+                                                                <Border Background="{DynamicResource PanelSoftBrush}"
+                                                                        BorderBrush="{DynamicResource LineBrush}"
+                                                                        BorderThickness="1"
+                                                                        CornerRadius="9"
+                                                                        Padding="7,3"
+                                                                        VerticalAlignment="Center">
+                                                                    <Border.Style>
+                                                                        <Style TargetType="{x:Type Border}">
+                                                                            <Setter Property="Visibility" Value="Visible" />
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsSeparator}" Value="True">
+                                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </Border.Style>
+                                                                    <TextBlock Text="{Binding TypeText}"
+                                                                               FontSize="10"
+                                                                               FontWeight="SemiBold"
+                                                                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                                </Border>
+
+                                                                <Border Width="24"
+                                                                        Height="24"
+                                                                        Margin="6,0,0,0"
+                                                                        Background="{DynamicResource PanelSoftBrush}"
+                                                                        BorderBrush="{DynamicResource LineBrush}"
+                                                                        BorderThickness="1"
+                                                                        CornerRadius="7"
+                                                                        ToolTip="{Binding MissingMastersTooltip}">
+                                                                    <Border.Style>
+                                                                        <Style TargetType="{x:Type Border}">
+                                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding HasMissingMasters}" Value="True">
+                                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </Border.Style>
+                                                                    <Image Source="Assets/Images/missing-master-warning.png"
+                                                                           Width="16"
+                                                                           Height="16"
+                                                                           Stretch="Uniform"
+                                                                           RenderOptions.BitmapScalingMode="HighQuality"
+                                                                           HorizontalAlignment="Center"
+                                                                           VerticalAlignment="Center" />
+                                                                </Border>
+                                                            </StackPanel>
                                                         </Grid>
                                                     </DataTemplate>
                                                 </ListBox.ItemTemplate>

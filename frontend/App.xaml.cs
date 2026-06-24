@@ -144,6 +144,7 @@ public partial class App : System.Windows.Application
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         applicationLogService?.CrashError("WPF", "Unhandled dispatcher exception.", e.Exception);
+        e.Handled = true;
     }
 
     private void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)
@@ -160,6 +161,7 @@ public partial class App : System.Windows.Application
     private void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
     {
         applicationLogService?.CrashError("Tasks", "Unobserved task exception.", e.Exception);
+        e.SetObserved();
     }
 
     private static async Task HoldStartupSplashAsync(DateTimeOffset shownAt)

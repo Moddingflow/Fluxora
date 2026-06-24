@@ -104,13 +104,13 @@
     <SolidColorBrush x:Key="CreationStepCancelBorderBrush" Color="#F59E0B" />
 
     <SolidColorBrush x:Key="DeletionTextBrush" Color="#F4F8FF" />
-    <SolidColorBrush x:Key="DeletionSecondaryTextBrush" Color="#F6C8D1" />
+    <SolidColorBrush x:Key="DeletionSecondaryTextBrush" Color="#D5E2F2" />
     <SolidColorBrush x:Key="DeletionMutedTextBrush" Color="#96A8C0" />
     <SolidColorBrush x:Key="DeletionErrorBrush" Color="#FB7185" />
-    <SolidColorBrush x:Key="DeletionTrackBrush" Color="#1B111B" />
-    <SolidColorBrush x:Key="DeletionButtonBrush" Color="#21131D" />
-    <SolidColorBrush x:Key="DeletionRingBrush" Color="#3A1F2C" />
-    <SolidColorBrush x:Key="DeletionRingFillBrush" Color="#3A1A2A" />
+    <SolidColorBrush x:Key="DeletionTrackBrush" Color="#0D1420" />
+    <SolidColorBrush x:Key="DeletionButtonBrush" Color="#142033" />
+    <SolidColorBrush x:Key="DeletionRingBrush" Color="#17304F" />
+    <SolidColorBrush x:Key="DeletionRingFillBrush" Color="#091C35" />
 
     <SolidColorBrush x:Key="OperationTextBrush" Color="#F8FAFC" />
     <SolidColorBrush x:Key="OperationSecondaryTextBrush" Color="#C8D0DD" />
@@ -269,14 +269,14 @@
         <GradientStop Color="#6FA5FF" Offset="1" />
     </LinearGradientBrush>
     <LinearGradientBrush x:Key="DeletionCoreBrush" StartPoint="0,0" EndPoint="1,1">
-        <GradientStop Color="#3A1A2A" Offset="0" />
-        <GradientStop Color="#140914" Offset="0.55" />
-        <GradientStop Color="#22131D" Offset="1" />
+        <GradientStop Color="#F4F8FF" Offset="0" />
+        <GradientStop Color="#C9DFFF" Offset="0.5" />
+        <GradientStop Color="#6FA5FF" Offset="1" />
     </LinearGradientBrush>
     <LinearGradientBrush x:Key="DeletionProgressBrush" StartPoint="0,0" EndPoint="1,0">
-        <GradientStop Color="#FB7185" Offset="0" />
-        <GradientStop Color="#F6C8D1" Offset="0.5" />
-        <GradientStop Color="#A8CAFF" Offset="1" />
+        <GradientStop Color="#7DD3FC" Offset="0" />
+        <GradientStop Color="#6FA5FF" Offset="0.5" />
+        <GradientStop Color="#9EC5FF" Offset="1" />
     </LinearGradientBrush>
     <LinearGradientBrush x:Key="OperationCoreBrush" StartPoint="0,0" EndPoint="1,1">
         <GradientStop Color="#242A38" Offset="0" />
