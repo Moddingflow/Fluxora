@@ -836,8 +836,9 @@
                                 <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Box" Property="Background" Value="{DynamicResource PanelBrush}" />
-                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
+                                <Setter TargetName="Box" Property="Background" Value="{DynamicResource AccentBrush}" />
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+                                <Setter TargetName="Check" Property="Foreground" Value="White" />
                                 <Setter TargetName="Check" Property="Opacity" Value="1" />
                             </Trigger>
                             <MultiTrigger>
@@ -845,7 +846,7 @@
                                     <Condition Property="IsChecked" Value="True" />
                                     <Condition Property="IsMouseOver" Value="True" />
                                 </MultiTrigger.Conditions>
-                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource LineHoverBrush}" />
+                                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
                             </MultiTrigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Box" Property="Opacity" Value="0.4" />
@@ -898,20 +899,19 @@
                     Padding="13,0,12,0"
                     SnapsToDevicePixels="True">
                 <Grid VerticalAlignment="Center">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
                     <Button Style="{StaticResource SeparatorCollapseButtonStyle}"
                             Command="{Binding DataContext.ToggleModSeparatorCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                             CommandParameter="{Binding}"
-                            Margin="0,0,8,0"
+                            HorizontalAlignment="Left"
                             VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="1"
-                               Text="{Binding DisplayName}"
+                    <TextBlock Text="{Binding DisplayName}"
                                TextTrimming="CharacterEllipsis"
                                Foreground="{TemplateBinding Foreground}"
+                               FontSize="{TemplateBinding FontSize}"
                                FontWeight="{TemplateBinding FontWeight}"
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center"
+                               Margin="32,0"
                                VerticalAlignment="Center" />
                 </Grid>
             </Border>
@@ -1623,6 +1623,97 @@
                       Style="{StaticResource DarkMenuItemStyle}"
                       InputGestureText="Del"
                       Command="{Binding PlacementTarget.Tag.DeleteSelectedModCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
+                <MenuItem.Icon>
+                    <TextBlock FontFamily="Segoe MDL2 Assets"
+                               Text="&#xE74D;"
+                               FontSize="12"
+                               Foreground="{DynamicResource ErrorBrush}" />
+                </MenuItem.Icon>
+            </MenuItem>
+        </ContextMenu>
+
+        <ContextMenu x:Key="InstalledPluginRowContextMenu"
+                     x:Shared="False"
+                     Style="{StaticResource DarkContextMenuStyle}">
+            <MenuItem Header="Включить"
+                      Style="{StaticResource DarkMenuItemStyle}"
+                      Command="{Binding PlacementTarget.Tag.EnableSelectedPluginCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
+                <MenuItem.Icon>
+                    <TextBlock FontFamily="Segoe MDL2 Assets"
+                               Text="&#xE8FB;"
+                               FontSize="12"
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Выключить"
+                      Style="{StaticResource DarkMenuItemStyle}"
+                      Command="{Binding PlacementTarget.Tag.DisableSelectedPluginCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
+                <MenuItem.Icon>
+                    <TextBlock FontFamily="Segoe MDL2 Assets"
+                               Text="&#xE711;"
+                               FontSize="12"
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator Margin="4,4" />
+            <MenuItem Header="Создать разделитель..."
+                      Style="{StaticResource DarkMenuItemStyle}"
+                      Command="{Binding PlacementTarget.Tag.CreatePluginSeparatorCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
+                <MenuItem.Icon>
+                    <TextBlock FontFamily="Segoe MDL2 Assets"
+                               Text="&#xE8A5;"
+                               FontSize="12"
+                               Foreground="{DynamicResource AccentHoverBrush}" />
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator Margin="4,4" />
+            <MenuItem Header="Удалить разделитель"
+                      Style="{StaticResource DarkMenuItemStyle}"
+                      InputGestureText="Del"
+                      Command="{Binding PlacementTarget.Tag.DeleteSelectedPluginCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
+                <MenuItem.Icon>
+                    <TextBlock FontFamily="Segoe MDL2 Assets"
+                               Text="&#xE74D;"
+                               FontSize="12"
+                               Foreground="{DynamicResource ErrorBrush}" />
+                </MenuItem.Icon>
+            </MenuItem>
+        </ContextMenu>
+
+        <ContextMenu x:Key="PluginSeparatorRowContextMenu"
+                     x:Shared="False"
+                     Style="{StaticResource DarkContextMenuStyle}">
+            <MenuItem Header="Включить"
+                      Style="{StaticResource DarkMenuItemStyle}"
+                      Command="{Binding PlacementTarget.Tag.EnableSelectedPluginCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
+                <MenuItem.Icon>
+                    <TextBlock FontFamily="Segoe MDL2 Assets"
+                               Text="&#xE8FB;"
+                               FontSize="12"
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Выключить"
+                      Style="{StaticResource DarkMenuItemStyle}"
+                      Command="{Binding PlacementTarget.Tag.DisableSelectedPluginCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
+                <MenuItem.Icon>
+                    <TextBlock FontFamily="Segoe MDL2 Assets"
+                               Text="&#xE711;"
+                               FontSize="12"
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator Margin="4,4" />
+            <MenuItem Header="Удалить разделитель"
+                      Style="{StaticResource DarkMenuItemStyle}"
+                      InputGestureText="Del"
+                      Command="{Binding PlacementTarget.Tag.DeleteSelectedPluginCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
                       CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
                 <MenuItem.Icon>
                     <TextBlock FontFamily="Segoe MDL2 Assets"
@@ -2668,9 +2759,10 @@
                                                 </Setter>
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding IsSeparator}" Value="True">
-                                                        <Setter Property="MinHeight" Value="34" />
+                                                        <Setter Property="MinHeight" Value="36" />
                                                         <Setter Property="Background" Value="{DynamicResource PanelSoftBrush}" />
                                                         <Setter Property="Foreground" Value="{DynamicResource AccentHoverBrush}" />
+                                                        <Setter Property="FontSize" Value="13" />
                                                         <Setter Property="FontWeight" Value="Bold" />
                                                         <Setter Property="Template" Value="{StaticResource ModSeparatorRowTemplate}" />
                                                         <Setter Property="ContextMenu" Value="{StaticResource ModSeparatorRowContextMenu}" />
@@ -2925,7 +3017,6 @@
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="*" />
-                                            <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
 
                                         <Grid>
@@ -3022,56 +3113,16 @@
                                                 <ListBox.ItemTemplate>
                                                     <DataTemplate>
                                                         <Grid Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType={x:Type Window}}}">
-                                                            <Grid.ContextMenu>
-                                                                <ContextMenu Style="{StaticResource DarkContextMenuStyle}">
-                                                                    <MenuItem Header="Включить"
-                                                                              Style="{StaticResource DarkMenuItemStyle}"
-                                                                              Command="{Binding PlacementTarget.Tag.EnableSelectedPluginCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
-                                                                              CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
-                                                                        <MenuItem.Icon>
-                                                                            <TextBlock FontFamily="Segoe MDL2 Assets"
-                                                                                       Text="&#xE8FB;"
-                                                                                       FontSize="12"
-                                                                                       Foreground="{DynamicResource TextSecondaryBrush}" />
-                                                                        </MenuItem.Icon>
-                                                                    </MenuItem>
-                                                                    <MenuItem Header="Выключить"
-                                                                              Style="{StaticResource DarkMenuItemStyle}"
-                                                                              Command="{Binding PlacementTarget.Tag.DisableSelectedPluginCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
-                                                                              CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
-                                                                        <MenuItem.Icon>
-                                                                            <TextBlock FontFamily="Segoe MDL2 Assets"
-                                                                                       Text="&#xE711;"
-                                                                                       FontSize="12"
-                                                                                       Foreground="{DynamicResource TextSecondaryBrush}" />
-                                                                        </MenuItem.Icon>
-                                                                    </MenuItem>
-                                                                    <Separator Margin="4,4" />
-                                                                    <MenuItem Header="Создать разделитель..."
-                                                                              Style="{StaticResource DarkMenuItemStyle}"
-                                                                              Command="{Binding PlacementTarget.Tag.CreatePluginSeparatorCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
-                                                                        <MenuItem.Icon>
-                                                                            <TextBlock FontFamily="Segoe MDL2 Assets"
-                                                                                       Text="&#xE8A5;"
-                                                                                       FontSize="12"
-                                                                                       Foreground="{DynamicResource AccentHoverBrush}" />
-                                                                        </MenuItem.Icon>
-                                                                    </MenuItem>
-                                                                    <Separator Margin="4,4" />
-                                                                    <MenuItem Header="Удалить разделитель"
-                                                                              Style="{StaticResource DarkMenuItemStyle}"
-                                                                              InputGestureText="Del"
-                                                                              Command="{Binding PlacementTarget.Tag.DeleteSelectedPluginCommand, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"
-                                                                              CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}">
-                                                                        <MenuItem.Icon>
-                                                                            <TextBlock FontFamily="Segoe MDL2 Assets"
-                                                                                       Text="&#xE74D;"
-                                                                                       FontSize="12"
-                                                                                       Foreground="{DynamicResource ErrorBrush}" />
-                                                                        </MenuItem.Icon>
-                                                                    </MenuItem>
-                                                                </ContextMenu>
-                                                            </Grid.ContextMenu>
+                                                            <Grid.Style>
+                                                                <Style TargetType="{x:Type Grid}">
+                                                                    <Setter Property="ContextMenu" Value="{StaticResource InstalledPluginRowContextMenu}" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsSeparator}" Value="True">
+                                                                            <Setter Property="ContextMenu" Value="{StaticResource PluginSeparatorRowContextMenu}" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Grid.Style>
                                                             <Grid.ColumnDefinitions>
                                                                 <ColumnDefinition Width="24" />
                                                                 <ColumnDefinition Width="30" />
@@ -3104,18 +3155,34 @@
                                                                        Foreground="{DynamicResource MutedTextBrush}"
                                                                        VerticalAlignment="Center" />
 
-                                                            <StackPanel Grid.Column="2"
-                                                                        Margin="3,0,10,0">
+                                                            <StackPanel>
+                                                                <StackPanel.Style>
+                                                                    <Style TargetType="{x:Type StackPanel}">
+                                                                        <Setter Property="Grid.Column" Value="2" />
+                                                                        <Setter Property="Margin" Value="3,0,10,0" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsSeparator}" Value="True">
+                                                                                <Setter Property="Grid.Column" Value="0" />
+                                                                                <Setter Property="Grid.ColumnSpan" Value="4" />
+                                                                                <Setter Property="HorizontalAlignment" Value="Center" />
+                                                                                <Setter Property="Margin" Value="32,0" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </StackPanel.Style>
                                                                 <TextBlock Text="{Binding DisplayName}"
                                                                            TextTrimming="CharacterEllipsis">
                                                                     <TextBlock.Style>
                                                                         <Style TargetType="{x:Type TextBlock}">
                                                                             <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                                                                             <Setter Property="FontWeight" Value="SemiBold" />
+                                                                            <Setter Property="TextAlignment" Value="Left" />
                                                                             <Style.Triggers>
                                                                                 <DataTrigger Binding="{Binding IsSeparator}" Value="True">
                                                                                     <Setter Property="Foreground" Value="{DynamicResource AccentHoverBrush}" />
+                                                                                    <Setter Property="FontSize" Value="13" />
                                                                                     <Setter Property="FontWeight" Value="Black" />
+                                                                                    <Setter Property="TextAlignment" Value="Center" />
                                                                                 </DataTrigger>
                                                                             </Style.Triggers>
                                                                         </Style>
@@ -3129,6 +3196,7 @@
                                                                             <Setter Property="Visibility" Value="Visible" />
                                                                             <Style.Triggers>
                                                                                 <DataTrigger Binding="{Binding IsSeparator}" Value="True">
+                                                                                    <Setter Property="Visibility" Value="Collapsed" />
                                                                                     <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                                                                 </DataTrigger>
                                                                             </Style.Triggers>
@@ -3211,22 +3279,6 @@
                                                 </StackPanel>
                                             </Border>
                                         </Grid>
-
-                                        <Border Grid.Row="2"
-                                                Style="{StaticResource InnerPanelStyle}"
-                                                Padding="12"
-                                                Margin="0,10,0,0">
-                                            <StackPanel>
-                                                <TextBlock Text="{Binding SelectedPluginTitle}"
-                                                           FontWeight="Black"
-                                                           Foreground="{DynamicResource TextBrush}"
-                                                           TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Text="{Binding SelectedPluginStatusText}"
-                                                           Margin="0,4,0,0"
-                                                           Style="{StaticResource MutedTextStyle}"
-                                                           TextWrapping="Wrap" />
-                                            </StackPanel>
-                                        </Border>
                                     </Grid>
                                 </TabItem>
 
