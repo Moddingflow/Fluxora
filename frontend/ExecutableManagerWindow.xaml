@@ -121,6 +121,7 @@
                BasedOn="{StaticResource DialogButtonStyle}">
             <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
             <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+            <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Foreground" Value="{DynamicResource PrimaryForegroundBrush}" />
         </Style>
 

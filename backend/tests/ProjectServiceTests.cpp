@@ -541,6 +541,56 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(ProjectServiceTests, DeleteProjectRemovesCatalogManifestWhenProjectDirectoryIsAlreadyMissing)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project catalog manifests live under APPDATA on Windows.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path catalogDirectory = temp.path() / L"AppData" / L"Fluxora" / L"Builds";
+        const std::filesystem::path configPath = catalogDirectory / L"Legacy Skyrim Build.json";
+        const std::filesystem::path missingProjectDirectory = temp.path() / L"Missing Skyrim Build";
+        writeTextFile(
+            configPath,
+            R"json({
+                "schemaVersion": "1",
+                "name": "Legacy Skyrim Build",
+                "templateId": "skyrimse",
+                "gameName": "Skyrim Special Edition",
+                "gamePath": "Game",
+                "installRoot": "../../..",
+                "projectDirectory": "../../../Missing Skyrim Build",
+                "dataDirectory": "Data",
+                "defaultProfile": "Default"
+            })json");
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        std::vector<ProjectDeleteProgress> progressEvents;
+        projects.deleteProject(ProjectDeleteRequest{
+            configPath,
+            [&progressEvents](const ProjectDeleteProgress& progress)
+            {
+                progressEvents.push_back(progress);
+            }
+        });
+
+        EXPECT_FALSE(std::filesystem::exists(configPath));
+        EXPECT_FALSE(std::filesystem::exists(missingProjectDirectory));
+        EXPECT_TRUE(projects.listProjectConfigSummaries(catalogDirectory).empty());
+        ASSERT_FALSE(progressEvents.empty());
+        EXPECT_EQ(progressEvents.back().phase, L"complete");
+        EXPECT_EQ(progressEvents.back().overallPercent, 100);
+        EXPECT_EQ(progressEvents.back().deletedEntries, progressEvents.back().totalEntries);
+#endif
+    }
+
     TEST(ProjectServiceTests, ListProjectConfigSummariesUsesLightCacheWithoutMigratingLegacyManifest)
     {
         TempDirectory temp;

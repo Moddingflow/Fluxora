@@ -395,8 +395,8 @@
     "semantic_hash": ""
   },
   "backend/src/Services/ProjectService.cpp": {
-    "mtime": 1782286639.4035342,
-    "ast_hash": "e36fb4d8eea12f5639c0adade6c8599e",
+    "mtime": 1782288305.1504865,
+    "ast_hash": "d78ad05208b9eb9c70953c74a0f7b3f7",
     "semantic_hash": ""
   },
   "backend/src/Services/TemplateService.cpp": {
@@ -550,8 +550,8 @@
     "semantic_hash": ""
   },
   "backend/tests/ProjectServiceTests.cpp": {
-    "mtime": 1782286594.10029,
-    "ast_hash": "610a668efc18205432226b904a8dc20c",
+    "mtime": 1782288173.8505738,
+    "ast_hash": "6a6e838e212ba9da96d6897a0810e6d1",
     "semantic_hash": ""
   },
   "backend/tests/ProjectStateTransactionTests.cpp": {

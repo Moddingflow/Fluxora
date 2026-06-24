@@ -462,6 +462,20 @@ namespace fluxora
             return value;
         }
 
+        std::wstring readStringOrDefaultLenient(
+            const JsonValue& object,
+            std::wstring_view field,
+            std::wstring_view fallback = L"")
+        {
+            const JsonValue* value = object.find(field);
+            if (value == nullptr || value->isNull() || !value->isString())
+            {
+                return std::wstring(fallback);
+            }
+
+            return value->asString();
+        }
+
         std::optional<std::vector<std::wstring>> readStringArrayField(
             const JsonValue& object,
             std::wstring_view field)
@@ -717,6 +731,11 @@ namespace fluxora
             const std::filesystem::path& candidate,
             const std::filesystem::path& root)
         {
+            if (candidate.empty() || root.empty())
+            {
+                return false;
+            }
+
             const std::wstring candidateText = normalizePathForComparison(candidate);
             const std::wstring rootText = normalizePathForComparison(root);
             if (candidateText == rootText)
@@ -1269,17 +1288,138 @@ namespace fluxora
                 L"Завершаю удаление");
         }
 
-        std::vector<std::filesystem::path> collectExternalConfigTargets(
+        ProjectDescriptor readProjectDeleteDescriptor(
+            const std::filesystem::path& configPath,
+            Logger& logger)
+        {
+            const auto absoluteConfigPath = std::filesystem::absolute(configPath);
+            if (!std::filesystem::exists(absoluteConfigPath) ||
+                !std::filesystem::is_regular_file(absoluteConfigPath))
+            {
+                throw std::invalid_argument("Build config file does not exist.");
+            }
+
+            recoverStateFile(
+                absoluteConfigPath,
+                L"project manifest",
+                ProjectStateValidation::JsonObject,
+                logger);
+            const JsonValue manifest = parseJsonConfig(readTextFile(absoluteConfigPath));
+            requireObject(manifest);
+
+            const std::filesystem::path manifestDirectory = absoluteConfigPath.parent_path();
+            const std::wstring explicitProjectDirectory =
+                readStringOrDefaultLenient(manifest, L"projectDirectory");
+            std::filesystem::path projectDirectory;
+            if (!explicitProjectDirectory.empty())
+            {
+                projectDirectory = resolveManifestPath(explicitProjectDirectory, manifestDirectory);
+            }
+            else if (!isSameOrInsidePath(absoluteConfigPath, resolveBuildManifestDirectory()))
+            {
+                projectDirectory = manifestDirectory;
+            }
+
+            const std::wstring installRootText = readStringOrDefaultLenient(
+                manifest,
+                L"installRoot",
+                readStringOrDefaultLenient(manifest, L"installRootDirectory"));
+            std::filesystem::path installRoot;
+            if (!installRootText.empty())
+            {
+                installRoot = resolveManifestPath(
+                    installRootText,
+                    projectDirectory.empty() ? manifestDirectory : projectDirectory);
+            }
+            else if (!projectDirectory.empty())
+            {
+                installRoot = projectDirectory.parent_path();
+            }
+
+            const std::filesystem::path relativeRoot =
+                projectDirectory.empty() ? manifestDirectory : projectDirectory;
+            std::wstring name = readStringOrDefaultLenient(manifest, L"name");
+            if (name.empty())
+            {
+                name = fileNameWithoutExtension(absoluteConfigPath);
+            }
+
+            return ProjectDescriptor{
+                std::move(name),
+                readStringOrDefaultLenient(
+                    manifest,
+                    L"templateId",
+                    readStringOrDefaultLenient(manifest, L"gameId")),
+                readStringOrDefaultLenient(
+                    manifest,
+                    L"gameName",
+                    readStringOrDefaultLenient(manifest, L"gameDisplayName")),
+                resolveManifestPath(readStringOrDefaultLenient(manifest, L"gamePath"), relativeRoot),
+                installRoot,
+                projectDirectory,
+                resolveManifestPath(
+                    readStringOrDefaultLenient(manifest, L"configPath", absoluteConfigPath.wstring()),
+                    manifestDirectory),
+                std::nullopt
+            };
+        }
+
+        bool shouldDeleteProjectDirectory(const ProjectDescriptor& project, Logger& logger)
+        {
+            if (project.projectDirectory.empty())
+            {
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "ProjectDeletion",
+                    "Project delete manifest has no projectDirectory. Removing catalog metadata only.");
+                return false;
+            }
+
+            const std::filesystem::path projectDirectory =
+                std::filesystem::absolute(project.projectDirectory).lexically_normal();
+            std::error_code statusError;
+            if (!std::filesystem::exists(projectDirectory, statusError))
+            {
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "ProjectDeletion",
+                    std::string("Project delete target is already missing. Removing catalog metadata only. projectDirectory=\"") +
+                        toUtf8(projectDirectory.wstring()) + "\"");
+                return false;
+            }
+
+            if (!std::filesystem::is_directory(projectDirectory, statusError))
+            {
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "ProjectDeletion",
+                    std::string("Project delete target is not a directory. Removing catalog metadata only. projectDirectory=\"") +
+                        toUtf8(projectDirectory.wstring()) + "\"");
+                return false;
+            }
+
+            ensureSafeDeleteTarget(project);
+            return true;
+        }
+
+        std::vector<std::filesystem::path> collectConfigTargetsForDelete(
             const std::filesystem::path& requestedConfigPath,
-            const ProjectDescriptor& project)
+            const ProjectDescriptor& project,
+            bool deletingProjectDirectory)
         {
             std::vector<std::filesystem::path> targets;
-            const auto addTarget = [&targets, &project](const std::filesystem::path& path)
+            const auto addTarget = [&targets, &project, deletingProjectDirectory](const std::filesystem::path& path)
             {
                 if (path.empty() ||
-                    isSameOrInsidePath(path, project.projectDirectory) ||
                     !std::filesystem::exists(path) ||
                     !std::filesystem::is_regular_file(path))
+                {
+                    return;
+                }
+
+                const std::filesystem::path absolutePath = std::filesystem::absolute(path);
+                if (deletingProjectDirectory &&
+                    isSameOrInsidePath(absolutePath, project.projectDirectory))
                 {
                     return;
                 }
@@ -1287,13 +1427,13 @@ namespace fluxora
                 const auto duplicate = std::find_if(
                     targets.begin(),
                     targets.end(),
-                    [&path](const std::filesystem::path& candidate)
+                    [&absolutePath](const std::filesystem::path& candidate)
                     {
-                        return isSamePath(candidate, path);
+                        return isSamePath(candidate, absolutePath);
                     });
                 if (duplicate == targets.end())
                 {
-                    targets.push_back(std::filesystem::absolute(path));
+                    targets.push_back(absolutePath);
                 }
             };
 
@@ -2633,18 +2773,28 @@ namespace fluxora
             const std::function<void(const ProjectDeleteProgress&)> deleteProgress =
                 makeSafeDeleteProgressCallback(request.progress, logger_);
             const auto requestedConfigPath = std::filesystem::absolute(request.configPath);
-            ProjectOpenResult current = openProjectConfig(requestedConfigPath);
-            ensureSafeDeleteTarget(current.project);
+            ProjectDescriptor currentProject = readProjectDeleteDescriptor(requestedConfigPath, logger_);
+            const bool deleteProjectDirectory = shouldDeleteProjectDirectory(currentProject, logger_);
 
             const std::filesystem::path projectDirectory =
-                std::filesystem::absolute(current.project.projectDirectory).lexically_normal();
+                currentProject.projectDirectory.empty()
+                    ? requestedConfigPath.parent_path()
+                    : std::filesystem::absolute(currentProject.projectDirectory).lexically_normal();
             logger_.writeOperation(
                 LogLevel::Info,
                 "ProjectDeletion",
                 std::string("Project delete target resolved. projectDirectory=\"") +
                     toUtf8(projectDirectory.wstring()) + "\"");
 
-            DeletePlan deletePlan = collectDeletePlan(projectDirectory, deleteProgress);
+            DeletePlan deletePlan;
+            if (deleteProjectDirectory)
+            {
+                deletePlan = collectDeletePlan(projectDirectory, deleteProgress);
+            }
+            else
+            {
+                deletePlan.totalEntries = 0;
+            }
             const std::string planMessage =
                 std::string("Project delete plan collected. projectDirectory=\"") +
                 toUtf8(projectDirectory.wstring()) +
@@ -2655,7 +2805,7 @@ namespace fluxora
             logger_.writeOperation(LogLevel::Info, "ProjectDeletion", planMessage);
 
             std::vector<std::filesystem::path> configTargets =
-                collectExternalConfigTargets(requestedConfigPath, current.project);
+                collectConfigTargetsForDelete(requestedConfigPath, currentProject, deleteProjectDirectory);
 
             std::uintmax_t totalBytes = deletePlan.totalBytes;
             std::uintmax_t totalEntries = deletePlan.totalEntries + configTargets.size();
@@ -2673,7 +2823,7 @@ namespace fluxora
             publishDeleteProgress(
                 deleteProgress,
                 L"delete",
-                L"Удаляю файлы сборки",
+                deleteProjectDirectory ? L"Удаляю файлы сборки" : L"Удаляю конфиг сборки",
                 projectDirectory.filename().wstring(),
                 1,
                 0,
@@ -2682,19 +2832,22 @@ namespace fluxora
                 totalEntries);
 
             DeleteProgressState deleteState;
-            deleteFilesFromPlan(
-                deletePlan,
-                deleteState,
-                deleteProgress,
-                projectDirectory,
-                totalBytes,
-                totalEntries);
-            removeRemainingDirectoryTree(
-                deleteState,
-                deleteProgress,
-                projectDirectory,
-                totalBytes,
-                totalEntries);
+            if (deleteProjectDirectory)
+            {
+                deleteFilesFromPlan(
+                    deletePlan,
+                    deleteState,
+                    deleteProgress,
+                    projectDirectory,
+                    totalBytes,
+                    totalEntries);
+                removeRemainingDirectoryTree(
+                    deleteState,
+                    deleteProgress,
+                    projectDirectory,
+                    totalBytes,
+                    totalEntries);
+            }
 
             for (const std::filesystem::path& configTarget : configTargets)
             {
@@ -2709,7 +2862,7 @@ namespace fluxora
                     error ? 0 : configBytes,
                     totalBytes,
                     totalEntries,
-                    L"Завершаю удаление",
+                    L"Удаляю конфиг сборки",
                     true);
             }
 
@@ -2717,13 +2870,13 @@ namespace fluxora
                 std::remove_if(
                     projects_.begin(),
                     projects_.end(),
-                    [&current](const ProjectDescriptor& candidate)
+                    [&currentProject](const ProjectDescriptor& candidate)
                     {
-                        return isSamePath(candidate.configPath, current.project.configPath) ||
-                            isSamePath(candidate.projectDirectory, current.project.projectDirectory);
+                        return isSamePath(candidate.configPath, currentProject.configPath) ||
+                            isSamePath(candidate.projectDirectory, currentProject.projectDirectory);
                     }),
                 projects_.end());
-            invalidateProjectSummaryCache(current.project.configPath);
+            invalidateProjectSummaryCache(currentProject.configPath);
             for (const std::filesystem::path& configTarget : configTargets)
             {
                 invalidateProjectSummaryCache(configTarget);
@@ -2733,7 +2886,7 @@ namespace fluxora
                 deleteProgress,
                 L"complete",
                 L"Удаление завершено",
-                current.project.name,
+                currentProject.name,
                 100,
                 totalBytes,
                 totalBytes,
