@@ -35,6 +35,8 @@ namespace fluxora
 
         [[nodiscard]] std::wstring loadLanguageCode() const;
         void saveLanguageCode(std::wstring_view languageCode) const;
+        [[nodiscard]] std::wstring loadThemeMode() const;
+        void saveThemeMode(std::wstring_view themeMode) const;
 
         [[nodiscard]] const std::filesystem::path& settingsPath() const noexcept;
         [[nodiscard]] const std::filesystem::path& appConfigPath() const noexcept;

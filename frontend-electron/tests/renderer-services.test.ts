@@ -1,0 +1,186 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  bridgeStatusLabel,
+  createProjectFromDraft,
+  loadProjectCatalog,
+  upsertProject
+} from '../src/renderer/services/project-catalog-service';
+import { defaultModNameFromPath, shortPath } from '../src/renderer/services/path-display-service';
+import {
+  createRendererOperationId,
+  errorMessage
+} from '../src/renderer/services/renderer-operation-service';
+import type {
+  FluxoraApi,
+  FluxoraGameTemplate,
+  FluxoraProject,
+  FluxoraProjectCatalog,
+  OperationRequest
+} from '../src/shared/fluxora-api';
+
+type RendererTestGlobal = typeof globalThis & {
+  window?: Window;
+};
+
+let originalFluxoraDescriptor: PropertyDescriptor | undefined;
+
+const ensureWindow = (): Window => {
+  const testGlobal = globalThis as RendererTestGlobal;
+  if (!testGlobal.window) {
+    Object.defineProperty(testGlobal, 'window', {
+      configurable: true,
+      value: testGlobal
+    });
+  }
+
+  return testGlobal.window;
+};
+
+const setFluxoraApi = (api: Partial<FluxoraApi>) => {
+  Object.defineProperty(ensureWindow(), 'fluxora', {
+    configurable: true,
+    value: api as FluxoraApi
+  });
+};
+
+const restoreFluxoraApi = () => {
+  const testWindow = ensureWindow();
+
+  if (originalFluxoraDescriptor) {
+    Object.defineProperty(testWindow, 'fluxora', originalFluxoraDescriptor);
+    return;
+  }
+
+  Reflect.deleteProperty(testWindow, 'fluxora');
+};
+
+const project = (overrides: Partial<FluxoraProject> = {}): FluxoraProject => ({
+  id: 'skyrim-main',
+  name: 'Skyrim Main',
+  templateId: 'skyrim-special-edition',
+  uiTemplateId: 'skyrim',
+  gameName: 'Skyrim Special Edition',
+  gamePath: 'C:\\Games\\Skyrim\\SkyrimSE.exe',
+  installRootDirectory: 'C:\\Fluxora Projects',
+  projectDirectory: 'C:\\Fluxora Projects\\Skyrim Main',
+  configPath: 'C:\\Fluxora\\Builds\\Skyrim.json',
+  ...overrides
+});
+
+const template: FluxoraGameTemplate = {
+  id: 'skyrim-special-edition',
+  displayName: 'Skyrim Special Edition',
+  gameName: 'Skyrim Special Edition',
+  summary: 'Bethesda RPG',
+  uiTemplateId: 'skyrim'
+};
+
+beforeEach(() => {
+  originalFluxoraDescriptor = Object.getOwnPropertyDescriptor(ensureWindow(), 'fluxora');
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  restoreFluxoraApi();
+});
+
+describe('renderer operation services', () => {
+  it('creates scoped renderer operation ids and normalizes errors', () => {
+    expect(createRendererOperationId('projects_list')).toContain('_projects_list_');
+    expect(errorMessage(new Error('Bridge failed'))).toBe('Bridge failed');
+    expect(errorMessage('bad')).toBe('Operation failed.');
+  });
+
+  it('formats display paths and archive names without filesystem access', () => {
+    expect(shortPath('C:\\Games\\Skyrim\\SkyrimSE.exe')).toBe('Skyrim\\SkyrimSE.exe');
+    expect(shortPath('')).toBe('not set');
+    expect(defaultModNameFromPath('C:\\Downloads\\Visual Pack.7z')).toBe('Visual Pack');
+  });
+});
+
+describe('project catalog service', () => {
+  it('labels bridge status without leaking status details into App', () => {
+    expect(bridgeStatusLabel(null)).toBe('checking');
+    expect(bridgeStatusLabel({ ready: true } as never)).toBe('ready');
+    expect(bridgeStatusLabel({ ready: false } as never)).toBe('error');
+  });
+
+  it('upserts projects by stable project identity', () => {
+    const existing = project();
+    const updated = project({ name: 'Skyrim Renamed' });
+    const added = project({
+      id: 'fallout-main',
+      name: 'Fallout Main',
+      configPath: 'C:\\Fluxora\\Builds\\Fallout.json',
+      projectDirectory: 'C:\\Fluxora Projects\\Fallout Main'
+    });
+
+    expect(upsertProject([existing], updated)).toEqual([updated]);
+    expect(upsertProject([existing], added)).toEqual([added, existing]);
+  });
+
+  it('loads catalog and templates through one renderer operation', async () => {
+    const catalog: FluxoraProjectCatalog = {
+      projects: [project()],
+      buildConfigsDirectory: 'C:\\Fluxora\\Builds',
+      defaultInstallRootDirectory: 'C:\\Fluxora Projects',
+      operationId: 'op_native'
+    };
+    const operationIds: string[] = [];
+
+    setFluxoraApi({
+      projects: {
+        list: vi.fn(async (request?: OperationRequest) => {
+          operationIds.push(request?.operationId ?? '');
+          return catalog;
+        })
+      } as unknown as FluxoraApi['projects'],
+      templates: {
+        list: vi.fn(async (request?: OperationRequest) => {
+          operationIds.push(request?.operationId ?? '');
+          return [template];
+        })
+      } as unknown as FluxoraApi['templates']
+    });
+
+    const result = await loadProjectCatalog();
+
+    expect(result.catalog).toBe(catalog);
+    expect(result.templates).toEqual([template]);
+    expect(operationIds).toHaveLength(2);
+    expect(operationIds[0]).toBe(operationIds[1]);
+    expect(operationIds[0]).toContain('_projects_list_');
+  });
+
+  it('creates projects from trimmed renderer draft fields', async () => {
+    const create = vi.fn(async () => project({ name: 'Nordic Build' }));
+
+    setFluxoraApi({
+      projects: {
+        create
+      } as unknown as FluxoraApi['projects']
+    });
+
+    const result = await createProjectFromDraft(
+      {
+        projectName: '  Nordic Build  ',
+        templateId: 'skyrim-special-edition',
+        gamePath: '  C:\\Games\\Skyrim\\SkyrimSE.exe  ',
+        installRootDirectory: '  C:\\Fluxora Projects  '
+      },
+      'op_manual_create'
+    );
+
+    expect(result.project.name).toBe('Nordic Build');
+    expect(create).toHaveBeenCalledWith(
+      {
+        projectName: 'Nordic Build',
+        templateId: 'skyrim-special-edition',
+        gamePath: 'C:\\Games\\Skyrim\\SkyrimSE.exe',
+        installRootDirectory: 'C:\\Fluxora Projects'
+      },
+      { operationId: 'op_manual_create' }
+    );
+  });
+});

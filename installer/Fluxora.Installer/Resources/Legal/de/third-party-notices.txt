@@ -1,0 +1,23 @@
+Fluxora Hinweise zu Drittanbieter-Komponenten
+Stand: 24. Juni 2026
+
+Fluxora enthält Drittanbieter-Komponenten für Laufzeit, Installer, Build und Tests. Dieser Hinweis dient als Release-Checkliste und Transparenzhinweis. Er ersetzt keine abschließende Prüfung durch Owner/Legal vor einer öffentlichen Distribution.
+
+Laufzeit- und Anwendungskomponenten:
+- Electron, einschließlich Chromium- und Node.js-Laufzeitkomponenten, für die Desktop-App-Shell.
+- React und React DOM für die Renderer-Oberfläche.
+- Lucide React für UI-Icons.
+- spdlog für natives Logging.
+- Microsoft Detours, wenn die Windows VFS/Hook-Funktion gebaut wird.
+
+Installer-Komponenten:
+- Microsoft .NET Laufzeitkomponenten, die vom Windows-Installer-Build verwendet werden.
+- SharpVectors.Wpf für SVG-Darstellung in der Windows-Installer-Oberfläche.
+
+Build-, Packaging- und Test-Komponenten:
+- Electron Forge, Electron Forge Maker und Plugins sowie Electron Fuses.
+- Vite, TypeScript und zugehörige TypeScript/React-Werkzeuge.
+- Playwright und Vitest für Smoke- und Unit-Tests.
+- GoogleTest für native Backend-Tests.
+
+Vor einer öffentlichen Veröffentlichung müssen der genaue Dependency Tree, Lizenztexte und Attribution-Anforderungen der im Build ausgelieferten Paketversionen geprüft werden. Vollständige Lizenzhinweise sind beizulegen, soweit eine Dependency-Lizenz dies verlangt.

@@ -98,6 +98,60 @@ namespace fluxora::tests
         EXPECT_TRUE(safety.validateWritePath(root, longTarget).safe());
     }
 
+    TEST(PathSafetyServiceTests, UnicodeGermanCyrillicAndSpacesRemainValidRelativePaths)
+    {
+        const PathSafetyService safety;
+        const std::vector<std::filesystem::path> paths{
+            L"Data/Textures/Über Café/мод файл.dds",
+            L"Data/Scripts/Größe ändern.psc",
+            L"mods/Русский перевод/readme deutsch.txt",
+            L"profiles/Default/Skyrim Special Edition.ini"
+        };
+
+        for (const std::filesystem::path& path : paths)
+        {
+            const PathSafetyResult relative = safety.validateRelativePath(path);
+            EXPECT_TRUE(relative.safe()) << path.wstring();
+            EXPECT_FALSE(relative.normalizedRelativePath.empty()) << path.wstring();
+
+            const PathSafetyResult archive = safety.validateArchiveEntryPath(path);
+            EXPECT_TRUE(archive.safe()) << path.wstring();
+        }
+    }
+
+    TEST(PathSafetyServiceTests, ArchiveComparisonKeyDocumentsPlatformCaseRules)
+    {
+        const PathSafetyService safety;
+
+        const std::wstring canonical =
+            safety.archiveEntryComparisonKey(L"Data/Textures/./SkyUI.dds/");
+        EXPECT_EQ(canonical, safety.archiveEntryComparisonKey(L"Data/Textures/SkyUI.dds"));
+
+#ifdef _WIN32
+        EXPECT_EQ(
+            safety.archiveEntryComparisonKey(L"Data/Textures/SkyUI.dds"),
+            safety.archiveEntryComparisonKey(L"data/textures/skyui.dds"));
+#else
+        EXPECT_NE(
+            safety.archiveEntryComparisonKey(L"Data/Textures/SkyUI.dds"),
+            safety.archiveEntryComparisonKey(L"data/textures/skyui.dds"));
+#endif
+    }
+
+    TEST(PathSafetyServiceTests, ContainedWritePathAllowsNonAsciiDirectoriesInsideRoot)
+    {
+        TempDirectory temp;
+        const std::filesystem::path root = temp.path() / L"Проект Über";
+        const std::filesystem::path target =
+            root / L"mods" / L"Ä Space" / L"файл.txt";
+        std::filesystem::create_directories(target.parent_path());
+
+        const PathSafetyResult result = PathSafetyService().validateWritePath(root, target);
+
+        EXPECT_TRUE(result.safe()) << result.message();
+        EXPECT_FALSE(result.canonicalPath.empty());
+    }
+
     TEST(PathSafetyServiceTests, WritePathValidatesFreeDiskSpace)
     {
         TempDirectory temp;

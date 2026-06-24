@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        xmlns:controls="clr-namespace:Fluxora.App.Controls"
+        xmlns:controls="clr-namespace:Fluxora.Installer.Controls"
         xmlns:models="clr-namespace:Fluxora.Installer.Models"
         xmlns:svgc="http://sharpvectors.codeplex.com/svgc/"
         Title="Fluxora Setup"
@@ -937,15 +937,19 @@
                                        TextWrapping="Wrap"
                                        LineHeight="20" />
 
-                            <StackPanel Grid.Row="6" Orientation="Horizontal">
+                            <WrapPanel Grid.Row="6">
                                 <Button x:Name="PrivacyTabButton"
                                         Style="{StaticResource TabButtonStyle}"
                                         Margin="0,0,10,0"
                                         Click="OnPrivacyTabClick" />
                                 <Button x:Name="TermsTabButton"
                                         Style="{StaticResource TabButtonStyle}"
+                                        Margin="0,0,10,0"
                                         Click="OnTermsTabClick" />
-                            </StackPanel>
+                                <Button x:Name="NoticesTabButton"
+                                        Style="{StaticResource TabButtonStyle}"
+                                        Click="OnNoticesTabClick" />
+                            </WrapPanel>
 
                             <Border Grid.Row="8"
                                     Height="292"

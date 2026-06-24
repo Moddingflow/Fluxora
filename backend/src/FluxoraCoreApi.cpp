@@ -2114,6 +2114,24 @@ extern "C"
         }
     }
 
+    int fluxora_core_shutdown()
+    {
+        try
+        {
+            if (currentCore != nullptr)
+            {
+                currentCore->shutdown();
+            }
+
+            fluxora::Logger::clearOperationId();
+            return FluxoraCoreResultOk;
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
     int fluxora_set_operation_context(const wchar_t* operationId)
     {
         if (isBlank(operationId))
@@ -2830,7 +2848,10 @@ extern "C"
     {
         try
         {
-            return writeToBuffer(core().settings().loadLanguageCode(), languageBuffer, languageBufferLength);
+            logOperation(fluxora::LogLevel::Info, "Settings", "Read app language requested.");
+            const std::wstring languageCode = core().settings().loadLanguageCode();
+            logOperation(fluxora::LogLevel::Info, "Settings", "Read app language completed.");
+            return writeToBuffer(languageCode, languageBuffer, languageBufferLength);
         }
         catch (const std::exception& exception)
         {
@@ -2849,6 +2870,48 @@ extern "C"
             }
 
             core().settings().saveLanguageCode(languageCode);
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Settings",
+                "Saved app language: " + textForLog(languageCode));
+            return FluxoraCoreResultOk;
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_app_theme(wchar_t* themeBuffer, int themeBufferLength)
+    {
+        try
+        {
+            logOperation(fluxora::LogLevel::Info, "Settings", "Read app theme requested.");
+            const std::wstring themeMode = core().settings().loadThemeMode();
+            logOperation(fluxora::LogLevel::Info, "Settings", "Read app theme completed.");
+            return writeToBuffer(themeMode, themeBuffer, themeBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_set_app_theme(const wchar_t* themeMode)
+    {
+        try
+        {
+            if (isBlank(themeMode))
+            {
+                lastError = L"Theme mode is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            core().settings().saveThemeMode(themeMode);
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Settings",
+                "Saved app theme: " + textForLog(themeMode));
             return FluxoraCoreResultOk;
         }
         catch (const std::exception& exception)

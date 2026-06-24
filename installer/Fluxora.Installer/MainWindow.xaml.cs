@@ -7,7 +7,6 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Microsoft.Win32;
-using Fluxora.App.Services;
 using Fluxora.Installer.Models;
 using Fluxora.Installer.Services;
 
@@ -31,7 +30,7 @@ public partial class MainWindow : Window
 
     private int stepIndex;
     private int lastAnimatedStepIndex = -1;
-    private bool showingPrivacy = true;
+    private string legalDocumentName = "privacy";
     private bool isInstalling;
     private InstallerResult? installerResult;
 
@@ -128,6 +127,7 @@ public partial class MainWindow : Window
         LegalBodyText.Text = T("LegalBody");
         PrivacyTabButton.Content = T("PrivacyTab");
         TermsTabButton.Content = T("TermsTab");
+        NoticesTabButton.Content = T("NoticesTab");
         AcceptPrivacyCheckBox.Content = T("AcceptPrivacy");
         AcceptTermsCheckBox.Content = T("AcceptTerms");
         TargetTitleText.Text = T("TargetTitle");
@@ -155,12 +155,17 @@ public partial class MainWindow : Window
     {
         LegalDocumentText.Text = legalDocumentService.ReadDocument(
             text.LanguageCode,
-            showingPrivacy ? "privacy" : "terms");
+            legalDocumentName);
 
-        PrivacyTabButton.Background = showingPrivacy ? Brush("AccentBrush") : Brush("PanelRaisedBrush");
-        PrivacyTabButton.BorderBrush = showingPrivacy ? Brush("AccentHoverBrush") : Brush("LineBrush");
-        TermsTabButton.Background = showingPrivacy ? Brush("PanelRaisedBrush") : Brush("AccentBrush");
-        TermsTabButton.BorderBrush = showingPrivacy ? Brush("LineBrush") : Brush("AccentHoverBrush");
+        UpdateLegalTabButton(PrivacyTabButton, legalDocumentName == "privacy");
+        UpdateLegalTabButton(TermsTabButton, legalDocumentName == "terms");
+        UpdateLegalTabButton(NoticesTabButton, legalDocumentName == "third-party-notices");
+    }
+
+    private void UpdateLegalTabButton(Button button, bool isActive)
+    {
+        button.Background = isActive ? Brush("AccentBrush") : Brush("PanelRaisedBrush");
+        button.BorderBrush = isActive ? Brush("AccentHoverBrush") : Brush("LineBrush");
     }
 
     private void UpdateStep()
@@ -378,13 +383,19 @@ public partial class MainWindow : Window
 
     private void OnPrivacyTabClick(object sender, RoutedEventArgs e)
     {
-        showingPrivacy = true;
+        legalDocumentName = "privacy";
         UpdateLegalDocument();
     }
 
     private void OnTermsTabClick(object sender, RoutedEventArgs e)
     {
-        showingPrivacy = false;
+        legalDocumentName = "terms";
+        UpdateLegalDocument();
+    }
+
+    private void OnNoticesTabClick(object sender, RoutedEventArgs e)
+    {
+        legalDocumentName = "third-party-notices";
         UpdateLegalDocument();
     }
 

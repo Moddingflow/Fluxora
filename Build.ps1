@@ -5,14 +5,6 @@ param(
 
     [string]$Runtime = 'win-x64',
 
-    [switch]$SelfContained,
-
-    [switch]$FrameworkDependent,
-
-    [switch]$LooseFiles,
-
-    [switch]$SingleFilePayload,
-
     [ValidateSet('Dev', 'Release')]
     [string]$Target = 'Release',
 
@@ -27,15 +19,15 @@ Set-StrictMode -Version Latest
 $ProjectRoot = $PSScriptRoot
 $BackendSource = Join-Path $ProjectRoot 'backend'
 $BackendBuild = Join-Path $ProjectRoot 'build\backend'
-$FrontendProject = Join-Path $ProjectRoot 'frontend\Fluxora.App.csproj'
-$FrontendExecutableName = 'FluxoraModding.exe'
+$ElectronProject = Join-Path $ProjectRoot 'frontend-electron'
+$ElectronNativeResourcesRoot = Join-Path $ProjectRoot 'build\electron-native'
+$ElectronExecutableName = 'Fluxora.exe'
 $InstallerProject = Join-Path $ProjectRoot 'installer\Fluxora.Installer\Fluxora.Installer.csproj'
 $OutputDir = Join-Path $ProjectRoot 'output'
 $SymbolsOutputDir = Join-Path $ProjectRoot 'output-symbols'
 $InstallerOutputDir = Join-Path $ProjectRoot 'output-installer'
 $InstallerPayloadDir = Join-Path $ProjectRoot 'installer\Fluxora.Installer\Resources\Payload'
 $InstallerPayloadPath = Join-Path $InstallerPayloadDir 'FluxoraPayload.flxpkg.gz'
-$LegacyInstallerPayloadPath = Join-Path $InstallerPayloadDir 'FluxoraPayload.flxpkg'
 $BuildCacheDir = Join-Path $ProjectRoot 'build\installer-cache'
 $PayloadManifestPath = Join-Path $BuildCacheDir 'payload.manifest.json'
 $InstallerManifestPath = Join-Path $BuildCacheDir 'installer.manifest.json'
@@ -65,6 +57,22 @@ function Invoke-BuildStep {
     Write-Host ""
     Write-Host "==> $Title"
     & $Action
+}
+
+function Invoke-CheckedCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [string[]]$Arguments = @()
+    )
+
+    & $FilePath @Arguments
+    $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+    if ($exitCode -ne 0) {
+        $commandLine = ($Arguments | ForEach-Object { "'$_'" }) -join ' '
+        throw "Command '$FilePath $commandLine' failed with exit code $exitCode."
+    }
 }
 
 function Get-NativeCorePath {
@@ -111,6 +119,86 @@ function Get-NativeVfsPath {
     }
 
     return $null
+}
+
+function Get-NativeBridgeHostPath {
+    $executableName = if ($Runtime -like 'win-*') { 'FluxoraBridgeHost.exe' } else { 'FluxoraBridgeHost' }
+    $knownPaths = @(
+        (Join-Path $BackendBuild "$Configuration\$executableName"),
+        (Join-Path $BackendBuild $executableName)
+    )
+
+    foreach ($path in $knownPaths) {
+        if (Test-Path -LiteralPath $path) {
+            return $path
+        }
+    }
+
+    $latestHost = Get-ChildItem -LiteralPath $BackendBuild -Recurse -Filter $executableName -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+
+    if ($latestHost) {
+        return $latestHost.FullName
+    }
+
+    throw "$executableName was not found under '$BackendBuild'."
+}
+
+function Get-ElectronPackageTarget {
+    if ($Runtime -eq 'win-x64') {
+        return [pscustomobject]@{ Platform = 'win32'; Arch = 'x64' }
+    }
+
+    throw "Build.ps1 assembles the Windows FluxoraSetup.exe installer. Electron installer payload builds currently support -Runtime win-x64."
+}
+
+function Get-ElectronPackagedAppDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Platform,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Arch
+    )
+
+    $outDir = Join-Path $ElectronProject 'out'
+    $knownPath = Join-Path $outDir "Fluxora-$Platform-$Arch"
+    $knownExePath = Join-Path $knownPath $ElectronExecutableName
+    if (Test-Path -LiteralPath $knownExePath -PathType Leaf) {
+        return $knownPath
+    }
+
+    $latestPackage = Get-ChildItem -LiteralPath $outDir -Directory -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName $ElectronExecutableName) -PathType Leaf } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+
+    if ($latestPackage) {
+        return $latestPackage.FullName
+    }
+
+    throw "Electron package output containing '$ElectronExecutableName' was not found under '$outDir'."
+}
+
+function Copy-DirectoryContents {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationDirectory
+    )
+
+    if (-not (Test-Path -LiteralPath $SourceDirectory)) {
+        throw "Source directory '$SourceDirectory' does not exist."
+    }
+
+    New-Item -ItemType Directory -Path $DestinationDirectory -Force | Out-Null
+    Get-ChildItem -LiteralPath $SourceDirectory -Force |
+        ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $DestinationDirectory -Recurse -Force
+        }
 }
 
 function Get-NativeInstallerCorePath {
@@ -430,11 +518,11 @@ function New-FluxoraInstallerManifest {
     $linkedInputPaths = @(
         (Join-Path $ProjectRoot 'Icons\Fluxora.ico'),
         (Join-Path $ProjectRoot 'Icons\Fluxora.png'),
-        (Join-Path $ProjectRoot 'frontend\Assets\Icons.xaml'),
-        (Join-Path $ProjectRoot 'frontend\Controls\LineIcon.cs'),
-        (Join-Path $ProjectRoot 'frontend\Models\AppTheme.cs'),
-        (Join-Path $ProjectRoot 'frontend\Services\ProgressUpdateCoalescer.cs'),
-        (Join-Path $ProjectRoot 'frontend\Services\WindowChromeService.cs'),
+        (Join-Path $ProjectRoot 'installer\Fluxora.Installer\Assets\Icons.xaml'),
+        (Join-Path $ProjectRoot 'installer\Fluxora.Installer\Controls\LineIcon.cs'),
+        (Join-Path $ProjectRoot 'installer\Fluxora.Installer\Models\AppTheme.cs'),
+        (Join-Path $ProjectRoot 'installer\Fluxora.Installer\Services\ProgressUpdateCoalescer.cs'),
+        (Join-Path $ProjectRoot 'installer\Fluxora.Installer\Services\WindowChromeService.cs'),
         $NativeInstallerCorePath
     )
 
@@ -442,7 +530,7 @@ function New-FluxoraInstallerManifest {
         Add-FluxoraInstallerInputPath -Paths $candidatePaths -Path $path
     }
 
-    Get-ChildItem -LiteralPath (Join-Path $ProjectRoot 'frontend\Fonts') -Filter '*.ttf' -File -ErrorAction SilentlyContinue |
+    Get-ChildItem -LiteralPath (Join-Path $ProjectRoot 'installer\Fluxora.Installer\Fonts') -Filter '*.ttf' -File -ErrorAction SilentlyContinue |
         ForEach-Object { $candidatePaths.Add($_.FullName) }
 
     $seenPaths = @{}
@@ -673,40 +761,18 @@ function Write-FluxoraPayloadPackage {
 
 Assert-Command 'cmake'
 Assert-Command 'dotnet'
+Assert-Command 'npm'
 
-if ($SelfContained -and $FrameworkDependent) {
-    throw "Use either -SelfContained or -FrameworkDependent, not both."
-}
-
-if ($LooseFiles -and $SingleFilePayload) {
-    throw "Use either -LooseFiles or -SingleFilePayload, not both."
-}
-
-# Keep setup itself self-contained, but make the embedded app payload
-# framework-dependent by default so the release artifact does not carry the
-# .NET/WPF desktop runtime twice. Use -SelfContained for an explicit full
-# offline app payload.
-$publishSelfContained = $SelfContained.IsPresent
-$appRuntimeStrategy = if ($publishSelfContained) { 'self-contained' } else { 'framework-dependent' }
 if ($Target -eq 'Release' -and [string]::IsNullOrWhiteSpace($Runtime)) {
     throw "Installer publish requires a runtime because FluxoraSetup.exe is self-contained. Example: -Runtime win-x64"
 }
-
-if ($SingleFilePayload -and (-not $publishSelfContained)) {
-    throw "Single-file app payload requires -SelfContained. The default framework-dependent payload is published as loose files."
-}
-
-# The public artifact is the installer. Keep the staged app payload loose by
-# default so Build.ps1 does not wrap a single-file app inside the installer
-# package; opt into that local shape only when explicitly requested.
-$publishSingleFile = $SingleFilePayload -and (-not $LooseFiles)
 
 if (-not (Test-Path -LiteralPath (Join-Path $BackendSource 'CMakeLists.txt'))) {
     throw "Backend CMake project was not found at '$BackendSource'."
 }
 
-if (-not (Test-Path -LiteralPath $FrontendProject)) {
-    throw "Frontend project was not found at '$FrontendProject'."
+if (-not (Test-Path -LiteralPath (Join-Path $ElectronProject 'package.json'))) {
+    throw "Electron frontend project was not found at '$ElectronProject'."
 }
 
 if (-not (Test-Path -LiteralPath $InstallerProject)) {
@@ -717,9 +783,9 @@ Assert-ChildPath -Path $OutputDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $SymbolsOutputDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $InstallerOutputDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $InstallerPayloadPath -ParentPath $ProjectRoot
-Assert-ChildPath -Path $LegacyInstallerPayloadPath -ParentPath $ProjectRoot
 Assert-ChildPath -Path $PayloadManifestPath -ParentPath $ProjectRoot
 Assert-ChildPath -Path $InstallerManifestPath -ParentPath $ProjectRoot
+Assert-ChildPath -Path $ElectronNativeResourcesRoot -ParentPath $ProjectRoot
 
 Invoke-BuildStep "Preparing output folders" {
     if ((Test-Path -LiteralPath $OutputDir) -and (-not $NoClean)) {
@@ -737,95 +803,114 @@ Invoke-BuildStep "Preparing output folders" {
         New-Item -ItemType Directory -Path $SymbolsOutputDir -Force | Out-Null
     }
 
-    if ((Test-Path -LiteralPath $LegacyInstallerPayloadPath) -and (-not $NoClean)) {
-        Remove-Item -LiteralPath $LegacyInstallerPayloadPath -Force
-    }
+    Get-ChildItem -LiteralPath $InstallerPayloadDir -Filter '*.flxpkg' -File -ErrorAction SilentlyContinue |
+        Remove-Item -Force
 }
 
 Invoke-BuildStep "Configuring C++ backend" {
-    & cmake -S $BackendSource -B $BackendBuild
+    Invoke-CheckedCommand -FilePath 'cmake' -Arguments @('-S', $BackendSource, '-B', $BackendBuild)
 
     $cmakeCachePath = Join-Path $BackendBuild 'CMakeCache.txt'
     $cmakeCache = Get-Content -LiteralPath $cmakeCachePath -Raw
     $isMultiConfigGenerator = $cmakeCache -match '(?m)^CMAKE_CONFIGURATION_TYPES(:[A-Z]+)?='
 
     if (-not $isMultiConfigGenerator) {
-        & cmake -S $BackendSource -B $BackendBuild -DCMAKE_BUILD_TYPE=$Configuration
+        Invoke-CheckedCommand -FilePath 'cmake' -Arguments @('-S', $BackendSource, '-B', $BackendBuild, "-DCMAKE_BUILD_TYPE=$Configuration")
     }
 }
 
 Invoke-BuildStep "Building C++ backend ($Configuration)" {
     # Build every target (FluxoraCore, the FluxoraVfs hook DLL and Detours) so the
     # virtual file system ships alongside the core.
-    & cmake --build $BackendBuild --config $Configuration
+    Invoke-CheckedCommand -FilePath 'cmake' -Arguments @('--build', $BackendBuild, '--config', $Configuration)
 }
 
-Invoke-BuildStep "Publishing C# frontend ($Configuration, $appRuntimeStrategy)" {
-    $publishArgs = @(
-        'publish',
-        $FrontendProject,
-        '--configuration',
-        $Configuration,
-        '--output',
-        $OutputDir,
-        '--self-contained',
-        $(if ($publishSelfContained) { 'true' } else { 'false' })
-    )
+$electronTarget = Get-ElectronPackageTarget
+$electronNativeTargetDir = Join-Path $ElectronNativeResourcesRoot (Join-Path $electronTarget.Platform $electronTarget.Arch)
+$electronOutDir = Join-Path $ElectronProject 'out'
+Assert-ChildPath -Path $electronOutDir -ParentPath $ProjectRoot
+Assert-ChildPath -Path $electronNativeTargetDir -ParentPath $ProjectRoot
 
-    if (-not [string]::IsNullOrWhiteSpace($Runtime)) {
-        $publishArgs += @('--runtime', $Runtime)
-    }
-
-    if ($publishSingleFile) {
-        $publishArgs += @(
-            '-p:PublishSingleFile=true',
-            '-p:IncludeNativeLibrariesForSelfExtract=true'
-        )
-    }
-
-    if ($Target -eq 'Release' -and (-not $IncludeSymbols.IsPresent)) {
-        $publishArgs += @(
-            '-p:DebugType=none',
-            '-p:DebugSymbols=false'
-        )
-    }
-
-    & dotnet @publishArgs
-
-    if ($IncludeSymbols) {
-        $managedSymbolCount = Copy-FluxoraPublishedSymbols `
-            -SourceDirectory $OutputDir `
-            -DestinationDirectory (Join-Path $SymbolsOutputDir 'managed')
-
-        if ($managedSymbolCount -gt 0) {
-            Write-Host "Copied $managedSymbolCount managed symbol file(s) to: $(Join-Path $SymbolsOutputDir 'managed')"
+Invoke-BuildStep "Preparing Electron native resources ($($electronTarget.Platform)/$($electronTarget.Arch))" {
+        if ((Test-Path -LiteralPath $ElectronNativeResourcesRoot) -and (-not $NoClean)) {
+            Remove-Item -LiteralPath $ElectronNativeResourcesRoot -Recurse -Force
         }
-    }
+
+        New-Item -ItemType Directory -Path $electronNativeTargetDir -Force | Out-Null
+
+        $nativeBridgeHostPath = Get-NativeBridgeHostPath
+        $nativeCorePath = Get-NativeCorePath
+        Copy-Item -LiteralPath $nativeBridgeHostPath -Destination $electronNativeTargetDir -Force
+        Copy-Item -LiteralPath $nativeCorePath -Destination $electronNativeTargetDir -Force
+
+        $nativeBridgeHostPdbPath = [System.IO.Path]::ChangeExtension($nativeBridgeHostPath, '.pdb')
+        if ($IncludeSymbols -and (Copy-FluxoraSymbolFile -Path $nativeBridgeHostPdbPath -DestinationDirectory (Join-Path $SymbolsOutputDir 'native'))) {
+            Write-Host "Copied native symbol: $nativeBridgeHostPdbPath"
+        }
+
+        $nativeCorePdbPath = [System.IO.Path]::ChangeExtension($nativeCorePath, '.pdb')
+        if ($IncludeSymbols -and (Copy-FluxoraSymbolFile -Path $nativeCorePdbPath -DestinationDirectory (Join-Path $SymbolsOutputDir 'native'))) {
+            Write-Host "Copied native symbol: $nativeCorePdbPath"
+        }
+
+        # The injected virtual file system hook must sit next to FluxoraCore.dll so the
+        # core can locate and inject it when launching a game.
+        $nativeVfsPath = Get-NativeVfsPath
+        if ($nativeVfsPath) {
+            Copy-Item -LiteralPath $nativeVfsPath -Destination $electronNativeTargetDir -Force
+
+            $nativeVfsPdbPath = [System.IO.Path]::ChangeExtension($nativeVfsPath, '.pdb')
+            if ($IncludeSymbols -and (Copy-FluxoraSymbolFile -Path $nativeVfsPdbPath -DestinationDirectory (Join-Path $SymbolsOutputDir 'native'))) {
+                Write-Host "Copied native symbol: $nativeVfsPdbPath"
+            }
+        }
+        else {
+            Write-Warning "FluxoraVfs.dll was not found; VFS launch will stay unavailable in this Electron package."
+        }
 }
 
-Invoke-BuildStep "Copying native backend to output" {
-    $nativeCorePath = Get-NativeCorePath
-    Copy-Item -LiteralPath $nativeCorePath -Destination $OutputDir -Force
-
-    $nativePdbPath = [System.IO.Path]::ChangeExtension($nativeCorePath, '.pdb')
-    if ($IncludeSymbols -and (Copy-FluxoraSymbolFile -Path $nativePdbPath -DestinationDirectory (Join-Path $SymbolsOutputDir 'native'))) {
-        Write-Host "Copied native symbol: $nativePdbPath"
-    }
-
-    # The injected virtual file system hook must sit next to FluxoraCore.dll so the
-    # core can locate and inject it when launching a game.
-    $nativeVfsPath = Get-NativeVfsPath
-    if ($nativeVfsPath) {
-        Copy-Item -LiteralPath $nativeVfsPath -Destination $OutputDir -Force
-
-        $nativeVfsPdbPath = [System.IO.Path]::ChangeExtension($nativeVfsPath, '.pdb')
-        if ($IncludeSymbols -and (Copy-FluxoraSymbolFile -Path $nativeVfsPdbPath -DestinationDirectory (Join-Path $SymbolsOutputDir 'native'))) {
-            Write-Host "Copied native symbol: $nativeVfsPdbPath"
+Invoke-BuildStep "Installing Electron dependencies" {
+        Push-Location $ElectronProject
+        try {
+            Invoke-CheckedCommand -FilePath 'npm' -Arguments @('ci', '--no-fund')
         }
-    }
-    else {
-        Write-Warning "FluxoraVfs.dll was not found; the build will run without the virtual file system."
-    }
+        finally {
+            Pop-Location
+        }
+}
+
+Invoke-BuildStep "Packaging Electron app ($($electronTarget.Platform)/$($electronTarget.Arch))" {
+        if ((Test-Path -LiteralPath $electronOutDir) -and (-not $NoClean)) {
+            Remove-Item -LiteralPath $electronOutDir -Recurse -Force
+        }
+
+        $previousNativeResources = $env:FLUXORA_NATIVE_RESOURCES
+        Push-Location $ElectronProject
+        try {
+            $env:FLUXORA_NATIVE_RESOURCES = $ElectronNativeResourcesRoot
+            Invoke-CheckedCommand -FilePath 'npm' -Arguments @('run', 'build')
+        }
+        finally {
+            if ($null -eq $previousNativeResources) {
+                Remove-Item Env:\FLUXORA_NATIVE_RESOURCES -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:FLUXORA_NATIVE_RESOURCES = $previousNativeResources
+            }
+            Pop-Location
+        }
+
+        $electronPackageDir = Get-ElectronPackagedAppDirectory -Platform $electronTarget.Platform -Arch $electronTarget.Arch
+        Copy-DirectoryContents -SourceDirectory $electronPackageDir -DestinationDirectory $OutputDir
+
+        $packagedBridgeHostPath = Join-Path $OutputDir 'resources\native\FluxoraBridgeHost.exe'
+        $packagedCorePath = Join-Path $OutputDir 'resources\native\FluxoraCore.dll'
+        if (-not (Test-Path -LiteralPath $packagedBridgeHostPath -PathType Leaf)) {
+            throw "Electron package is missing bundled native bridge host at '$packagedBridgeHostPath'."
+        }
+        if (-not (Test-Path -LiteralPath $packagedCorePath -PathType Leaf)) {
+            throw "Electron package is missing bundled native core at '$packagedCorePath'."
+        }
 }
 
 Invoke-BuildStep "Removing symbols from app payload staging" {
@@ -838,9 +923,10 @@ Invoke-BuildStep "Removing symbols from app payload staging" {
     }
 }
 
-$appExePath = Join-Path $OutputDir $FrontendExecutableName
+$payloadExecutableName = $ElectronExecutableName
+$appExePath = Join-Path $OutputDir $payloadExecutableName
 if (-not (Test-Path -LiteralPath $appExePath)) {
-    throw "Build completed, but $FrontendExecutableName was not found in '$OutputDir'."
+    throw "Build completed, but $payloadExecutableName was not found in '$OutputDir'."
 }
 
 if ($Target -eq 'Release') {
@@ -927,7 +1013,7 @@ if ($Target -eq 'Release') {
                 Remove-Item -LiteralPath $InstallerOutputDir -Recurse -Force
             }
 
-            & dotnet @installerPublishArgs
+            Invoke-CheckedCommand -FilePath 'dotnet' -Arguments $installerPublishArgs
 
             if (-not (Test-Path -LiteralPath $setupExePath)) {
                 throw "Installer publish completed, but FluxoraSetup.exe was not found in '$InstallerOutputDir'."
@@ -948,9 +1034,10 @@ else {
 
 Write-Host ""
 Write-Host "Done. Project outputs are ready:"
+Write-Host "  Frontend payload: Electron"
 Write-Host "  Build target: $Target"
 Write-Host "  App payload staging: $OutputDir"
-Write-Host "  App payload runtime: $appRuntimeStrategy"
+Write-Host "  Electron native resources: $ElectronNativeResourcesRoot"
 if ($IncludeSymbols) {
     Write-Host "  Symbols artifact: $SymbolsOutputDir"
 }

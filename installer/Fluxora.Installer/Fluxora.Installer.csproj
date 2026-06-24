@@ -21,12 +21,7 @@
     <Resource Include="..\..\Icons\Fluxora.ico" Link="Fluxora.ico" />
     <Resource Include="..\..\Icons\Fluxora.png" Link="Fluxora.png" />
     <Resource Include="Assets\Emoji\*.svg" />
-    <Page Include="..\..\frontend\Assets\Icons.xaml" Link="Assets\Icons.xaml" />
-    <Resource Include="..\..\frontend\Fonts\*.ttf" LinkBase="Fonts" />
-    <Compile Include="..\..\frontend\Controls\LineIcon.cs" Link="Controls\LineIcon.cs" />
-    <Compile Include="..\..\frontend\Models\AppTheme.cs" Link="Models\AppTheme.cs" />
-    <Compile Include="..\..\frontend\Services\ProgressUpdateCoalescer.cs" Link="Services\ProgressUpdateCoalescer.cs" />
-    <Compile Include="..\..\frontend\Services\WindowChromeService.cs" Link="Services\WindowChromeService.cs" />
+    <Resource Include="Fonts\*.ttf" LinkBase="Fonts" />
     <EmbeddedResource Include="Resources\Legal\**\*.txt" />
     <EmbeddedResource Include="Resources\Payload\FluxoraPayload.flxpkg.gz"
                       Condition="Exists('Resources\Payload\FluxoraPayload.flxpkg.gz')" />

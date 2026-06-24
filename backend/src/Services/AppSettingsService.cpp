@@ -170,6 +170,17 @@ namespace fluxora
             return value.empty() ? L"en" : value;
         }
 
+        std::wstring normalizeThemeMode(std::wstring value)
+        {
+            value = trim(std::move(value));
+            for (wchar_t& ch : value)
+            {
+                ch = static_cast<wchar_t>(std::towlower(ch));
+            }
+
+            return value == L"light" ? L"light" : L"dark";
+        }
+
         std::map<std::wstring, std::wstring> readIniValues(const std::filesystem::path& path)
         {
             std::map<std::wstring, std::wstring> values;
@@ -268,6 +279,7 @@ namespace fluxora
         std::filesystem::create_directories(settingsPath_.parent_path());
         std::filesystem::create_directories(appConfigPath_.parent_path());
         (void)loadLanguageCode();
+        (void)loadThemeMode();
         initialized_ = true;
         logger_.write(LogLevel::Info, "App settings service initialized.");
     }
@@ -378,6 +390,27 @@ namespace fluxora
         std::map<std::wstring, std::wstring> values = readIniValues(appConfigPath_);
         values.erase(L"LANGUAGES");
         values[L"LANGUAGE"] = normalizeLanguageCode(std::wstring(languageCode));
+        writeIniValues(appConfigPath_, values);
+    }
+
+    std::wstring AppSettingsService::loadThemeMode() const
+    {
+        std::map<std::wstring, std::wstring> values = readIniValues(appConfigPath_);
+        const auto found = values.find(L"THEME");
+        if (found != values.end() && !trim(found->second).empty())
+        {
+            return normalizeThemeMode(found->second);
+        }
+
+        values[L"THEME"] = L"dark";
+        writeIniValues(appConfigPath_, values);
+        return L"dark";
+    }
+
+    void AppSettingsService::saveThemeMode(std::wstring_view themeMode) const
+    {
+        std::map<std::wstring, std::wstring> values = readIniValues(appConfigPath_);
+        values[L"THEME"] = normalizeThemeMode(std::wstring(themeMode));
         writeIniValues(appConfigPath_, values);
     }
 

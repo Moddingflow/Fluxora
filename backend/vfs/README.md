@@ -9,7 +9,7 @@ hooking the file system inside the game process.
 ## How it works
 
 ```
-Fluxora (WPF UI)
+Fluxora (Electron UI)
         │  "Run"  →  fluxora_launch_game_executable
         ▼
 FluxoraCore.dll  ── VirtualFileSystemService
@@ -62,9 +62,9 @@ Build without the VFS at all (launching then behaves like a plain run):
 cmake -S backend -B build\backend -DFLUXORA_ENABLE_VFS=OFF
 ```
 
-`Build.ps1` copies both `FluxoraCore.dll` and `FluxoraVfs.dll` into `Output\`.
-They must sit next to each other — the core locates the hook DLL relative to
-itself when launching.
+`Build.ps1` packages `FluxoraCore.dll` and `FluxoraVfs.dll` into the Electron
+native resources directory. They must sit next to each other — the core locates
+the hook DLL relative to itself when launching.
 
 ## Notes and current limits
 

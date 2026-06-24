@@ -948,6 +948,17 @@ namespace
 #endif
     }
 
+    std::filesystem::path resolveInstalledApplicationPath(const std::filesystem::path& installDirectory)
+    {
+        const std::filesystem::path candidate = installDirectory / L"Fluxora.exe";
+        if (std::filesystem::exists(candidate))
+        {
+            return candidate;
+        }
+
+        throw std::runtime_error("Installed package is missing Fluxora.exe.");
+    }
+
     std::filesystem::path createDesktopShortcut(const std::filesystem::path& applicationPath)
     {
 #ifdef _WIN32
@@ -1097,16 +1108,13 @@ namespace
             throw std::runtime_error("Payload manifest byte count does not match copied bytes.");
         }
 
-        const std::filesystem::path applicationPath = validatedInstallDirectory / L"FluxoraModding.exe";
-        if (!std::filesystem::exists(applicationPath))
-        {
-            throw std::runtime_error("Installed package is missing FluxoraModding.exe.");
-        }
+        const std::filesystem::path applicationPath = resolveInstalledApplicationPath(validatedInstallDirectory);
+        const std::wstring applicationFileName = applicationPath.filename().wstring();
 
         InstallResult result;
         result.installDirectory = validatedInstallDirectory;
         result.applicationPath = applicationPath;
-        emitProgress(callback, userData, progressState, L"finalizing", L"FluxoraModding.exe", header.totalBytes, header.totalBytes, true);
+        emitProgress(callback, userData, progressState, L"finalizing", applicationFileName, header.totalBytes, header.totalBytes, true);
 
         if (shouldCreateDesktopShortcut)
         {

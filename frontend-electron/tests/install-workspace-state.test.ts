@@ -1,0 +1,236 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  buildArchivePlacementRows,
+  coerceFomodSelection,
+  createPlacementOverrideForDrop,
+  createPlacementOverrides,
+  evaluateFomodWizard,
+  findExistingInstalledModName,
+  initialFomodSelection,
+  toggleFomodOption,
+  validateInstallModName
+} from '../src/renderer/install-workspace-state';
+import type {
+  FluxoraContentLayoutPreview,
+  FluxoraFomodInstaller
+} from '../src/shared/fluxora-api';
+
+const preview: FluxoraContentLayoutPreview = {
+  gameId: 'skyrimse',
+  gameDisplayName: 'Skyrim Special Edition',
+  rootFileWrapperDirectory: '',
+  canInstall: false,
+  summary: {
+    supported: true,
+    hasWarnings: true,
+    hasBlockers: true,
+    totalEntries: 2,
+    plannedEntries: 1,
+    gameDataEntries: 1,
+    gameRootEntries: 0,
+    pluginEntries: 1,
+    archiveEntries: 0,
+    scriptExtenderEntries: 0,
+    unknownEntries: 1,
+    unsafeEntries: 0
+  },
+  entries: [
+    {
+      sourcePath: 'Data/SkyUI.esp',
+      target: 'data',
+      contentArea: 'data',
+      targetRelativePath: 'SkyUI.esp',
+      classification: 'plugin',
+      explanation: 'Plugin goes to Data.',
+      manualOverrideAllowed: true,
+      safeManualTargets: ['data', 'gameRoot']
+    },
+    {
+      sourcePath: 'tools/helper.exe',
+      target: 'blocked',
+      contentArea: 'blocked',
+      targetRelativePath: '',
+      classification: 'toolExecutable',
+      explanation: 'Unexpected executable.',
+      manualOverrideAllowed: true,
+      safeManualTargets: ['gameRoot']
+    }
+  ],
+  validationFindings: [
+    {
+      severity: 'error',
+      path: 'tools/helper.exe',
+      classification: 'toolExecutable',
+      message: 'Unexpected executable.',
+      blocksInstall: true
+    }
+  ],
+  explanationSummary: 'Layout needs review.',
+  explanationDetails: []
+};
+
+const fomod: FluxoraFomodInstaller = {
+  isFomod: true,
+  moduleName: 'SkyUI',
+  moduleVersion: '5.2',
+  moduleId: 'skyui',
+  moduleImagePath: '',
+  memoryKey: 'skyui',
+  hasPreviousSelection: true,
+  previousSelectedOptionIds: ['mcm'],
+  fileDependencies: [{ file: 'Data/SKSE/skse64_loader.exe', exists: true }],
+  requiredFiles: [],
+  conditionalFilePatterns: [],
+  steps: [
+    {
+      id: 'main',
+      name: 'Main',
+      visible: null,
+      groups: [
+        {
+          id: 'variant',
+          name: 'Variant',
+          type: 'SelectExactlyOne',
+          options: [
+            {
+              id: 'mcm',
+              name: 'MCM',
+              description: 'MCM package',
+              imagePath: '',
+              type: 'Recommended',
+              defaultType: 'Recommended',
+              flags: [{ name: 'variant', value: 'mcm' }],
+              typePatterns: []
+            },
+            {
+              id: 'classic',
+              name: 'Classic',
+              description: 'Classic package',
+              imagePath: '',
+              type: 'Optional',
+              defaultType: 'Optional',
+              flags: [{ name: 'variant', value: 'classic' }],
+              typePatterns: []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'skse',
+      name: 'SKSE',
+      visible: {
+        kind: 'flag',
+        operator: 'And',
+        file: '',
+        state: '',
+        flag: 'variant',
+        value: 'mcm',
+        version: '',
+        children: []
+      },
+      groups: [
+        {
+          id: 'skse-files',
+          name: 'SKSE files',
+          type: 'SelectAny',
+          options: [
+            {
+              id: 'loader',
+              name: 'SKSE loader',
+              description: 'Required when SKSE is present',
+              imagePath: '',
+              type: 'Optional',
+              defaultType: 'Optional',
+              flags: [],
+              typePatterns: [
+                {
+                  type: 'Required',
+                  dependencies: {
+                    kind: 'file',
+                    operator: 'And',
+                    file: 'Data/SKSE/skse64_loader.exe',
+                    state: 'Active',
+                    flag: '',
+                    value: '',
+                    version: '',
+                    children: []
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+};
+
+describe('install workspace state', () => {
+  it('validates mod folder names without claiming core ownership', () => {
+    expect(validateInstallModName(' SkyUI ')).toBe('');
+    expect(validateInstallModName('CON')).toContain('reserved');
+    expect(validateInstallModName('bad/name')).toContain('characters');
+  });
+
+  it('builds placement rows and serializes real drop overrides', () => {
+    const rows = buildArchivePlacementRows(preview);
+    const dataFolder = rows.find((row) => row.isDirectory && row.displayPath === 'Data');
+    const blockedFile = preview.entries[1];
+
+    expect(dataFolder?.canAcceptDrops).toBe(true);
+    expect(createPlacementOverrideForDrop(blockedFile, dataFolder!)).toBeNull();
+
+    const plugin = preview.entries[0];
+    const override = createPlacementOverrideForDrop(plugin, dataFolder!);
+    expect(override).toEqual({
+      sourcePath: 'Data/SkyUI.esp',
+      target: 'data',
+      targetRelativePath: 'SkyUI.esp'
+    });
+
+    const rootRows = buildArchivePlacementRows(preview, {
+      'tools/helper.exe': {
+        target: 'gameRoot',
+        targetRelativePath: 'helper.exe'
+      }
+    });
+    expect(rootRows.some((row) => row.displayPath === 'helper.exe')).toBe(true);
+    expect(
+      createPlacementOverrides(preview, {
+        'tools/helper.exe': {
+          target: 'gameRoot',
+          targetRelativePath: 'helper.exe'
+        }
+      })
+    ).toEqual([
+      {
+        sourcePath: 'tools/helper.exe',
+        target: 'gameRoot',
+        targetRelativePath: 'helper.exe'
+      }
+    ]);
+  });
+
+  it('evaluates FOMOD defaults, dynamic required options and exclusive groups', () => {
+    const initial = initialFomodSelection(fomod);
+    expect(initial).toContain('mcm');
+
+    const evaluation = evaluateFomodWizard(fomod, initial);
+    expect(evaluation.visibleSteps).toHaveLength(2);
+    expect(evaluation.selectedOptionIds).toEqual(['mcm', 'loader']);
+
+    const classic = toggleFomodOption(fomod, initial, 'classic', true);
+    expect(classic).toContain('classic');
+    expect(classic).not.toContain('mcm');
+    expect(evaluateFomodWizard(fomod, classic).visibleSteps).toHaveLength(1);
+
+    expect(coerceFomodSelection(fomod, [])).toContain('mcm');
+  });
+
+  it('detects existing mods case-insensitively for replace merge UX', () => {
+    expect(findExistingInstalledModName(['SkyUI', 'RaceMenu'], 'skyui')).toBe('SkyUI');
+    expect(findExistingInstalledModName(['SkyUI'], 'SmoothCam')).toBeNull();
+  });
+});

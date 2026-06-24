@@ -1,14 +1,14 @@
 Fluxora Nutzungsbedingungen
-Stand: 15. Juni 2026
+Stand: 24. Juni 2026
 
 1. Annahme
 Mit der Installation oder Nutzung von Fluxora stimmen Sie diesen Nutzungsbedingungen und der Fluxora Datenschutzerklärung zu. Wenn Sie nicht zustimmen, installieren und nutzen Sie Fluxora nicht.
 
 2. Produkt
-Fluxora ist ein Desktop Mod Manager und Launcher im ModdingFlow Ökosystem. Der Installer installiert Fluxora in einen von Ihnen gewählten Ordner und kann auf Wunsch eine Desktop-Verknüpfung erstellen.
+Fluxora ist ein Desktop Mod Manager und Launcher im ModdingFlow Ökosystem. Der Installer installiert Fluxora in einen von Ihnen gewählten Ordner und kann auf Wunsch eine Desktop-Verknüpfung erstellen. Aktuelle Fluxora-Builds nutzen eine Electron-App-Oberfläche, einen nativen Bridge Host und einen nativen C++ Core. Electron enthält Chromium- und Node.js-Laufzeitkomponenten.
 
 3. Lizenz
-Fluxora ist proprietäre Software. Vorbehaltlich dieser Bedingungen erhalten Sie ein beschränktes, widerrufliches, nicht ausschließliches und nicht übertragbares Recht, Fluxora für den vorgesehenen Zweck zu installieren und zu nutzen. Sie erwerben kein Eigentum an Fluxora, Quellcode, Marken, Icons, Assets oder Dokumentation.
+Fluxora ist proprietäre Software. Vorbehaltlich dieser Bedingungen erhalten Sie ein beschränktes, widerrufliches, nicht ausschließliches und nicht übertragbares Recht, Fluxora für den vorgesehenen Zweck zu installieren und zu nutzen. Sie erwerben kein Eigentum an Fluxora, Quellcode, Marken, Icons, Assets oder Dokumentation. Mitgelieferte Drittanbieter-Komponenten unterliegen weiterhin ihren eigenen Lizenzbedingungen und Hinweisen.
 
 4. Beschränkungen
 Soweit zwingendes Recht nichts anderes erlaubt, dürfen Sie Fluxora nicht kopieren, weiterverbreiten, verkaufen, vermieten, unterlizenzieren, veröffentlichen, verändern, zurückentwickeln, dekompilieren, disassemblieren, technische Schutzmaßnahmen umgehen, abgeleitete Werke erstellen oder Fluxora Marken ohne vorherige schriftliche Erlaubnis von ModdingFlow verwenden.
@@ -21,6 +21,8 @@ Fluxora schreibt Dateien in den von Ihnen gewählten Installationsordner, speich
 
 7. Online-Funktionen
 Einige Funktionen können Ihren Browser öffnen, Nexus Mods verbinden, Mod-Hosting-Dienste abrufen, Dateien herunterladen oder nxm Protokollverarbeitung registrieren. Diese Funktionen sind optional und können den Bedingungen, Verfügbarkeiten, API-Änderungen, Limits, Kontoregeln und Netzwerkfehlern Dritter unterliegen.
+
+Fluxora bündelt Drittanbieter-Komponenten für Laufzeit, Installer, Build und Tests, darunter Electron/Chromium/Node, React, Lucide, Electron Forge, Vite, TypeScript, spdlog, Microsoft Detours soweit VFS gebaut wird, SharpVectors für die Installer-Oberfläche und weitere Pakete, die in den mitgelieferten Third-Party Notices aufgeführt sind. Diese Hinweise dienen der Transparenz und sollten vor öffentlicher Weitergabe geprüft werden.
 
 8. Backups
 Vor dem Importieren, Verschieben, Löschen, Aktivieren oder Deaktivieren von Mods sollten Sie Backups wichtiger Spieldateien, Speicherstände, Profile und Mod-Archive erstellen. Modding kann das Verhalten von Spielen verändern. Fluxora soll diese Abläufe erleichtern, die Verantwortung für das Ergebnis bleibt bei Ihnen.

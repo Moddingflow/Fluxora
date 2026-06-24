@@ -28,6 +28,8 @@ extern "C"
 
     FLUXORA_CORE_API int fluxora_core_is_available();
 
+    FLUXORA_CORE_API int fluxora_core_shutdown();
+
     // Sets a thread-local operation id used by native bridge/core/operation log
     // lines. Passing null or an empty string clears the current context.
     FLUXORA_CORE_API int fluxora_set_operation_context(
@@ -219,6 +221,13 @@ extern "C"
 
     FLUXORA_CORE_API int fluxora_set_app_language(
         const wchar_t* languageCode);
+
+    FLUXORA_CORE_API int fluxora_get_app_theme(
+        wchar_t* themeBuffer,
+        int themeBufferLength);
+
+    FLUXORA_CORE_API int fluxora_set_app_theme(
+        const wchar_t* themeMode);
 
     // Registers Fluxora as the current-user handler for nxm:// Mod Manager
     // download links. The previous command is preserved in the user registry.

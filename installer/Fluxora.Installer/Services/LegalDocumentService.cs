@@ -8,9 +8,12 @@ public sealed class LegalDocumentService
     public string ReadDocument(string languageCode, string documentName)
     {
         string normalizedLanguage = NormalizeLanguage(languageCode);
-        string normalizedDocument = documentName.Equals("terms", StringComparison.OrdinalIgnoreCase)
-            ? "terms"
-            : "privacy";
+        string normalizedDocument =
+            documentName.Equals("terms", StringComparison.OrdinalIgnoreCase)
+                ? "terms"
+                : documentName.Equals("third-party-notices", StringComparison.OrdinalIgnoreCase)
+                    ? "third-party-notices"
+                    : "privacy";
 
         Assembly assembly = Assembly.GetExecutingAssembly();
         string suffix = $".Resources.Legal.{normalizedLanguage}.{normalizedDocument}.txt";

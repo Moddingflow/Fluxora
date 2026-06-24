@@ -1,14 +1,14 @@
 Fluxora Privacy Policy
-Last updated: 15 June 2026
+Last updated: 24 June 2026
 
 1. Controller
 Fluxora is provided as part of the ModdingFlow ecosystem. The controller for data processing is ModdingFlow, Germany, unless another legal notice is supplied with the official distribution. Use the official ModdingFlow contact channel or legal notice for privacy requests.
 
 2. Scope
-This policy covers the Fluxora installer, the Fluxora desktop launcher and the native C++ core included with Fluxora. It does not cover third-party services, game publishers, mod hosting platforms, Nexus Mods, Microsoft, or websites opened by the user.
+This policy covers the Fluxora installer, the Electron-based Fluxora desktop app, the bundled Electron/Chromium/Node runtime used to display the app UI, the native bridge host and the native C++ core included with Fluxora. It does not cover third-party services, game publishers, mod hosting platforms, Nexus Mods, Microsoft, Chromium/Electron project websites, npm package websites, or websites opened by the user.
 
 3. Summary
-Fluxora is designed as a local desktop application. The installer does not create an online account and does not send telemetry. Fluxora stores application files, settings, project metadata and logs on your device. Online communication happens only when you use features that require it, for example connecting Nexus Mods, opening a website, registering nxm links, checking mod data, or downloading files selected by you.
+Fluxora is designed as a local desktop application. The installer does not create an online account and does not send telemetry. Current Electron builds do not enable analytics or automatic crash upload. Fluxora stores application files, settings, project metadata and logs on your device. Online communication happens only when you use features that require it, for example connecting Nexus Mods, opening a website, registering nxm links, checking mod data, or downloading files selected by you.
 
 4. Data processed locally
 Fluxora may store or process the following data on your device:
@@ -16,11 +16,11 @@ Fluxora may store or process the following data on your device:
 - Installation data: selected installation folder, installed files and optional desktop shortcut path.
 - Settings: language, app configuration, build configuration folder and other preferences.
 - Project data: project names, game paths, mod folders, profile files, plugin order, download records, imported Mod Organizer data, executable paths and related metadata.
-- Logs: timestamps, operation status, error messages, selected paths, file names involved in an operation, process or thread identifiers and diagnostic details. Logs may indirectly contain your Windows user name if it is part of a file path.
+- Logs and crash diagnostics: installer logs, Electron UI logs, Electron main/bridge logs, native core logs, operation logs and crash logs with timestamps, operation status, operation ids, error messages, selected paths, file names involved in an operation, process or thread identifiers and diagnostic details. Logs may indirectly contain your operating-system user name if it is part of a file path.
 - Nexus Mods connection data, if you connect it: account display name, user id, token type, expiry date, access or refresh tokens, and personal API keys protected with Windows data protection APIs where available.
 - Local protocol data: nxm links passed to Fluxora when you choose Fluxora as handler.
 
-Fluxora does not intentionally collect special categories of personal data, payment data, advertising identifiers, address books, browser history, microphone data, camera data or location data.
+Fluxora does not intentionally collect special categories of personal data, payment data, advertising identifiers, address books, browser history, microphone data, camera data or location data. The bundled Electron/Chromium runtime is used to render the local application UI; Fluxora does not use it to track browsing activity.
 
 5. Purposes and legal bases
 The legal bases follow Article 6 GDPR:
@@ -35,7 +35,7 @@ The legal bases follow Article 6 GDPR:
 Fluxora stores data locally, typically in these locations:
 
 - Installed application: the folder selected during installation.
-- Logs: a logs folder next to the executable where writable, and/or %APPDATA%\Fluxora\logs.
+- Logs: a logs folder next to the executable where writable, and/or %APPDATA%\Fluxora\logs. Electron logs are separated from native core, operation, installer and crash logs.
 - Settings: %APPDATA%\Fluxora\settings.ini and %APPDATA%\Fluxora\settings.json.
 - Runtime launch state: %APPDATA%\Fluxora\launch-session.json while an external executable is being tracked.
 - Project files: folders selected by you when creating or importing projects.
@@ -49,6 +49,7 @@ Fluxora does not sell personal data and does not send logs or telemetry to Moddi
 - Nexus Mods OAuth and API endpoints when you connect or use Nexus Mods features.
 - A download URL or mod hosting service when you download a file.
 - Your browser or operating system when Fluxora opens a link or registers local protocol handling.
+- Third-party runtime and package components bundled with Fluxora, such as Electron/Chromium/Node and other libraries listed in the bundled third-party notices, run locally as part of the app or installer.
 
 Those third parties process data under their own terms and privacy policies. Fluxora itself does not intentionally transfer data outside your device unless you use such optional online features or manually send logs for support.
 
@@ -65,4 +66,4 @@ You have the right to lodge a complaint with a competent data protection supervi
 Fluxora is not directed at children. If a child uses Fluxora, a parent or legal guardian is responsible for ensuring that use is lawful and appropriate.
 
 13. Changes
-This policy may be updated when Fluxora changes how it processes data, when new online features are added, or when legal requirements change. The version bundled with the installer is the version presented before installation.
+This policy may be updated when Fluxora changes how it processes data, when new online features are added, when third-party runtime components change, or when legal requirements change. The version bundled with the installer is the version presented before installation.

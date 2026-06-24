@@ -154,6 +154,27 @@ if(WIN32)
 endif()
 
 # --------------------------------------------------------------------------
+# FluxoraBridgeHost: JSON-RPC stdio host used by Electron main.
+# --------------------------------------------------------------------------
+add_executable(FluxoraBridgeHost
+    src/BridgeHost/FluxoraBridgeHost.cpp
+)
+
+target_include_directories(FluxoraBridgeHost
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_compile_features(FluxoraBridgeHost PRIVATE cxx_std_20)
+target_link_libraries(FluxoraBridgeHost PRIVATE FluxoraCore)
+
+if(MSVC)
+    target_compile_options(FluxoraBridgeHost PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(FluxoraBridgeHost PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# --------------------------------------------------------------------------
 # FluxoraInstallerCore: native installer logic used by the WPF setup UI.
 # --------------------------------------------------------------------------
 if(WIN32)

@@ -189,7 +189,7 @@ TEST(InstallerCorePackageTests, InstallPackageStreamInstallsV2Payload)
     fluxora::tests::TempDirectory temp;
     const std::filesystem::path installDirectory = temp.path() / L"install";
     const std::vector<unsigned char> package = makePackage({
-        {"FluxoraModding.exe", "fake executable"},
+        {"Fluxora.exe", "fake executable"},
         {"data/config.txt", "profile=data"}
     });
     VectorReadState readState{&package, 0, 17};
@@ -207,9 +207,40 @@ TEST(InstallerCorePackageTests, InstallPackageStreamInstallsV2Payload)
         static_cast<int>(json.size()));
 
     EXPECT_EQ(FluxoraInstallerResultOk, result);
-    EXPECT_EQ("fake executable", fluxora::tests::readTextFile(installDirectory / L"FluxoraModding.exe"));
+    EXPECT_EQ("fake executable", fluxora::tests::readTextFile(installDirectory / L"Fluxora.exe"));
     EXPECT_EQ("profile=data", fluxora::tests::readTextFile(installDirectory / L"data" / L"config.txt"));
-    EXPECT_NE(std::wstring(json.data()).find(L"FluxoraModding.exe"), std::wstring::npos);
+    EXPECT_NE(std::wstring(json.data()).find(L"Fluxora.exe"), std::wstring::npos);
+    ASSERT_FALSE(progressUpdates.empty());
+    EXPECT_NE(progressUpdates.back().find(L"\"phase\":\"completed\""), std::wstring::npos);
+}
+
+TEST(InstallerCorePackageTests, InstallPackageStreamIncludesElectronResources)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path installDirectory = temp.path() / L"install";
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", "electron executable"},
+        {"resources/app.asar", "asar payload"},
+        {"resources/native/FluxoraBridgeHost.exe", "bridge host"}
+    });
+    VectorReadState readState{&package, 0, 23};
+    std::vector<std::wstring> progressUpdates;
+    std::array<wchar_t, 4096> json{};
+
+    const int result = fluxora_installer_install_package_stream(
+        readVectorPackage,
+        &readState,
+        installDirectory.c_str(),
+        0,
+        collectProgress,
+        &progressUpdates,
+        json.data(),
+        static_cast<int>(json.size()));
+
+    EXPECT_EQ(FluxoraInstallerResultOk, result);
+    EXPECT_EQ("electron executable", fluxora::tests::readTextFile(installDirectory / L"Fluxora.exe"));
+    EXPECT_EQ("asar payload", fluxora::tests::readTextFile(installDirectory / L"resources" / L"app.asar"));
+    EXPECT_NE(std::wstring(json.data()).find(L"Fluxora.exe"), std::wstring::npos);
     ASSERT_FALSE(progressUpdates.empty());
     EXPECT_NE(progressUpdates.back().find(L"\"phase\":\"completed\""), std::wstring::npos);
 }
@@ -219,7 +250,7 @@ TEST(InstallerCorePackageTests, InstallPackageStreamRejectsTamperedPayload)
     fluxora::tests::TempDirectory temp;
     const std::filesystem::path installDirectory = temp.path() / L"install";
     std::vector<unsigned char> package = makePackage({
-        {"FluxoraModding.exe", "fake executable"}
+        {"Fluxora.exe", "fake executable"}
     });
     package.back() ^= 0x01;
 

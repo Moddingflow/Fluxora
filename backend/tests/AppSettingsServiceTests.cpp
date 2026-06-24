@@ -39,6 +39,24 @@ namespace fluxora::tests
         EXPECT_NE(content.find("LANGUAGE=de-de"), std::string::npos);
     }
 
+    TEST(AppSettingsServiceTests, SavesLoadsAndNormalizesThemeMode)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        Logger logger;
+        AppSettingsService service(logger);
+        service.initialize();
+
+        EXPECT_EQ(service.loadThemeMode(), L"dark");
+
+        service.saveThemeMode(L"  LIGHT  ");
+        EXPECT_EQ(service.loadThemeMode(), L"light");
+        EXPECT_NE(readTextFile(service.appConfigPath()).find("THEME=light"), std::string::npos);
+
+        service.saveThemeMode(L"solarized");
+        EXPECT_EQ(service.loadThemeMode(), L"dark");
+    }
+
     TEST(AppSettingsServiceTests, SavesLoadsAndClearsNexusModsAuth)
     {
         TempDirectory temp;

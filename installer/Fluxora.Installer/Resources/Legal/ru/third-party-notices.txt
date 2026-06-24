@@ -1,0 +1,23 @@
+Уведомления Fluxora о сторонних компонентах
+Дата обновления: 24 июня 2026 г.
+
+Fluxora включает сторонние runtime, installer, build и test components. Этот документ является release checklist и уведомлением для прозрачности. Он не заменяет финальную проверку owner/legal перед публичным распространением.
+
+Runtime и компоненты приложения:
+- Electron, включая runtime-компоненты Chromium и Node.js, для desktop app shell.
+- React и React DOM для renderer UI.
+- Lucide React для UI icons.
+- spdlog для native logging.
+- Microsoft Detours, если собрана Windows VFS/hook функция.
+
+Компоненты установщика:
+- Microsoft .NET runtime components, используемые Windows installer build.
+- SharpVectors.Wpf для SVG rendering в Windows installer UI.
+
+Build, packaging и test components:
+- Electron Forge, Electron Forge makers/plugins и Electron fuses.
+- Vite, TypeScript и related TypeScript/React tooling.
+- Playwright и Vitest для smoke/unit tests.
+- GoogleTest для native backend tests.
+
+Перед публичным релизом нужно проверить точное дерево зависимостей, тексты лицензий и требования к атрибуции для версий пакетов, которые попали в поставку. Полные license notices должны быть включены там, где этого требует лицензия зависимости.
