@@ -39,6 +39,9 @@ export const emptyPluginWorkspaceState = (): PluginWorkspaceState => ({
 export const pluginItemTitle = (item: FluxoraPluginOrderItem): string =>
   item.isSeparator ? item.separatorTitle || 'Separator' : item.name || item.id;
 
+export const pluginHexIndex = (item: FluxoraPluginOrderItem): string =>
+  item.isSeparator ? '--' : Math.max(0, item.order).toString(16).toUpperCase().padStart(2, '0');
+
 export const selectedPluginOrderItem = (
   items: FluxoraPluginOrderItem[],
   selectedOrderId: string | null

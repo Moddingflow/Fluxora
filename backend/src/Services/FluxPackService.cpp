@@ -2427,12 +2427,6 @@ namespace fluxora
         {
             PathSafetyService().validateWritePath(projectDirectory, installGameDirectory.path)
                 .throwIfUnsafe("FluxPack game directory is unsafe");
-            std::filesystem::create_directories(installGameDirectory.path);
-            logger_.writeOperation(
-                LogLevel::Info,
-                "FluxPack",
-                "FluxPack install using local game directory. gameDirectory=\"" +
-                    pathForLog(installGameDirectory.path) + "\"");
         }
 
         std::vector<ProviderInstallState> providers = buildProviderStates(manifest.sourceArchives);
@@ -2470,6 +2464,18 @@ namespace fluxora
             installRoot,
             installGameDirectory.validateExistingGame
         });
+
+        if (!installGameDirectory.validateExistingGame)
+        {
+            PathSafetyService().validateWritePath(project.projectDirectory, project.gamePath)
+                .throwIfUnsafe("FluxPack game directory is unsafe");
+            std::filesystem::create_directories(project.gamePath);
+            logger_.writeOperation(
+                LogLevel::Info,
+                "FluxPack",
+                "FluxPack install using local game directory. gameDirectory=\"" +
+                    pathForLog(project.gamePath) + "\"");
+        }
 
         const BuildPathSettings savedInstallPaths = pathSettings_.saveForConfig(
             project.configPath,

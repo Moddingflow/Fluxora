@@ -14,13 +14,9 @@ import {
   File,
   FolderOpen,
   FolderTree,
-  Globe2,
   Home,
   Layers,
-  Languages,
-  Link2,
   Maximize2,
-  Minus,
   MoreHorizontal,
   Pencil,
   Play,
@@ -28,28 +24,43 @@ import {
   Power,
   RefreshCw,
   Search,
-  Settings,
   ShieldCheck,
-  Square,
   Trash2,
   UploadCloud,
-  X,
   XCircle
 } from 'lucide-react';
 import { useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactElement } from 'react';
 
-import fluxoraLogo from './assets/brand/Fluxora.png';
-import nexusModsIcon from './assets/images/nexus-mods.svg';
-import skyrimIcon from './assets/images/SkyrimSpecialEditionIcon.png';
+import { AppTitlebar } from './components/chrome/AppTitlebar';
+import { EmptyState, LoadingSplash, StatusDot } from './design-system';
+import { PrimitivePreview } from './design-system/PrimitivePreview';
+import {
+  LibraryHome,
+  type LibraryCatalogState
+} from './features/library/LibraryHome';
+import {
+  buildProjectLibraryStats,
+  type ProjectRuntimeSummary
+} from './features/library/projectLibraryStats';
+import { BuildPathsInspector } from './features/build/BuildPathsInspector';
+import { BuildDetailHeader } from './features/build/BuildDetailHeader';
+import {
+  InstallDialog,
+  type InstallDialogState
+} from './features/install/InstallDialog';
+import {
+  OperationOverlay,
+  type OperationOverlayState
+} from './features/operations/OperationOverlay';
+import { SettingsWorkspace } from './features/settings/SettingsWorkspace';
 import {
   emptyProjectDraft,
   filterProjects,
   filterTemplates,
   isProjectDraftStepComplete,
   projectCapabilitiesLabel,
-  projectDisplayPath,
   type ProjectDraft
 } from './project-catalog-state';
 import {
@@ -71,8 +82,12 @@ import {
   hasConflict,
   isModNestedUnderSeparator,
   modItemTitle,
+  modLatestVersionText,
   modOverwriteView,
+  modSeparatorChildCount,
   modStatusText,
+  modTableStatusView,
+  modVersionText,
   modWorkspaceReducer,
   selectedModOrderItem,
   targetIndexForDrop,
@@ -82,6 +97,7 @@ import {
   emptyPluginWorkspaceState,
   filterPluginOrderItems,
   pluginCapabilityView,
+  pluginHexIndex,
   pluginItemTitle,
   pluginStatusText,
   pluginTypeLabel,
@@ -115,15 +131,12 @@ import {
   selectedProfileName
 } from './profiles-executables-workspace-state';
 import {
-  languageOptions,
   normalizeThemeMode,
   selectPreferredTransferDrive,
   settingsCapabilityView,
-  settingsSections,
   type SettingsSectionId
 } from './settings-workspace-state';
 import {
-  TransferSettingsPanel,
   type TransferMode,
   type TransferStepId
 } from './TransferSettingsPanel';
@@ -133,6 +146,7 @@ import {
 } from './TransferMo2Page';
 import {
   buildPathSaveRequest,
+  buildHeaderCapabilityView,
   buildPrimaryExecutableList,
   directoryFromExecutablePath,
   draftFromBuildPathSettings,
@@ -142,10 +156,6 @@ import {
   type BuildPathDraft
 } from './build-workspace-state';
 import {
-  buildArchivePlacementRows,
-  buildPlacementPreviewLines,
-  buildPlacementSummaryText,
-  createPlacementOverrideForDrop,
   createPlacementOverrides,
   currentFomodStepValidation,
   defaultInstallModName,
@@ -154,11 +164,8 @@ import {
   findExistingInstalledModName,
   initialFomodSelection,
   normalizeInstallModName,
-  previousFomodSelection,
-  toggleFomodOption,
   validateInstallModName,
-  type InstallSource,
-  type PlacementOverrideMap
+  type InstallSource
 } from './install-workspace-state';
 import { defaultModNameFromPath, shortPath } from './services/path-display-service';
 import { createRendererOperationId, errorMessage } from './services/renderer-operation-service';
@@ -171,7 +178,6 @@ import type {
   FluxoraExecutable,
   FluxoraExecutableLaunchResult,
   FluxoraExistingModInstallMode,
-  FluxoraFomodInstaller,
   FluxoraFluxPackInstallResult,
   FluxoraFluxPackSummary,
   FluxoraGameTemplate,
@@ -202,55 +208,7 @@ type RouteId =
   | 'executables'
   | 'settings';
 
-type CatalogState = 'idle' | 'loading' | 'ready' | 'blocked' | 'error';
-
-type InstallDialogPhase = 'analyzing' | 'fomod' | 'options' | 'details' | 'installing' | 'error';
-
-interface InstallDialogState {
-  phase: InstallDialogPhase;
-  source: InstallSource;
-  operationId: string;
-  isFomod: boolean;
-  fomodInstaller: FluxoraFomodInstaller | null;
-  selectedFomodOptionIds: string[];
-  fomodStepIndex: number;
-  layoutPreview: FluxoraContentLayoutPreview | null;
-  modName: string;
-  existingModMode: FluxoraExistingModInstallMode;
-  placementOverrides: PlacementOverrideMap;
-  draggedSourcePath: string | null;
-  validationMessage: string | null;
-  errorMessage: string | null;
-}
-
-interface OperationOverlayState {
-  operationId: string;
-  kind: 'build-create' | 'build-delete' | 'fluxpack-export' | 'fluxpack-install';
-  title: string;
-  statusText: string;
-  currentItem: string;
-  percent: number | null;
-  isRunning: boolean;
-  canClose: boolean;
-  cancelRequested: boolean;
-  createdProject: FluxoraProject | null;
-  resultText: string | null;
-  errorText: string | null;
-}
-
-type OperationOverlayTone = 'running' | 'complete' | 'error';
-
-const operationOverlayTone = (overlay: OperationOverlayState): OperationOverlayTone => {
-  if (overlay.errorText) {
-    return 'error';
-  }
-
-  if (!overlay.isRunning && overlay.resultText) {
-    return 'complete';
-  }
-
-  return 'running';
-};
+type CatalogState = LibraryCatalogState;
 
 interface ProjectMenuPosition {
   left: number;
@@ -265,181 +223,14 @@ interface StartMo2TransferOptions {
   skipMainHandoff?: boolean;
 }
 
-type RightPaneId = 'plugins' | 'downloads';
-
-interface ProjectRuntimeSummary {
-  modCount?: number;
-  disabledModCount?: number;
-  enabledPluginCount?: number;
-  pluginCount?: number;
-  downloadsCount?: number;
+interface LaunchSplashState {
+  appName: string;
+  buildName: string;
+  detail: string;
+  operationId: string;
 }
 
-interface ProjectLibraryStats {
-  lastLaunch: string;
-  size: string;
-  mods: string;
-  disabledMods: string;
-  plugins: string;
-  downloads: string;
-}
-
-interface ProjectStatItem {
-  label: string;
-  value: string;
-}
-
-const unknownProjectStatValues = new Set(['-', 'Not tracked']);
-
-const hasProjectStatValue = (value: string): boolean =>
-  value.trim().length > 0 && !unknownProjectStatValues.has(value);
-
-const projectSummaryFacts = (stats: ProjectLibraryStats): ProjectStatItem[] =>
-  [
-    { label: 'Last launch', value: stats.lastLaunch },
-    { label: 'Build size', value: stats.size },
-    { label: 'Mods', value: stats.mods },
-    { label: 'Disabled mods', value: stats.disabledMods },
-    { label: 'Plugins', value: stats.plugins },
-    { label: 'Downloads', value: stats.downloads }
-  ].filter((item) => hasProjectStatValue(item.value));
-
-const projectRowStats = (stats: ProjectLibraryStats): ProjectStatItem[] =>
-  [
-    { label: 'mods', value: stats.mods },
-    { label: 'plugins', value: stats.plugins },
-    { label: 'downloads', value: stats.downloads },
-    { label: 'last launch', value: stats.lastLaunch }
-  ].filter((item) => hasProjectStatValue(item.value));
-
-const projectMetricKeys = {
-  lastLaunch: ['lastLaunchedAt', 'lastLaunchAt', 'lastRunAt', 'lastOpenedAt', 'lastOpened'],
-  size: ['sizeBytes', 'totalBytes', 'projectSizeBytes', 'installSizeBytes', 'diskSizeBytes'],
-  mods: ['modCount', 'modsCount', 'installedModCount', 'totalMods'],
-  disabledMods: ['disabledModCount', 'disabledMods', 'inactiveModCount'],
-  plugins: ['pluginCount', 'pluginsCount', 'totalPlugins'],
-  enabledPlugins: ['enabledPluginCount', 'enabledPlugins', 'activePluginCount'],
-  downloads: ['downloadCount', 'downloadsCount', 'queuedDownloadCount']
-} as const;
-
-const isMetricRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const projectMetricSources = (project: FluxoraProject): Array<Record<string, unknown>> =>
-  [project.projectFingerprint, project.gameHealthSummary, project.contentLayoutSummary].filter(
-    isMetricRecord
-  );
-
-const readNumberMetric = (
-  project: FluxoraProject,
-  keys: readonly string[]
-): number | null => {
-  for (const source of projectMetricSources(project)) {
-    for (const key of keys) {
-      const value = source[key];
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        return Math.max(0, value);
-      }
-
-      if (typeof value === 'string' && value.trim()) {
-        const parsed = Number(value);
-        if (Number.isFinite(parsed)) {
-          return Math.max(0, parsed);
-        }
-      }
-    }
-  }
-
-  return null;
-};
-
-const readTextMetric = (
-  project: FluxoraProject,
-  keys: readonly string[]
-): string | null => {
-  for (const source of projectMetricSources(project)) {
-    for (const key of keys) {
-      const value = source[key];
-      if (typeof value === 'string' && value.trim()) {
-        return value.trim();
-      }
-    }
-  }
-
-  return null;
-};
-
-const formatOptionalCount = (value: number | null | undefined): string =>
-  Number.isFinite(value) ? String(value) : '-';
-
-const formatProjectBytes = (value: number | null): string => {
-  if (!value || value <= 0) {
-    return '-';
-  }
-
-  if (value < 1024) {
-    return `${value} B`;
-  }
-
-  const kilobytes = value / 1024;
-  if (kilobytes < 1024) {
-    return `${kilobytes.toFixed(kilobytes >= 10 ? 0 : 1)} KB`;
-  }
-
-  const megabytes = kilobytes / 1024;
-  if (megabytes < 1024) {
-    return `${megabytes.toFixed(megabytes >= 10 ? 0 : 1)} MB`;
-  }
-
-  const gigabytes = megabytes / 1024;
-  return `${gigabytes.toFixed(gigabytes >= 10 ? 1 : 2)} GB`;
-};
-
-const formatProjectDate = (value: string | null): string => {
-  if (!value) {
-    return 'Not tracked';
-  }
-
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric)
-    ? new Date(numeric < 10000000000 ? numeric * 1000 : numeric)
-    : new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit'
-  }).format(date);
-};
-
-const buildProjectLibraryStats = (
-  project: FluxoraProject,
-  runtime?: ProjectRuntimeSummary
-): ProjectLibraryStats => {
-  const enabledPlugins =
-    runtime?.enabledPluginCount ?? readNumberMetric(project, projectMetricKeys.enabledPlugins);
-  const pluginCount = runtime?.pluginCount ?? readNumberMetric(project, projectMetricKeys.plugins);
-
-  return {
-    lastLaunch: formatProjectDate(readTextMetric(project, projectMetricKeys.lastLaunch)),
-    size: formatProjectBytes(readNumberMetric(project, projectMetricKeys.size)),
-    mods: formatOptionalCount(runtime?.modCount ?? readNumberMetric(project, projectMetricKeys.mods)),
-    disabledMods: formatOptionalCount(
-      runtime?.disabledModCount ?? readNumberMetric(project, projectMetricKeys.disabledMods)
-    ),
-    plugins:
-      enabledPlugins !== null && enabledPlugins !== undefined && pluginCount !== null && pluginCount !== undefined
-        ? `${enabledPlugins}/${pluginCount}`
-        : formatOptionalCount(pluginCount),
-    downloads: formatOptionalCount(
-      runtime?.downloadsCount ?? readNumberMetric(project, projectMetricKeys.downloads)
-    )
-  };
-};
+type RightPaneId = 'plugins' | 'data' | 'downloads' | 'build';
 
 const navItems: Array<{ id: RouteId; label: string; icon: typeof Home }> = [
   { id: 'home', label: 'Home', icon: Home },
@@ -452,6 +243,14 @@ const wizardSteps = [
   { id: 'executable', label: 'Game executable' },
   { id: 'location', label: 'Install location' }
 ] as const;
+
+const rightPaneTabs: Array<{ id: RightPaneId; label: string; icon: typeof Layers }> = [
+  { id: 'plugins', label: 'Плагины', icon: Layers },
+  { id: 'data', label: 'Данные', icon: FolderTree },
+  { id: 'downloads', label: 'Загрузки', icon: Download },
+  { id: 'build', label: 'Сборка', icon: Box }
+];
+
 const modRowHeight = 48;
 const modVisibleRows = 28;
 const modOverscanRows = 8;
@@ -461,9 +260,6 @@ const pluginOverscanRows = 8;
 const downloadRowHeight = 48;
 const downloadVisibleRows = 28;
 const downloadOverscanRows = 8;
-const archiveTreeRowHeight = 32;
-const archiveTreeVisibleRows = 32;
-const archiveTreeOverscanRows = 10;
 const projectMenuWidth = 174;
 const projectMenuEstimatedHeight = 116;
 const projectMenuViewportPadding = 8;
@@ -590,6 +386,7 @@ export const App = () => {
   const [executableDraft, setExecutableDraft] = useState<FluxoraExecutable | null>(null);
   const [executableLaunchResult, setExecutableLaunchResult] =
     useState<FluxoraExecutableLaunchResult | null>(null);
+  const [launchSplash, setLaunchSplash] = useState<LaunchSplashState | null>(null);
   const [executableDeleteArmedId, setExecutableDeleteArmedId] = useState<string | null>(null);
   const [installDialog, setInstallDialog] = useState<InstallDialogState | null>(null);
   const [isBuildPathsOpen, setIsBuildPathsOpen] = useState(false);
@@ -613,7 +410,7 @@ export const App = () => {
           project.id === selectedProjectId ||
           project.configPath === selectedProjectId ||
           project.projectDirectory === selectedProjectId
-      ) ?? projects[0] ?? null,
+      ) ?? null,
     [projects, selectedProjectId]
   );
 
@@ -648,6 +445,16 @@ export const App = () => {
   const selectedModItem = useMemo(
     () => selectedModOrderItem(modsWorkspace.items, modsWorkspace.selectedOrderId),
     [modsWorkspace.items, modsWorkspace.selectedOrderId]
+  );
+
+  const totalModCount = useMemo(
+    () => modsWorkspace.items.filter((item) => item.isMod).length,
+    [modsWorkspace.items]
+  );
+
+  const enabledModCount = useMemo(
+    () => modsWorkspace.items.filter((item) => item.isMod && item.isEnabled).length,
+    [modsWorkspace.items]
   );
 
   const filteredPluginItems = useMemo(
@@ -809,6 +616,11 @@ export const App = () => {
     [bridgeStatus, selectedProject]
   );
 
+  const buildHeaderCapabilities = useMemo(
+    () => buildHeaderCapabilityView(bridgeStatus),
+    [bridgeStatus]
+  );
+
   const settingsCapabilities = useMemo(
     () => settingsCapabilityView(bridgeStatus),
     [bridgeStatus]
@@ -864,7 +676,7 @@ export const App = () => {
           return current;
         }
 
-        return nextCatalog.projects[0]?.id ?? null;
+        return null;
       });
     } catch (error) {
       setCatalogState('error');
@@ -1685,6 +1497,12 @@ export const App = () => {
     const operationId = createRendererOperationId('executables_launch');
     setExecutablesBusyLabel('Launching executable');
     setExecutableLaunchResult(null);
+    setLaunchSplash({
+      operationId,
+      appName: selectedExecutableItem.displayName,
+      buildName: selectedProject.name,
+      detail: 'Waiting for launch handoff'
+    });
     setMessage(null);
 
     try {
@@ -1699,6 +1517,7 @@ export const App = () => {
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
+      setLaunchSplash((current) => (current?.operationId === operationId ? null : current));
       setExecutablesBusyLabel(null);
     }
   };
@@ -1772,6 +1591,7 @@ export const App = () => {
       fomodInstaller: null,
       selectedFomodOptionIds: [],
       fomodStepIndex: 0,
+      activeFomodOptionId: null,
       layoutPreview: null,
       modName: fallbackName,
       existingModMode: 1,
@@ -1796,6 +1616,7 @@ export const App = () => {
           fomodInstaller,
           selectedFomodOptionIds: initialFomodSelection(fomodInstaller),
           fomodStepIndex: 0,
+          activeFomodOptionId: null,
           modName: fomodInstaller.moduleName.trim() || fallbackName
         });
         return;
@@ -2472,16 +2293,12 @@ export const App = () => {
   }, [transferRunningOperationId]);
 
   useEffect(() => {
-    if (isSettingsWindow) {
-      return;
-    }
-
     return window.fluxora.operations.onProgress((progress) => {
       if (progress.operationId === transferRunningOperationIdRef.current) {
         setTransferProgress(progress);
       }
     });
-  }, [isSettingsWindow]);
+  }, []);
 
   useEffect(() => {
     if (!operationOverlay?.operationId) {
@@ -2550,6 +2367,30 @@ export const App = () => {
   const openSettingsWindow = async () => {
     try {
       await window.fluxora.windowControls.openSettings();
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const minimizeWindow = async () => {
+    try {
+      await window.fluxora.windowControls.minimize();
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const toggleMaximizeWindow = async () => {
+    try {
+      await window.fluxora.windowControls.toggleMaximize();
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const closeWindow = async () => {
+    try {
+      await window.fluxora.windowControls.close();
     } catch (error) {
       setMessage(errorMessage(error));
     }
@@ -2897,6 +2738,7 @@ export const App = () => {
       );
       setFluxPackSummary(summary);
       setFluxPackInstallResult(null);
+      setActiveRightPane('build');
       setMessage(`FluxPack exported: ${summary.outputPath}`);
       finishOperationOverlay(operationId, `Exported ${summary.buildName || selectedProject.name}`);
     } catch (error) {
@@ -2920,6 +2762,7 @@ export const App = () => {
       const summary = await window.fluxora.fluxPack.inspect(result.path, { operationId });
       setFluxPackSummary(summary);
       setFluxPackInstallResult(null);
+      setActiveRightPane('build');
       setMessage(`FluxPack ready: ${summary.buildName}`);
     } catch (error) {
       setMessage(errorMessage(error));
@@ -2963,6 +2806,7 @@ export const App = () => {
       );
       setFluxPackSummary(result.summary);
       setFluxPackInstallResult(result);
+      setActiveRightPane('build');
       const { project: opened } = await openProjectConfig(result.configPath, operationId);
       setProjects((current) => upsertProject(current, opened));
       setSelectedProjectId(opened.id);
@@ -3686,156 +3530,6 @@ export const App = () => {
     );
   };
 
-  const renderProjectRows = () => {
-    if (catalogState === 'loading') {
-      return (
-        <div className="library-empty-state" role="status">
-          <RefreshCw size={18} aria-hidden="true" />
-          <strong>Loading builds</strong>
-          <span>{catalog.buildConfigsDirectory || 'Fluxora catalog'}</span>
-        </div>
-      );
-    }
-
-    if (catalogState === 'blocked') {
-      return (
-        <div className="library-empty-state" role="status">
-          <AlertTriangle size={18} aria-hidden="true" />
-          <strong>Core unavailable</strong>
-          <span>{bridgeStatus?.error?.message ?? 'Build the native bridge host first.'}</span>
-        </div>
-      );
-    }
-
-    if (filteredProjects.length === 0) {
-      return (
-        <div className="library-empty-state">
-          <FolderOpen size={18} aria-hidden="true" />
-          <strong>{projects.length === 0 ? 'No builds yet' : 'No matching builds'}</strong>
-          <span>{catalog.buildConfigsDirectory || 'Create or open a Fluxora build.'}</span>
-        </div>
-      );
-    }
-
-    return (
-      <div className="library-build-list" role="listbox" aria-label="Fluxora builds">
-        {filteredProjects.map((project) => {
-          const isSelected = selectedProject?.id === project.id;
-          const gameLabel = project.gameName || project.templateId || 'Fluxora build';
-          const icon = /skyrim/i.test(gameLabel) ? skyrimIcon : fluxoraLogo;
-          const stats = buildProjectLibraryStats(
-            project,
-            isSelected ? selectedProjectRuntimeSummary : undefined
-          );
-          const rowStats = projectRowStats(stats);
-          const isProjectMenuOpen = projectMenuId === project.id;
-          return (
-            <div
-              className="project-row project-row--library"
-              data-selected={isSelected}
-              key={project.id}
-              role="option"
-              aria-selected={isSelected}
-              tabIndex={0}
-              onClick={() => {
-                setSelectedProjectId(project.id);
-                setProjectMenuId(null);
-              }}
-              onDoubleClick={() => void openProjectByConfig(project.configPath)}
-              onKeyDown={(event) => {
-                if (event.currentTarget !== event.target) {
-                  return;
-                }
-
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                  setSelectedProjectId(project.id);
-                  setProjectMenuId(null);
-                }
-
-                if (event.key === 'Escape') {
-                  setProjectMenuId(null);
-                }
-              }}
-            >
-              <button
-                className="library-build-open"
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setSelectedProjectId(project.id);
-                  setProjectMenuId(null);
-                  void openProjectByConfig(project.configPath);
-                }}
-              >
-                <Play size={15} aria-hidden="true" />
-                Open
-              </button>
-              <div className="library-build-row">
-                <img className="project-row__icon" src={icon} alt="" />
-                <span className="project-row__main">
-                  <strong>{project.name}</strong>
-                  <span>{gameLabel}</span>
-                  <small title={projectDisplayPath(project)}>
-                    {shortPath(projectDisplayPath(project))}
-                  </small>
-                  {rowStats.length > 0 ? (
-                    <span className="project-row__meta-chips" aria-label={`${project.name} available stats`}>
-                      {rowStats.map((item) => (
-                        <span key={item.label}>
-                          <strong>{item.value}</strong>
-                          {item.label}
-                        </span>
-                      ))}
-                    </span>
-                  ) : null}
-                </span>
-              </div>
-              <div
-                className="row-actions library-build-actions"
-                aria-label={`${project.name} actions`}
-                data-menu-open={isProjectMenuOpen}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') {
-                    event.stopPropagation();
-                    setProjectMenuId(null);
-                  }
-                }}
-              >
-                <button
-                  className="library-build-more"
-                  type="button"
-                  title="More build actions"
-                  aria-label={`${project.name} actions`}
-                  aria-haspopup="menu"
-                  aria-expanded={isProjectMenuOpen}
-                  data-project-menu-trigger="true"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setSelectedProjectId(project.id);
-                    if (isProjectMenuOpen) {
-                      setProjectMenuId(null);
-                      setProjectMenuPosition(null);
-                      return;
-                    }
-
-                    setProjectMenuPosition(
-                      projectMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
-                    );
-                    setProjectMenuId(project.id);
-                  }}
-                >
-                  <MoreHorizontal size={17} aria-hidden="true" />
-                </button>
-                {isProjectMenuOpen ? renderProjectRowMenu(project) : null}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
   const renderCreateWizard = () => {
     const currentStep = wizardSteps[createStep];
 
@@ -4076,123 +3770,43 @@ export const App = () => {
   };
 
   const renderHome = () => {
-    const selectedGameLabel = selectedProject
-      ? selectedProject.gameName || selectedProject.templateId || 'Fluxora build'
-      : 'No game selected';
-    const selectedIcon = selectedProject && /skyrim/i.test(selectedGameLabel) ? skyrimIcon : fluxoraLogo;
-    const selectedProjectFacts = selectedProjectLibraryStats
-      ? projectSummaryFacts(selectedProjectLibraryStats)
-      : [];
-
     return (
-      <section className="library-page" aria-label="Build library">
-        <header className="library-page__header">
-          <div>
-            <h1>Build library</h1>
-          </div>
-          <div className="library-page__actions">
-            <label className="library-search">
-              <Search size={14} aria-hidden="true" />
-              <input
-                aria-label="Search builds"
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-                placeholder="Search builds"
-              />
-            </label>
-            <button
-              type="button"
-              className="primary-button"
-              disabled={!bridgeStatus?.ready || isTransferRunning}
-              onClick={startCreate}
-            >
-              <Plus size={16} aria-hidden="true" />
-              New build
-            </button>
-          </div>
-        </header>
+      <LibraryHome
+        bridgeErrorMessage={bridgeStatus?.error?.message ?? message ?? undefined}
+        catalogPath={catalog.buildConfigsDirectory}
+        catalogState={catalogState}
+        filteredProjects={filteredProjects}
+        isNewBuildDisabled={!bridgeStatus?.ready || isTransferRunning}
+        message={message}
+        onNewBuild={startCreate}
+        onOpenProject={(project) => void openProjectByConfig(project.configPath)}
+        onOpenProjectDirectory={(project) => void openProjectDirectory(project)}
+        onOpenSelectedProject={() => void openSelectedProject()}
+        onProjectMenuToggle={(project, anchor) => {
+          if (projectMenuId === project.id) {
+            setProjectMenuId(null);
+            setProjectMenuPosition(null);
+            return;
+          }
 
-        {message ? (
-          <div className="activity-banner library-message" role="status">
-            <CircleDot size={16} aria-hidden="true" />
-            <span>{message}</span>
-          </div>
-        ) : null}
-
-        <section className="library-page__body">
-          <section className="library-home-panel" aria-label="Builds">
-            <div className="library-panel-title">
-              <div>
-                <h2>{projects.length} builds</h2>
-              </div>
-            </div>
-            <div className="library-list" aria-label="Builds">
-              {renderProjectRows()}
-            </div>
-          </section>
-
-          <aside className="library-detail-panel" aria-label="Selected build summary">
-            {selectedProject && selectedProjectLibraryStats ? (
-              <>
-                <div className="library-detail-hero">
-                  <img src={selectedIcon} alt="" />
-                  <div>
-                    <p className="eyebrow">Selected build</p>
-                    <h2>{selectedProject.name}</h2>
-                    <span>{selectedGameLabel}</span>
-                    <small title={projectDisplayPath(selectedProject)}>
-                      {shortPath(projectDisplayPath(selectedProject))}
-                    </small>
-                  </div>
-                </div>
-                {selectedProjectFacts.length > 0 ? (
-                  <dl className="library-detail-metrics">
-                    {selectedProjectFacts.map((item) => (
-                      <div key={item.label}>
-                        <dt>{item.label}</dt>
-                        <dd>{item.value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                ) : null}
-                <div className="library-detail-paths">
-                  <div>
-                    <span>Project folder</span>
-                    <strong title={selectedProject.projectDirectory}>
-                      {shortPath(selectedProject.projectDirectory)}
-                    </strong>
-                  </div>
-                </div>
-                <div className="library-detail-actions">
-                  <button
-                    type="button"
-                    className="primary-button"
-                    disabled={!bridgeStatus?.ready || isTransferRunning}
-                    onClick={() => void openSelectedProject()}
-                  >
-                    <Play size={16} aria-hidden="true" />
-                    Open
-                  </button>
-                  <button
-                    type="button"
-                    className="tool-button"
-                    onClick={() => void openProjectDirectory(selectedProject)}
-                  >
-                    <FolderOpen size={16} aria-hidden="true" />
-                    Folder
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div className="library-empty-state">
-                <FolderOpen size={18} aria-hidden="true" />
-                <strong>No build selected</strong>
-                <span>Create or open a Fluxora build to fill the library.</span>
-              </div>
-            )}
-          </aside>
-        </section>
-      </section>
+          setProjectMenuPosition(projectMenuPositionFromAnchor(anchor));
+          setProjectMenuId(project.id);
+        }}
+        onSearchChange={setSearchText}
+        onSelectProject={(project) => {
+          setSelectedProjectId(project.id);
+          setProjectMenuId(null);
+        }}
+        projectMenuId={projectMenuId}
+        projects={projects}
+        projectStats={(project, isSelected) =>
+          buildProjectLibraryStats(project, isSelected ? selectedProjectRuntimeSummary : undefined)
+        }
+        renderProjectRowMenu={renderProjectRowMenu}
+        searchText={searchText}
+        selectedProject={selectedProject}
+        selectedProjectStats={selectedProjectLibraryStats}
+      />
     );
   };
 
@@ -4229,44 +3843,53 @@ export const App = () => {
   const renderModRows = () => {
     if (modsWorkspace.loadState === 'loading') {
       return (
-        <div className="empty-state" role="status">
-          <RefreshCw size={18} aria-hidden="true" />
-          <strong>Loading mods</strong>
-          <span>{selectedProject?.projectDirectory ?? 'Selected build'}</span>
-        </div>
+        <EmptyState
+          icon={<RefreshCw size={18} aria-hidden="true" />}
+          title="Loading mods"
+          description={selectedProject?.projectDirectory ?? 'Selected build'}
+          tone="loading"
+        />
       );
     }
 
     if (modsWorkspace.loadState === 'error') {
       return (
-        <div className="empty-state" role="status">
-          <AlertTriangle size={18} aria-hidden="true" />
-          <strong>Mods unavailable</strong>
-          <span>{modsWorkspace.errorMessage ?? 'The native core could not load mods.'}</span>
-        </div>
+        <EmptyState
+          icon={<AlertTriangle size={18} aria-hidden="true" />}
+          title="Mods unavailable"
+          description={modsWorkspace.errorMessage ?? 'The native core could not load mods.'}
+          tone="error"
+        />
       );
     }
 
     if (filteredModItems.length === 0) {
       return (
-        <div className="empty-state">
-          <Box size={18} aria-hidden="true" />
-          <strong>
-            {modsWorkspace.items.length === 0 ? 'No installed mods' : 'No matching mods'}
-          </strong>
-          <span>
-            {modsWorkspace.items.length === 0
-              ? 'Create an empty mod or install an archive in a later phase.'
-              : 'Clear the search query to return to the full order.'}
-          </span>
-        </div>
+        <EmptyState
+          icon={<Box size={18} aria-hidden="true" />}
+          title={modsWorkspace.items.length === 0 ? 'No installed mods' : 'No matching mods'}
+          description={
+            modsWorkspace.items.length === 0
+              ? 'Create an empty mod or install an archive.'
+              : 'Clear the search query to return to the full order.'
+          }
+        />
       );
     }
 
     return (
-      <div className="mod-list" role="list" aria-label="Mod order">
+      <div className="mod-list mod-list--table" role="table" aria-label="Mod order">
+        <div className="mod-list__head" role="row">
+          <span className="mod-list__head-name" role="columnheader">
+            Название
+          </span>
+          <span role="columnheader">Версия</span>
+          <span role="columnheader">Latest</span>
+          <span role="columnheader">Статус</span>
+        </div>
         <div
           className="mod-list__body"
+          role="rowgroup"
           onScroll={(event) => setModListScrollTop(event.currentTarget.scrollTop)}
         >
           {visibleModWindow.topSpacer > 0 ? (
@@ -4277,6 +3900,10 @@ export const App = () => {
             const isMenuOpen = item.orderId === modMenuOrderId;
             const isNested = isModNestedUnderSeparator(modsWorkspace.items, item.orderId);
             const overwrite = modOverwriteView(item);
+            const status = modTableStatusView(item);
+            const separatorModCount = item.isSeparator
+              ? modSeparatorChildCount(modsWorkspace.items, item.orderId)
+              : 0;
             const isDragging = draggedModOrderId === item.orderId;
             const isDropTarget =
               modDropTargetOrderId === item.orderId && draggedModOrderId !== item.orderId;
@@ -4284,7 +3911,7 @@ export const App = () => {
             return (
               <div
                 className={`mod-list-row${item.isSeparator ? ' mod-list-row--separator' : ''}`}
-                role="listitem"
+                role="row"
                 tabIndex={0}
                 draggable={!modsBusyLabel}
                 data-selected={isSelected}
@@ -4292,6 +3919,7 @@ export const App = () => {
                 data-in-separator={isNested}
                 data-dragging={isDragging}
                 data-drop-target={isDropTarget}
+                data-menu-open={isMenuOpen}
                 key={item.orderId}
                 aria-label={`${modItemTitle(item)} ${item.isSeparator ? 'separator' : 'mod'}`}
                 onClick={() => {
@@ -4366,39 +3994,56 @@ export const App = () => {
               >
                 {item.isSeparator ? (
                   <>
-                    <span className="mod-separator-line" aria-hidden="true" />
-                    <strong className="mod-separator-title">{modItemTitle(item)}</strong>
-                    <span className="mod-separator-line" aria-hidden="true" />
+                    <div className="mod-separator-cell" role="cell">
+                      <span className="mod-separator-line" aria-hidden="true" />
+                      <strong className="mod-separator-title">{modItemTitle(item)}</strong>
+                      <span className="mod-separator-count">
+                        {separatorModCount} {separatorModCount === 1 ? 'mod' : 'mods'}
+                      </span>
+                      <span className="mod-separator-line" aria-hidden="true" />
+                    </div>
                     {isMenuOpen ? renderModRowMenu(item) : null}
                   </>
                 ) : (
                   <>
-                    <label
-                      className="mod-enable-checkbox"
-                      title={item.isEnabled ? 'Disable mod' : 'Enable mod'}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={item.isEnabled}
-                        disabled={Boolean(modsBusyLabel)}
-                        aria-label={item.isEnabled ? `Disable ${modItemTitle(item)}` : `Enable ${modItemTitle(item)}`}
+                    <div className="mod-list-row__identity" role="cell">
+                      <label
+                        className="mod-enable-checkbox"
                         title={item.isEnabled ? 'Disable mod' : 'Enable mod'}
-                        onChange={(event) => void setModEnabled(item, event.currentTarget.checked)}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={item.isEnabled}
+                          disabled={Boolean(modsBusyLabel)}
+                          aria-label={item.isEnabled ? `Disable ${modItemTitle(item)}` : `Enable ${modItemTitle(item)}`}
+                          title={item.isEnabled ? 'Disable mod' : 'Enable mod'}
+                          onChange={(event) => void setModEnabled(item, event.currentTarget.checked)}
+                        />
+                        <span aria-hidden="true" />
+                      </label>
+                      <StatusDot
+                        className="mod-conflict-dot"
+                        label={overwrite.title}
+                        size={18}
+                        state={overwrite.state}
+                        title={overwrite.title}
                       />
-                      <span aria-hidden="true" />
-                    </label>
-                    <div className="mod-list-row__title">
-                      <strong>{modItemTitle(item)}</strong>
+                      <div className="mod-list-row__title">
+                        <strong>{modItemTitle(item)}</strong>
+                        <span>{item.sourceIsNexus ? 'Nexus Mods' : item.isLocal ? 'Local' : 'Managed'}</span>
+                      </div>
                     </div>
-                    <span
-                      className="mod-overwrite-check"
-                      data-state={overwrite.state}
-                      title={overwrite.title}
-                      aria-label={overwrite.title}
-                    >
-                      <CheckCircle2 size={16} aria-hidden="true" />
-                      <span>{overwrite.label}</span>
+                    <span className="mod-list-row__version" role="cell">
+                      {modVersionText(item)}
+                    </span>
+                    <span className="mod-list-row__latest" data-update={item.hasUpdate} role="cell">
+                      {modLatestVersionText(item)}
+                    </span>
+                    <span className="mod-list-row__status" role="cell">
+                      <span className="mod-status-chip" data-status={status.tone}>
+                        {status.label}
+                      </span>
                     </span>
                     {isMenuOpen ? renderModRowMenu(item) : null}
                   </>
@@ -4665,37 +4310,37 @@ export const App = () => {
   const renderPluginRows = () => {
     if (pluginsWorkspace.loadState === 'loading') {
       return (
-        <div className="empty-state" role="status">
-          <RefreshCw size={18} aria-hidden="true" />
-          <strong>Loading plugins</strong>
-          <span>{selectedProject?.projectDirectory ?? 'Selected build'}</span>
-        </div>
+        <EmptyState
+          icon={<RefreshCw size={18} aria-hidden="true" />}
+          title="Loading plugins"
+          description={selectedProject?.projectDirectory ?? 'Selected build'}
+          tone="loading"
+        />
       );
     }
 
     if (pluginsWorkspace.loadState === 'error') {
       return (
-        <div className="empty-state" role="status">
-          <AlertTriangle size={18} aria-hidden="true" />
-          <strong>Plugins unavailable</strong>
-          <span>{pluginsWorkspace.errorMessage ?? 'The native core could not load plugins.'}</span>
-        </div>
+        <EmptyState
+          icon={<AlertTriangle size={18} aria-hidden="true" />}
+          title="Plugins unavailable"
+          description={pluginsWorkspace.errorMessage ?? 'The native core could not load plugins.'}
+          tone="error"
+        />
       );
     }
 
     if (filteredPluginItems.length === 0) {
       return (
-        <div className="empty-state">
-          <MoreHorizontal size={18} aria-hidden="true" />
-          <strong>
-            {pluginsWorkspace.items.length === 0 ? 'No detected plugins' : 'No matching plugins'}
-          </strong>
-          <span>
-            {pluginsWorkspace.items.length === 0
+        <EmptyState
+          icon={<MoreHorizontal size={18} aria-hidden="true" />}
+          title={pluginsWorkspace.items.length === 0 ? 'No detected plugins' : 'No matching plugins'}
+          description={
+            pluginsWorkspace.items.length === 0
               ? 'Install or enable a mod with plugin files to populate the load order.'
-              : 'Clear the search query to return to the full load order.'}
-          </span>
-        </div>
+              : 'Clear the search query to return to the full load order.'
+          }
+        />
       );
     }
 
@@ -4758,7 +4403,9 @@ export const App = () => {
                   }
                 }}
               >
-                <span role="cell">{item.isSeparator ? '-' : item.order + 1}</span>
+                <span className="plugin-hex-index" role="cell">
+                  {pluginHexIndex(item)}
+                </span>
                 <div className="mod-row__main" role="cell">
                   <strong>{pluginItemTitle(item)}</strong>
                   <span>
@@ -4767,7 +4414,17 @@ export const App = () => {
                       : item.lockReason || item.missingMasters.join(', ') || item.orderId}
                   </span>
                 </div>
-                <span role="cell">{pluginTypeLabel(item)}</span>
+                <span role="cell">
+                  {item.isSeparator ? null : (
+                    <span
+                      className="plugin-type-badge"
+                      data-master={item.isMaster}
+                      data-light={item.isLight}
+                    >
+                      {pluginTypeLabel(item)}
+                    </span>
+                  )}
+                </span>
                 <span
                   role="cell"
                   data-status={item.isLocked || item.missingMasters.length > 0 ? 'checking' : item.isEnabled ? 'ready' : 'error'}
@@ -5018,37 +4675,37 @@ export const App = () => {
   const renderDownloadRows = () => {
     if (downloadsWorkspace.loadState === 'loading') {
       return (
-        <div className="empty-state" role="status">
-          <RefreshCw size={18} aria-hidden="true" />
-          <strong>Loading downloads</strong>
-          <span>{selectedProject?.projectDirectory ?? 'Selected build'}</span>
-        </div>
+        <EmptyState
+          icon={<RefreshCw size={18} aria-hidden="true" />}
+          title="Loading downloads"
+          description={selectedProject?.projectDirectory ?? 'Selected build'}
+          tone="loading"
+        />
       );
     }
 
     if (downloadsWorkspace.loadState === 'error') {
       return (
-        <div className="empty-state" role="status">
-          <AlertTriangle size={18} aria-hidden="true" />
-          <strong>Downloads unavailable</strong>
-          <span>{downloadsWorkspace.errorMessage ?? 'The native core could not load downloads.'}</span>
-        </div>
+        <EmptyState
+          icon={<AlertTriangle size={18} aria-hidden="true" />}
+          title="Downloads unavailable"
+          description={downloadsWorkspace.errorMessage ?? 'The native core could not load downloads.'}
+          tone="error"
+        />
       );
     }
 
     if (filteredDownloadItems.length === 0) {
       return (
-        <div className="empty-state">
-          <Download size={18} aria-hidden="true" />
-          <strong>
-            {downloadsWorkspace.items.length === 0 ? 'No downloads yet' : 'No matching downloads'}
-          </strong>
-          <span>
-            {downloadsWorkspace.items.length === 0
+        <EmptyState
+          icon={<Download size={18} aria-hidden="true" />}
+          title={downloadsWorkspace.items.length === 0 ? 'No downloads yet' : 'No matching downloads'}
+          description={
+            downloadsWorkspace.items.length === 0
               ? 'Import an archive or capture NXM links to populate this queue.'
-              : 'Clear the search query to return to the full download queue.'}
-          </span>
-        </div>
+              : 'Clear the search query to return to the full download queue.'
+          }
+        />
       );
     }
 
@@ -5259,505 +4916,549 @@ export const App = () => {
     </aside>
   );
 
-  const renderInstallFomodStep = () => {
-    if (!installDialog?.fomodInstaller || !installFomodEvaluation) {
-      return null;
-    }
+  const renderRightPanePluginDetails = () => (
+    <section className="right-pane-detail-card" aria-label="Selected plugin detail">
+      <div>
+        <span>Selected plugin</span>
+        <strong>{selectedPluginItem ? pluginItemTitle(selectedPluginItem) : 'None'}</strong>
+      </div>
+      <dl>
+        <div>
+          <dt>Status</dt>
+          <dd>{pluginStatusText(selectedPluginItem)}</dd>
+        </div>
+        <div>
+          <dt>Type</dt>
+          <dd>{pluginTypeLabel(selectedPluginItem)}</dd>
+        </div>
+        <div>
+          <dt>Source</dt>
+          <dd>{selectedPluginItem?.isPlugin ? selectedPluginItem.sourceMod || 'game data' : 'none'}</dd>
+        </div>
+        <div>
+          <dt>Missing masters</dt>
+          <dd>
+            {selectedPluginItem?.isPlugin && selectedPluginItem.missingMasters.length > 0
+              ? selectedPluginItem.missingMasters.join(', ')
+              : 'none'}
+          </dd>
+        </div>
+      </dl>
+    </section>
+  );
 
-    const currentStep =
-      installFomodEvaluation.visibleSteps[installDialog.fomodStepIndex] ??
-      installFomodEvaluation.visibleSteps[0];
-    const canMoveNext = installDialog.fomodStepIndex < installFomodEvaluation.visibleSteps.length - 1;
-    const detailsOption =
-      currentStep?.groups.flatMap((group) => group.options).find((option) => option.isSelected) ??
-      currentStep?.groups.flatMap((group) => group.options)[0] ??
-      null;
+  const renderRightPaneDownloadDetails = () => (
+    <section className="right-pane-detail-card" aria-label="Selected download detail">
+      <div>
+        <span>Selected download</span>
+        <strong>{selectedDownloadItem ? downloadTitle(selectedDownloadItem) : 'None'}</strong>
+      </div>
+      <dl>
+        <div>
+          <dt>Status</dt>
+          <dd>{downloadStatusText(selectedDownloadItem)}</dd>
+        </div>
+        <div>
+          <dt>Progress</dt>
+          <dd>
+            {selectedDownloadItem
+              ? selectedDownloadItem.progressText || `${downloadProgressValue(selectedDownloadItem)}%`
+              : 'none'}
+          </dd>
+        </div>
+        <div>
+          <dt>Path</dt>
+          <dd>{selectedDownloadItem ? shortPath(downloadPath(selectedDownloadItem)) : 'none'}</dd>
+        </div>
+        <div>
+          <dt>NXM</dt>
+          <dd>{downloadCapabilities.nxmRegistrationState}</dd>
+        </div>
+      </dl>
+    </section>
+  );
+
+  const renderRightPanePathTree = (
+    rows: Array<{ id: string; label: string; value: string; level?: number }>
+  ) => (
+    <div className="right-pane-path-tree" role="tree" aria-label="Build data folders">
+      {rows.map((row) => (
+        <div
+          className="right-pane-path-row"
+          key={row.id}
+          role="treeitem"
+          aria-level={row.level ?? 1}
+          style={{ paddingLeft: `${10 + ((row.level ?? 1) - 1) * 16}px` }}
+        >
+          <FolderOpen size={15} aria-hidden="true" />
+          <span>{row.label}</span>
+          <code title={row.value}>{row.value || 'not configured'}</code>
+        </div>
+      ))}
+    </div>
+  );
+
+  const renderDataRightPane = () => {
+    const pathRows = [
+      {
+        id: 'project',
+        label: 'Project',
+        value: selectedProject?.projectDirectory ?? '',
+        level: 1
+      },
+      {
+        id: 'game',
+        label: 'Game',
+        value: selectedProject?.paths?.gameDirectory ?? selectedProject?.gamePath ?? '',
+        level: 2
+      },
+      {
+        id: 'mods',
+        label: 'Mods',
+        value: selectedProject?.paths?.modsDirectory ?? '',
+        level: 2
+      },
+      {
+        id: 'profiles',
+        label: 'Profiles',
+        value: selectedProject?.paths?.profilesDirectory ?? '',
+        level: 2
+      },
+      {
+        id: 'downloads',
+        label: 'Downloads',
+        value: selectedProject?.paths?.downloadsDirectory ?? '',
+        level: 2
+      },
+      {
+        id: 'overwrite',
+        label: 'Overwrite',
+        value: selectedProject?.paths?.overwriteDirectory ?? '',
+        level: 2
+      },
+      {
+        id: 'config',
+        label: 'Config',
+        value: selectedProject?.configPath ?? '',
+        level: 1
+      }
+    ];
 
     return (
-      <div className="install-grid install-grid--fomod">
-        <aside className="install-steps" aria-label="FOMOD steps">
-          {installFomodEvaluation.visibleSteps.map((step, index) => (
-            <button
-              key={`${step.stepIndex}:${step.stepName}`}
-              type="button"
-              data-active={index === installDialog.fomodStepIndex}
-              data-complete={index < installDialog.fomodStepIndex && step.isSelectionValid}
-              onClick={() => {
-                if (index <= installDialog.fomodStepIndex) {
-                  setInstallDialogPatch({ fomodStepIndex: index, validationMessage: null });
-                }
-              }}
-            >
-              <span>{step.visibleNumber}</span>
-              <strong>{step.stepName}</strong>
-            </button>
-          ))}
-        </aside>
-
-        <section className="install-fomod-options">
-          <div className="install-section-heading">
+      <div
+        className="right-pane-content right-pane-content--data"
+        role="tabpanel"
+        aria-label="Данные"
+      >
+        <section className="right-pane-section">
+          <header>
+            <FolderTree size={16} aria-hidden="true" />
             <div>
-              <p className="eyebrow">FOMOD</p>
-              <h3>{currentStep?.stepName ?? 'Options'}</h3>
+              <strong>Build folders</strong>
+              <span>Read-only paths from the project DTO.</span>
             </div>
-            {installDialog.fomodInstaller.hasPreviousSelection ? (
+          </header>
+          {renderRightPanePathTree(pathRows)}
+        </section>
+
+        <section className="right-pane-section right-pane-section--tree">
+          <header>
+            <FolderTree size={16} aria-hidden="true" />
+            <div>
+              <strong>Selected mod data</strong>
+              <span>{selectedModItem?.isMod ? modItemTitle(selectedModItem) : 'Select a mod row.'}</span>
+            </div>
+            {selectedModItem?.isMod ? (
               <button
-                className="tool-button"
+                className="icon-button"
                 type="button"
-                onClick={() =>
-                  setInstallDialogPatch({
-                    selectedFomodOptionIds: previousFomodSelection(installDialog.fomodInstaller!),
-                    fomodStepIndex: 0,
-                    validationMessage: null
-                  })
-                }
+                title="Reload selected mod file tree"
+                onClick={() => void loadModFileTree('', selectedModItem)}
               >
                 <RefreshCw size={15} aria-hidden="true" />
-                Previous
               </button>
             ) : null}
-          </div>
-
-          {installDialog.validationMessage ? (
-            <div className="install-validation" role="alert">
-              <AlertTriangle size={16} aria-hidden="true" />
-              <span>{installDialog.validationMessage}</span>
-            </div>
-          ) : null}
-
-          <div className="fomod-group-list">
-            {currentStep?.groups.map((group) => (
-              <section
-                key={group.group.id || group.group.name}
-                className="fomod-group"
-                data-invalid={!group.isSelectionValid}
-              >
-                <header>
-                  <strong>{group.group.name || 'Options'}</strong>
-                  <span>{group.group.type || 'SelectAny'}</span>
-                </header>
-                <div className="fomod-options">
-                  {group.options.map((option) => {
-                    const isRadio =
-                      group.group.type === 'SelectExactlyOne' ||
-                      group.group.type === 'SelectAtMostOne';
-                    return (
-                      <label
-                        key={option.option.id}
-                        className="fomod-option"
-                        data-selected={option.isSelected}
-                        data-disabled={!option.canToggle}
-                      >
-                        <input
-                          type={isRadio ? 'radio' : 'checkbox'}
-                          name={group.group.id || group.group.name}
-                          checked={option.isSelected}
-                          disabled={!option.canToggle}
-                          onChange={(event) =>
-                            setInstallDialogPatch({
-                              selectedFomodOptionIds: toggleFomodOption(
-                                installDialog.fomodInstaller!,
-                                installDialog.selectedFomodOptionIds,
-                                option.option.id,
-                                event.target.checked
-                              ),
-                              validationMessage: null
-                            })
-                          }
-                        />
-                        <span>
-                          <strong>{option.option.name || 'Option'}</strong>
-                          <small>{option.effectiveType}</small>
-                        </span>
-                        {option.wasPreviouslySelected ? <em>Previous</em> : null}
-                      </label>
-                    );
-                  })}
-                </div>
-              </section>
-            ))}
-          </div>
-        </section>
-
-        <aside className="install-details-pane" aria-label="FOMOD option details">
-          <strong>{detailsOption?.option.name ?? installDialog.fomodInstaller.moduleName}</strong>
-          <span>
-            {detailsOption?.option.description ||
-              installDialog.fomodInstaller.moduleVersion ||
-              'No description provided.'}
-          </span>
-          {detailsOption?.option.imagePath || installDialog.fomodInstaller.moduleImagePath ? (
-            <img
-              src={detailsOption?.option.imagePath || installDialog.fomodInstaller.moduleImagePath}
-              alt=""
-            />
-          ) : null}
-        </aside>
-
-        <footer className="install-dialog-actions install-grid-actions">
-          <button
-            className="tool-button"
-            type="button"
-            disabled={installDialog.fomodStepIndex === 0}
-            onClick={() => void moveInstallFomodStep(-1)}
-          >
-            <ChevronLeft size={16} aria-hidden="true" />
-            Back
-          </button>
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => (canMoveNext ? void moveInstallFomodStep(1) : void continueFromFomod())}
-          >
-            {canMoveNext ? (
-              <>
-                Next
-                <ChevronRight size={16} aria-hidden="true" />
-              </>
+          </header>
+          <div className="file-tree right-pane-file-tree" role="tree" aria-label="Selected mod data tree">
+            {!selectedModItem?.isMod ? (
+              <span className="file-tree-empty">Select an installed mod to inspect indexed files.</span>
+            ) : fileTreeState === 'loading' ? (
+              <span className="file-tree-empty">Loading tree</span>
+            ) : fileTreeState === 'error' ? (
+              <span className="file-tree-empty">File tree unavailable.</span>
+            ) : (fileTreeCache[''] ?? []).length === 0 ? (
+              <span className="file-tree-empty">No files indexed yet.</span>
             ) : (
-              <>
-                <CheckCircle2 size={16} aria-hidden="true" />
-                Continue
-              </>
+              renderFileTreeEntries()
             )}
-          </button>
-        </footer>
-      </div>
-    );
-  };
-
-  const renderInstallOptions = () => {
-    if (!installDialog?.layoutPreview) {
-      return null;
-    }
-
-    const preview = installDialog.layoutPreview;
-    const previewLines = buildPlacementPreviewLines(preview, installPlacementOverrides.length);
-    const validation = installDialog.validationMessage ?? validateInstallModName(installDialog.modName);
-
-    return (
-      <div className="install-grid">
-        <section className="install-options-main">
-          <label className="field">
-            <span>Mod name</span>
-            <input
-              value={installDialog.modName}
-              onChange={(event) =>
-                setInstallDialogPatch({
-                  modName: event.target.value,
-                  validationMessage: null
-                })
-              }
-            />
-          </label>
-
-          {installExistingModName ? (
-            <section className="install-conflict" aria-label="Existing mod conflict">
-              <div>
-                <strong>Existing mod detected</strong>
-                <span>{installExistingModName}</span>
-              </div>
-              <div className="segmented-control">
-                <button
-                  type="button"
-                  data-active={installDialog.existingModMode === 1}
-                  onClick={() => setInstallDialogPatch({ existingModMode: 1 })}
-                >
-                  Replace
-                </button>
-                <button
-                  type="button"
-                  data-active={installDialog.existingModMode === 2}
-                  onClick={() => setInstallDialogPatch({ existingModMode: 2 })}
-                >
-                  Merge
-                </button>
-              </div>
-            </section>
-          ) : null}
-
-          <section className="install-layout-summary">
-            <header>
-              <strong>Placement plan</strong>
-            <button
-              className="tool-button"
-              type="button"
-              onClick={() => {
-                setArchiveTreeScrollTop(0);
-                setInstallDialogPatch({ phase: 'details' });
-              }}
-            >
-                <FolderTree size={15} aria-hidden="true" />
-                Details
-              </button>
-            </header>
-            <p>{buildPlacementSummaryText(preview, installPlacementOverrides.length)}</p>
-            <ul>
-              {previewLines.slice(0, 7).map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </section>
-
-          {validation ? (
-            <div className="install-validation" role="alert">
-              <AlertTriangle size={16} aria-hidden="true" />
-              <span>{validation}</span>
-            </div>
-          ) : null}
+          </div>
         </section>
-
-        <aside className="install-details-pane">
-          <strong>{preview.gameDisplayName || preview.gameId || 'Content layout'}</strong>
-          <dl className="install-mini-facts">
-            <div>
-              <dt>Files</dt>
-              <dd>{preview.summary.totalEntries}</dd>
-            </div>
-            <div>
-              <dt>Warnings</dt>
-              <dd>{preview.summary.hasWarnings ? 'yes' : 'no'}</dd>
-            </div>
-            <div>
-              <dt>Blockers</dt>
-              <dd>{preview.summary.hasBlockers ? 'yes' : 'no'}</dd>
-            </div>
-            <div>
-              <dt>Overrides</dt>
-              <dd>{installPlacementOverrides.length}</dd>
-            </div>
-          </dl>
-        </aside>
       </div>
     );
   };
 
-  const renderInstallDetails = () => {
-    if (!installDialog?.layoutPreview) {
-      return null;
-    }
-
-    const rows = buildArchivePlacementRows(
-      installDialog.layoutPreview,
-      installDialog.placementOverrides
-    );
-    const draggedEntry = installDialog.draggedSourcePath
-      ? installDialog.layoutPreview.entries.find(
-          (entry) => entry.sourcePath === installDialog.draggedSourcePath
-        )
-      : null;
-    const visibleArchiveWindow = createVirtualWindow(rows, archiveTreeScrollTop, {
-      rowHeight: archiveTreeRowHeight,
-      visibleRows: archiveTreeVisibleRows,
-      overscanRows: archiveTreeOverscanRows
-    });
+  const renderBuildRightPane = () => {
+    const selectedExecutablePath =
+      selectedExecutableItem?.executablePath || selectedProject?.gamePath || 'not configured';
+    const buildRows = [
+      ['Project', selectedProject?.projectDirectory ?? 'not configured'],
+      ['Game directory', selectedProject?.paths?.gameDirectory ?? 'not configured'],
+      ['Mods', selectedProject?.paths?.modsDirectory ?? 'not configured'],
+      ['Profiles', selectedProject?.paths?.profilesDirectory ?? 'not configured'],
+      ['Downloads', selectedProject?.paths?.downloadsDirectory ?? 'not configured'],
+      ['Overwrite', selectedProject?.paths?.overwriteDirectory ?? 'not configured']
+    ] as const;
 
     return (
-      <div className="install-details-tree">
-        <header className="install-section-heading">
-          <div>
-            <p className="eyebrow">Archive details</p>
-            <h3>Placement tree</h3>
-          </div>
-          <div className="mods-toolbar">
-            <button
-              className="tool-button"
-              type="button"
-              onClick={() =>
-                setInstallDialogPatch({
-                  placementOverrides: {},
-                  validationMessage: null
-                })
-              }
-            >
-              <RefreshCw size={15} aria-hidden="true" />
-              Reset
-            </button>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={() => setInstallDialogPatch({ phase: 'options', validationMessage: null })}
-            >
-              Apply
-            </button>
-          </div>
-        </header>
-        {installDialog.layoutPreview.validationFindings.length > 0 ? (
-          <div className="install-findings">
-            {installDialog.layoutPreview.validationFindings.map((finding) => (
-              <span key={`${finding.path}:${finding.message}`} data-blocker={finding.blocksInstall}>
-                {finding.path || finding.classification}: {finding.message}
-              </span>
-            ))}
-          </div>
-        ) : null}
-        <div
-          className="archive-tree"
-          role="tree"
-          aria-label="Archive placement tree"
-          onScroll={(event) => setArchiveTreeScrollTop(event.currentTarget.scrollTop)}
-        >
-          {visibleArchiveWindow.topSpacer > 0 ? (
-            <div style={{ height: visibleArchiveWindow.topSpacer }} aria-hidden="true" />
-          ) : null}
-          {visibleArchiveWindow.items.map((row) => {
-            const canDrop =
-              draggedEntry !== undefined &&
-              draggedEntry !== null &&
-              createPlacementOverrideForDrop(draggedEntry, row) !== null;
-            const hasOverride =
-              row.entry !== null && installDialog.placementOverrides[row.entry.sourcePath] !== undefined;
-            return (
-              <div
-                key={row.key}
-                className="archive-tree-row"
-                role="treeitem"
-                tabIndex={0}
-                aria-level={row.depth + 1}
-                draggable={row.entry?.manualOverrideAllowed === true}
-                data-directory={row.isDirectory}
-                data-drop={canDrop}
-                data-override={hasOverride}
-                onDragStart={(event) => {
-                  if (!row.entry?.manualOverrideAllowed) {
-                    event.preventDefault();
-                    return;
-                  }
-
-                  event.dataTransfer.setData('text/plain', row.entry.sourcePath);
-                  setInstallDialogPatch({ draggedSourcePath: row.entry.sourcePath });
-                }}
-                onDragEnd={() => setInstallDialogPatch({ draggedSourcePath: null })}
-                onDragOver={(event) => {
-                  if (canDrop) {
-                    event.preventDefault();
-                  }
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  const sourcePath =
-                    event.dataTransfer.getData('text/plain') || installDialog.draggedSourcePath || '';
-                  const sourceEntry = installDialog.layoutPreview?.entries.find(
-                    (entry) => entry.sourcePath === sourcePath
-                  );
-                  if (!sourceEntry) {
-                    setInstallDialogPatch({ draggedSourcePath: null });
-                    return;
-                  }
-
-                  const override = createPlacementOverrideForDrop(sourceEntry, row);
-                  if (!override) {
-                    setInstallDialogPatch({ draggedSourcePath: null });
-                    return;
-                  }
-
-                  setInstallDialogPatch({
-                    draggedSourcePath: null,
-                    placementOverrides: {
-                      ...installDialog.placementOverrides,
-                      [override.sourcePath]: {
-                        target: override.target,
-                        targetRelativePath: override.targetRelativePath
-                      }
-                    },
-                    validationMessage: null
-                  });
-                }}
-                style={{ paddingLeft: `${12 + row.depth * 18}px` }}
-              >
-                {row.isDirectory ? (
-                  <FolderOpen size={15} aria-hidden="true" />
-                ) : (
-                  <File size={15} aria-hidden="true" />
-                )}
-                <span>{row.name}</span>
-                <small>{row.isDirectory ? row.target || 'folder' : row.entry?.classification}</small>
-              </div>
-            );
-          })}
-          {visibleArchiveWindow.bottomSpacer > 0 ? (
-            <div style={{ height: visibleArchiveWindow.bottomSpacer }} aria-hidden="true" />
-          ) : null}
-        </div>
-      </div>
-    );
-  };
-
-  const renderInstallDialog = () => {
-    if (!installDialog) {
-      return null;
-    }
-
-    return (
-      <div className="install-modal-backdrop" role="presentation">
-        <section className="install-dialog" role="dialog" aria-modal="true" aria-label="Install mod">
-          <header className="install-dialog-header">
+      <div
+        className="right-pane-content right-pane-content--build"
+        role="tabpanel"
+        aria-label="Сборка"
+      >
+        <section className="right-pane-section">
+          <header>
+            <FolderTree size={16} aria-hidden="true" />
             <div>
-              <p className="eyebrow">
-                {installDialog.source.kind === 'download' ? 'Download install' : 'Archive install'}
-              </p>
-              <h2>{installDialog.source.displayName}</h2>
+              <strong>Build paths</strong>
+              <span>Core-owned locations, shown read-only here.</span>
             </div>
             <button
               className="icon-button"
               type="button"
-              title="Close install dialog"
-              disabled={installDialog.phase === 'installing'}
-              onClick={() => setInstallDialog(null)}
+              title={buildHeaderCapabilities.settingsReason || 'Open build settings'}
+              disabled={!buildHeaderCapabilities.settingsAvailable || Boolean(buildPathsBusyLabel)}
+              onClick={() => void openBuildPathSettings()}
             >
-              <X size={16} aria-hidden="true" />
+              <Pencil size={15} aria-hidden="true" />
             </button>
           </header>
-
-          <div className="install-dialog-body">
-            {installDialog.phase === 'analyzing' || installDialog.phase === 'installing' ? (
-              <div className="install-progress" role="status">
-                <RefreshCw size={18} aria-hidden="true" />
-                <strong>
-                  {installDialog.phase === 'installing' ? 'Installing mod' : 'Analyzing archive'}
-                </strong>
-                <span>{shortPath(installDialog.source.sourcePath)}</span>
+          <dl className="right-pane-path-list">
+            {buildRows.map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd title={value}>{value}</dd>
               </div>
-            ) : null}
-            {installDialog.phase === 'fomod' ? renderInstallFomodStep() : null}
-            {installDialog.phase === 'options' ? renderInstallOptions() : null}
-            {installDialog.phase === 'details' ? renderInstallDetails() : null}
-            {installDialog.phase === 'error' ? (
-              <div className="install-error" role="alert">
-                <AlertTriangle size={20} aria-hidden="true" />
-                <strong>Install flow failed</strong>
-                <span>{installDialog.errorMessage ?? 'Operation failed.'}</span>
-              </div>
-            ) : null}
-          </div>
-
-          {installDialog.phase === 'options' || installDialog.phase === 'error' ? (
-            <footer className="install-dialog-actions">
-              <button
-                className="tool-button"
-                type="button"
-                onClick={() => setInstallDialog(null)}
-              >
-                Cancel
-              </button>
-              {installDialog.phase === 'options' ? (
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={Boolean(validateInstallModName(installDialog.modName))}
-                  onClick={() => void submitInstallOptions()}
-                >
-                  <Play size={16} aria-hidden="true" />
-                  Install
-                </button>
-              ) : null}
-            </footer>
+            ))}
+          </dl>
+          {buildPathsError ? (
+            <div className="settings-note" data-status="error" role="alert">
+              <strong>Build paths need attention</strong>
+              <span>{buildPathsError}</span>
+            </div>
           ) : null}
+          {buildPathsBusyLabel ? (
+            <div className="mod-busy-strip" role="status">
+              <RefreshCw size={15} aria-hidden="true" />
+              <span>{buildPathsBusyLabel}</span>
+            </div>
+          ) : null}
+        </section>
+
+        <section className="right-pane-section">
+          <header>
+            <Play size={16} aria-hidden="true" />
+            <div>
+              <strong>Executable config</strong>
+              <span>{selectedProjectProfileName}</span>
+            </div>
+            <button
+              className="icon-button"
+              type="button"
+              title={executableCapabilities.launchReason || 'Launch executable'}
+              disabled={
+                !selectedExecutableItem ||
+                !executableCapabilities.launchAvailable ||
+                Boolean(executablesBusyLabel)
+              }
+              onClick={() => void launchExecutable()}
+            >
+              <Play size={15} aria-hidden="true" />
+            </button>
+          </header>
+          <dl className="right-pane-path-list">
+            <div>
+              <dt>Name</dt>
+              <dd>{selectedExecutableItem?.displayName || 'not configured'}</dd>
+            </div>
+            <div>
+              <dt>Path</dt>
+              <dd title={selectedExecutablePath}>{selectedExecutablePath}</dd>
+            </div>
+            <div>
+              <dt>Arguments</dt>
+              <dd>{selectedExecutableItem?.arguments || 'none'}</dd>
+            </div>
+            <div>
+              <dt>Launch</dt>
+              <dd>{executableCapabilities.launchAvailable ? 'available' : executableCapabilities.launchReason}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="right-pane-section right-pane-section--fluxpack">
+          <header>
+            <File size={16} aria-hidden="true" />
+            <div>
+              <strong>FluxPack</strong>
+              <span>{fluxPackSummary ? fluxPackSummary.outputPath : 'No package summary yet.'}</span>
+            </div>
+          </header>
+          <div className="right-pane-actionbar" aria-label="FluxPack actions">
+            <button
+              className="tool-button"
+              type="button"
+              title={buildHeaderCapabilities.packageReason || 'Export FluxPack'}
+              disabled={!buildHeaderCapabilities.packageAvailable || Boolean(operationOverlay?.isRunning)}
+              onClick={() => void packageFluxPack()}
+            >
+              <UploadCloud size={16} aria-hidden="true" />
+              Package
+            </button>
+            <button
+              className="tool-button"
+              type="button"
+              disabled={!bridgeStatus?.ready || Boolean(operationOverlay?.isRunning)}
+              onClick={() => void inspectFluxPack()}
+            >
+              <File size={16} aria-hidden="true" />
+              Inspect
+            </button>
+            <button
+              className="tool-button"
+              type="button"
+              disabled={!bridgeStatus?.ready || Boolean(operationOverlay?.isRunning)}
+              onClick={() => void installFluxPack()}
+            >
+              <Download size={16} aria-hidden="true" />
+              Install
+            </button>
+          </div>
+          {fluxPackSummary ? (
+            renderFluxPackSummary()
+          ) : (
+            <div className="empty-state empty-state--compact">
+              <File size={18} aria-hidden="true" />
+              <strong>No FluxPack summary</strong>
+              <span>Export, inspect or install a package to show the latest summary.</span>
+            </div>
+          )}
         </section>
       </div>
     );
   };
 
+  const rightPaneTabCount = (id: RightPaneId): string | null => {
+    if (id === 'plugins') {
+      return String(pluginCount);
+    }
+
+    if (id === 'downloads') {
+      return String(downloadsWorkspace.items.length);
+    }
+
+    if (id === 'data') {
+      return selectedModItem?.isMod ? String(selectedModItem.fileCount) : null;
+    }
+
+    return fluxPackSummary ? '1' : null;
+  };
+
+  const rightPaneSummary = (): string => {
+    if (activeRightPane === 'plugins') {
+      return `${enabledPluginCount} enabled · ${filteredPluginItems.length} visible`;
+    }
+
+    if (activeRightPane === 'downloads') {
+      return `${downloadsWorkspace.items.length} files · ${filteredDownloadItems.length} visible`;
+    }
+
+    if (activeRightPane === 'data') {
+      return selectedModItem?.isMod
+        ? `${selectedModItem.fileCount} indexed files`
+        : 'Project paths and selected mod files';
+    }
+
+    return fluxPackSummary ? 'FluxPack summary ready' : 'Paths, executable and FluxPack actions';
+  };
+
+  const renderPluginsRightPane = () => (
+    <div
+      className="right-pane-content right-pane-content--plugins"
+      role="tabpanel"
+      aria-label="Плагины"
+    >
+      <div className="right-pane-actionbar" aria-label="Plugin commands">
+        <button
+          className="icon-button"
+          type="button"
+          title="Refresh plugins"
+          disabled={Boolean(pluginsBusyLabel)}
+          onClick={() => void loadPluginsWorkspace(selectedProject)}
+        >
+          <RefreshCw size={16} aria-hidden="true" />
+        </button>
+        <button
+          className="tool-button"
+          type="button"
+          disabled={Boolean(pluginsBusyLabel) || !pluginCapabilities.loadOrderSupported}
+          onClick={() => void createPluginSeparator()}
+        >
+          <Layers size={16} aria-hidden="true" />
+          Separator
+        </button>
+      </div>
+      <label className="pane-search">
+        <Search size={15} aria-hidden="true" />
+        <input
+          value={pluginsWorkspace.searchText}
+          onChange={(event) => {
+            dispatchPluginsWorkspace({
+              type: 'search-changed',
+              searchText: event.target.value
+            });
+            setPluginListScrollTop(0);
+          }}
+          placeholder="Search plugins"
+          aria-label="Search plugins"
+          disabled={!pluginCapabilities.bridgeAvailable || !pluginCapabilities.projectSupported}
+        />
+      </label>
+      {pluginsBusyLabel ? (
+        <div className="mod-busy-strip" role="status">
+          <RefreshCw size={15} aria-hidden="true" />
+          <span>{pluginsBusyLabel}</span>
+        </div>
+      ) : null}
+      {!pluginCapabilities.loadOrderSupported && pluginCapabilities.reason ? (
+        <div className="mod-busy-strip" role="status">
+          <AlertTriangle size={15} aria-hidden="true" />
+          <span>{pluginCapabilities.reason}</span>
+        </div>
+      ) : null}
+      {!pluginCapabilities.bridgeAvailable || !pluginCapabilities.projectSupported ? (
+        <div className="empty-state">
+          <MoreHorizontal size={18} aria-hidden="true" />
+          <strong>Plugins unavailable</strong>
+          <span>{pluginCapabilities.reason}</span>
+        </div>
+      ) : (
+        renderPluginRows()
+      )}
+      {renderRightPanePluginDetails()}
+    </div>
+  );
+
+  const renderDownloadsRightPane = () => (
+    <div
+      className="right-pane-content right-pane-content--downloads"
+      role="tabpanel"
+      aria-label="Загрузки"
+    >
+      <div className="right-pane-actionbar" aria-label="Download commands">
+        <button
+          className="icon-button"
+          type="button"
+          title="Refresh downloads"
+          disabled={Boolean(downloadsBusyLabel)}
+          onClick={() => void loadDownloadsWorkspace(selectedProject)}
+        >
+          <RefreshCw size={16} aria-hidden="true" />
+        </button>
+        <button
+          className="tool-button"
+          type="button"
+          disabled={Boolean(downloadsBusyLabel)}
+          onClick={() => void importDownloadArchive()}
+        >
+          <File size={16} aria-hidden="true" />
+          Import
+        </button>
+        <button
+          className="tool-button"
+          type="button"
+          disabled={Boolean(downloadsBusyLabel)}
+          onClick={() => void installArchiveFromDialog()}
+        >
+          <Download size={16} aria-hidden="true" />
+          Archive
+        </button>
+        <button
+          className="tool-button"
+          type="button"
+          disabled={Boolean(downloadsBusyLabel)}
+          onClick={() => void importInboundDownloads()}
+        >
+          <ExternalLink size={16} aria-hidden="true" />
+          NXM
+        </button>
+      </div>
+      <label className="pane-search">
+        <Search size={15} aria-hidden="true" />
+        <input
+          value={downloadsWorkspace.searchText}
+          onChange={(event) => {
+            dispatchDownloadsWorkspace({
+              type: 'search-changed',
+              searchText: event.target.value
+            });
+            setDownloadListScrollTop(0);
+          }}
+          placeholder="Search downloads"
+          aria-label="Search downloads"
+          disabled={!downloadCapabilities.bridgeAvailable}
+        />
+      </label>
+      {downloadsBusyLabel ? (
+        <div className="mod-busy-strip" role="status">
+          <RefreshCw size={15} aria-hidden="true" />
+          <span>{downloadsBusyLabel}</span>
+        </div>
+      ) : null}
+      {!downloadCapabilities.bridgeAvailable ? (
+        <div className="empty-state">
+          <Download size={18} aria-hidden="true" />
+          <strong>Downloads unavailable</strong>
+          <span>{downloadCapabilities.reason}</span>
+        </div>
+      ) : (
+        renderDownloadRows()
+      )}
+      {renderRightPaneDownloadDetails()}
+    </div>
+  );
+
+  const renderRightPaneContent = () => {
+    if (activeRightPane === 'plugins') {
+      return renderPluginsRightPane();
+    }
+
+    if (activeRightPane === 'data') {
+      return renderDataRightPane();
+    }
+
+    if (activeRightPane === 'downloads') {
+      return renderDownloadsRightPane();
+    }
+
+    return renderBuildRightPane();
+  };
+
+  const renderInstallDialog = () => (
+    <InstallDialog
+      archiveTreeScrollTop={archiveTreeScrollTop}
+      evaluation={installFomodEvaluation}
+      existingModName={installExistingModName}
+      installDialog={installDialog}
+      modsDirectory={selectedProject?.paths?.modsDirectory}
+      overrideCount={installPlacementOverrides.length}
+      onArchiveTreeScrollTopChange={setArchiveTreeScrollTop}
+      onClose={() => setInstallDialog(null)}
+      onContinueFromFomod={() => void continueFromFomod()}
+      onMoveFomodStep={(direction) => void moveInstallFomodStep(direction)}
+      onPatch={setInstallDialogPatch}
+      onSubmitInstallOptions={() => void submitInstallOptions()}
+    />
+  );
   const renderDownloadsWorkspace = () => {
     if (!selectedProject) {
       return (
@@ -5859,35 +5560,37 @@ export const App = () => {
   const renderProfileRows = () => {
     if (profilesWorkspace.loadState === 'loading') {
       return (
-        <div className="empty-state" role="status">
-          <RefreshCw size={18} aria-hidden="true" />
-          <strong>Loading profiles</strong>
-          <span>{selectedProject?.projectDirectory ?? 'Selected build'}</span>
-        </div>
+        <EmptyState
+          icon={<RefreshCw size={18} aria-hidden="true" />}
+          title="Loading profiles"
+          description={selectedProject?.projectDirectory ?? 'Selected build'}
+          tone="loading"
+        />
       );
     }
 
     if (profilesWorkspace.loadState === 'error') {
       return (
-        <div className="empty-state" role="status">
-          <AlertTriangle size={18} aria-hidden="true" />
-          <strong>Profiles unavailable</strong>
-          <span>{profilesWorkspace.errorMessage ?? 'The native core could not load profiles.'}</span>
-        </div>
+        <EmptyState
+          icon={<AlertTriangle size={18} aria-hidden="true" />}
+          title="Profiles unavailable"
+          description={profilesWorkspace.errorMessage ?? 'The native core could not load profiles.'}
+          tone="error"
+        />
       );
     }
 
     if (filteredProfileItems.length === 0) {
       return (
-        <div className="empty-state">
-          <FolderOpen size={18} aria-hidden="true" />
-          <strong>{profilesWorkspace.items.length === 0 ? 'No profiles yet' : 'No matching profiles'}</strong>
-          <span>
-            {profilesWorkspace.items.length === 0
+        <EmptyState
+          icon={<FolderOpen size={18} aria-hidden="true" />}
+          title={profilesWorkspace.items.length === 0 ? 'No profiles yet' : 'No matching profiles'}
+          description={
+            profilesWorkspace.items.length === 0
               ? 'Create a profile to isolate mod and plugin order.'
-              : 'Clear the search query to return to the profile list.'}
-          </span>
-        </div>
+              : 'Clear the search query to return to the profile list.'
+          }
+        />
       );
     }
 
@@ -6168,37 +5871,41 @@ export const App = () => {
   const renderExecutableRows = () => {
     if (executablesWorkspace.loadState === 'loading') {
       return (
-        <div className="empty-state" role="status">
-          <RefreshCw size={18} aria-hidden="true" />
-          <strong>Loading executables</strong>
-          <span>{selectedProject?.configPath ?? 'Selected build'}</span>
-        </div>
+        <EmptyState
+          icon={<RefreshCw size={18} aria-hidden="true" />}
+          title="Loading executables"
+          description={selectedProject?.configPath ?? 'Selected build'}
+          tone="loading"
+        />
       );
     }
 
     if (executablesWorkspace.loadState === 'error') {
       return (
-        <div className="empty-state" role="status">
-          <AlertTriangle size={18} aria-hidden="true" />
-          <strong>Executables unavailable</strong>
-          <span>{executablesWorkspace.errorMessage ?? 'The native core could not load executables.'}</span>
-        </div>
+        <EmptyState
+          icon={<AlertTriangle size={18} aria-hidden="true" />}
+          title="Executables unavailable"
+          description={
+            executablesWorkspace.errorMessage ?? 'The native core could not load executables.'
+          }
+          tone="error"
+        />
       );
     }
 
     if (filteredExecutableItems.length === 0) {
       return (
-        <div className="empty-state">
-          <Play size={18} aria-hidden="true" />
-          <strong>
-            {executablesWorkspace.items.length === 0 ? 'No executables yet' : 'No matching executables'}
-          </strong>
-          <span>
-            {executablesWorkspace.items.length === 0
+        <EmptyState
+          icon={<Play size={18} aria-hidden="true" />}
+          title={
+            executablesWorkspace.items.length === 0 ? 'No executables yet' : 'No matching executables'
+          }
+          description={
+            executablesWorkspace.items.length === 0
               ? 'Add the game executable or a tool to launch it from Fluxora.'
-              : 'Clear the search query to return to the executable list.'}
-          </span>
-        </div>
+              : 'Clear the search query to return to the executable list.'
+          }
+        />
       );
     }
 
@@ -6283,11 +5990,13 @@ export const App = () => {
         </div>
       </div>
       {!executableDraft ? (
-        <div className="empty-state empty-state--compact">
-          <Play size={18} aria-hidden="true" />
-          <strong>Select an executable</strong>
-          <span>Add or select a row to edit launch details.</span>
-        </div>
+        <EmptyState
+          className="empty-state--compact"
+          compact
+          icon={<Play size={18} aria-hidden="true" />}
+          title="Select an executable"
+          description="Add or select a row to edit launch details."
+        />
       ) : (
         <div className="executable-editor">
           <label className="field">
@@ -6494,131 +6203,19 @@ export const App = () => {
     );
   };
 
-  const renderBuildPathInput = (
-    label: string,
-    field: keyof Pick<
-      BuildPathDraft,
-      'modsDirectory' | 'profilesDirectory' | 'downloadsDirectory' | 'overwriteDirectory'
-    >,
-    browseTitle: string
-  ) => (
-    <label className="field">
-      <span>{label}</span>
-      <div className="path-picker">
-        <input
-          value={buildPathDraft[field]}
-          disabled={Boolean(buildPathsBusyLabel)}
-          onChange={(event) => updateBuildPathDraft({ [field]: event.target.value } as Partial<BuildPathDraft>)}
-        />
-        <button
-          className="tool-button"
-          type="button"
-          disabled={Boolean(buildPathsBusyLabel)}
-          onClick={() => void browseBuildPathDirectory(browseTitle, field)}
-        >
-          <FolderOpen size={16} aria-hidden="true" />
-          Browse
-        </button>
-      </div>
-    </label>
-  );
-
   const renderBuildPathsInspector = () => (
-    <aside className="inspector build-paths-inspector" aria-label="Build path settings">
-      <div className="surface-header surface-header--compact">
-        <div>
-          <p className="eyebrow">Build settings</p>
-          <h2>{selectedProject?.name ?? 'Paths'}</h2>
-        </div>
-        <button
-          className="icon-button"
-          type="button"
-          title="Close build settings"
-          disabled={Boolean(buildPathsBusyLabel)}
-          onClick={() => setIsBuildPathsOpen(false)}
-        >
-          <X size={16} aria-hidden="true" />
-        </button>
-      </div>
-      <div className="build-paths-form">
-        <label className="field">
-          <span>Project directory</span>
-          <input value={buildPathDraft.projectDirectory} readOnly />
-        </label>
-        <label className="field">
-          <span>Game executable</span>
-          <div className="path-picker">
-            <input
-              value={buildPathDraft.gameExecutablePath}
-              disabled={Boolean(buildPathsBusyLabel)}
-              onChange={(event) =>
-                updateBuildPathDraft({
-                  gameExecutablePath: event.target.value,
-                  gameDirectory:
-                    directoryFromExecutablePath(event.target.value) ||
-                    buildPathDraft.gameDirectory
-                })
-              }
-            />
-            <button
-              className="tool-button"
-              type="button"
-              disabled={Boolean(buildPathsBusyLabel)}
-              onClick={() => void browseBuildGameExecutable()}
-            >
-              <FolderOpen size={16} aria-hidden="true" />
-              Browse
-            </button>
-          </div>
-        </label>
-        <label className="field">
-          <span>Game directory</span>
-          <input
-            value={buildPathDraft.gameDirectory}
-            disabled={Boolean(buildPathsBusyLabel)}
-            onChange={(event) => updateBuildPathDraft({ gameDirectory: event.target.value })}
-          />
-        </label>
-        {renderBuildPathInput('Mods directory', 'modsDirectory', 'Select mods directory')}
-        {renderBuildPathInput('Profiles directory', 'profilesDirectory', 'Select profiles directory')}
-        {renderBuildPathInput('Downloads directory', 'downloadsDirectory', 'Select downloads directory')}
-        {renderBuildPathInput('Overwrite directory', 'overwriteDirectory', 'Select overwrite directory')}
-        {buildPathsError ? (
-          <div className="settings-note" data-status="error" role="alert">
-            <strong>Build paths need attention</strong>
-            <span>{buildPathsError}</span>
-          </div>
-        ) : null}
-        {buildPathsBusyLabel ? (
-          <div className="mod-busy-strip" role="status">
-            <RefreshCw size={15} aria-hidden="true" />
-            <span>{buildPathsBusyLabel}</span>
-          </div>
-        ) : null}
-        <div className="settings-actions settings-actions--footer">
-          <button
-            className="tool-button"
-            type="button"
-            disabled={Boolean(buildPathsBusyLabel)}
-            onClick={() => setIsBuildPathsOpen(false)}
-          >
-            <X size={16} aria-hidden="true" />
-            Cancel
-          </button>
-          <button
-            className="primary-button"
-            type="button"
-            disabled={Boolean(buildPathsBusyLabel)}
-            onClick={() => void saveBuildPathSettings()}
-          >
-            <CheckCircle2 size={16} aria-hidden="true" />
-            Save
-          </button>
-        </div>
-      </div>
-    </aside>
+    <BuildPathsInspector
+      busyLabel={buildPathsBusyLabel}
+      draft={buildPathDraft}
+      error={buildPathsError}
+      projectName={selectedProject?.name ?? 'Paths'}
+      onBrowseDirectory={(title, field) => void browseBuildPathDirectory(title, field)}
+      onBrowseGameExecutable={() => void browseBuildGameExecutable()}
+      onChange={updateBuildPathDraft}
+      onClose={() => setIsBuildPathsOpen(false)}
+      onSave={() => void saveBuildPathSettings()}
+    />
   );
-
   const renderFluxPackSummary = () => {
     if (!fluxPackSummary) {
       return null;
@@ -6660,103 +6257,27 @@ export const App = () => {
   };
 
   const renderOperationOverlay = () => {
-    if (!operationOverlay) {
-      return null;
-    }
-
-    const isIndeterminate = operationOverlay.isRunning && operationOverlay.percent === null;
-    const percent = Math.max(0, Math.min(100, operationOverlay.percent ?? 0));
-    const tone = operationOverlayTone(operationOverlay);
-    const progressLabel = `${percent}%`;
-    const stepText =
-      operationOverlay.errorText ||
-      operationOverlay.resultText ||
-      operationOverlay.statusText ||
-      'Preparing operation';
-    const detailText = operationOverlay.currentItem || operationOverlay.title;
-    const canCancelBuildCreate =
-      operationOverlay.kind === 'build-create' &&
-      (operationOverlay.isRunning || operationOverlay.createdProject !== null);
-    const canCancelNativeOperation = operationOverlay.isRunning && operationCancellationSupported;
-    const showCancel = canCancelBuildCreate || canCancelNativeOperation;
-    const cancelDisabled = operationOverlay.cancelRequested && operationOverlay.isRunning;
-    const showClose = operationOverlay.canClose && !showCancel;
-
     return (
-      <div
-        className="operation-overlay"
-        data-state={tone}
-        role={tone === 'error' ? 'alert' : 'status'}
-        aria-label={operationOverlay.title}
-      >
-        <div className="operation-overlay__panel">
-          <div className="operation-splash__topline">
-            <span>Operation</span>
-            {showCancel ? (
-              <button
-                className="operation-splash__action operation-splash__action--cancel"
-                type="button"
-                disabled={cancelDisabled}
-                onClick={() => void cancelOperationOverlay()}
-              >
-                Отменить
-              </button>
-            ) : showClose ? (
-              <button
-                className="operation-splash__action"
-                type="button"
-                onClick={() => setOperationOverlay(null)}
-              >
-                Закрыть
-              </button>
-            ) : null}
-          </div>
-          <div className="operation-splash__hero">
-            <span className="operation-splash__spinner" aria-hidden="true">
-              {tone === 'complete' ? (
-                <CheckCircle2 size={30} />
-              ) : tone === 'error' ? (
-                <AlertTriangle size={30} />
-              ) : (
-                <span className="operation-loader">
-                  <span className="operation-loader__piece operation-loader__piece--blue" />
-                  <span className="operation-loader__piece operation-loader__piece--red" />
-                  <span className="operation-loader__piece operation-loader__piece--yellow" />
-                  <span className="operation-loader__piece operation-loader__piece--green" />
-                  <span className="operation-loader__core" />
-                </span>
-              )}
-            </span>
-            <div className="operation-splash__copy">
-              <h2>{operationOverlay.title}</h2>
-              <p>{detailText}</p>
-            </div>
-          </div>
-          <div className="operation-progress">
-            <div className="operation-progress__header">
-              <span>Progress</span>
-              <strong>{progressLabel}</strong>
-            </div>
-            <div
-              className="progress-track"
-              data-indeterminate={isIndeterminate}
-              role="progressbar"
-              aria-label={`${operationOverlay.title} progress`}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={isIndeterminate ? undefined : percent}
-            >
-              <span style={{ width: isIndeterminate ? '42%' : `${percent}%` }} />
-            </div>
-            <div className="operation-splash__step">
-              <span>Current step</span>
-              <strong>{stepText}</strong>
-            </div>
-          </div>
-        </div>
-      </div>
+      <OperationOverlay
+        cancellationSupported={operationCancellationSupported}
+        onCancel={() => void cancelOperationOverlay()}
+        onClose={() => setOperationOverlay(null)}
+        overlay={operationOverlay}
+      />
     );
   };
+
+  const renderLaunchSplash = () => (
+    <LoadingSplash
+      appName={launchSplash?.appName}
+      buildName={launchSplash?.buildName}
+      detail={launchSplash?.detail}
+      indeterminate
+      open={Boolean(launchSplash)}
+      state="starting"
+      title={launchSplash ? `Launching ${launchSplash.appName}` : undefined}
+    />
+  );
 
   const renderTransferOperationPage = () => (
     <TransferMo2Page
@@ -6802,144 +6323,31 @@ export const App = () => {
     />
   );
 
-  const renderSettingsNav = () => (
-    <aside className="settings-nav" aria-label="Settings sections">
-      {settingsSections.map((section) => {
-        const isActive = settingsSection === section.id;
-        const icon =
-          section.id === 'connections'
-            ? Link2
-            : section.id === 'language'
-              ? Languages
-              : UploadCloud;
-        const Icon = icon;
-        return (
-          <button
-            key={section.id}
-            type="button"
-            data-active={isActive}
-            disabled={isTransferRunning && section.id !== 'transfer'}
-            onClick={() => setSettingsSection(section.id)}
-          >
-            <Icon size={17} aria-hidden="true" />
-            <span>
-              <strong>{section.label}</strong>
-            </span>
-          </button>
-        );
-      })}
-    </aside>
-  );
-
-  const renderNexusSettings = () => {
-    const accountName = nexusStatus?.displayName || nexusStatus?.userId || '';
-    const accountText = nexusStatus?.isLinked
-      ? accountName
-        ? `Аккаунт привязан - ${accountName}`
-        : 'Аккаунт привязан'
-      : 'Аккаунт не привязан';
-    const canToggleNexus =
-      settingsCapabilities.nexusAvailable &&
-      Boolean(nexusStatus?.isLinked || nexusStatus?.isConfigured);
-
-    return (
-      <div className="settings-panel" aria-label="Nexus Mods settings">
-        <div className="settings-service-row">
-          <div className="settings-service-main">
-            <span className="settings-service-icon settings-service-icon--nexus">
-              <img src={nexusModsIcon} alt="" />
-            </span>
-            <span className="settings-service-copy">
-              <strong>Nexus Mods</strong>
-              <span>{accountText}</span>
-            </span>
-          </div>
-          <button
-            className="settings-switch"
-            type="button"
-            role="switch"
-            aria-checked={Boolean(nexusStatus?.isLinked)}
-            aria-label="Nexus Mods account"
-            title={nexusStatus?.message || accountText}
-            disabled={nexusBusy || !canToggleNexus}
-            onClick={() => void toggleNexusConnection()}
-          >
-            <span aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  const renderLanguageSettings = () => {
-    const selectedLanguage =
-      languageOptions.find((language) => language.code === bridgeStatus?.language) ??
-      languageOptions[0];
-
-    return (
-      <div className="settings-panel settings-panel--language" aria-label="Language settings">
-        <label className="settings-select-card" aria-label="Interface language">
-          <span className="settings-select-control">
-            <Globe2 size={17} aria-hidden="true" />
-            <select
-              aria-label="Language"
-              value={selectedLanguage?.code ?? ''}
-              disabled={!bridgeStatus?.ready || languageBusy !== null}
-              onChange={(event) => void setLanguage(event.target.value)}
-            >
-              {languageOptions.map((language) => (
-                <option key={language.code} value={language.code}>
-                  {language.nativeLabel} - {language.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={17} aria-hidden="true" />
-          </span>
-        </label>
-      </div>
-    );
-  };
-
-  const renderTransferSettings = () => (
-    <TransferSettingsPanel
-      bridgeReady={Boolean(bridgeStatus?.ready)}
-      transferAvailable={settingsCapabilities.transferAvailable}
-      busyLabel={settingsBusyLabel}
-      isRunning={isTransferRunning}
+  const renderSettingsWorkspace = () => (
+    <SettingsWorkspace
+      bridgeStatus={bridgeStatus}
+      cancelRequested={transferCancelRequested}
+      cancellationSupported={transferCancellationSupported}
+      isTransferRunning={isTransferRunning}
+      languageBusy={languageBusy}
+      message={message}
+      nexusBusy={nexusBusy}
+      nexusStatus={nexusStatus}
+      section={settingsSection}
+      settingsBusyLabel={settingsBusyLabel}
+      settingsCapabilities={settingsCapabilities}
+      transferAnalysis={transferAnalysis}
+      transferError={transferError}
+      transferProgress={transferProgress}
+      transferResult={transferResult}
+      onCancelTransfer={() => void cancelMo2Transfer()}
       onOpenTransfer={() => void openMo2TransferFromSettings()}
+      onRefreshNexusStatus={() => void refreshNexusStatus()}
+      onSectionChange={setSettingsSection}
+      onSetLanguage={(language) => void setLanguage(language)}
+      onToggleNexusConnection={() => void toggleNexusConnection()}
     />
   );
-
-  const renderSettingsWorkspace = () => {
-    const section =
-      settingsSection === 'connections'
-        ? renderNexusSettings()
-        : settingsSection === 'language'
-          ? renderLanguageSettings()
-          : renderTransferSettings();
-
-    return (
-      <section className="settings-layout" aria-label="Settings">
-        {renderSettingsNav()}
-        <section className="work-surface settings-surface">
-          {message ? (
-            <div className="activity-banner" role="status">
-              <CircleDot size={16} aria-hidden="true" />
-              <span>{message}</span>
-            </div>
-          ) : null}
-          {settingsBusyLabel ? (
-            <div className="mod-busy-strip" role="status">
-              <RefreshCw size={15} aria-hidden="true" />
-              <span>{settingsBusyLabel}</span>
-            </div>
-          ) : null}
-          {section}
-        </section>
-      </section>
-    );
-  };
-
   const renderBuildWorkspace = () => {
     if (!selectedProject) {
       return (
@@ -6955,100 +6363,35 @@ export const App = () => {
 
     return (
       <section className="build-page" aria-label="Selected build">
-        <section className="build-header">
-          <div className="build-title">
-            <div>
-              <p className="eyebrow">Build</p>
-              <h2>{selectedProject.name}</h2>
-            </div>
-            <dl className="build-metrics" aria-label="Build summary">
-              <div>
-                <dt>Game</dt>
-                <dd>{selectedProject.gameName || selectedProject.templateId}</dd>
-              </div>
-              <div>
-                <dt>Last launch</dt>
-                <dd>{selectedProjectLibraryStats?.lastLaunch ?? 'Not tracked'}</dd>
-              </div>
-              <div>
-                <dt>Size</dt>
-                <dd>{selectedProjectLibraryStats?.size ?? '-'}</dd>
-              </div>
-              <div>
-                <dt>Mods</dt>
-                <dd>{selectedProjectLibraryStats?.mods ?? '-'}</dd>
-              </div>
-              <div>
-                <dt>Disabled</dt>
-                <dd>{selectedProjectLibraryStats?.disabledMods ?? '-'}</dd>
-              </div>
-              <div>
-                <dt>Plugins</dt>
-                <dd>{selectedProjectLibraryStats?.plugins ?? `${enabledPluginCount}/${pluginCount}`}</dd>
-              </div>
-            </dl>
-          </div>
-
-          <div className="build-controls" aria-label="Build launch controls">
-            <label className="compact-field">
-              <span>Profile</span>
-              <select
-                value={selectedProjectProfileName}
-                disabled={Boolean(profilesBusyLabel) || buildProfileOptions.length === 0}
-                onChange={(event) => {
-                  dispatchProfilesWorkspace({ type: 'selected', name: event.target.value });
-                  setProfileDraftName(event.target.value);
-                  setProfileDeleteArmedName(null);
-                }}
-              >
-                {buildProfileOptions.length === 0 ? (
-                  <option value="">No profiles</option>
-                ) : (
-                  buildProfileOptions.map((profileName) => (
-                    <option key={profileName} value={profileName}>
-                      {profileName}
-                    </option>
-                  ))
-                )}
-              </select>
-            </label>
-
-            <label className="compact-field compact-field--wide">
-              <span>Executable</span>
-              <select
-                value={selectedExecutableItem?.id ?? ''}
-                disabled={Boolean(executablesBusyLabel) || executablesWorkspace.items.length === 0}
-                onChange={(event) =>
-                  dispatchExecutablesWorkspace({ type: 'selected', id: event.target.value })
-                }
-              >
-                {executablesWorkspace.items.length === 0 ? (
-                  <option value="">No executable</option>
-                ) : (
-                  executablesWorkspace.items.map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {executableTitle(entry)}
-                    </option>
-                  ))
-                )}
-              </select>
-            </label>
-
-            <button
-              className="primary-button"
-              type="button"
-              disabled={
-                !selectedExecutableItem ||
-                Boolean(executablesBusyLabel) ||
-                !executableCapabilities.launchAvailable
-              }
-              onClick={() => void launchExecutable()}
-            >
-              <Play size={16} aria-hidden="true" />
-              Launch
-            </button>
-          </div>
-        </section>
+        <BuildDetailHeader
+          buildCapabilities={buildHeaderCapabilities}
+          executables={executablesWorkspace.items}
+          executablesBusyLabel={executablesBusyLabel}
+          isOperationRunning={Boolean(operationOverlay?.isRunning)}
+          launchAvailable={executableCapabilities.launchAvailable}
+          launchReason={executableCapabilities.launchReason}
+          onBack={() => changeRoute('home')}
+          onExecutableChange={(id) =>
+            dispatchExecutablesWorkspace({ type: 'selected', id })
+          }
+          onLaunch={() => void launchExecutable()}
+          onPackage={() => void packageFluxPack()}
+          onProfileChange={(profileName) => {
+            dispatchProfilesWorkspace({ type: 'selected', name: profileName });
+            setProfileDraftName(profileName);
+            setProfileDeleteArmedName(null);
+          }}
+          onRefresh={() => void checkModUpdates()}
+          onSettings={() => void openBuildPathSettings()}
+          profileOptions={buildProfileOptions}
+          profilesBusyLabel={profilesBusyLabel}
+          project={selectedProject}
+          refreshBusyLabel={modsBusyLabel}
+          selectedExecutable={selectedExecutableItem}
+          selectedProfileName={selectedProjectProfileName}
+          settingsBusyLabel={buildPathsBusyLabel}
+          stats={selectedProjectLibraryStats}
+        />
 
         {message ? (
           <div className="activity-banner build-message" role="status">
@@ -7057,13 +6400,70 @@ export const App = () => {
           </div>
         ) : null}
 
-        {renderFluxPackSummary()}
-
         <section className="build-workbench" aria-label="Mod Organizer style workspace">
           <section className="build-pane build-pane--mods" aria-label="Mods">
-            <header className="build-pane__header">
+            <header className="build-pane__header build-pane__header--mods">
               <div>
-                <h3>Mods</h3>
+                <h3>Моды</h3>
+                <span>
+                  {enabledModCount} of {totalModCount} enabled · {filteredModItems.length} visible
+                </span>
+              </div>
+              <div className="build-pane__tools mods-pane-toolbar" aria-label="Mod commands">
+                <button
+                  className="icon-button"
+                  type="button"
+                  title="Refresh mods"
+                  disabled={Boolean(modsBusyLabel)}
+                  onClick={() => void loadModsWorkspace(selectedProject)}
+                >
+                  <RefreshCw size={16} aria-hidden="true" />
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  title="Check updates"
+                  disabled={Boolean(modsBusyLabel)}
+                  onClick={() => void checkModUpdates()}
+                >
+                  <CircleDot size={16} aria-hidden="true" />
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  title="Enable all mods"
+                  disabled={Boolean(modsBusyLabel)}
+                  onClick={() => void setAllModsEnabled(true)}
+                >
+                  <CheckCircle2 size={16} aria-hidden="true" />
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  title="Disable all mods"
+                  disabled={Boolean(modsBusyLabel)}
+                  onClick={() => void setAllModsEnabled(false)}
+                >
+                  <XCircle size={16} aria-hidden="true" />
+                </button>
+                <button
+                  className="tool-button"
+                  type="button"
+                  disabled={Boolean(modsBusyLabel)}
+                  onClick={() => void createModSeparator()}
+                >
+                  <Layers size={16} aria-hidden="true" />
+                  Separator
+                </button>
+                <button
+                  className="tool-button"
+                  type="button"
+                  disabled={Boolean(modsBusyLabel)}
+                  onClick={() => void createEmptyMod()}
+                >
+                  <Plus size={16} aria-hidden="true" />
+                  Empty mod
+                </button>
               </div>
             </header>
             <label className="pane-search">
@@ -7096,149 +6496,33 @@ export const App = () => {
           >
             <header className="build-pane__header build-pane__header--tabs">
               <div>
-                <h3>{activeRightPane === 'plugins' ? 'Plugins' : 'Downloads'}</h3>
-                <span>
-                  {activeRightPane === 'plugins'
-                    ? `${enabledPluginCount} enabled`
-                    : `${downloadsWorkspace.items.length} files`}
-                </span>
+                <h3>{rightPaneTabs.find((tab) => tab.id === activeRightPane)?.label}</h3>
+                <span>{rightPaneSummary()}</span>
               </div>
 
               <div className="right-pane-tabs" role="tablist" aria-label="Right pane tabs">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeRightPane === 'plugins'}
-                  data-active={activeRightPane === 'plugins'}
-                  onClick={() => setActiveRightPane('plugins')}
-                >
-                  <Layers size={15} aria-hidden="true" />
-                  <span>Plugins</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeRightPane === 'downloads'}
-                  data-active={activeRightPane === 'downloads'}
-                  onClick={() => setActiveRightPane('downloads')}
-                >
-                  <Download size={15} aria-hidden="true" />
-                  <span>Downloads</span>
-                  <strong>{downloadsWorkspace.items.length}</strong>
-                </button>
-              </div>
+                {rightPaneTabs.map(({ id, label, icon: Icon }) => {
+                  const count = rightPaneTabCount(id);
 
-              {activeRightPane === 'downloads' ? (
-                <div className="build-pane__tools">
-                  <button
-                    className="icon-button"
-                    type="button"
-                    title="Refresh downloads"
-                    disabled={Boolean(downloadsBusyLabel)}
-                    onClick={() => void loadDownloadsWorkspace(selectedProject)}
-                  >
-                    <RefreshCw size={16} aria-hidden="true" />
-                  </button>
-                  <button
-                    className="tool-button"
-                    type="button"
-                    disabled={Boolean(downloadsBusyLabel)}
-                    onClick={() => void importDownloadArchive()}
-                  >
-                    <File size={16} aria-hidden="true" />
-                    Import
-                  </button>
-                  <button
-                    className="tool-button"
-                    type="button"
-                    disabled={Boolean(downloadsBusyLabel)}
-                    onClick={() => void installArchiveFromDialog()}
-                  >
-                    <Download size={16} aria-hidden="true" />
-                    Archive
-                  </button>
-                  <button
-                    className="tool-button"
-                    type="button"
-                    disabled={Boolean(downloadsBusyLabel)}
-                    onClick={() => void importInboundDownloads()}
-                  >
-                    <ExternalLink size={16} aria-hidden="true" />
-                    NXM
-                  </button>
-                </div>
-              ) : null}
+                  return (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeRightPane === id}
+                      data-active={activeRightPane === id}
+                      key={id}
+                      onClick={() => setActiveRightPane(id)}
+                    >
+                      <Icon size={15} aria-hidden="true" />
+                      <span>{label}</span>
+                      {count ? <strong>{count}</strong> : null}
+                    </button>
+                  );
+                })}
+              </div>
             </header>
 
-            {activeRightPane === 'plugins' ? (
-              <>
-                <label className="pane-search">
-                  <Search size={15} aria-hidden="true" />
-                  <input
-                    value={pluginsWorkspace.searchText}
-                    onChange={(event) => {
-                      dispatchPluginsWorkspace({
-                        type: 'search-changed',
-                        searchText: event.target.value
-                      });
-                      setPluginListScrollTop(0);
-                    }}
-                    placeholder="Search plugins"
-                    aria-label="Search plugins"
-                    disabled={!pluginCapabilities.bridgeAvailable || !pluginCapabilities.projectSupported}
-                  />
-                </label>
-                {pluginsBusyLabel ? (
-                  <div className="mod-busy-strip" role="status">
-                    <RefreshCw size={15} aria-hidden="true" />
-                    <span>{pluginsBusyLabel}</span>
-                  </div>
-                ) : null}
-                {!pluginCapabilities.bridgeAvailable || !pluginCapabilities.projectSupported ? (
-                  <div className="empty-state">
-                    <MoreHorizontal size={18} aria-hidden="true" />
-                    <strong>Plugins unavailable</strong>
-                    <span>{pluginCapabilities.reason}</span>
-                  </div>
-                ) : (
-                  renderPluginRows()
-                )}
-              </>
-            ) : (
-              <>
-                <label className="pane-search">
-                  <Search size={15} aria-hidden="true" />
-                  <input
-                    value={downloadsWorkspace.searchText}
-                    onChange={(event) => {
-                      dispatchDownloadsWorkspace({
-                        type: 'search-changed',
-                        searchText: event.target.value
-                      });
-                      setDownloadListScrollTop(0);
-                    }}
-                    placeholder="Search downloads"
-                    aria-label="Search downloads"
-                    disabled={!downloadCapabilities.bridgeAvailable}
-                  />
-                </label>
-                {downloadsBusyLabel ? (
-                  <div className="mod-busy-strip" role="status">
-                    <RefreshCw size={15} aria-hidden="true" />
-                    <span>{downloadsBusyLabel}</span>
-                  </div>
-                ) : null}
-                {!downloadCapabilities.bridgeAvailable ? (
-                  <div className="empty-state">
-                    <Download size={18} aria-hidden="true" />
-                    <strong>Downloads unavailable</strong>
-                    <span>{downloadCapabilities.reason}</span>
-                  </div>
-                ) : (
-                  renderDownloadRows()
-                )}
-              </>
-            )}
+            {renderRightPaneContent()}
           </section>
         </section>
 
@@ -7256,65 +6540,27 @@ export const App = () => {
   );
 
   const renderTitlebar = (showSettingsButton: boolean) => (
-    <header className="titlebar" data-tauri-drag-region>
-      <div className="titlebar__drag" data-tauri-drag-region />
-      <div className="titlebar__brand">
-        {isSettingsWindow ? (
-          <>
-            <Settings className="titlebar__settings-icon" size={18} aria-hidden="true" />
-            <span>Settings</span>
-          </>
-        ) : (
-          <>
-            <img className="titlebar__mark" src={fluxoraLogo} alt="" />
-            <span>Fluxora</span>
-          </>
-        )}
-      </div>
-      <div className="titlebar__controls">
-        {showSettingsButton ? (
-          <>
-            <button
-              className="titlebar__shortcut"
-              type="button"
-              title="Home"
-              aria-label="Home"
-              data-active={activeRoute === 'home'}
-              onClick={() => changeRoute('home')}
-            >
-              <Home size={17} aria-hidden="true" />
-            </button>
-            <button
-              className="titlebar__shortcut"
-              type="button"
-              title="Open settings"
-              aria-label="Open settings"
-              onClick={() => void openSettingsWindow()}
-            >
-              <Settings size={17} aria-hidden="true" />
-            </button>
-          </>
-        ) : null}
-        <button type="button" title="Minimize" onClick={() => void window.fluxora.windowControls.minimize()}>
-          <Minus size={14} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          title="Maximize"
-          onClick={() => void window.fluxora.windowControls.toggleMaximize()}
-        >
-          <Square size={13} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          title="Close"
-          onClick={() => void window.fluxora.windowControls.close()}
-        >
-          <X size={15} aria-hidden="true" />
-        </button>
-      </div>
-    </header>
+    <AppTitlebar
+      homeActive={activeRoute === 'home' && !isTransferPageOpen}
+      mode={isSettingsWindow ? 'settings' : 'main'}
+      settingsActive={isSettingsWindow}
+      showShortcuts={showSettingsButton}
+      onClose={() => void closeWindow()}
+      onHome={() => changeRoute('home')}
+      onMinimize={() => void minimizeWindow()}
+      onOpenSettings={() => void openSettingsWindow()}
+      onToggleMaximize={() => void toggleMaximizeWindow()}
+    />
   );
+
+  if (import.meta.env.DEV && window.location.hash === '#design-system') {
+    return (
+      <main className="desktop-shell">
+        {renderTitlebar(false)}
+        <PrimitivePreview />
+      </main>
+    );
+  }
 
   if (isSettingsWindow) {
     return (
@@ -7368,6 +6614,7 @@ export const App = () => {
                   : null}
                 {renderInstallDialog()}
                 {renderOperationOverlay()}
+                {renderLaunchSplash()}
               </>
             )}
           </div>

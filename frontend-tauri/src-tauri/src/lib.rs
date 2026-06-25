@@ -21,6 +21,23 @@ const OPERATION_CANCEL_DIR_NAME: &str = "operation-cancel";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+fn operation_progress_payload(envelope: &Value) -> Value {
+    let mut payload = envelope.get("params").cloned().unwrap_or(Value::Null);
+    let operation_id = envelope
+        .get("meta")
+        .and_then(|meta| meta.get("operationId"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty());
+
+    if let (Value::Object(fields), Some(operation_id)) = (&mut payload, operation_id) {
+        fields
+            .entry("operationId")
+            .or_insert_with(|| Value::String(operation_id.to_string()));
+    }
+
+    payload
+}
+
 #[derive(Default)]
 struct BridgeState {
     process: Mutex<BridgeProcess>,
@@ -654,7 +671,7 @@ impl BridgeProcess {
                 serde_json::from_str(line.trim()).map_err(|error| error.to_string())?;
             if envelope.get("id").and_then(Value::as_str) != Some(request_id.as_str()) {
                 if envelope.get("method").and_then(Value::as_str) == Some("operations.progress") {
-                    let payload = envelope.get("params").cloned().unwrap_or(Value::Null);
+                    let payload = operation_progress_payload(&envelope);
                     let _ = app.emit(PROGRESS_EVENT, payload);
                 }
                 continue;
@@ -1228,4 +1245,48 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fluxora");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operation_progress_payload_adds_operation_id_from_meta() {
+        let envelope = json!({
+            "jsonrpc": "2.0",
+            "method": "operations.progress",
+            "params": {
+                "phase": "copy",
+                "overallPercent": 42
+            },
+            "meta": {
+                "operationId": "op_transfer_import"
+            }
+        });
+
+        let payload = operation_progress_payload(&envelope);
+
+        assert_eq!(payload["operationId"], "op_transfer_import");
+        assert_eq!(payload["overallPercent"], 42);
+    }
+
+    #[test]
+    fn operation_progress_payload_keeps_payload_operation_id() {
+        let envelope = json!({
+            "jsonrpc": "2.0",
+            "method": "operations.progress",
+            "params": {
+                "operationId": "op_from_payload",
+                "phase": "copy"
+            },
+            "meta": {
+                "operationId": "op_from_meta"
+            }
+        });
+
+        let payload = operation_progress_payload(&envelope);
+
+        assert_eq!(payload["operationId"], "op_from_payload");
+    }
 }

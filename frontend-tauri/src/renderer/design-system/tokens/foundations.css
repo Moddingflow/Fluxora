@@ -1,0 +1,164 @@
+/* Fluxora redesign foundations.
+   This file is the renderer token source of truth for colors, type, spacing,
+   radii, shadows and motion. Keep runtime assets local or system-provided. */
+
+:root {
+  color-scheme: dark;
+  font-family:
+    "IBM Plex Sans", "Segoe UI Variable", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+
+  /* Typography. IBM Plex is preferred when installed or later bundled locally. */
+  --font-sans: "IBM Plex Sans", "Segoe UI Variable", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --fw-light: 300;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --fs-micro: 10px;
+  --fs-ui: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 15px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+  --fs-2xl: 28px;
+  --fs-3xl: 40px;
+  --lh-tight: 1.15;
+  --lh-snug: 1.3;
+  --lh-normal: 1.5;
+  --ls-tight: 0;
+  --ls-normal: 0;
+  --ls-label: 0.08em;
+  --ls-wide: 0.14em;
+
+  /* Base ink and text ramp. */
+  --flx-text: #f5f0e6;
+  --flx-text-secondary: #cec8ba;
+  --flx-text-muted: #948d7e;
+  --flx-text-subtle: #6b6557;
+
+  /* Single Fluxora accent: gold. */
+  --flx-accent: #e6b450;
+  --flx-accent-hover: #f0c76e;
+  --flx-accent-bright: #f8dd98;
+  --flx-accent-soft: #1e1a0f;
+  --flx-accent-line: #4b4024;
+  --flx-ink-on-accent: #0b0e14;
+
+  /* Surface stack. */
+  --flx-bg-0: #06080c;
+  --flx-bg-1: #0b0e14;
+  --flx-bg-2: #0f131b;
+  --flx-panel-soft: #0d1017;
+  --flx-panel: #13171f;
+  --flx-panel-raised: #1a1f29;
+  --flx-panel-hover: #222732;
+  --flx-line: #262c36;
+  --flx-line-hover: #3a414d;
+
+  /* Semantic states stay inside the gold/neutral identity. */
+  --flx-error: #9a8f7a;
+  --flx-error-solid: #4a4234;
+  --flx-error-press: #3b3429;
+  --flx-success: var(--flx-accent);
+  --flx-conflict-overwrites: var(--flx-accent);
+  --flx-conflict-overwritten: var(--flx-text-subtle);
+  --flx-conflict-fully-overwritten: #45413a;
+
+  /* Compatibility fills: the legacy names stay, but values are flat colors. */
+  --flx-grad-app: var(--flx-bg-1);
+  --flx-grad-hero: var(--flx-panel);
+  --flx-grad-accent: var(--flx-accent);
+  --flx-fill-app: var(--flx-grad-app);
+  --flx-fill-hero: var(--flx-grad-hero);
+  --flx-fill-accent: var(--flx-grad-accent);
+
+  /* RGB channels for existing alpha-based styles. */
+  --flx-accent-rgb: 230, 180, 80;
+  --flx-accent-hover-rgb: 240, 199, 110;
+  --flx-bg-rgb: 11, 14, 20;
+  --flx-panel-rgb: 19, 23, 31;
+  --flx-line-rgb: 38, 44, 54;
+  --flx-error-rgb: 154, 143, 122;
+
+  /* Redesign semantic aliases. */
+  --color-bg: var(--flx-bg-1);
+  --surface-app: var(--flx-bg-1);
+  --surface-card: var(--flx-panel);
+  --surface-raised: var(--flx-panel-raised);
+  --surface-inset: var(--flx-panel-soft);
+  --surface-hover: var(--flx-panel-hover);
+  --text-strong: var(--flx-text);
+  --text-body: var(--flx-text-secondary);
+  --text-muted: var(--flx-text-muted);
+  --text-subtle: var(--flx-text-subtle);
+  --border-default: var(--flx-line);
+  --border-hover: var(--flx-line-hover);
+  --border-accent: var(--flx-accent-line);
+  --accent: var(--flx-accent);
+  --accent-hover: var(--flx-accent-hover);
+  --on-accent: var(--flx-ink-on-accent);
+  --flx-bg: var(--flx-bg-0);
+  --border-subtle: rgba(var(--flx-line-rgb), 0.6);
+
+  /* Existing Tauri compatibility aliases. */
+  --bg: var(--flx-bg-1);
+  --chrome: var(--flx-panel-soft);
+  --surface: var(--flx-panel);
+  --surface-strong: var(--flx-panel-raised);
+  --surface-soft: var(--flx-panel-soft);
+  --line: var(--flx-line);
+  --line-soft: rgba(var(--flx-line-rgb), 0.18);
+  --text: var(--flx-text);
+  --muted: var(--flx-text-secondary);
+  --subtle: var(--flx-text-muted);
+  --accent-secondary: var(--flx-accent-hover);
+  --accent-info: var(--flx-accent);
+  --warning: var(--flx-accent);
+  --danger: var(--flx-error);
+  --danger-soft: rgba(var(--flx-error-rgb), 0.12);
+  --focus-ring: rgba(var(--flx-accent-hover-rgb), 0.72);
+  --row-hover: rgba(var(--flx-accent-rgb), 0.07);
+
+  /* Spacing scale. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Radii and controls. */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 9px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-pill: 999px;
+  --control-h: 34px;
+  --control-h-sm: 30px;
+  --control-h-xs: 28px;
+  --input-h: 36px;
+  --combo-h: 32px;
+  --icon-btn: 30px;
+  --border-w: 1px;
+
+  /* Shadows and motion. */
+  --shadow-panel: 0 8px 20px rgba(4, 7, 13, 0.3);
+  --shadow-popup: 0 12px 32px rgba(4, 7, 13, 0.52);
+  --shadow-menu: var(--shadow-popup);
+  --shadow-accent-glow: 0 0 0 3px rgba(var(--flx-accent-hover-rgb), 0.3);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-base: 160ms;
+  --dur-slow: 220ms;
+  --motion-fast: var(--dur-fast) var(--ease-standard);
+  --motion-medium: var(--dur-slow) var(--ease-standard);
+}

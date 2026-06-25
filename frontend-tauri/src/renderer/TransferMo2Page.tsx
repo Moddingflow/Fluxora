@@ -10,7 +10,8 @@ import {
   XCircle
 } from 'lucide-react';
 
-import modOrganizerIcon from './assets/images/mod-organizer-2.png';
+import { ProgressBar } from './design-system';
+import { modOrganizerIcon } from './design-system/assets';
 import {
   findTransferDriveForPath,
   formatTransferBytes,
@@ -490,9 +491,11 @@ export const TransferMo2Page = ({
 
         <div className="transfer-operation-meter">
           <strong>{percent}%</strong>
-          <div className="progress-track progress-track--animated">
-            <span style={{ width: `${percent}%` }} />
-          </div>
+          <ProgressBar
+            aria-label="MO2 transfer progress"
+            className="transfer-progress-bar"
+            value={percent}
+          />
         </div>
 
         <div className="transfer-operation-steps" aria-label="Текущие шаги переноса">

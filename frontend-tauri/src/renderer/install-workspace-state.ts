@@ -389,6 +389,50 @@ export const buildPlacementPreviewLines = (
   return lines;
 };
 
+export const installSourceLabel = (source: InstallSource): string => {
+  const label = source.fileName || fileNameFromPath(source.sourcePath) || source.displayName;
+  return source.kind === 'download' ? `Download · ${label}` : `Archive · ${label}`;
+};
+
+export const installDestinationPreview = (
+  modsDirectory: string | undefined,
+  modName: string
+): string => {
+  const name = normalizeInstallModName(modName) || 'new mod';
+  const root = modsDirectory?.trim().replace(/[\\/]+$/g, '');
+  return root ? `${root}\\${name}` : `mods\\${name}`;
+};
+
+export const installCategoryLabel = (
+  preview: FluxoraContentLayoutPreview,
+  isFomod: boolean
+): string => {
+  const state = preview.summary.hasBlockers
+    ? 'blocked'
+    : preview.summary.hasWarnings
+      ? 'needs review'
+      : 'ready';
+  const game = preview.gameDisplayName || preview.gameId || 'content layout';
+  return [game, isFomod ? 'FOMOD' : 'simple archive', state].join(' · ');
+};
+
+export const fomodGroupTypeLabel = (type: string): string => {
+  switch (type.toLocaleLowerCase()) {
+    case 'selectexactlyone':
+      return 'choose one';
+    case 'selectatleastone':
+      return 'one or more';
+    case 'selectatmostone':
+      return 'zero or one';
+    case 'selectall':
+      return 'required set';
+    case 'selectany':
+      return 'several allowed';
+    default:
+      return type || 'options';
+  }
+};
+
 const normalizeDependencyFile = (file: string): string => file.trim().replace(/\//g, '\\').replace(/^\\+/, '');
 
 const isDependencySatisfied = (

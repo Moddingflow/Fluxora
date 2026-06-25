@@ -4,6 +4,7 @@ import {
   emptyPluginWorkspaceState,
   filterPluginOrderItems,
   pluginCapabilityView,
+  pluginHexIndex,
   pluginStatusText,
   pluginTypeLabel,
   pluginWorkspaceReducer,
@@ -133,6 +134,9 @@ describe('plugin workspace state', () => {
   });
 
   it('formats plugin status and type for dense rows', () => {
+    expect(pluginHexIndex(items[0])).toBe('00');
+    expect(pluginHexIndex(items[1])).toBe('--');
+    expect(pluginHexIndex(items[3])).toBe('03');
     expect(pluginStatusText(items[0])).toBe('Locked');
     expect(pluginStatusText(items[2])).toBe('Missing masters');
     expect(pluginStatusText(items[3])).toBe('Disabled');

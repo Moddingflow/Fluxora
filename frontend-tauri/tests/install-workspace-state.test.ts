@@ -7,6 +7,10 @@ import {
   createPlacementOverrides,
   evaluateFomodWizard,
   findExistingInstalledModName,
+  fomodGroupTypeLabel,
+  installCategoryLabel,
+  installDestinationPreview,
+  installSourceLabel,
   initialFomodSelection,
   toggleFomodOption,
   validateInstallModName
@@ -232,5 +236,23 @@ describe('install workspace state', () => {
   it('detects existing mods case-insensitively for replace merge UX', () => {
     expect(findExistingInstalledModName(['SkyUI', 'RaceMenu'], 'skyui')).toBe('SkyUI');
     expect(findExistingInstalledModName(['SkyUI'], 'SmoothCam')).toBeNull();
+  });
+
+  it('builds simple install identity labels without owning install rules', () => {
+    expect(
+      installSourceLabel({
+        kind: 'download',
+        sourcePath: 'D:\\Fluxora\\downloads\\SkyUI.7z',
+        displayName: 'SkyUI',
+        fileName: 'SkyUI.7z'
+      })
+    ).toBe('Download · SkyUI.7z');
+    expect(installDestinationPreview('D:\\Fluxora\\Builds\\mods\\', ' SkyUI ')).toBe(
+      'D:\\Fluxora\\Builds\\mods\\SkyUI'
+    );
+    expect(installCategoryLabel(preview, true)).toBe(
+      'Skyrim Special Edition · FOMOD · blocked'
+    );
+    expect(fomodGroupTypeLabel('SelectExactlyOne')).toBe('choose one');
   });
 });

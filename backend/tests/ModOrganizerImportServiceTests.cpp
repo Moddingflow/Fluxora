@@ -15,6 +15,45 @@
 
 namespace fluxora::tests
 {
+    TEST(ModOrganizerImportServiceTests, AnalyzePlacesDriveRootImportsInsideFluxoraBuilds)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+
+        const std::filesystem::path source = temp.path() / L"MO2";
+        const std::filesystem::path driveRoot = temp.path().root_path();
+
+        writeTextFile(source / L"GameRoot" / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(source / L"GameRoot" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(source / L"mods" / L"SkyUI" / L"interface" / L"skyui.swf", "ui");
+        writeTextFile(
+            source / L"mods" / L"SkyUI" / L"meta.ini",
+            "[General]\nname=SkyUI\nversion=1\nmodid=3863\nfileid=123\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"modlist.txt", "+SkyUI\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"plugins.txt", "*Skyrim.esm\n");
+        writeTextFile(
+            source / L"ModOrganizer.ini",
+            "[General]\n"
+            "gameName=Skyrim Special Edition\n"
+            "gamePath=GameRoot\n"
+            "selected_profile=Default\n");
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        BuildPathSettingsService pathSettings(logger);
+        ModOrganizerImportService importer(logger, templates, projects, pathSettings);
+
+        const ModOrganizerImportAnalysis analysis = importer.analyze(source, driveRoot);
+        const std::filesystem::path expectedRoot = driveRoot / L"Fluxora Builds";
+
+        EXPECT_EQ(normalized(analysis.destinationRootDirectory), normalized(expectedRoot));
+        EXPECT_EQ(
+            normalized(analysis.targetProjectDirectory.parent_path()),
+            normalized(expectedRoot));
+    }
+
     TEST(ModOrganizerImportServiceTests, ImportCopiesQtByteArrayOverwriteDirectory)
     {
         TempDirectory temp;

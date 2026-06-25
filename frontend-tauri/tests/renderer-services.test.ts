@@ -96,6 +96,9 @@ describe('renderer operation services', () => {
     expect(errorMessage({ detail: 'Install root is not writable' })).toBe(
       'Install root is not writable'
     );
+    expect(errorMessage('Core failed\n    at native_bridge.cpp:42\nstderr: raw stack')).toBe(
+      'Core failed'
+    );
     expect(errorMessage('')).toBe('Operation failed.');
   });
 

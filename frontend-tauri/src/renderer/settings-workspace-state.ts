@@ -3,6 +3,8 @@ import type {
   FluxoraPlatformSupport,
   FluxoraModOrganizerImportAnalysis,
   FluxoraModOrganizerImportProgress,
+  FluxoraNexusModsAuthStatus,
+  FluxoraProject,
   FluxoraTransferDriveOption,
   FluxoraThemeMode,
   NativeBridgeFeatureState,
@@ -14,20 +16,24 @@ export type SettingsSectionId = 'connections' | 'language' | 'transfer';
 export interface SettingsSection {
   id: SettingsSectionId;
   label: string;
+  hint: string;
 }
 
 export const settingsSections: SettingsSection[] = [
   {
     id: 'connections',
-    label: 'Привязки'
+    label: 'Connections',
+    hint: 'Nexus Mods and bridge'
   },
   {
     id: 'language',
-    label: 'Language'
+    label: 'Languages',
+    hint: 'EN / RU / DE'
   },
   {
     id: 'transfer',
-    label: 'Перенос'
+    label: 'Transfer',
+    hint: 'MO2 import'
   }
 ];
 
@@ -60,6 +66,81 @@ export const settingsCapabilityView = (bridgeStatus: NativeBridgeStatus | null) 
     transferAvailable,
     transferCancellationAvailable: transferAvailable
   };
+};
+
+export const languageSettingsHint = (languageCode: string | undefined): string => {
+  const normalized = languageCode?.trim().toLowerCase() || 'en-us';
+  const shortCode = normalized.startsWith('ru')
+    ? 'ru'
+    : normalized.startsWith('de')
+      ? 'de'
+      : 'en';
+  return `settings.json - language=${shortCode}`;
+};
+
+export const nexusConnectionSummary = (
+  status: FluxoraNexusModsAuthStatus | null
+): string => {
+  if (!status) {
+    return 'Status not loaded';
+  }
+
+  if (!status.isConfigured && !status.isLinked) {
+    return 'OAuth is not configured in the native core';
+  }
+
+  if (!status.isLinked) {
+    return 'Not linked';
+  }
+
+  const accountName = status.displayName || status.userId;
+  return accountName ? `Linked - ${accountName}` : 'Linked';
+};
+
+export const nexusActionLabel = (status: FluxoraNexusModsAuthStatus | null): string =>
+  status?.isLinked ? 'Disconnect Nexus Mods' : 'Link Nexus Mods with OAuth';
+
+export const nexusCanToggle = (
+  status: FluxoraNexusModsAuthStatus | null,
+  nexusAvailable: boolean
+): boolean =>
+  nexusAvailable &&
+  Boolean(status) &&
+  (Boolean(status?.isLinked) || Boolean(status?.isConfigured));
+
+export const transferSettingsSummary = (
+  progress: FluxoraModOrganizerImportProgress | null,
+  result: FluxoraProject | null,
+  error: string | null
+): string => {
+  if (error) {
+    return error;
+  }
+
+  if (result) {
+    return `Completed - ${result.name}`;
+  }
+
+  if (progress) {
+    return transferProgressSummary(progress);
+  }
+
+  return 'Transfer mods, profiles, load order, and metadata from an existing MO2 build.';
+};
+
+export const transferSettingsProgressPercent = (
+  progress: FluxoraModOrganizerImportProgress | null,
+  result: FluxoraProject | null
+): number | null => {
+  if (result) {
+    return 100;
+  }
+
+  if (!progress) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(progress.overallPercent)));
 };
 
 export interface PlatformSupportRow extends FluxoraPlatformSupport {

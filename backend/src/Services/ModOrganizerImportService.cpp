@@ -51,6 +51,7 @@ namespace fluxora
     {
         constexpr std::wstring_view fallbackProfileName = L"Default";
         constexpr std::wstring_view buildManifestsFolderName = L"Builds";
+        constexpr std::wstring_view transferredBuildsFolderName = L"Fluxora Builds";
         constexpr std::wstring_view manifestFileExtension = L".json";
         constexpr std::wstring_view invalidFolderCharacters = L"<>:\"/\\|?*";
         constexpr std::wstring_view customExecutablesPrefix = L"customexecutables.";
@@ -460,6 +461,25 @@ namespace fluxora
             }
 
             return std::filesystem::absolute(std::filesystem::path(rootText));
+        }
+
+        std::filesystem::path normalizeTransferredBuildsRoot(const std::filesystem::path& root)
+        {
+            const std::filesystem::path normalizedRoot =
+                normalizeRootDirectory(root).lexically_normal();
+            if (normalizedRoot.empty())
+            {
+                return normalizedRoot;
+            }
+
+            if (equalsIgnoreCase(normalizedRoot.filename().wstring(), transferredBuildsFolderName))
+            {
+                return normalizedRoot;
+            }
+
+            return normalizedRoot == normalizedRoot.root_path()
+                ? normalizedRoot / std::filesystem::path(transferredBuildsFolderName)
+                : normalizedRoot;
         }
 
         std::filesystem::path resolveFluxoraDataDirectory()
@@ -2016,7 +2036,7 @@ namespace fluxora
                     : existingProject->project.installRootDirectory;
                 analysis.destinationRootDirectory = destinationRootDirectory.empty()
                     ? existingRoot
-                    : normalizeRootDirectory(destinationRootDirectory);
+                    : normalizeTransferredBuildsRoot(destinationRootDirectory);
                 const bool keepExistingProjectDirectory =
                     destinationRootDirectory.empty() ||
                     areSamePath(analysis.destinationRootDirectory, existingRoot);
@@ -2028,7 +2048,7 @@ namespace fluxora
             }
             else
             {
-                analysis.destinationRootDirectory = normalizeRootDirectory(destinationRootDirectory);
+                analysis.destinationRootDirectory = normalizeTransferredBuildsRoot(destinationRootDirectory);
                 const std::wstring projectFolder = sanitizeFolderName(analysis.projectName, L"MO2 Import");
                 analysis.targetProjectDirectory = uniquePath(analysis.destinationRootDirectory, projectFolder);
                 analysis.targetConfigPath = uniquePath(

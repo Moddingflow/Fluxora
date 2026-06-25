@@ -102,6 +102,98 @@ export const modOverwriteView = (item: FluxoraModOrderItem): ModOverwriteView =>
   };
 };
 
+export const modVersionText = (item: FluxoraModOrderItem): string => {
+  if (!item.isMod) {
+    return '';
+  }
+
+  return item.version.trim() || 'local';
+};
+
+export const modLatestVersionText = (item: FluxoraModOrderItem): string => {
+  if (!item.isMod) {
+    return '';
+  }
+
+  if (item.latestVersion.trim()) {
+    return item.latestVersion;
+  }
+
+  if (item.hasUpdate) {
+    return 'available';
+  }
+
+  return item.canCheckUpdates ? 'not checked' : 'local';
+};
+
+export type ModTableStatusTone = 'disabled' | 'update' | 'conflict' | 'local' | 'ready';
+
+export interface ModTableStatusView {
+  label: string;
+  tone: ModTableStatusTone;
+}
+
+export const modTableStatusView = (item: FluxoraModOrderItem): ModTableStatusView => {
+  if (!item.isMod) {
+    return {
+      label: 'Separator',
+      tone: 'local'
+    };
+  }
+
+  if (!item.isEnabled) {
+    return {
+      label: 'Disabled',
+      tone: 'disabled'
+    };
+  }
+
+  if (item.hasUpdate || item.updateStatus.trim()) {
+    return {
+      label: item.updateStatus.trim() || 'Update available',
+      tone: 'update'
+    };
+  }
+
+  const overwrite = modOverwriteView(item);
+  if (overwrite.state !== 'none') {
+    return {
+      label: overwrite.label,
+      tone: 'conflict'
+    };
+  }
+
+  return {
+    label: item.canCheckUpdates ? 'Not checked' : 'Local',
+    tone: item.canCheckUpdates ? 'ready' : 'local'
+  };
+};
+
+export const modSeparatorChildCount = (
+  items: FluxoraModOrderItem[],
+  separatorOrderId: string
+): number => {
+  const separatorIndex = items.findIndex((item) => item.orderId === separatorOrderId);
+  if (separatorIndex < 0 || !items[separatorIndex]?.isSeparator) {
+    return 0;
+  }
+
+  let count = 0;
+
+  for (let index = separatorIndex + 1; index < items.length; index += 1) {
+    const item = items[index];
+    if (item.isSeparator) {
+      break;
+    }
+
+    if (item.isMod) {
+      count += 1;
+    }
+  }
+
+  return count;
+};
+
 export const isModNestedUnderSeparator = (
   items: FluxoraModOrderItem[],
   orderId: string

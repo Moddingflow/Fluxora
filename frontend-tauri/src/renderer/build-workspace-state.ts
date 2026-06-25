@@ -3,12 +3,27 @@ import type {
   FluxoraBuildPathSettingsSaveRequest,
   FluxoraExecutable,
   FluxoraFluxPackSummary,
-  FluxoraProject
+  FluxoraProject,
+  NativeBridgeStatus
 } from '../shared/fluxora-api';
 
 export interface BuildPathDraft extends FluxoraBuildPathSettingsSaveRequest {
   projectDirectory: string;
   gameExecutablePath: string;
+}
+
+export interface BuildActionAvailability {
+  available: boolean;
+  reason: string;
+}
+
+export interface BuildHeaderCapabilityView {
+  packageAvailable: boolean;
+  packageReason: string;
+  refreshAvailable: boolean;
+  refreshReason: string;
+  settingsAvailable: boolean;
+  settingsReason: string;
 }
 
 export const emptyBuildPathDraft = (project: FluxoraProject | null): BuildPathDraft => ({
@@ -89,6 +104,73 @@ export const buildPathSaveRequest = (
   downloadsDirectory: draft.downloadsDirectory.trim(),
   overwriteDirectory: draft.overwriteDirectory.trim()
 });
+
+const enabledFeatureStates = new Set(['available', 'limited', 'runtime-shell']);
+
+export const buildActionAvailability = (
+  bridgeStatus: NativeBridgeStatus | null,
+  featureIds: string[],
+  label: string
+): BuildActionAvailability => {
+  if (!bridgeStatus?.ready) {
+    return {
+      available: false,
+      reason: 'Native bridge is not ready.'
+    };
+  }
+
+  const feature = featureIds
+    .map((featureId) => bridgeStatus.capabilities?.features[featureId])
+    .find(Boolean);
+
+  if (!feature) {
+    return {
+      available: true,
+      reason: ''
+    };
+  }
+
+  if (enabledFeatureStates.has(feature.state)) {
+    return {
+      available: true,
+      reason: ''
+    };
+  }
+
+  return {
+    available: false,
+    reason: feature.reason || `${label} is not available in this bridge build.`
+  };
+};
+
+export const buildHeaderCapabilityView = (
+  bridgeStatus: NativeBridgeStatus | null
+): BuildHeaderCapabilityView => {
+  const packageAction = buildActionAvailability(
+    bridgeStatus,
+    ['fluxPackExport', 'fluxPack'],
+    'FluxPack export'
+  );
+  const refreshAction = buildActionAvailability(
+    bridgeStatus,
+    ['modsCheckUpdates', 'mods'],
+    'Mod update checks'
+  );
+  const settingsAction = buildActionAvailability(
+    bridgeStatus,
+    ['buildPathsSave', 'buildPaths'],
+    'Build settings'
+  );
+
+  return {
+    packageAvailable: packageAction.available,
+    packageReason: packageAction.reason,
+    refreshAvailable: refreshAction.available,
+    refreshReason: refreshAction.reason,
+    settingsAvailable: settingsAction.available,
+    settingsReason: settingsAction.reason
+  };
+};
 
 const resolveExecutablePath = (executablePath: string, gameDirectory: string): string => {
   const trimmed = executablePath.trim();

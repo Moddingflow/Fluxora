@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildActionAvailability,
+  buildHeaderCapabilityView,
   buildPathSaveRequest,
   buildPrimaryExecutableList,
   directoryFromExecutablePath,
   emptyBuildPathDraft,
   validateBuildPathDraft
 } from '../src/renderer/build-workspace-state';
-import type { FluxoraExecutable, FluxoraProject } from '../src/shared/fluxora-api';
+import type { FluxoraExecutable, FluxoraProject, NativeBridgeStatus } from '../src/shared/fluxora-api';
 
 const project: FluxoraProject = {
   id: 'C:\\Builds\\Skyrim.json',
@@ -25,6 +27,24 @@ const project: FluxoraProject = {
     profilesDirectory: 'C:\\Fluxora Projects\\Skyrim Main\\profiles',
     downloadsDirectory: 'C:\\Fluxora Projects\\Skyrim Main\\downloads',
     overwriteDirectory: 'C:\\Fluxora Projects\\Skyrim Main\\overwrite'
+  }
+};
+
+const readyBridge: NativeBridgeStatus = {
+  ready: true,
+  operationId: 'op_bridge',
+  capabilities: {
+    platform: 'win32',
+    arch: 'x64',
+    core: {
+      available: true,
+      libraryName: 'FluxoraCore.dll'
+    },
+    features: {}
+  },
+  logs: {
+    uiLogPath: '',
+    mainBridgeLogPath: ''
   }
 };
 
@@ -93,5 +113,36 @@ describe('build workspace state', () => {
       iconPath: ''
     });
     expect(executables[0].executablePath).toBe('Old.exe');
+  });
+
+  it('keeps build header actions capability-driven without requiring every bridge to report method keys', () => {
+    expect(buildActionAvailability(null, ['fluxPack'], 'FluxPack export')).toEqual({
+      available: false,
+      reason: 'Native bridge is not ready.'
+    });
+
+    expect(buildHeaderCapabilityView(readyBridge)).toMatchObject({
+      packageAvailable: true,
+      refreshAvailable: true,
+      settingsAvailable: true
+    });
+
+    const unsupportedFluxPack: NativeBridgeStatus = {
+      ...readyBridge,
+      capabilities: {
+        ...readyBridge.capabilities!,
+        features: {
+          fluxPackExport: {
+            state: 'unsupported',
+            reason: 'FluxPack export is disabled for this smoke bridge.'
+          }
+        }
+      }
+    };
+
+    expect(buildHeaderCapabilityView(unsupportedFluxPack)).toMatchObject({
+      packageAvailable: false,
+      packageReason: 'FluxPack export is disabled for this smoke bridge.'
+    });
   });
 });

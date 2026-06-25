@@ -6,8 +6,12 @@ import {
   formatFileSize,
   hasConflict,
   isModNestedUnderSeparator,
+  modLatestVersionText,
   modStatusText,
   modOverwriteView,
+  modSeparatorChildCount,
+  modTableStatusView,
+  modVersionText,
   modWorkspaceReducer,
   selectedModOrderItem,
   targetIndexForDrop,
@@ -151,5 +155,26 @@ describe('mod workspace state', () => {
         })
       ).state
     ).toBe('fully-overwritten');
+  });
+
+  it('formats table columns and separator group counts for the redesigned mods pane', () => {
+    expect(modSeparatorChildCount(items, 'sep_visuals')).toBe(2);
+    expect(modVersionText(items[1])).toBe('1.0.0');
+    expect(modLatestVersionText(items[1])).toBe('available');
+    expect(modTableStatusView(items[1])).toEqual({
+      label: 'Update available',
+      tone: 'update'
+    });
+    expect(modTableStatusView(items[2])).toEqual({
+      label: 'Disabled',
+      tone: 'disabled'
+    });
+    expect(modTableStatusView(modItem('mod_local', 'Local Mod', 8, {
+      canCheckUpdates: false,
+      sourceIsNexus: false
+    }))).toEqual({
+      label: 'Local',
+      tone: 'local'
+    });
   });
 });

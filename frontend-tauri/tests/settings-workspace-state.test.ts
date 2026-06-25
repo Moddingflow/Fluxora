@@ -4,6 +4,10 @@ import {
   capabilityStateLabel,
   formatTransferBytes,
   currentPlatformSupport,
+  languageSettingsHint,
+  nexusActionLabel,
+  nexusCanToggle,
+  nexusConnectionSummary,
   normalizeThemeMode,
   platformFeatureState,
   platformSupportRows,
@@ -13,11 +17,15 @@ import {
   settingsSections,
   transferDriveRootForPath,
   transferAnalysisStatus,
-  transferProgressSummary
+  transferProgressSummary,
+  transferSettingsProgressPercent,
+  transferSettingsSummary
 } from '../src/renderer/settings-workspace-state';
 import type {
   FluxoraAppInfo,
   FluxoraModOrganizerImportAnalysis,
+  FluxoraNexusModsAuthStatus,
+  FluxoraProject,
   FluxoraTransferDriveOption,
   NativeBridgeStatus
 } from '../src/shared/fluxora-api';
@@ -143,6 +151,29 @@ const transferDrives: FluxoraTransferDriveOption[] = [
   }
 ];
 
+const nexusStatus: FluxoraNexusModsAuthStatus = {
+  isConfigured: true,
+  isLinked: true,
+  displayName: 'Valerii',
+  userId: '123',
+  message: 'Linked',
+  clientId: '',
+  redirectUri: '',
+  operationId: 'op_nexus'
+};
+
+const transferredProject: FluxoraProject = {
+  id: 'mo2-import',
+  name: 'MO2 Import',
+  templateId: 'skyrimse',
+  uiTemplateId: 'skyrim',
+  gameName: 'Skyrim Special Edition',
+  gamePath: 'C:\\Skyrim\\SkyrimSE.exe',
+  installRootDirectory: 'D:\\Fluxora',
+  projectDirectory: 'D:\\Fluxora\\MO2 Import',
+  configPath: 'D:\\Fluxora\\MO2 Import\\fluxora.json'
+};
+
 describe('settings workspace state', () => {
   it('keeps settings sections focused on user-facing configuration', () => {
     expect(settingsSections.map((section) => section.id)).toEqual([
@@ -151,9 +182,9 @@ describe('settings workspace state', () => {
       'transfer'
     ]);
     expect(settingsSections).toEqual([
-      { id: 'connections', label: 'Привязки' },
-      { id: 'language', label: 'Language' },
-      { id: 'transfer', label: 'Перенос' }
+      { id: 'connections', label: 'Connections', hint: 'Nexus Mods and bridge' },
+      { id: 'language', label: 'Languages', hint: 'EN / RU / DE' },
+      { id: 'transfer', label: 'Transfer', hint: 'MO2 import' }
     ]);
   });
 
@@ -162,6 +193,7 @@ describe('settings workspace state', () => {
     expect(normalizeThemeMode('dark')).toBe('dark');
     expect(normalizeThemeMode('neon')).toBe('dark');
     expect(formatTransferBytes(1536)).toBe('1.5 KB');
+    expect(languageSettingsHint('ru-ru')).toBe('settings.json - language=ru');
   });
 
   it('reports transfer analysis readiness', () => {
@@ -178,19 +210,30 @@ describe('settings workspace state', () => {
   });
 
   it('summarizes MO2 import progress', () => {
-    expect(
-      transferProgressSummary({
-        operationId: 'op_import',
-        phase: 'copying',
-        currentStep: 'Copy files',
-        currentItem: 'SkyUI',
-        overallPercent: 30,
-        copyPercent: 40,
-        databasePercent: 0,
-        copiedBytes: 1024,
-        totalBytes: 2048
-      })
-    ).toBe('Copy files - SkyUI - 1.0 KB / 2.0 KB');
+    const progress = {
+      operationId: 'op_import',
+      phase: 'copying',
+      currentStep: 'Copy files',
+      currentItem: 'SkyUI',
+      overallPercent: 30,
+      copyPercent: 40,
+      databasePercent: 0,
+      copiedBytes: 1024,
+      totalBytes: 2048
+    };
+
+    expect(transferProgressSummary(progress)).toBe('Copy files - SkyUI - 1.0 KB / 2.0 KB');
+    expect(transferSettingsSummary(progress, null, null)).toBe('Copy files - SkyUI - 1.0 KB / 2.0 KB');
+    expect(transferSettingsProgressPercent(progress, null)).toBe(30);
+    expect(transferSettingsSummary(null, transferredProject, null)).toBe('Completed - MO2 Import');
+    expect(transferSettingsProgressPercent(null, transferredProject)).toBe(100);
+  });
+
+  it('keeps Nexus account copy action-oriented without exposing token data', () => {
+    expect(nexusConnectionSummary(nexusStatus)).toBe('Linked - Valerii');
+    expect(nexusActionLabel(nexusStatus)).toBe('Disconnect Nexus Mods');
+    expect(nexusCanToggle(nexusStatus, true)).toBe(true);
+    expect(nexusCanToggle({ ...nexusStatus, isConfigured: false, isLinked: false }, true)).toBe(false);
   });
 
   it('summarizes platform support from bridge capabilities', () => {

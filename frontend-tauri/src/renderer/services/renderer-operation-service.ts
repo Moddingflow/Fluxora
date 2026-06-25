@@ -14,7 +14,15 @@ const cleanErrorText = (value: unknown): string | null => {
   }
 
   const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (/(?:\n|\r).*(?:\bat\s+|stack|stderr|stdout|traceback|exception)/i.test(trimmed)) {
+    return trimmed.split(/\r?\n/)[0]?.trim() || fallbackErrorMessage;
+  }
+
+  return trimmed;
 };
 
 export const errorMessage = (error: unknown): string => {
