@@ -154,7 +154,7 @@ if(WIN32)
 endif()
 
 # --------------------------------------------------------------------------
-# FluxoraBridgeHost: JSON-RPC stdio host used by Electron main.
+# FluxoraBridgeHost: JSON-RPC stdio host used by the Tauri shell.
 # --------------------------------------------------------------------------
 add_executable(FluxoraBridgeHost
     src/BridgeHost/FluxoraBridgeHost.cpp

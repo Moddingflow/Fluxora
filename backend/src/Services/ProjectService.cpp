@@ -2160,6 +2160,48 @@ namespace fluxora
                 }
             }
         }
+
+        void removeCreateRollbackPath(
+            Logger& logger,
+            const std::filesystem::path& path,
+            std::string_view label,
+            bool recursive)
+        {
+            if (path.empty())
+            {
+                return;
+            }
+
+            std::error_code existsError;
+            if (!std::filesystem::exists(path, existsError))
+            {
+                return;
+            }
+
+            std::error_code removeError;
+            if (recursive)
+            {
+                static_cast<void>(std::filesystem::remove_all(path, removeError));
+            }
+            else
+            {
+                static_cast<void>(std::filesystem::remove(path, removeError));
+            }
+
+            if (removeError)
+            {
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "ProjectDiagnostics",
+                    std::string("createProject rollback could not remove ") +
+                        std::string(label) +
+                        " path=\"" +
+                        toUtf8(path.wstring()) +
+                        "\", reason=\"" +
+                        removeError.message() +
+                        "\".");
+            }
+        }
     }
 
     ProjectService::ProjectService(Logger& logger, const TemplateService& templates) noexcept
@@ -2208,6 +2250,10 @@ namespace fluxora
                 "\", templateId=\"" + toUtf8(request.templateId) +
                 "\", selectedGamePath=\"" + toUtf8(request.gamePath.wstring()) +
                 "\", installRoot=\"" + toUtf8(request.installRootDirectory.wstring()) + "\".");
+
+        std::optional<std::filesystem::path> rollbackProjectDirectory;
+        std::optional<std::filesystem::path> rollbackConfigPath;
+        std::optional<std::filesystem::path> rollbackInstallRoot;
 
         try
         {
@@ -2292,17 +2338,86 @@ namespace fluxora
             }
 
             const auto normalizedRoot = normalizeRootDirectory(request.installRootDirectory);
-            if (!std::filesystem::exists(normalizedRoot) || !std::filesystem::is_directory(normalizedRoot))
+            std::error_code rootExistsError;
+            const bool rootExists = std::filesystem::exists(normalizedRoot, rootExistsError);
+            if (rootExistsError)
             {
-                throw std::invalid_argument("Install root directory does not exist.");
+                throw std::invalid_argument(
+                    std::string("Install root directory could not be inspected: ") +
+                    rootExistsError.message());
             }
+
+            if (rootExists)
+            {
+                std::error_code rootDirectoryError;
+                if (!std::filesystem::is_directory(normalizedRoot, rootDirectoryError))
+                {
+                    throw std::invalid_argument("Install root directory is not a directory.");
+                }
+            }
+
             PathSafetyService().validateDirectoryWriteRoot(normalizedRoot)
                 .throwIfUnsafe("Install root directory is unsafe");
+
+            if (!rootExists)
+            {
+                std::error_code createRootError;
+                const bool createdRoot = std::filesystem::create_directories(normalizedRoot, createRootError);
+                if (createRootError)
+                {
+                    throw std::invalid_argument(
+                        std::string("Install root directory could not be created: ") +
+                        createRootError.message());
+                }
+
+                if (createdRoot)
+                {
+                    rollbackInstallRoot = normalizedRoot;
+                    logger_.writeOperation(
+                        LogLevel::Info,
+                        "ProjectDiagnostics",
+                        "createProject created missing install root path=\"" +
+                            toUtf8(normalizedRoot.wstring()) + "\".");
+                }
+            }
 
             const auto projectDirectory = buildProjectDirectory(normalizedRoot, request.name);
             PathSafetyService().validateWritePath(normalizedRoot, projectDirectory)
                 .throwIfUnsafe("Project directory is unsafe");
             const auto manifestPath = buildManifestPath(request.name);
+            rollbackProjectDirectory = projectDirectory;
+            rollbackConfigPath = manifestPath;
+
+            std::error_code projectExistsError;
+            const bool projectDirectoryExists = std::filesystem::exists(projectDirectory, projectExistsError);
+            if (projectExistsError)
+            {
+                throw std::invalid_argument(
+                    std::string("Project directory could not be inspected: ") +
+                    projectExistsError.message());
+            }
+            if (projectDirectoryExists)
+            {
+                std::error_code projectDirectoryError;
+                if (!std::filesystem::is_directory(projectDirectory, projectDirectoryError))
+                {
+                    throw std::invalid_argument("Project directory is not a directory.");
+                }
+
+                std::error_code cleanError;
+                static_cast<void>(std::filesystem::remove_all(projectDirectory, cleanError));
+                if (cleanError)
+                {
+                    throw std::invalid_argument(
+                        std::string("Project directory could not be cleaned: ") +
+                        cleanError.message());
+                }
+                logger_.writeOperation(
+                    LogLevel::Info,
+                    "ProjectDiagnostics",
+                    "createProject cleaned existing project directory path=\"" +
+                        toUtf8(projectDirectory.wstring()) + "\".");
+            }
 
             materializeTemplate(projectDirectory, resolved);
 
@@ -2344,6 +2459,30 @@ namespace fluxora
         }
         catch (const std::exception& exception)
         {
+            if (rollbackProjectDirectory.has_value())
+            {
+                removeCreateRollbackPath(
+                    logger_,
+                    rollbackProjectDirectory.value(),
+                    "project directory",
+                    true);
+            }
+            if (rollbackConfigPath.has_value())
+            {
+                removeCreateRollbackPath(
+                    logger_,
+                    rollbackConfigPath.value(),
+                    "project manifest",
+                    false);
+            }
+            if (rollbackInstallRoot.has_value())
+            {
+                removeCreateRollbackPath(
+                    logger_,
+                    rollbackInstallRoot.value(),
+                    "auto-created install root",
+                    true);
+            }
             logger_.writeOperation(
                 LogLevel::Error,
                 "ProjectDiagnostics",

@@ -1,0 +1,21 @@
+[package]
+name = "fluxora_tauri"
+version = "0.0.0"
+description = "Fluxora Tauri shell"
+authors = ["Fluxora"]
+edition = "2021"
+
+[lib]
+name = "fluxora_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tokio = { version = "1", features = ["fs", "io-util", "process", "sync", "time"] }

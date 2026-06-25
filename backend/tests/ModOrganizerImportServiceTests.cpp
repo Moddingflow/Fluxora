@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <stdexcept>
 
 namespace fluxora::tests
@@ -166,6 +167,67 @@ namespace fluxora::tests
         request.mode = ModOrganizerImportMode::CreateNew;
 
         EXPECT_THROW((void)importer.importInstance(request), std::invalid_argument);
+    }
+
+    TEST(ModOrganizerImportServiceTests, ImportCancellationCleansStagingDirectory)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+
+        const std::filesystem::path source = temp.path() / L"MO2";
+        const std::filesystem::path destinationRoot = temp.path() / L"Imported";
+
+        writeTextFile(source / L"GameRoot" / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(source / L"GameRoot" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(source / L"mods" / L"SkyUI" / L"interface" / L"skyui.swf", "ui");
+        writeTextFile(
+            source / L"mods" / L"SkyUI" / L"meta.ini",
+            "[General]\nname=SkyUI\nversion=1\nmodid=3863\nfileid=123\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"modlist.txt", "+SkyUI\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"plugins.txt", "*Skyrim.esm\n");
+        writeTextFile(
+            source / L"ModOrganizer.ini",
+            "[General]\n"
+            "gameName=Skyrim Special Edition\n"
+            "gamePath=GameRoot\n"
+            "selected_profile=Default\n");
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        BuildPathSettingsService pathSettings(logger);
+        ModOrganizerImportService importer(logger, templates, projects, pathSettings);
+
+        std::atomic_bool cancel{false};
+        ModOrganizerImportRequest request;
+        request.sourceDirectory = source;
+        request.destinationRootDirectory = destinationRoot;
+        request.mode = ModOrganizerImportMode::CreateNew;
+        request.cancellationRequested = [&cancel]()
+        {
+            return cancel.load(std::memory_order_relaxed);
+        };
+        request.progress = [&cancel](const ModOrganizerImportProgress& progress)
+        {
+            if (progress.currentStep == L"Готовлю временную копию")
+            {
+                cancel.store(true, std::memory_order_relaxed);
+            }
+        };
+
+        EXPECT_THROW((void)importer.importInstance(request), std::runtime_error);
+        EXPECT_FALSE(std::filesystem::exists(destinationRoot / L"MO2"));
+        if (std::filesystem::exists(destinationRoot))
+        {
+            std::error_code error;
+            EXPECT_EQ(
+                std::distance(
+                    std::filesystem::directory_iterator(destinationRoot, error),
+                    std::filesystem::directory_iterator()),
+                0);
+            EXPECT_FALSE(error);
+        }
     }
 
     TEST(ModOrganizerImportServiceTests, ImportRejectsSupportedGameWithBadHealth)

@@ -623,13 +623,15 @@ namespace
         writer.endObject();
         writer.key(L"settings").beginObject();
         writer.field(L"state", L"available");
-        writer.stringArray(L"supports", std::vector<std::wstring>{L"language", L"theme"});
+        writer.stringArray(L"supports", std::vector<std::wstring>{L"language", L"themeState"});
         writer.endObject();
         writer.key(L"language").beginObject();
         writer.field(L"state", L"available");
         writer.endObject();
         writer.key(L"theme").beginObject();
-        writer.field(L"state", L"available");
+        writer.field(L"state", L"limited");
+        writer.stringArray(L"supports", std::vector<std::wstring>{L"currentTheme"});
+        writer.field(L"reason", L"Only the dark theme is supported in the current product UI.");
         writer.endObject();
         writer.key(L"nexusAuth").beginObject();
         writer.field(L"state", L"available");
@@ -637,7 +639,7 @@ namespace
         writer.endObject();
         writer.key(L"mo2Transfer").beginObject();
         writer.field(L"state", L"available");
-        writer.stringArray(L"supports", std::vector<std::wstring>{L"analyze", L"import"});
+        writer.stringArray(L"supports", std::vector<std::wstring>{L"analyze", L"import", L"cancel"});
         writer.endObject();
         writer.key(L"operations").beginObject();
         writer.field(L"state", L"limited");
@@ -647,7 +649,7 @@ namespace
         writer.field(L"state", L"unsupported");
         writer.endObject();
         writer.key(L"shellOpen").beginObject();
-        writer.field(L"state", L"electron-main");
+        writer.field(L"state", L"runtime-shell");
         writer.endObject();
         writer.key(L"vfsLaunch").beginObject();
 #ifdef _WIN32

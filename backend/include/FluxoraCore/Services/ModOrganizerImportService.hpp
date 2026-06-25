@@ -63,6 +63,7 @@ namespace fluxora
         std::filesystem::path existingConfigPath;
         ModOrganizerImportMode mode{ModOrganizerImportMode::CreateNew};
         std::function<void(const ModOrganizerImportProgress&)> progress;
+        std::function<bool()> cancellationRequested;
     };
 
     struct ModOrganizerImportResult

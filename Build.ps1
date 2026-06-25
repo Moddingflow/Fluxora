@@ -19,9 +19,10 @@ Set-StrictMode -Version Latest
 $ProjectRoot = $PSScriptRoot
 $BackendSource = Join-Path $ProjectRoot 'backend'
 $BackendBuild = Join-Path $ProjectRoot 'build\backend'
-$ElectronProject = Join-Path $ProjectRoot 'frontend-electron'
-$ElectronNativeResourcesRoot = Join-Path $ProjectRoot 'build\electron-native'
-$ElectronExecutableName = 'Fluxora.exe'
+$TauriProject = Join-Path $ProjectRoot 'frontend-tauri'
+$TauriNativeResourcesRoot = Join-Path $ProjectRoot 'build\tauri-native'
+$TauriNativeResourcesDir = Join-Path $TauriProject 'src-tauri\resources\native'
+$TauriExecutableName = 'Fluxora.exe'
 $InstallerProject = Join-Path $ProjectRoot 'installer\Fluxora.Installer\Fluxora.Installer.csproj'
 $OutputDir = Join-Path $ProjectRoot 'output'
 $SymbolsOutputDir = Join-Path $ProjectRoot 'output-symbols'
@@ -145,40 +146,30 @@ function Get-NativeBridgeHostPath {
     throw "$executableName was not found under '$BackendBuild'."
 }
 
-function Get-ElectronPackageTarget {
+function Get-TauriPackageTarget {
     if ($Runtime -eq 'win-x64') {
         return [pscustomobject]@{ Platform = 'win32'; Arch = 'x64' }
     }
 
-    throw "Build.ps1 assembles the Windows FluxoraSetup.exe installer. Electron installer payload builds currently support -Runtime win-x64."
+    throw "Build.ps1 assembles the Windows FluxoraSetup.exe installer. Tauri installer payload builds currently support -Runtime win-x64."
 }
 
-function Get-ElectronPackagedAppDirectory {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Platform,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Arch
-    )
-
-    $outDir = Join-Path $ElectronProject 'out'
-    $knownPath = Join-Path $outDir "Fluxora-$Platform-$Arch"
-    $knownExePath = Join-Path $knownPath $ElectronExecutableName
+function Get-TauriBuiltExecutablePath {
+    $releaseDir = Join-Path $TauriProject 'src-tauri\target\release'
+    $knownExePath = Join-Path $releaseDir $TauriExecutableName
     if (Test-Path -LiteralPath $knownExePath -PathType Leaf) {
-        return $knownPath
+        return $knownExePath
     }
 
-    $latestPackage = Get-ChildItem -LiteralPath $outDir -Directory -ErrorAction SilentlyContinue |
-        Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName $ElectronExecutableName) -PathType Leaf } |
+    $latestExe = Get-ChildItem -LiteralPath $releaseDir -Recurse -Filter $TauriExecutableName -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
 
-    if ($latestPackage) {
-        return $latestPackage.FullName
+    if ($latestExe) {
+        return $latestExe.FullName
     }
 
-    throw "Electron package output containing '$ElectronExecutableName' was not found under '$outDir'."
+    throw "Tauri build output containing '$TauriExecutableName' was not found under '$releaseDir'."
 }
 
 function Copy-DirectoryContents {
@@ -771,8 +762,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $BackendSource 'CMakeLists.txt'))) {
     throw "Backend CMake project was not found at '$BackendSource'."
 }
 
-if (-not (Test-Path -LiteralPath (Join-Path $ElectronProject 'package.json'))) {
-    throw "Electron frontend project was not found at '$ElectronProject'."
+if (-not (Test-Path -LiteralPath (Join-Path $TauriProject 'package.json'))) {
+    throw "Tauri frontend project was not found at '$TauriProject'."
 }
 
 if (-not (Test-Path -LiteralPath $InstallerProject)) {
@@ -785,7 +776,8 @@ Assert-ChildPath -Path $InstallerOutputDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $InstallerPayloadPath -ParentPath $ProjectRoot
 Assert-ChildPath -Path $PayloadManifestPath -ParentPath $ProjectRoot
 Assert-ChildPath -Path $InstallerManifestPath -ParentPath $ProjectRoot
-Assert-ChildPath -Path $ElectronNativeResourcesRoot -ParentPath $ProjectRoot
+Assert-ChildPath -Path $TauriNativeResourcesRoot -ParentPath $ProjectRoot
+Assert-ChildPath -Path $TauriNativeResourcesDir -ParentPath $ProjectRoot
 
 Invoke-BuildStep "Preparing output folders" {
     if ((Test-Path -LiteralPath $OutputDir) -and (-not $NoClean)) {
@@ -825,23 +817,27 @@ Invoke-BuildStep "Building C++ backend ($Configuration)" {
     Invoke-CheckedCommand -FilePath 'cmake' -Arguments @('--build', $BackendBuild, '--config', $Configuration)
 }
 
-$electronTarget = Get-ElectronPackageTarget
-$electronNativeTargetDir = Join-Path $ElectronNativeResourcesRoot (Join-Path $electronTarget.Platform $electronTarget.Arch)
-$electronOutDir = Join-Path $ElectronProject 'out'
-Assert-ChildPath -Path $electronOutDir -ParentPath $ProjectRoot
-Assert-ChildPath -Path $electronNativeTargetDir -ParentPath $ProjectRoot
+$tauriTarget = Get-TauriPackageTarget
+$tauriNativeTargetDir = Join-Path $TauriNativeResourcesRoot (Join-Path $tauriTarget.Platform $tauriTarget.Arch)
+Assert-ChildPath -Path $tauriNativeTargetDir -ParentPath $ProjectRoot
 
-Invoke-BuildStep "Preparing Electron native resources ($($electronTarget.Platform)/$($electronTarget.Arch))" {
-        if ((Test-Path -LiteralPath $ElectronNativeResourcesRoot) -and (-not $NoClean)) {
-            Remove-Item -LiteralPath $ElectronNativeResourcesRoot -Recurse -Force
+Invoke-BuildStep "Preparing Tauri native resources ($($tauriTarget.Platform)/$($tauriTarget.Arch))" {
+        if ((Test-Path -LiteralPath $TauriNativeResourcesRoot) -and (-not $NoClean)) {
+            Remove-Item -LiteralPath $TauriNativeResourcesRoot -Recurse -Force
+        }
+        if ((Test-Path -LiteralPath $TauriNativeResourcesDir) -and (-not $NoClean)) {
+            Remove-Item -LiteralPath $TauriNativeResourcesDir -Recurse -Force
         }
 
-        New-Item -ItemType Directory -Path $electronNativeTargetDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $tauriNativeTargetDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $TauriNativeResourcesDir -Force | Out-Null
 
         $nativeBridgeHostPath = Get-NativeBridgeHostPath
         $nativeCorePath = Get-NativeCorePath
-        Copy-Item -LiteralPath $nativeBridgeHostPath -Destination $electronNativeTargetDir -Force
-        Copy-Item -LiteralPath $nativeCorePath -Destination $electronNativeTargetDir -Force
+        Copy-Item -LiteralPath $nativeBridgeHostPath -Destination $tauriNativeTargetDir -Force
+        Copy-Item -LiteralPath $nativeCorePath -Destination $tauriNativeTargetDir -Force
+        Copy-Item -LiteralPath $nativeBridgeHostPath -Destination $TauriNativeResourcesDir -Force
+        Copy-Item -LiteralPath $nativeCorePath -Destination $TauriNativeResourcesDir -Force
 
         $nativeBridgeHostPdbPath = [System.IO.Path]::ChangeExtension($nativeBridgeHostPath, '.pdb')
         if ($IncludeSymbols -and (Copy-FluxoraSymbolFile -Path $nativeBridgeHostPdbPath -DestinationDirectory (Join-Path $SymbolsOutputDir 'native'))) {
@@ -857,7 +853,8 @@ Invoke-BuildStep "Preparing Electron native resources ($($electronTarget.Platfor
         # core can locate and inject it when launching a game.
         $nativeVfsPath = Get-NativeVfsPath
         if ($nativeVfsPath) {
-            Copy-Item -LiteralPath $nativeVfsPath -Destination $electronNativeTargetDir -Force
+            Copy-Item -LiteralPath $nativeVfsPath -Destination $tauriNativeTargetDir -Force
+            Copy-Item -LiteralPath $nativeVfsPath -Destination $TauriNativeResourcesDir -Force
 
             $nativeVfsPdbPath = [System.IO.Path]::ChangeExtension($nativeVfsPath, '.pdb')
             if ($IncludeSymbols -and (Copy-FluxoraSymbolFile -Path $nativeVfsPdbPath -DestinationDirectory (Join-Path $SymbolsOutputDir 'native'))) {
@@ -865,51 +862,41 @@ Invoke-BuildStep "Preparing Electron native resources ($($electronTarget.Platfor
             }
         }
         else {
-            Write-Warning "FluxoraVfs.dll was not found; VFS launch will stay unavailable in this Electron package."
+            Write-Warning "FluxoraVfs.dll was not found; VFS launch will stay unavailable in this Tauri package."
         }
 }
 
-Invoke-BuildStep "Installing Electron dependencies" {
-        Push-Location $ElectronProject
+Invoke-BuildStep "Installing Tauri dependencies" {
+        Push-Location $TauriProject
         try {
-            Invoke-CheckedCommand -FilePath 'npm' -Arguments @('ci', '--no-fund')
+            Invoke-CheckedCommand -FilePath 'npm' -Arguments @('install', '--no-fund')
         }
         finally {
             Pop-Location
         }
 }
 
-Invoke-BuildStep "Packaging Electron app ($($electronTarget.Platform)/$($electronTarget.Arch))" {
-        if ((Test-Path -LiteralPath $electronOutDir) -and (-not $NoClean)) {
-            Remove-Item -LiteralPath $electronOutDir -Recurse -Force
-        }
-
-        $previousNativeResources = $env:FLUXORA_NATIVE_RESOURCES
-        Push-Location $ElectronProject
+Invoke-BuildStep "Packaging Tauri app ($($tauriTarget.Platform)/$($tauriTarget.Arch))" {
+        Push-Location $TauriProject
         try {
-            $env:FLUXORA_NATIVE_RESOURCES = $ElectronNativeResourcesRoot
             Invoke-CheckedCommand -FilePath 'npm' -Arguments @('run', 'build')
         }
         finally {
-            if ($null -eq $previousNativeResources) {
-                Remove-Item Env:\FLUXORA_NATIVE_RESOURCES -ErrorAction SilentlyContinue
-            }
-            else {
-                $env:FLUXORA_NATIVE_RESOURCES = $previousNativeResources
-            }
             Pop-Location
         }
 
-        $electronPackageDir = Get-ElectronPackagedAppDirectory -Platform $electronTarget.Platform -Arch $electronTarget.Arch
-        Copy-DirectoryContents -SourceDirectory $electronPackageDir -DestinationDirectory $OutputDir
+        $tauriExePath = Get-TauriBuiltExecutablePath
+        Copy-Item -LiteralPath $tauriExePath -Destination (Join-Path $OutputDir $TauriExecutableName) -Force
+        New-Item -ItemType Directory -Path (Join-Path $OutputDir 'resources\native') -Force | Out-Null
+        Copy-DirectoryContents -SourceDirectory $TauriNativeResourcesDir -DestinationDirectory (Join-Path $OutputDir 'resources\native')
 
         $packagedBridgeHostPath = Join-Path $OutputDir 'resources\native\FluxoraBridgeHost.exe'
         $packagedCorePath = Join-Path $OutputDir 'resources\native\FluxoraCore.dll'
         if (-not (Test-Path -LiteralPath $packagedBridgeHostPath -PathType Leaf)) {
-            throw "Electron package is missing bundled native bridge host at '$packagedBridgeHostPath'."
+            throw "Tauri package is missing bundled native bridge host at '$packagedBridgeHostPath'."
         }
         if (-not (Test-Path -LiteralPath $packagedCorePath -PathType Leaf)) {
-            throw "Electron package is missing bundled native core at '$packagedCorePath'."
+            throw "Tauri package is missing bundled native core at '$packagedCorePath'."
         }
 }
 
@@ -923,7 +910,7 @@ Invoke-BuildStep "Removing symbols from app payload staging" {
     }
 }
 
-$payloadExecutableName = $ElectronExecutableName
+$payloadExecutableName = $TauriExecutableName
 $appExePath = Join-Path $OutputDir $payloadExecutableName
 if (-not (Test-Path -LiteralPath $appExePath)) {
     throw "Build completed, but $payloadExecutableName was not found in '$OutputDir'."
@@ -1034,10 +1021,10 @@ else {
 
 Write-Host ""
 Write-Host "Done. Project outputs are ready:"
-Write-Host "  Frontend payload: Electron"
+Write-Host "  Frontend payload: Tauri"
 Write-Host "  Build target: $Target"
 Write-Host "  App payload staging: $OutputDir"
-Write-Host "  Electron native resources: $ElectronNativeResourcesRoot"
+Write-Host "  Tauri native resources: $TauriNativeResourcesRoot"
 if ($IncludeSymbols) {
     Write-Host "  Symbols artifact: $SymbolsOutputDir"
 }

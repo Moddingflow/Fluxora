@@ -115,6 +115,108 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(ProjectServiceTests, CreateProjectCreatesMissingInstallRoot)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project creation initializes the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        ASSERT_FALSE(std::filesystem::exists(installRoot));
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        const ProjectDescriptor project = projects.createProject(ProjectCreateRequest{
+            L"Auto Root Build",
+            L"skyrimse",
+            temp.path() / L"Skyrim Special Edition" / L"SkyrimSE.exe",
+            installRoot,
+            false
+        });
+
+        EXPECT_TRUE(std::filesystem::is_directory(installRoot));
+        EXPECT_TRUE(std::filesystem::is_directory(project.projectDirectory));
+        EXPECT_EQ(project.installRootDirectory, std::filesystem::absolute(installRoot));
+#endif
+    }
+
+    TEST(ProjectServiceTests, CreateProjectCleansExistingProjectDirectory)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project creation initializes the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path staleFile = installRoot / L"Clean Root Build" / L"stale.txt";
+        writeTextFile(staleFile, "old build artifact");
+        ASSERT_TRUE(std::filesystem::exists(staleFile));
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        const ProjectDescriptor project = projects.createProject(ProjectCreateRequest{
+            L"Clean Root Build",
+            L"skyrimse",
+            temp.path() / L"Skyrim Special Edition" / L"SkyrimSE.exe",
+            installRoot,
+            false
+        });
+
+        EXPECT_TRUE(std::filesystem::is_directory(project.projectDirectory));
+        EXPECT_FALSE(std::filesystem::exists(staleFile));
+#endif
+    }
+
+    TEST(ProjectServiceTests, CreateProjectRemovesAutoCreatedInstallRootAfterFailure)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project creation initializes the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path appDataFile = temp.path() / L"AppData";
+        writeTextFile(appDataFile, "not a directory");
+        ScopedEnvironmentVariable appData(L"APPDATA", appDataFile.wstring());
+
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        ASSERT_FALSE(std::filesystem::exists(installRoot));
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        try
+        {
+            (void)projects.createProject(ProjectCreateRequest{
+                L"Rollback Root Build",
+                L"skyrimse",
+                temp.path() / L"Skyrim Special Edition" / L"SkyrimSE.exe",
+                installRoot,
+                false
+            });
+            FAIL() << "Expected project creation to fail after creating the install root.";
+        }
+        catch (const std::exception& exception)
+        {
+            EXPECT_EQ(std::string(exception.what()).find("Install root directory does not exist."), std::string::npos);
+        }
+
+        EXPECT_FALSE(std::filesystem::exists(installRoot));
+#endif
+    }
+
     TEST(ProjectServiceTests, CreateSkyrimProjectRejectsMissingRequiredFiles)
     {
 #ifndef _WIN32

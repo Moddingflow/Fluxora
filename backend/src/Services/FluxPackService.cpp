@@ -2350,9 +2350,54 @@ namespace fluxora
             std::filesystem::absolute(request.fluxPackPath).lexically_normal();
         const std::filesystem::path installRoot =
             std::filesystem::absolute(request.installRootDirectory).lexically_normal();
-        if (!std::filesystem::exists(installRoot) || !std::filesystem::is_directory(installRoot))
+
+        std::error_code rootExistsError;
+        const bool rootExists = std::filesystem::exists(installRoot, rootExistsError);
+        if (rootExistsError)
         {
-            throw std::invalid_argument("Install root directory does not exist.");
+            logger_.writeOperation(
+                LogLevel::Error,
+                "FluxPack",
+                "FluxPack install root could not be inspected. installRoot=\"" +
+                    pathForLog(installRoot) + "\", error=\"" + rootExistsError.message() + "\".");
+            throw std::invalid_argument(
+                std::string("Install root directory could not be inspected: ") +
+                rootExistsError.message());
+        }
+        if (rootExists)
+        {
+            std::error_code rootDirectoryError;
+            const bool rootIsDirectory = std::filesystem::is_directory(installRoot, rootDirectoryError);
+            if (rootDirectoryError)
+            {
+                logger_.writeOperation(
+                    LogLevel::Error,
+                    "FluxPack",
+                    "FluxPack install root directory check failed. installRoot=\"" +
+                        pathForLog(installRoot) + "\", error=\"" + rootDirectoryError.message() + "\".");
+                throw std::invalid_argument(
+                    std::string("Install root directory could not be inspected: ") +
+                    rootDirectoryError.message());
+            }
+            if (!rootIsDirectory)
+            {
+                logger_.writeOperation(
+                    LogLevel::Error,
+                    "FluxPack",
+                    "FluxPack install root is not a directory. installRoot=\"" +
+                        pathForLog(installRoot) + "\".");
+                throw std::invalid_argument("Install root directory is not a directory.");
+            }
+        }
+        PathSafetyService().validateDirectoryWriteRoot(installRoot)
+            .throwIfUnsafe("Install root directory is unsafe");
+        if (!rootExists)
+        {
+            logger_.writeOperation(
+                LogLevel::Info,
+                "FluxPack",
+                "FluxPack install will create missing install root. installRoot=\"" +
+                    pathForLog(installRoot) + "\".");
         }
 
         std::error_code sizeError;

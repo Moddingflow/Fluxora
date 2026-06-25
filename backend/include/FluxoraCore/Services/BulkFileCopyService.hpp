@@ -2,6 +2,7 @@
 
 #include "FluxoraCore/Services/Logger.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -34,6 +35,7 @@ namespace fluxora
         std::size_t maxWorkers{0};
         std::function<void(const BulkFileCopyProgress&)> progress;
         std::function<void(LogLevel, std::string_view)> diagnostics;
+        std::function<bool()> cancellationRequested;
     };
 
     class BulkFileCopyService final

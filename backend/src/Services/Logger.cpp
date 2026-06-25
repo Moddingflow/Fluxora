@@ -176,6 +176,16 @@ namespace fluxora
             return {};
         }
 
+        std::filesystem::path configuredLogDirectory()
+        {
+            if (const std::wstring directory = readEnvironmentVariable(L"FLUXORA_LOG_DIR"); !directory.empty())
+            {
+                return std::filesystem::path(directory);
+            }
+
+            return {};
+        }
+
         std::filesystem::path tempLogDirectory()
         {
             return std::filesystem::temp_directory_path() / L"Fluxora" / L"logs";
@@ -246,6 +256,14 @@ namespace fluxora
                 : std::filesystem::path(home) / ".local" / "state" / "fluxora" / "logs";
         }
 
+        std::filesystem::path configuredLogDirectory()
+        {
+            const char* directory = std::getenv("FLUXORA_LOG_DIR");
+            return directory == nullptr || std::string_view(directory).empty()
+                ? std::filesystem::path{}
+                : std::filesystem::path(directory);
+        }
+
         std::filesystem::path tempLogDirectory()
         {
             return std::filesystem::temp_directory_path() / "Fluxora" / "logs";
@@ -287,6 +305,11 @@ namespace fluxora
         std::filesystem::path chooseLogDirectory()
         {
             std::vector<std::filesystem::path> directories;
+            if (const std::filesystem::path directory = configuredLogDirectory(); !directory.empty())
+            {
+                directories.push_back(directory);
+            }
+
             if (const std::filesystem::path directory = executableDirectory(); !directory.empty())
             {
                 directories.push_back(directory / L"logs");

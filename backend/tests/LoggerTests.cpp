@@ -1,5 +1,7 @@
 #include "FluxoraCore/Services/Logger.hpp"
 
+#include "TestFilesystem.hpp"
+
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -61,5 +63,27 @@ namespace fluxora::tests
         EXPECT_NE(content.find(marker), std::string::npos);
         EXPECT_NE(content.find("op=logger-operation-channel"), std::string::npos);
         EXPECT_NE(content.find("operationId=logger-operation-channel"), std::string::npos);
+    }
+
+    TEST(LoggerTests, UsesConfiguredLogDirectory)
+    {
+        TempDirectory temp;
+        const std::filesystem::path logDirectory = temp.path() / L"native-logs";
+        ScopedEnvironmentVariable configuredLogDirectory(L"FLUXORA_LOG_DIR", logDirectory.wstring());
+
+        Logger logger;
+        logger.initialize();
+        ASSERT_TRUE(logger.isInitialized());
+        ASSERT_FALSE(logger.logPath().empty());
+
+        EXPECT_EQ(normalized(logger.logDirectory()), normalized(logDirectory));
+
+        const std::string marker = "configured-native-log-directory-marker";
+        logger.write(LogLevel::Info, "LoggerTests", marker);
+        const std::filesystem::path coreLogPath = logger.logPath();
+        logger.shutdown();
+
+        const std::string content = readFile(coreLogPath);
+        EXPECT_NE(content.find(marker), std::string::npos);
     }
 }

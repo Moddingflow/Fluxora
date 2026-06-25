@@ -4,7 +4,7 @@ Last updated: 24 June 2026
 Fluxora includes third-party runtime, installer, build and test components. This notice is a release checklist and transparency notice. It is not a substitute for final owner/legal review before public distribution.
 
 Runtime and application components:
-- Electron, including Chromium and Node.js runtime components, for the desktop application shell.
+- Tauri, including Chromium and Node.js runtime components, for the desktop application shell.
 - React and React DOM for the renderer UI.
 - Lucide React for UI icons.
 - spdlog for native logging.
@@ -15,7 +15,7 @@ Installer components:
 - SharpVectors.Wpf for SVG rendering in the Windows installer UI.
 
 Build, packaging and test components:
-- Electron Forge, Electron Forge makers and plugins, and Electron fuses.
+- Tauri bundler, Tauri bundler makers and plugins, and Tauri fuses.
 - Vite, TypeScript and related TypeScript/React tooling.
 - Playwright and Vitest for smoke and unit tests.
 - GoogleTest for native backend tests.

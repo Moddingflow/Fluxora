@@ -400,6 +400,20 @@ namespace fluxora
             }
         }
 
+        bool isCancellationRequested(const BulkFileCopyOptions& options)
+        {
+            return options.cancellationRequested && options.cancellationRequested();
+        }
+
+        void throwIfCancellationRequested(const BulkFileCopyOptions& options)
+        {
+            if (isCancellationRequested(options))
+            {
+                writeDiagnostic(options, LogLevel::Warning, "bulk-copy-cancelled");
+                throw std::runtime_error("Bulk file copy was canceled.");
+            }
+        }
+
         std::string copyFailureMessage(
             std::string_view baseMessage,
             const CopyFileTask& task)
@@ -691,6 +705,7 @@ namespace fluxora
             CopyProgressState& state;
             std::uintmax_t totalBytes{0};
             const std::function<void(const BulkFileCopyProgress&)>& progress;
+            const BulkFileCopyOptions& options;
             std::wstring_view currentStep;
             const std::filesystem::path& currentItem;
             std::uintmax_t plannedFileBytes{0};
@@ -719,6 +734,11 @@ namespace fluxora
             if (context == nullptr)
             {
                 return PROGRESS_CONTINUE;
+            }
+
+            if (isCancellationRequested(context->options))
+            {
+                return PROGRESS_CANCEL;
             }
 
             std::uintmax_t transferred = largeIntegerToByteCount(totalBytesTransferred);
@@ -753,6 +773,7 @@ namespace fluxora
                 state,
                 totalBytes,
                 progress,
+                options,
                 task.currentStep,
                 task.source,
                 task.bytes
@@ -786,6 +807,10 @@ namespace fluxora
                 }
 
                 copyError = GetLastError();
+                if (isCancellationRequested(options))
+                {
+                    throw std::runtime_error("Bulk file copy was canceled.");
+                }
                 if (context.lastFileBytes > 0)
                 {
                     logCopyFailure(logger, options, task, "copy-engine-file-failed", win32ErrorForLog(copyError));
@@ -832,6 +857,7 @@ namespace fluxora
             const Logger& logger,
             const BulkFileCopyOptions& options)
         {
+            throwIfCancellationRequested(options);
             SetLastError(ERROR_SUCCESS);
             Win32FileHandle input(CreateFileW(
                 pathForWin32Io(task.source).c_str(),
@@ -897,6 +923,7 @@ namespace fluxora
             std::vector<char> buffer(bufferSizeForTask(task));
             for (;;)
             {
+                throwIfCancellationRequested(options);
                 DWORD bytesRead = 0;
                 if (ReadFile(
                         input.get(),
@@ -918,6 +945,7 @@ namespace fluxora
                 DWORD totalWritten = 0;
                 while (totalWritten < bytesRead)
                 {
+                    throwIfCancellationRequested(options);
                     DWORD bytesWritten = 0;
                     if (WriteFile(
                             output.get(),
@@ -1011,6 +1039,7 @@ namespace fluxora
 #ifdef _WIN32
             copyFileWithProgressWin32(task, state, totalBytes, progress, logger, options);
 #else
+            throwIfCancellationRequested(options);
             errno = 0;
             std::ifstream input(task.source, std::ios::in | std::ios::binary);
             if (!input)
@@ -1056,6 +1085,7 @@ namespace fluxora
             std::vector<char> buffer(bufferSizeForTask(task));
             while (input)
             {
+                throwIfCancellationRequested(options);
                 input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
                 const std::streamsize read = input.gcount();
                 if (read <= 0)
@@ -1157,6 +1187,7 @@ namespace fluxora
             const Logger& logger,
             const std::atomic<bool>& shouldStop)
         {
+            throwIfCancellationRequested(options);
             std::error_code existsError;
             const bool sourceExists = std::filesystem::exists(root.sourceDirectory, existsError);
             if (existsError)
@@ -1191,6 +1222,7 @@ namespace fluxora
 
             while (!error && iterator != end)
             {
+                throwIfCancellationRequested(options);
                 if (shouldStop.load(std::memory_order_relaxed))
                 {
                     return;
@@ -1327,6 +1359,12 @@ namespace fluxora
                 (void)worker;
                 while (!shouldStop.load(std::memory_order_relaxed))
                 {
+                    if (isCancellationRequested(options))
+                    {
+                        rememberCurrentException();
+                        break;
+                    }
+
                     std::optional<CopyFileTask> task = dequeueCopyTask(queue, shouldStop);
                     if (!task)
                     {
@@ -1387,6 +1425,7 @@ namespace fluxora
             {
                 for (const BulkFileCopyRoot& root : roots)
                 {
+                    throwIfCancellationRequested(options);
                     if (shouldStop.load(std::memory_order_relaxed))
                     {
                         break;
@@ -1424,6 +1463,7 @@ namespace fluxora
         {
             std::rethrow_exception(firstError);
         }
+        throwIfCancellationRequested(options);
 
         publishCopyProgress(state, options.totalBytes, options.progress, L"Файлы скопированы", L"Готово", true);
         const std::uintmax_t copiedBytes = state.copiedBytes.load(std::memory_order_relaxed);

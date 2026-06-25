@@ -4,10 +4,12 @@
 #include "FluxoraCore/Support/JsonReader.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
 
+#include <array>
 #include <fstream>
 #include <iterator>
 #include <map>
 #include <stdexcept>
+#include <string_view>
 #include <cwctype>
 
 #ifdef _WIN32
@@ -18,6 +20,9 @@ namespace fluxora
 {
     namespace
     {
+        constexpr std::wstring_view defaultThemeMode = L"dark";
+        constexpr std::array<std::wstring_view, 1> supportedThemeModes{defaultThemeMode};
+
         std::string toUtf8(const std::wstring& value)
         {
 #ifdef _WIN32
@@ -178,7 +183,15 @@ namespace fluxora
                 ch = static_cast<wchar_t>(std::towlower(ch));
             }
 
-            return value == L"light" ? L"light" : L"dark";
+            for (std::wstring_view mode : supportedThemeModes)
+            {
+                if (value == mode)
+                {
+                    return std::wstring(mode);
+                }
+            }
+
+            return std::wstring(defaultThemeMode);
         }
 
         std::map<std::wstring, std::wstring> readIniValues(const std::filesystem::path& path)
@@ -399,12 +412,19 @@ namespace fluxora
         const auto found = values.find(L"THEME");
         if (found != values.end() && !trim(found->second).empty())
         {
-            return normalizeThemeMode(found->second);
+            const std::wstring normalizedTheme = normalizeThemeMode(found->second);
+            if (found->second != normalizedTheme)
+            {
+                values[L"THEME"] = normalizedTheme;
+                writeIniValues(appConfigPath_, values);
+            }
+
+            return normalizedTheme;
         }
 
-        values[L"THEME"] = L"dark";
+        values[L"THEME"] = std::wstring(defaultThemeMode);
         writeIniValues(appConfigPath_, values);
-        return L"dark";
+        return std::wstring(defaultThemeMode);
     }
 
     void AppSettingsService::saveThemeMode(std::wstring_view themeMode) const

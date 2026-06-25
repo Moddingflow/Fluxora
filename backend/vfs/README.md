@@ -9,7 +9,7 @@ hooking the file system inside the game process.
 ## How it works
 
 ```
-Fluxora (Electron UI)
+Fluxora (Tauri UI)
         │  "Run"  →  fluxora_launch_game_executable
         ▼
 FluxoraCore.dll  ── VirtualFileSystemService
@@ -62,7 +62,7 @@ Build without the VFS at all (launching then behaves like a plain run):
 cmake -S backend -B build\backend -DFLUXORA_ENABLE_VFS=OFF
 ```
 
-`Build.ps1` packages `FluxoraCore.dll` and `FluxoraVfs.dll` into the Electron
+`Build.ps1` packages `FluxoraCore.dll` and `FluxoraVfs.dll` into the Tauri
 native resources directory. They must sit next to each other — the core locates
 the hook DLL relative to itself when launching.
 

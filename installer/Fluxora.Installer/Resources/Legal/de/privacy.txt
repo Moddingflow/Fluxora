@@ -5,10 +5,10 @@ Stand: 24. Juni 2026
 Fluxora wird als Teil des ModdingFlow Ökosystems bereitgestellt. Verantwortlicher für die Datenverarbeitung ist ModdingFlow, Deutschland, sofern in der offiziellen Distribution kein anderer rechtlicher Hinweis angegeben ist. Für Datenschutzanfragen nutzen Sie den offiziellen Kontaktkanal oder das Impressum von ModdingFlow.
 
 2. Geltungsbereich
-Diese Datenschutzerklärung gilt für den Fluxora Installer, die Electron-basierte Fluxora Desktop-App, die mitgelieferte Electron/Chromium/Node Laufzeitumgebung für die App-Oberfläche, den nativen Bridge Host und den nativen C++ Core von Fluxora. Sie gilt nicht für Drittanbieter, Spielehersteller, Mod-Plattformen, Nexus Mods, Microsoft, Webseiten der Chromium/Electron-Projekte, npm-Paketwebseiten oder Webseiten, die Sie selbst öffnen.
+Diese Datenschutzerklärung gilt für den Fluxora Installer, die Tauri-basierte Fluxora Desktop-App, die Plattform-Webview-Laufzeitumgebung für die App-Oberfläche, den nativen Bridge Host und den nativen C++ Core von Fluxora. Sie gilt nicht für Drittanbieter, Spielehersteller, Mod-Plattformen, Nexus Mods, Microsoft, Webseiten von Tauri- oder Webview-Projekten, npm-Paketwebseiten, Rust-Crate-Webseiten oder Webseiten, die Sie selbst öffnen.
 
 3. Kurzfassung
-Fluxora ist als lokale Desktop-Anwendung konzipiert. Der Installer erstellt kein Online-Konto und sendet keine Telemetrie. Aktuelle Electron-Builds aktivieren keine Analytics und keinen automatischen Crash-Upload. Fluxora speichert Programmdateien, Einstellungen, Projektdaten und Protokolle auf Ihrem Gerät. Netzwerkkommunikation findet nur statt, wenn Sie eine Funktion nutzen, die dies benötigt, zum Beispiel Nexus Mods verbinden, eine Webseite öffnen, nxm Links registrieren, Mod-Daten prüfen oder ausgewählte Dateien herunterladen.
+Fluxora ist als lokale Desktop-Anwendung konzipiert. Der Installer erstellt kein Online-Konto und sendet keine Telemetrie. Aktuelle Tauri-Builds aktivieren keine Analytics und keinen automatischen Crash-Upload. Fluxora speichert Programmdateien, Einstellungen, Projektdaten und Protokolle auf Ihrem Gerät. Netzwerkkommunikation findet nur statt, wenn Sie eine Funktion nutzen, die dies benötigt, zum Beispiel Nexus Mods verbinden, eine Webseite öffnen, nxm Links registrieren, Mod-Daten prüfen oder ausgewählte Dateien herunterladen.
 
 4. Lokal verarbeitete Daten
 Fluxora kann folgende Daten lokal auf Ihrem Gerät speichern oder verarbeiten:
@@ -16,11 +16,11 @@ Fluxora kann folgende Daten lokal auf Ihrem Gerät speichern oder verarbeiten:
 - Installationsdaten: gewählter Installationsordner, installierte Dateien und optionaler Desktop-Link.
 - Einstellungen: Sprache, App-Konfiguration, Ordner für Build-Konfigurationen und weitere Präferenzen.
 - Projektdaten: Projektnamen, Spielpfade, Mod-Ordner, Profildateien, Plugin-Reihenfolge, Download-Einträge, importierte Mod Organizer Daten, ausführbare Dateien und zugehörige Metadaten.
-- Protokolle und Crash-Diagnosen: Installer-Protokolle, Electron UI-Protokolle, Electron Main/Bridge-Protokolle, native Core-Protokolle, Vorgangsprotokolle und Crash-Protokolle mit Zeitstempeln, Vorgangsstatus, Vorgangs-IDs, Fehlermeldungen, ausgewählten Pfaden, Dateinamen, Prozess- oder Thread-Kennungen und Diagnosedaten. Protokolle können indirekt Ihren Betriebssystem-Benutzernamen enthalten, wenn er Teil eines Dateipfads ist.
+- Protokolle und Crash-Diagnosen: Installer-Protokolle, Tauri UI-Protokolle, Tauri Main/Bridge-Protokolle, native Core-Protokolle, Vorgangsprotokolle und Crash-Protokolle mit Zeitstempeln, Vorgangsstatus, Vorgangs-IDs, Fehlermeldungen, ausgewählten Pfaden, Dateinamen, Prozess- oder Thread-Kennungen und Diagnosedaten. Protokolle können indirekt Ihren Betriebssystem-Benutzernamen enthalten, wenn er Teil eines Dateipfads ist.
 - Nexus Mods Verbindungsdaten, falls Sie Nexus Mods verbinden: Anzeigename, Benutzer-ID, Token-Typ, Ablaufzeit, Access- oder Refresh-Tokens und persönliche API-Schlüssel, geschützt mit Windows Datenschutz-APIs, soweit verfügbar.
 - Lokale Protokoll-Links: nxm Links, die an Fluxora übergeben werden, wenn Sie Fluxora als Handler auswählen.
 
-Fluxora erhebt nicht absichtlich besondere Kategorien personenbezogener Daten, Zahlungsdaten, Werbe-IDs, Adressbücher, Browserverläufe, Mikrofon-, Kamera- oder Standortdaten. Die mitgelieferte Electron/Chromium Laufzeitumgebung wird zur Darstellung der lokalen App-Oberfläche verwendet; Fluxora nutzt sie nicht zur Verfolgung von Browseraktivität.
+Fluxora erhebt nicht absichtlich besondere Kategorien personenbezogener Daten, Zahlungsdaten, Werbe-IDs, Adressbücher, Browserverläufe, Mikrofon-, Kamera- oder Standortdaten. Die mitgelieferte Tauri/Chromium Laufzeitumgebung wird zur Darstellung der lokalen App-Oberfläche verwendet; Fluxora nutzt sie nicht zur Verfolgung von Browseraktivität.
 
 5. Zwecke und Rechtsgrundlagen
 Die Rechtsgrundlagen richten sich nach Artikel 6 DSGVO:
@@ -35,7 +35,7 @@ Die Rechtsgrundlagen richten sich nach Artikel 6 DSGVO:
 Fluxora speichert Daten typischerweise lokal an folgenden Orten:
 
 - Installierte Anwendung: der von Ihnen gewählte Installationsordner.
-- Protokolle: ein logs Ordner neben der ausführbaren Datei, sofern beschreibbar, und/oder %APPDATA%\Fluxora\logs. Electron-Protokolle bleiben von nativen Core-, Vorgangs-, Installer- und Crash-Protokollen getrennt.
+- Protokolle: ein logs Ordner neben der ausführbaren Datei, sofern beschreibbar, und/oder %APPDATA%\Fluxora\logs. Tauri-Protokolle bleiben von nativen Core-, Vorgangs-, Installer- und Crash-Protokollen getrennt.
 - Einstellungen: %APPDATA%\Fluxora\settings.ini und %APPDATA%\Fluxora\settings.json.
 - Laufzeitstatus von Starts: %APPDATA%\Fluxora\launch-session.json, solange eine externe ausführbare Datei verfolgt wird.
 - Projektdateien: von Ihnen beim Erstellen oder Importieren gewählte Ordner.
@@ -49,7 +49,7 @@ Fluxora verkauft keine personenbezogenen Daten und sendet keine Protokolle oder 
 - Nexus Mods OAuth und API-Endpunkte, wenn Sie Nexus Mods verbinden oder Nexus Mods Funktionen nutzen.
 - Eine Download-URL oder ein Mod-Hosting-Dienst, wenn Sie eine Datei herunterladen.
 - Ihr Browser oder Betriebssystem, wenn Fluxora einen Link öffnet oder lokale Protokollverknüpfungen registriert.
-- Drittanbieter-Laufzeit- und Paketkomponenten, die mit Fluxora gebündelt sind, zum Beispiel Electron/Chromium/Node und weitere in den mitgelieferten Third-Party Notices aufgeführte Bibliotheken, laufen lokal als Teil der App oder des Installers.
+- Drittanbieter-Laufzeit- und Paketkomponenten, die mit Fluxora gebündelt sind, zum Beispiel Tauri, die Plattform-Webview-Laufzeitumgebung und weitere in den mitgelieferten Third-Party Notices aufgeführte Bibliotheken, laufen lokal als Teil der App oder des Installers.
 
 Diese Dritten verarbeiten Daten nach ihren eigenen Bedingungen und Datenschutzhinweisen. Fluxora selbst übermittelt Daten nicht absichtlich von Ihrem Gerät, sofern Sie keine optionalen Online-Funktionen nutzen oder Protokolle manuell an den Support senden.
 

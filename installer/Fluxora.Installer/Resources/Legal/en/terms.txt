@@ -5,7 +5,7 @@ Last updated: 24 June 2026
 By installing or using Fluxora, you agree to these Terms of Use and to the Fluxora Privacy Policy. If you do not agree, do not install or use Fluxora.
 
 2. Product
-Fluxora is a desktop mod manager and launcher in the ModdingFlow ecosystem. The installer installs Fluxora into a folder selected by you and may create a desktop shortcut if you choose that option. Current Fluxora builds use an Electron app UI, a native bridge host and a native C++ core. Electron includes Chromium and Node.js runtime components.
+Fluxora is a desktop mod manager and launcher in the ModdingFlow ecosystem. The installer installs Fluxora into a folder selected by you and may create a desktop shortcut if you choose that option. Current Fluxora builds use an Tauri app UI, a native bridge host and a native C++ core. Tauri includes Chromium and Node.js runtime components.
 
 3. License
 Fluxora is proprietary software. Subject to these terms, you receive a limited, revocable, non-exclusive, non-transferable right to install and use Fluxora for its intended purpose. You do not receive ownership of Fluxora, its source code, branding, icons, assets or documentation. Third-party components bundled with Fluxora remain subject to their own license terms and notices.
@@ -22,7 +22,7 @@ Fluxora writes files into the installation folder you choose, stores settings an
 7. Online features
 Some features may open your browser, connect to Nexus Mods, access mod hosting services, download files or register nxm protocol handling. Those features are optional and may be subject to third-party terms, availability limits, API changes, rate limits, account rules and network errors.
 
-Fluxora bundles third-party runtime, installer, build and test components, including Electron/Chromium/Node, React, Lucide, Electron Forge, Vite, TypeScript, spdlog, Microsoft Detours where VFS is built, SharpVectors for the installer UI and other packages listed in the bundled third-party notices. These notices are provided for transparency and should be reviewed before public redistribution.
+Fluxora bundles third-party runtime, installer, build and test components, including Tauri, the platform webview runtime, React, Lucide, Tauri bundler, Vite, TypeScript, Rust crates, spdlog, Microsoft Detours where VFS is built, SharpVectors for the installer UI and other packages listed in the bundled third-party notices. These notices are provided for transparency and should be reviewed before public redistribution.
 
 8. Backups
 Before importing, moving, deleting, enabling or disabling mods, you should keep backups of important game files, save files, profiles and mod archives. Modding workflows can affect game behavior. Fluxora is provided to help manage those workflows, but you remain responsible for the result.

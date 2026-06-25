@@ -39,7 +39,7 @@ namespace fluxora::tests
         EXPECT_NE(content.find("LANGUAGE=de-de"), std::string::npos);
     }
 
-    TEST(AppSettingsServiceTests, SavesLoadsAndNormalizesThemeMode)
+    TEST(AppSettingsServiceTests, KeepsThemeModeOnSupportedDarkTheme)
     {
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
@@ -50,11 +50,28 @@ namespace fluxora::tests
         EXPECT_EQ(service.loadThemeMode(), L"dark");
 
         service.saveThemeMode(L"  LIGHT  ");
-        EXPECT_EQ(service.loadThemeMode(), L"light");
-        EXPECT_NE(readTextFile(service.appConfigPath()).find("THEME=light"), std::string::npos);
+        EXPECT_EQ(service.loadThemeMode(), L"dark");
+        EXPECT_NE(readTextFile(service.appConfigPath()).find("THEME=dark"), std::string::npos);
+        EXPECT_EQ(readTextFile(service.appConfigPath()).find("THEME=light"), std::string::npos);
 
         service.saveThemeMode(L"solarized");
         EXPECT_EQ(service.loadThemeMode(), L"dark");
+    }
+
+    TEST(AppSettingsServiceTests, MigratesLegacyLightThemeToDark)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        Logger logger;
+        AppSettingsService service(logger);
+        service.initialize();
+        writeTextFile(service.appConfigPath(), "THEME=light\n");
+
+        EXPECT_EQ(service.loadThemeMode(), L"dark");
+
+        const std::string content = readTextFile(service.appConfigPath());
+        EXPECT_NE(content.find("THEME=dark"), std::string::npos);
+        EXPECT_EQ(content.find("THEME=light"), std::string::npos);
     }
 
     TEST(AppSettingsServiceTests, SavesLoadsAndClearsNexusModsAuth)

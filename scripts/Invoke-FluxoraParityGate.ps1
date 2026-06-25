@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$ElectronRoot = Join-Path $RepoRoot "frontend-electron"
+$TauriRoot = Join-Path $RepoRoot "frontend-tauri"
 $BackendBuild = Join-Path $RepoRoot "build\backend"
 
 function Invoke-Step {
@@ -21,8 +21,8 @@ function Invoke-Step {
     & $Action
 }
 
-Invoke-Step "Electron typecheck" {
-    Push-Location $ElectronRoot
+Invoke-Step "Tauri typecheck" {
+    Push-Location $TauriRoot
     try {
         npm run typecheck
     } finally {
@@ -30,8 +30,8 @@ Invoke-Step "Electron typecheck" {
     }
 }
 
-Invoke-Step "Electron unit and parity tests" {
-    Push-Location $ElectronRoot
+Invoke-Step "Tauri unit and parity tests" {
+    Push-Location $TauriRoot
     try {
         npm test
     } finally {
@@ -40,8 +40,8 @@ Invoke-Step "Electron unit and parity tests" {
 }
 
 if (-not $SkipE2E) {
-    Invoke-Step "Electron Playwright parity smoke" {
-        Push-Location $ElectronRoot
+    Invoke-Step "Tauri Playwright parity smoke" {
+        Push-Location $TauriRoot
         try {
             npm run test:e2e
         } finally {

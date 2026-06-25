@@ -227,7 +227,7 @@ namespace fluxora::tests
         const std::filesystem::path installRoot = temp.path() / L"Installed";
         const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
         const std::filesystem::path fluxPack = temp.path() / L"Foundation.fluxpack";
-        std::filesystem::create_directories(installRoot);
+        ASSERT_FALSE(std::filesystem::exists(installRoot));
         writeTextFile(game / L"SkyrimSE.exe", "MZ");
         writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
         const std::string fluxPackJson =
@@ -269,7 +269,9 @@ namespace fluxora::tests
             fluxPackJson);
 
         Logger logger;
+        Logger::setOperationId(L"fluxpack-auto-root-test");
         logger.initialize();
+        const std::filesystem::path operationsLogPath = logger.operationsLogPath();
         AppSettingsService settings(logger);
         settings.initialize();
         TemplateService templates(logger);
@@ -294,6 +296,7 @@ namespace fluxora::tests
         });
 
         EXPECT_EQ(result.buildName, L"Foundation Edition");
+        EXPECT_TRUE(std::filesystem::is_directory(installRoot));
         EXPECT_TRUE(std::filesystem::is_regular_file(result.configPath));
         EXPECT_TRUE(std::filesystem::is_directory(result.projectDirectory));
         EXPECT_EQ(result.totalSourceCount, 0U);
@@ -314,6 +317,13 @@ namespace fluxora::tests
         pathSettings.shutdown();
         settings.shutdown();
         logger.shutdown();
+
+        const std::string operationsLog = readTextFile(operationsLogPath);
+        EXPECT_NE(
+            operationsLog.find("FluxPack install will create missing install root"),
+            std::string::npos);
+        EXPECT_NE(operationsLog.find("operationId=fluxpack-auto-root-test"), std::string::npos);
+        Logger::clearOperationId();
 #endif
     }
 

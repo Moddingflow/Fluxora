@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cctype>
 #include <ctime>
 #include <cstdlib>
 #include <cwctype>
@@ -33,6 +34,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -84,7 +86,8 @@ namespace fluxora
 
         std::uintmax_t directorySize(
             const std::filesystem::path& directory,
-            const std::function<bool(const std::filesystem::path&)>& shouldSkip);
+            const std::function<bool(const std::filesystem::path&)>& shouldSkip,
+            const std::function<bool()>& cancellationRequested);
 
 #ifdef _WIN32
         std::wstring readEnvironmentVariable(const wchar_t* name)
@@ -106,6 +109,95 @@ namespace fluxora
             return value;
         }
 #endif
+
+        std::filesystem::path operationCancellationDirectory()
+        {
+#ifdef _WIN32
+            if (const std::wstring configured = readEnvironmentVariable(L"FLUXORA_OPERATION_CANCEL_DIR");
+                !configured.empty())
+            {
+                return std::filesystem::path(configured);
+            }
+            if (const std::wstring logs = readEnvironmentVariable(L"FLUXORA_LOG_DIR"); !logs.empty())
+            {
+                return std::filesystem::path(logs) / L"operation-cancel";
+            }
+#else
+            if (const char* configured = std::getenv("FLUXORA_OPERATION_CANCEL_DIR");
+                configured != nullptr && configured[0] != '\0')
+            {
+                return std::filesystem::path(configured);
+            }
+            if (const char* logs = std::getenv("FLUXORA_LOG_DIR"); logs != nullptr && logs[0] != '\0')
+            {
+                return std::filesystem::path(logs) / "operation-cancel";
+            }
+#endif
+
+            return {};
+        }
+
+        std::string operationMarkerFileName(std::string_view operationId)
+        {
+            std::string safe;
+            safe.reserve(operationId.size() + 7);
+            for (const char character : operationId)
+            {
+                const unsigned char value = static_cast<unsigned char>(character);
+                if (std::isalnum(value) != 0 || character == '_' || character == '-' || character == '.')
+                {
+                    safe.push_back(character);
+                }
+                else
+                {
+                    safe.push_back('_');
+                }
+            }
+
+            if (safe.empty())
+            {
+                return {};
+            }
+
+            safe += ".cancel";
+            return safe;
+        }
+
+        std::filesystem::path operationCancellationMarkerPath(std::string_view operationId)
+        {
+            const std::filesystem::path directory = operationCancellationDirectory();
+            const std::string fileName = operationMarkerFileName(operationId);
+            if (directory.empty() || fileName.empty())
+            {
+                return {};
+            }
+
+            return directory / std::filesystem::path(fileName);
+        }
+
+        bool markerExists(const std::filesystem::path& path)
+        {
+            if (path.empty())
+            {
+                return false;
+            }
+
+            std::error_code error;
+            return std::filesystem::exists(path, error);
+        }
+
+        bool isCancellationRequested(const std::function<bool()>& cancellationRequested)
+        {
+            return cancellationRequested && cancellationRequested();
+        }
+
+        void throwIfCancellationRequested(const std::function<bool()>& cancellationRequested)
+        {
+            if (isCancellationRequested(cancellationRequested))
+            {
+                throw std::runtime_error("Mod Organizer import was canceled.");
+            }
+        }
 
         std::wstring trim(std::wstring value)
         {
@@ -1113,8 +1205,10 @@ namespace fluxora
             const std::filesystem::path& gamePath,
             const ModOrganizerSourceLayout& sourceLayout,
             const std::filesystem::path& targetProjectDirectory,
-            ModOrganizerExecutableImportPlan& executableImport)
+            ModOrganizerExecutableImportPlan& executableImport,
+            const std::function<bool()>& cancellationRequested)
         {
+            throwIfCancellationRequested(cancellationRequested);
             const std::optional<std::filesystem::path> relative =
                 relativePathInsideLocalBuild(gamePath, sourceLayout);
             if (!relative.has_value())
@@ -1140,7 +1234,8 @@ namespace fluxora
             });
             executableImport.totalCopyBytes += directorySize(
                 gamePath,
-                [](const std::filesystem::path&) { return false; });
+                [](const std::filesystem::path&) { return false; },
+                cancellationRequested);
         }
 
         std::filesystem::path canonicalOrAbsolute(const std::filesystem::path& path)
@@ -1477,7 +1572,8 @@ namespace fluxora
 
         std::uintmax_t directorySize(
             const std::filesystem::path& directory,
-            const std::function<bool(const std::filesystem::path&)>& shouldSkip)
+            const std::function<bool(const std::filesystem::path&)>& shouldSkip,
+            const std::function<bool()>& cancellationRequested)
         {
             std::uintmax_t total = 0;
             std::error_code error;
@@ -1488,6 +1584,7 @@ namespace fluxora
             const std::filesystem::recursive_directory_iterator end;
             while (!error && iterator != end)
             {
+                throwIfCancellationRequested(cancellationRequested);
                 const std::filesystem::path current = iterator->path();
                 if (shouldSkip(current))
                 {
@@ -1514,18 +1611,22 @@ namespace fluxora
             return total;
         }
 
-        std::uintmax_t sourceSize(const ModOrganizerSourceLayout& layout)
+        std::uintmax_t sourceSize(
+            const ModOrganizerSourceLayout& layout,
+            const std::function<bool()>& cancellationRequested)
         {
             std::uintmax_t total = 0;
             const auto modsDirectory = layout.modsDirectory;
             for (const std::wstring& folder : enumerateModFolders(modsDirectory))
             {
+                throwIfCancellationRequested(cancellationRequested);
                 total += directorySize(
                     modsDirectory / std::filesystem::path(folder),
                     [](const std::filesystem::path& path)
                     {
                         return equalsIgnoreCase(path.filename().wstring(), L"meta.ini");
-                    });
+                    },
+                    cancellationRequested);
             }
 
             const std::array<std::filesystem::path, 3> extraFolders{
@@ -1535,9 +1636,13 @@ namespace fluxora
             };
             for (const std::filesystem::path& path : extraFolders)
             {
+                throwIfCancellationRequested(cancellationRequested);
                 if (std::filesystem::exists(path))
                 {
-                    total += directorySize(path, [](const std::filesystem::path&) { return false; });
+                    total += directorySize(
+                        path,
+                        [](const std::filesystem::path&) { return false; },
+                        cancellationRequested);
                 }
             }
 
@@ -1881,7 +1986,8 @@ namespace fluxora
             std::wstring_view profileName,
             const std::vector<std::wstring>& modFolders,
             const std::vector<ProfileOrderImportItemRecord>& orderItems,
-            const std::map<std::wstring, std::wstring>& organizerIni)
+            const std::map<std::wstring, std::wstring>& organizerIni,
+            const std::function<bool()>& cancellationRequested)
         {
             ModOrganizerImportAnalysis analysis;
             analysis.sourceDirectory = std::filesystem::absolute(sourceDirectory);
@@ -1901,7 +2007,7 @@ namespace fluxora
                 orderItems.begin(),
                 orderItems.end(),
                 [](const ProfileOrderImportItemRecord& item) { return item.kind == separatorKind; }));
-            analysis.totalBytes = sourceSize(sourceLayout);
+            analysis.totalBytes = sourceSize(sourceLayout, cancellationRequested);
 
             if (existingProject != nullptr)
             {
@@ -2024,8 +2130,10 @@ namespace fluxora
             ProjectService& projects,
             const std::filesystem::path& sourceDirectory,
             const std::filesystem::path& destinationRootDirectory,
-            const std::filesystem::path& existingConfigPath)
+            const std::filesystem::path& existingConfigPath,
+            const std::function<bool()>& cancellationRequested = {})
         {
+            throwIfCancellationRequested(cancellationRequested);
             if (sourceDirectory.empty())
             {
                 throw std::invalid_argument("Mod Organizer 2 directory is required.");
@@ -2040,9 +2148,11 @@ namespace fluxora
             std::optional<ProjectOpenResult> existingProject;
             if (!existingConfigPath.empty())
             {
+                throwIfCancellationRequested(cancellationRequested);
                 existingProject = projects.openProjectConfig(existingConfigPath);
             }
 
+            throwIfCancellationRequested(cancellationRequested);
             const std::map<std::wstring, std::wstring> organizerIni = readIni(source / L"ModOrganizer.ini");
             const std::filesystem::path gamePath = chooseGamePath(
                 organizerIni,
@@ -2052,6 +2162,7 @@ namespace fluxora
             validateModOrganizerInstanceStructure(source, sourceLayout);
             const auto modsDirectory = sourceLayout.modsDirectory;
 
+            throwIfCancellationRequested(cancellationRequested);
             std::vector<std::wstring> modFolders = enumerateModFolders(modsDirectory);
             const std::wstring profileName = profileFromSourceLayout(sourceLayout, organizerIni);
             ModOrganizerProfileOrder profileOrder = ModOrganizerProfileOrderService::read(
@@ -2088,6 +2199,7 @@ namespace fluxora
                 resolved.defaultProfileName = profileName;
             }
 
+            throwIfCancellationRequested(cancellationRequested);
             std::vector<ProfilePluginOrderImportItemRecord> pluginOrderItems =
                 ModOrganizerPluginGroupService::read(
                     sourceLayout.profilesDirectory / std::filesystem::path(profileName),
@@ -2102,8 +2214,10 @@ namespace fluxora
                 profileName,
                 modFolders,
                 orderItems,
-                organizerIni);
+                organizerIni,
+                cancellationRequested);
 
+            throwIfCancellationRequested(cancellationRequested);
             ModOrganizerExecutableImportPlan executableImport =
                 ModOrganizerExecutableImportService::createPlan(
                     organizerIni,
@@ -2124,7 +2238,8 @@ namespace fluxora
                 analysis.gamePath,
                 sourceLayout,
                 analysis.targetProjectDirectory,
-                executableImport);
+                executableImport,
+                cancellationRequested);
             const std::filesystem::path healthGamePath = analysis.gamePath;
             analysis.gamePath = remapImportedGamePath(
                 analysis.gamePath,
@@ -2928,15 +3043,39 @@ namespace fluxora
         const ModOrganizerImportRequest& request) const
     {
         const bool replaceExisting = request.mode == ModOrganizerImportMode::ReplaceExisting;
+        const std::filesystem::path cancellationMarker =
+            operationCancellationMarkerPath(Logger::operationId());
+        const std::function<bool()> cancellationRequested =
+            [marker = cancellationMarker, requestCancellation = request.cancellationRequested]()
+            {
+                return (requestCancellation && requestCancellation()) || markerExists(marker);
+            };
+
+        if (request.progress)
+        {
+            request.progress(ModOrganizerImportProgress{
+                L"prepare",
+                L"Проверяю сборку Mod Organizer 2",
+                request.sourceDirectory.filename().wstring(),
+                1,
+                0,
+                0,
+                0,
+                0
+            });
+        }
+
         ImportPlan plan;
         try
         {
+            throwIfCancellationRequested(cancellationRequested);
             plan = createPlan(
                 templates_,
                 projects_,
                 request.sourceDirectory,
                 request.destinationRootDirectory,
-                replaceExisting ? request.existingConfigPath : std::filesystem::path{});
+                replaceExisting ? request.existingConfigPath : std::filesystem::path{},
+                cancellationRequested);
         }
         catch (const std::exception& exception)
         {
@@ -2950,6 +3089,7 @@ namespace fluxora
             throw;
         }
         logImportPlanDiagnostics(logger_, plan, "planned");
+        throwIfCancellationRequested(cancellationRequested);
 
         if (hasUnsafeSourceTargetOverlap(plan.analysis.sourceDirectory, plan.analysis.targetProjectDirectory))
         {
@@ -2983,6 +3123,7 @@ namespace fluxora
 
         try
         {
+            throwIfCancellationRequested(cancellationRequested);
             stagingProjectDirectory = createImportStagingDirectory(finalProjectDirectory);
 
             std::ostringstream startLog;
@@ -3025,7 +3166,7 @@ namespace fluxora
                     L"prepare",
                     L"Готовлю временную копию",
                     stagingProjectDirectory.wstring(),
-                    0,
+                    2,
                     0,
                     0,
                     0,
@@ -3124,8 +3265,10 @@ namespace fluxora
                     [&diagnostics](LogLevel level, std::string_view message)
                     {
                         diagnostics.write(level, message);
-                    }
+                    },
+                    cancellationRequested
                 });
+            throwIfCancellationRequested(cancellationRequested);
 
             if (request.progress)
             {
@@ -3141,6 +3284,7 @@ namespace fluxora
                 });
             }
 
+            throwIfCancellationRequested(cancellationRequested);
             materializeTemplate(stagingProjectDirectory, plan.resolvedTemplate, &logger_);
 
             if (request.progress)
@@ -3159,6 +3303,7 @@ namespace fluxora
 
             ProjectDescriptor stagingDescriptor = finalDescriptor;
             stagingDescriptor.projectDirectory = stagingProjectDirectory;
+            throwIfCancellationRequested(cancellationRequested);
             InstanceMetadataStore::ensureInstance(stagingDescriptor.projectDirectory, plan.resolvedTemplate.id);
 
             std::vector<InstalledModImportRecord> modsToRegister;
@@ -3191,11 +3336,12 @@ namespace fluxora
             InstanceMetadataStore::registerInstalledMods(
                 stagingDescriptor.projectDirectory,
                 modsToRegister,
-                [&request, copiedBytes, copyTotalBytes](
+                [&request, copiedBytes, copyTotalBytes, cancellationRequested](
                     std::size_t processedMods,
                     std::size_t totalMods,
                     std::wstring_view folderName)
                 {
+                    throwIfCancellationRequested(cancellationRequested);
                     if (!request.progress)
                     {
                         return;
@@ -3215,11 +3361,13 @@ namespace fluxora
                         copyTotalBytes
                     });
                 });
+            throwIfCancellationRequested(cancellationRequested);
 
             InstanceMetadataStore::replaceProfileOrderItems(
                 stagingDescriptor.projectDirectory,
                 plan.analysis.profileName,
                 plan.orderItems);
+            throwIfCancellationRequested(cancellationRequested);
 
             if (!plan.pluginOrderItems.empty())
             {
@@ -3228,6 +3376,7 @@ namespace fluxora
                     plan.analysis.profileName,
                     plan.pluginOrderItems);
             }
+            throwIfCancellationRequested(cancellationRequested);
 
             if (request.progress)
             {

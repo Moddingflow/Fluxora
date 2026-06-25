@@ -214,13 +214,13 @@ TEST(InstallerCorePackageTests, InstallPackageStreamInstallsV2Payload)
     EXPECT_NE(progressUpdates.back().find(L"\"phase\":\"completed\""), std::wstring::npos);
 }
 
-TEST(InstallerCorePackageTests, InstallPackageStreamIncludesElectronResources)
+TEST(InstallerCorePackageTests, InstallPackageStreamIncludesTauriResources)
 {
     fluxora::tests::TempDirectory temp;
     const std::filesystem::path installDirectory = temp.path() / L"install";
     const std::vector<unsigned char> package = makePackage({
-        {"Fluxora.exe", "electron executable"},
-        {"resources/app.asar", "asar payload"},
+        {"Fluxora.exe", "tauri executable"},
+        {"resources/native/FluxoraCore.dll", "core payload"},
         {"resources/native/FluxoraBridgeHost.exe", "bridge host"}
     });
     VectorReadState readState{&package, 0, 23};
@@ -238,8 +238,8 @@ TEST(InstallerCorePackageTests, InstallPackageStreamIncludesElectronResources)
         static_cast<int>(json.size()));
 
     EXPECT_EQ(FluxoraInstallerResultOk, result);
-    EXPECT_EQ("electron executable", fluxora::tests::readTextFile(installDirectory / L"Fluxora.exe"));
-    EXPECT_EQ("asar payload", fluxora::tests::readTextFile(installDirectory / L"resources" / L"app.asar"));
+    EXPECT_EQ("tauri executable", fluxora::tests::readTextFile(installDirectory / L"Fluxora.exe"));
+    EXPECT_EQ("core payload", fluxora::tests::readTextFile(installDirectory / L"resources" / L"native" / L"FluxoraCore.dll"));
     EXPECT_NE(std::wstring(json.data()).find(L"Fluxora.exe"), std::wstring::npos);
     ASSERT_FALSE(progressUpdates.empty());
     EXPECT_NE(progressUpdates.back().find(L"\"phase\":\"completed\""), std::wstring::npos);

@@ -1,0 +1,38 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic:
+      - generic: Fluxora
+    - generic [ref=e6]:
+      - button "Home" [ref=e7] [cursor=pointer]:
+        - img [ref=e8]
+      - button "Open settings" [ref=e11] [cursor=pointer]:
+        - img [ref=e12]
+      - button "Minimize" [ref=e15] [cursor=pointer]:
+        - img [ref=e16]
+      - button "Maximize" [ref=e17] [cursor=pointer]:
+        - img [ref=e18]
+      - button "Close" [ref=e20] [cursor=pointer]:
+        - img [ref=e21]
+  - region "Build library" [ref=e26]:
+    - generic [ref=e27]:
+      - heading "Build library" [level=1] [ref=e29]
+      - generic [ref=e30]:
+        - generic [ref=e31]:
+          - img [ref=e32]
+          - textbox "Search builds" [ref=e35]
+        - button "New build" [disabled] [ref=e36]:
+          - img [ref=e37]
+          - text: New build
+    - generic [ref=e38]:
+      - region "Builds" [ref=e39]:
+        - heading "0 builds" [level=2] [ref=e42]
+        - generic "Builds" [ref=e43]:
+          - status [ref=e44]:
+            - img [ref=e45]
+            - strong [ref=e47]: Core unavailable
+            - generic [ref=e48]: Tauri runtime is unavailable in browser preview.
+      - complementary "Selected build summary" [ref=e49]:
+        - generic [ref=e50]:
+          - img [ref=e51]
+          - strong [ref=e53]: No build selected
+          - generic [ref=e54]: Create or open a Fluxora build to fill the library.
