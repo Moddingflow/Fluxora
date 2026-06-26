@@ -51,8 +51,6 @@ const baseProps: TransferMo2PageProps = {
   sourceDirectory: 'E:\\Foundation Edition',
   destinationRootDirectory: 'C:\\',
   defaultDestinationRoot: 'C:\\',
-  mode: 'create',
-  hasSelectedProject: true,
   selectedStep: 'review',
   analysis: {
     sourceDirectory: 'E:\\Foundation Edition',
@@ -81,7 +79,6 @@ const baseProps: TransferMo2PageProps = {
   drives,
   driveState: 'ready',
   onSelectStep: noop,
-  onModeChange: noop,
   onBrowseSource: noop,
   onSelectDestinationDrive: noop,
   onRefreshDrives: noop,
@@ -134,9 +131,9 @@ describe('TransferMo2Page', () => {
 
     expect(html).toContain('Foundation Edition');
     expect(html).toContain('Выбрать');
-    expect(html).toContain('Режим переноса');
-    expect(html).toContain('Новая сборка');
-    expect(html).toContain('Заменить выбранную');
+    expect(html).not.toContain('Режим переноса');
+    expect(html).not.toContain('Новая сборка');
+    expect(html).not.toContain('Заменить выбранную');
     expect(html).not.toContain('Установить на:');
     expect(html).not.toContain('Локальный диск (D:)');
     expect(html).not.toContain('Проверка пройдена');

@@ -47,7 +47,6 @@ input,
 .settings-switch,
 .transfer-stepper button,
 .transfer-picker-card,
-.transfer-mode-card,
 .transfer-drive-row,
 .transfer-entry-card,
 .transfer-entry-progress,
@@ -5191,7 +5190,6 @@ input::placeholder {
 
 .transfer-hero,
 .transfer-picker-card,
-.transfer-mode-card,
 .transfer-review-card {
   border: 1px solid var(--line-soft);
   border-radius: 8px;
@@ -5281,14 +5279,12 @@ input::placeholder {
 }
 
 .transfer-picker-card,
-.transfer-mode-card,
 .transfer-review-card {
   min-width: 0;
   padding: 12px;
 }
 
-.transfer-picker-card,
-.transfer-mode-card {
+.transfer-picker-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -5296,14 +5292,12 @@ input::placeholder {
 }
 
 .transfer-picker-card[data-active="true"],
-.transfer-mode-card:focus-within,
 .transfer-review-card:focus-within {
   border-color: rgba(var(--flx-accent-rgb), 0.5);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-.transfer-picker-card > div,
-.transfer-mode-card > div:first-child {
+.transfer-picker-card > div {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   align-items: center;
@@ -5312,13 +5306,11 @@ input::placeholder {
 }
 
 .transfer-picker-card svg,
-.transfer-mode-card svg,
 .transfer-review-card header > svg {
   color: var(--accent);
 }
 
 .transfer-picker-card span,
-.transfer-mode-card span,
 .transfer-review-card header div {
   display: grid;
   gap: 3px;
@@ -5326,14 +5318,12 @@ input::placeholder {
 }
 
 .transfer-picker-card strong,
-.transfer-mode-card strong,
 .transfer-review-card strong {
   color: var(--text);
   font-size: 13px;
 }
 
 .transfer-picker-card small,
-.transfer-mode-card small,
 .transfer-review-card span,
 .transfer-review-empty span {
   min-width: 0;
@@ -5341,14 +5331,6 @@ input::placeholder {
   font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
-}
-
-.transfer-mode-card {
-  grid-column: 1 / -1;
-}
-
-.transfer-mode-toggle {
-  min-width: min(330px, 100%);
 }
 
 .transfer-review-card {
@@ -5572,16 +5554,11 @@ input::placeholder {
   align-self: stretch;
 }
 
-.transfer-setup-grid .transfer-mode-card {
-  grid-column: 1;
-}
-
 .transfer-setup-grid .transfer-review-card {
   grid-column: 1 / -1;
 }
 
 .transfer-setup-grid--source .transfer-picker-card--source,
-.transfer-setup-grid--source .transfer-mode-card,
 .transfer-setup-grid--destination .transfer-drive-section,
 .transfer-setup-grid--review .transfer-review-card {
   grid-column: 1;
@@ -6048,15 +6025,13 @@ input::placeholder {
   .transfer-hero,
   .transfer-entry-card,
   .transfer-page-hero,
-  .transfer-picker-card,
-  .transfer-mode-card {
+  .transfer-picker-card {
     align-items: stretch;
     flex-direction: column;
   }
 
   .transfer-drive-section,
   .transfer-setup-grid .transfer-picker-card--source,
-  .transfer-setup-grid .transfer-mode-card,
   .transfer-setup-grid .transfer-review-card {
     grid-column: 1;
     grid-row: auto;

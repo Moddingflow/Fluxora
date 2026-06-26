@@ -137,7 +137,6 @@ import {
   type SettingsSectionId
 } from './settings-workspace-state';
 import {
-  type TransferMode,
   type TransferStepId
 } from './TransferSettingsPanel';
 import {
@@ -217,8 +216,6 @@ interface ProjectMenuPosition {
 }
 
 interface StartMo2TransferOptions {
-  mode?: TransferMode;
-  existingConfigPath?: string;
   analysis?: FluxoraModOrganizerImportAnalysis | null;
   skipMainHandoff?: boolean;
 }
@@ -316,7 +313,6 @@ export const App = () => {
   const [nexusBusy, setNexusBusy] = useState(false);
   const [transferSourceDirectory, setTransferSourceDirectory] = useState('');
   const [transferDestinationRootDirectory, setTransferDestinationRootDirectory] = useState('');
-  const [transferMode, setTransferMode] = useState<TransferMode>('create');
   const [transferStep, setTransferStep] = useState<TransferStepId>('source');
   const [transferDestinationDrives, setTransferDestinationDrives] = useState<FluxoraTransferDriveOption[]>([]);
   const [transferDriveState, setTransferDriveState] = useState<TransferDriveListState>('idle');
@@ -3228,13 +3224,9 @@ export const App = () => {
     }
   };
 
-  const existingTransferConfigPath = (): string =>
-    transferMode === 'replace' ? selectedProject?.configPath ?? '' : '';
-
   const analyzeMo2Transfer = async (
     rawSourceDirectory = transferSourceDirectory,
-    rawDestinationRootDirectory = transferDestinationRootDirectory,
-    rawExistingConfigPath = existingTransferConfigPath()
+    rawDestinationRootDirectory = transferDestinationRootDirectory
   ) => {
     const sourceDirectory = rawSourceDirectory.trim();
     const destinationRootDirectory = rawDestinationRootDirectory.trim();
@@ -3253,7 +3245,7 @@ export const App = () => {
       const analysis = await window.fluxora.transfer.analyzeMo2(
         sourceDirectory,
         destinationRootDirectory,
-        rawExistingConfigPath,
+        undefined,
         { operationId }
       );
       setTransferAnalysis(analysis);
@@ -3277,10 +3269,8 @@ export const App = () => {
     }
 
     const handoffAnalysis = handoff.request.replaceExisting ? null : handoff.analysis ?? null;
-    const mode: TransferMode = handoff.request.replaceExisting ? 'replace' : 'create';
     setTransferSourceDirectory(handoff.request.sourceDirectory);
     setTransferDestinationRootDirectory(handoff.request.destinationRootDirectory);
-    setTransferMode(mode);
     setTransferAnalysis(handoffAnalysis);
     setTransferError(null);
     setTransferResult(null);
@@ -3292,8 +3282,6 @@ export const App = () => {
     setActiveRoute('home');
 
     await startMo2Transfer(handoff.request.sourceDirectory, handoff.request.destinationRootDirectory, {
-      mode,
-      existingConfigPath: handoff.request.existingConfigPath,
       analysis: handoffAnalysis,
       skipMainHandoff: true
     });
@@ -3306,13 +3294,6 @@ export const App = () => {
   ) => {
     const sourceDirectory = rawSourceDirectory.trim();
     const destinationRootDirectory = rawDestinationRootDirectory.trim();
-    const effectiveMode = options.mode ?? transferMode;
-    const effectiveExistingConfigPath =
-      options.existingConfigPath ?? (effectiveMode === 'replace' ? selectedProject?.configPath ?? '' : '');
-    if (effectiveMode === 'replace' && !effectiveExistingConfigPath) {
-      setTransferError('Выберите сборку Fluxora, которую нужно заменить.');
-      return;
-    }
     const canReuseAnalysis =
       sourceDirectory === transferSourceDirectory.trim() &&
       destinationRootDirectory === transferDestinationRootDirectory.trim();
@@ -3320,7 +3301,7 @@ export const App = () => {
       options.analysis ??
       (canReuseAnalysis && transferAnalysis
         ? transferAnalysis
-        : await analyzeMo2Transfer(sourceDirectory, destinationRootDirectory, effectiveExistingConfigPath));
+        : await analyzeMo2Transfer(sourceDirectory, destinationRootDirectory));
     if (!analysis) {
       return;
     }
@@ -3332,8 +3313,7 @@ export const App = () => {
 
     const importRequest = createMo2TransferImportRequest(
       sourceDirectory,
-      destinationRootDirectory,
-      effectiveExistingConfigPath
+      destinationRootDirectory
     );
 
     if (isSettingsWindow && !options.skipMainHandoff) {
@@ -3355,7 +3335,6 @@ export const App = () => {
     transferRunningOperationIdRef.current = operationId;
     setIsTransferPageOpen(true);
     setIsCreateOpen(false);
-    setTransferMode(effectiveMode);
     setTransferSourceDirectory(sourceDirectory);
     setTransferDestinationRootDirectory(destinationRootDirectory);
     setTransferAnalysis(analysis);
@@ -6290,8 +6269,6 @@ export const App = () => {
         sourceDirectory={transferSourceDirectory}
         destinationRootDirectory={transferDestinationRootDirectory}
         defaultDestinationRoot={selectedProject?.installRootDirectory || catalog.defaultInstallRootDirectory}
-        mode={transferMode}
-        hasSelectedProject={Boolean(selectedProject)}
         selectedStep={transferStep}
       analysis={transferAnalysis}
       progress={transferProgress}
@@ -6300,12 +6277,6 @@ export const App = () => {
         drives={transferDestinationDrives}
         driveState={transferDriveState}
         onSelectStep={setTransferStep}
-        onModeChange={(mode) => {
-          setTransferMode(mode);
-          setTransferAnalysis(null);
-          setTransferError(null);
-          setTransferResult(null);
-        }}
         onBrowseSource={() => void browseTransferSource()}
       onSelectDestinationDrive={(drive) => void selectTransferDestinationDrive(drive)}
       onRefreshDrives={() => void loadTransferDestinationDrives()}

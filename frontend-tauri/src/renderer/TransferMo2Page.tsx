@@ -4,7 +4,6 @@ import {
   Home,
   Play,
   RefreshCw,
-  ShieldCheck,
   UploadCloud,
   X,
   XCircle
@@ -25,7 +24,7 @@ import type {
   FluxoraProject,
   FluxoraTransferDriveOption
 } from '../shared/fluxora-api';
-import type { TransferMode, TransferStepId } from './TransferSettingsPanel';
+import type { TransferStepId } from './TransferSettingsPanel';
 
 export type TransferDriveListState = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -39,8 +38,6 @@ interface TransferMo2PageProps {
   sourceDirectory: string;
   destinationRootDirectory: string;
   defaultDestinationRoot: string;
-  mode: TransferMode;
-  hasSelectedProject: boolean;
   selectedStep: TransferStepId;
   analysis: FluxoraModOrganizerImportAnalysis | null;
   progress: FluxoraModOrganizerImportProgress | null;
@@ -49,7 +46,6 @@ interface TransferMo2PageProps {
   drives: FluxoraTransferDriveOption[];
   driveState: TransferDriveListState;
   onSelectStep: (step: TransferStepId) => void;
-  onModeChange: (mode: TransferMode) => void;
   onBrowseSource: () => void;
   onSelectDestinationDrive: (drive: FluxoraTransferDriveOption) => void;
   onRefreshDrives: () => void;
@@ -108,8 +104,6 @@ export const TransferMo2Page = ({
   sourceDirectory,
   destinationRootDirectory,
   defaultDestinationRoot,
-  mode,
-  hasSelectedProject,
   selectedStep,
   analysis,
   progress,
@@ -118,7 +112,6 @@ export const TransferMo2Page = ({
   drives,
   driveState,
   onSelectStep,
-  onModeChange,
   onBrowseSource,
   onSelectDestinationDrive,
   onRefreshDrives,
@@ -140,8 +133,7 @@ export const TransferMo2Page = ({
   const canStart =
     canAnalyze &&
     Boolean(analysis) &&
-    analysisStatus === 'ready' &&
-    (mode === 'create' || hasSelectedProject);
+    analysisStatus === 'ready';
   const selectedDrive = findTransferDriveForPath(drives, destinationRootDirectory);
   const sourceLabel = sourceDirectory ? shortPath(sourceDirectory) : 'Выберите папку Mod Organizer 2';
   const destinationLabel = destinationRootDirectory
@@ -274,33 +266,6 @@ export const TransferMo2Page = ({
         </button>
       </section>
 
-      <section className="transfer-mode-card">
-        <div>
-          <ShieldCheck size={18} aria-hidden="true" />
-          <span>
-            <strong>Режим переноса</strong>
-            <small>Оригинальная папка MO2 не очищается и не изменяется</small>
-          </span>
-        </div>
-        <div className="segmented-control transfer-mode-toggle" aria-label="Transfer mode">
-          <button
-            type="button"
-            data-active={mode === 'create'}
-            disabled={isRunning}
-            onClick={() => onModeChange('create')}
-          >
-            Новая сборка
-          </button>
-          <button
-            type="button"
-            data-active={mode === 'replace'}
-            disabled={isRunning || !hasSelectedProject}
-            onClick={() => onModeChange('replace')}
-          >
-            Заменить выбранную
-          </button>
-        </div>
-      </section>
     </div>
   );
 

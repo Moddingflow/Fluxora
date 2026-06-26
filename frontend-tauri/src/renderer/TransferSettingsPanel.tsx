@@ -12,7 +12,6 @@ import type {
   FluxoraProject
 } from '../shared/fluxora-api';
 
-export type TransferMode = 'create' | 'replace';
 export type TransferStepId = 'source' | 'destination' | 'review';
 
 interface TransferSettingsPanelProps {

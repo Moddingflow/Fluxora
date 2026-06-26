@@ -11,9 +11,15 @@ describe('createMo2TransferImportRequest', () => {
     });
   });
 
-  it('replaces the selected Fluxora build when an existing config is provided', () => {
+  it('ignores stale existing config arguments and still creates a new Fluxora build', () => {
+    const createRequest = createMo2TransferImportRequest as (
+      sourceDirectory: string,
+      destinationRootDirectory: string,
+      existingConfigPath: string
+    ) => ReturnType<typeof createMo2TransferImportRequest>;
+
     expect(
-      createMo2TransferImportRequest(
+      createRequest(
         'E:\\MO2',
         'D:\\Fluxora',
         'D:\\Fluxora\\Builds\\Skyrim.json'
@@ -21,8 +27,7 @@ describe('createMo2TransferImportRequest', () => {
     ).toEqual({
       sourceDirectory: 'E:\\MO2',
       destinationRootDirectory: 'D:\\Fluxora',
-      existingConfigPath: 'D:\\Fluxora\\Builds\\Skyrim.json',
-      replaceExisting: true
+      replaceExisting: false
     });
   });
 });

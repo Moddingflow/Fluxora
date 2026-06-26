@@ -18,10 +18,7 @@ import {
   settingsSections,
   type SettingsSectionId
 } from '../../settings-workspace-state';
-import {
-  TransferSettingsPanel,
-  type TransferMode
-} from '../../TransferSettingsPanel';
+import { TransferSettingsPanel } from '../../TransferSettingsPanel';
 import { nexusModsIcon } from '../../design-system/assets';
 import type {
   FluxoraModOrganizerImportAnalysis,
@@ -282,4 +279,4 @@ export function SettingsWorkspace({
   );
 }
 
-export type { SettingsCapabilities, TransferMode };
+export type { SettingsCapabilities };

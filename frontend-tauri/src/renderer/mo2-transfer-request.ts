@@ -2,11 +2,9 @@ import type { FluxoraModOrganizerImportRequest } from '../shared/fluxora-api';
 
 export const createMo2TransferImportRequest = (
   sourceDirectory: string,
-  destinationRootDirectory: string,
-  existingConfigPath = ''
+  destinationRootDirectory: string
 ): FluxoraModOrganizerImportRequest => ({
   sourceDirectory,
   destinationRootDirectory,
-  existingConfigPath: existingConfigPath.trim() || undefined,
-  replaceExisting: existingConfigPath.trim().length > 0
+  replaceExisting: false
 });
