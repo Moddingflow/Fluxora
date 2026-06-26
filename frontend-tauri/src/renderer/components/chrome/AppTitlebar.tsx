@@ -19,6 +19,12 @@ const runTitlebarAction = (handler: (() => void | Promise<void>) | undefined) =>
   void handler?.();
 };
 
+const windowsCaptionGlyphs = {
+  minimize: '\uE921',
+  maximize: '\uE922',
+  close: '\uE8BB'
+} as const;
+
 export function AppTitlebar({
   mode = 'main',
   showShortcuts = true,
@@ -39,9 +45,12 @@ export function AppTitlebar({
       data-tauri-drag-region
     >
       <div className="titlebar__brand" data-tauri-drag-region>
-        <img className="titlebar__mark" src={fluxoraLogo} alt="" />
-        <span className="titlebar__brand-name">Fluxora</span>
-        <span className="titlebar__subtitle">{isSettingsWindow ? 'Settings' : 'Mod manager'}</span>
+        {isSettingsWindow ? (
+          <Icon className="titlebar__mark titlebar__mark--settings" name="settings" size={16} />
+        ) : (
+          <img className="titlebar__mark" src={fluxoraLogo} alt="" />
+        )}
+        <span className="titlebar__brand-name">{isSettingsWindow ? 'Settings' : 'Fluxora'}</span>
       </div>
 
       <div className="titlebar__drag" data-tauri-drag-region />
@@ -56,7 +65,7 @@ export function AppTitlebar({
             type="button"
             onClick={() => runTitlebarAction(onHome)}
           >
-            <Icon name="layers" size={17} />
+            <Icon name="layers" size={15} />
           </button>
           <button
             aria-label="Open settings"
@@ -66,7 +75,7 @@ export function AppTitlebar({
             type="button"
             onClick={() => runTitlebarAction(onOpenSettings)}
           >
-            <Icon name="settings" size={17} />
+            <Icon name="settings" size={15} />
           </button>
         </nav>
       ) : null}
@@ -79,7 +88,9 @@ export function AppTitlebar({
           type="button"
           onClick={() => runTitlebarAction(onMinimize)}
         >
-          <Icon name="window-minimize" size={13} strokeWidth={1.7} />
+          <span aria-hidden="true" className="titlebar__caption-glyph">
+            {windowsCaptionGlyphs.minimize}
+          </span>
         </button>
         <button
           aria-label="Maximize"
@@ -88,7 +99,9 @@ export function AppTitlebar({
           type="button"
           onClick={() => runTitlebarAction(onToggleMaximize)}
         >
-          <Icon name="window-maximize" size={13} strokeWidth={1.7} />
+          <span aria-hidden="true" className="titlebar__caption-glyph">
+            {windowsCaptionGlyphs.maximize}
+          </span>
         </button>
         <button
           aria-label="Close"
@@ -97,7 +110,9 @@ export function AppTitlebar({
           type="button"
           onClick={() => runTitlebarAction(onClose)}
         >
-          <Icon name="window-close" size={14} strokeWidth={1.7} />
+          <span aria-hidden="true" className="titlebar__caption-glyph">
+            {windowsCaptionGlyphs.close}
+          </span>
         </button>
       </div>
     </header>

@@ -313,7 +313,7 @@ export const App = () => {
   const [nexusBusy, setNexusBusy] = useState(false);
   const [transferSourceDirectory, setTransferSourceDirectory] = useState('');
   const [transferDestinationRootDirectory, setTransferDestinationRootDirectory] = useState('');
-  const [transferStep, setTransferStep] = useState<TransferStepId>('source');
+  const [transferStep, setTransferStep] = useState<TransferStepId>('name');
   const [transferDestinationDrives, setTransferDestinationDrives] = useState<FluxoraTransferDriveOption[]>([]);
   const [transferDriveState, setTransferDriveState] = useState<TransferDriveListState>('idle');
   const [transferAnalysis, setTransferAnalysis] =
@@ -3075,21 +3075,6 @@ export const App = () => {
     }
   };
 
-  const refreshNexusStatus = async () => {
-    const operationId = createRendererOperationId('nexus_status');
-    setNexusBusy(true);
-    setMessage(null);
-
-    try {
-      const status = await window.fluxora.nexus.getAuthStatus({ operationId });
-      setNexusStatus(status);
-    } catch (error) {
-      setMessage(errorMessage(error));
-    } finally {
-      setNexusBusy(false);
-    }
-  };
-
   const toggleNexusConnection = async () => {
     const operationId = createRendererOperationId(nexusStatus?.isLinked ? 'nexus_disconnect' : 'nexus_connect');
     setNexusBusy(true);
@@ -3156,7 +3141,7 @@ export const App = () => {
     setIsTransferPageOpen(true);
     setActiveRoute('home');
     resetTransferPlanningState();
-    setTransferStep(transferSourceDirectory.trim() ? 'destination' : 'source');
+    setTransferStep(transferSourceDirectory.trim() ? 'game' : 'name');
     void loadTransferDestinationDrives();
   };
 
@@ -3207,9 +3192,9 @@ export const App = () => {
         setTransferDestinationRootDirectory(destinationRootDirectory);
       }
       resetTransferPlanningState();
-      setTransferStep(destinationRootDirectory ? 'review' : 'destination');
+      setTransferStep(destinationRootDirectory ? 'game' : 'install');
       if (destinationRootDirectory) {
-        await analyzeMo2Transfer(path, destinationRootDirectory);
+        await analyzeMo2Transfer(path, destinationRootDirectory, 'game');
       }
     }
   };
@@ -3218,15 +3203,16 @@ export const App = () => {
     const sourceDirectory = transferSourceDirectory.trim();
     setTransferDestinationRootDirectory(drive.rootPath);
     resetTransferPlanningState();
-    setTransferStep(sourceDirectory ? 'review' : 'source');
+    setTransferStep(sourceDirectory ? 'game' : 'name');
     if (sourceDirectory) {
-      await analyzeMo2Transfer(sourceDirectory, drive.rootPath);
+      await analyzeMo2Transfer(sourceDirectory, drive.rootPath, 'install');
     }
   };
 
   const analyzeMo2Transfer = async (
     rawSourceDirectory = transferSourceDirectory,
-    rawDestinationRootDirectory = transferDestinationRootDirectory
+    rawDestinationRootDirectory = transferDestinationRootDirectory,
+    nextStep: TransferStepId = 'install'
   ) => {
     const sourceDirectory = rawSourceDirectory.trim();
     const destinationRootDirectory = rawDestinationRootDirectory.trim();
@@ -3239,7 +3225,7 @@ export const App = () => {
     setSettingsBusyLabel('Проверяем перенос');
     setTransferError(null);
     setTransferResult(null);
-    setTransferStep('review');
+    setTransferStep(nextStep);
 
     try {
       const analysis = await window.fluxora.transfer.analyzeMo2(
@@ -3276,7 +3262,7 @@ export const App = () => {
     setTransferResult(null);
     setTransferProgress(null);
     setTransferCancelRequested(false);
-    setTransferStep('review');
+    setTransferStep('install');
     setIsCreateOpen(false);
     setIsTransferPageOpen(true);
     setActiveRoute('home');
@@ -3354,7 +3340,7 @@ export const App = () => {
     setTransferError(null);
     setTransferResult(null);
     setSettingsBusyLabel('Переносим сборку');
-    setTransferStep('review');
+    setTransferStep('install');
 
     try {
       const imported = await window.fluxora.transfer.importMo2(
@@ -6313,7 +6299,6 @@ export const App = () => {
       transferResult={transferResult}
       onCancelTransfer={() => void cancelMo2Transfer()}
       onOpenTransfer={() => void openMo2TransferFromSettings()}
-      onRefreshNexusStatus={() => void refreshNexusStatus()}
       onSectionChange={setSettingsSection}
       onSetLanguage={(language) => void setLanguage(language)}
       onToggleNexusConnection={() => void toggleNexusConnection()}

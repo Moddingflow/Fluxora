@@ -4,7 +4,7 @@ import {
   capabilityStateLabel,
   formatTransferBytes,
   currentPlatformSupport,
-  languageSettingsHint,
+  languageOptions,
   nexusActionLabel,
   nexusCanToggle,
   nexusConnectionSummary,
@@ -182,9 +182,27 @@ describe('settings workspace state', () => {
       'transfer'
     ]);
     expect(settingsSections).toEqual([
-      { id: 'connections', label: 'Connections', hint: 'Nexus Mods and bridge' },
+      { id: 'connections', label: 'Connections', hint: '' },
       { id: 'language', label: 'Languages', hint: 'EN / RU / DE' },
       { id: 'transfer', label: 'Transfer', hint: 'MO2 import' }
+    ]);
+  });
+
+  it('keeps language options paired with country flag metadata', () => {
+    expect(languageOptions.map((language) => language.code)).toEqual([
+      'en-us',
+      'ru-ru',
+      'de-de'
+    ]);
+    expect(languageOptions.map((language) => language.countryCode)).toEqual([
+      'gb',
+      'ru',
+      'de'
+    ]);
+    expect(languageOptions.map((language) => language.countryName)).toEqual([
+      'United Kingdom',
+      'Russia',
+      'Germany'
     ]);
   });
 
@@ -193,7 +211,6 @@ describe('settings workspace state', () => {
     expect(normalizeThemeMode('dark')).toBe('dark');
     expect(normalizeThemeMode('neon')).toBe('dark');
     expect(formatTransferBytes(1536)).toBe('1.5 KB');
-    expect(languageSettingsHint('ru-ru')).toBe('settings.json - language=ru');
   });
 
   it('reports transfer analysis readiness', () => {

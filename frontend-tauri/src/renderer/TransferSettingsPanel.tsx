@@ -12,7 +12,7 @@ import type {
   FluxoraProject
 } from '../shared/fluxora-api';
 
-export type TransferStepId = 'source' | 'destination' | 'review';
+export type TransferStepId = 'name' | 'game' | 'path' | 'install';
 
 interface TransferSettingsPanelProps {
   bridgeReady: boolean;

@@ -1063,14 +1063,25 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
 test('uses the redesigned Settings window for Nexus, language and MO2 transfer actions', async ({ page }) => {
   await page.goto(`${baseUrl}/?window=settings`);
 
-  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+  await expect(page.locator('.settings-nav__header')).toHaveCount(0);
+  await expect(page.locator('.titlebar__brand-name')).toHaveText('Settings');
+  await expect(page.locator('.titlebar__mark--settings')).toBeVisible();
   await expect(page.getByRole('button', { name: /Connections/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Languages/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Transfer/ })).toBeVisible();
-  await expect(page.getByText('Account bridge')).toBeVisible();
+  await expect(page.getByText('Account bridge')).toHaveCount(0);
   await expect(page.getByText('Nexus Mods', { exact: true })).toBeVisible();
+  const connectionsPanelBox = await page.locator('.settings-panel--connections').boundingBox();
+  const connectionRowBox = await page.locator('.settings-service-row--connection').boundingBox();
+  expect(connectionsPanelBox).not.toBeNull();
+  expect(connectionRowBox).not.toBeNull();
+  if (connectionsPanelBox && connectionRowBox) {
+    const leftGap = connectionRowBox.x - connectionsPanelBox.x;
+    const rightGap = connectionsPanelBox.x + connectionsPanelBox.width - (connectionRowBox.x + connectionRowBox.width);
+    expect(Math.abs(leftGap - rightGap)).toBeLessThanOrEqual(1);
+  }
 
-  await page.getByRole('button', { name: 'Link Nexus Mods with OAuth' }).click();
+  await page.getByRole('switch', { name: 'Nexus Mods account' }).click();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -1082,7 +1093,72 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
   await expect(page.getByText('Linked - Playwright user')).toBeVisible();
 
   await page.getByRole('button', { name: /Languages/ }).click();
-  await page.getByLabel('Language', { exact: true }).selectOption('ru-ru');
+  await expect(page.getByText('Choose the renderer language.')).toHaveCount(0);
+  await expect(page.getByText(/settings\.json - language=/)).toHaveCount(0);
+  const languagePanelBox = await page.locator('.settings-panel--language').boundingBox();
+  const languageRowBox = await page.locator('.settings-language-row').boundingBox();
+  expect(languagePanelBox).not.toBeNull();
+  expect(languageRowBox).not.toBeNull();
+  if (languagePanelBox && languageRowBox && connectionRowBox) {
+    const leftGap = languageRowBox.x - languagePanelBox.x;
+    const rightGap = languagePanelBox.x + languagePanelBox.width - (languageRowBox.x + languageRowBox.width);
+    expect(Math.abs(leftGap - rightGap)).toBeLessThanOrEqual(1);
+    expect(Math.abs(languageRowBox.width - connectionRowBox.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(languageRowBox.height - connectionRowBox.height)).toBeLessThanOrEqual(4);
+  }
+  const languageButton = page.getByRole('combobox', { name: 'Language' });
+  await languageButton.click();
+  const languageMenu = page.locator('.language-select__menu[data-open="true"]');
+  await expect(languageMenu).toBeVisible();
+  const languageMenuBox = await languageMenu.boundingBox();
+  expect(languageMenuBox).not.toBeNull();
+  expect(languageMenuBox?.height).toBeGreaterThanOrEqual(132);
+  expect(languageMenuBox?.height).toBeLessThan(180);
+  await expect
+    .poll(() =>
+      languageMenu.evaluate((element) => ({
+        clientHeight: element.clientHeight,
+        overflowY: getComputedStyle(element).overflowY,
+        scrollHeight: element.scrollHeight
+      }))
+    )
+    .toEqual(expect.objectContaining({ overflowY: 'auto' }));
+  const languageMenuMetrics = await languageMenu.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight
+  }));
+  expect(languageMenuMetrics.scrollHeight).toBeLessThanOrEqual(languageMenuMetrics.clientHeight + 1);
+  const selectedLanguageOption = page.getByRole('option', { name: /English - English/ });
+  const selectedLanguageStyle = await selectedLanguageOption.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundImage: style.backgroundImage,
+      borderTopColor: style.borderTopColor,
+      borderTopWidth: style.borderTopWidth
+    };
+  });
+  expect(selectedLanguageStyle.backgroundImage).toBe('none');
+  expect(selectedLanguageStyle.borderTopWidth).toBe('1px');
+  expect(selectedLanguageStyle.borderTopColor).not.toBe('rgba(0, 0, 0, 0)');
+  const germanLanguageOption = page.getByRole('option', { name: /Deutsch - German/ });
+  await germanLanguageOption.hover();
+  await expect
+    .poll(() =>
+      germanLanguageOption.evaluate((element) => getComputedStyle(element).backgroundColor)
+    )
+    .toContain('0.15');
+  const hoveredLanguageStyle = await germanLanguageOption.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundColor: style.backgroundColor,
+      backgroundImage: style.backgroundImage,
+      borderTopColor: style.borderTopColor
+    };
+  });
+  expect(hoveredLanguageStyle.backgroundImage).toBe('none');
+  expect(hoveredLanguageStyle.backgroundColor).toContain('0.15');
+  expect(hoveredLanguageStyle.borderTopColor).toBe('rgba(0, 0, 0, 0)');
+  await page.getByRole('option', { name: /Русский - Russian/ }).click();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -1091,7 +1167,7 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
       )
     )
     .toContain('settings.setLanguage');
-  await expect(page.getByText('settings.json - language=ru')).toBeVisible();
+  await expect(page.getByText(/settings\.json - language=/)).toHaveCount(0);
 
   await page.getByRole('button', { name: /Transfer/ }).click();
   await expect(page.getByText('Build transfer', { exact: true })).toBeVisible();
@@ -1161,7 +1237,8 @@ test('captures phase 13 visual acceptance surfaces across desktop sizes', async 
     await capturePhase13Screenshot(page, testInfo, 'operation-overlay', size);
 
     await page.goto(`${baseUrl}/?window=settings`);
-    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await expect(page.locator('.titlebar__brand-name')).toHaveText('Settings');
+    await expect(page.locator('.titlebar__mark--settings')).toBeVisible();
     await expect(page.getByText('Nexus Mods', { exact: true })).toBeVisible();
     await capturePhase13Screenshot(page, testInfo, 'settings', size);
   }

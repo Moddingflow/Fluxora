@@ -23,7 +23,7 @@ export const settingsSections: SettingsSection[] = [
   {
     id: 'connections',
     label: 'Connections',
-    hint: 'Nexus Mods and bridge'
+    hint: ''
   },
   {
     id: 'language',
@@ -39,14 +39,34 @@ export const settingsSections: SettingsSection[] = [
 
 export interface LanguageOption {
   code: string;
+  countryCode: string;
+  countryName: string;
   label: string;
   nativeLabel: string;
 }
 
 export const languageOptions: LanguageOption[] = [
-  { code: 'en-us', label: 'English', nativeLabel: 'English' },
-  { code: 'ru-ru', label: 'Russian', nativeLabel: 'Русский' },
-  { code: 'de-de', label: 'German', nativeLabel: 'Deutsch' }
+  {
+    code: 'en-us',
+    countryCode: 'gb',
+    countryName: 'United Kingdom',
+    label: 'English',
+    nativeLabel: 'English'
+  },
+  {
+    code: 'ru-ru',
+    countryCode: 'ru',
+    countryName: 'Russia',
+    label: 'Russian',
+    nativeLabel: 'Русский'
+  },
+  {
+    code: 'de-de',
+    countryCode: 'de',
+    countryName: 'Germany',
+    label: 'German',
+    nativeLabel: 'Deutsch'
+  }
 ];
 
 export const defaultThemeMode: FluxoraThemeMode = 'dark';
@@ -66,16 +86,6 @@ export const settingsCapabilityView = (bridgeStatus: NativeBridgeStatus | null) 
     transferAvailable,
     transferCancellationAvailable: transferAvailable
   };
-};
-
-export const languageSettingsHint = (languageCode: string | undefined): string => {
-  const normalized = languageCode?.trim().toLowerCase() || 'en-us';
-  const shortCode = normalized.startsWith('ru')
-    ? 'ru'
-    : normalized.startsWith('de')
-      ? 'de'
-      : 'en';
-  return `settings.json - language=${shortCode}`;
 };
 
 export const nexusConnectionSummary = (

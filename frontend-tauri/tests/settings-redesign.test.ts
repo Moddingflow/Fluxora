@@ -72,13 +72,66 @@ describe('settings redesign', () => {
       'settings',
       'SettingsWorkspace.tsx'
     );
+    const languageSelect = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'settings',
+      'LanguageSelect.tsx'
+    );
+    const titlebar = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'components',
+      'chrome',
+      'AppTitlebar.tsx'
+    );
 
     expect(app).toContain("import { SettingsWorkspace } from './features/settings/SettingsWorkspace';");
-    expect(settingsWorkspace).toContain('className="settings-nav__header"');
-    expect(settingsWorkspace).toContain('Connections, languages, and build transfer.');
-    expect(settingsWorkspace).toContain('className="settings-card settings-card--connections"');
-    expect(settingsWorkspace).toContain('className="settings-card settings-card--language"');
+    expect(settingsWorkspace).not.toContain('className="settings-nav__header"');
+    expect(settingsWorkspace).not.toContain('Connections, languages, and build transfer.');
+    expect(settingsWorkspace).toContain('className="settings-connections-list"');
+    expect(settingsWorkspace).toContain('settings-service-row--connection');
+    expect(settingsWorkspace).toContain('<LanguageSelect');
+    expect(languageSelect).toContain('settings-language-row');
+    expect(languageSelect).toContain('../../../../../Icons/flag-united-kingdom.svg');
+    expect(languageSelect).toContain('languageMenuViewportHeight = 330');
+    expect(languageSelect).toContain('languageMenuContentHeight');
+    expect(languageSelect).toContain('role="listbox"');
+    expect(languageSelect).toContain('role="option"');
+    expect(languageSelect).not.toContain('<select');
+    expect(languageSelect).not.toContain('{selectedLanguage.countryName}');
+    expect(languageSelect).not.toContain('{language.countryName}');
+    for (const iconName of [
+      'flag-united-kingdom.svg',
+      'flag-russia.svg',
+      'flag-germany.svg'
+    ]) {
+      expect(fs.existsSync(path.join(repoRoot, 'Icons', iconName))).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(
+            repoRoot,
+            'frontend-tauri',
+            'src',
+            'renderer',
+            'assets',
+            'images',
+            iconName
+          )
+        )
+      ).toBe(false);
+    }
+    expect(settingsWorkspace).not.toContain('settings.json - language=');
+    expect(settingsWorkspace).not.toContain('Choose the renderer language.');
     expect(settingsWorkspace).toContain('<TransferSettingsPanel');
+    expect(titlebar).toContain('titlebar__mark titlebar__mark--settings');
+    expect(titlebar).toContain("isSettingsWindow ? 'Settings' : 'Fluxora'");
+    expect(settingsWorkspace).not.toContain('Account bridge');
+    expect(settingsWorkspace).not.toContain('Link Nexus Mods with OAuth');
+    expect(settingsWorkspace).not.toContain('Refresh status');
     expect(app).toContain('window.fluxora.settings.setLanguage');
     expect(app).toContain('window.fluxora.nexus.getAuthStatus');
     expect(app).toContain('window.fluxora.nexus.connect');
@@ -96,9 +149,23 @@ describe('settings redesign', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
 
     expect(styles).toContain('grid-template-columns: 240px minmax(0, 1fr);');
-    expect(styles).toContain('.settings-nav__header');
-    expect(styles).toContain('.settings-card--connections');
-    expect(styles).toContain('.settings-card--language');
+    expect(styles).not.toContain('.settings-nav__header');
+    expect(styles).toContain('.titlebar__mark--settings');
+    expect(styles).toContain('.settings-connections-list');
+    expect(styles).toContain('width: 100%;');
+    expect(styles).toContain('.settings-service-row--connection');
+    expect(styles).toContain('min-height: 74px;');
+    expect(styles).toContain('.settings-language-row');
+    expect(styles).toContain('*::-webkit-scrollbar-button:vertical:start:decrement');
+    expect(styles).toContain('*::-webkit-scrollbar-button:vertical:end:increment');
+    expect(styles).toContain('overflow-y: auto;');
+    expect(styles).not.toContain('scrollbar-gutter: stable;');
+    expect(styles).not.toContain('overflow-y: scroll;');
+    expect(styles).toContain('.language-select__option:hover:not([data-selected="true"])');
+    expect(styles).toContain('.language-select__option[data-highlighted="true"]:not([data-selected="true"])');
+    expect(styles).toContain('background: rgba(var(--flx-accent-rgb), 0.15);');
+    expect(styles).toContain('box-shadow: inset 0 0 0 1px rgba(var(--flx-accent-rgb), 0.12);');
+    expect(styles).not.toContain('linear-gradient(180deg, rgba(var(--flx-accent-rgb), 0.18), rgba(var(--flx-accent-rgb), 0.1))');
     expect(styles).toContain('.settings-card--transfer');
     expect(styles).toContain('.transfer-entry-progress');
     expect(styles).toContain('.settings-facts--transfer');

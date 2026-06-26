@@ -1085,18 +1085,18 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
-    "mtime": 1782452914.4597192,
-    "ast_hash": "896265e1255c0af22ad80d2e619475de",
+    "mtime": 1782456345.9745653,
+    "ast_hash": "4b685803f9cd37533b2169caaf7804cd",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferMo2Page.tsx": {
-    "mtime": 1782452914.457719,
-    "ast_hash": "468269752626bfbf4766278ee84fbaa3",
+    "mtime": 1782453801.1923983,
+    "ast_hash": "4a012890243a29dbaed3edef88d88f0e",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferSettingsPanel.tsx": {
-    "mtime": 1782452939.4533236,
-    "ast_hash": "4370ddb741c441a145044b2b3b44bd71",
+    "mtime": 1782453801.1903963,
+    "ast_hash": "3a49ad81769f66a2dffbf50a9980f955",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/build-workspace-state.ts": {
@@ -1160,8 +1160,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/settings-workspace-state.ts": {
-    "mtime": 1782395057.2662501,
-    "ast_hash": "9d9eb8d5975f62d4ca541617358982f1",
+    "mtime": 1782459324.08752,
+    "ast_hash": "30fd645233fd8b94ed9c236d12dba821",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/ui-performance.ts": {
@@ -1190,7 +1190,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/.last-run.json": {
-    "mtime": 1782399326.0525784,
+    "mtime": 1782462171.851755,
     "ast_hash": "f196824657d8858bc7fa44eecbba38b1",
     "semantic_hash": ""
   },
@@ -1245,13 +1245,13 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/settings-workspace-state.test.ts": {
-    "mtime": 1782395335.1243644,
-    "ast_hash": "25cf8e55b4032c69c2b62d8854d6c58f",
+    "mtime": 1782459324.0915234,
+    "ast_hash": "272e38e3d2bac47da0087b6ccfbb4b25",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/transfer-mo2-page.test.ts": {
-    "mtime": 1782452914.46072,
-    "ast_hash": "6e87deeeddd8720800305c83ab2b38ad",
+    "mtime": 1782453967.921128,
+    "ast_hash": "070d28def6308ec9c5238ad232df112a",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/ui-performance.test.ts": {
@@ -1635,8 +1635,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/components/chrome/AppTitlebar.tsx": {
-    "mtime": 1782390312.3106787,
-    "ast_hash": "71935fc0fa4f54119e0b7f3cc95360ed",
+    "mtime": 1782457960.5552096,
+    "ast_hash": "21dcc5f3525c65d8847b1af477e36aff",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/chrome-titlebar.test.tsx": {
@@ -1645,8 +1645,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/library-home.spec.ts": {
-    "mtime": 1782398768.069636,
-    "ast_hash": "1cd021e98cd785d716fcd9b00f285a35",
+    "mtime": 1782462153.4420567,
+    "ast_hash": "c71348a071df38d31846644c4e055e61",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/LibraryHome.tsx": {
@@ -1675,8 +1675,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/settings-redesign.test.ts": {
-    "mtime": 1782398263.7881496,
-    "ast_hash": "14e329a45c89c6f2018f47f6da1fb9c2",
+    "mtime": 1782461987.966479,
+    "ast_hash": "b979bd6baefc851475c35d91873267fc",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/operations/OperationOverlay.tsx": {
@@ -1700,13 +1700,38 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/settings/SettingsWorkspace.tsx": {
-    "mtime": 1782452939.4533236,
-    "ast_hash": "2dfd5af973865d5c4c14a4a2fbb2fd7e",
+    "mtime": 1782459324.0895202,
+    "ast_hash": "d4f3e089beb712ffa468565b63b61204",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/project-library-stats.test.ts": {
     "mtime": 1782398167.5654728,
     "ast_hash": "a585f7ccf67f66ae64bab54d254a439b",
+    "semantic_hash": ""
+  },
+  "frontend-tauri/src/renderer/features/settings/LanguageSelect.tsx": {
+    "mtime": 1782461987.963413,
+    "ast_hash": "a2b03622f10465700960b1c84e670a81",
+    "semantic_hash": ""
+  },
+  "Icons/README.md": {
+    "mtime": 1782460164.8563733,
+    "ast_hash": "e4b6ae9ccca4875bcd343b781d3aa27c",
+    "semantic_hash": ""
+  },
+  "Icons/flag-germany.svg": {
+    "mtime": 1782460144.4908564,
+    "ast_hash": "939afd91bea7074f84f4a328ca095295",
+    "semantic_hash": ""
+  },
+  "Icons/flag-russia.svg": {
+    "mtime": 1782460144.2929125,
+    "ast_hash": "01efcb4dcb5b464a6859688f7e48907f",
+    "semantic_hash": ""
+  },
+  "Icons/flag-united-kingdom.svg": {
+    "mtime": 1782460144.0637105,
+    "ast_hash": "99a9e5571c2f5acd9cb910ce6a3f39a6",
     "semantic_hash": ""
   }
 }

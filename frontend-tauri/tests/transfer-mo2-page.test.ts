@@ -51,7 +51,7 @@ const baseProps: TransferMo2PageProps = {
   sourceDirectory: 'E:\\Foundation Edition',
   destinationRootDirectory: 'C:\\',
   defaultDestinationRoot: 'C:\\',
-  selectedStep: 'review',
+  selectedStep: 'install',
   analysis: {
     sourceDirectory: 'E:\\Foundation Edition',
     destinationRootDirectory: 'C:\\',
@@ -96,51 +96,56 @@ const renderTransferPage = (
   renderToStaticMarkup(React.createElement(TransferMo2Page, { ...baseProps, selectedStep, ...overrides }));
 
 describe('TransferMo2Page', () => {
-  it('shows only the compact transfer summary on the review step', () => {
-    const html = renderTransferPage('review');
+  it('renders the reference-style install step with destination and transfer summary', () => {
+    const html = renderTransferPage('install');
 
+    expect(html).toContain('Папка установки');
+    expect(html).toContain('C:\\Fluxora\\Foundation Edition');
+    expect(html).toContain('Установить на:');
+    expect(html).toContain('Локальный диск (C:)');
+    expect(html).toContain('Локальный диск (D:)');
     expect(html).toContain('Папка сборки');
     expect(html).toContain('Foundation Edition');
     expect(html).toContain('Выбранный диск');
-    expect(html).toContain('Локальный диск (C:)');
     expect(html).toContain('нужно 109 GB, доступно 151 GB');
-    expect(html).not.toContain('Установить на:');
-    expect(html).not.toContain('Локальный диск (D:)');
     expect(html).not.toContain('Режим переноса');
     expect(html).not.toContain('Новая сборка');
     expect(html).not.toContain('Заменить выбранную');
-    expect(html).not.toContain('Готово к настройке');
-    expect(html).not.toContain('Отмена будет отправлена');
-    expect(html).not.toContain('Проверка пройдена');
-    expect(html).not.toContain('Игра');
-    expect(html).not.toContain('Моды');
   });
 
-  it('keeps drive selection scoped to the destination step', () => {
-    const html = renderTransferPage('destination');
+  it('keeps source picking scoped to the name step', () => {
+    const html = renderTransferPage('name');
 
-    expect(html).toContain('Установить на:');
-    expect(html).toContain('Локальный диск (D:)');
-    expect(html).not.toContain('NVMe M.2 - доступно');
-    expect(html).not.toContain('Режим переноса');
-    expect(html).not.toContain('Проверка пройдена');
-  });
-
-  it('keeps only the folder picker on the source step', () => {
-    const html = renderTransferPage('source');
-
+    expect(html).toContain('Название сборки');
+    expect(html).toContain('Название');
     expect(html).toContain('Foundation Edition');
-    expect(html).toContain('Выбрать');
-    expect(html).not.toContain('Режим переноса');
-    expect(html).not.toContain('Новая сборка');
-    expect(html).not.toContain('Заменить выбранную');
+    expect(html).toContain('E:\\Foundation Edition');
     expect(html).not.toContain('Установить на:');
     expect(html).not.toContain('Локальный диск (D:)');
-    expect(html).not.toContain('Проверка пройдена');
+  });
+
+  it('shows detected game facts on the game step without drive rows', () => {
+    const html = renderTransferPage('game');
+
+    expect(html).toContain('Обнаруженная игра');
+    expect(html).toContain('Skyrim Special Edition');
+    expect(html).toContain('skyrim-se');
+    expect(html).toContain('621');
+    expect(html).not.toContain('Установить на:');
+    expect(html).not.toContain('Локальный диск (D:)');
+  });
+
+  it('shows the analyzed executable path on the path step', () => {
+    const html = renderTransferPage('path');
+
+    expect(html).toContain('Путь к игре');
+    expect(html).toContain('Исполняемый файл игры');
+    expect(html).toContain('E:\\Steam\\Skyrim Special Edition');
+    expect(html).not.toContain('Установить на:');
   });
 
   it('keeps the progress view free of duplicate safety notes', () => {
-    const html = renderTransferPage('review', {
+    const html = renderTransferPage('install', {
       progress: {
         operationId: 'op_transfer_import',
         phase: 'copying',
@@ -159,7 +164,7 @@ describe('TransferMo2Page', () => {
   });
 
   it('enables cancel cleanup while a cancellable transfer is running', () => {
-    const html = renderTransferPage('review', {
+    const html = renderTransferPage('install', {
       isRunning: true,
       cancellationSupported: true,
       progress: {
@@ -176,11 +181,11 @@ describe('TransferMo2Page', () => {
     });
 
     expect(html).toContain('Отменить и очистить');
-    expect(html).not.toContain('class="danger-button" type="button" disabled=""');
+    expect(html).not.toContain('class="transfer-footer-button transfer-footer-button--danger" type="button" disabled=""');
   });
 
   it('locks cancel cleanup after the request is accepted', () => {
-    const html = renderTransferPage('review', {
+    const html = renderTransferPage('install', {
       isRunning: true,
       cancellationSupported: true,
       cancelRequested: true,
