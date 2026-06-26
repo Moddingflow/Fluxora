@@ -104,7 +104,7 @@ export function PrimitivePreview() {
           <div className="primitive-preview__stack">
             <ProgressBar label="Installing archive" value={62} valueLabel="62%" />
             <div className="primitive-preview__row">
-              <FacetSpinner size={34} stroke={3} />
+              <FacetSpinner size={34} />
               <EmptyState
                 compact
                 description="Choose a build to inspect mods and plugins."

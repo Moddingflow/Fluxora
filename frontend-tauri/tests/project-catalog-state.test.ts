@@ -8,6 +8,10 @@ import {
   projectCapabilitiesLabel,
   projectDisplayPath
 } from '../src/renderer/project-catalog-state';
+import {
+  mergeProjectIntoCatalog,
+  projectCatalogFallback
+} from '../src/renderer/services/project-catalog-service';
 import type {
   FluxoraGameTemplate,
   FluxoraProject
@@ -90,5 +94,22 @@ describe('project catalog state', () => {
     expect(projectDisplayPath(projects[0])).toBe('C:\\Fluxora Projects\\Skyrim Main');
     expect(projectCapabilitiesLabel(projects[0])).toBe('plugins, load order, VFS');
     expect(projectCapabilitiesLabel(projects[1])).toBe('core managed');
+  });
+
+  it('can preserve a transferred project in the local catalog after a refresh error', () => {
+    const imported: FluxoraProject = {
+      ...projects[0],
+      id: 'C:\\Fluxora\\Builds\\Imported.json',
+      name: 'Imported MO2 Build',
+      installRootDirectory: 'E:\\Fluxora Builds',
+      projectDirectory: 'E:\\Fluxora Builds\\Imported MO2 Build',
+      configPath: 'C:\\Fluxora\\Builds\\Imported.json'
+    };
+
+    const catalog = mergeProjectIntoCatalog(projectCatalogFallback, imported);
+
+    expect(catalog.projects).toEqual([imported]);
+    expect(catalog.buildConfigsDirectory).toBe(projectCatalogFallback.buildConfigsDirectory);
+    expect(catalog.defaultInstallRootDirectory).toBe(projectCatalogFallback.defaultInstallRootDirectory);
   });
 });

@@ -9,6 +9,7 @@ export interface AppTitlebarProps {
   homeActive?: boolean;
   settingsActive?: boolean;
   onHome?: () => void | Promise<void>;
+  onRefresh?: () => void | Promise<void>;
   onOpenSettings?: () => void | Promise<void>;
   onMinimize: () => void | Promise<void>;
   onToggleMaximize: () => void | Promise<void>;
@@ -31,6 +32,7 @@ export function AppTitlebar({
   homeActive = false,
   settingsActive = false,
   onHome,
+  onRefresh,
   onOpenSettings,
   onMinimize,
   onToggleMaximize,
@@ -66,6 +68,15 @@ export function AppTitlebar({
             onClick={() => runTitlebarAction(onHome)}
           >
             <Icon name="layers" size={15} />
+          </button>
+          <button
+            aria-label="Refresh"
+            className="titlebar__shortcut"
+            title="Refresh"
+            type="button"
+            onClick={() => runTitlebarAction(onRefresh)}
+          >
+            <Icon name="refresh" size={15} />
           </button>
           <button
             aria-label="Open settings"

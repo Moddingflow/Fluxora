@@ -102,7 +102,7 @@ export const OperationOverlay = ({
             ) : tone === 'error' ? (
               <AlertTriangle size={30} />
             ) : (
-              <FacetSpinner size={58} stroke={4} />
+              <FacetSpinner size={58} />
             )}
           </span>
           <div className="operation-splash__copy">

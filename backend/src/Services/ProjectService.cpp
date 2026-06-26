@@ -1662,6 +1662,64 @@ namespace fluxora
             };
         }
 
+        bool projectDirectoryExists(const ProjectOpenResult& summary)
+        {
+            return !summary.project.projectDirectory.empty() &&
+                isDirectory(summary.project.projectDirectory);
+        }
+
+        void removeCatalogManifestFile(
+            const std::filesystem::path& configPath,
+            Logger& logger,
+            std::string_view reason) noexcept
+        {
+            try
+            {
+                if (configPath.empty())
+                {
+                    return;
+                }
+
+                std::error_code statusError;
+                if (!std::filesystem::is_regular_file(configPath, statusError) || statusError)
+                {
+                    return;
+                }
+
+                std::error_code removeError;
+                const bool removed = std::filesystem::remove(configPath, removeError);
+                if (removeError)
+                {
+                    logger.writeOperation(
+                        LogLevel::Warning,
+                        "ProjectDiagnostics",
+                        std::string("projectCatalog could not remove stale manifest reason=\"") +
+                            std::string(reason) +
+                            "\", configPath=\"" +
+                            toUtf8(configPath.wstring()) +
+                            "\", error=\"" +
+                            removeError.message() +
+                            "\".");
+                    return;
+                }
+
+                if (removed)
+                {
+                    logger.writeOperation(
+                        LogLevel::Info,
+                        "ProjectDiagnostics",
+                        std::string("projectCatalog removed stale manifest reason=\"") +
+                            std::string(reason) +
+                            "\", configPath=\"" +
+                            toUtf8(configPath.wstring()) +
+                            "\".");
+                }
+            }
+            catch (...)
+            {
+            }
+        }
+
         std::optional<std::filesystem::path> defaultGameExecutablePath(
             const BuildTemplate& resolved,
             const std::filesystem::path& gameDirectory)
@@ -2454,6 +2512,16 @@ namespace fluxora
                         toUtf8(projectDirectory.wstring()) + "\".");
             }
             logger_.write(LogLevel::Info, "Project structure created from template.");
+            projects_.erase(
+                std::remove_if(
+                    projects_.begin(),
+                    projects_.end(),
+                    [&project](const ProjectDescriptor& candidate)
+                    {
+                        return isSamePath(candidate.configPath, project.configPath) ||
+                            isSamePath(candidate.projectDirectory, project.projectDirectory);
+                    }),
+                projects_.end());
             projects_.push_back(project);
             return project;
         }
@@ -2665,6 +2733,11 @@ namespace fluxora
                 cached->second.lastWriteTime == stamp->lastWriteTime &&
                 cached->second.fileSize == stamp->fileSize)
             {
+                if (!projectDirectoryExists(cached->second.summary))
+                {
+                    throw std::invalid_argument("Build project directory does not exist.");
+                }
+
                 return cached->second.summary;
             }
         }
@@ -2712,6 +2785,8 @@ namespace fluxora
             return summaries;
         }
 
+        const bool canPruneCatalogManifests =
+            isSamePath(buildConfigsDirectory, resolveBuildManifestDirectory());
         std::vector<ProjectConfigCatalogEntry> entries;
         for (const auto& entry : std::filesystem::directory_iterator(
                  buildConfigsDirectory,
@@ -2749,14 +2824,45 @@ namespace fluxora
         });
 
         summaries.reserve(entries.size());
+        std::vector<std::wstring> seenProjectDirectories;
         for (const auto& entry : entries)
         {
             try
             {
-                summaries.push_back(readCachedProjectConfigSummary(entry.path));
+                ProjectOpenResult summary = readCachedProjectConfigSummary(entry.path);
+                const std::wstring projectDirectoryKey =
+                    normalizePathForComparison(summary.project.projectDirectory);
+                if (canPruneCatalogManifests &&
+                    std::find(
+                        seenProjectDirectories.begin(),
+                        seenProjectDirectories.end(),
+                        projectDirectoryKey) != seenProjectDirectories.end())
+                {
+                    logger_.writeOperation(
+                        LogLevel::Warning,
+                        "ProjectDiagnostics",
+                        "projectCatalog skipped duplicate manifest projectDirectory=\"" +
+                            toUtf8(summary.project.projectDirectory.wstring()) +
+                            "\", configPath=\"" +
+                            toUtf8(summary.project.configPath.wstring()) +
+                            "\".");
+                    removeCatalogManifestFile(entry.path, logger_, "duplicate project directory");
+                    invalidateProjectSummaryCache(entry.path);
+                    continue;
+                }
+
+                seenProjectDirectories.push_back(projectDirectoryKey);
+                summaries.push_back(std::move(summary));
             }
-            catch (const std::exception&)
+            catch (const std::exception& exception)
             {
+                if (canPruneCatalogManifests &&
+                    std::string(exception.what()).find("Build project directory does not exist.") !=
+                        std::string::npos)
+                {
+                    removeCatalogManifestFile(entry.path, logger_, "missing project directory");
+                    invalidateProjectSummaryCache(entry.path);
+                }
                 // Ignore stale or unrelated JSON files in the build catalog.
             }
         }
@@ -2783,6 +2889,16 @@ namespace fluxora
                 "\", projectDirectory=\"" + toUtf8(project.projectDirectory.wstring()) + "\".");
         logOptionalProjectFingerprintDiagnostics(logger_, "openProject", project.fingerprint);
         logger_.write(LogLevel::Info, "Project opened from build config.");
+        projects_.erase(
+            std::remove_if(
+                projects_.begin(),
+                projects_.end(),
+                [&project](const ProjectDescriptor& candidate)
+                {
+                    return isSamePath(candidate.configPath, project.configPath) ||
+                        isSamePath(candidate.projectDirectory, project.projectDirectory);
+                }),
+            projects_.end());
         projects_.push_back(project);
 
         return result;

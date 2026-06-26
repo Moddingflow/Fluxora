@@ -35,6 +35,7 @@ add_executable(FluxoraCoreTests
     ModOrganizerPluginGroupServiceTests.cpp
     ModOrganizerProfileOrderServiceTests.cpp
     NexusModsAuthServiceTests.cpp
+    OperationCancellationTests.cpp
     PathSafetyServiceTests.cpp
     PluginServiceTests.cpp
     ProjectServiceTests.cpp
@@ -121,6 +122,35 @@ endif()
 
 include(GoogleTest)
 gtest_discover_tests(FluxoraCoreTests)
+
+add_executable(FluxoraCoreApiTests
+    FluxoraCoreApiTests.cpp
+    TestFilesystem.hpp
+)
+
+target_include_directories(FluxoraCoreApiTests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+
+target_compile_features(FluxoraCoreApiTests PRIVATE cxx_std_20)
+
+if(MSVC)
+    target_compile_options(FluxoraCoreApiTests PRIVATE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(FluxoraCoreApiTests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+target_link_libraries(FluxoraCoreApiTests PRIVATE GTest::gtest_main FluxoraCore)
+
+add_custom_command(
+    TARGET FluxoraCoreApiTests
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:FluxoraCore>
+        $<TARGET_FILE_DIR:FluxoraCoreApiTests>)
+
+gtest_discover_tests(FluxoraCoreApiTests DISCOVERY_MODE PRE_TEST)
 
 if(WIN32)
     add_executable(FluxoraInstallerCoreTests

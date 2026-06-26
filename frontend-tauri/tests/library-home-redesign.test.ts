@@ -106,6 +106,15 @@ describe('library home redesign', () => {
     expect(styles).not.toContain('.library-build-open {');
   });
 
+  it('prevents horizontal scrolling in the library sidebar list', () => {
+    const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+
+    expect(styles).toMatch(/\.library-list\s*\{[^}]*overflow-x: hidden;[^}]*overflow-y: auto;[^}]*\}/);
+    expect(styles).toMatch(
+      /\.library-list \.flx-empty-state__description\s*\{[^}]*overflow-wrap: anywhere;[^}]*\}/
+    );
+  });
+
   it('keeps project mutations on the typed facade with renderer-created operation ids', () => {
     const service = readText(
       'frontend-tauri',

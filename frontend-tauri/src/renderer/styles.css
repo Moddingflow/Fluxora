@@ -111,20 +111,17 @@ input,
 .archive-tree-row,
 .phase-tile,
 .stepper button,
-  .settings-card,
   .settings-service-row,
   .language-select__button,
   .language-select__option,
   .settings-nav button,
   .settings-switch,
-.transfer-stepper button,
-.transfer-picker-card,
-.transfer-drive-row,
-.transfer-entry-card,
-.transfer-entry-progress,
-.transfer-page-panel,
-.segmented-grid button,
-.segmented-control button {
+  .transfer-stepper button,
+  .transfer-picker-card,
+  .transfer-drive-row,
+  .transfer-page-panel,
+  .segmented-grid button,
+  .segmented-control button {
   transition:
     background-color var(--motion-fast),
     border-color var(--motion-fast),
@@ -382,7 +379,8 @@ button:disabled {
 .library-list {
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 0 12px 12px;
 }
 
@@ -1124,8 +1122,10 @@ input::placeholder {
 }
 
 .library-list .flx-empty-state__description {
+  min-width: 0;
   max-width: 220px;
   font-size: 10.5px;
+  overflow-wrap: anywhere;
 }
 
 .library-home-main > .flx-empty-state {
@@ -2779,10 +2779,8 @@ input::placeholder {
   position: relative;
   width: 96px;
   height: 96px;
-  border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--accent);
-  background: rgba(var(--flx-panel-rgb), 0.34);
 }
 
 .operation-overlay[data-state="complete"] .operation-splash__spinner {
@@ -4754,7 +4752,8 @@ input::placeholder {
   justify-content: stretch;
 }
 
-.settings-panel--connections {
+.settings-panel--connections,
+.settings-panel--transfer {
   grid-template-columns: minmax(0, 1fr);
   justify-content: stretch;
 }
@@ -4765,65 +4764,6 @@ input::placeholder {
   width: 100%;
   justify-self: stretch;
   min-width: 0;
-}
-
-.settings-card {
-  display: grid;
-  align-content: start;
-  gap: 16px;
-  width: min(100%, 560px);
-  min-width: 0;
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xl);
-  background: var(--surface);
-  box-shadow: var(--shadow-panel);
-}
-
-.settings-card--connections,
-.settings-card--transfer {
-  width: min(100%, 520px);
-}
-
-.settings-card__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  min-width: 0;
-}
-
-.settings-card__header > div {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.settings-card__header h3 {
-  margin: 0;
-  color: var(--text);
-  font-size: 15px;
-  line-height: 1.25;
-}
-
-.settings-card__header p,
-.settings-card__copy {
-  max-width: 58ch;
-  margin: 0;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.settings-card__meta {
-  margin: -2px 0 0;
-  color: var(--text-subtle);
-  font-size: 10px;
-  line-height: 1.4;
-}
-
-.settings-card__meta--mono {
-  font-family: var(--font-mono);
 }
 
 .settings-service-row {
@@ -4843,6 +4783,10 @@ input::placeholder {
   gap: 16px;
   min-height: 74px;
   padding: 16px;
+}
+
+.settings-service-row--transfer .settings-service-copy {
+  gap: 0;
 }
 
 .settings-language-row {
@@ -4961,6 +4905,10 @@ input::placeholder {
   flex: 0 0 auto;
 }
 
+.settings-transfer-button {
+  min-width: 104px;
+}
+
 .settings-switch {
   position: relative;
   width: 46px;
@@ -5014,19 +4962,6 @@ input::placeholder {
 .settings-switch:focus-visible:not(:disabled) {
   border-color: rgba(var(--flx-accent-rgb), 0.62);
   outline: none;
-}
-
-.settings-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-.settings-actions--footer {
-  justify-content: flex-start;
 }
 
 .settings-select-card {
@@ -5320,10 +5255,6 @@ input::placeholder {
   grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
-.settings-facts--transfer {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 .platform-matrix {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -5491,56 +5422,6 @@ input::placeholder {
 .transfer-wizard {
   align-content: start;
   gap: 12px;
-}
-
-.transfer-entry-panel {
-  align-content: start;
-}
-
-.transfer-entry-card {
-  display: grid;
-  gap: 14px;
-  min-width: 0;
-}
-
-.transfer-entry-button {
-  min-width: 176px;
-  justify-content: center;
-}
-
-.transfer-entry-progress {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-lg);
-  background: var(--surface-soft);
-}
-
-.transfer-entry-progress > div:first-child {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-}
-
-.transfer-entry-progress span,
-.transfer-entry-progress small {
-  min-width: 0;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.transfer-entry-progress strong {
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: 12px;
 }
 
 .transfer-hero,
@@ -5921,7 +5802,8 @@ input::placeholder {
 }
 
 .transfer-review-facts {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+  width: min(100%, 66ch);
 }
 
 .transfer-drive-section {
@@ -6095,37 +5977,8 @@ input::placeholder {
   width: 100%;
 }
 
-.transfer-operation-orbit {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 86px;
-  height: 86px;
+.transfer-operation-spinner {
   color: var(--flx-accent-bright);
-}
-
-.transfer-operation-orbit span {
-  position: absolute;
-  inset: 0;
-  border: 2px solid rgba(var(--flx-accent-rgb), 0.18);
-  border-top-color: var(--accent);
-  border-radius: 999px;
-  background: transparent;
-  animation: transferOrbit 1.25s linear infinite;
-}
-
-.transfer-operation-orbit::after {
-  content: "";
-  position: absolute;
-  inset: 7px;
-  border: 1px solid rgba(var(--flx-accent-rgb), 0.24);
-  border-radius: 999px;
-  background: rgba(var(--flx-bg-rgb), 0.82);
-}
-
-.transfer-operation-orbit svg {
-  position: relative;
-  z-index: 1;
 }
 
 .transfer-operation-copy {
@@ -6153,6 +6006,11 @@ input::placeholder {
   overflow-wrap: anywhere;
 }
 
+.transfer-operation-copy .transfer-operation-current-step {
+  color: var(--text-strong);
+  font-weight: 800;
+}
+
 .transfer-operation-meter {
   display: grid;
   gap: 10px;
@@ -6166,72 +6024,9 @@ input::placeholder {
   text-align: center;
 }
 
-.transfer-operation-steps {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  width: 100%;
-}
-
-.transfer-operation-steps div {
-  display: grid;
-  align-content: start;
-  gap: 6px;
-  min-width: 0;
-  min-height: 96px;
-  padding: 10px;
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-  background: rgba(var(--flx-panel-rgb), 0.72);
-}
-
-.transfer-operation-steps div > span {
-  width: 22px;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--line);
-}
-
-.transfer-operation-steps div[data-state="active"] {
-  border-color: rgba(var(--flx-accent-rgb), 0.45);
-  background: rgba(var(--flx-accent-rgb), 0.08);
-}
-
-.transfer-operation-steps div[data-state="active"] > span {
-  background: var(--flx-fill-accent);
-  animation: transferStepPulse 900ms cubic-bezier(0.32, 0.72, 0, 1) infinite alternate;
-}
-
-.transfer-operation-steps div[data-state="done"] > span {
-  background: var(--flx-success);
-}
-
-.transfer-operation-steps strong {
-  min-width: 0;
-  color: var(--text);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.transfer-operation-steps small {
-  min-width: 0;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
 @keyframes transferProgressGloss {
   to {
     transform: translateX(100%);
-  }
-}
-
-@keyframes transferOrbit {
-  to {
-    transform: rotate(360deg);
   }
 }
 
@@ -6244,18 +6039,6 @@ input::placeholder {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes transferStepPulse {
-  from {
-    opacity: 0.55;
-    transform: scaleX(0.72);
-  }
-
-  to {
-    opacity: 1;
-    transform: scaleX(1);
   }
 }
 
@@ -6443,52 +6226,6 @@ input::placeholder {
 .transfer-rail-spacer {
   min-height: 12px;
   flex: 1 1 auto;
-}
-
-.transfer-rail-game {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 16px;
-  border-top: 1px solid var(--border-default);
-}
-
-.transfer-rail-game img {
-  display: block;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--border-default);
-  border-radius: 7px;
-  object-fit: cover;
-}
-
-.transfer-rail-game span {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.transfer-rail-game small,
-.transfer-rail-game strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.transfer-rail-game small {
-  color: var(--text-subtle);
-  font-size: 9.5px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.transfer-rail-game strong {
-  color: var(--text-strong);
-  font-size: 11.5px;
-  font-weight: 800;
 }
 
 .transfer-wizard-main {
@@ -6790,7 +6527,8 @@ input::placeholder {
 }
 
 .transfer-review-facts {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+  width: min(100%, 66ch);
 }
 
 .transfer-wizard-footer {
@@ -6801,38 +6539,6 @@ input::placeholder {
   padding: 0 36px 0 40px;
   border-top: 1px solid var(--border-default);
   background: var(--flx-panel-soft);
-}
-
-.transfer-footer-progress {
-  color: var(--text-muted);
-  font-size: 10.5px;
-  font-weight: 800;
-}
-
-.transfer-footer-dots {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-}
-
-.transfer-footer-dots span {
-  width: 7px;
-  height: 5px;
-  border-radius: var(--radius-pill);
-  background: var(--border-default);
-  transition:
-    width var(--motion-medium),
-    background-color var(--motion-fast);
-}
-
-.transfer-footer-dots span[data-complete="true"] {
-  background: var(--border-accent);
-}
-
-.transfer-footer-dots span[data-active="true"] {
-  width: 20px;
-  background: var(--accent);
 }
 
 .transfer-footer-spacer {
@@ -7066,7 +6772,6 @@ input::placeholder {
   }
 
   .transfer-hero,
-  .transfer-entry-card,
   .transfer-page-hero,
   .transfer-picker-card {
     align-items: stretch;
@@ -7093,8 +6798,7 @@ input::placeholder {
     text-align: left;
   }
 
-  .transfer-facts,
-  .transfer-operation-steps {
+  .transfer-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

@@ -69,6 +69,7 @@ import {
   createProjectFromDraft,
   deleteProjectConfig,
   loadProjectCatalog,
+  mergeProjectIntoCatalog,
   openProjectConfig,
   previewProjectDirectory,
   projectCatalogFallback,
@@ -168,7 +169,12 @@ import {
 } from './install-workspace-state';
 import { defaultModNameFromPath, shortPath } from './services/path-display-service';
 import { createRendererOperationId, errorMessage } from './services/renderer-operation-service';
-import { createMo2TransferImportRequest } from './mo2-transfer-request';
+import { installRendererRefreshShortcut } from './services/renderer-refresh-shortcut-service';
+import {
+  createMo2TransferImportRequest,
+  normalizeMo2TransferAnalysis,
+  normalizeMo2TransferDestinationRoot
+} from './mo2-transfer-request';
 import { createVirtualWindow } from './ui-performance';
 import type {
   FluxoraAppInfo,
@@ -209,6 +215,12 @@ type RouteId =
 
 type CatalogState = LibraryCatalogState;
 
+interface LoadCatalogOptions {
+  mergeProject?: FluxoraProject;
+  keepMergedProjectOnError?: boolean;
+  preferredProjectId?: string | null;
+}
+
 interface ProjectMenuPosition {
   left: number;
   top: number;
@@ -225,6 +237,12 @@ interface LaunchSplashState {
   buildName: string;
   detail: string;
   operationId: string;
+}
+
+interface OpeningBuildSplashState {
+  buildName: string;
+  operationId: string;
+  progress: number;
 }
 
 type RightPaneId = 'plugins' | 'data' | 'downloads' | 'build';
@@ -247,6 +265,19 @@ const rightPaneTabs: Array<{ id: RightPaneId; label: string; icon: typeof Layers
   { id: 'downloads', label: 'Загрузки', icon: Download },
   { id: 'build', label: 'Сборка', icon: Box }
 ];
+
+const openingBuildMessages = [
+  'Загружаем вашу сборку',
+  'Смотрим плагины',
+  'Проверяем профиль',
+  'Готовим рабочее пространство',
+  'Еще чуть-чуть'
+] as const;
+
+const projectMatchesSelection = (project: FluxoraProject, selection: string): boolean =>
+  project.id === selection ||
+  project.configPath === selection ||
+  project.projectDirectory === selection;
 
 const modRowHeight = 48;
 const modVisibleRows = 28;
@@ -305,6 +336,10 @@ export const App = () => {
   const [templateSearchText, setTemplateSearchText] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const [openingBuildSplash, setOpeningBuildSplash] =
+    useState<OpeningBuildSplashState | null>(null);
+  const openingBuildCancelRequestsRef = useRef<Set<string>>(new Set());
+  const openingBuildOperationIdRef = useRef<string | null>(null);
   const [languageBusy, setLanguageBusy] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<FluxoraThemeMode>('dark');
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('connections');
@@ -313,7 +348,7 @@ export const App = () => {
   const [nexusBusy, setNexusBusy] = useState(false);
   const [transferSourceDirectory, setTransferSourceDirectory] = useState('');
   const [transferDestinationRootDirectory, setTransferDestinationRootDirectory] = useState('');
-  const [transferStep, setTransferStep] = useState<TransferStepId>('name');
+  const [transferStep, setTransferStep] = useState<TransferStepId>('source');
   const [transferDestinationDrives, setTransferDestinationDrives] = useState<FluxoraTransferDriveOption[]>([]);
   const [transferDriveState, setTransferDriveState] = useState<TransferDriveListState>('idle');
   const [transferAnalysis, setTransferAnalysis] =
@@ -322,6 +357,10 @@ export const App = () => {
     useState<FluxoraModOrganizerImportProgress | null>(null);
   const [transferRunningOperationId, setTransferRunningOperationId] = useState<string | null>(null);
   const transferRunningOperationIdRef = useRef<string | null>(null);
+  const transferAnalysisRequestRef = useRef<{
+    key: string;
+    promise: Promise<FluxoraModOrganizerImportAnalysis | null>;
+  } | null>(null);
   const [transferCancelRequested, setTransferCancelRequested] = useState(false);
   const [transferResult, setTransferResult] = useState<FluxoraProject | null>(null);
   const [transferError, setTransferError] = useState<string | null>(null);
@@ -397,6 +436,8 @@ export const App = () => {
     useState<FluxoraFluxPackInstallResult | null>(null);
   const [operationOverlay, setOperationOverlay] = useState<OperationOverlayState | null>(null);
   const createCancelRequestsRef = useRef<Set<string>>(new Set());
+  const refreshInFlightRef = useRef(false);
+  const refreshCurrentViewRef = useRef<() => void | Promise<void>>(() => undefined);
   const [isTransferPageOpen, setIsTransferPageOpen] = useState(false);
 
   const selectedProject = useMemo(
@@ -656,27 +697,46 @@ export const App = () => {
     [activeRoute]
   );
 
-  const loadCatalog = async () => {
+  const loadCatalog = async (options: LoadCatalogOptions = {}) => {
     setCatalogState('loading');
     setMessage(null);
 
     try {
       const { catalog: nextCatalog, templates: nextTemplates } = await loadProjectCatalog();
+      const mergedCatalog = options.mergeProject
+        ? mergeProjectIntoCatalog(nextCatalog, options.mergeProject)
+        : nextCatalog;
+      const nextProjects = mergedCatalog.projects;
 
-      setCatalog(nextCatalog);
-      setProjects(nextCatalog.projects);
+      setCatalog(mergedCatalog);
+      setProjects(nextProjects);
       setTemplates(nextTemplates);
       setCatalogState('ready');
       setSelectedProjectId((current) => {
-        if (current && nextCatalog.projects.some((project) => project.id === current)) {
-          return current;
+        const preferred = options.preferredProjectId ?? current;
+        if (
+          preferred &&
+          nextProjects.some((project) => projectMatchesSelection(project, preferred))
+        ) {
+          return preferred;
         }
 
         return null;
       });
     } catch (error) {
+      const nextMessage = errorMessage(error);
+      const mergeProject = options.mergeProject;
+      if (mergeProject) {
+        setCatalog((current) => mergeProjectIntoCatalog(current, mergeProject));
+        setProjects((current) => upsertProject(current, mergeProject));
+        setSelectedProjectId(options.preferredProjectId ?? mergeProject.id);
+        if (options.keepMergedProjectOnError) {
+          setCatalogState('ready');
+          return;
+        }
+      }
       setCatalogState('error');
-      setMessage(errorMessage(error));
+      setMessage(nextMessage);
     }
   };
 
@@ -2350,6 +2410,12 @@ export const App = () => {
   }, [activeRoute, selectedModItem?.orderId, selectedModItem?.id]);
 
   const changeRoute = (route: RouteId) => {
+    if (route === 'home' && openingBuildOperationIdRef.current) {
+      openingBuildCancelRequestsRef.current.add(openingBuildOperationIdRef.current);
+      openingBuildOperationIdRef.current = null;
+      setOpeningBuildSplash(null);
+    }
+
     if (isTransferRunning && route !== 'home') {
       setIsTransferPageOpen(true);
       setActiveRoute('home');
@@ -2444,6 +2510,12 @@ export const App = () => {
             errorText: null
           }
         : current
+      );
+  };
+
+  const closeOperationOverlay = (operationId: string) => {
+    setOperationOverlay((current) =>
+      current && current.operationId === operationId ? null : current
     );
   };
 
@@ -2465,19 +2537,48 @@ export const App = () => {
   };
 
   const openProjectByConfig = async (configPath: string) => {
-    setBusyLabel('Opening build');
+    const operationId = createRendererOperationId('projects_open');
+    const pendingProject = projects.find((project) => project.configPath === configPath);
+
+    if (openingBuildOperationIdRef.current) {
+      openingBuildCancelRequestsRef.current.add(openingBuildOperationIdRef.current);
+    }
+    openingBuildOperationIdRef.current = operationId;
+
+    setOpeningBuildSplash({
+      operationId,
+      buildName: pendingProject?.name ?? 'Сборка',
+      progress: 4
+    });
     setMessage(null);
 
     try {
-      const { project: opened } = await openProjectConfig(configPath);
+      const { project: opened } = await openProjectConfig(configPath, operationId);
+      if (openingBuildCancelRequestsRef.current.has(operationId)) {
+        return;
+      }
+
+      setOpeningBuildSplash((current) =>
+        current?.operationId === operationId
+          ? { ...current, buildName: opened.name, progress: 100 }
+          : current
+      );
+
       setProjects((current) => upsertProject(current, opened));
       setSelectedProjectId(opened.id);
       changeRoute('build');
       setMessage(`Opened ${opened.name}`);
     } catch (error) {
+      if (openingBuildCancelRequestsRef.current.has(operationId)) {
+        return;
+      }
       setMessage(errorMessage(error));
     } finally {
-      setBusyLabel(null);
+      openingBuildCancelRequestsRef.current.delete(operationId);
+      if (openingBuildOperationIdRef.current === operationId) {
+        openingBuildOperationIdRef.current = null;
+      }
+      setOpeningBuildSplash((current) => (current?.operationId === operationId ? null : current));
     }
   };
 
@@ -2498,6 +2599,44 @@ export const App = () => {
 
     await openProjectByConfig(selectedProject.configPath);
   };
+
+  const cancelOpeningBuild = () => {
+    const operationId = openingBuildSplash?.operationId ?? openingBuildOperationIdRef.current;
+    if (!operationId) {
+      return;
+    }
+
+    openingBuildCancelRequestsRef.current.add(operationId);
+    if (openingBuildOperationIdRef.current === operationId) {
+      openingBuildOperationIdRef.current = null;
+    }
+    setOpeningBuildSplash(null);
+    setMessage('Открытие сборки отменено.');
+  };
+
+  useEffect(() => {
+    if (!openingBuildSplash) {
+      return undefined;
+    }
+
+    const operationId = openingBuildSplash.operationId;
+    const timer = window.setInterval(() => {
+      setOpeningBuildSplash((current) => {
+        if (!current || current.operationId !== operationId || current.progress >= 94) {
+          return current;
+        }
+
+        const remaining = 94 - current.progress;
+        const step = Math.max(0.8, Math.min(5.5, remaining * 0.12));
+        return {
+          ...current,
+          progress: Math.min(94, current.progress + step)
+        };
+      });
+    }, 420);
+
+    return () => window.clearInterval(timer);
+  }, [openingBuildSplash?.operationId]);
 
   const renameProject = async (project: FluxoraProject) => {
     const newName = window.prompt('Build name', project.name)?.trim();
@@ -2545,8 +2684,7 @@ export const App = () => {
         setSelectedProjectId(null);
         changeRoute('home');
       }
-      setMessage(`Deleted ${project.name}`);
-      finishOperationOverlay(operationId, `Deleted ${project.name}`);
+      closeOperationOverlay(operationId);
     } catch (error) {
       const nextMessage = errorMessage(error);
       setMessage(nextMessage);
@@ -3001,8 +3139,7 @@ export const App = () => {
       setSelectedProjectId(created.id);
       setIsCreateOpen(false);
       changeRoute('build');
-      setMessage(`Created ${created.name}`);
-      finishOperationOverlay(operationId, `Created ${created.name}`);
+      closeOperationOverlay(operationId);
     } catch (error) {
       if (createCancelRequestsRef.current.has(operationId)) {
         createCancelRequestsRef.current.delete(operationId);
@@ -3099,6 +3236,7 @@ export const App = () => {
   };
 
   const resetTransferPlanningState = () => {
+    transferAnalysisRequestRef.current = null;
     setTransferAnalysis(null);
     setTransferError(null);
     setTransferResult(null);
@@ -3141,7 +3279,7 @@ export const App = () => {
     setIsTransferPageOpen(true);
     setActiveRoute('home');
     resetTransferPlanningState();
-    setTransferStep(transferSourceDirectory.trim() ? 'game' : 'name');
+    setTransferStep(transferSourceDirectory.trim() ? 'destination' : 'source');
     void loadTransferDestinationDrives();
   };
 
@@ -3158,6 +3296,129 @@ export const App = () => {
 
     openMo2TransferSetup();
   };
+
+  const refreshBuildWorkspace = async (project: FluxoraProject) => {
+    const refreshTasks: Array<Promise<void>> = [loadModsWorkspace(project)];
+
+    if (
+      activeRightPane === 'plugins' &&
+      pluginCapabilities.bridgeAvailable &&
+      pluginCapabilities.projectSupported
+    ) {
+      refreshTasks.push(loadPluginsWorkspace(project));
+    }
+
+    if (activeRightPane === 'downloads' && downloadCapabilities.bridgeAvailable) {
+      refreshTasks.push(loadDownloadsWorkspace(project));
+    }
+
+    if (activeRightPane === 'build') {
+      if (profilesCapabilities.bridgeAvailable) {
+        refreshTasks.push(loadProfilesWorkspace(project));
+      }
+
+      if (executableCapabilities.bridgeAvailable) {
+        refreshTasks.push(loadExecutablesWorkspace(project));
+      }
+    }
+
+    await Promise.all(refreshTasks);
+  };
+
+  const refreshCurrentView = async () => {
+    if (refreshInFlightRef.current) {
+      return;
+    }
+
+    refreshInFlightRef.current = true;
+    setProjectMenuId(null);
+    setProjectMenuPosition(null);
+    setMessage(null);
+
+    try {
+      if (!bridgeStatus?.ready) {
+        if (!bridgeStatus) {
+          return;
+        }
+
+        const operationId = createRendererOperationId('renderer_refresh_status');
+        const nextBridgeStatus = await window.fluxora.bridge.getStatus({ operationId });
+        const nextThemeMode = normalizeThemeMode(nextBridgeStatus.theme);
+        setBridgeStatus({
+          ...nextBridgeStatus,
+          theme: nextThemeMode,
+          operationId
+        });
+        setThemeMode(nextThemeMode);
+
+        if (nextBridgeStatus.ready) {
+          await loadCatalog({ preferredProjectId: selectedProjectId });
+          return;
+        }
+
+        setCatalogState('blocked');
+        return;
+      }
+
+      if (isTransferPageOpen) {
+        if (!isTransferRunning) {
+          await loadTransferDestinationDrives();
+        }
+        return;
+      }
+
+      if (activeRoute === 'home') {
+        await loadCatalog({ preferredProjectId: selectedProjectId });
+        return;
+      }
+
+      if (activeRoute === 'build' || activeRoute === 'workspace') {
+        if (selectedProject) {
+          await refreshBuildWorkspace(selectedProject);
+        }
+        return;
+      }
+
+      if (activeRoute === 'mods') {
+        await loadModsWorkspace(selectedProject);
+        return;
+      }
+
+      if (activeRoute === 'plugins') {
+        await loadPluginsWorkspace(selectedProject);
+        return;
+      }
+
+      if (activeRoute === 'downloads') {
+        await loadDownloadsWorkspace(selectedProject);
+        return;
+      }
+
+      if (activeRoute === 'profiles') {
+        await loadProfilesWorkspace(selectedProject);
+        return;
+      }
+
+      if (activeRoute === 'executables') {
+        await loadExecutablesWorkspace(selectedProject);
+        return;
+      }
+
+      if (activeRoute === 'settings') {
+        await loadSettingsWorkspace();
+      }
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      refreshInFlightRef.current = false;
+    }
+  };
+
+  refreshCurrentViewRef.current = refreshCurrentView;
+
+  useEffect(() => {
+    return installRendererRefreshShortcut(document, () => refreshCurrentViewRef.current());
+  }, []);
 
   useEffect(() => {
     if (isSettingsWindow) {
@@ -3192,10 +3453,7 @@ export const App = () => {
         setTransferDestinationRootDirectory(destinationRootDirectory);
       }
       resetTransferPlanningState();
-      setTransferStep(destinationRootDirectory ? 'game' : 'install');
-      if (destinationRootDirectory) {
-        await analyzeMo2Transfer(path, destinationRootDirectory, 'game');
-      }
+      setTransferStep('destination');
     }
   };
 
@@ -3203,16 +3461,13 @@ export const App = () => {
     const sourceDirectory = transferSourceDirectory.trim();
     setTransferDestinationRootDirectory(drive.rootPath);
     resetTransferPlanningState();
-    setTransferStep(sourceDirectory ? 'game' : 'name');
-    if (sourceDirectory) {
-      await analyzeMo2Transfer(sourceDirectory, drive.rootPath, 'install');
-    }
+    setTransferStep(sourceDirectory ? 'destination' : 'source');
   };
 
   const analyzeMo2Transfer = async (
     rawSourceDirectory = transferSourceDirectory,
     rawDestinationRootDirectory = transferDestinationRootDirectory,
-    nextStep: TransferStepId = 'install'
+    nextStep: TransferStepId = 'review'
   ) => {
     const sourceDirectory = rawSourceDirectory.trim();
     const destinationRootDirectory = rawDestinationRootDirectory.trim();
@@ -3221,32 +3476,87 @@ export const App = () => {
       return null;
     }
 
+    const requestKey = `${sourceDirectory}\n${destinationRootDirectory}`;
+    const existingRequest = transferAnalysisRequestRef.current;
+    if (existingRequest?.key === requestKey) {
+      return existingRequest.promise;
+    }
+
     const operationId = createRendererOperationId('transfer_analyze_mo2');
     setSettingsBusyLabel('Проверяем перенос');
     setTransferError(null);
     setTransferResult(null);
     setTransferStep(nextStep);
 
-    try {
-      const analysis = await window.fluxora.transfer.analyzeMo2(
-        sourceDirectory,
-        destinationRootDirectory,
-        undefined,
-        { operationId }
-      );
-      setTransferAnalysis(analysis);
-      setMessage(analysis.statusMessage || 'Проверка переноса завершена.');
-      return analysis;
-    } catch (error) {
-      const nextMessage = errorMessage(error);
-      setTransferAnalysis(null);
-      setTransferError(nextMessage);
-      setMessage(nextMessage);
-      return null;
-    } finally {
-      setSettingsBusyLabel(null);
-    }
+    const request = (async () => {
+      try {
+        const analysis = await window.fluxora.transfer.analyzeMo2(
+          sourceDirectory,
+          destinationRootDirectory,
+          undefined,
+          { operationId }
+        );
+        const normalizedAnalysis = normalizeMo2TransferAnalysis(
+          analysis,
+          destinationRootDirectory
+        );
+        setTransferAnalysis(normalizedAnalysis);
+        setMessage(normalizedAnalysis.statusMessage || 'Проверка переноса завершена.');
+        return normalizedAnalysis;
+      } catch (error) {
+        const nextMessage = errorMessage(error);
+        setTransferAnalysis(null);
+        setTransferError(nextMessage);
+        setMessage(nextMessage);
+        return null;
+      } finally {
+        if (transferAnalysisRequestRef.current?.key === requestKey) {
+          transferAnalysisRequestRef.current = null;
+        }
+        setSettingsBusyLabel(null);
+      }
+    })();
+
+    transferAnalysisRequestRef.current = { key: requestKey, promise: request };
+    return request;
   };
+
+  useEffect(() => {
+    const sourceDirectory = transferSourceDirectory.trim();
+    const destinationRootDirectory = transferDestinationRootDirectory.trim();
+    const shouldAutoAnalyze =
+      isTransferPageOpen &&
+      !isSettingsWindow &&
+      transferStep === 'review' &&
+      !isTransferRunning &&
+      !settingsBusyLabel &&
+      bridgeStatus?.ready &&
+      settingsCapabilities.transferAvailable &&
+      sourceDirectory &&
+      destinationRootDirectory &&
+      !transferAnalysis &&
+      !transferError &&
+      !transferProgress &&
+      !transferResult;
+
+    if (shouldAutoAnalyze) {
+      void analyzeMo2Transfer(sourceDirectory, destinationRootDirectory, 'review');
+    }
+  }, [
+    bridgeStatus?.ready,
+    isSettingsWindow,
+    isTransferPageOpen,
+    isTransferRunning,
+    settingsBusyLabel,
+    settingsCapabilities.transferAvailable,
+    transferAnalysis,
+    transferDestinationRootDirectory,
+    transferError,
+    transferProgress,
+    transferResult,
+    transferSourceDirectory,
+    transferStep
+  ]);
 
   const startMo2TransferFromHandoff = async (handoff: FluxoraMo2TransferHandoff) => {
     if (transferRunningOperationId) {
@@ -3254,7 +3564,13 @@ export const App = () => {
       return;
     }
 
-    const handoffAnalysis = handoff.request.replaceExisting ? null : handoff.analysis ?? null;
+    const handoffAnalysis =
+      handoff.request.replaceExisting || !handoff.analysis
+        ? null
+        : normalizeMo2TransferAnalysis(
+            handoff.analysis,
+            handoff.request.destinationRootDirectory
+          );
     setTransferSourceDirectory(handoff.request.sourceDirectory);
     setTransferDestinationRootDirectory(handoff.request.destinationRootDirectory);
     setTransferAnalysis(handoffAnalysis);
@@ -3262,7 +3578,7 @@ export const App = () => {
     setTransferResult(null);
     setTransferProgress(null);
     setTransferCancelRequested(false);
-    setTransferStep('install');
+    setTransferStep('review');
     setIsCreateOpen(false);
     setIsTransferPageOpen(true);
     setActiveRoute('home');
@@ -3292,21 +3608,30 @@ export const App = () => {
       return;
     }
 
-    if (!analysis.canImport || !analysis.hasEnoughSpace) {
-      setTransferError(analysis.warningMessage || analysis.statusMessage || 'Перенос пока недоступен.');
+    const normalizedAnalysis = normalizeMo2TransferAnalysis(analysis, destinationRootDirectory);
+
+    if (!normalizedAnalysis.canImport || !normalizedAnalysis.hasEnoughSpace) {
+      setTransferError(
+        normalizedAnalysis.warningMessage ||
+          normalizedAnalysis.statusMessage ||
+          'Перенос пока недоступен.'
+      );
       return;
     }
 
+    const importDestinationRootDirectory =
+      normalizedAnalysis.destinationRootDirectory ||
+      normalizeMo2TransferDestinationRoot(destinationRootDirectory);
     const importRequest = createMo2TransferImportRequest(
       sourceDirectory,
-      destinationRootDirectory
+      importDestinationRootDirectory
     );
 
     if (isSettingsWindow && !options.skipMainHandoff) {
       try {
         await window.fluxora.transfer.startMo2InMain({
           request: importRequest,
-          analysis
+          analysis: normalizedAnalysis
         });
         await window.fluxora.windowControls.close();
       } catch (error) {
@@ -3322,25 +3647,25 @@ export const App = () => {
     setIsTransferPageOpen(true);
     setIsCreateOpen(false);
     setTransferSourceDirectory(sourceDirectory);
-    setTransferDestinationRootDirectory(destinationRootDirectory);
-    setTransferAnalysis(analysis);
+    setTransferDestinationRootDirectory(importDestinationRootDirectory);
+    setTransferAnalysis(normalizedAnalysis);
     setTransferRunningOperationId(operationId);
     setTransferCancelRequested(false);
     setTransferProgress({
       operationId,
       phase: 'preparing',
       currentStep: 'Подготовка переноса',
-      currentItem: analysis.projectName,
+      currentItem: normalizedAnalysis.projectName,
       overallPercent: 0,
       copyPercent: 0,
       databasePercent: 0,
       copiedBytes: 0,
-      totalBytes: analysis.totalBytes
+      totalBytes: normalizedAnalysis.totalBytes
     });
     setTransferError(null);
     setTransferResult(null);
     setSettingsBusyLabel('Переносим сборку');
-    setTransferStep('install');
+    setTransferStep('review');
 
     try {
       const imported = await window.fluxora.transfer.importMo2(
@@ -3363,7 +3688,14 @@ export const App = () => {
       setProjects((current) => upsertProject(current, imported));
       setSelectedProjectId(imported.id);
       setMessage(`Перенос завершен: ${imported.name}`);
-      await loadCatalog();
+      await loadCatalog({
+        mergeProject: imported,
+        preferredProjectId: imported.id,
+        keepMergedProjectOnError: true
+      });
+      setMessage(`Перенос завершен: ${imported.name}`);
+      setIsTransferPageOpen(false);
+      changeRoute('home');
     } catch (error) {
       const nextMessage = errorMessage(error);
       const cancellationMessage = nextMessage.toLowerCase();
@@ -6244,6 +6576,20 @@ export const App = () => {
     />
   );
 
+  const renderOpeningBuildSplash = () => (
+    <LoadingSplash
+      buildName={openingBuildSplash?.buildName}
+      cancelLabel="Отмена"
+      cancelTitle="Отменить открытие сборки"
+      detail="Opening build progress"
+      messages={openingBuildMessages}
+      onCancel={() => cancelOpeningBuild()}
+      open={Boolean(openingBuildSplash)}
+      progress={openingBuildSplash?.progress ?? 0}
+      subtitle={openingBuildSplash?.buildName}
+    />
+  );
+
   const renderTransferOperationPage = () => (
     <TransferMo2Page
       bridgeReady={Boolean(bridgeStatus?.ready)}
@@ -6263,19 +6609,15 @@ export const App = () => {
         drives={transferDestinationDrives}
         driveState={transferDriveState}
         onSelectStep={setTransferStep}
-        onBrowseSource={() => void browseTransferSource()}
+        onBrowseSource={() => browseTransferSource()}
       onSelectDestinationDrive={(drive) => void selectTransferDestinationDrive(drive)}
       onRefreshDrives={() => void loadTransferDestinationDrives()}
-      onAnalyze={() => void analyzeMo2Transfer()}
+      onAnalyze={() => analyzeMo2Transfer()}
       onStart={() => void startMo2Transfer()}
       onCancel={() => void cancelMo2Transfer()}
       onClose={() => {
         setIsTransferPageOpen(false);
         changeRoute('home');
-      }}
-      onOpenBuild={() => {
-        setIsTransferPageOpen(false);
-        changeRoute('build');
       }}
     />
   );
@@ -6283,8 +6625,6 @@ export const App = () => {
   const renderSettingsWorkspace = () => (
     <SettingsWorkspace
       bridgeStatus={bridgeStatus}
-      cancelRequested={transferCancelRequested}
-      cancellationSupported={transferCancellationSupported}
       isTransferRunning={isTransferRunning}
       languageBusy={languageBusy}
       message={message}
@@ -6293,11 +6633,6 @@ export const App = () => {
       section={settingsSection}
       settingsBusyLabel={settingsBusyLabel}
       settingsCapabilities={settingsCapabilities}
-      transferAnalysis={transferAnalysis}
-      transferError={transferError}
-      transferProgress={transferProgress}
-      transferResult={transferResult}
-      onCancelTransfer={() => void cancelMo2Transfer()}
       onOpenTransfer={() => void openMo2TransferFromSettings()}
       onSectionChange={setSettingsSection}
       onSetLanguage={(language) => void setLanguage(language)}
@@ -6505,6 +6840,7 @@ export const App = () => {
       onHome={() => changeRoute('home')}
       onMinimize={() => void minimizeWindow()}
       onOpenSettings={() => void openSettingsWindow()}
+      onRefresh={() => void refreshCurrentView()}
       onToggleMaximize={() => void toggleMaximizeWindow()}
     />
   );
@@ -6570,6 +6906,7 @@ export const App = () => {
                   : null}
                 {renderInstallDialog()}
                 {renderOperationOverlay()}
+                {renderOpeningBuildSplash()}
                 {renderLaunchSplash()}
               </>
             )}

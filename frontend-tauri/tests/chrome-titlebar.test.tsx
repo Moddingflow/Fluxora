@@ -25,14 +25,15 @@ describe('redesign app chrome titlebar', () => {
         onHome={noop}
         onMinimize={noop}
         onOpenSettings={noop}
+        onRefresh={noop}
         onToggleMaximize={noop}
       />
     );
 
     expect(markup).toContain('Fluxora');
-    expect(markup).toContain('Mod manager');
     expect(markup).toContain('data-tauri-drag-region');
     expect(markup).toContain('aria-label="Home"');
+    expect(markup).toContain('aria-label="Refresh"');
     expect(markup).toContain('aria-label="Open settings"');
     expect(markup).toContain('aria-label="Minimize"');
     expect(markup).toContain('aria-label="Maximize"');
@@ -58,12 +59,12 @@ describe('redesign app chrome titlebar', () => {
     expect(markup).not.toContain('aria-label="Open settings"');
   });
 
-  it('keeps chrome styling aligned with the 50px UI-kit titlebar', () => {
+  it('keeps chrome styling aligned with the compact UI-kit titlebar', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
 
-    expect(styles).toContain('height: 50px;');
-    expect(styles).toContain('padding-left: 14px;');
-    expect(styles).toContain('width: 46px;');
+    expect(styles).toContain('height: 44px;');
+    expect(styles).toContain('padding-left: 0;');
+    expect(styles).toContain('width: 50px;');
     expect(styles).toContain('cursor: default;');
     expect(styles).toContain('.titlebar__caption-button--close:hover');
     expect(styles).toContain('background: var(--flx-error-solid);');

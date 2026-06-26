@@ -774,7 +774,8 @@ namespace
     void writeOpenedProject(
         fluxora::JsonWriter& writer,
         const fluxora::ProjectOpenResult& result,
-        bool tolerateExecutableErrors)
+        bool tolerateExecutableErrors,
+        bool includeWorkspaceDetails)
     {
         const fluxora::ProjectDescriptor& project = result.project;
         fluxora::BuildPathSettings pathSettings{
@@ -823,31 +824,36 @@ namespace
         writeContentLayoutSummary(writer, metadata);
         writer.key(L"paths");
         writeBuildPathSettings(writer, pathSettings);
-        writer.key(L"executables");
-        if (tolerateExecutableErrors)
+
+        if (includeWorkspaceDetails)
         {
-            try
+            writer.key(L"executables");
+            if (tolerateExecutableErrors)
+            {
+                try
+                {
+                    writeGameExecutableList(writer, core().executables().listProjectExecutables(project.configPath));
+                }
+                catch (const std::exception&)
+                {
+                    writer.beginArray().endArray();
+                }
+            }
+            else
             {
                 writeGameExecutableList(writer, core().executables().listProjectExecutables(project.configPath));
             }
-            catch (const std::exception&)
-            {
-                writer.beginArray().endArray();
-            }
+
+            writer.key(L"template");
+            writeResolvedTemplate(writer, result.resolvedTemplate);
         }
-        else
-        {
-            writeGameExecutableList(writer, core().executables().listProjectExecutables(project.configPath));
-        }
-        writer.key(L"template");
-        writeResolvedTemplate(writer, result.resolvedTemplate);
         writer.endObject();
     }
 
     std::wstring serializeOpenedProject(const fluxora::ProjectOpenResult& result)
     {
         fluxora::JsonWriter writer;
-        writeOpenedProject(writer, result, false);
+        writeOpenedProject(writer, result, false, true);
         return writer.str();
     }
 
@@ -857,7 +863,7 @@ namespace
         writer.beginArray();
         for (const fluxora::ProjectOpenResult& result : results)
         {
-            writeOpenedProject(writer, result, true);
+            writeOpenedProject(writer, result, true, false);
         }
         writer.endArray();
         return writer.str();

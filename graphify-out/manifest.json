@@ -250,8 +250,8 @@
     "semantic_hash": ""
   },
   "backend/src/FluxoraCoreApi.cpp": {
-    "mtime": 1782305194.0793986,
-    "ast_hash": "65e3af23fede291d9b9e7aeaed59cd07",
+    "mtime": 1782500339.7574716,
+    "ast_hash": "6f9672af14e60ed9df945bb8639c7410",
     "semantic_hash": ""
   },
   "backend/src/GameSupport/DefinitionBackedGameSupport.cpp": {
@@ -305,8 +305,8 @@
     "semantic_hash": ""
   },
   "backend/src/Services/BulkFileCopyService.cpp": {
-    "mtime": 1782381211.0329292,
-    "ast_hash": "caa5cccb1849cd0d5d4daceb9ecdceb2",
+    "mtime": 1782470338.2574043,
+    "ast_hash": "1dc11d5d219ee51eddca752d2819de3b",
     "semantic_hash": ""
   },
   "backend/src/Services/ContentLayoutService.cpp": {
@@ -355,8 +355,8 @@
     "semantic_hash": ""
   },
   "backend/src/Services/ModOrganizerImportService.cpp": {
-    "mtime": 1782383011.5890343,
-    "ast_hash": "5e426527917ca91f7a042e262e5fa8c5",
+    "mtime": 1782500363.8201194,
+    "ast_hash": "d30ed269cbe074a2cc74cc010920b322",
     "semantic_hash": ""
   },
   "backend/src/Services/ModOrganizerPluginGroupService.cpp": {
@@ -395,8 +395,8 @@
     "semantic_hash": ""
   },
   "backend/src/Services/ProjectService.cpp": {
-    "mtime": 1782374716.3028853,
-    "ast_hash": "8f726a46a6cd1e5d6c86da479e8340fb",
+    "mtime": 1782496647.3454514,
+    "ast_hash": "9e797e0804d02eb459552d1325e39bd7",
     "semantic_hash": ""
   },
   "backend/src/Services/TemplateService.cpp": {
@@ -520,8 +520,8 @@
     "semantic_hash": ""
   },
   "backend/tests/ModOrganizerImportServiceTests.cpp": {
-    "mtime": 1782383023.6405125,
-    "ast_hash": "44cfef2e74509595804940779841d6b4",
+    "mtime": 1782500466.2130656,
+    "ast_hash": "793b08c930aba0d10ece90ba3278e096",
     "semantic_hash": ""
   },
   "backend/tests/ModOrganizerPluginGroupServiceTests.cpp": {
@@ -550,8 +550,8 @@
     "semantic_hash": ""
   },
   "backend/tests/ProjectServiceTests.cpp": {
-    "mtime": 1782374658.794616,
-    "ast_hash": "db7f4b1527b6325090c87621780d62dc",
+    "mtime": 1782496313.6366503,
+    "ast_hash": "054eecd57037ba0c4468710f392025c6",
     "semantic_hash": ""
   },
   "backend/tests/ProjectStateTransactionTests.cpp": {
@@ -785,8 +785,8 @@
     "semantic_hash": ""
   },
   "backend/tests/CMakeLists.txt": {
-    "mtime": 1782216864.1301093,
-    "ast_hash": "a9c54531ba19196dc7a1833bcdc32e5f",
+    "mtime": 1782500436.5484326,
+    "ast_hash": "db401933561857620b1fd06d6a361545",
     "semantic_hash": ""
   },
   "backend/vfs/README.md": {
@@ -995,8 +995,8 @@
     "semantic_hash": ""
   },
   "backend/src/BridgeHost/FluxoraBridgeHost.cpp": {
-    "mtime": 1782381118.2651691,
-    "ast_hash": "0ce01549c8599fbc2dd8a43805ee2b39",
+    "mtime": 1782500864.839708,
+    "ast_hash": "fb6705c78b2021b30d3702909a623613",
     "semantic_hash": ""
   },
   "installer/Fluxora.Installer/Resources/Legal/de/third-party-notices.txt": {
@@ -1070,8 +1070,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/lib.rs": {
-    "mtime": 1782383055.6067579,
-    "ast_hash": "fe13df7625e960560c059e7896330d71",
+    "mtime": 1782493859.287983,
+    "ast_hash": "4eb8a817a36113f99714f0b561afa666",
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/main.rs": {
@@ -1085,18 +1085,18 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
-    "mtime": 1782456345.9745653,
-    "ast_hash": "4b685803f9cd37533b2169caaf7804cd",
+    "mtime": 1782498927.4601133,
+    "ast_hash": "ea7375390c9141d2ca71346ad299d8a1",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferMo2Page.tsx": {
-    "mtime": 1782453801.1923983,
-    "ast_hash": "4a012890243a29dbaed3edef88d88f0e",
+    "mtime": 1782488725.4087193,
+    "ast_hash": "10a7dac78682b5a1d172e04e3c28cfb8",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferSettingsPanel.tsx": {
-    "mtime": 1782453801.1903963,
-    "ast_hash": "3a49ad81769f66a2dffbf50a9980f955",
+    "mtime": 1782466881.8134882,
+    "ast_hash": "c037fa4ced787a1f95388e6890cf7b84",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/build-workspace-state.ts": {
@@ -1120,8 +1120,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/mo2-transfer-request.ts": {
-    "mtime": 1782452914.4597192,
-    "ast_hash": "6f087aa46a57a7bd0dfc39d3e3458163",
+    "mtime": 1782488715.1932023,
+    "ast_hash": "7231b2b3a0998d7dc371adf362a435b9",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/mod-workspace-state.ts": {
@@ -1150,8 +1150,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/services/project-catalog-service.ts": {
-    "mtime": 1782374804.0141864,
-    "ast_hash": "547c2aa133f69780fb0d4d657f8dd603",
+    "mtime": 1782480111.6195798,
+    "ast_hash": "e65f50ae12ef00373754bc9ade614b03",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/services/renderer-operation-service.ts": {
@@ -1180,8 +1180,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/tauri/fluxora-api.ts": {
-    "mtime": 1782382231.1169834,
-    "ast_hash": "2a8116c437d514c40e0910a6d46e6184",
+    "mtime": 1782501527.6215794,
+    "ast_hash": "2824228de95b43714aafefcb5bd31a0d",
     "semantic_hash": ""
   },
   "frontend-tauri/src/tauri/register-fluxora-api.ts": {
@@ -1190,7 +1190,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/.last-run.json": {
-    "mtime": 1782462171.851755,
+    "mtime": 1782499152.4038365,
     "ast_hash": "f196824657d8858bc7fa44eecbba38b1",
     "semantic_hash": ""
   },
@@ -1210,8 +1210,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/mo2-transfer-request.test.ts": {
-    "mtime": 1782452914.46072,
-    "ast_hash": "95f2bf6327fac65d07d803da9c727b03",
+    "mtime": 1782488807.4201143,
+    "ast_hash": "3ac953c427079249f6eb1744e1babd12",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/mod-workspace-state.test.ts": {
@@ -1235,8 +1235,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/project-catalog-state.test.ts": {
-    "mtime": 1782297755.0263677,
-    "ast_hash": "370edf13630cdbd7bf77b5d2cf3e98f9",
+    "mtime": 1782480168.5627966,
+    "ast_hash": "53524e720faae5a06ec80f19378aaa60",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/renderer-services.test.ts": {
@@ -1250,8 +1250,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/transfer-mo2-page.test.ts": {
-    "mtime": 1782453967.921128,
-    "ast_hash": "070d28def6308ec9c5238ad232df112a",
+    "mtime": 1782488844.9271672,
+    "ast_hash": "d649e59a32c37c77d2aa10ab69321cc8",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/ui-performance.test.ts": {
@@ -1270,8 +1270,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/vitest.config.ts": {
-    "mtime": 1782294949.7597103,
-    "ast_hash": "f66a6b474703fef298a931e29583de49",
+    "mtime": 1782477606.9877985,
+    "ast_hash": "bc316e83ea8c8c6d422ce35a1801e459",
     "semantic_hash": ""
   },
   "docs/tauri-migration/README.md": {
@@ -1570,8 +1570,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/design-system/PrimitivePreview.tsx": {
-    "mtime": 1782389830.1916988,
-    "ast_hash": "314a1cd357a4fddcc692d9385a868c3a",
+    "mtime": 1782468868.3660426,
+    "ast_hash": "0062c2db7d5efce8c2a1a25100e8d96c",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/design-system/icons/Icon.tsx": {
@@ -1600,8 +1600,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/design-system/primitives/feedback.tsx": {
-    "mtime": 1782397134.9103966,
-    "ast_hash": "e2d1d5962ba41a4bb41f427ea120fcc7",
+    "mtime": 1782498610.818518,
+    "ast_hash": "37e56052c875c72648711dc9a612ea99",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/design-system/primitives/forms.tsx": {
@@ -1625,28 +1625,28 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/design-primitives.test.ts": {
-    "mtime": 1782397141.6922197,
-    "ast_hash": "80a3949b10d61449d86bfada31916c2c",
+    "mtime": 1782498554.7968698,
+    "ast_hash": "aec5dd6bef06d95853ae88a52f80fe3f",
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/chrome-titlebar.spec.ts": {
-    "mtime": 1782390548.7737412,
-    "ast_hash": "e7945ded432e513e0248c693bd2f2b89",
+    "mtime": 1782495554.298906,
+    "ast_hash": "92a98f28a4e56d7d386c13f646bbf1d4",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/components/chrome/AppTitlebar.tsx": {
-    "mtime": 1782457960.5552096,
-    "ast_hash": "21dcc5f3525c65d8847b1af477e36aff",
+    "mtime": 1782495192.0596433,
+    "ast_hash": "b1bd77ec023af02210a594dde9f1933a",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/chrome-titlebar.test.tsx": {
-    "mtime": 1782390424.8865638,
-    "ast_hash": "f4896b23f20250ed03dfaa51ec3a2d9f",
+    "mtime": 1782495559.6432967,
+    "ast_hash": "f16b15195021bfa08721931fa7bf6e64",
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/library-home.spec.ts": {
-    "mtime": 1782462153.4420567,
-    "ast_hash": "c71348a071df38d31846644c4e055e61",
+    "mtime": 1782499107.1423824,
+    "ast_hash": "b79f74b7b29ebedc9b0bf2fa44478399",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/LibraryHome.tsx": {
@@ -1655,8 +1655,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/library-home-redesign.test.ts": {
-    "mtime": 1782391457.1866617,
-    "ast_hash": "659b79051eb64e258f0f42f5527bb071",
+    "mtime": 1782463552.5490448,
+    "ast_hash": "0d080720fc1666de544246937f3092d9",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/build-detail-header.test.ts": {
@@ -1675,17 +1675,17 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/settings-redesign.test.ts": {
-    "mtime": 1782461987.966479,
-    "ast_hash": "b979bd6baefc851475c35d91873267fc",
+    "mtime": 1782464070.982949,
+    "ast_hash": "7e900d18588eb0c085bae55420299fdc",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/operations/OperationOverlay.tsx": {
-    "mtime": 1782396881.2432618,
-    "ast_hash": "9cfb0a7380ef6448bf888e9cfb71c54c",
+    "mtime": 1782468864.0718532,
+    "ast_hash": "48df7e13dc315e41df5c6f346ba83215",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/operation-overlays.test.tsx": {
-    "mtime": 1782397087.717268,
+    "mtime": 1782477435.129032,
     "ast_hash": "2a2cbb130308d6df4d9c35a22f0e9b24",
     "semantic_hash": ""
   },
@@ -1700,8 +1700,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/settings/SettingsWorkspace.tsx": {
-    "mtime": 1782459324.0895202,
-    "ast_hash": "d4f3e089beb712ffa468565b63b61204",
+    "mtime": 1782464008.6501462,
+    "ast_hash": "217fce84d726dcbad5cd86c4e0f47918",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/project-library-stats.test.ts": {
@@ -1732,6 +1732,81 @@
   "Icons/flag-united-kingdom.svg": {
     "mtime": 1782460144.0637105,
     "ast_hash": "99a9e5571c2f5acd9cb910ce6a3f39a6",
+    "semantic_hash": ""
+  },
+  "backend/tests/OperationCancellationTests.cpp": {
+    "mtime": 1782470459.368896,
+    "ast_hash": "8f74d0516294d93b89e364472dc0d55d",
+    "semantic_hash": ""
+  },
+  "frontend-tauri/tests/build-delete-overlay.test.ts": {
+    "mtime": 1782477992.9179983,
+    "ast_hash": "24d0b66b82e9ac7e22ecb62eae648d13",
+    "semantic_hash": ""
+  },
+  "frontend-tauri/src/renderer/services/renderer-refresh-shortcut-service.ts": {
+    "mtime": 1782495192.0586429,
+    "ast_hash": "13df1535ace82acebae29218fa3917a2",
+    "semantic_hash": ""
+  },
+  "frontend-tauri/tests/renderer-refresh-shortcut-service.test.ts": {
+    "mtime": 1782495192.0596433,
+    "ast_hash": "324dbebce4b389845346732bb61934bc",
+    "semantic_hash": ""
+  },
+  "frontend-tauri/tests/chrome-titlebar-refresh.test.ts": {
+    "mtime": 1782495393.2983027,
+    "ast_hash": "bcebcf304193adc0b2356056def53985",
+    "semantic_hash": ""
+  },
+  ".agents/skills/Stop Slop/SKILL.md": {
+    "mtime": 1782495413.9574263,
+    "ast_hash": "aaf679c0ebfa3121deb469549a87fe72",
+    "semantic_hash": ""
+  },
+  ".agents/skills/Test-Driven Development/SKILL.md": {
+    "mtime": 1782495606.1787927,
+    "ast_hash": "fbfe2c806326df508f2f3b5d699596fb",
+    "semantic_hash": ""
+  },
+  ".agents/skills/kk-add/SKILL.md": {
+    "mtime": 1782495678.1010675,
+    "ast_hash": "8ef1f4a72cfb20211d9aaad4d2136eb6",
+    "semantic_hash": ""
+  },
+  ".agents/skills/kk-bootstrap/SKILL.md": {
+    "mtime": 1782495678.112066,
+    "ast_hash": "41b29e54f6fb90d66f02a48c2260a1d3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/kk-curate/SKILL.md": {
+    "mtime": 1782495678.118066,
+    "ast_hash": "91bec7f3cd675f786e63ac5878abc137",
+    "semantic_hash": ""
+  },
+  ".agents/skills/self-review-apply/SKILL.md": {
+    "mtime": 1782495678.1240654,
+    "ast_hash": "9cb8475fd3958568abe2e1b78b56a6de",
+    "semantic_hash": ""
+  },
+  ".agents/skills/self-review-critique/SKILL.md": {
+    "mtime": 1782495678.1370664,
+    "ast_hash": "f7a59d5149234f839dbbdfe8bce44605",
+    "semantic_hash": ""
+  },
+  "frontend-tauri/tests/build-opening-splash.test.ts": {
+    "mtime": 1782498938.3270025,
+    "ast_hash": "0a8e870b9809c9d57ea91545e37cfba3",
+    "semantic_hash": ""
+  },
+  "backend/tests/FluxoraCoreApiTests.cpp": {
+    "mtime": 1782500622.283446,
+    "ast_hash": "8a80a9a9f14db3711a897dc16cda3474",
+    "semantic_hash": ""
+  },
+  "frontend-tauri/tests/tauri-bridge-timeouts.test.ts": {
+    "mtime": 1782501601.282644,
+    "ast_hash": "7beca0ac46fccf2b41c3d1e9320deb41",
     "semantic_hash": ""
   }
 }

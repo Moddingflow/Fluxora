@@ -52,6 +52,57 @@ namespace fluxora::tests
             "dataDirectory": "Data",
             "defaultProfile": "Default"
         })json";
+
+        std::string toUtf8(const std::wstring& value)
+        {
+#ifdef _WIN32
+            if (value.empty())
+            {
+                return {};
+            }
+
+            const int size = WideCharToMultiByte(
+                CP_UTF8,
+                0,
+                value.data(),
+                static_cast<int>(value.size()),
+                nullptr,
+                0,
+                nullptr,
+                nullptr);
+            std::string out(static_cast<std::size_t>(size), '\0');
+            WideCharToMultiByte(
+                CP_UTF8,
+                0,
+                value.data(),
+                static_cast<int>(value.size()),
+                out.data(),
+                size,
+                nullptr,
+                nullptr);
+            return out;
+#else
+            return std::string(value.begin(), value.end());
+#endif
+        }
+
+        std::string catalogProjectManifest(
+            std::string name,
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& installRoot)
+        {
+            return "{"
+                "\"schemaVersion\":\"1\","
+                "\"name\":\"" + std::move(name) + "\","
+                "\"templateId\":\"skyrimse\","
+                "\"gameName\":\"Skyrim Special Edition\","
+                "\"gamePath\":\"" + toUtf8((projectDirectory / L"Game").generic_wstring()) + "\","
+                "\"installRoot\":\"" + toUtf8(installRoot.generic_wstring()) + "\","
+                "\"projectDirectory\":\"" + toUtf8(projectDirectory.generic_wstring()) + "\","
+                "\"dataDirectory\":\"Data\","
+                "\"defaultProfile\":\"Default\""
+                "}";
+        }
     }
 
     TEST(ProjectServiceTests, CreateSkyrimProjectSeedsProfileAndManifestFromSupportRules)
@@ -690,6 +741,84 @@ namespace fluxora::tests
         EXPECT_EQ(progressEvents.back().phase, L"complete");
         EXPECT_EQ(progressEvents.back().overallPercent, 100);
         EXPECT_EQ(progressEvents.back().deletedEntries, progressEvents.back().totalEntries);
+#endif
+    }
+
+    TEST(ProjectServiceTests, ListProjectConfigSummariesPrunesCatalogManifestWhenProjectFolderDisappears)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project catalog manifests live under APPDATA on Windows.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path catalogDirectory = temp.path() / L"AppData" / L"Fluxora" / L"Builds";
+        const std::filesystem::path installRoot = temp.path() / L"Fluxora Builds";
+        const std::filesystem::path projectDirectory = installRoot / L"Foundation Edition";
+        const std::filesystem::path configPath = catalogDirectory / L"Foundation Edition.json";
+        writeTextFile(
+            configPath,
+            catalogProjectManifest("Foundation Edition", projectDirectory, installRoot));
+        std::filesystem::create_directories(projectDirectory);
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        std::vector<ProjectOpenResult> summaries = projects.listProjectConfigSummaries(catalogDirectory);
+        ASSERT_EQ(summaries.size(), 1U);
+        EXPECT_EQ(summaries[0].project.projectDirectory, std::filesystem::absolute(projectDirectory));
+
+        std::filesystem::remove_all(projectDirectory);
+
+        summaries = projects.listProjectConfigSummaries(catalogDirectory);
+
+        EXPECT_TRUE(summaries.empty());
+        EXPECT_FALSE(std::filesystem::exists(configPath));
+        EXPECT_FALSE(std::filesystem::exists(projectDirectory));
+#endif
+    }
+
+    TEST(ProjectServiceTests, ListProjectConfigSummariesPrunesDuplicateCatalogManifestsForSameProjectFolder)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project catalog manifests live under APPDATA on Windows.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path catalogDirectory = temp.path() / L"AppData" / L"Fluxora" / L"Builds";
+        const std::filesystem::path installRoot = temp.path() / L"Fluxora Builds";
+        const std::filesystem::path projectDirectory = installRoot / L"Foundation Edition";
+        const std::filesystem::path olderConfigPath = catalogDirectory / L"Foundation Edition.json";
+        const std::filesystem::path newerConfigPath = catalogDirectory / L"Foundation Edition-2.json";
+        std::filesystem::create_directories(projectDirectory);
+        writeTextFile(
+            olderConfigPath,
+            catalogProjectManifest("Foundation Edition", projectDirectory, installRoot));
+        writeTextFile(
+            newerConfigPath,
+            catalogProjectManifest("Foundation Edition", projectDirectory, installRoot));
+
+        const std::filesystem::file_time_type now = std::filesystem::file_time_type::clock::now();
+        std::filesystem::last_write_time(olderConfigPath, now - std::chrono::hours(2));
+        std::filesystem::last_write_time(newerConfigPath, now - std::chrono::hours(1));
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        const std::vector<ProjectOpenResult> summaries = projects.listProjectConfigSummaries(catalogDirectory);
+
+        ASSERT_EQ(summaries.size(), 1U);
+        EXPECT_EQ(summaries[0].project.configPath, std::filesystem::absolute(newerConfigPath));
+        EXPECT_EQ(summaries[0].project.projectDirectory, std::filesystem::absolute(projectDirectory));
+        EXPECT_TRUE(std::filesystem::exists(newerConfigPath));
+        EXPECT_FALSE(std::filesystem::exists(olderConfigPath));
 #endif
     }
 

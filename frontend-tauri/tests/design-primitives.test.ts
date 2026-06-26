@@ -32,6 +32,8 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 const readText = (...segments: string[]): string =>
   fs.readFileSync(path.join(repoRoot, ...segments), 'utf8');
 
+const noop = () => undefined;
+
 const collectSourceFiles = (directory: string): string[] => {
   const absoluteDirectory = path.join(repoRoot, directory);
   const entries = fs.readdirSync(absoluteDirectory, { withFileTypes: true });
@@ -105,6 +107,7 @@ describe('redesign primitives', () => {
     const status = renderToStaticMarkup(React.createElement(StatusDot, { state: 'overwritten' }));
     const cleanStatus = renderToStaticMarkup(React.createElement(StatusDot, { state: 'none' }));
     const mixedStatus = renderToStaticMarkup(React.createElement(StatusDot, { state: 'mixed' }));
+    const spinner = renderToStaticMarkup(React.createElement(FacetSpinner));
     const empty = renderToStaticMarkup(
       React.createElement(EmptyState, { title: 'No builds', tone: 'error' })
     );
@@ -118,7 +121,31 @@ describe('redesign primitives', () => {
     expect(status).toContain('aria-label="Overwritten by others"');
     expect(cleanStatus).toContain('aria-label="No overwrite conflicts"');
     expect(mixedStatus).toContain('aria-label="Mixed overwrite conflicts"');
+    expect(spinner).toContain('stroke-width="6"');
     expect(empty).toContain('role="alert"');
+  });
+
+  it('renders the loading splash with rotating copy, progress percent and an escape hatch', () => {
+    const splash = renderToStaticMarkup(
+      React.createElement(LoadingSplash, {
+        buildName: 'Foundation Edition',
+        cancelLabel: 'Отмена',
+        detail: 'Opening build progress',
+        messages: ['Загружаем вашу сборку', 'Смотрим плагины'],
+        onCancel: noop,
+        progress: 47,
+        subtitle: 'Foundation Edition'
+      })
+    );
+
+    expect(splash).toContain('role="status"');
+    expect(splash).toContain('Загружаем вашу сборку');
+    expect(splash).toContain('Foundation Edition');
+    expect(splash).toContain('Opening build progress');
+    expect(splash).toContain('aria-valuenow="47"');
+    expect(splash).toContain('47%');
+    expect(splash).toContain('Отмена');
+    expect(splash).toContain('flx-loading-splash__progress');
   });
 
   it('keeps primitive styles on the public CSS entrypoint with reduced-motion support', () => {
@@ -135,6 +162,9 @@ describe('redesign primitives', () => {
     expect(styles).toContain('@import "./design-system/primitives/primitives.css";');
     expect(primitiveCss).toContain('.flx-button');
     expect(primitiveCss).toContain('.flx-icon-button');
+    expect(primitiveCss).toContain('stroke: currentColor;');
+    expect(primitiveCss).toContain('.flx-loading-splash__cancel');
+    expect(primitiveCss).toContain('@keyframes flx-splash-message-in');
     expect(primitiveCss).toContain('@media (prefers-reduced-motion: reduce)');
     expect(primitiveCss).not.toContain('127, 176, 250');
   });

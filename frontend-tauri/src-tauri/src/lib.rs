@@ -321,13 +321,36 @@ fn native_library_name() -> &'static str {
     }
 }
 
-fn app_data_dir(app: &AppHandle) -> PathBuf {
-    app.path().app_data_dir().unwrap_or_else(|_| {
-        std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
-            .join("Fluxora")
-    })
+fn fluxora_data_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(app_data) = std::env::var_os("APPDATA") {
+            return PathBuf::from(app_data).join("Fluxora");
+        }
+
+        if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+            return PathBuf::from(user_profile)
+                .join("AppData")
+                .join("Roaming")
+                .join("Fluxora");
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        if let Some(xdg_data_home) = std::env::var_os("XDG_DATA_HOME") {
+            return PathBuf::from(xdg_data_home).join("Fluxora");
+        }
+
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("Fluxora");
+        }
+    }
+
+    std::env::temp_dir().join("Fluxora")
 }
 
 fn executable_log_dir() -> Option<PathBuf> {
@@ -522,6 +545,15 @@ async fn resolve_host_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 impl BridgeProcess {
+    async fn reset(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill().await;
+        }
+        self.stdin = None;
+        self.stdout = None;
+        self.handshake = None;
+    }
+
     async fn ensure_started(&mut self, app: &AppHandle) -> Result<(), String> {
         if self.child.is_some() && self.stdin.is_some() && self.stdout.is_some() {
             return Ok(());
@@ -621,6 +653,7 @@ impl BridgeProcess {
     ) -> Result<Value, String> {
         let request_id = format!("req_{}_{}", now_millis(), method.replace('.', "_"));
         let operation_id = operation_id(Some(&request), method);
+        let started_at = now_millis();
         let payload = json!({
             "jsonrpc": "2.0",
             "id": request_id,
@@ -637,38 +670,94 @@ impl BridgeProcess {
             }
         });
 
+        let _ = write_log(
+            app,
+            "main-bridge",
+            "info",
+            "BridgeRequest",
+            &format!(
+                "Request started. method={} timeoutMs={}",
+                sanitize_log(method),
+                timeout_ms
+            ),
+            Some(&operation_id),
+        )
+        .await;
+
         let stdin = self
             .stdin
             .as_mut()
             .ok_or_else(|| "Bridge host stdin is unavailable.".to_string())?;
-        stdin
-            .write_all(format!("{}\n", payload).as_bytes())
-            .await
-            .map_err(|error| error.to_string())?;
+        if let Err(error) = stdin.write_all(format!("{}\n", payload).as_bytes()).await {
+            self.reset().await;
+            return Err(error.to_string());
+        }
+        if let Err(error) = stdin.flush().await {
+            self.reset().await;
+            return Err(error.to_string());
+        }
 
         loop {
             let mut line = String::new();
-            let stdout = self
-                .stdout
-                .as_mut()
-                .ok_or_else(|| "Bridge host stdout is unavailable.".to_string())?;
-            let bytes = timeout(
-                Duration::from_millis(timeout_ms),
-                stdout.read_line(&mut line),
-            )
-            .await
-            .map_err(|_| format!("Bridge request timed out: {}", method))?
-            .map_err(|error| error.to_string())?;
+            let read_result = {
+                let stdout = self
+                    .stdout
+                    .as_mut()
+                    .ok_or_else(|| "Bridge host stdout is unavailable.".to_string())?;
+                timeout(
+                    Duration::from_millis(timeout_ms),
+                    stdout.read_line(&mut line),
+                )
+                .await
+            };
+            let bytes = match read_result {
+                Ok(Ok(bytes)) => bytes,
+                Ok(Err(error)) => {
+                    self.reset().await;
+                    return Err(error.to_string());
+                }
+                Err(_) => {
+                    let message = format!("Bridge request timed out: {}", method);
+                    let _ = write_log(
+                        app,
+                        "main-bridge",
+                        "error",
+                        "BridgeRequest",
+                        &format!(
+                            "{}. Host process will be restarted for the next request.",
+                            message
+                        ),
+                        Some(&operation_id),
+                    )
+                    .await;
+                    self.reset().await;
+                    return Err(message);
+                }
+            };
             if bytes == 0 {
-                self.child = None;
-                self.stdin = None;
-                self.stdout = None;
-                self.handshake = None;
+                self.reset().await;
                 return Err("Bridge host exited before replying.".to_string());
             }
 
-            let envelope: Value =
-                serde_json::from_str(line.trim()).map_err(|error| error.to_string())?;
+            let envelope: Value = match serde_json::from_str(line.trim()) {
+                Ok(envelope) => envelope,
+                Err(error) => {
+                    let _ = write_log(
+                        app,
+                        "main-bridge",
+                        "warning",
+                        "BridgeRequest",
+                        &format!(
+                            "Ignored non-JSON bridge stdout while waiting for method={}: {}",
+                            sanitize_log(method),
+                            sanitize_log(&error.to_string())
+                        ),
+                        Some(&operation_id),
+                    )
+                    .await;
+                    continue;
+                }
+            };
             if envelope.get("id").and_then(Value::as_str) != Some(request_id.as_str()) {
                 if envelope.get("method").and_then(Value::as_str) == Some("operations.progress") {
                     let payload = operation_progress_payload(&envelope);
@@ -678,6 +767,25 @@ impl BridgeProcess {
             }
 
             if let Some(error) = envelope.get("error") {
+                let message = error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Native bridge request failed.")
+                    .to_string();
+                let _ = write_log(
+                    app,
+                    "main-bridge",
+                    "error",
+                    "BridgeRequest",
+                    &format!(
+                        "Request failed. method={} durationMs={} error={}",
+                        sanitize_log(method),
+                        now_millis().saturating_sub(started_at),
+                        sanitize_log(&message)
+                    ),
+                    Some(&operation_id),
+                )
+                .await;
                 return Err(error
                     .get("message")
                     .and_then(Value::as_str)
@@ -691,6 +799,19 @@ impl BridgeProcess {
             if result.get("ok").and_then(Value::as_bool) != Some(true) {
                 return Err("Bridge response did not include an ok result.".to_string());
             }
+            let _ = write_log(
+                app,
+                "main-bridge",
+                "info",
+                "BridgeRequest",
+                &format!(
+                    "Request completed. method={} durationMs={}",
+                    sanitize_log(method),
+                    now_millis().saturating_sub(started_at)
+                ),
+                Some(&operation_id),
+            )
+            .await;
             return Ok(result.get("data").cloned().unwrap_or(Value::Null));
         }
     }
@@ -708,12 +829,7 @@ impl BridgeProcess {
                 BRIDGE_TIMEOUT_MS,
             )
             .await;
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill().await;
-        }
-        self.stdin = None;
-        self.stdout = None;
-        self.handshake = None;
+        self.reset().await;
         Ok(())
     }
 }
@@ -734,8 +850,8 @@ fn fluxora_app_info(app: AppHandle) -> AppInfo {
 }
 
 #[tauri::command]
-fn fluxora_runtime_paths(app: AppHandle) -> RuntimePaths {
-    let root = app_data_dir(&app);
+fn fluxora_runtime_paths(_app: AppHandle) -> RuntimePaths {
+    let root = fluxora_data_dir();
     RuntimePaths {
         build_configs_directory: root.join("Builds").to_string_lossy().to_string(),
         default_install_root_directory: root.join("Projects").to_string_lossy().to_string(),
@@ -1250,6 +1366,34 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::ffi::{OsStr, OsString};
+    use std::sync::{Mutex, OnceLock};
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
+            let previous = env::var_os(key);
+            env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                env::set_var(self.key, previous);
+            } else {
+                env::remove_var(self.key);
+            }
+        }
+    }
 
     #[test]
     fn operation_progress_payload_adds_operation_id_from_meta() {
@@ -1288,5 +1432,24 @@ mod tests {
         let payload = operation_progress_payload(&envelope);
 
         assert_eq!(payload["operationId"], "op_from_payload");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fluxora_data_dir_uses_shared_appdata_catalog_root_on_windows() {
+        let _env_lock = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let root = env::temp_dir().join(format!("fluxora-tauri-test-{}", now_millis()));
+        let app_data = root.join("Roaming");
+        let user_profile = root.join("Profile");
+        let _app_data_guard = EnvVarGuard::set("APPDATA", &app_data);
+        let _user_profile_guard = EnvVarGuard::set("USERPROFILE", &user_profile);
+
+        let data_dir = fluxora_data_dir();
+
+        assert_eq!(data_dir, app_data.join("Fluxora"));
+        assert_eq!(
+            data_dir.join("Builds"),
+            app_data.join("Fluxora").join("Builds")
+        );
     }
 }

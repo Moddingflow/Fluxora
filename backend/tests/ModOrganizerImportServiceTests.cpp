@@ -12,12 +12,14 @@
 #include <algorithm>
 #include <atomic>
 #include <stdexcept>
+#include <vector>
 
 namespace fluxora::tests
 {
     TEST(ModOrganizerImportServiceTests, AnalyzePlacesDriveRootImportsInsideFluxoraBuilds)
     {
         TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
         ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
 
         const std::filesystem::path source = temp.path() / L"MO2";
@@ -54,9 +56,205 @@ namespace fluxora::tests
             normalized(expectedRoot));
     }
 
+    TEST(ModOrganizerImportServiceTests, AnalyzePlacesFolderImportsInsideFluxoraBuilds)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+
+        const std::filesystem::path source = temp.path() / L"MO2";
+        const std::filesystem::path destinationRoot = temp.path() / L"SelectedLibrary";
+
+        writeTextFile(source / L"GameRoot" / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(source / L"GameRoot" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(source / L"mods" / L"SkyUI" / L"interface" / L"skyui.swf", "ui");
+        writeTextFile(
+            source / L"mods" / L"SkyUI" / L"meta.ini",
+            "[General]\nname=SkyUI\nversion=1\nmodid=3863\nfileid=123\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"modlist.txt", "+SkyUI\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"plugins.txt", "*Skyrim.esm\n");
+        writeTextFile(
+            source / L"ModOrganizer.ini",
+            "[General]\n"
+            "gameName=Skyrim Special Edition\n"
+            "gamePath=GameRoot\n"
+            "selected_profile=Default\n");
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        BuildPathSettingsService pathSettings(logger);
+        ModOrganizerImportService importer(logger, templates, projects, pathSettings);
+
+        const ModOrganizerImportAnalysis analysis = importer.analyze(source, destinationRoot);
+        const std::filesystem::path expectedRoot = destinationRoot / L"Fluxora Builds";
+
+        EXPECT_EQ(normalized(analysis.destinationRootDirectory), normalized(expectedRoot));
+        EXPECT_EQ(
+            normalized(analysis.targetProjectDirectory.parent_path()),
+            normalized(expectedRoot));
+    }
+
+    TEST(ModOrganizerImportServiceTests, ImportCreatesFluxoraBuildsFolderForCyrillicBuildName)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+
+        const std::filesystem::path source = temp.path() / L"Сборка";
+        const std::filesystem::path destinationRoot = temp.path() / L"SelectedDrive";
+
+        writeTextFile(source / L"GameRoot" / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(source / L"GameRoot" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(source / L"mods" / L"SkyUI" / L"interface" / L"skyui.swf", "ui");
+        writeTextFile(
+            source / L"mods" / L"SkyUI" / L"meta.ini",
+            "[General]\nname=SkyUI\nversion=1\nmodid=3863\nfileid=123\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"modlist.txt", "+SkyUI\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"plugins.txt", "*Skyrim.esm\n");
+        writeTextFile(
+            source / L"ModOrganizer.ini",
+            "[General]\n"
+            "gameName=Skyrim Special Edition\n"
+            "gamePath=GameRoot\n"
+            "selected_profile=Default\n");
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        BuildPathSettingsService pathSettings(logger);
+        ModOrganizerImportService importer(logger, templates, projects, pathSettings);
+
+        ModOrganizerImportRequest request;
+        request.sourceDirectory = source;
+        request.destinationRootDirectory = destinationRoot;
+        request.mode = ModOrganizerImportMode::CreateNew;
+
+        const ModOrganizerImportResult result = importer.importInstance(request);
+
+        const std::filesystem::path expectedRoot = destinationRoot / L"Fluxora Builds";
+        const std::filesystem::path expectedBuild = expectedRoot / L"Сборка";
+        EXPECT_EQ(normalized(result.analysis.destinationRootDirectory), normalized(expectedRoot));
+        EXPECT_EQ(normalized(result.analysis.targetProjectDirectory), normalized(expectedBuild));
+        EXPECT_TRUE(std::filesystem::is_directory(expectedRoot));
+        EXPECT_TRUE(std::filesystem::is_directory(expectedBuild));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            expectedBuild / L"mods" / L"SkyUI" / L"interface" / L"skyui.swf"));
+        EXPECT_FALSE(std::filesystem::exists(destinationRoot / L"Сборка"));
+    }
+
+    TEST(ModOrganizerImportServiceTests, ImportPersistsBuildInAppDataCatalogForRestart)
+    {
+        TempDirectory temp;
+        const std::filesystem::path appDataRoot = temp.path() / L"AppData" / L"Roaming";
+        ScopedEnvironmentVariable appData(L"APPDATA", appDataRoot.wstring());
+        ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+
+        const std::filesystem::path source = temp.path() / L"MO2";
+        const std::filesystem::path destinationRoot = temp.path() / L"SelectedDrive";
+
+        writeTextFile(source / L"GameRoot" / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(source / L"GameRoot" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(source / L"mods" / L"SkyUI" / L"interface" / L"skyui.swf", "ui");
+        writeTextFile(
+            source / L"mods" / L"SkyUI" / L"meta.ini",
+            "[General]\nname=SkyUI\nversion=1\nmodid=3863\nfileid=123\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"modlist.txt", "+SkyUI\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"plugins.txt", "*Skyrim.esm\n");
+        writeTextFile(
+            source / L"ModOrganizer.ini",
+            "[General]\n"
+            "gameName=Skyrim Special Edition\n"
+            "gamePath=GameRoot\n"
+            "selected_profile=Default\n");
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        BuildPathSettingsService pathSettings(logger);
+        ModOrganizerImportService importer(logger, templates, projects, pathSettings);
+
+        ModOrganizerImportRequest request;
+        request.sourceDirectory = source;
+        request.destinationRootDirectory = destinationRoot;
+        request.mode = ModOrganizerImportMode::CreateNew;
+
+        const ModOrganizerImportResult result = importer.importInstance(request);
+        const std::filesystem::path catalogDirectory = appDataRoot / L"Fluxora" / L"Builds";
+
+        EXPECT_EQ(normalized(result.project.project.configPath.parent_path()), normalized(catalogDirectory));
+        EXPECT_TRUE(std::filesystem::is_regular_file(result.project.project.configPath));
+
+        ProjectService reloadedProjects(logger, templates);
+        reloadedProjects.initialize();
+        const std::vector<ProjectOpenResult> reloaded =
+            reloadedProjects.listProjectConfigSummaries(catalogDirectory);
+
+        ASSERT_EQ(reloaded.size(), 1U);
+        EXPECT_EQ(reloaded[0].project.name, result.project.project.name);
+        EXPECT_EQ(normalized(reloaded[0].project.projectDirectory), normalized(result.project.project.projectDirectory));
+        EXPECT_EQ(normalized(reloaded[0].project.configPath), normalized(result.project.project.configPath));
+    }
+
+    TEST(ModOrganizerImportServiceTests, ImportSkipsTransientInstanceDatabaseSidecars)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+
+        const std::filesystem::path source = temp.path() / L"MO2";
+        const std::filesystem::path destinationRoot = temp.path() / L"Imported";
+
+        writeTextFile(source / L"GameRoot" / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(source / L"GameRoot" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(source / L"mods" / L"SkyUI" / L"interface" / L"skyui.swf", "ui");
+        writeTextFile(source / L"mods" / L"SkyUI" / L"InstanceDB-wal", "stale sqlite wal");
+        writeTextFile(source / L"mods" / L"SkyUI" / L"meta.ini", "[General]\nname=SkyUI\nversion=1\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"modlist.txt", "+SkyUI\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"plugins.txt", "*Skyrim.esm\n");
+        writeTextFile(source / L"profiles" / L"Default" / L"InstanceDB-shm", "stale sqlite shm");
+        writeTextFile(source / L"profiles" / L"Default" / L"notes.txt", "profile note");
+        writeTextFile(source / L"downloads" / L"instance.db-wal", "stale sqlite wal");
+        writeTextFile(source / L"overwrite" / L"instance.db-journal", "stale sqlite journal");
+        writeTextFile(source / L"overwrite" / L"SKSE" / L"Plugins" / L"generated.log", "overwrite");
+        writeTextFile(
+            source / L"ModOrganizer.ini",
+            "[General]\n"
+            "gameName=Skyrim Special Edition\n"
+            "gamePath=GameRoot\n"
+            "selected_profile=Default\n");
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        BuildPathSettingsService pathSettings(logger);
+        ModOrganizerImportService importer(logger, templates, projects, pathSettings);
+
+        ModOrganizerImportRequest request;
+        request.sourceDirectory = source;
+        request.destinationRootDirectory = destinationRoot;
+        request.mode = ModOrganizerImportMode::CreateNew;
+
+        const ModOrganizerImportResult result = importer.importInstance(request);
+        const std::filesystem::path target = result.analysis.targetProjectDirectory;
+
+        EXPECT_FALSE(std::filesystem::exists(target / L"mods" / L"SkyUI" / L"InstanceDB-wal"));
+        EXPECT_FALSE(std::filesystem::exists(target / L"profiles" / L"Default" / L"InstanceDB-shm"));
+        EXPECT_FALSE(std::filesystem::exists(target / L"downloads" / L"instance.db-wal"));
+        EXPECT_FALSE(std::filesystem::exists(target / L"overwrite" / L"instance.db-journal"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(target / L"profiles" / L"Default" / L"notes.txt"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            target / L"overwrite" / L"SKSE" / L"Plugins" / L"generated.log"));
+    }
+
     TEST(ModOrganizerImportServiceTests, ImportCopiesQtByteArrayOverwriteDirectory)
     {
         TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
         ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
 
         const std::filesystem::path source = temp.path() / L"MO2";
@@ -114,6 +312,11 @@ namespace fluxora::tests
         request.mode = ModOrganizerImportMode::CreateNew;
 
         const ModOrganizerImportResult result = importer.importInstance(request);
+
+        const std::filesystem::path expectedTransferRoot = destinationRoot / L"Fluxora Builds";
+        EXPECT_EQ(normalized(result.analysis.destinationRootDirectory), normalized(expectedTransferRoot));
+        EXPECT_EQ(normalized(result.analysis.targetProjectDirectory.parent_path()), normalized(expectedTransferRoot));
+        EXPECT_TRUE(std::filesystem::is_directory(expectedTransferRoot));
 
         const std::filesystem::path importedOverwrite =
             result.analysis.targetProjectDirectory / L"overwrite" / L"SKSE" / L"Plugins" / L"generated.log";
@@ -211,6 +414,7 @@ namespace fluxora::tests
     TEST(ModOrganizerImportServiceTests, ImportCancellationCleansStagingDirectory)
     {
         TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
         ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
 
         const std::filesystem::path source = temp.path() / L"MO2";
@@ -256,13 +460,14 @@ namespace fluxora::tests
         };
 
         EXPECT_THROW((void)importer.importInstance(request), std::runtime_error);
-        EXPECT_FALSE(std::filesystem::exists(destinationRoot / L"MO2"));
-        if (std::filesystem::exists(destinationRoot))
+        const std::filesystem::path transferRoot = destinationRoot / L"Fluxora Builds";
+        EXPECT_FALSE(std::filesystem::exists(transferRoot / L"MO2"));
+        if (std::filesystem::exists(transferRoot))
         {
             std::error_code error;
             EXPECT_EQ(
                 std::distance(
-                    std::filesystem::directory_iterator(destinationRoot, error),
+                    std::filesystem::directory_iterator(transferRoot, error),
                     std::filesystem::directory_iterator()),
                 0);
             EXPECT_FALSE(error);

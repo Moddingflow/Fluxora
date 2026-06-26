@@ -856,6 +856,9 @@ const eventUnlisteners = new Map<string, Promise<EventUnlisten>>();
 const legacyShellState = ['elec', 'tron-main'].join('');
 const legacyRuntimePattern = new RegExp(['Elec', 'tron'].join(''), 'gi');
 const legacyPackagerPattern = new RegExp(['Fo', 'rge'].join(''), 'gi');
+const projectsListTimeoutMs = 30_000;
+const projectOpenConfigTimeoutMs = 60_000;
+const executablesListTimeoutMs = 30_000;
 const transferImportTimeoutMs = 2 * 60 * 60 * 1000;
 
 const createOperationId = (scope: string): string =>
@@ -1223,7 +1226,8 @@ const createTauriInvoker = (): IpcInvoker => ({
         const projects = await bridgeRequest<FluxoraProject[]>(
           'projects.listConfigs',
           { buildConfigsDirectory: paths.buildConfigsDirectory },
-          request
+          request,
+          projectsListTimeoutMs
         );
         return {
           projects,
@@ -1235,7 +1239,12 @@ const createTauriInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.projectsOpenConfig: {
         const request = requestWithOperationId(args[1], 'projects_open_config');
-        return bridgeRequest('projects.openConfig', { configPath: args[0] }, request);
+        return bridgeRequest(
+          'projects.openConfig',
+          { configPath: args[0] },
+          request,
+          projectOpenConfigTimeoutMs
+        );
       }
 
       case FluxoraIpcChannels.projectsPreviewDirectory: {
@@ -1381,7 +1390,12 @@ const createTauriInvoker = (): IpcInvoker => ({
         return bridgeRequest('profiles.delete', { projectDirectory: args[0], profileName: args[1], defaultProfileName: optionalString(args[2]) }, requestWithOperationId(args[3], 'profiles_delete'));
 
       case FluxoraIpcChannels.executablesList:
-        return bridgeRequest('executables.list', { configPath: args[0] }, requestWithOperationId(args[1], 'executables_list'));
+        return bridgeRequest(
+          'executables.list',
+          { configPath: args[0] },
+          requestWithOperationId(args[1], 'executables_list'),
+          executablesListTimeoutMs
+        );
       case FluxoraIpcChannels.executablesSave:
         return bridgeRequest('executables.save', { configPath: args[0], executablesJson: JSON.stringify(args[1]) }, requestWithOperationId(args[2], 'executables_save'));
       case FluxoraIpcChannels.executablesGetIcon: {

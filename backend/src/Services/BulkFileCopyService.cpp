@@ -661,17 +661,30 @@ namespace fluxora
             return (std::max<std::size_t>)(128, workerCount * multiplier);
         }
 
+        std::exception_ptr makeCopyCancellationException()
+        {
+            try
+            {
+                throw std::runtime_error("Bulk file copy was canceled.");
+            }
+            catch (...)
+            {
+                return std::current_exception();
+            }
+        }
+
         void rememberCopyException(
             std::exception_ptr& firstError,
             std::mutex& errorMutex,
             std::atomic<bool>& shouldStop,
-            CopyTaskQueue& queue)
+            CopyTaskQueue& queue,
+            std::exception_ptr error = std::current_exception())
         {
             {
                 std::lock_guard lock(errorMutex);
-                if (!firstError)
+                if (!firstError && error)
                 {
-                    firstError = std::current_exception();
+                    firstError = error;
                 }
             }
             shouldStop.store(true, std::memory_order_relaxed);
@@ -991,6 +1004,12 @@ namespace fluxora
             const Logger& logger,
             const BulkFileCopyOptions& options)
         {
+            if (options.cancellationRequested)
+            {
+                copyFileWithProgressWin32Manual(task, state, totalBytes, progress, logger, options);
+                return;
+            }
+
             if (copyFileWithWindowsCopyEngine(task, state, totalBytes, progress, logger, options))
             {
                 return;
@@ -1361,7 +1380,12 @@ namespace fluxora
                 {
                     if (isCancellationRequested(options))
                     {
-                        rememberCurrentException();
+                        rememberCopyException(
+                            firstError,
+                            errorMutex,
+                            shouldStop,
+                            queue,
+                            makeCopyCancellationException());
                         break;
                     }
 

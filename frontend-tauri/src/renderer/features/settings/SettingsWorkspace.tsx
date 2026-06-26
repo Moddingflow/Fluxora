@@ -18,10 +18,7 @@ import { TransferSettingsPanel } from '../../TransferSettingsPanel';
 import { nexusModsIcon } from '../../design-system/assets';
 import { LanguageSelect } from './LanguageSelect';
 import type {
-  FluxoraModOrganizerImportAnalysis,
-  FluxoraModOrganizerImportProgress,
   FluxoraNexusModsAuthStatus,
-  FluxoraProject,
   NativeBridgeStatus
 } from '../../../shared/fluxora-api';
 
@@ -29,14 +26,11 @@ type SettingsCapabilities = ReturnType<typeof settingsCapabilityView>;
 
 interface SettingsWorkspaceProps {
   bridgeStatus: NativeBridgeStatus | null;
-  cancelRequested: boolean;
-  cancellationSupported: boolean;
   isTransferRunning: boolean;
   languageBusy: string | null;
   message: string | null;
   nexusBusy: boolean;
   nexusStatus: FluxoraNexusModsAuthStatus | null;
-  onCancelTransfer: () => void;
   onOpenTransfer: () => void;
   onSectionChange: (section: SettingsSectionId) => void;
   onSetLanguage: (language: string) => void;
@@ -44,33 +38,22 @@ interface SettingsWorkspaceProps {
   section: SettingsSectionId;
   settingsBusyLabel: string | null;
   settingsCapabilities: SettingsCapabilities;
-  transferAnalysis: FluxoraModOrganizerImportAnalysis | null;
-  transferError: string | null;
-  transferProgress: FluxoraModOrganizerImportProgress | null;
-  transferResult: FluxoraProject | null;
 }
 
 export function SettingsWorkspace({
   bridgeStatus,
-  cancelRequested,
-  cancellationSupported,
   isTransferRunning,
   languageBusy,
   message,
   nexusBusy,
   nexusStatus,
-  onCancelTransfer,
   onOpenTransfer,
   onSectionChange,
   onSetLanguage,
   onToggleNexusConnection,
   section,
   settingsBusyLabel,
-  settingsCapabilities,
-  transferAnalysis,
-  transferError,
-  transferProgress,
-  transferResult
+  settingsCapabilities
 }: SettingsWorkspaceProps) {
   const renderSettingsNav = () => (
     <aside className="settings-nav" aria-label="Settings sections">
@@ -168,14 +151,7 @@ export function SettingsWorkspace({
       transferAvailable={settingsCapabilities.transferAvailable}
       busyLabel={settingsBusyLabel}
       isRunning={isTransferRunning}
-      cancellationSupported={cancellationSupported}
-      cancelRequested={cancelRequested}
-      analysis={transferAnalysis}
-      progress={transferProgress}
-      error={transferError}
-      result={transferResult}
       onOpenTransfer={onOpenTransfer}
-      onCancel={onCancelTransfer}
     />
   );
 

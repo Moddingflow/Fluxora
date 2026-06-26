@@ -270,6 +270,43 @@ namespace fluxora
             return equalsIgnoreCase(value.substr(value.size() - suffix.size()), suffix);
         }
 
+        bool isTransientInstanceDatabaseSidecar(const std::filesystem::path& path)
+        {
+            const std::wstring lowerName = toLower(path.filename().wstring());
+            static constexpr std::array<std::wstring_view, 3> sqliteSidecarSuffixes{
+                L"-wal",
+                L"-shm",
+                L"-journal"
+            };
+
+            for (std::wstring_view suffix : sqliteSidecarSuffixes)
+            {
+                if (lowerName.size() <= suffix.size() ||
+                    lowerName.substr(lowerName.size() - suffix.size()) != suffix)
+                {
+                    continue;
+                }
+
+                const std::wstring_view databaseName(lowerName.data(), lowerName.size() - suffix.size());
+                if (databaseName == L"instance.db" || databaseName == L"instancedb")
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        bool isModOrganizerMetadataFile(const std::filesystem::path& path)
+        {
+            return equalsIgnoreCase(path.filename().wstring(), L"meta.ini");
+        }
+
+        bool shouldSkipModOrganizerImportEntry(const std::filesystem::path& path)
+        {
+            return isTransientInstanceDatabaseSidecar(path);
+        }
+
         bool startsWith(std::wstring_view value, std::wstring_view prefix)
         {
             return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
@@ -477,9 +514,7 @@ namespace fluxora
                 return normalizedRoot;
             }
 
-            return normalizedRoot == normalizedRoot.root_path()
-                ? normalizedRoot / std::filesystem::path(transferredBuildsFolderName)
-                : normalizedRoot;
+            return normalizedRoot / std::filesystem::path(transferredBuildsFolderName);
         }
 
         std::filesystem::path resolveFluxoraDataDirectory()
@@ -1644,7 +1679,8 @@ namespace fluxora
                     modsDirectory / std::filesystem::path(folder),
                     [](const std::filesystem::path& path)
                     {
-                        return equalsIgnoreCase(path.filename().wstring(), L"meta.ini");
+                        return isModOrganizerMetadataFile(path) ||
+                            shouldSkipModOrganizerImportEntry(path);
                     },
                     cancellationRequested);
             }
@@ -1661,7 +1697,7 @@ namespace fluxora
                 {
                     total += directorySize(
                         path,
-                        [](const std::filesystem::path&) { return false; },
+                        shouldSkipModOrganizerImportEntry,
                         cancellationRequested);
                 }
             }
@@ -3207,7 +3243,8 @@ namespace fluxora
                     L"Копирую моды",
                     [](const std::filesystem::path& path)
                     {
-                        return equalsIgnoreCase(path.filename().wstring(), L"meta.ini");
+                        return isModOrganizerMetadataFile(path) ||
+                            shouldSkipModOrganizerImportEntry(path);
                     }
                 });
             }
@@ -3223,7 +3260,7 @@ namespace fluxora
                     sourceFolder,
                     stagingProjectDirectory / std::filesystem::path(targetFolderName),
                     L"Копирую файлы профиля",
-                    [](const std::filesystem::path&) { return false; }
+                    shouldSkipModOrganizerImportEntry
                 });
             }
 
@@ -3240,7 +3277,8 @@ namespace fluxora
                     L"Копирую исполняемые файлы",
                     [onlyFile](const std::filesystem::path& path)
                     {
-                        return onlyFile.has_value() && !areSamePath(path, onlyFile.value());
+                        return shouldSkipModOrganizerImportEntry(path) ||
+                            (onlyFile.has_value() && !areSamePath(path, onlyFile.value()));
                     }
                 });
             }

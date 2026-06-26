@@ -57,6 +57,14 @@ export const upsertProject = (projects: FluxoraProject[], next: FluxoraProject):
   return copy;
 };
 
+export const mergeProjectIntoCatalog = (
+  catalog: FluxoraProjectCatalog,
+  project: FluxoraProject
+): FluxoraProjectCatalog => ({
+  ...catalog,
+  projects: upsertProject(catalog.projects, project)
+});
+
 export const loadProjectCatalog = async (): Promise<ProjectCatalogLoadResult> => {
   const operationId = createRendererOperationId('projects_list');
   const [catalog, templates] = await Promise.all([

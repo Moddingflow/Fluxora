@@ -5,23 +5,25 @@ import {
   ChevronLeft,
   ChevronRight,
   FolderOpen,
-  Gamepad2,
   HardDrive,
   Home,
   Layers,
-  Play,
   RefreshCw,
   UploadCloud,
   XCircle
 } from 'lucide-react';
 
-import { ProgressBar } from './design-system';
-import { appIconPlaceholder, fluxoraLogo, modOrganizerIcon, skyrimIcon } from './design-system/assets';
+import { FacetSpinner, ProgressBar } from './design-system';
+import { fluxoraLogo, modOrganizerIcon } from './design-system/assets';
 import {
   findTransferDriveForPath,
   formatTransferBytes,
   transferAnalysisStatus
 } from './settings-workspace-state';
+import {
+  normalizeMo2TransferDestinationRoot,
+  normalizeMo2TransferTargetProjectDirectory
+} from './mo2-transfer-request';
 import { shortPath } from './services/path-display-service';
 import type {
   FluxoraModOrganizerImportAnalysis,
@@ -58,13 +60,12 @@ interface TransferMo2PageProps {
   onStart: () => void;
   onCancel: () => void;
   onClose: () => void;
-  onOpenBuild: () => void;
 }
 
 const clampPercent = (value: number | undefined): number =>
   Math.max(0, Math.min(100, Number.isFinite(value) ? value ?? 0 : 0));
 
-const transferStepOrder: TransferStepId[] = ['name', 'game', 'path', 'install'];
+const transferStepOrder: TransferStepId[] = ['source', 'destination', 'review'];
 
 const transferStepMeta: Record<
   TransferStepId,
@@ -75,29 +76,23 @@ const transferStepMeta: Record<
     icon: ReactNode;
   }
 > = {
-  name: {
-    title: 'Название сборки',
-    short: 'Название',
-    hint: 'Как сборка будет называться в библиотеке Fluxora',
-    icon: <Layers size={20} aria-hidden="true" />
+  source: {
+    title: 'Папка сборки',
+    short: 'Папка',
+    hint: 'Выберите существующую сборку Mod Organizer 2',
+    icon: <FolderOpen size={20} aria-hidden="true" />
   },
-  game: {
-    title: 'Игра',
-    short: 'Игра',
-    hint: 'Для какой игры предназначена эта сборка',
-    icon: <Gamepad2 size={20} aria-hidden="true" />
-  },
-  path: {
-    title: 'Путь к игре',
-    short: 'Путь',
-    hint: 'Исполняемый файл, который Fluxora будет запускать',
+  destination: {
+    title: 'Диск установки',
+    short: 'Диск',
+    hint: 'Куда создать папку Fluxora Builds',
     icon: <HardDrive size={20} aria-hidden="true" />
   },
-  install: {
-    title: 'Папка установки',
-    short: 'Папка',
-    hint: 'Куда Fluxora развернет перенесенную сборку',
-    icon: <FolderOpen size={20} aria-hidden="true" />
+  review: {
+    title: 'Проверка',
+    short: 'Проверка',
+    hint: 'Проверьте путь, игру и место перед переносом',
+    icon: <Check size={20} aria-hidden="true" />
   }
 };
 
@@ -112,7 +107,7 @@ const pathLeaf = (rawPath: string): string => {
 };
 
 const combineTargetPath = (rootPath: string, buildName: string): string => {
-  const root = rootPath.trim().replace(/[\\/]+$/, '');
+  const root = normalizeMo2TransferDestinationRoot(rootPath);
   if (!root || !buildName.trim()) {
     return '';
   }
@@ -167,8 +162,7 @@ export const TransferMo2Page = ({
   onAnalyze,
   onStart,
   onCancel,
-  onClose,
-  onOpenBuild
+  onClose
 }: TransferMo2PageProps) => {
   const analysisStatus = transferAnalysisStatus(analysis);
   const requiredBytes = analysis?.totalBytes ?? progress?.totalBytes ?? 0;
@@ -181,6 +175,7 @@ export const TransferMo2Page = ({
     Boolean(sourceDirectory.trim()) &&
     Boolean(destinationRootDirectory.trim());
   const canStart = canAnalyze && Boolean(analysis) && analysisStatus === 'ready';
+  const isAutoChecking = busyLabel === 'Проверяем перенос' && !analysis;
   const selectedDrive = findTransferDriveForPath(drives, destinationRootDirectory);
   const sourceLabel = sourceDirectory ? shortPath(sourceDirectory) : 'Выберите папку Mod Organizer 2';
   const destinationLabel = destinationRootDirectory
@@ -189,13 +184,12 @@ export const TransferMo2Page = ({
       ? shortPath(defaultDestinationRoot)
       : 'Fluxora выберет диск из списка';
   const buildName = analysis?.projectName || pathLeaf(sourceDirectory) || 'Foundation Edition';
-  const profileName = analysis?.profileName || buildName;
   const gameName = analysis?.gameName || 'Игра будет определена после проверки';
-  const gamePath = analysis?.gamePath || 'Путь будет определен после проверки сборки';
-  const gameIcon = gameName.toLocaleLowerCase().includes('skyrim') ? skyrimIcon : appIconPlaceholder;
-  const targetProjectDirectory =
-    analysis?.targetProjectDirectory ||
-    combineTargetPath(destinationRootDirectory || defaultDestinationRoot, buildName);
+  const targetProjectDirectory = normalizeMo2TransferTargetProjectDirectory(
+    analysis?.targetProjectDirectory,
+    analysis?.destinationRootDirectory || destinationRootDirectory || defaultDestinationRoot,
+    buildName
+  ) || combineTargetPath(destinationRootDirectory || defaultDestinationRoot, buildName);
   const currentStepIndex = transferStepOrder.indexOf(selectedStep);
   const previousStepRef = useRef(selectedStep);
   const previousIndex = transferStepOrder.indexOf(previousStepRef.current);
@@ -207,12 +201,11 @@ export const TransferMo2Page = ({
 
   const completedSteps = useMemo(
     () => ({
-      name: Boolean(sourceDirectory.trim()),
-      game: Boolean(analysis?.gameName),
-      path: Boolean(analysis?.gamePath),
-      install: Boolean(analysis && analysisStatus === 'ready')
+      source: Boolean(sourceDirectory.trim()),
+      destination: Boolean(destinationRootDirectory.trim()),
+      review: Boolean(analysis && analysisStatus === 'ready')
     }),
-    [analysis, analysisStatus, sourceDirectory]
+    [analysis, analysisStatus, destinationRootDirectory, sourceDirectory]
   );
 
   const stepMotionStyle = {
@@ -220,25 +213,24 @@ export const TransferMo2Page = ({
   } as CSSProperties;
 
   const goToNextStep = async () => {
-    if (selectedStep === 'name') {
+    if (selectedStep === 'source') {
       if (!sourceDirectory.trim()) {
         await onBrowseSource();
         return;
       }
-      onSelectStep('game');
+      onSelectStep('destination');
       return;
     }
 
-    if (selectedStep === 'game') {
-      if (!analysis && canAnalyze) {
+    if (selectedStep === 'destination') {
+      if (!sourceDirectory.trim()) {
+        onSelectStep('source');
+        return;
+      }
+
+      if (canAnalyze) {
         await onAnalyze();
       }
-      onSelectStep('path');
-      return;
-    }
-
-    if (selectedStep === 'path') {
-      onSelectStep('install');
       return;
     }
 
@@ -310,13 +302,6 @@ export const TransferMo2Page = ({
         </nav>
 
         <div className="transfer-rail-spacer" />
-        <div className="transfer-rail-game">
-          <img src={gameIcon} alt="" />
-          <span>
-            <small>Игра</small>
-            <strong>{analysis?.gameName || 'Не определена'}</strong>
-          </span>
-        </div>
       </aside>
     );
   };
@@ -357,16 +342,16 @@ export const TransferMo2Page = ({
     </div>
   );
 
-  const renderNameStep = () => (
+  const renderSourceStep = () => (
     <div className="transfer-step-stack">
       <p>
-        Дайте сборке имя - под ним она появится в библиотеке Fluxora. Исходная сборка Mod
-        Organizer 2 останется на месте и не будет изменена.
+        Выберите папку существующей сборки Mod Organizer 2. Fluxora возьмет название из этой
+        папки, а исходная сборка останется на месте и не будет изменена.
       </p>
       {renderFieldShell(
-        'Название',
-        <Layers size={15} aria-hidden="true" />,
-        sourceDirectory ? buildName : 'Выберите папку Mod Organizer 2',
+        'Папка сборки',
+        <FolderOpen size={15} aria-hidden="true" />,
+        sourceDirectory ? sourceLabel : 'Выбрать папку со сборкой',
         {
           title: sourceDirectory || 'Выберите папку Mod Organizer 2',
           onClick: onBrowseSource,
@@ -375,74 +360,10 @@ export const TransferMo2Page = ({
       )}
       {sourceDirectory ? (
         <div className="transfer-source-note">
-          <FolderOpen size={15} aria-hidden="true" />
-          <span title={sourceDirectory}>{sourceLabel}</span>
+          <Layers size={15} aria-hidden="true" />
+          <span title={buildName}>Название после переноса: {buildName}</span>
         </div>
       ) : null}
-    </div>
-  );
-
-  const renderGameStep = () => (
-    <div className="transfer-step-stack transfer-step-stack--wide">
-      <p>
-        Fluxora определит игру по данным сборки MO2 и использует ее для профиля, порядка загрузки и
-        запуска перенесенной сборки.
-      </p>
-      <section className="transfer-game-card" data-ready={Boolean(analysis?.gameName)}>
-        <img src={gameIcon} alt="" />
-        <span>
-          <small>Обнаруженная игра</small>
-          <strong>{gameName}</strong>
-          <em>{analysis?.templateId || 'Нажмите проверку, если игра еще не определена'}</em>
-        </span>
-        <button
-          className="tool-button"
-          type="button"
-          disabled={!canAnalyze}
-          onClick={() => void onAnalyze()}
-        >
-          <RefreshCw size={15} aria-hidden="true" />
-          Проверить
-        </button>
-      </section>
-      {analysis?.modCount !== undefined ? (
-        <div className="transfer-micro-facts">
-          <span>
-            <small>Моды</small>
-            <strong>{analysis.modCount}</strong>
-          </span>
-          <span>
-            <small>Профиль</small>
-            <strong>{profileName}</strong>
-          </span>
-          <span>
-            <small>Статус</small>
-            <strong>{analysis.statusMessage || 'Проверено'}</strong>
-          </span>
-        </div>
-      ) : null}
-    </div>
-  );
-
-  const renderPathStep = () => (
-    <div className="transfer-step-stack">
-      <p>
-        Укажите путь к исполняемому файлу игры - Fluxora будет запускать игру через него с активной
-        перенесенной сборкой.
-      </p>
-      {renderFieldShell(
-        'Исполняемый файл игры',
-        <HardDrive size={15} aria-hidden="true" />,
-        gamePath,
-        {
-          title: gamePath,
-          disabled: true
-        }
-      )}
-      <div className="transfer-source-note">
-        <Gamepad2 size={15} aria-hidden="true" />
-        <span>Путь приходит из анализа MO2 и остается под контролем native bridge.</span>
-      </div>
     </div>
   );
 
@@ -541,6 +462,14 @@ export const TransferMo2Page = ({
             <dd title={destinationRootDirectory || destinationLabel}>{selectedDrive?.label || destinationLabel}</dd>
           </div>
           <div>
+            <dt>Итоговый путь</dt>
+            <dd title={targetProjectDirectory}>{targetProjectDirectory || 'Диск еще не выбран'}</dd>
+          </div>
+          <div>
+            <dt>Игра</dt>
+            <dd>{gameName}</dd>
+          </div>
+          <div>
             <dt>Место</dt>
             <dd>{spaceText}</dd>
           </div>
@@ -555,14 +484,14 @@ export const TransferMo2Page = ({
     );
   };
 
-  const renderInstallStep = () => (
+  const renderDestinationStep = () => (
     <div className="transfer-step-stack transfer-step-stack--install">
       <p>
-        Выберите папку, в которую Fluxora развернет перенесенную сборку. Внутри будет создана сборка
-        с данными, профилем и порядком загрузки из Mod Organizer 2.
+        Выберите диск, куда Fluxora перенесет сборку. На выбранном диске будет создана папка
+        Fluxora Builds, а внутри нее сборка {buildName}.
       </p>
       {renderFieldShell(
-        'Папка установки',
+        'Итоговая структура',
         <FolderOpen size={15} aria-hidden="true" />,
         targetProjectDirectory || 'Выберите диск назначения',
         {
@@ -571,57 +500,72 @@ export const TransferMo2Page = ({
         }
       )}
       {renderDriveList()}
+    </div>
+  );
+
+  const renderReviewStep = () => (
+    <div className="transfer-step-stack transfer-step-stack--install">
+      <p>
+        Проверка подтвердит структуру MO2, рассчитает размер переноса и покажет итоговую папку перед
+        запуском копирования.
+      </p>
       <section className="transfer-review-card transfer-review-card--compact" aria-label="Проверка переноса">
-        {renderReviewSummary()}
+        {analysis ? (
+          renderReviewSummary()
+        ) : (
+          <div className="settings-note" data-status="ready" aria-busy={isAutoChecking}>
+            <strong>{isAutoChecking ? 'Проверяем перенос' : 'Проверка еще не запущена'}</strong>
+            <span>
+              Выберите диск установки и нажмите «Проверить», чтобы рассчитать размер и итоговый путь.
+            </span>
+          </div>
+        )}
       </section>
     </div>
   );
 
   const renderStepContent = () => {
     switch (selectedStep) {
-      case 'game':
-        return renderGameStep();
-      case 'path':
-        return renderPathStep();
-      case 'install':
-        return renderInstallStep();
-      case 'name':
+      case 'destination':
+        return renderDestinationStep();
+      case 'review':
+        return renderReviewStep();
+      case 'source':
       default:
-        return renderNameStep();
+        return renderSourceStep();
     }
   };
 
   const footerPrimaryLabel =
-    selectedStep === 'install'
-      ? canStart
-        ? 'Перенести'
-        : 'Проверить'
-      : 'Далее';
+    selectedStep === 'source'
+      ? sourceDirectory.trim()
+        ? 'Выбрать диск'
+        : 'Выбрать папку'
+      : selectedStep === 'destination'
+        ? 'Проверить'
+        : 'Перенести';
   const footerPrimaryIcon =
-    selectedStep === 'install' ? (
-      canStart ? (
-        <UploadCloud size={15} aria-hidden="true" />
+    selectedStep === 'source' ? (
+      sourceDirectory.trim() ? (
+        <ChevronRight size={14} aria-hidden="true" />
       ) : (
-        <RefreshCw size={15} aria-hidden="true" />
+        <FolderOpen size={15} aria-hidden="true" />
       )
+    ) : selectedStep === 'destination' ? (
+      <RefreshCw size={15} aria-hidden="true" />
     ) : (
-      <ChevronRight size={14} aria-hidden="true" />
+      <UploadCloud size={15} aria-hidden="true" />
     );
   const primaryDisabled =
-    selectedStep === 'name'
+    selectedStep === 'source'
       ? !sourceDirectory.trim() && !canBrowseSource
-      : selectedStep === 'install'
-        ? !canStart && !canAnalyze
-        : !sourceDirectory.trim();
+      : selectedStep === 'destination'
+        ? !canAnalyze
+        : !canStart;
+  const showPrimaryButton = selectedStep !== 'review' || canStart;
 
   const renderWizardFooter = () => (
     <footer className="transfer-wizard-footer">
-      <span className="transfer-footer-progress">Шаг {currentStepIndex + 1} из {transferStepOrder.length}</span>
-      <span className="transfer-footer-dots" aria-hidden="true">
-        {transferStepOrder.map((step) => (
-          <span key={step} data-active={step === selectedStep} data-complete={completedSteps[step]} />
-        ))}
-      </span>
       <span className="transfer-footer-spacer" />
       <button className="transfer-footer-button transfer-footer-button--ghost" type="button" onClick={onClose}>
         Отмена
@@ -635,15 +579,17 @@ export const TransferMo2Page = ({
         <ChevronLeft size={14} aria-hidden="true" />
         Назад
       </button>
-      <button
-        className="transfer-footer-button transfer-footer-button--primary"
-        type="button"
-        disabled={primaryDisabled}
-        onClick={() => void goToNextStep()}
-      >
-        {footerPrimaryLabel}
-        {footerPrimaryIcon}
-      </button>
+      {showPrimaryButton ? (
+        <button
+          className="transfer-footer-button transfer-footer-button--primary"
+          type="button"
+          disabled={primaryDisabled}
+          onClick={() => void goToNextStep()}
+        >
+          {footerPrimaryLabel}
+          {footerPrimaryIcon}
+        </button>
+      ) : null}
     </footer>
   );
 
@@ -697,34 +643,8 @@ export const TransferMo2Page = ({
     }
 
     const percent = clampPercent(visibleProgress.overallPercent);
-    const copyPercent = clampPercent(visibleProgress.copyPercent);
-    const databasePercent = clampPercent(visibleProgress.databasePercent);
-    const phase = visibleProgress.phase.toLocaleLowerCase();
-    const isPreparing = percent < 5 || phase.includes('prepar');
-    const isCopying = phase.includes('copy') || (copyPercent > 0 && copyPercent < 100);
-    const isDatabase = phase.includes('database') || (databasePercent > 0 && databasePercent < 100);
-    const stepRows = [
-      {
-        label: 'Подготовка',
-        detail: 'Проверяем план переноса и папку назначения',
-        state: isPreparing ? 'active' : 'done'
-      },
-      {
-        label: 'Копирование файлов',
-        detail: `${copyPercent}% файлов перенесено`,
-        state: isCopying ? 'active' : copyPercent >= 100 ? 'done' : 'idle'
-      },
-      {
-        label: 'Профили и база',
-        detail: `${databasePercent}% данных записано`,
-        state: isDatabase ? 'active' : databasePercent >= 100 ? 'done' : 'idle'
-      },
-      {
-        label: 'Финализация',
-        detail: 'Обновляем каталог Fluxora',
-        state: percent >= 100 ? 'done' : percent >= 98 ? 'active' : 'idle'
-      }
-    ];
+    const currentStepText =
+      visibleProgress.currentStep || visibleProgress.phase || 'Перенос выполняется';
     const pageTitle = result
       ? 'Перенос завершен'
       : error
@@ -734,18 +654,15 @@ export const TransferMo2Page = ({
     return (
       <section className="transfer-operation-page transfer-operation-page--wizard" aria-label="Перенос сборки">
         <div className="transfer-wizard-page">
-          {renderRail('install')}
+          {renderRail('review')}
           <div className="transfer-wizard-main">
             <div className="transfer-wizard-scroll">
               <section className="transfer-progress-card">
-                <div className="transfer-operation-orbit" aria-hidden="true">
-                  <span />
-                  <UploadCloud size={28} />
-                </div>
+                <FacetSpinner className="transfer-operation-spinner" size={76} />
                 <div className="transfer-operation-copy">
                   <p className="eyebrow">Перенос сборки</p>
                   <h2>{pageTitle}</h2>
-                  <span>{visibleProgress.currentStep || visibleProgress.phase || 'Перенос выполняется'}</span>
+                  <span className="transfer-operation-current-step">{currentStepText}</span>
                   {visibleProgress.currentItem ? <small>{visibleProgress.currentItem}</small> : null}
                 </div>
 
@@ -758,16 +675,6 @@ export const TransferMo2Page = ({
                   />
                 </div>
 
-                <div className="transfer-operation-steps" aria-label="Текущие шаги переноса">
-                  {stepRows.map((step) => (
-                    <div key={step.label} data-state={step.state}>
-                      <span aria-hidden="true" />
-                      <strong>{step.label}</strong>
-                      <small>{step.detail}</small>
-                    </div>
-                  ))}
-                </div>
-
                 {error ? (
                   <div className="settings-note" data-status="error" role="alert">
                     <strong>Нужно внимание</strong>
@@ -778,12 +685,6 @@ export const TransferMo2Page = ({
             </div>
 
             <footer className="transfer-wizard-footer">
-              <span className="transfer-footer-progress">Шаг 4 из 4</span>
-              <span className="transfer-footer-dots" aria-hidden="true">
-                {transferStepOrder.map((step) => (
-                  <span key={step} data-active={step === 'install'} data-complete />
-                ))}
-              </span>
               <span className="transfer-footer-spacer" />
               {isRunning ? (
                 <button
@@ -797,17 +698,7 @@ export const TransferMo2Page = ({
                   {cancelRequested ? 'Отменяем и очищаем' : 'Отменить и очистить'}
                 </button>
               ) : (
-                <>
-                  {result ? (
-                    <button
-                      className="transfer-footer-button transfer-footer-button--primary"
-                      type="button"
-                      onClick={onOpenBuild}
-                    >
-                      Открыть сборку
-                      <Play size={15} aria-hidden="true" />
-                    </button>
-                  ) : null}
+                result ? null : (
                   <button
                     className="transfer-footer-button transfer-footer-button--secondary"
                     type="button"
@@ -816,7 +707,7 @@ export const TransferMo2Page = ({
                     <Home size={15} aria-hidden="true" />
                     В библиотеку
                   </button>
-                </>
+                )
               )}
             </footer>
           </div>

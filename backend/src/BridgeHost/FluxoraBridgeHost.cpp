@@ -23,7 +23,9 @@ namespace
 {
     constexpr std::wstring_view protocolVersion = L"1.0";
     constexpr std::wstring_view hostVersion = L"0.1.0-mvp";
-    constexpr int initialBufferLength = 512;
+    // Common catalog responses include path and health metadata; keep the first
+    // C ABI buffer large enough for normal startup while preserving resize fallback.
+    constexpr int initialBufferLength = 8192;
 
     enum class ErrorCategory
     {

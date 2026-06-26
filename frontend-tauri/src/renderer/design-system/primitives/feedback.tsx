@@ -1,4 +1,4 @@
-import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type HTMLAttributes, type ReactNode } from 'react';
 
 import { cx } from './utils';
 
@@ -99,7 +99,7 @@ export interface FacetSpinnerProps extends HTMLAttributes<HTMLSpanElement> {
 export function FacetSpinner({
   className,
   size = 56,
-  stroke = 4,
+  stroke = 6,
   style,
   ...rest
 }: FacetSpinnerProps) {
@@ -141,11 +141,16 @@ export function FacetSpinner({
   );
 }
 
-export interface LoadingSplashProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'> {
+export interface LoadingSplashProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onCancel' | 'title'> {
   appName?: string;
   buildName?: string;
+  cancelLabel?: ReactNode;
+  cancelTitle?: string;
   detail?: ReactNode;
   indeterminate?: boolean;
+  messageIntervalMs?: number;
+  messages?: ReadonlyArray<ReactNode>;
+  onCancel?: () => void;
   open?: boolean;
   progress?: number;
   state?: 'starting' | 'running';
@@ -156,9 +161,14 @@ export interface LoadingSplashProps extends Omit<HTMLAttributes<HTMLDivElement>,
 export function LoadingSplash({
   appName,
   buildName,
+  cancelLabel = 'Cancel',
+  cancelTitle,
   className,
   detail,
   indeterminate = false,
+  messageIntervalMs = 5000,
+  messages,
+  onCancel,
   open = true,
   progress = 0,
   state = 'starting',
@@ -166,22 +176,46 @@ export function LoadingSplash({
   title,
   ...rest
 }: LoadingSplashProps) {
-  if (!open) {
-    return null;
-  }
-
   const isStarting = state === 'starting';
   const progressValue = clampProgress(progress);
   const resolvedTitle = title ?? (isStarting ? 'Launching build' : 'Build is running');
   const resolvedSubtitle =
     subtitle ??
     (isStarting
-      ? buildName
-        ? `Preparing ${buildName}.`
-        : 'The native core is preparing the build.'
+      ? (detail ??
+        (buildName
+          ? `Preparing ${buildName}.`
+          : 'The native core is preparing the build.'))
       : appName
         ? `Close ${appName} to return to Fluxora.`
         : 'Close the launched app to return to Fluxora.');
+  const messageItems = useMemo(() => {
+    const source = messages?.length ? messages : [resolvedTitle];
+    return source.filter(Boolean);
+  }, [messages, resolvedTitle]);
+  const [messageIndex, setMessageIndex] = useState(0);
+  const activeMessage = messageItems[messageIndex % Math.max(1, messageItems.length)] ?? resolvedTitle;
+  const percentLabel = indeterminate ? '...' : `${Math.round(progressValue)}%`;
+
+  useEffect(() => {
+    setMessageIndex(0);
+  }, [open, messageItems.length]);
+
+  useEffect(() => {
+    if (!open || messageItems.length < 2 || messageIntervalMs <= 0) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      setMessageIndex((current) => (current + 1) % messageItems.length);
+    }, messageIntervalMs);
+
+    return () => window.clearInterval(timer);
+  }, [messageIntervalMs, messageItems.length, open]);
+
+  if (!open) {
+    return null;
+  }
 
   return (
     <div
@@ -191,19 +225,33 @@ export function LoadingSplash({
       role="status"
       {...rest}
     >
+      {onCancel ? (
+        <button
+          className="flx-loading-splash__cancel"
+          title={cancelTitle ?? (typeof cancelLabel === 'string' ? cancelLabel : undefined)}
+          type="button"
+          onClick={onCancel}
+        >
+          {cancelLabel}
+        </button>
+      ) : null}
       <div className="flx-loading-splash__panel">
         <FacetSpinner />
         <div className="flx-loading-splash__copy">
-          <strong>{resolvedTitle}</strong>
+          <strong key={messageIndex} className="flx-loading-splash__message">
+            {activeMessage}
+          </strong>
           {resolvedSubtitle ? <span>{resolvedSubtitle}</span> : null}
         </div>
         {isStarting ? (
-          <ProgressBar
-            indeterminate={indeterminate}
-            label={detail ?? 'Preparing build'}
-            value={progressValue}
-            valueLabel={indeterminate ? 'Working' : `${Math.round(progressValue)}%`}
-          />
+          <div className="flx-loading-splash__progress">
+            <ProgressBar
+              aria-label={typeof detail === 'string' ? detail : 'Loading progress'}
+              indeterminate={indeterminate}
+              value={progressValue}
+            />
+            <strong className="flx-loading-splash__percent">{percentLabel}</strong>
+          </div>
         ) : (
           <span className="flx-loading-splash__lock">Screen locked</span>
         )}

@@ -21,34 +21,7 @@ const baseTransferProps: TransferSettingsPanelProps = {
   transferAvailable: true,
   busyLabel: null,
   isRunning: false,
-  cancellationSupported: true,
-  cancelRequested: false,
-  analysis: {
-    sourceDirectory: 'E:\\MO2\\Skyrim',
-    destinationRootDirectory: 'D:\\Fluxora',
-    targetProjectDirectory: 'D:\\Fluxora\\Skyrim',
-    targetConfigPath: 'D:\\Fluxora\\Skyrim\\fluxora.json',
-    projectName: 'Skyrim',
-    profileName: 'Default',
-    templateId: 'skyrimse',
-    gameName: 'Skyrim Special Edition',
-    gamePath: 'E:\\Steam\\SkyrimSE.exe',
-    totalBytes: 2048,
-    availableBytes: 4096,
-    modCount: 12,
-    separatorCount: 2,
-    hasEnoughSpace: true,
-    willOverwrite: false,
-    canImport: true,
-    statusMessage: 'Ready',
-    warningMessage: '',
-    operationId: 'op_analysis'
-  },
-  progress: null,
-  error: null,
-  result: null,
-  onOpenTransfer: () => undefined,
-  onCancel: () => undefined
+  onOpenTransfer: () => undefined
 };
 
 const renderTransferSettings = (
@@ -166,33 +139,27 @@ describe('settings redesign', () => {
     expect(styles).toContain('background: rgba(var(--flx-accent-rgb), 0.15);');
     expect(styles).toContain('box-shadow: inset 0 0 0 1px rgba(var(--flx-accent-rgb), 0.12);');
     expect(styles).not.toContain('linear-gradient(180deg, rgba(var(--flx-accent-rgb), 0.18), rgba(var(--flx-accent-rgb), 0.1))');
-    expect(styles).toContain('.settings-card--transfer');
-    expect(styles).toContain('.transfer-entry-progress');
-    expect(styles).toContain('.settings-facts--transfer');
+    expect(styles).toContain('.settings-panel--transfer');
+    expect(styles).toContain('.settings-service-row--transfer');
+    expect(styles).toContain('.settings-transfer-button');
+    expect(styles).not.toContain('.settings-card');
+    expect(styles).not.toContain('.transfer-entry-progress');
+    expect(styles).not.toContain('.settings-facts--transfer');
+    expect(styles).not.toContain('.settings-actions');
   });
 
-  it('renders MO2 transfer progress and operation-scoped cancellation in the Settings card', () => {
-    const html = renderTransferSettings({
-      isRunning: true,
-      progress: {
-        operationId: 'op_transfer_import',
-        phase: 'copying',
-        currentStep: 'Copy files',
-        currentItem: 'SkyUI',
-        overallPercent: 42,
-        copyPercent: 55,
-        databasePercent: 0,
-        copiedBytes: 1024,
-        totalBytes: 2048
-      }
-    });
+  it('renders the MO2 transfer entry as a minimal settings row', () => {
+    const html = renderTransferSettings();
 
-    expect(html).toContain('Build transfer');
     expect(html).toContain('Mod Organizer 2');
-    expect(html).toContain('MO2 transfer progress');
-    expect(html).toContain('aria-valuenow="42"');
-    expect(html).toContain('Cancel and clean');
-    expect(html).toContain('E:\\MO2\\Skyrim');
-    expect(html).toContain('D:\\Fluxora\\Skyrim');
+    expect(html).toContain('Перенести');
+    expect(html).toContain('settings-service-row--transfer');
+    expect(html).not.toContain('Build transfer');
+    expect(html).not.toContain('MO2 transfer progress');
+    expect(html).not.toContain('Native core check');
+    expect(html).not.toContain('Source');
+    expect(html).not.toContain('Target');
+    expect(html).not.toContain('Cancel and clean');
+    expect(html).not.toContain('status-pill');
   });
 });

@@ -1170,9 +1170,12 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
   await expect(page.getByText(/settings\.json - language=/)).toHaveCount(0);
 
   await page.getByRole('button', { name: /Transfer/ }).click();
-  await expect(page.getByText('Build transfer', { exact: true })).toBeVisible();
-  await expect(page.getByText('The native core verifies the MO2 structure before import starts.')).toBeVisible();
-  await page.getByRole('button', { name: 'Start transfer' }).click();
+  await expect(page.getByText('Mod Organizer 2', { exact: true })).toBeVisible();
+  const transferButton = page.getByRole('button', {
+    name: 'Перенести сборку из Mod Organizer 2'
+  });
+  await expect(transferButton).toBeEnabled();
+  await transferButton.click();
   await expect
     .poll(() =>
       page.evaluate(() =>
