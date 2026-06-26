@@ -103,7 +103,21 @@ describe('mod workspace state', () => {
     expect(targetIndexForMove(items, 'mod_skyui', 1)).toBe(2);
     expect(targetIndexForMove(items, 'sep_visuals', -1)).toBeNull();
     expect(targetIndexForDrop(items, 'mod_skyui', 'mod_smoothcam')).toBe(2);
+    expect(targetIndexForDrop(items, 'mod_smoothcam', 'mod_skyui', 'before')).toBe(1);
+    expect(targetIndexForDrop(items, 'mod_skyui', 'mod_smoothcam', 'before')).toBeNull();
     expect(targetIndexForDrop(items, 'mod_skyui', 'mod_skyui')).toBeNull();
+  });
+
+  it('calculates separator block drop indexes for precise row slots', () => {
+    const groupedItems = [
+      ...items,
+      separatorItem('sep_audio', 'Audio', 3),
+      modItem('mod_music', 'Music - HQ', 4)
+    ];
+
+    expect(targetIndexForDrop(groupedItems, 'sep_visuals', 'mod_music', 'after')).toBe(4);
+    expect(targetIndexForDrop(groupedItems, 'sep_visuals', 'sep_audio', 'before')).toBeNull();
+    expect(targetIndexForDrop(groupedItems, 'sep_audio', 'sep_visuals', 'before')).toBe(0);
   });
 
   it('marks mods as nested when they belong to a separator group', () => {

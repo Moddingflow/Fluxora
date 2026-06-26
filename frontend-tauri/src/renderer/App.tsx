@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { ReactElement } from 'react';
+import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react';
 
 import { AppTitlebar } from './components/chrome/AppTitlebar';
 import { EmptyState, LoadingSplash, StatusDot } from './design-system';
@@ -95,6 +95,7 @@ import {
   targetIndexForMove
 } from './mod-workspace-state';
 import {
+  canDragPluginOrderItem,
   emptyPluginWorkspaceState,
   filterPluginOrderItems,
   pluginCapabilityView,
@@ -104,6 +105,7 @@ import {
   pluginTypeLabel,
   pluginWorkspaceReducer,
   selectedPluginOrderItem,
+  targetIndexForPluginDrop,
   targetIndexForPluginMove
 } from './plugin-workspace-state';
 import {
@@ -246,6 +248,44 @@ interface OpeningBuildSplashState {
 }
 
 type RightPaneId = 'plugins' | 'data' | 'downloads' | 'build';
+type RowReorderKind = 'mod' | 'plugin';
+type RowDropPlacement = 'before' | 'after';
+
+interface RowDropTargetState {
+  orderId: string;
+  placement: RowDropPlacement;
+}
+
+interface RowReorderSession {
+  kind: RowReorderKind;
+  pointerId: number;
+  sourceOrderId: string;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+  active: boolean;
+  frameId: number | null;
+  targetOrderId: string | null;
+  placement: RowDropPlacement | null;
+  scrollContainer: HTMLElement | null;
+}
+
+interface WorkspaceLoadOptions {
+  showBusy?: boolean;
+  showLoading?: boolean;
+  resetScroll?: boolean;
+}
+
+interface WorkspaceMutationOptions {
+  showBusy?: boolean;
+  reload?: WorkspaceLoadOptions;
+}
+
+interface ReorderMutationOptions {
+  busyText?: string;
+  showBusy?: boolean;
+}
 
 const navItems: Array<{ id: RouteId; label: string; icon: typeof Home }> = [
   { id: 'home', label: 'Home', icon: Home },
@@ -291,6 +331,14 @@ const downloadOverscanRows = 8;
 const projectMenuWidth = 174;
 const projectMenuEstimatedHeight = 116;
 const projectMenuViewportPadding = 8;
+const rowReorderDragThreshold = 5;
+const rowReorderAutoScrollEdge = 36;
+const rowReorderAutoScrollMaxStep = 18;
+const backgroundReorderLoadOptions: WorkspaceLoadOptions = {
+  resetScroll: false,
+  showBusy: false,
+  showLoading: false
+};
 
 const projectMenuPositionFromAnchor = (anchor: DOMRect): ProjectMenuPosition => {
   const left = Math.max(
@@ -312,6 +360,24 @@ const projectMenuPositionFromAnchor = (anchor: DOMRect): ProjectMenuPosition => 
       Math.min(projectMenuEstimatedHeight, window.innerHeight - top - projectMenuViewportPadding)
     )
   };
+};
+
+const isInteractiveRowDragTarget = (target: EventTarget | null): boolean => {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(
+    target.closest('button, input, label, select, textarea, a, [role="button"], [data-no-row-drag="true"]')
+  );
+};
+
+const rowDropPlacementFromPointer = (
+  row: HTMLElement,
+  pointerY: number
+): RowDropPlacement => {
+  const rect = row.getBoundingClientRect();
+  return pointerY < rect.top + rect.height / 2 ? 'before' : 'after';
 };
 
 export const App = () => {
@@ -379,7 +445,7 @@ export const App = () => {
   const [modMenuOrderId, setModMenuOrderId] = useState<string | null>(null);
   const [modListScrollTop, setModListScrollTop] = useState(0);
   const [draggedModOrderId, setDraggedModOrderId] = useState<string | null>(null);
-  const [modDropTargetOrderId, setModDropTargetOrderId] = useState<string | null>(null);
+  const [modDropTarget, setModDropTarget] = useState<RowDropTargetState | null>(null);
   const [fileTreeCache, setFileTreeCache] = useState<Record<string, FluxoraModFileTreeEntry[]>>({});
   const [expandedFileTree, setExpandedFileTree] = useState<Record<string, boolean>>({});
   const [fileTreeState, setFileTreeState] = useState<'idle' | 'loading' | 'ready' | 'error'>(
@@ -394,6 +460,8 @@ export const App = () => {
   const [pluginsBusyLabel, setPluginsBusyLabel] = useState<string | null>(null);
   const [pluginMenuOrderId, setPluginMenuOrderId] = useState<string | null>(null);
   const [pluginListScrollTop, setPluginListScrollTop] = useState(0);
+  const [draggedPluginOrderId, setDraggedPluginOrderId] = useState<string | null>(null);
+  const [pluginDropTarget, setPluginDropTarget] = useState<RowDropTargetState | null>(null);
   const [downloadsWorkspace, dispatchDownloadsWorkspace] = useReducer(
     downloadWorkspaceReducer,
     undefined,
@@ -438,6 +506,8 @@ export const App = () => {
   const createCancelRequestsRef = useRef<Set<string>>(new Set());
   const refreshInFlightRef = useRef(false);
   const refreshCurrentViewRef = useRef<() => void | Promise<void>>(() => undefined);
+  const rowReorderSessionRef = useRef<RowReorderSession | null>(null);
+  const suppressNextRowClickRef = useRef(false);
   const [isTransferPageOpen, setIsTransferPageOpen] = useState(false);
 
   const selectedProject = useMemo(
@@ -740,15 +810,25 @@ export const App = () => {
     }
   };
 
-  const loadModsWorkspace = async (project = selectedProject) => {
+  const loadModsWorkspace = async (
+    project = selectedProject,
+    options: WorkspaceLoadOptions = {}
+  ) => {
     if (!project || !bridgeStatus?.ready) {
       return;
     }
 
+    const showBusy = options.showBusy ?? true;
+    const showLoading = options.showLoading ?? true;
+    const resetScroll = options.resetScroll ?? true;
     const operationId = createRendererOperationId('mods_load');
-    dispatchModsWorkspace({ type: 'load-started' });
-    setModsBusyLabel('Loading mods');
-    setMessage(null);
+    if (showLoading) {
+      dispatchModsWorkspace({ type: 'load-started' });
+    }
+    if (showBusy) {
+      setModsBusyLabel('Loading mods');
+      setMessage(null);
+    }
 
     try {
       const [nextInstalledMods, nextOrder] = await Promise.all([
@@ -760,14 +840,18 @@ export const App = () => {
 
       setInstalledMods(nextInstalledMods);
       dispatchModsWorkspace({ type: 'items-loaded', items: nextOrder });
-      setModListScrollTop(0);
+      if (resetScroll) {
+        setModListScrollTop(0);
+      }
       setDraggedModOrderId(null);
-      setModDropTargetOrderId(null);
+      setModDropTarget(null);
     } catch (error) {
       dispatchModsWorkspace({ type: 'load-failed', message: errorMessage(error) });
       setMessage(errorMessage(error));
     } finally {
-      setModsBusyLabel(null);
+      if (showBusy) {
+        setModsBusyLabel(null);
+      }
     }
   };
 
@@ -802,23 +886,29 @@ export const App = () => {
 
   const runModMutation = async (
     busyText: string,
-    action: (operationId: string) => Promise<unknown>
+    action: (operationId: string) => Promise<unknown>,
+    options: WorkspaceMutationOptions = {}
   ) => {
     if (!selectedProject) {
       return;
     }
 
+    const showBusy = options.showBusy ?? true;
     const operationId = createRendererOperationId('mods_mutation');
-    setModsBusyLabel(busyText);
-    setMessage(null);
+    if (showBusy) {
+      setModsBusyLabel(busyText);
+      setMessage(null);
+    }
 
     try {
       await action(operationId);
-      await loadModsWorkspace(selectedProject);
+      await loadModsWorkspace(selectedProject, options.reload);
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
-      setModsBusyLabel(null);
+      if (showBusy) {
+        setModsBusyLabel(null);
+      }
     }
   };
 
@@ -849,7 +939,7 @@ export const App = () => {
   const moveModOrderItemToIndex = async (
     item: FluxoraModOrderItem,
     targetIndex: number,
-    busyText = 'Moving mod'
+    options: ReorderMutationOptions = {}
   ) => {
     if (!selectedProject) {
       return;
@@ -860,14 +950,21 @@ export const App = () => {
       return;
     }
 
-    await runModMutation(busyText, (operationId) =>
-      window.fluxora.mods.moveOrderItem(
-        selectedProject.projectDirectory,
-        selectedProjectProfileName,
-        item.orderId,
-        targetIndex,
-        { operationId }
-      )
+    const showBusy = options.showBusy ?? false;
+    await runModMutation(
+      options.busyText ?? 'Moving mod',
+      (operationId) =>
+        window.fluxora.mods.moveOrderItem(
+          selectedProject.projectDirectory,
+          selectedProjectProfileName,
+          item.orderId,
+          targetIndex,
+          { operationId }
+        ),
+      {
+        reload: showBusy ? undefined : backgroundReorderLoadOptions,
+        showBusy
+      }
     );
   };
 
@@ -877,24 +974,9 @@ export const App = () => {
       return;
     }
 
-    await moveModOrderItemToIndex(item, targetIndex, direction < 0 ? 'Moving mod up' : 'Moving mod down');
-  };
-
-  const dropModOrderItem = async (target: FluxoraModOrderItem) => {
-    if (!draggedModOrderId) {
-      return;
-    }
-
-    const source = modsWorkspace.items.find((item) => item.orderId === draggedModOrderId);
-    const targetIndex = targetIndexForDrop(modsWorkspace.items, draggedModOrderId, target.orderId);
-    setDraggedModOrderId(null);
-    setModDropTargetOrderId(null);
-
-    if (!source || targetIndex === null) {
-      return;
-    }
-
-    await moveModOrderItemToIndex(source, targetIndex, 'Moving mod');
+    await moveModOrderItemToIndex(item, targetIndex, {
+      busyText: direction < 0 ? 'Moving mod up' : 'Moving mod down'
+    });
   };
 
   const createModSeparator = async () => {
@@ -1012,21 +1094,33 @@ export const App = () => {
     }
   };
 
-  const loadPluginsWorkspace = async (project = selectedProject) => {
+  const loadPluginsWorkspace = async (
+    project = selectedProject,
+    options: WorkspaceLoadOptions = {}
+  ) => {
     if (!project || !bridgeStatus?.ready || !pluginCapabilities.bridgeAvailable) {
       return;
     }
 
     if (!pluginCapabilities.projectSupported) {
       dispatchPluginsWorkspace({ type: 'items-loaded', items: [] });
+      setDraggedPluginOrderId(null);
+      setPluginDropTarget(null);
       return;
     }
 
+    const showBusy = options.showBusy ?? true;
+    const showLoading = options.showLoading ?? true;
+    const resetScroll = options.resetScroll ?? true;
     const operationId = createRendererOperationId('plugins_load');
     const profileName = selectedProjectProfileName;
-    dispatchPluginsWorkspace({ type: 'load-started' });
-    setPluginsBusyLabel('Loading plugins');
-    setMessage(null);
+    if (showLoading) {
+      dispatchPluginsWorkspace({ type: 'load-started' });
+    }
+    if (showBusy) {
+      setPluginsBusyLabel('Loading plugins');
+      setMessage(null);
+    }
 
     try {
       const nextPlugins = await window.fluxora.plugins.list(
@@ -1036,34 +1130,46 @@ export const App = () => {
         { operationId }
       );
       dispatchPluginsWorkspace({ type: 'items-loaded', items: nextPlugins });
-      setPluginListScrollTop(0);
+      if (resetScroll) {
+        setPluginListScrollTop(0);
+      }
+      setDraggedPluginOrderId(null);
+      setPluginDropTarget(null);
     } catch (error) {
       dispatchPluginsWorkspace({ type: 'load-failed', message: errorMessage(error) });
       setMessage(errorMessage(error));
     } finally {
-      setPluginsBusyLabel(null);
+      if (showBusy) {
+        setPluginsBusyLabel(null);
+      }
     }
   };
 
   const runPluginMutation = async (
     busyText: string,
-    action: (operationId: string) => Promise<unknown>
+    action: (operationId: string) => Promise<unknown>,
+    options: WorkspaceMutationOptions = {}
   ) => {
     if (!selectedProject || !pluginCapabilities.bridgeAvailable || !pluginCapabilities.projectSupported) {
       return;
     }
 
+    const showBusy = options.showBusy ?? true;
     const operationId = createRendererOperationId('plugins_mutation');
-    setPluginsBusyLabel(busyText);
-    setMessage(null);
+    if (showBusy) {
+      setPluginsBusyLabel(busyText);
+      setMessage(null);
+    }
 
     try {
       await action(operationId);
-      await loadPluginsWorkspace(selectedProject);
+      await loadPluginsWorkspace(selectedProject, options.reload);
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
-      setPluginsBusyLabel(null);
+      if (showBusy) {
+        setPluginsBusyLabel(null);
+      }
     }
   };
 
@@ -1084,26 +1190,289 @@ export const App = () => {
     );
   };
 
-  const movePluginOrderItem = async (item: FluxoraPluginOrderItem, direction: -1 | 1) => {
+  const movePluginOrderItemToIndex = async (
+    item: FluxoraPluginOrderItem,
+    targetIndex: number,
+    options: ReorderMutationOptions = {}
+  ) => {
     if (!selectedProject || !pluginCapabilities.loadOrderSupported) {
       return;
     }
 
+    const sourceIndex = pluginsWorkspace.items.findIndex((candidate) => candidate.orderId === item.orderId);
+    if (sourceIndex < 0 || sourceIndex === targetIndex) {
+      return;
+    }
+
+    const showBusy = options.showBusy ?? false;
+    await runPluginMutation(
+      options.busyText ?? 'Moving plugin',
+      (operationId) =>
+        window.fluxora.plugins.move(
+          selectedProject.projectDirectory,
+          selectedProject.templateId,
+          selectedProjectProfileName,
+          item.orderId,
+          targetIndex,
+          { operationId }
+        ),
+      {
+        reload: showBusy ? undefined : backgroundReorderLoadOptions,
+        showBusy
+      }
+    );
+  };
+
+  const movePluginOrderItem = async (item: FluxoraPluginOrderItem, direction: -1 | 1) => {
     const targetIndex = targetIndexForPluginMove(pluginsWorkspace.items, item.orderId, direction);
     if (targetIndex === null) {
       return;
     }
 
-    await runPluginMutation(direction < 0 ? 'Moving plugin up' : 'Moving plugin down', (operationId) =>
-      window.fluxora.plugins.move(
-        selectedProject.projectDirectory,
-        selectedProject.templateId,
-        selectedProjectProfileName,
-        item.orderId,
-        targetIndex,
-        { operationId }
-      )
+    await movePluginOrderItemToIndex(item, targetIndex, {
+      busyText: direction < 0 ? 'Moving plugin up' : 'Moving plugin down'
+    });
+  };
+
+  const clearRowReorderSession = () => {
+    const session = rowReorderSessionRef.current;
+    if (session?.frameId != null) {
+      window.cancelAnimationFrame(session.frameId);
+    }
+
+    rowReorderSessionRef.current = null;
+    setDraggedModOrderId(null);
+    setModDropTarget(null);
+    setDraggedPluginOrderId(null);
+    setPluginDropTarget(null);
+    document.body.classList.remove('row-reorder-active');
+  };
+
+  const setRowDropTarget = (
+    kind: RowReorderKind,
+    target: RowDropTargetState | null
+  ) => {
+    if (kind === 'mod') {
+      setModDropTarget(target);
+      return;
+    }
+
+    setPluginDropTarget(target);
+  };
+
+  const targetIndexForRowDrop = (
+    kind: RowReorderKind,
+    sourceOrderId: string,
+    targetOrderId: string,
+    placement: RowDropPlacement
+  ): number | null =>
+    kind === 'mod'
+      ? targetIndexForDrop(modsWorkspace.items, sourceOrderId, targetOrderId, placement)
+      : targetIndexForPluginDrop(pluginsWorkspace.items, sourceOrderId, targetOrderId, placement);
+
+  const applyRowReorderAutoScroll = (session: RowReorderSession) => {
+    const container = session.scrollContainer;
+    if (!container) {
+      return;
+    }
+
+    const rect = container.getBoundingClientRect();
+    let delta = 0;
+    if (session.currentY < rect.top + rowReorderAutoScrollEdge) {
+      const pressure = (rect.top + rowReorderAutoScrollEdge - session.currentY) / rowReorderAutoScrollEdge;
+      delta = -Math.ceil(Math.min(1, pressure) * rowReorderAutoScrollMaxStep);
+    } else if (session.currentY > rect.bottom - rowReorderAutoScrollEdge) {
+      const pressure = (session.currentY - (rect.bottom - rowReorderAutoScrollEdge)) / rowReorderAutoScrollEdge;
+      delta = Math.ceil(Math.min(1, pressure) * rowReorderAutoScrollMaxStep);
+    }
+
+    if (delta !== 0) {
+      container.scrollTop += delta;
+    }
+  };
+
+  const resolveRowDropTarget = (session: RowReorderSession) => {
+    session.frameId = null;
+    applyRowReorderAutoScroll(session);
+
+    const element = document.elementFromPoint(session.currentX, session.currentY);
+    const row =
+      element instanceof Element
+        ? element.closest<HTMLElement>(`[data-reorder-kind="${session.kind}"][data-order-id]`)
+        : null;
+    const targetOrderId = row?.dataset.orderId ?? null;
+    const placement = row ? rowDropPlacementFromPointer(row, session.currentY) : null;
+    const targetIndex =
+      targetOrderId && placement
+        ? targetIndexForRowDrop(session.kind, session.sourceOrderId, targetOrderId, placement)
+        : null;
+    const nextTarget =
+      targetOrderId && placement && targetIndex !== null
+        ? { orderId: targetOrderId, placement }
+        : null;
+
+    if (
+      session.targetOrderId === (nextTarget?.orderId ?? null) &&
+      session.placement === (nextTarget?.placement ?? null)
+    ) {
+      return;
+    }
+
+    session.targetOrderId = nextTarget?.orderId ?? null;
+    session.placement = nextTarget?.placement ?? null;
+    setRowDropTarget(session.kind, nextTarget);
+  };
+
+  const scheduleRowDropTargetResolve = (session: RowReorderSession) => {
+    if (session.frameId !== null) {
+      return;
+    }
+
+    session.frameId = window.requestAnimationFrame(() => resolveRowDropTarget(session));
+  };
+
+  const beginRowReorderDrag = (
+    event: ReactPointerEvent<HTMLElement>,
+    kind: RowReorderKind,
+    sourceOrderId: string,
+    canDrag: boolean
+  ): boolean => {
+    if (
+      !canDrag ||
+      event.button !== 0 ||
+      isInteractiveRowDragTarget(event.target)
+    ) {
+      return false;
+    }
+
+    const scrollContainer = event.currentTarget.closest<HTMLElement>(
+      kind === 'mod' ? '.mod-list__body' : '.mod-table__body'
     );
+    if (rowReorderSessionRef.current) {
+      clearRowReorderSession();
+    }
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    rowReorderSessionRef.current = {
+      kind,
+      pointerId: event.pointerId,
+      sourceOrderId,
+      startX: event.clientX,
+      startY: event.clientY,
+      currentX: event.clientX,
+      currentY: event.clientY,
+      active: false,
+      frameId: null,
+      targetOrderId: null,
+      placement: null,
+      scrollContainer
+    };
+
+    return true;
+  };
+
+  const updateRowReorderDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const session = rowReorderSessionRef.current;
+    if (!session || session.pointerId !== event.pointerId) {
+      return;
+    }
+
+    session.currentX = event.clientX;
+    session.currentY = event.clientY;
+
+    if (!session.active) {
+      const deltaX = event.clientX - session.startX;
+      const deltaY = event.clientY - session.startY;
+      if (Math.hypot(deltaX, deltaY) < rowReorderDragThreshold) {
+        return;
+      }
+
+      session.active = true;
+      document.body.classList.add('row-reorder-active');
+      if (session.kind === 'mod') {
+        setDraggedModOrderId(session.sourceOrderId);
+      } else {
+        setDraggedPluginOrderId(session.sourceOrderId);
+      }
+    }
+
+    event.preventDefault();
+    scheduleRowDropTargetResolve(session);
+  };
+
+  const endRowReorderDrag = (
+    event: ReactPointerEvent<HTMLElement>
+  ) => {
+    const session = rowReorderSessionRef.current;
+    if (!session || session.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (session.active && session.frameId != null) {
+      window.cancelAnimationFrame(session.frameId);
+      resolveRowDropTarget(session);
+    }
+
+    const targetOrderId = session.targetOrderId;
+    const placement = session.placement;
+    const sourceOrderId = session.sourceOrderId;
+    const kind = session.kind;
+    const wasActive = session.active;
+    const targetIndex =
+      targetOrderId && placement
+        ? targetIndexForRowDrop(kind, sourceOrderId, targetOrderId, placement)
+        : null;
+    clearRowReorderSession();
+
+    if (!wasActive) {
+      return;
+    }
+
+    suppressNextRowClickRef.current = true;
+    event.preventDefault();
+    if (targetIndex === null) {
+      return;
+    }
+
+    if (kind === 'mod') {
+      const source = modsWorkspace.items.find((item) => item.orderId === sourceOrderId);
+      if (source) {
+        void moveModOrderItemToIndex(source, targetIndex);
+      }
+      return;
+    }
+
+    const source = pluginsWorkspace.items.find((item) => item.orderId === sourceOrderId);
+    if (source) {
+      void movePluginOrderItemToIndex(source, targetIndex);
+    }
+  };
+
+  const cancelRowReorderDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const session = rowReorderSessionRef.current;
+    if (!session || session.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    clearRowReorderSession();
+  };
+
+  const consumeSuppressedRowClick = () => {
+    if (!suppressNextRowClickRef.current) {
+      return false;
+    }
+
+    suppressNextRowClickRef.current = false;
+    return true;
   };
 
   const createPluginSeparator = async () => {
@@ -4203,23 +4572,32 @@ export const App = () => {
               : 0;
             const isDragging = draggedModOrderId === item.orderId;
             const isDropTarget =
-              modDropTargetOrderId === item.orderId && draggedModOrderId !== item.orderId;
+              modDropTarget?.orderId === item.orderId && draggedModOrderId !== item.orderId;
+            const canDragModRow = !modsBusyLabel;
 
             return (
               <div
                 className={`mod-list-row${item.isSeparator ? ' mod-list-row--separator' : ''}`}
                 role="row"
                 tabIndex={0}
-                draggable={!modsBusyLabel}
+                draggable={false}
+                data-reorder-kind="mod"
+                data-order-id={item.orderId}
                 data-selected={isSelected}
                 data-separator={item.isSeparator}
                 data-in-separator={isNested}
                 data-dragging={isDragging}
                 data-drop-target={isDropTarget}
+                data-drop-placement={isDropTarget ? modDropTarget?.placement : undefined}
+                data-reorder-disabled={!canDragModRow}
                 data-menu-open={isMenuOpen}
                 key={item.orderId}
                 aria-label={`${modItemTitle(item)} ${item.isSeparator ? 'separator' : 'mod'}`}
                 onClick={() => {
+                  if (consumeSuppressedRowClick()) {
+                    return;
+                  }
+
                   dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
                   setModMenuOrderId(null);
                 }}
@@ -4228,49 +4606,17 @@ export const App = () => {
                   dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
                   setModMenuOrderId(item.orderId);
                 }}
-                onDragStart={(event) => {
-                  if (modsBusyLabel) {
-                    event.preventDefault();
+                onPointerDown={(event) => {
+                  if (!beginRowReorderDrag(event, 'mod', item.orderId, canDragModRow)) {
                     return;
                   }
 
-                  event.dataTransfer.effectAllowed = 'move';
-                  event.dataTransfer.setData('text/plain', item.orderId);
                   dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
-                  setDraggedModOrderId(item.orderId);
-                  setModDropTargetOrderId(null);
                   setModMenuOrderId(null);
                 }}
-                onDragEnter={(event) => {
-                  if (!draggedModOrderId || draggedModOrderId === item.orderId) {
-                    return;
-                  }
-
-                  event.preventDefault();
-                  setModDropTargetOrderId(item.orderId);
-                }}
-                onDragOver={(event) => {
-                  if (!draggedModOrderId || draggedModOrderId === item.orderId) {
-                    return;
-                  }
-
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = 'move';
-                  setModDropTargetOrderId(item.orderId);
-                }}
-                onDragLeave={() => {
-                  setModDropTargetOrderId((current) =>
-                    current === item.orderId ? null : current
-                  );
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  void dropModOrderItem(item);
-                }}
-                onDragEnd={() => {
-                  setDraggedModOrderId(null);
-                  setModDropTargetOrderId(null);
-                }}
+                onPointerMove={updateRowReorderDrag}
+                onPointerUp={endRowReorderDrag}
+                onPointerCancel={cancelRowReorderDrag}
                 onKeyDown={(event) => {
                   if (event.currentTarget !== event.target) {
                     return;
@@ -4289,6 +4635,11 @@ export const App = () => {
                   }
                 }}
               >
+                {isDropTarget ? (
+                  <span className="row-drop-target-chip" aria-hidden="true">
+                    Сюда
+                  </span>
+                ) : null}
                 {item.isSeparator ? (
                   <>
                     <div className="mod-separator-cell" role="cell">
@@ -4662,18 +5013,37 @@ export const App = () => {
             const isSelected = item.orderId === pluginsWorkspace.selectedOrderId;
             const isMenuOpen = item.orderId === pluginMenuOrderId;
             const state = pluginStatusText(item);
+            const isDragging = draggedPluginOrderId === item.orderId;
+            const isDropTarget =
+              pluginDropTarget?.orderId === item.orderId && draggedPluginOrderId !== item.orderId;
+            const canDragPluginRow =
+              pluginCapabilities.loadOrderSupported &&
+              !pluginsBusyLabel &&
+              canDragPluginOrderItem(pluginsWorkspace.items, item.orderId);
 
             return (
               <div
                 className="mod-row plugin-row"
                 role="row"
                 tabIndex={0}
+                draggable={false}
+                data-reorder-kind="plugin"
+                data-order-id={item.orderId}
                 data-selected={isSelected}
                 data-separator={item.isSeparator}
                 data-locked={item.isLocked}
+                data-dragging={isDragging}
+                data-drop-target={isDropTarget}
+                data-drop-placement={isDropTarget ? pluginDropTarget?.placement : undefined}
+                data-reorder-disabled={!canDragPluginRow}
                 data-menu-open={isMenuOpen}
                 key={item.orderId}
+                aria-label={`${pluginItemTitle(item)} ${item.isSeparator ? 'separator' : 'plugin'}`}
                 onClick={() => {
+                  if (consumeSuppressedRowClick()) {
+                    return;
+                  }
+
                   dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
                   setPluginMenuOrderId(null);
                 }}
@@ -4682,6 +5052,17 @@ export const App = () => {
                   dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
                   setPluginMenuOrderId(item.orderId);
                 }}
+                onPointerDown={(event) => {
+                  if (!beginRowReorderDrag(event, 'plugin', item.orderId, canDragPluginRow)) {
+                    return;
+                  }
+
+                  dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
+                  setPluginMenuOrderId(null);
+                }}
+                onPointerMove={updateRowReorderDrag}
+                onPointerUp={endRowReorderDrag}
+                onPointerCancel={cancelRowReorderDrag}
                 onKeyDown={(event) => {
                   if (event.currentTarget !== event.target) {
                     return;
@@ -4700,6 +5081,11 @@ export const App = () => {
                   }
                 }}
               >
+                {isDropTarget ? (
+                  <span className="row-drop-target-chip" aria-hidden="true">
+                    Сюда
+                  </span>
+                ) : null}
                 <span className="plugin-hex-index" role="cell">
                   {pluginHexIndex(item)}
                 </span>

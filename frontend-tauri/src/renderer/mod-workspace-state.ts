@@ -275,7 +275,8 @@ export const targetIndexForMove = (
 export const targetIndexForDrop = (
   items: FluxoraModOrderItem[],
   sourceOrderId: string,
-  targetOrderId: string
+  targetOrderId: string,
+  placement: 'before' | 'after' = 'after'
 ): number | null => {
   const sourceIndex = items.findIndex((item) => item.orderId === sourceOrderId);
   const targetIndex = items.findIndex((item) => item.orderId === targetOrderId);
@@ -284,7 +285,29 @@ export const targetIndexForDrop = (
     return null;
   }
 
-  return targetIndex;
+  const blockEnd = modOrderMoveBlockEnd(items, sourceIndex);
+  const slotIndex = targetIndex + (placement === 'after' ? 1 : 0);
+
+  if (slotIndex >= sourceIndex && slotIndex <= blockEnd) {
+    return null;
+  }
+
+  return slotIndex > sourceIndex ? slotIndex - 1 : slotIndex;
+};
+
+const modOrderMoveBlockEnd = (
+  items: FluxoraModOrderItem[],
+  sourceIndex: number
+): number => {
+  const source = items[sourceIndex];
+  if (!source?.isSeparator) {
+    return sourceIndex + 1;
+  }
+
+  const nextSeparatorIndex = items.findIndex(
+    (item, index) => index > sourceIndex && item.isSeparator
+  );
+  return nextSeparatorIndex >= 0 ? nextSeparatorIndex : items.length;
 };
 
 export const modStatusText = (item: FluxoraModOrderItem | null): string => {

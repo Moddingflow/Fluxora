@@ -102,6 +102,124 @@ export const targetIndexForPluginMove = (
   return targetIndex;
 };
 
+export const canDragPluginOrderItem = (
+  items: FluxoraPluginOrderItem[],
+  orderId: string
+): boolean => {
+  const sourceIndex = items.findIndex((item) => item.orderId === orderId);
+  if (sourceIndex < 0 || items[sourceIndex].isLocked) {
+    return false;
+  }
+
+  const blockEnd = pluginOrderMoveBlockEnd(items, sourceIndex);
+  return !pluginOrderBlockContainsLockedPlugin(items, sourceIndex, blockEnd);
+};
+
+export const targetIndexForPluginDrop = (
+  items: FluxoraPluginOrderItem[],
+  sourceOrderId: string,
+  targetOrderId: string,
+  placement: 'before' | 'after' = 'after'
+): number | null => {
+  const sourceIndex = items.findIndex((item) => item.orderId === sourceOrderId);
+  const targetIndex = items.findIndex((item) => item.orderId === targetOrderId);
+
+  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
+    return null;
+  }
+
+  const source = items[sourceIndex];
+  if (!source || !canDragPluginOrderItem(items, sourceOrderId)) {
+    return null;
+  }
+
+  const blockEnd = pluginOrderMoveBlockEnd(items, sourceIndex);
+  const slotIndex = targetIndex + (placement === 'after' ? 1 : 0);
+
+  if (slotIndex >= sourceIndex && slotIndex <= blockEnd) {
+    return null;
+  }
+
+  const requestedTargetIndex = slotIndex > sourceIndex ? slotIndex - 1 : slotIndex;
+  const minTargetIndex = pluginOrderMinimumTargetIndex(items, sourceIndex, blockEnd);
+
+  return requestedTargetIndex >= minTargetIndex ? requestedTargetIndex : null;
+};
+
+const pluginOrderMoveBlockEnd = (
+  items: FluxoraPluginOrderItem[],
+  sourceIndex: number
+): number => {
+  const source = items[sourceIndex];
+  if (!source?.isSeparator) {
+    return sourceIndex + 1;
+  }
+
+  const nextSeparatorIndex = items.findIndex(
+    (item, index) => index > sourceIndex && item.isSeparator
+  );
+  return nextSeparatorIndex >= 0 ? nextSeparatorIndex : items.length;
+};
+
+const pluginOrderBlockContainsLockedPlugin = (
+  items: FluxoraPluginOrderItem[],
+  sourceIndex: number,
+  blockEnd: number
+): boolean => {
+  for (let index = sourceIndex; index < blockEnd; index += 1) {
+    const item = items[index];
+    if (item?.isPlugin && item.isLocked) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const pluginOrderBlockContainsPlugin = (
+  items: FluxoraPluginOrderItem[],
+  sourceIndex: number,
+  blockEnd: number
+): boolean => {
+  for (let index = sourceIndex; index < blockEnd; index += 1) {
+    if (items[index]?.isPlugin) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const pluginOrderFirstUnlockedTargetIndex = (
+  items: FluxoraPluginOrderItem[]
+): number => {
+  let lastLockedPluginIndex = -1;
+  items.forEach((item, index) => {
+    if (item.isPlugin && item.isLocked) {
+      lastLockedPluginIndex = index;
+    }
+  });
+
+  return lastLockedPluginIndex + 1;
+};
+
+const pluginOrderMinimumTargetIndex = (
+  items: FluxoraPluginOrderItem[],
+  sourceIndex: number,
+  blockEnd: number
+): number => {
+  const source = items[sourceIndex];
+  if (!source?.isSeparator) {
+    return Math.min(pluginOrderFirstUnlockedTargetIndex(items), Math.max(0, items.length - 1));
+  }
+
+  if (!pluginOrderBlockContainsPlugin(items, sourceIndex, blockEnd)) {
+    return 0;
+  }
+
+  return Math.min(pluginOrderFirstUnlockedTargetIndex(items), Math.max(0, items.length - 1));
+};
+
 export const pluginStatusText = (item: FluxoraPluginOrderItem | null): string => {
   if (!item) {
     return 'No plugin selected';

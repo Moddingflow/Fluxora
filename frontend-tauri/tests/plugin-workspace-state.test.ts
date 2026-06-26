@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  canDragPluginOrderItem,
   emptyPluginWorkspaceState,
   filterPluginOrderItems,
   pluginCapabilityView,
@@ -9,6 +10,7 @@ import {
   pluginTypeLabel,
   pluginWorkspaceReducer,
   selectedPluginOrderItem,
+  targetIndexForPluginDrop,
   targetIndexForPluginMove
 } from '../src/renderer/plugin-workspace-state';
 import type {
@@ -131,6 +133,29 @@ describe('plugin workspace state', () => {
     expect(targetIndexForPluginMove(items, 'plugin_skyui', -1)).toBe(1);
     expect(targetIndexForPluginMove(items, 'plugin_skyui', 1)).toBe(3);
     expect(targetIndexForPluginMove(items, 'plugin_skyrim', -1)).toBeNull();
+    expect(canDragPluginOrderItem(items, 'plugin_skyrim')).toBe(false);
+    expect(canDragPluginOrderItem(items, 'plugin_skyui')).toBe(true);
+    expect(targetIndexForPluginDrop(items, 'plugin_skyui', 'plugin_skyrim', 'before')).toBeNull();
+    expect(targetIndexForPluginDrop(items, 'plugin_skyui', 'plugin_skyrim', 'after')).toBe(1);
+    expect(targetIndexForPluginDrop(items, 'plugin_light', 'plugin_skyui', 'before')).toBe(2);
+    expect(targetIndexForPluginDrop(items, 'plugin_skyui', 'plugin_light', 'before')).toBeNull();
+  });
+
+  it('blocks dragging separators that include locked plugins', () => {
+    const lockedGroup = [
+      separatorItem('sep_base', 'Base game', 0),
+      pluginItem('plugin_skyrim', 'Skyrim.esm', 1, {
+        sourceMod: 'Skyrim Special Edition',
+        isMaster: true,
+        isLocked: true,
+        lockReason: 'Base game plugin'
+      }),
+      separatorItem('sep_patches', 'Late patches', 2),
+      pluginItem('plugin_skyui', 'SkyUI.esp', 3)
+    ];
+
+    expect(canDragPluginOrderItem(lockedGroup, 'sep_base')).toBe(false);
+    expect(targetIndexForPluginDrop(lockedGroup, 'sep_base', 'plugin_skyui', 'after')).toBeNull();
   });
 
   it('formats plugin status and type for dense rows', () => {

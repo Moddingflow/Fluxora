@@ -2,7 +2,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 const distRoot = path.resolve(__dirname, '..', 'dist');
 
@@ -792,6 +792,43 @@ const openSkyrimBuild = async (page: Page) => {
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
 };
 
+const dragRowToSlot = async (
+  page: Page,
+  source: Locator,
+  target: Locator,
+  placement: 'before' | 'after'
+) => {
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  expect(sourceBox).not.toBeNull();
+  expect(targetBox).not.toBeNull();
+
+  const sourceX = sourceBox!.x + Math.min(140, sourceBox!.width / 2);
+  const sourceY = sourceBox!.y + sourceBox!.height / 2;
+  const targetX = targetBox!.x + Math.min(180, targetBox!.width / 2);
+  const targetY =
+    placement === 'before'
+      ? targetBox!.y + 4
+      : targetBox!.y + targetBox!.height - 4;
+
+  await page.mouse.move(sourceX, sourceY);
+  await page.mouse.down();
+  await page.mouse.move(sourceX + 8, sourceY + 8, { steps: 2 });
+  await page.mouse.move(targetX, targetY, { steps: 8 });
+  await expect(target).toHaveAttribute('data-drop-target', 'true');
+  await expect(target).toHaveAttribute('data-drop-placement', placement);
+  await expect(target.locator('.row-drop-target-chip')).toHaveText('Сюда');
+  await page.mouse.up();
+};
+
+const latestCallPayload = async (page: Page, method: string) =>
+  page.evaluate((methodName) => {
+    const calls =
+      (window as typeof window & { __fluxoraCalls?: Array<{ method: string; payload?: unknown }> })
+        .__fluxoraCalls ?? [];
+    return calls.filter((call) => call.method === methodName).at(-1)?.payload ?? null;
+  }, method);
+
 const expectNoDocumentHorizontalOverflow = async (page: Page) => {
   const overflow = await page.evaluate(() => ({
     bodyClientWidth: document.body.clientWidth,
@@ -945,6 +982,24 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
     .toContain('mods.moveOrderItem');
 });
 
+test('drags mod order rows with pointer placement feedback', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const source = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const target = page.getByRole('row', { name: /SkyUI mod/ });
+
+  await dragRowToSlot(page, source, target, 'after');
+  await expect(page.getByText('Moving mod', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Loading mods', { exact: true })).toHaveCount(0);
+
+  await expect
+    .poll(() => latestCallPayload(page, 'mods.moveOrderItem'))
+    .toMatchObject({
+      orderId: 'mod_ussep',
+      targetIndex: 2
+    });
+});
+
 test('uses the redesigned right pane tabs for plugins, data, downloads and build actions', async ({ page }) => {
   await page.goto(baseUrl);
 
@@ -1008,6 +1063,24 @@ test('uses the redesigned right pane tabs for plugins, data, downloads and build
       )
     )
     .toContain('fluxPack.export');
+});
+
+test('drags plugin rows without selecting text', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const source = page.getByRole('row', { name: /SkyUI\.esp plugin/ });
+  const target = page.getByRole('row', { name: /Skyrim\.esm plugin/ });
+
+  await dragRowToSlot(page, source, target, 'after');
+  await expect(page.getByText('Moving plugin', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Loading plugins', { exact: true })).toHaveCount(0);
+
+  await expect
+    .poll(() => latestCallPayload(page, 'plugins.move'))
+    .toMatchObject({
+      orderId: 'plugin_skyui',
+      targetIndex: 1
+    });
 });
 
 test('uses the redesigned install dialogs for downloads and FOMOD archives', async ({ page }) => {
