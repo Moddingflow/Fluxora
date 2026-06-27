@@ -1,5 +1,7 @@
 export { Button, IconButton } from './buttons';
 export type { ButtonProps, ButtonSize, ButtonVariant, IconButtonProps, IconButtonVariant } from './buttons';
+export { CustomSelect } from './custom-select';
+export type { CustomSelectOption, CustomSelectProps } from './custom-select';
 export { Checkbox, Input, Select, Switch } from './forms';
 export type { CheckboxProps, InputProps, SelectOption, SelectProps, SwitchProps } from './forms';
 export { Badge, Card, SectionLabel, StatusDot } from './display';

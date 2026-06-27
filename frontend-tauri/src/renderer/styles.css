@@ -114,6 +114,8 @@ input,
   .settings-service-row,
   .language-select__button,
   .language-select__option,
+  .flx-custom-select__button,
+  .flx-custom-select__option,
   .settings-nav button,
   .settings-switch,
   .transfer-stepper button,
@@ -2074,6 +2076,10 @@ input::placeholder {
   white-space: nowrap;
 }
 
+.build-select .flx-custom-select {
+  width: 100%;
+}
+
 .build-select select {
   width: 100%;
   height: 34px;
@@ -2663,6 +2669,11 @@ input::placeholder {
   min-height: 0;
   padding: 14px;
   overflow: auto;
+}
+
+.build-paths-form--settings-panel {
+  width: min(100%, 620px);
+  padding: 0;
 }
 
 .build-paths-form input[readonly] {
@@ -5119,6 +5130,11 @@ body.row-reorder-active * {
   justify-content: stretch;
 }
 
+.settings-panel--build-paths {
+  grid-template-columns: minmax(0, min(620px, 100%));
+  justify-content: start;
+}
+
 .settings-connections-list {
   display: grid;
   gap: 10px;
@@ -5393,6 +5409,11 @@ body.row-reorder-active * {
   min-width: 0;
 }
 
+.flx-custom-select {
+  position: relative;
+  min-width: 0;
+}
+
 .language-select__button {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr) 18px;
@@ -5413,9 +5434,50 @@ body.row-reorder-active * {
     0 10px 22px rgba(0, 0, 0, 0.12);
 }
 
+.flx-custom-select__button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 6px 12px;
+  border: 1px solid rgba(var(--flx-accent-rgb), 0.44);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0)),
+    rgba(8, 11, 17, 0.66);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 10px 22px rgba(0, 0, 0, 0.12);
+}
+
+.flx-custom-select[data-density="compact"] .flx-custom-select__button {
+  height: 34px;
+  min-height: 34px;
+  padding: 0 9px 0 10px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1;
+}
+
 .language-select__button:hover:not(:disabled),
 .language-select__button:focus-visible:not(:disabled),
 .language-select__button[data-open="true"] {
+  border-color: rgba(var(--flx-accent-rgb), 0.74);
+  outline: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 0 0 1px rgba(var(--flx-accent-rgb), 0.16),
+    0 14px 28px rgba(0, 0, 0, 0.18);
+}
+
+.flx-custom-select__button:hover:not(:disabled),
+.flx-custom-select__button:focus-visible:not(:disabled),
+.flx-custom-select__button[data-open="true"] {
   border-color: rgba(var(--flx-accent-rgb), 0.74);
   outline: none;
   box-shadow:
@@ -5428,6 +5490,10 @@ body.row-reorder-active * {
   cursor: default;
 }
 
+.flx-custom-select__button:disabled {
+  cursor: default;
+}
+
 .language-select__flag {
   display: block;
   width: 32px;
@@ -5437,7 +5503,9 @@ body.row-reorder-active * {
 }
 
 .language-select__value,
-.language-select__option-copy {
+.language-select__option-copy,
+.flx-custom-select__value,
+.flx-custom-select__option-copy {
   display: grid;
   gap: 2px;
   min-width: 0;
@@ -5445,7 +5513,9 @@ body.row-reorder-active * {
 }
 
 .language-select__value strong,
-.language-select__option-copy strong {
+.language-select__option-copy strong,
+.flx-custom-select__value strong,
+.flx-custom-select__option-copy strong {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5460,7 +5530,33 @@ body.row-reorder-active * {
   line-height: 1.2;
 }
 
+.flx-custom-select__value strong,
+.flx-custom-select__option-copy strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.flx-custom-select[data-density="compact"] .flx-custom-select__value strong {
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.flx-custom-select__menu[data-density="compact"] .flx-custom-select__option-copy strong {
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
 .language-select__chevron {
+  color: var(--accent);
+  justify-self: end;
+  transition: transform var(--motion-fast);
+}
+
+.flx-custom-select__chevron {
   color: var(--accent);
   justify-self: end;
   transition: transform var(--motion-fast);
@@ -5470,7 +5566,40 @@ body.row-reorder-active * {
   transform: rotate(180deg);
 }
 
+.flx-custom-select__button[data-open="true"] .flx-custom-select__chevron {
+  transform: rotate(180deg);
+}
+
 .language-select__menu {
+  position: fixed;
+  z-index: 100;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  max-width: calc(100vw - 16px);
+  padding: 6px;
+  border: 1px solid rgba(var(--flx-accent-rgb), 0.36);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.015)),
+    rgba(12, 15, 22, 0.98);
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  align-content: start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px) scale(0.98);
+  transform-origin: 50% 0;
+  transition:
+    opacity 170ms ease,
+    transform 190ms cubic-bezier(0.18, 0.89, 0.32, 1.14);
+}
+
+.flx-custom-select__menu {
   position: fixed;
   z-index: 100;
   display: grid;
@@ -5505,6 +5634,12 @@ body.row-reorder-active * {
   transform: translateY(0) scale(1);
 }
 
+.flx-custom-select__menu[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
 .language-select__option {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) 18px;
@@ -5527,7 +5662,39 @@ body.row-reorder-active * {
     transform 170ms ease;
 }
 
+.flx-custom-select__option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    background-color var(--motion-fast),
+    border-color var(--motion-fast),
+    color var(--motion-fast),
+    opacity 150ms ease,
+    transform 170ms ease;
+}
+
+.flx-custom-select__menu[data-density="compact"] .flx-custom-select__option {
+  min-height: 32px;
+  padding: 4px 8px;
+}
+
 .language-select__menu[data-open="true"] .language-select__option {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.flx-custom-select__menu[data-open="true"] .flx-custom-select__option {
   opacity: 1;
   transform: translateY(0);
 }
@@ -5540,8 +5707,22 @@ body.row-reorder-active * {
   transition-delay: 48ms;
 }
 
+.flx-custom-select__menu[data-open="true"] .flx-custom-select__option:nth-child(2) {
+  transition-delay: 24ms;
+}
+
+.flx-custom-select__menu[data-open="true"] .flx-custom-select__option:nth-child(3) {
+  transition-delay: 48ms;
+}
+
 .language-select__option:hover:not([data-selected="true"]),
 .language-select__option[data-highlighted="true"]:not([data-selected="true"]) {
+  border-color: transparent;
+  background: rgba(var(--flx-accent-rgb), 0.15);
+}
+
+.flx-custom-select__option:hover:not([data-selected="true"]):not(:disabled),
+.flx-custom-select__option[data-highlighted="true"]:not([data-selected="true"]):not(:disabled) {
   border-color: transparent;
   background: rgba(var(--flx-accent-rgb), 0.15);
 }
@@ -5552,7 +5733,25 @@ body.row-reorder-active * {
   box-shadow: inset 0 0 0 1px rgba(var(--flx-accent-rgb), 0.12);
 }
 
+.flx-custom-select__option[data-selected="true"] {
+  border-color: rgba(var(--flx-accent-rgb), 0.46);
+  background: rgba(var(--flx-accent-rgb), 0.08);
+  box-shadow: inset 0 0 0 1px rgba(var(--flx-accent-rgb), 0.12);
+}
+
+.flx-custom-select__option:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
 .language-select__option > svg {
+  justify-self: end;
+  color: var(--accent);
+  opacity: 0;
+  transform: scale(0.76);
+}
+
+.flx-custom-select__option > svg {
   justify-self: end;
   color: var(--accent);
   opacity: 0;
@@ -5564,10 +5763,18 @@ body.row-reorder-active * {
   transform: scale(1);
 }
 
+.flx-custom-select__option[data-selected="true"] > svg {
+  opacity: 1;
+  transform: scale(1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .language-select__menu,
   .language-select__option,
-  .language-select__chevron {
+  .language-select__chevron,
+  .flx-custom-select__menu,
+  .flx-custom-select__option,
+  .flx-custom-select__chevron {
     transition: none;
   }
 }

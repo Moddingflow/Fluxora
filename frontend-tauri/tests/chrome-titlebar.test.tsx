@@ -46,6 +46,7 @@ describe('redesign app chrome titlebar', () => {
       <AppTitlebar
         mode="settings"
         showShortcuts={false}
+        title="Settings · Foundation Edition"
         onClose={noop}
         onMinimize={noop}
         onToggleMaximize={noop}
@@ -53,7 +54,7 @@ describe('redesign app chrome titlebar', () => {
     );
 
     expect(markup).toContain('Fluxora');
-    expect(markup).toContain('Settings');
+    expect(markup).toContain('Settings · Foundation Edition');
     expect(markup).toContain('Fluxora settings window chrome');
     expect(markup).not.toContain('aria-label="Home"');
     expect(markup).not.toContain('aria-label="Open settings"');

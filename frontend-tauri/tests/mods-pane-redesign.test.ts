@@ -23,6 +23,8 @@ describe('mods pane redesign', () => {
     expect(app).toContain('window.fluxora.mods.moveOrderItem');
     expect(app).toContain('window.fluxora.mods.createSeparator');
     expect(app).not.toContain('className="mod-overwrite-check"');
+    expect(app).not.toContain('className="build-pane__tools mods-pane-toolbar"');
+    expect(app).not.toContain('aria-label="Mod commands"');
   });
 
   it('exposes bulk enable and disable actions from mod and plugin context menus', () => {

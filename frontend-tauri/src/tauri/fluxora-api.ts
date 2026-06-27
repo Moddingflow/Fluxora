@@ -770,6 +770,16 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         request
       )
   },
+  buildSettings: {
+    notifyPathsSaved: (project: FluxoraProject) =>
+      invokeTyped<void>(ipc, FluxoraIpcChannels.buildSettingsNotifyPathsSaved, project),
+    onPathsSaved: (callback: (project: FluxoraProject) => void) =>
+      listenTyped<FluxoraProject>(
+        ipc,
+        FluxoraIpcChannels.buildSettingsPathsSaved,
+        callback
+      )
+  },
   fluxPack: {
     export: (request: FluxoraFluxPackExportRequest, operation?: OperationRequest) =>
       invokeTyped<FluxoraFluxPackSummary>(
@@ -884,6 +894,13 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   windowControls: {
     close: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowClose),
     minimize: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowMinimize),
+    openBuildSettings: (configPath: string, buildName: string) =>
+      invokeTyped<void>(
+        ipc,
+        FluxoraIpcChannels.windowOpenBuildSettings,
+        configPath,
+        buildName
+      ),
     openSettings: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowOpenSettings),
     toggleMaximize: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowToggleMaximize)
   }
@@ -1040,9 +1057,11 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.templatesList:
         return [] satisfies FluxoraGameTemplate[];
 
+      case FluxoraIpcChannels.buildSettingsNotifyPathsSaved:
       case FluxoraIpcChannels.uiLog:
       case FluxoraIpcChannels.windowClose:
       case FluxoraIpcChannels.windowMinimize:
+      case FluxoraIpcChannels.windowOpenBuildSettings:
       case FluxoraIpcChannels.windowOpenSettings:
       case FluxoraIpcChannels.windowToggleMaximize:
         return undefined;
@@ -1211,8 +1230,17 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.windowClose:
         return invoke('fluxora_window_close');
 
+      case FluxoraIpcChannels.windowOpenBuildSettings:
+        return invoke('fluxora_open_build_settings_window', {
+          configPath: optionalString(args[0]),
+          buildName: optionalString(args[1])
+        });
+
       case FluxoraIpcChannels.windowOpenSettings:
         return invoke('fluxora_open_settings_window');
+
+      case FluxoraIpcChannels.buildSettingsNotifyPathsSaved:
+        return invoke('fluxora_build_settings_paths_saved', { project: args[0] });
 
       case FluxoraIpcChannels.transferStartMo2InMain:
         return invoke('fluxora_transfer_start_mo2_in_main', { handoff: args[0] });

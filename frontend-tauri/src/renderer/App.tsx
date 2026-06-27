@@ -44,6 +44,7 @@ import {
   type ProjectRuntimeSummary
 } from './features/library/projectLibraryStats';
 import { BuildPathsInspector } from './features/build/BuildPathsInspector';
+import { BuildSettingsWorkspace } from './features/build/BuildSettingsWorkspace';
 import { BuildDetailHeader } from './features/build/BuildDetailHeader';
 import {
   InstallDialog,
@@ -328,8 +329,7 @@ const wizardSteps = [
 const rightPaneTabs: Array<{ id: RightPaneId; label: string; icon: typeof Layers }> = [
   { id: 'plugins', label: 'Плагины', icon: Layers },
   { id: 'data', label: 'Данные', icon: FolderTree },
-  { id: 'downloads', label: 'Загрузки', icon: Download },
-  { id: 'build', label: 'Сборка', icon: Box }
+  { id: 'downloads', label: 'Загрузки', icon: Download }
 ];
 
 const openingBuildMessages = [
@@ -563,10 +563,13 @@ const rowDropPlacementFromPointer = (
 };
 
 export const App = () => {
-  const isSettingsWindow = useMemo(
-    () => new URLSearchParams(window.location.search).get('window') === 'settings',
-    []
-  );
+  const windowParameters = useMemo(() => new URLSearchParams(window.location.search), []);
+  const windowMode = windowParameters.get('window');
+  const isSettingsWindow = windowMode === 'settings';
+  const isBuildSettingsWindow = windowMode === 'build-settings';
+  const isSecondaryWindow = isSettingsWindow || isBuildSettingsWindow;
+  const buildSettingsProjectId = windowParameters.get('project');
+  const buildSettingsInitialName = windowParameters.get('name')?.trim() ?? '';
   const [activeRoute, setActiveRoute] = useState<RouteId>(() =>
     isSettingsWindow ? 'settings' : 'home'
   );
@@ -709,6 +712,7 @@ export const App = () => {
   const pendingPluginEnableStatesByOrderIdRef =
     useRef<Map<string, PendingPluginEnableSave>>(new Map());
   const suppressNextRowClickRef = useRef(false);
+  const buildSettingsLoadedProjectRef = useRef<string | null>(null);
   const [isTransferPageOpen, setIsTransferPageOpen] = useState(false);
 
   const selectedProject = useMemo(
@@ -721,6 +725,18 @@ export const App = () => {
       ) ?? null,
     [projects, selectedProjectId]
   );
+  const windowTitle = useMemo(() => {
+    if (isBuildSettingsWindow) {
+      return `Settings · ${selectedProject?.name ?? (buildSettingsInitialName || 'Build')}`;
+    }
+
+    return isSettingsWindow ? 'Settings' : 'Fluxora';
+  }, [
+    buildSettingsInitialName,
+    isBuildSettingsWindow,
+    isSettingsWindow,
+    selectedProject?.name
+  ]);
 
   const deferredSearchText = useDeferredValue(searchText);
   const deferredTemplateSearchText = useDeferredValue(templateSearchText);
@@ -3214,6 +3230,12 @@ export const App = () => {
   }, []);
 
   useEffect(() => {
+    if (isBuildSettingsWindow && buildSettingsProjectId) {
+      setSelectedProjectId(buildSettingsProjectId);
+    }
+  }, [buildSettingsProjectId, isBuildSettingsWindow]);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
   }, [themeMode]);
 
@@ -3494,14 +3516,25 @@ export const App = () => {
   }, [activeRoute, bridgeStatus?.ready, isSettingsWindow]);
 
   useEffect(() => {
-    if (isSettingsWindow) {
+    if (isSecondaryWindow) {
       return;
     }
 
     return window.fluxora.transfer.onMo2Handoff((handoff) => {
       void startMo2TransferFromHandoff(handoff);
     });
-  }, [isSettingsWindow, transferRunningOperationId]);
+  }, [isSecondaryWindow, transferRunningOperationId]);
+
+  useEffect(() => {
+    if (isSecondaryWindow) {
+      return;
+    }
+
+    return window.fluxora.buildSettings.onPathsSaved((project) => {
+      setProjects((current) => upsertProject(current, project));
+      setMessage(`Build paths saved for ${project.name}.`);
+    });
+  }, [isSecondaryWindow]);
 
   useEffect(() => {
     transferRunningOperationIdRef.current = transferRunningOperationId;
@@ -3924,7 +3957,32 @@ export const App = () => {
       return;
     }
 
+    if (!isBuildSettingsWindow) {
+      try {
+        await window.fluxora.windowControls.openBuildSettings(
+          selectedProject.configPath,
+          selectedProject.name
+        );
+      } catch (error) {
+        setMessage(errorMessage(error));
+      }
+      return;
+    }
+
     await loadBuildPathSettings(selectedProject);
+  };
+
+  const closeBuildPathSettings = async () => {
+    if (isBuildSettingsWindow) {
+      try {
+        await window.fluxora.windowControls.close();
+      } catch (error) {
+        setMessage(errorMessage(error));
+      }
+      return;
+    }
+
+    setIsBuildPathsOpen(false);
   };
 
   const updateBuildPathDraft = (patch: Partial<BuildPathDraft>) => {
@@ -4012,7 +4070,12 @@ export const App = () => {
       setBuildPathDraft(draftFromBuildPathSettings(nextProject, saved, savedExecutables));
       setBuildPathExecutables(savedExecutables);
       setMessage('Build paths saved.');
-      setIsBuildPathsOpen(false);
+      if (isBuildSettingsWindow) {
+        await window.fluxora.buildSettings.notifyPathsSaved(nextProject);
+        await window.fluxora.windowControls.close();
+      } else {
+        setIsBuildPathsOpen(false);
+      }
     } catch (error) {
       const nextMessage = errorMessage(error);
       setBuildPathsError(nextMessage);
@@ -4021,6 +4084,19 @@ export const App = () => {
       setBuildPathsBusyLabel(null);
     }
   };
+
+  useEffect(() => {
+    if (!isBuildSettingsWindow || !selectedProject || !bridgeStatus?.ready) {
+      return;
+    }
+
+    if (buildSettingsLoadedProjectRef.current === selectedProject.configPath) {
+      return;
+    }
+
+    buildSettingsLoadedProjectRef.current = selectedProject.configPath;
+    void loadBuildPathSettings(selectedProject);
+  }, [bridgeStatus?.ready, isBuildSettingsWindow, selectedProject?.configPath]);
 
   const defaultFluxPackPath = (project: FluxoraProject): string =>
     `${project.name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'FluxoraBuild'}.fluxpack`;
@@ -4556,6 +4632,14 @@ export const App = () => {
         return;
       }
 
+      if (isBuildSettingsWindow) {
+        if (selectedProject) {
+          buildSettingsLoadedProjectRef.current = null;
+          await loadBuildPathSettings(selectedProject);
+        }
+        return;
+      }
+
       if (activeRoute === 'home') {
         await loadCatalog({ preferredProjectId: selectedProjectId });
         return;
@@ -4610,7 +4694,7 @@ export const App = () => {
   }, []);
 
   useEffect(() => {
-    if (isSettingsWindow) {
+    if (isSecondaryWindow) {
       return;
     }
 
@@ -4618,7 +4702,7 @@ export const App = () => {
       openMo2TransferSetup();
     });
   }, [
-    isSettingsWindow,
+    isSecondaryWindow,
     transferRunningOperationId,
     transferSourceDirectory,
     transferDestinationRootDirectory,
@@ -4715,7 +4799,7 @@ export const App = () => {
     const destinationRootDirectory = transferDestinationRootDirectory.trim();
     const shouldAutoAnalyze =
       isTransferPageOpen &&
-      !isSettingsWindow &&
+      !isSecondaryWindow &&
       transferStep === 'review' &&
       !isTransferRunning &&
       !settingsBusyLabel &&
@@ -4733,7 +4817,7 @@ export const App = () => {
     }
   }, [
     bridgeStatus?.ready,
-    isSettingsWindow,
+    isSecondaryWindow,
     isTransferPageOpen,
     isTransferRunning,
     settingsBusyLabel,
@@ -5857,62 +5941,6 @@ export const App = () => {
               <p className="eyebrow">Mods</p>
               <h2>{selectedProject.name}</h2>
             </div>
-            <div className="mods-toolbar" aria-label="Mod commands">
-              <button
-                className="icon-button"
-                type="button"
-                title="Refresh mods"
-                disabled={Boolean(modsBusyLabel)}
-                onClick={() => void loadModsWorkspace(selectedProject)}
-              >
-                <RefreshCw size={16} aria-hidden="true" />
-              </button>
-              <button
-                className="icon-button"
-                type="button"
-                title="Check updates"
-                disabled={Boolean(modsBusyLabel)}
-                onClick={() => void checkModUpdates()}
-              >
-                <CircleDot size={16} aria-hidden="true" />
-              </button>
-              <button
-                className="icon-button"
-                type="button"
-                title="Enable all mods"
-                disabled={Boolean(modsBusyLabel)}
-                onClick={() => void setAllModsEnabled(true)}
-              >
-                <CheckCircle2 size={16} aria-hidden="true" />
-              </button>
-              <button
-                className="icon-button"
-                type="button"
-                title="Disable all mods"
-                disabled={Boolean(modsBusyLabel)}
-                onClick={() => void setAllModsEnabled(false)}
-              >
-                <XCircle size={16} aria-hidden="true" />
-              </button>
-              <button
-                className="tool-button"
-                type="button"
-                disabled={Boolean(modsBusyLabel)}
-                onClick={() => void createModSeparator()}
-              >
-                <Layers size={16} aria-hidden="true" />
-                Separator
-              </button>
-              <button
-                className="tool-button"
-                type="button"
-                disabled={Boolean(modsBusyLabel)}
-                onClick={() => void createEmptyMod()}
-              >
-                <Plus size={16} aria-hidden="true" />
-                Empty mod
-              </button>
-            </div>
           </div>
           {message ? (
             <div className="activity-banner" role="status">
@@ -6410,26 +6438,6 @@ export const App = () => {
             <div>
               <p className="eyebrow">Plugins</p>
               <h2>{selectedProject.name}</h2>
-            </div>
-            <div className="mods-toolbar" aria-label="Plugin commands">
-              <button
-                className="icon-button"
-                type="button"
-                title="Refresh plugins"
-                disabled={Boolean(pluginsBusyLabel)}
-                onClick={() => void loadPluginsWorkspace(selectedProject)}
-              >
-                <RefreshCw size={16} aria-hidden="true" />
-              </button>
-              <button
-                className="tool-button"
-                type="button"
-                disabled={Boolean(pluginsBusyLabel) || !pluginCapabilities.loadOrderSupported}
-                onClick={() => void createPluginSeparator()}
-              >
-                <Layers size={16} aria-hidden="true" />
-                Separator
-              </button>
             </div>
           </div>
           {message ? (
@@ -7062,26 +7070,6 @@ export const App = () => {
       role="tabpanel"
       aria-label="Плагины"
     >
-      <div className="right-pane-actionbar" aria-label="Plugin commands">
-        <button
-          className="icon-button"
-          type="button"
-          title="Refresh plugins"
-          disabled={Boolean(pluginsBusyLabel)}
-          onClick={() => void loadPluginsWorkspace(selectedProject)}
-        >
-          <RefreshCw size={16} aria-hidden="true" />
-        </button>
-        <button
-          className="tool-button"
-          type="button"
-          disabled={Boolean(pluginsBusyLabel) || !pluginCapabilities.loadOrderSupported}
-          onClick={() => void createPluginSeparator()}
-        >
-          <Layers size={16} aria-hidden="true" />
-          Separator
-        </button>
-      </div>
       <label className="pane-search">
         <Search size={15} aria-hidden="true" />
         <input
@@ -7985,7 +7973,23 @@ export const App = () => {
       onBrowseDirectory={(title, field) => void browseBuildPathDirectory(title, field)}
       onBrowseGameExecutable={() => void browseBuildGameExecutable()}
       onChange={updateBuildPathDraft}
-      onClose={() => setIsBuildPathsOpen(false)}
+      onClose={() => void closeBuildPathSettings()}
+      onSave={() => void saveBuildPathSettings()}
+    />
+  );
+  const renderBuildSettingsWorkspace = () => (
+    <BuildSettingsWorkspace
+      busyLabel={buildPathsBusyLabel}
+      draft={buildPathDraft}
+      error={buildPathsError}
+      isLoading={catalogState === 'loading' || Boolean(buildPathsBusyLabel)}
+      message={message}
+      projectName={selectedProject?.name ?? (buildSettingsInitialName || 'Build')}
+      projectReady={Boolean(selectedProject)}
+      onBrowseDirectory={(title, field) => void browseBuildPathDirectory(title, field)}
+      onBrowseGameExecutable={() => void browseBuildGameExecutable()}
+      onChange={updateBuildPathDraft}
+      onClose={() => void closeBuildPathSettings()}
       onSave={() => void saveBuildPathSettings()}
     />
   );
@@ -8156,22 +8160,18 @@ export const App = () => {
             dispatchExecutablesWorkspace({ type: 'selected', id })
           }
           onLaunch={() => void launchExecutable()}
-          onPackage={() => void packageFluxPack()}
           onProfileChange={(profileName) => {
             dispatchProfilesWorkspace({ type: 'selected', name: profileName });
             setProfileDraftName(profileName);
             setProfileDeleteArmedName(null);
           }}
-          onRefresh={() => void checkModUpdates()}
           onSettings={() => void openBuildPathSettings()}
           profileOptions={buildProfileOptions}
           profilesBusyLabel={profilesBusyLabel}
           project={selectedProject}
-          refreshBusyLabel={modsBusyLabel}
           selectedExecutable={selectedExecutableItem}
           selectedProfileName={selectedProjectProfileName}
           settingsBusyLabel={buildPathsBusyLabel}
-          stats={selectedProjectLibraryStats}
         />
 
         {message ? (
@@ -8189,62 +8189,6 @@ export const App = () => {
                 <span>
                   {enabledModCount} of {totalModCount} enabled · {filteredModItems.length} visible
                 </span>
-              </div>
-              <div className="build-pane__tools mods-pane-toolbar" aria-label="Mod commands">
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="Refresh mods"
-                  disabled={Boolean(modsBusyLabel)}
-                  onClick={() => void loadModsWorkspace(selectedProject)}
-                >
-                  <RefreshCw size={16} aria-hidden="true" />
-                </button>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="Check updates"
-                  disabled={Boolean(modsBusyLabel)}
-                  onClick={() => void checkModUpdates()}
-                >
-                  <CircleDot size={16} aria-hidden="true" />
-                </button>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="Enable all mods"
-                  disabled={Boolean(modsBusyLabel)}
-                  onClick={() => void setAllModsEnabled(true)}
-                >
-                  <CheckCircle2 size={16} aria-hidden="true" />
-                </button>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title="Disable all mods"
-                  disabled={Boolean(modsBusyLabel)}
-                  onClick={() => void setAllModsEnabled(false)}
-                >
-                  <XCircle size={16} aria-hidden="true" />
-                </button>
-                <button
-                  className="tool-button"
-                  type="button"
-                  disabled={Boolean(modsBusyLabel)}
-                  onClick={() => void createModSeparator()}
-                >
-                  <Layers size={16} aria-hidden="true" />
-                  Separator
-                </button>
-                <button
-                  className="tool-button"
-                  type="button"
-                  disabled={Boolean(modsBusyLabel)}
-                  onClick={() => void createEmptyMod()}
-                >
-                  <Plus size={16} aria-hidden="true" />
-                  Empty mod
-                </button>
               </div>
             </header>
             <label className="pane-search">
@@ -8323,9 +8267,10 @@ export const App = () => {
   const renderTitlebar = (showSettingsButton: boolean) => (
     <AppTitlebar
       homeActive={activeRoute === 'home' && !isTransferPageOpen}
-      mode={isSettingsWindow ? 'settings' : 'main'}
+      mode={isSecondaryWindow ? 'settings' : 'main'}
       settingsActive={isSettingsWindow}
       showShortcuts={showSettingsButton}
+      title={windowTitle}
       onClose={() => void closeWindow()}
       onHome={() => changeRoute('home')}
       onMinimize={() => void minimizeWindow()}
@@ -8350,6 +8295,17 @@ export const App = () => {
         {renderTitlebar(false)}
         <section className="settings-window">
           {renderSettingsWorkspace()}
+        </section>
+      </main>
+    );
+  }
+
+  if (isBuildSettingsWindow) {
+    return (
+      <main className="desktop-shell desktop-shell--settings-window">
+        {renderTitlebar(false)}
+        <section className="settings-window">
+          {renderBuildSettingsWorkspace()}
         </section>
       </main>
     );

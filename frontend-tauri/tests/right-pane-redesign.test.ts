@@ -11,14 +11,14 @@ const readText = (...segments: string[]): string =>
   fs.readFileSync(path.join(repoRoot, ...segments), 'utf8');
 
 describe('right pane redesign', () => {
-  it('keeps Phase 8 tabs, panels and details in the build workspace', () => {
+  it('keeps visible Phase 8 tabs, panels and details in the build workspace', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
 
     expect(app).toContain("type RightPaneId = 'plugins' | 'data' | 'downloads' | 'build';");
     expect(app).toContain("label: 'Плагины'");
     expect(app).toContain("label: 'Данные'");
     expect(app).toContain("label: 'Загрузки'");
-    expect(app).toContain("label: 'Сборка'");
+    expect(app).not.toContain("label: 'Сборка'");
     expect(app).toContain('renderPluginsRightPane');
     expect(app).toContain('renderDataRightPane');
     expect(app).toContain('renderDownloadsRightPane');
@@ -26,6 +26,7 @@ describe('right pane redesign', () => {
     expect(app).toContain('className="right-pane-detail-card"');
     expect(app).toContain('className="right-pane-path-tree"');
     expect(app).toContain('aria-label="Selected mod data tree"');
+    expect(app).not.toContain('aria-label="Plugin commands"');
     expect(app).not.toContain('Selected download');
   });
 

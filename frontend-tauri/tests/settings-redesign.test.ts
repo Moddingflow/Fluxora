@@ -101,7 +101,7 @@ describe('settings redesign', () => {
     expect(settingsWorkspace).not.toContain('Choose the renderer language.');
     expect(settingsWorkspace).toContain('<TransferSettingsPanel');
     expect(titlebar).toContain('titlebar__mark titlebar__mark--settings');
-    expect(titlebar).toContain("isSettingsWindow ? 'Settings' : 'Fluxora'");
+    expect(titlebar).toContain("title ?? (isSettingsWindow ? 'Settings' : 'Fluxora')");
     expect(settingsWorkspace).not.toContain('Account bridge');
     expect(settingsWorkspace).not.toContain('Link Nexus Mods with OAuth');
     expect(settingsWorkspace).not.toContain('Refresh status');

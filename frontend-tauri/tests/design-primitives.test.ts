@@ -10,6 +10,7 @@ import {
   Button,
   Card,
   Checkbox,
+  CustomSelect,
   EmptyState,
   FacetSpinner,
   Icon,
@@ -56,6 +57,7 @@ describe('redesign primitives', () => {
       Button,
       Card,
       Checkbox,
+      CustomSelect,
       EmptyState,
       FacetSpinner,
       IconButton,
@@ -146,6 +148,28 @@ describe('redesign primitives', () => {
     expect(splash).toContain('47%');
     expect(splash).toContain('Отмена');
     expect(splash).toContain('flx-loading-splash__progress');
+  });
+
+  it('renders the custom select as a renderer-only combobox shell', () => {
+    const combo = renderToStaticMarkup(
+      React.createElement(CustomSelect, {
+        ariaLabel: 'Profile',
+        density: 'compact',
+        onValueChange: noop,
+        options: [
+          { label: 'Foundation Edition', value: 'foundation' },
+          { label: 'Testing', value: 'testing' }
+        ],
+        value: 'foundation'
+      })
+    );
+
+    expect(combo).toContain('role="combobox"');
+    expect(combo).toContain('aria-expanded="false"');
+    expect(combo).toContain('aria-label="Profile"');
+    expect(combo).toContain('flx-custom-select');
+    expect(combo).toContain('Foundation Edition');
+    expect(combo).not.toContain('<select');
   });
 
   it('keeps primitive styles on the public CSS entrypoint with reduced-motion support', () => {

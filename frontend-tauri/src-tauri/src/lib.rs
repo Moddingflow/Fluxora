@@ -15,6 +15,9 @@ const BRIDGE_PROTOCOL_VERSION: &str = "1.0";
 const BRIDGE_TIMEOUT_MS: u64 = 10_000;
 const PROGRESS_EVENT: &str = "fluxora:operations:progress";
 const MAIN_WINDOW_LABEL: &str = "main";
+const SETTINGS_WINDOW_LABEL: &str = "settings";
+const BUILD_SETTINGS_WINDOW_LABEL_PREFIX: &str = "build-settings";
+const BUILD_SETTINGS_PATHS_SAVED_EVENT: &str = "fluxora:build-settings:paths-saved";
 const TRANSFER_MO2_HANDOFF_EVENT: &str = "fluxora:transfer:mo2-handoff";
 const TRANSFER_MO2_OPEN_EVENT: &str = "fluxora:transfer:mo2-open";
 const OPERATION_CANCEL_DIR_NAME: &str = "operation-cancel";
@@ -24,6 +27,28 @@ const PROCESS_WATCH_DEFAULT_POLL_MS: u64 = 1_000;
 const PROCESS_WATCH_MIN_POLL_MS: u64 = 250;
 const PROCESS_WATCH_MAX_POLL_MS: u64 = 5_000;
 const PROCESS_WATCH_DEFAULT_HANDOFF_MS: u64 = 30_000;
+
+fn encode_query_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn stable_label_suffix(value: &str) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in value.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
 
 fn normalized_process_name(value: &str) -> String {
     value
@@ -1696,7 +1721,7 @@ async fn fluxora_window_close(window: tauri::WebviewWindow) -> Result<(), String
 
 #[tauri::command]
 async fn fluxora_open_settings_window(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("settings") {
+    if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
@@ -1705,7 +1730,7 @@ async fn fluxora_open_settings_window(app: AppHandle) -> Result<(), String> {
 
     WebviewWindowBuilder::new(
         &app,
-        "settings",
+        SETTINGS_WINDOW_LABEL,
         WebviewUrl::App("/?window=settings".into()),
     )
     .title("Settings")
@@ -1717,6 +1742,61 @@ async fn fluxora_open_settings_window(app: AppHandle) -> Result<(), String> {
     .build()
     .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+async fn fluxora_open_build_settings_window(
+    app: AppHandle,
+    config_path: String,
+    build_name: String,
+) -> Result<(), String> {
+    let config_path = config_path.trim();
+    if config_path.is_empty() {
+        return Err("Build settings require a project config path.".to_string());
+    }
+
+    let build_name = build_name.trim();
+    let build_title = if build_name.is_empty() {
+        "Build"
+    } else {
+        build_name
+    };
+    let label = format!(
+        "{BUILD_SETTINGS_WINDOW_LABEL_PREFIX}:{}",
+        stable_label_suffix(config_path)
+    );
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    let url = format!(
+        "/?window=build-settings&project={}&name={}",
+        encode_query_component(config_path),
+        encode_query_component(build_title)
+    );
+
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()))
+        .title(format!("Settings \u{00B7} {build_title}"))
+        .inner_size(980.0, 700.0)
+        .min_inner_size(860.0, 620.0)
+        .resizable(true)
+        .decorations(false)
+        .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn fluxora_build_settings_paths_saved(
+    app: AppHandle,
+    project: Value,
+) -> Result<(), String> {
+    app.emit_to(MAIN_WINDOW_LABEL, BUILD_SETTINGS_PATHS_SAVED_EVENT, project)
+        .map_err(|error| error.to_string())
 }
 
 pub fn run() {
@@ -1767,7 +1847,9 @@ pub fn run() {
             fluxora_window_minimize,
             fluxora_window_toggle_maximize,
             fluxora_window_close,
-            fluxora_open_settings_window
+            fluxora_open_settings_window,
+            fluxora_open_build_settings_window,
+            fluxora_build_settings_paths_saved
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fluxora");

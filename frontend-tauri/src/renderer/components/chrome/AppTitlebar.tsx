@@ -6,6 +6,7 @@ export type AppTitlebarMode = 'main' | 'settings';
 export interface AppTitlebarProps {
   mode?: AppTitlebarMode;
   showShortcuts?: boolean;
+  title?: string;
   homeActive?: boolean;
   settingsActive?: boolean;
   onHome?: () => void | Promise<void>;
@@ -29,6 +30,7 @@ const windowsCaptionGlyphs = {
 export function AppTitlebar({
   mode = 'main',
   showShortcuts = true,
+  title,
   homeActive = false,
   settingsActive = false,
   onHome,
@@ -39,6 +41,7 @@ export function AppTitlebar({
   onClose
 }: AppTitlebarProps) {
   const isSettingsWindow = mode === 'settings';
+  const titleText = title ?? (isSettingsWindow ? 'Settings' : 'Fluxora');
 
   return (
     <header
@@ -52,7 +55,7 @@ export function AppTitlebar({
         ) : (
           <img className="titlebar__mark" src={fluxoraLogo} alt="" />
         )}
-        <span className="titlebar__brand-name">{isSettingsWindow ? 'Settings' : 'Fluxora'}</span>
+        <span className="titlebar__brand-name">{titleText}</span>
       </div>
 
       <div className="titlebar__drag" data-tauri-drag-region />

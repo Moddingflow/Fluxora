@@ -6,7 +6,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { BuildDetailHeader } from '../src/renderer/features/build/BuildDetailHeader';
-import type { ProjectLibraryStats } from '../src/renderer/features/library/LibraryHome';
 import type { FluxoraExecutable, FluxoraProject } from '../src/shared/fluxora-api';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -39,15 +38,6 @@ const executable: FluxoraExecutable = {
   iconPath: ''
 };
 
-const stats: ProjectLibraryStats = {
-  disabledMods: '12',
-  downloads: '4',
-  lastLaunch: 'Jun 24, 2026',
-  mods: '248',
-  plugins: '92',
-  size: '32.4 GB'
-};
-
 const defaultProps = {
   buildCapabilities: {
     packageAvailable: true,
@@ -65,18 +55,14 @@ const defaultProps = {
   onBack: noop,
   onExecutableChange: noop,
   onLaunch: noop,
-  onPackage: noop,
   onProfileChange: noop,
-  onRefresh: noop,
   onSettings: noop,
   profileOptions: ['Default', 'Testing'],
   profilesBusyLabel: null,
   project,
-  refreshBusyLabel: null,
   selectedExecutable: executable,
   selectedProfileName: 'Default',
-  settingsBusyLabel: null,
-  stats
+  settingsBusyLabel: null
 } satisfies React.ComponentProps<typeof BuildDetailHeader>;
 
 const renderHeader = (
@@ -91,30 +77,33 @@ describe('build detail header redesign', () => {
     expect(markup).toContain('Back');
     expect(markup).toContain('Skyrim graphics overhaul');
     expect(markup).toContain('Skyrim Special Edition');
-    expect(markup).toContain('248 mods');
-    expect(markup).toContain('92 plugins');
-    expect(markup).toContain('32.4 GB');
-    expect(markup).toContain('Package');
-    expect(markup).toContain('Check');
+    expect(markup).not.toContain('248 mods');
+    expect(markup).not.toContain('92 plugins');
+    expect(markup).not.toContain('32.4 GB');
+    expect(markup).not.toContain('Package');
+    expect(markup).not.toContain('Check');
     expect(markup).toContain('aria-label="Build settings"');
     expect(markup).toContain('aria-label="Profile"');
     expect(markup).toContain('aria-label="Executable"');
+    expect(markup).toContain('role="combobox"');
+    expect(markup).toContain('flx-custom-select');
+    expect(markup).not.toContain('<select');
     expect(markup).toContain('Launch');
   });
 
-  it('surfaces capability reasons when a header action is unsupported', () => {
+  it('surfaces capability reasons when a visible header action is unsupported', () => {
     const markup = renderHeader({
       buildCapabilities: {
-        packageAvailable: false,
-        packageReason: 'FluxPack export is unavailable on this bridge.',
+        packageAvailable: true,
+        packageReason: '',
         refreshAvailable: true,
         refreshReason: '',
-        settingsAvailable: true,
-        settingsReason: ''
+        settingsAvailable: false,
+        settingsReason: 'Build settings are unavailable on this bridge.'
       }
     });
 
-    expect(markup).toContain('FluxPack export is unavailable on this bridge.');
+    expect(markup).toContain('Build settings are unavailable on this bridge.');
     expect(markup).toContain('disabled=""');
   });
 
@@ -126,6 +115,8 @@ describe('build detail header redesign', () => {
     expect(styles).toContain('min-height: 64px;');
     expect(styles).toContain('height: 34px;');
     expect(styles).toContain('.build-select--executable');
+    expect(styles).toContain('.build-select .flx-custom-select');
+    expect(styles).toContain('.flx-custom-select__menu');
     expect(styles).toContain('.build-header__capability-note');
   });
 
@@ -133,9 +124,10 @@ describe('build detail header redesign', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
 
     expect(app).toContain('<BuildDetailHeader');
-    expect(app).toContain('onPackage={() => void packageFluxPack()}');
-    expect(app).toContain('onRefresh={() => void checkModUpdates()}');
+    expect(app).not.toContain('onPackage={() => void packageFluxPack()}');
+    expect(app).not.toContain('onRefresh={() => void checkModUpdates()}');
     expect(app).toContain('onSettings={() => void openBuildPathSettings()}');
+    expect(app).toContain('await window.fluxora.windowControls.openBuildSettings(');
     expect(app).toContain('onLaunch={() => void launchExecutable()}');
     expect(app).toContain('window.fluxora.executables.launch');
     expect(app).toContain('window.fluxora.fluxPack.export');

@@ -62,6 +62,8 @@ export const FluxoraIpcChannels = {
   operationsProgress: 'fluxora:operations:progress',
   archivesInstallFomod: 'fluxora:archives:install-fomod',
   archivesInstall: 'fluxora:archives:install',
+  buildSettingsNotifyPathsSaved: 'fluxora:build-settings:notify-paths-saved',
+  buildSettingsPathsSaved: 'fluxora:build-settings:paths-saved',
   fluxPackExport: 'fluxora:flux-pack:export',
   fluxPackInspect: 'fluxora:flux-pack:inspect',
   fluxPackInstall: 'fluxora:flux-pack:install',
@@ -88,6 +90,7 @@ export const FluxoraIpcChannels = {
   uiLog: 'fluxora:ui:log',
   windowClose: 'fluxora:window:close',
   windowMinimize: 'fluxora:window:minimize',
+  windowOpenBuildSettings: 'fluxora:window:open-build-settings',
   windowOpenSettings: 'fluxora:window:open-settings',
   windowToggleMaximize: 'fluxora:window:toggle-maximize'
 } as const;
@@ -1126,6 +1129,10 @@ export interface FluxoraApi {
       request?: OperationRequest
     ) => Promise<FluxoraBuildPathSettings>;
   };
+  buildSettings: {
+    notifyPathsSaved: (project: FluxoraProject) => Promise<void>;
+    onPathsSaved: (callback: (project: FluxoraProject) => void) => () => void;
+  };
   fluxPack: {
     export: (
       request: FluxoraFluxPackExportRequest,
@@ -1189,6 +1196,7 @@ export interface FluxoraApi {
   windowControls: {
     close: () => Promise<void>;
     minimize: () => Promise<void>;
+    openBuildSettings: (configPath: string, buildName: string) => Promise<void>;
     openSettings: () => Promise<void>;
     toggleMaximize: () => Promise<void>;
   };

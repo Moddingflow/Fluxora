@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
   "description": "Fluxora main and settings webviews",
-  "windows": ["main", "settings"],
+  "windows": ["main", "settings", "build-settings:*"],
   "permissions": [
     "core:app:default",
     "core:event:default",
