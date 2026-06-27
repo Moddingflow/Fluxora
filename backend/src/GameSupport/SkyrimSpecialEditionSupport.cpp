@@ -56,6 +56,7 @@ namespace fluxora
             L"dialogueviews",
             L"distantlod",
             L"facegendata",
+            L"grass",
             L"interface",
             L"lodsettings",
             L"materials",

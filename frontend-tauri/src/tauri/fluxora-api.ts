@@ -15,6 +15,7 @@ import type {
   FluxoraExecutable,
   FluxoraExecutableIconResult,
   FluxoraExecutableLaunchResult,
+  FluxoraLaunchProcessWatchRequest,
   FluxoraIpcChannel,
   FluxoraGameTemplate,
   FluxoraAnalyzeContentLayoutRequest,
@@ -42,6 +43,7 @@ import type {
   FluxoraNexusModsAuthStatus,
   FluxoraOperationCancelResult,
   FluxoraOperationProgress,
+  FluxoraProcessWatchResult,
   FluxoraPluginOrderItem,
   FluxoraProject,
   FluxoraProjectCatalog,
@@ -533,6 +535,25 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         request
       )
   },
+  processes: {
+    waitForLaunchReady: (
+      launch: FluxoraLaunchProcessWatchRequest,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraProcessWatchResult>(
+        ipc,
+        FluxoraIpcChannels.processesWatchLaunchReady,
+        launch,
+        request
+      ),
+    waitForExit: (processId: number, request?: OperationRequest) =>
+      invokeTyped<FluxoraProcessWatchResult>(
+        ipc,
+        FluxoraIpcChannels.processesWaitForExit,
+        processId,
+        request
+      )
+  },
   downloads: {
     list: (projectDirectory: string, request?: OperationRequest) =>
       invokeTyped<FluxoraDownloadEntry[]>(
@@ -882,6 +903,7 @@ const legacyPackagerPattern = new RegExp(['Fo', 'rge'].join(''), 'gi');
 const projectsListTimeoutMs = 30_000;
 const projectOpenConfigTimeoutMs = 60_000;
 const executablesListTimeoutMs = 30_000;
+const executablesLaunchTimeoutMs = 2 * 60 * 1000;
 const transferImportTimeoutMs = 2 * 60 * 60 * 1000;
 
 const createOperationId = (scope: string): string =>
@@ -1050,6 +1072,18 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.transferListDestinationDrives:
         return [] satisfies FluxoraTransferDriveOption[];
 
+      case FluxoraIpcChannels.processesWatchLaunchReady:
+      case FluxoraIpcChannels.processesWaitForExit: {
+        const request = requestWithOperationId(args[1], 'process_watch');
+        return {
+          processId: 0,
+          processName: '',
+          state: 'notFound',
+          trackedKind: 'directProcess',
+          operationId: operationIdOf(request, 'process_watch')
+        } satisfies FluxoraProcessWatchResult;
+      }
+
       case FluxoraIpcChannels.transferStartMo2InMain:
       case FluxoraIpcChannels.transferOpenMo2InMain:
         return undefined;
@@ -1188,6 +1222,22 @@ const createTauriInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.transferListDestinationDrives:
         return invoke<FluxoraTransferDriveOption[]>('fluxora_list_destination_drives');
+
+      case FluxoraIpcChannels.processesWatchLaunchReady: {
+        const request = requestWithOperationId(args[1], 'process_watch_launch');
+        return invoke<FluxoraProcessWatchResult>('fluxora_wait_for_launch_ready', {
+          launch: args[0],
+          request
+        });
+      }
+
+      case FluxoraIpcChannels.processesWaitForExit: {
+        const request = requestWithOperationId(args[1], 'process_wait_exit');
+        return invoke<FluxoraProcessWatchResult>('fluxora_wait_for_process_exit', {
+          processId: args[0],
+          request
+        });
+      }
 
       case FluxoraIpcChannels.bridgeGetStatus:
         return normalizeStatus(await bridgeStatusWithRuntimeCapabilities(args[0]));
@@ -1442,7 +1492,8 @@ const createTauriInvoker = (): IpcInvoker => ({
         const data = await bridgeRequest<Record<string, unknown>>(
           'executables.launch',
           { configPath: args[0], executableId: args[1], profileName: optionalString(args[2]) },
-          request
+          request,
+          executablesLaunchTimeoutMs
         );
         return withOperationId(data, request, 'executables_launch');
       }

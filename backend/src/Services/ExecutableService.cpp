@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cwctype>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <map>
 #include <optional>
@@ -23,6 +24,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <thread>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -57,6 +59,8 @@ namespace fluxora
             std::optional<LaunchSupportRules> launchRules;
             std::optional<VfsSupportRules> vfsRules;
             std::optional<ContentLayoutSupportRules> contentLayoutRules;
+            mutable std::optional<std::vector<std::filesystem::path>> activeProfileModPathsCache;
+            mutable std::optional<std::vector<std::filesystem::path>> activeRootBuilderOverlayRootsCache;
         };
 
         std::string toUtf8(const std::wstring& value)
@@ -363,6 +367,8 @@ namespace fluxora
                 std::nullopt,
                 std::nullopt,
                 std::nullopt,
+                std::nullopt,
+                std::nullopt,
                 std::nullopt
             };
             applySupportRules(context);
@@ -559,6 +565,17 @@ namespace fluxora
                 return std::nullopt;
             }
 
+            const std::filesystem::path direct = directory / std::filesystem::path(std::wstring(childName));
+            if (isDirectory(direct))
+            {
+                return direct;
+            }
+
+#ifdef _WIN32
+            // Windows lookup is already case-insensitive, so the direct probe
+            // above covers casing differences without enumerating large mod roots.
+            return std::nullopt;
+#else
             std::error_code error;
             for (const std::filesystem::directory_entry& entry :
                 std::filesystem::directory_iterator(directory, error))
@@ -576,6 +593,7 @@ namespace fluxora
             }
 
             return std::nullopt;
+#endif
         }
 
         std::optional<std::filesystem::path> rootBuilderRelativeFromImportedModsPath(
@@ -637,18 +655,24 @@ namespace fluxora
             return value.empty() ? std::wstring(L"root") : value;
         }
 
-        std::vector<std::filesystem::path> activeProfileModPaths(const ProjectExecutableContext& context)
+        const std::vector<std::filesystem::path>& activeProfileModPaths(const ProjectExecutableContext& context)
         {
+            if (context.activeProfileModPathsCache.has_value())
+            {
+                return context.activeProfileModPathsCache.value();
+            }
+
             if (context.projectDirectory.empty() || context.modsDirectory.empty())
             {
-                return {};
+                context.activeProfileModPathsCache = std::vector<std::filesystem::path>{};
+                return context.activeProfileModPathsCache.value();
             }
 
             try
             {
                 const std::wstring profile = context.defaultProfile.empty() ? L"Default" : context.defaultProfile;
                 std::vector<std::filesystem::path> mods;
-                for (const ProfileOrderItemRecord& item : InstanceMetadataStore::listProfileOrderItems(
+                for (const ProfileOrderItemRecord& item : InstanceMetadataStore::listCachedProfileOrderItems(
                          context.projectDirectory,
                          profile,
                          context.modsDirectory))
@@ -662,11 +686,13 @@ namespace fluxora
                     }
                 }
 
-                return mods;
+                context.activeProfileModPathsCache = std::move(mods);
+                return context.activeProfileModPathsCache.value();
             }
             catch (...)
             {
-                return {};
+                context.activeProfileModPathsCache = std::vector<std::filesystem::path>{};
+                return context.activeProfileModPathsCache.value();
             }
         }
 
@@ -834,6 +860,49 @@ namespace fluxora
             return winner;
         }
 
+        const std::vector<std::filesystem::path>& activeRootBuilderOverlayRoots(
+            const ProjectExecutableContext& context)
+        {
+            if (context.activeRootBuilderOverlayRootsCache.has_value())
+            {
+                return context.activeRootBuilderOverlayRootsCache.value();
+            }
+
+            std::vector<std::filesystem::path> roots;
+            if (!supportsRootBuilder(context))
+            {
+                context.activeRootBuilderOverlayRootsCache = std::move(roots);
+                return context.activeRootBuilderOverlayRootsCache.value();
+            }
+
+            for (const std::filesystem::path& mod : activeProfileModPaths(context))
+            {
+                const std::filesystem::path root = rootBuilderDirectory(context, mod);
+                if (isDirectory(root))
+                {
+                    roots.push_back(root);
+                }
+            }
+
+            if (!context.overwriteDirectory.empty())
+            {
+                const std::filesystem::path root =
+                    rootBuilderDirectory(context, context.overwriteDirectory);
+                if (isDirectory(root))
+                {
+                    roots.push_back(root);
+                }
+            }
+
+            context.activeRootBuilderOverlayRootsCache = std::move(roots);
+            return context.activeRootBuilderOverlayRootsCache.value();
+        }
+
+        bool hasActiveRootBuilderOverlay(const ProjectExecutableContext& context)
+        {
+            return !activeRootBuilderOverlayRoots(context).empty();
+        }
+
         std::optional<std::filesystem::path> rootBuilderVirtualPathForBackingFile(
             const ProjectExecutableContext& context,
             const std::filesystem::path& backingPath)
@@ -859,6 +928,16 @@ namespace fluxora
                     relativePathIfInsideLexical(
                         backingPath,
                         rootBuilderDirectory(context, context.overwriteDirectory));
+                if (relative.has_value() && isUsableRelativePath(relative.value()))
+                {
+                    return context.gamePath / relative.value();
+                }
+            }
+
+            if (hasActiveRootBuilderOverlay(context))
+            {
+                const std::optional<std::filesystem::path> relative =
+                    relativePathIfInsideLexical(backingPath, context.gamePath);
                 if (relative.has_value() && isUsableRelativePath(relative.value()))
                 {
                     return context.gamePath / relative.value();
@@ -951,10 +1030,19 @@ namespace fluxora
             RootBuilderLaunchCacheFileStamp stamp;
         };
 
+        struct RootBuilderLaunchCacheDirectoryStamp
+        {
+            std::filesystem::path relativePath;
+            std::filesystem::path sourcePath;
+            std::int64_t modifiedTicks{0};
+        };
+
         struct RootBuilderLaunchCacheManifest
         {
             std::wstring revision;
             std::map<std::wstring, RootBuilderLaunchCacheManifestFile> files;
+            std::map<std::wstring, RootBuilderLaunchCacheDirectoryStamp> directories;
+            bool sealed{false};
         };
 
         enum class RootBuilderLaunchCacheManifestStatus
@@ -976,6 +1064,7 @@ namespace fluxora
             std::wstring revision;
             std::map<std::wstring, RootBuilderLaunchCacheDesiredFile> files;
             std::map<std::wstring, std::filesystem::path> directories;
+            std::map<std::wstring, RootBuilderLaunchCacheDirectoryStamp> watchedDirectories;
             std::size_t materializedEarlyDataRoots{0};
         };
 
@@ -987,6 +1076,13 @@ namespace fluxora
             std::size_t deletedDirectories{0};
             bool rebuilt{false};
             bool revisionChanged{false};
+            bool fastPathUsed{false};
+        };
+
+        struct RootBuilderLaunchCacheValidationResult
+        {
+            bool reusable{true};
+            std::string failure;
         };
 
         std::wstring rootBuilderLaunchCacheRelativeKey(const std::filesystem::path& relativePath)
@@ -1152,6 +1248,47 @@ namespace fluxora
             };
         }
 
+        bool isTransientRootBuilderLaunchCacheFile(const std::filesystem::path& relativePath)
+        {
+            const std::wstring extension = toLower(relativePath.extension().wstring());
+            return extension == L".log" ||
+                extension == L".tmp" ||
+                extension == L".dmp" ||
+                extension == L".mdmp" ||
+                extension == L".bak" ||
+                extension == L".old";
+        }
+
+        std::optional<std::int64_t> rootBuilderLaunchCacheDirectoryModifiedTicks(
+            const std::filesystem::path& path,
+            std::string& failure)
+        {
+            std::error_code error;
+            if (!std::filesystem::is_directory(path, error) || error)
+            {
+                failure = "could not inspect " + toUtf8(path.wstring()) +
+                    " directory (" + filesystemErrorForLog(error) + ")";
+                return std::nullopt;
+            }
+
+            error.clear();
+            const std::filesystem::file_time_type modified =
+                std::filesystem::last_write_time(path, error);
+            if (error)
+            {
+                failure = "could not inspect " + toUtf8(path.wstring()) +
+                    " modified time (" + filesystemErrorForLog(error) + ")";
+                return std::nullopt;
+            }
+
+            return static_cast<std::int64_t>(modified.time_since_epoch().count());
+        }
+
+        std::wstring rootBuilderLaunchCacheSourceDirectoryKey(const std::filesystem::path& path)
+        {
+            return comparablePathText(path.lexically_normal());
+        }
+
         void rememberRootBuilderLaunchCacheDirectory(
             RootBuilderLaunchCacheDesiredState& state,
             const std::filesystem::path& relativeDirectory)
@@ -1176,12 +1313,56 @@ namespace fluxora
             }
         }
 
+        bool rememberRootBuilderLaunchCacheSourceDirectory(
+            RootBuilderLaunchCacheDesiredState& state,
+            const std::filesystem::path& sourceDirectory,
+            const std::filesystem::path& relativeDirectory,
+            std::string& failure)
+        {
+            const std::filesystem::path normalizedRelative =
+                relativeDirectory.lexically_normal();
+            if (!normalizedRelative.empty() && normalizedRelative != L".")
+            {
+                const PathSafetyResult relativeSafety =
+                    PathSafetyService().validateRelativePath(normalizedRelative);
+                if (!relativeSafety.safe())
+                {
+                    failure = "unsafe launch cache watched directory " +
+                        toUtf8(normalizedRelative.wstring()) +
+                        " (" + pathSafetyErrorForLog(relativeSafety) + ")";
+                    return false;
+                }
+            }
+
+            const std::optional<std::int64_t> modifiedTicks =
+                rootBuilderLaunchCacheDirectoryModifiedTicks(sourceDirectory, failure);
+            if (!modifiedTicks.has_value())
+            {
+                return false;
+            }
+
+            const std::filesystem::path absoluteSource =
+                std::filesystem::absolute(sourceDirectory).lexically_normal();
+            state.watchedDirectories[rootBuilderLaunchCacheSourceDirectoryKey(absoluteSource)] =
+                RootBuilderLaunchCacheDirectoryStamp{
+                    normalizedRelative == L"." ? std::filesystem::path{} : normalizedRelative,
+                    absoluteSource,
+                    modifiedTicks.value()
+                };
+            return true;
+        }
+
         bool addRootBuilderLaunchCacheDesiredFile(
             RootBuilderLaunchCacheDesiredState& state,
             const std::filesystem::path& source,
             const std::filesystem::path& relativeDestination,
             std::string& failure)
         {
+            if (isTransientRootBuilderLaunchCacheFile(relativeDestination))
+            {
+                return true;
+            }
+
             const PathSafetyService pathSafety;
             const PathSafetyResult relativeSafety =
                 pathSafety.validateRelativePath(relativeDestination);
@@ -1222,6 +1403,14 @@ namespace fluxora
         {
             const PathSafetyService pathSafety;
             rememberRootBuilderLaunchCacheDirectory(state, destinationRelativeRoot);
+            if (!rememberRootBuilderLaunchCacheSourceDirectory(
+                state,
+                sourceDirectory,
+                destinationRelativeRoot,
+                failure))
+            {
+                return false;
+            }
 
             std::error_code error;
             std::filesystem::recursive_directory_iterator iterator(
@@ -1287,6 +1476,14 @@ namespace fluxora
                 if (isDirectoryEntry)
                 {
                     rememberRootBuilderLaunchCacheDirectory(state, destinationRelative);
+                    if (!rememberRootBuilderLaunchCacheSourceDirectory(
+                        state,
+                        current,
+                        destinationRelative,
+                        failure))
+                    {
+                        return false;
+                    }
                 }
                 else
                 {
@@ -1380,7 +1577,7 @@ namespace fluxora
             std::string& failure)
         {
             RootBuilderLaunchCacheDesiredState state;
-            const std::vector<std::filesystem::path> activeMods = activeProfileModPaths(context);
+            const std::vector<std::filesystem::path>& activeMods = activeProfileModPaths(context);
             state.revision = rootBuilderLaunchCacheRevision(
                 context,
                 location,
@@ -1390,6 +1587,15 @@ namespace fluxora
             const PathSafetyService pathSafety;
             if (!context.gamePath.empty())
             {
+                if (!rememberRootBuilderLaunchCacheSourceDirectory(
+                    state,
+                    context.gamePath,
+                    {},
+                    failure))
+                {
+                    return std::nullopt;
+                }
+
                 std::error_code error;
                 std::filesystem::directory_iterator gameIterator(
                     context.gamePath,
@@ -1453,25 +1659,7 @@ namespace fluxora
                 return std::nullopt;
             }
 
-            std::vector<std::filesystem::path> overlayRoots;
-            for (const std::filesystem::path& mod : activeMods)
-            {
-                const std::filesystem::path root = rootBuilderDirectory(context, mod);
-                if (isDirectory(root))
-                {
-                    overlayRoots.push_back(root);
-                }
-            }
-            if (!context.overwriteDirectory.empty())
-            {
-                const std::filesystem::path root = rootBuilderDirectory(context, context.overwriteDirectory);
-                if (isDirectory(root))
-                {
-                    overlayRoots.push_back(root);
-                }
-            }
-
-            for (const std::filesystem::path& overlayRoot : overlayRoots)
+            for (const std::filesystem::path& overlayRoot : activeRootBuilderOverlayRoots(context))
             {
                 if (!collectRootBuilderLaunchCacheDirectoryOverlay(
                     overlayRoot,
@@ -1545,6 +1733,11 @@ namespace fluxora
 
                 RootBuilderLaunchCacheManifest manifest;
                 manifest.revision = revisionValue->asString();
+                const JsonValue* sealedValue = root.find(L"sealed");
+                manifest.sealed =
+                    sealedValue != nullptr &&
+                    sealedValue->type() == JsonValue::Type::Boolean &&
+                    sealedValue->asBoolean();
                 for (const JsonValue& item : filesValue->asArray())
                 {
                     if (!item.isObject())
@@ -1588,6 +1781,55 @@ namespace fluxora
                         };
                 }
 
+                if (const JsonValue* directoriesValue = root.find(L"directories");
+                    directoriesValue != nullptr && !directoriesValue->isNull())
+                {
+                    if (!directoriesValue->isArray())
+                    {
+                        throw std::runtime_error("directories are not an array");
+                    }
+
+                    for (const JsonValue& item : directoriesValue->asArray())
+                    {
+                        if (!item.isObject())
+                        {
+                            throw std::runtime_error("directory item is not an object");
+                        }
+
+                        const JsonValue* relativePathValue = item.find(L"relativePath");
+                        const JsonValue* sourcePathValue = item.find(L"sourcePath");
+                        const JsonValue* modifiedValue = item.find(L"mtimeTicks");
+                        if (relativePathValue == nullptr || !relativePathValue->isString() ||
+                            sourcePathValue == nullptr || !sourcePathValue->isString() ||
+                            modifiedValue == nullptr)
+                        {
+                            throw std::runtime_error("directory item has missing fields");
+                        }
+
+                        const std::filesystem::path relativePath(relativePathValue->asString());
+                        if (!relativePath.empty() && !isUsableRelativePath(relativePath))
+                        {
+                            throw std::runtime_error("directory item has unsafe relative path");
+                        }
+
+                        const std::optional<std::int64_t> modified =
+                            parseSignedJsonNumber(*modifiedValue);
+                        if (!modified.has_value())
+                        {
+                            throw std::runtime_error("directory item has invalid stamp");
+                        }
+
+                        const std::filesystem::path sourcePath(sourcePathValue->asString());
+                        const std::filesystem::path normalizedRelative = relativePath.lexically_normal();
+                        manifest.directories[rootBuilderLaunchCacheSourceDirectoryKey(sourcePath)] =
+                            RootBuilderLaunchCacheDirectoryStamp{
+                                normalizedRelative == L"." ? std::filesystem::path{} : normalizedRelative,
+                                sourcePath.lexically_normal(),
+                                modified.value()
+                            };
+                    }
+                }
+
                 return RootBuilderLaunchCacheManifestReadResult{
                     RootBuilderLaunchCacheManifestStatus::Loaded,
                     std::move(manifest),
@@ -1612,6 +1854,20 @@ namespace fluxora
             writer.beginObject()
                 .field(L"schemaVersion", rootBuilderLaunchCacheManifestSchemaVersion)
                 .field(L"revision", state.revision)
+                .field(L"sealed", true)
+                .key(L"directories")
+                .beginArray();
+            for (const auto& [key, directory] : state.watchedDirectories)
+            {
+                static_cast<void>(key);
+                writer.beginObject()
+                    .field(L"relativePath", directory.relativePath.generic_wstring())
+                    .field(L"sourcePath", directory.sourcePath.wstring())
+                    .key(L"mtimeTicks")
+                    .numberValue(std::to_wstring(directory.modifiedTicks))
+                    .endObject();
+            }
+            writer.endArray()
                 .key(L"files")
                 .beginArray();
             for (const auto& [key, file] : state.files)
@@ -1647,6 +1903,14 @@ namespace fluxora
                 previous.stamp.modifiedTicks == desired.stamp.modifiedTicks;
         }
 
+        bool sameRootBuilderLaunchCacheDirectoryStamp(
+            const RootBuilderLaunchCacheDirectoryStamp& previous,
+            const RootBuilderLaunchCacheDirectoryStamp& desired)
+        {
+            return comparablePathText(previous.sourcePath) == comparablePathText(desired.sourcePath) &&
+                previous.modifiedTicks == desired.modifiedTicks;
+        }
+
         bool rootBuilderLaunchCacheDestinationLooksReusable(
             const std::filesystem::path& destination,
             const RootBuilderLaunchCacheDesiredFile& desired)
@@ -1660,6 +1924,307 @@ namespace fluxora
             error.clear();
             const std::uintmax_t size = std::filesystem::file_size(destination, error);
             return !error && size == desired.stamp.size;
+        }
+
+        bool rootBuilderLaunchCacheDestinationLooksReusable(
+            const std::filesystem::path& destination,
+            const RootBuilderLaunchCacheManifestFile& manifestFile)
+        {
+            std::error_code error;
+            if (!std::filesystem::is_regular_file(destination, error) || error)
+            {
+                return false;
+            }
+
+            error.clear();
+            const std::uintmax_t size = std::filesystem::file_size(destination, error);
+            if (error || size != manifestFile.stamp.size)
+            {
+                return false;
+            }
+
+            error.clear();
+            const std::filesystem::file_time_type modified =
+                std::filesystem::last_write_time(destination, error);
+            return !error &&
+                static_cast<std::int64_t>(modified.time_since_epoch().count()) ==
+                    manifestFile.stamp.modifiedTicks;
+        }
+
+        RootBuilderLaunchCacheValidationResult verifyRootBuilderLaunchCacheManifestFile(
+            const RootBuilderLaunchCacheManifestFile& manifestFile)
+        {
+            std::string fileFailure;
+            const std::optional<RootBuilderLaunchCacheFileStamp> sourceStamp =
+                rootBuilderLaunchCacheFileStamp(manifestFile.sourcePath, fileFailure);
+            if (!sourceStamp.has_value())
+            {
+                return RootBuilderLaunchCacheValidationResult{false, fileFailure};
+            }
+            if (sourceStamp->size != manifestFile.stamp.size ||
+                sourceStamp->modifiedTicks != manifestFile.stamp.modifiedTicks)
+            {
+                return RootBuilderLaunchCacheValidationResult{false, {}};
+            }
+
+            return RootBuilderLaunchCacheValidationResult{};
+        }
+
+        std::size_t rootBuilderLaunchCacheValidationWorkerCount(std::size_t fileCount)
+        {
+            if (fileCount < 64)
+            {
+                return 1;
+            }
+
+            const unsigned int hardware = std::thread::hardware_concurrency();
+            const std::size_t availableWorkers = hardware == 0
+                ? 4
+                : static_cast<std::size_t>(hardware);
+            return (std::min<std::size_t>)(
+                fileCount,
+                (std::min<std::size_t>)(8, (std::max<std::size_t>)(2, availableWorkers)));
+        }
+
+        RootBuilderLaunchCacheValidationResult verifyRootBuilderLaunchCacheManifestFileRange(
+            const std::vector<const RootBuilderLaunchCacheManifestFile*>& files,
+            std::size_t begin,
+            std::size_t end)
+        {
+            for (std::size_t index = begin; index < end; ++index)
+            {
+                const RootBuilderLaunchCacheValidationResult result =
+                    verifyRootBuilderLaunchCacheManifestFile(*files[index]);
+                if (!result.reusable)
+                {
+                    return result;
+                }
+            }
+
+            return RootBuilderLaunchCacheValidationResult{};
+        }
+
+        RootBuilderLaunchCacheValidationResult rootBuilderLaunchCacheManifestSourcesLookReusable(
+            const RootBuilderLaunchCacheManifest& manifest)
+        {
+            std::vector<const RootBuilderLaunchCacheManifestFile*> files;
+            files.reserve(manifest.files.size());
+            for (const auto& [key, manifestFile] : manifest.files)
+            {
+                static_cast<void>(key);
+                files.push_back(&manifestFile);
+            }
+
+            const std::size_t workerCount =
+                rootBuilderLaunchCacheValidationWorkerCount(files.size());
+            if (workerCount <= 1)
+            {
+                return verifyRootBuilderLaunchCacheManifestFileRange(
+                    files,
+                    0,
+                    files.size());
+            }
+
+            const std::size_t chunkSize = (files.size() + workerCount - 1) / workerCount;
+            std::vector<std::future<RootBuilderLaunchCacheValidationResult>> workers;
+            workers.reserve(workerCount);
+            try
+            {
+                for (std::size_t begin = 0; begin < files.size(); begin += chunkSize)
+                {
+                    const std::size_t end = (std::min)(files.size(), begin + chunkSize);
+                    workers.push_back(std::async(
+                        std::launch::async,
+                        [&files, begin, end]()
+                        {
+                            return verifyRootBuilderLaunchCacheManifestFileRange(
+                                files,
+                                begin,
+                                end);
+                        }));
+                }
+
+                for (std::future<RootBuilderLaunchCacheValidationResult>& worker : workers)
+                {
+                    RootBuilderLaunchCacheValidationResult result = worker.get();
+                    if (!result.reusable)
+                    {
+                        return result;
+                    }
+                }
+            }
+            catch (...)
+            {
+                return verifyRootBuilderLaunchCacheManifestFileRange(
+                    files,
+                    0,
+                    files.size());
+            }
+
+            return RootBuilderLaunchCacheValidationResult{};
+        }
+
+        bool rootBuilderLaunchCacheWarmManifestLooksReusable(
+            const std::filesystem::path& cacheRoot,
+            const RootBuilderLaunchCacheManifest& manifest,
+            const std::wstring& expectedRevision,
+            const std::filesystem::path& requiredRelativeFile,
+            std::string& failure)
+        {
+            if (!manifest.sealed ||
+                manifest.revision != expectedRevision ||
+                manifest.directories.empty())
+            {
+                return false;
+            }
+
+            const std::wstring requiredFileKey =
+                rootBuilderLaunchCacheRelativeKey(requiredRelativeFile);
+            bool requiredFileWasVerified = false;
+
+            const PathSafetyService pathSafety;
+            for (const auto& [key, directory] : manifest.directories)
+            {
+                static_cast<void>(key);
+                const std::optional<std::int64_t> modifiedTicks =
+                    rootBuilderLaunchCacheDirectoryModifiedTicks(directory.sourcePath, failure);
+                if (!modifiedTicks.has_value() || modifiedTicks.value() != directory.modifiedTicks)
+                {
+                    return false;
+                }
+
+                if (!directory.relativePath.empty())
+                {
+                    const std::filesystem::path destination = cacheRoot / directory.relativePath;
+                    const PathSafetyResult destinationSafety =
+                        pathSafety.validateWritePath(cacheRoot, destination);
+                    if (!destinationSafety.safe())
+                    {
+                        failure = "unsafe warm launch cache directory " +
+                            toUtf8(destination.wstring()) +
+                            " (" + pathSafetyErrorForLog(destinationSafety) + ")";
+                        return false;
+                    }
+                    if (!isDirectory(destination))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            const auto requiredFile = manifest.files.find(requiredFileKey);
+            if (requiredFile == manifest.files.end())
+            {
+                return false;
+            }
+
+            const RootBuilderLaunchCacheValidationResult sourceValidation =
+                rootBuilderLaunchCacheManifestSourcesLookReusable(manifest);
+            if (!sourceValidation.reusable)
+            {
+                failure = sourceValidation.failure;
+                return false;
+            }
+
+            const RootBuilderLaunchCacheManifestFile& manifestFile = requiredFile->second;
+            const std::filesystem::path destination = cacheRoot / manifestFile.relativePath;
+            const PathSafetyResult destinationSafety =
+                pathSafety.validateWritePath(cacheRoot, destination);
+            if (!destinationSafety.safe())
+            {
+                failure = "unsafe warm launch cache file " +
+                    toUtf8(destination.wstring()) +
+                    " (" + pathSafetyErrorForLog(destinationSafety) + ")";
+                return false;
+            }
+            if (!rootBuilderLaunchCacheDestinationLooksReusable(destination, manifestFile))
+            {
+                return false;
+            }
+            requiredFileWasVerified = true;
+
+            return requiredFileWasVerified;
+        }
+
+        bool rootBuilderLaunchCacheManifestMatchesDesiredState(
+            const RootBuilderLaunchCacheManifest& previous,
+            const RootBuilderLaunchCacheDesiredState& desired)
+        {
+            if (!previous.sealed ||
+                previous.revision != desired.revision ||
+                previous.files.size() != desired.files.size() ||
+                previous.directories.size() != desired.watchedDirectories.size())
+            {
+                return false;
+            }
+
+            for (const auto& [key, desiredFile] : desired.files)
+            {
+                const auto previousFile = previous.files.find(key);
+                if (previousFile == previous.files.end() ||
+                    !sameRootBuilderLaunchCacheManifestFile(previousFile->second, desiredFile))
+                {
+                    return false;
+                }
+            }
+
+            for (const auto& [key, desiredDirectory] : desired.watchedDirectories)
+            {
+                const auto previousDirectory = previous.directories.find(key);
+                if (previousDirectory == previous.directories.end() ||
+                    !sameRootBuilderLaunchCacheDirectoryStamp(previousDirectory->second, desiredDirectory))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        bool rootBuilderLaunchCacheFastPathLooksReusable(
+            const std::filesystem::path& cacheRoot,
+            const RootBuilderLaunchCacheDesiredState& desired,
+            const RootBuilderLaunchCacheManifest& previous,
+            std::string& failure)
+        {
+            if (!rootBuilderLaunchCacheManifestMatchesDesiredState(previous, desired))
+            {
+                return false;
+            }
+
+            const PathSafetyService pathSafety;
+            for (const auto& [key, directory] : desired.directories)
+            {
+                static_cast<void>(key);
+                const std::filesystem::path destination = cacheRoot / directory;
+                const PathSafetyResult destinationSafety =
+                    pathSafety.validateWritePath(cacheRoot, destination);
+                if (!destinationSafety.safe())
+                {
+                    failure = "unsafe warm launch cache directory " +
+                        toUtf8(destination.wstring()) +
+                        " (" + pathSafetyErrorForLog(destinationSafety) + ")";
+                    return false;
+                }
+
+                if (!isDirectory(destination))
+                {
+                    return false;
+                }
+            }
+
+            for (const auto& [key, desiredFile] : desired.files)
+            {
+                static_cast<void>(key);
+                if (!rootBuilderLaunchCacheDestinationLooksReusable(
+                        cacheRoot / desiredFile.relativePath,
+                        desiredFile))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         bool removeExistingRootBuilderLaunchCachePath(
@@ -1935,6 +2500,18 @@ namespace fluxora
             RootBuilderLaunchCacheApplyStats& stats,
             std::string& failure)
         {
+            if (previousManifest.has_value() &&
+                rootBuilderLaunchCacheFastPathLooksReusable(
+                    cacheRoot,
+                    state,
+                    previousManifest.value(),
+                    failure))
+            {
+                stats.fastPathUsed = true;
+                stats.reusedFiles = state.files.size();
+                return true;
+            }
+
             if (!removeStaleRootBuilderLaunchCacheFiles(cacheRoot, manifestPath, state, stats, failure))
             {
                 return false;
@@ -2046,6 +2623,20 @@ namespace fluxora
                 }
             }
 
+            if (!context.gamePath.empty() && hasActiveRootBuilderOverlay(context))
+            {
+                const std::optional<std::filesystem::path> relative =
+                    relativePathIfInsideLexical(backingPath, context.gamePath);
+                if (relative.has_value() && isUsableRelativePath(relative.value()))
+                {
+                    return RootBuilderBackingLocation{
+                        context.gamePath,
+                        context.gamePath,
+                        relative.value()
+                    };
+                }
+            }
+
             return std::nullopt;
         }
 
@@ -2105,19 +2696,12 @@ namespace fluxora
             }
 
             std::string failure;
-            const std::optional<RootBuilderLaunchCacheDesiredState> desiredState =
-                collectRootBuilderLaunchCacheDesiredState(
-                    context,
-                    location.value(),
-                    executableIsUnderData,
-                    failure);
-            if (!desiredState.has_value())
-            {
-                logger.write(
-                    LogLevel::Warning,
-                    "Root Builder launch cache could not be prepared: " + failure + ".");
-                return std::nullopt;
-            }
+            const std::vector<std::filesystem::path>& activeMods = activeProfileModPaths(context);
+            const std::wstring expectedRevision = rootBuilderLaunchCacheRevision(
+                context,
+                location.value(),
+                activeMods,
+                executableIsUnderData);
 
             std::error_code error;
             const bool cacheRootExisted = std::filesystem::exists(cacheRoot, error);
@@ -2144,6 +2728,43 @@ namespace fluxora
             const std::filesystem::path manifestPath = rootBuilderLaunchCacheManifestPath(cacheRoot);
             RootBuilderLaunchCacheManifestReadResult manifestRead =
                 readRootBuilderLaunchCacheManifest(manifestPath, logger);
+            const auto manifestCoversExecutable = [&]() -> bool
+            {
+                return manifestRead.manifest.has_value() &&
+                    manifestRead.manifest->files.find(
+                        rootBuilderLaunchCacheRelativeKey(location->relativePath)) !=
+                    manifestRead.manifest->files.end();
+            };
+            std::string warmFailure;
+            if (manifestRead.status == RootBuilderLaunchCacheManifestStatus::Loaded &&
+                manifestCoversExecutable() &&
+                rootBuilderLaunchCacheWarmManifestLooksReusable(
+                    cacheRoot,
+                    manifestRead.manifest.value(),
+                    expectedRevision,
+                    location->relativePath,
+                    warmFailure))
+            {
+                const std::filesystem::path cachedExecutable = cacheRoot / location->relativePath;
+                if (isReadableExecutableFile(cachedExecutable))
+                {
+                    logger.write(
+                        LogLevel::Info,
+                        "Root Builder launch cache reused from sealed manifest without recursive overlay scan: " +
+                            toUtf8(cachedExecutable.wstring()));
+                    return RootBuilderLaunchCache{
+                        std::filesystem::absolute(cachedExecutable),
+                        std::filesystem::absolute(cacheRoot)
+                    };
+                }
+            }
+            if (!warmFailure.empty())
+            {
+                logger.write(
+                    LogLevel::Info,
+                    "Root Builder launch cache warm reuse skipped: " + warmFailure + ".");
+            }
+
             RootBuilderLaunchCacheApplyStats stats;
             if (manifestRead.status == RootBuilderLaunchCacheManifestStatus::Corrupt ||
                 (manifestRead.status == RootBuilderLaunchCacheManifestStatus::Missing && cacheRootExisted))
@@ -2179,6 +2800,20 @@ namespace fluxora
                 }
 
                 manifestRead = RootBuilderLaunchCacheManifestReadResult{};
+            }
+
+            const std::optional<RootBuilderLaunchCacheDesiredState> desiredState =
+                collectRootBuilderLaunchCacheDesiredState(
+                    context,
+                    location.value(),
+                    executableIsUnderData,
+                    failure);
+            if (!desiredState.has_value())
+            {
+                logger.write(
+                    LogLevel::Warning,
+                    "Root Builder launch cache could not be prepared: " + failure + ".");
+                return std::nullopt;
             }
 
             stats.revisionChanged = manifestRead.manifest.has_value() &&
@@ -2220,7 +2855,9 @@ namespace fluxora
                     ", rebuilt=" +
                     std::to_string(stats.rebuilt ? 1 : 0) +
                     ", revisionChanged=" +
-                    std::to_string(stats.revisionChanged ? 1 : 0) + ".");
+                    std::to_string(stats.revisionChanged ? 1 : 0) +
+                    ", fastPath=" +
+                    std::to_string(stats.fastPathUsed ? 1 : 0) + ".");
 
             const std::filesystem::path cachedExecutable = cacheRoot / location->relativePath;
             if (!isReadableExecutableFile(cachedExecutable))
@@ -2963,7 +3600,6 @@ namespace fluxora
         context.overwriteDirectory = settings.overwriteDirectory;
         std::vector<GameExecutable> executables =
             withDefaultGameExecutable(context, readExecutablesFromManifest(context.manifest));
-        resolveExecutableIconPaths(context, iconService_, executables);
         const auto match = std::find_if(
             executables.begin(),
             executables.end(),

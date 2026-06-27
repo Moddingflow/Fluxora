@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_opener::OpenerExt;
@@ -20,6 +20,143 @@ const TRANSFER_MO2_OPEN_EVENT: &str = "fluxora:transfer:mo2-open";
 const OPERATION_CANCEL_DIR_NAME: &str = "operation-cancel";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const PROCESS_WATCH_DEFAULT_POLL_MS: u64 = 1_000;
+const PROCESS_WATCH_MIN_POLL_MS: u64 = 250;
+const PROCESS_WATCH_MAX_POLL_MS: u64 = 5_000;
+const PROCESS_WATCH_DEFAULT_HANDOFF_MS: u64 = 30_000;
+
+fn normalized_process_name(value: &str) -> String {
+    value
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(value)
+        .trim()
+        .to_ascii_lowercase()
+}
+
+#[cfg(windows)]
+mod process_platform {
+    use super::normalized_process_name;
+    use std::ffi::{c_void, OsString};
+    use std::mem::{size_of, zeroed};
+    use std::os::windows::ffi::OsStringExt;
+
+    type Handle = *mut c_void;
+
+    const INVALID_HANDLE_VALUE: Handle = -1isize as Handle;
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
+    const WAIT_TIMEOUT: u32 = 0x0000_0102;
+
+    #[repr(C)]
+    struct ProcessEntry32W {
+        dw_size: u32,
+        cnt_usage: u32,
+        th32_process_id: u32,
+        th32_default_heap_id: usize,
+        th32_module_id: u32,
+        cnt_threads: u32,
+        th32_parent_process_id: u32,
+        pc_pri_class_base: i32,
+        dw_flags: u32,
+        sz_exe_file: [u16; 260],
+    }
+
+    extern "system" {
+        fn OpenProcess(dw_desired_access: u32, b_inherit_handle: i32, dw_process_id: u32)
+            -> Handle;
+        fn WaitForSingleObject(h_handle: Handle, dw_milliseconds: u32) -> u32;
+        fn CloseHandle(h_object: Handle) -> i32;
+        fn CreateToolhelp32Snapshot(dw_flags: u32, th32_process_id: u32) -> Handle;
+        fn Process32FirstW(h_snapshot: Handle, lppe: *mut ProcessEntry32W) -> i32;
+        fn Process32NextW(h_snapshot: Handle, lppe: *mut ProcessEntry32W) -> i32;
+    }
+
+    fn process_name(entry: &ProcessEntry32W) -> String {
+        let end = entry
+            .sz_exe_file
+            .iter()
+            .position(|character| *character == 0)
+            .unwrap_or(entry.sz_exe_file.len());
+        OsString::from_wide(&entry.sz_exe_file[..end])
+            .to_string_lossy()
+            .to_string()
+    }
+
+    pub fn is_process_running(process_id: u32) -> bool {
+        if process_id == 0 {
+            return false;
+        }
+
+        let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, process_id) };
+        if handle.is_null() {
+            return false;
+        }
+
+        let wait_result = unsafe { WaitForSingleObject(handle, 0) };
+        unsafe {
+            CloseHandle(handle);
+        }
+        wait_result == WAIT_TIMEOUT
+    }
+
+    pub fn find_process_by_names(names: &[String]) -> Option<(u32, String)> {
+        if names.is_empty() {
+            return None;
+        }
+
+        let wanted: Vec<String> = names
+            .iter()
+            .map(|name| normalized_process_name(name))
+            .filter(|name| !name.is_empty())
+            .collect();
+        if wanted.is_empty() {
+            return None;
+        }
+
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snapshot == INVALID_HANDLE_VALUE {
+            return None;
+        }
+
+        let mut entry: ProcessEntry32W = unsafe { zeroed() };
+        entry.dw_size = size_of::<ProcessEntry32W>() as u32;
+        let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+        while has_entry {
+            let name = process_name(&entry);
+            if wanted
+                .iter()
+                .any(|wanted_name| normalized_process_name(&name) == *wanted_name)
+            {
+                unsafe {
+                    CloseHandle(snapshot);
+                }
+                return Some((entry.th32_process_id, name));
+            }
+
+            has_entry = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+        }
+
+        unsafe {
+            CloseHandle(snapshot);
+        }
+        None
+    }
+}
+
+#[cfg(not(windows))]
+mod process_platform {
+    pub fn is_process_running(process_id: u32) -> bool {
+        process_id != 0
+            && std::path::Path::new("/proc")
+                .join(process_id.to_string())
+                .exists()
+    }
+
+    pub fn find_process_by_names(_names: &[String]) -> Option<(u32, String)> {
+        None
+    }
+}
 
 fn operation_progress_payload(envelope: &Value) -> Value {
     let mut payload = envelope.get("params").cloned().unwrap_or(Value::Null);
@@ -56,6 +193,29 @@ struct BridgeProcess {
 struct OperationRequest {
     #[serde(rename = "operationId")]
     operation_id: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchProcessWatchRequest {
+    process_id: u32,
+    process_name: Option<String>,
+    launch_tracking_kind: Option<String>,
+    #[serde(default)]
+    expected_child_process_names: Vec<String>,
+    handoff_timeout_ms: Option<u64>,
+    poll_interval_ms: Option<u64>,
+    operation_id: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessWatchResult {
+    process_id: u32,
+    process_name: String,
+    state: String,
+    tracked_kind: String,
+    operation_id: String,
 }
 
 #[derive(Clone, Deserialize)]
@@ -493,14 +653,22 @@ fn candidate_host_paths(app: &AppHandle) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Some(path) = std::env::var_os("FLUXORA_BRIDGE_HOST_PATH") {
-        candidates.push(PathBuf::from(path));
+        push_unique_candidate(&mut candidates, PathBuf::from(path));
     }
 
     if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(resource_dir.join("native").join(executable));
+        push_unique_candidate(&mut candidates, resource_dir.join("native").join(executable));
+        push_packaged_native_candidate(&mut candidates, &resource_dir, executable);
+    }
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(executable_dir) = current_exe.parent() {
+            push_packaged_native_candidate(&mut candidates, executable_dir, executable);
+        }
     }
 
     if let Ok(current_dir) = std::env::current_dir() {
+        push_packaged_native_candidate(&mut candidates, &current_dir, executable);
         for root in [
             current_dir.as_path(),
             current_dir.parent().unwrap_or(current_dir.as_path()),
@@ -509,29 +677,32 @@ fn candidate_host_paths(app: &AppHandle) -> Vec<PathBuf> {
                 .and_then(Path::parent)
                 .unwrap_or(current_dir.as_path()),
         ] {
-            candidates.push(root.join("build").join("backend").join(executable));
-            candidates.push(
-                root.join("build")
-                    .join("backend")
-                    .join("Debug")
-                    .join(executable),
-            );
-            candidates.push(
-                root.join("build")
-                    .join("backend")
-                    .join("Release")
-                    .join(executable),
-            );
-            candidates.push(
-                root.join("build")
-                    .join("backend")
-                    .join("RelWithDebInfo")
-                    .join(executable),
-            );
+            let backend_dir = root.join("build").join("backend");
+            for configuration in ["Release", "RelWithDebInfo", "Debug", "MinSizeRel"] {
+                push_unique_candidate(
+                    &mut candidates,
+                    backend_dir.join(configuration).join(executable),
+                );
+            }
+            push_unique_candidate(&mut candidates, backend_dir.join(executable));
         }
     }
 
     candidates
+}
+
+fn push_unique_candidate(candidates: &mut Vec<PathBuf>, path: PathBuf) {
+    if !candidates.iter().any(|candidate| candidate == &path) {
+        candidates.push(path);
+    }
+}
+
+fn push_packaged_native_candidate(candidates: &mut Vec<PathBuf>, root: &Path, executable: &str) {
+    push_unique_candidate(
+        candidates,
+        root.join("resources").join("native").join(executable),
+    );
+    push_unique_candidate(candidates, root.join("native").join(executable));
 }
 
 async fn resolve_host_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -595,6 +766,7 @@ impl BridgeProcess {
             });
         }
 
+        let host_path_for_log = host_path.to_string_lossy().to_string();
         self.stdin = child.stdin.take();
         self.stdout = child.stdout.take().map(BufReader::new);
         self.child = Some(child);
@@ -607,7 +779,8 @@ impl BridgeProcess {
             "info",
             "BridgeHost",
             &format!(
-                "Started FluxoraBridgeHost with FLUXORA_LOG_DIR={}",
+                "Started FluxoraBridgeHost with hostPath={} FLUXORA_LOG_DIR={}",
+                host_path_for_log,
                 native_log_dir.to_string_lossy()
             ),
             None,
@@ -1024,6 +1197,241 @@ async fn fluxora_shutdown_bridge(
         .await
 }
 
+fn process_watch_request(
+    request: Option<OperationRequest>,
+    embedded_operation_id: Option<String>,
+    scope: &str,
+) -> OperationRequest {
+    request.unwrap_or(OperationRequest {
+        operation_id: embedded_operation_id
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| Some(operation_id(None, scope))),
+    })
+}
+
+fn process_watch_result(
+    process_id: u32,
+    process_name: String,
+    state: &str,
+    tracked_kind: &str,
+    operation_id: String,
+) -> ProcessWatchResult {
+    ProcessWatchResult {
+        process_id,
+        process_name,
+        state: state.to_string(),
+        tracked_kind: tracked_kind.to_string(),
+        operation_id,
+    }
+}
+
+fn process_watch_poll_interval(request: &LaunchProcessWatchRequest) -> Duration {
+    Duration::from_millis(
+        request
+            .poll_interval_ms
+            .unwrap_or(PROCESS_WATCH_DEFAULT_POLL_MS)
+            .clamp(PROCESS_WATCH_MIN_POLL_MS, PROCESS_WATCH_MAX_POLL_MS),
+    )
+}
+
+fn cleaned_process_names(names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .map(|name| name.trim())
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn launch_process_display_name(
+    request: &LaunchProcessWatchRequest,
+    expected_names: &[String],
+) -> String {
+    request
+        .process_name
+        .as_ref()
+        .map(|name| name.trim())
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| expected_names.first().cloned())
+        .unwrap_or_else(|| "launched process".to_string())
+}
+
+#[tauri::command]
+async fn fluxora_wait_for_launch_ready(
+    app: AppHandle,
+    launch: LaunchProcessWatchRequest,
+    request: Option<OperationRequest>,
+) -> Result<ProcessWatchResult, String> {
+    let request =
+        process_watch_request(request, launch.operation_id.clone(), "process_watch_launch");
+    let operation_id = operation_id(Some(&request), "process_watch_launch");
+    let tracking_kind = launch
+        .launch_tracking_kind
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("directProcess")
+        .to_string();
+    let expected_names = cleaned_process_names(&launch.expected_child_process_names);
+    let display_name = launch_process_display_name(&launch, &expected_names);
+    let poll_interval = process_watch_poll_interval(&launch);
+
+    let _ = write_log(
+        &app,
+        "main",
+        "info",
+        "LaunchProcess",
+        &format!(
+            "Waiting for launch readiness. pid={} kind={} expectedChildren={}",
+            launch.process_id,
+            sanitize_log(&tracking_kind),
+            sanitize_log(&expected_names.join(","))
+        ),
+        Some(&operation_id),
+    )
+    .await;
+
+    if tracking_kind == "expectedChildProcess" && !expected_names.is_empty() {
+        let handoff_timeout = Duration::from_millis(
+            launch
+                .handoff_timeout_ms
+                .unwrap_or(PROCESS_WATCH_DEFAULT_HANDOFF_MS),
+        );
+        let started_at = Instant::now();
+        loop {
+            if let Some((process_id, process_name)) =
+                process_platform::find_process_by_names(&expected_names)
+            {
+                let _ = write_log(
+                    &app,
+                    "main",
+                    "info",
+                    "LaunchProcess",
+                    &format!(
+                        "Expected child process is running. pid={} name={}",
+                        process_id,
+                        sanitize_log(&process_name)
+                    ),
+                    Some(&operation_id),
+                )
+                .await;
+                return Ok(process_watch_result(
+                    process_id,
+                    process_name,
+                    "running",
+                    "expectedChildProcess",
+                    operation_id,
+                ));
+            }
+
+            if started_at.elapsed() >= handoff_timeout {
+                let _ = write_log(
+                    &app,
+                    "main",
+                    "warning",
+                    "LaunchProcess",
+                    &format!(
+                        "Timed out waiting for expected child process. pid={} expectedChildren={}",
+                        launch.process_id,
+                        sanitize_log(&expected_names.join(","))
+                    ),
+                    Some(&operation_id),
+                )
+                .await;
+                return Ok(process_watch_result(
+                    launch.process_id,
+                    display_name,
+                    "timeout",
+                    "expectedChildProcess",
+                    operation_id,
+                ));
+            }
+
+            tokio::time::sleep(poll_interval).await;
+        }
+    }
+
+    let state = if process_platform::is_process_running(launch.process_id) {
+        "running"
+    } else if launch.process_id == 0 {
+        "notFound"
+    } else {
+        "exited"
+    };
+    let _ = write_log(
+        &app,
+        "main",
+        if state == "running" {
+            "info"
+        } else {
+            "warning"
+        },
+        "LaunchProcess",
+        &format!(
+            "Direct launch process readiness state={}. pid={} name={}",
+            state,
+            launch.process_id,
+            sanitize_log(&display_name)
+        ),
+        Some(&operation_id),
+    )
+    .await;
+    Ok(process_watch_result(
+        launch.process_id,
+        display_name,
+        state,
+        "directProcess",
+        operation_id,
+    ))
+}
+
+#[tauri::command]
+async fn fluxora_wait_for_process_exit(
+    app: AppHandle,
+    process_id: u32,
+    request: Option<OperationRequest>,
+) -> Result<ProcessWatchResult, String> {
+    let request = process_watch_request(request, None, "process_wait_exit");
+    let operation_id = operation_id(Some(&request), "process_wait_exit");
+    let poll_interval = Duration::from_millis(PROCESS_WATCH_DEFAULT_POLL_MS);
+
+    let _ = write_log(
+        &app,
+        "main",
+        "info",
+        "LaunchProcess",
+        &format!("Waiting for process exit. pid={}", process_id),
+        Some(&operation_id),
+    )
+    .await;
+
+    while process_platform::is_process_running(process_id) {
+        tokio::time::sleep(poll_interval).await;
+    }
+
+    let _ = write_log(
+        &app,
+        "main",
+        "info",
+        "LaunchProcess",
+        &format!("Tracked launch process exited. pid={}", process_id),
+        Some(&operation_id),
+    )
+    .await;
+
+    Ok(process_watch_result(
+        process_id,
+        String::new(),
+        if process_id == 0 {
+            "notFound"
+        } else {
+            "exited"
+        },
+        "directProcess",
+        operation_id,
+    ))
+}
+
 #[tauri::command]
 async fn fluxora_list_destination_drives() -> Result<Vec<TransferDriveOption>, String> {
     let mut drives = Vec::new();
@@ -1344,6 +1752,8 @@ pub fn run() {
             fluxora_bridge_request,
             fluxora_bridge_status,
             fluxora_shutdown_bridge,
+            fluxora_wait_for_launch_ready,
+            fluxora_wait_for_process_exit,
             fluxora_list_destination_drives,
             fluxora_dialog_pick_file,
             fluxora_dialog_pick_folder,

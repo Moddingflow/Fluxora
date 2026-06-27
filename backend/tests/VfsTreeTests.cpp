@@ -258,6 +258,97 @@ namespace fluxora::tests
         EXPECT_GT(bottomProbes, topProbes);
     }
 
+    TEST(VfsTreeTests, ParentListingAmortizesLaterSiblingLookups)
+    {
+        TempDirectory temp;
+
+        constexpr std::size_t modCount = 96;
+        const std::filesystem::path data = temp.path() / L"Game" / L"Data";
+        std::filesystem::create_directories(data);
+        const std::vector<std::wstring> mods = createModRoots(temp.path() / L"mods", modCount);
+        const std::filesystem::path hotMod = std::filesystem::path(mods.back());
+        writeTextFile(hotMod / L"textures" / L"first.dds", "first");
+        writeTextFile(hotMod / L"textures" / L"second.dds", "second");
+        writeTextFile(hotMod / L"textures" / L"third.dds", "third");
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            data.wstring(),
+            L"",
+            mods,
+            {}
+        });
+
+        vfs::VfsTree::resetAttributeProbeCountForTests();
+        const vfs::VfsTree::PathInfo first = tree.classify(L"textures\\first.dds");
+        ASSERT_EQ(first.kind, vfs::VfsTree::PathInfo::Kind::File);
+        EXPECT_LE(vfs::VfsTree::attributeProbeCountForTests(), static_cast<std::uint64_t>(1));
+
+        vfs::VfsTree::resetAttributeProbeCountForTests();
+        const vfs::VfsTree::PathInfo second = tree.classify(L"textures\\second.dds");
+        ASSERT_EQ(second.kind, vfs::VfsTree::PathInfo::Kind::File);
+        EXPECT_LE(vfs::VfsTree::attributeProbeCountForTests(), static_cast<std::uint64_t>(modCount + 2));
+
+        vfs::VfsTree::resetAttributeProbeCountForTests();
+        const vfs::VfsTree::PathInfo third = tree.classify(L"textures\\third.dds");
+        ASSERT_EQ(third.kind, vfs::VfsTree::PathInfo::Kind::File);
+        EXPECT_LE(vfs::VfsTree::attributeProbeCountForTests(), static_cast<std::uint64_t>(1));
+    }
+
+    TEST(VfsTreeTests, ParentListingCachesChildDirectoryLookup)
+    {
+        TempDirectory temp;
+
+        constexpr std::size_t modCount = 96;
+        const std::filesystem::path data = temp.path() / L"Game" / L"Data";
+        std::filesystem::create_directories(data);
+        const std::vector<std::wstring> mods = createModRoots(temp.path() / L"mods", modCount);
+        const std::filesystem::path coldMod = std::filesystem::path(mods.front());
+        writeTextFile(coldMod / L"textures" / L"actors" / L"body.dds", "body");
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            data.wstring(),
+            L"",
+            mods,
+            {}
+        });
+
+        const auto textures = tree.listing(L"textures");
+        ASSERT_TRUE(containsChild(*textures, L"actors"));
+
+        vfs::VfsTree::resetAttributeProbeCountForTests();
+        const vfs::VfsTree::PathInfo actors = tree.classify(L"textures\\actors");
+        ASSERT_EQ(actors.kind, vfs::VfsTree::PathInfo::Kind::Directory);
+        expectSamePath(actors.winner, coldMod / L"textures" / L"actors");
+        EXPECT_LE(vfs::VfsTree::attributeProbeCountForTests(), static_cast<std::uint64_t>(1));
+    }
+
+    TEST(VfsTreeTests, ParentListingPreservesRealDirectoryExistenceForOverlayDirectory)
+    {
+        TempDirectory temp;
+
+        const std::filesystem::path data = temp.path() / L"Game" / L"Data";
+        const std::filesystem::path mod = temp.path() / L"mods" / L"Textures Mod";
+        writeTextFile(data / L"textures" / L"base.dds", "base");
+        writeTextFile(mod / L"textures" / L"mod.dds", "mod");
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            data.wstring(),
+            L"",
+            {mod.wstring()},
+            {}
+        });
+
+        const auto root = tree.listing(L"");
+        ASSERT_TRUE(containsChild(*root, L"textures"));
+
+        const vfs::VfsTree::PathInfo textures = tree.classify(L"textures");
+        ASSERT_EQ(textures.kind, vfs::VfsTree::PathInfo::Kind::Directory);
+        EXPECT_TRUE(textures.directoryRealExists);
+    }
+
     TEST(VfsTreeTests, MissingChildAfterDirectoryListingSkipsActiveModScan)
     {
         TempDirectory temp;

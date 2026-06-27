@@ -48,6 +48,22 @@ namespace fluxora::tests
             return match == summaries.end() ? nullptr : &(*match);
         }
 
+        const ProfileOrderItemRecord* findProfileOrderMod(
+            const std::vector<ProfileOrderItemRecord>& items,
+            std::wstring_view folderName)
+        {
+            const auto match = std::find_if(
+                items.begin(),
+                items.end(),
+                [folderName](const ProfileOrderItemRecord& item)
+                {
+                    return item.kind == L"mod" &&
+                        item.hasMod &&
+                        item.mod.folderName == folderName;
+                });
+            return match == items.end() ? nullptr : &(*match);
+        }
+
         void writeBulkConflictFiles(
             const std::filesystem::path& modPath,
             int fileCount,
@@ -497,6 +513,43 @@ namespace fluxora::tests
         EXPECT_TRUE(manual->contentFingerprint.empty());
         ASSERT_TRUE(std::filesystem::is_regular_file(portableManifestPath(modPath)));
         EXPECT_NE(readTextFile(portableManifestPath(modPath)).find(R"("contentFingerprint":"")"), std::string::npos);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, CachedProfileOrderDoesNotRefreshDiskOnlyMods)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path registered = mods / L"Registered Mod";
+        const std::filesystem::path diskOnly = mods / L"Disk Only Mod";
+        writeTextFile(registered / L"Data" / L"Registered.esp", "registered");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{registered, L"Registered Mod", {}, true, {}}
+            });
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {ProfileOrderImportItemRecord{L"mod", L"Registered Mod", {}}});
+
+        writeTextFile(diskOnly / L"Data" / L"DiskOnly.esp", "disk-only");
+
+        std::vector<ProfileOrderItemRecord> cached =
+            InstanceMetadataStore::listCachedProfileOrderItems(project, L"Default", mods);
+        EXPECT_NE(findProfileOrderMod(cached, L"Registered Mod"), nullptr);
+        EXPECT_EQ(findProfileOrderMod(cached, L"Disk Only Mod"), nullptr);
+
+        InstanceMetadataStore::refreshInstalledModsFromDisk(project, mods);
+        std::vector<ProfileOrderItemRecord> refreshed =
+            InstanceMetadataStore::listProfileOrderItems(project, L"Default", mods);
+        EXPECT_NE(findProfileOrderMod(refreshed, L"Disk Only Mod"), nullptr);
 #endif
     }
 

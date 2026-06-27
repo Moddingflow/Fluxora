@@ -255,6 +255,9 @@ interface LaunchSplashState {
   buildName: string;
   detail: string;
   operationId: string;
+  state: 'starting' | 'running';
+  subtitle?: string;
+  title: string;
 }
 
 interface OpeningBuildSplashState {
@@ -1330,11 +1333,6 @@ export const App = () => {
       return;
     }
 
-    if (!pluginCapabilities.bulkToggleSupported) {
-      setMessage('This Fluxora bridge build does not expose bulk plugin toggles.');
-      return;
-    }
-
     const targetItems = pluginsWorkspace.items.filter(
       (candidate) =>
         candidate.isPlugin && !candidate.isLocked && candidate.isEnabled !== isEnabled
@@ -1364,13 +1362,28 @@ export const App = () => {
 
     try {
       const operationId = createRendererOperationId('plugins_set_all_enabled');
-      const confirmedOrder = await window.fluxora.plugins.setAllEnabled(
-        project.projectDirectory,
-        project.templateId,
-        profileName,
-        isEnabled,
-        { operationId }
-      );
+      let confirmedOrder: FluxoraPluginOrderItem[];
+      if (pluginCapabilities.nativeBulkToggleSupported) {
+        confirmedOrder = await window.fluxora.plugins.setAllEnabled(
+          project.projectDirectory,
+          project.templateId,
+          profileName,
+          isEnabled,
+          { operationId }
+        );
+      } else {
+        confirmedOrder = previousItems;
+        for (const candidate of targetItems) {
+          confirmedOrder = await window.fluxora.plugins.setEnabled(
+            project.projectDirectory,
+            project.templateId,
+            profileName,
+            candidate.name,
+            isEnabled,
+            { operationId }
+          );
+        }
+      }
 
       targetItems.forEach((candidate) =>
         completeLatestPluginEnableSave(candidate.orderId, sequence)
@@ -2601,7 +2614,10 @@ export const App = () => {
       operationId,
       appName: selectedExecutableItem.displayName,
       buildName: selectedProject.name,
-      detail: 'Waiting for launch handoff'
+      detail: 'Процесс запускается',
+      state: 'starting',
+      subtitle: selectedProject.name,
+      title: 'Процесс запускается'
     });
     setMessage(null);
 
@@ -2613,7 +2629,45 @@ export const App = () => {
         { operationId }
       );
       setExecutableLaunchResult(result);
-      setMessage(`Launched ${result.displayName || selectedExecutableItem.displayName}.`);
+      const processName =
+        result.handoffDisplayName || result.displayName || selectedExecutableItem.displayName;
+      const ready = await window.fluxora.processes.waitForLaunchReady(
+        {
+          processId: result.processId,
+          processName,
+          launchTrackingKind: result.launchTrackingKind,
+          expectedChildProcessNames: result.expectedChildProcessNames,
+          handoffTimeoutMs: result.handoffTimeoutMs,
+          operationId
+        },
+        { operationId }
+      );
+
+      if (ready.state !== 'running') {
+        const reason =
+          ready.state === 'timeout'
+            ? `Fluxora не обнаружила ${processName} до истечения времени запуска.`
+            : `${processName} завершился до того, как Fluxora смогла отследить процесс.`;
+        setMessage(reason);
+        return;
+      }
+
+      const trackedProcessName = ready.processName || processName;
+      setLaunchSplash((current) =>
+        current?.operationId === operationId
+          ? {
+              ...current,
+              appName: trackedProcessName,
+              detail: 'Процесс запущен',
+              state: 'running',
+              subtitle: 'Закройте процесс, чтобы продолжить работу в Mod Manager.',
+              title: 'Процесс запущен'
+            }
+          : current
+      );
+      setMessage('Процесс запущен. Закройте процесс, чтобы продолжить работу в Mod Manager.');
+      await window.fluxora.processes.waitForExit(ready.processId, { operationId });
+      setMessage(`${trackedProcessName} закрыт. Можно продолжить работу в Mod Manager.`);
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -7993,8 +8047,9 @@ export const App = () => {
       detail={launchSplash?.detail}
       indeterminate
       open={Boolean(launchSplash)}
-      state="starting"
-      title={launchSplash ? `Launching ${launchSplash.appName}` : undefined}
+      state={launchSplash?.state ?? 'starting'}
+      subtitle={launchSplash?.subtitle}
+      title={launchSplash?.title}
     />
   );
 

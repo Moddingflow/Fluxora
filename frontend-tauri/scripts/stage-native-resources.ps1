@@ -8,7 +8,12 @@ $backendBuild = Join-Path $repoRoot 'build\backend'
 $resourcesDir = Join-Path $projectRoot 'src-tauri\resources\native'
 $configuration = if ($env:FLUXORA_NATIVE_CONFIGURATION) { $env:FLUXORA_NATIVE_CONFIGURATION } else { 'Release' }
 $requiredArtifacts = @('FluxoraBridgeHost.exe', 'FluxoraCore.dll')
-$optionalArtifacts = @('FluxoraVfs.dll')
+$isWindows = [string]::Equals($env:OS, 'Windows_NT', [System.StringComparison]::OrdinalIgnoreCase)
+$optionalArtifacts = @()
+
+if ($isWindows) {
+    $requiredArtifacts += 'FluxoraVfs.dll'
+}
 
 function Resolve-NativeArtifact {
     param(
@@ -34,6 +39,14 @@ function Resolve-NativeArtifact {
 }
 
 New-Item -ItemType Directory -Force -Path $resourcesDir | Out-Null
+
+$cmakeCache = Join-Path $backendBuild 'CMakeCache.txt'
+if ($isWindows -and (Test-Path -LiteralPath $cmakeCache -PathType Leaf)) {
+    $cacheText = Get-Content -LiteralPath $cmakeCache -Raw
+    if ($cacheText -match '(?m)^FLUXORA_ENABLE_VFS:BOOL=OFF$') {
+        throw "The C++ backend is configured with FLUXORA_ENABLE_VFS=OFF. Reconfigure with '.\Build.ps1' or 'cmake -S backend -B build\backend -DFLUXORA_ENABLE_VFS=ON' before staging native resources."
+    }
+}
 
 foreach ($artifact in $requiredArtifacts) {
     $source = Resolve-NativeArtifact -Name $artifact

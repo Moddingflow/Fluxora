@@ -36,10 +36,10 @@ Default Tauri installer build:
 The Tauri build path performs these steps:
 
 - configure and build `backend/` through CMake;
-- collect `FluxoraBridgeHost.exe`, `FluxoraCore.dll` and optional `FluxoraVfs.dll` into `build/tauri-native/win32/x64`;
+- collect `FluxoraBridgeHost.exe`, `FluxoraCore.dll` and `FluxoraVfs.dll` into `build/tauri-native/win32/x64`;
 - run `npm install` and `npm run build` in `frontend-tauri/` after staging native payloads into `frontend-tauri/src-tauri/resources/native`;
 - copy the built Tauri app from `frontend-tauri/src-tauri/target/release/Fluxora.exe` into `output/`;
-- verify `output/Fluxora.exe`, `output/resources/native/FluxoraBridgeHost.exe` and `output/resources/native/FluxoraCore.dll`;
+- verify `output/Fluxora.exe`, `output/resources/native/FluxoraBridgeHost.exe`, `output/resources/native/FluxoraCore.dll` and `output/resources/native/FluxoraVfs.dll`;
 - create `installer/Fluxora.Installer/Resources/Payload/FluxoraPayload.flxpkg.gz`;
 - publish the approved Windows installer to `output-installer/FluxoraSetup.exe`.
 
@@ -69,7 +69,7 @@ Before a Phase 15 dry-run is accepted:
 - `output/Fluxora.exe` exists.
 - `output/resources/native/FluxoraBridgeHost.exe` exists.
 - `output/resources/native/FluxoraCore.dll` exists.
-- `output/resources/native/FluxoraVfs.dll` exists for Windows VFS-enabled builds, or the release notes clearly state that VFS is unavailable.
+- `output/resources/native/FluxoraVfs.dll` exists for Windows builds; missing VFS is a release-blocking packaging error.
 - `installer/Fluxora.Installer/Resources/Payload/FluxoraPayload.flxpkg.gz` exists and its manifest hash is recorded in `build/installer-cache/payload.manifest.json`.
 - No portable staging folder, loose payload folder or ad-hoc zip is published.
 

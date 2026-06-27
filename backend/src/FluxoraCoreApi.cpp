@@ -2764,8 +2764,8 @@ extern "C"
 
             // Launching always goes through the virtual file system so the game
             // sees the merged mod data directory, exactly like Mod Organizer 2.
-            // The service transparently falls back to a plain launch when there
-            // is nothing to virtualize.
+            // The service only falls back to a plain launch when there is
+            // nothing to virtualize; missing VFS support is a build error.
             logBridge(fluxora::LogLevel::Info, "fluxora_launch_game_executable started.");
             logOperation(
                 fluxora::LogLevel::Info,

@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+
 namespace fluxora::tests
 {
     namespace
@@ -214,6 +216,83 @@ namespace fluxora::tests
         EXPECT_FALSE(std::filesystem::exists(cacheData / L"Interface" / L"not-early.swf"));
     }
 
+    TEST(ExecutableServiceTests, RootBuilderLaunchCacheSkipsTransientRuntimeOutputs)
+    {
+        TempDirectory temp;
+        const RootBuilderLaunchCacheTestProject paths = createRootBuilderLaunchCacheTestProject(temp);
+        writeTextFile(paths.runtimeHigh / L"SKSE" / L"Plugins" / L"startup.log", "runtime log");
+        writeTextFile(paths.runtimeHigh / L"SKSE" / L"Plugins" / L"startup.tmp", "runtime temp");
+        writeTextFile(paths.skseMod / L"root" / L"skse64_loader.log", "loader log");
+
+        const ResolvedExecutableLaunch resolved = resolveSkseExecutable(paths.config);
+
+        ASSERT_FALSE(resolved.rootBuilderLaunchCacheDirectory.empty());
+        const std::filesystem::path cachePlugins =
+            resolved.rootBuilderLaunchCacheDirectory / L"Data" / L"SKSE" / L"Plugins";
+        EXPECT_TRUE(std::filesystem::is_regular_file(cachePlugins / L"shared.dll"));
+        EXPECT_FALSE(std::filesystem::exists(cachePlugins / L"startup.log"));
+        EXPECT_FALSE(std::filesystem::exists(cachePlugins / L"startup.tmp"));
+        EXPECT_FALSE(std::filesystem::exists(resolved.rootBuilderLaunchCacheDirectory / L"skse64_loader.log"));
+    }
+
+    TEST(ExecutableServiceTests, RootBuilderLaunchCacheAppliesRootOverlaysWhenLaunchingGameRootExecutable)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Imported Build";
+        const std::filesystem::path config = project / L"build.json";
+        const std::filesystem::path game = project / L"Stock Game";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path engineFixes = mods / L"SSE Engine Fixes";
+
+        writeExecutableStub(game / L"SkyrimSE.exe");
+        std::filesystem::create_directories(game / L"Data");
+        writeTextFile(game / L"d3dx9_42.dll", "stock-bad");
+        writeTextFile(engineFixes / L"root" / L"d3dx9_42.dll", "mod-fixed");
+
+        writeTextFile(
+            config,
+            "{"
+            "\"schemaVersion\":\"1\","
+            "\"name\":\"Imported Build\","
+            "\"templateId\":\"skyrimse\","
+            "\"gameName\":\"Skyrim Special Edition\","
+            "\"gamePath\":\"Stock Game\","
+            "\"dataDirectory\":\"Data\","
+            "\"defaultProfile\":\"Default\","
+            "\"launchExecutables\":[{"
+            "\"id\":\"game\","
+            "\"displayName\":\"Skyrim Special Edition\","
+            "\"executablePath\":\"SkyrimSE.exe\","
+            "\"arguments\":\"\","
+            "\"workingDirectory\":\"\""
+            "}]"
+            "}");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {InstalledModImportRecord{engineFixes, L"SSE Engine Fixes", {}, true, {}}});
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {ProfileOrderImportItemRecord{L"mod", L"SSE Engine Fixes", {}}});
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        ExecutableIconService iconService(logger);
+        ExecutableService service(logger, iconService, pathSettings);
+
+        const ResolvedExecutableLaunch resolved = service.resolveExecutable(config, L"game");
+
+        ASSERT_FALSE(resolved.rootBuilderLaunchCacheDirectory.empty());
+        EXPECT_EQ(
+            normalized(resolved.resolvedExecutablePath),
+            normalized(resolved.rootBuilderLaunchCacheDirectory / L"SkyrimSE.exe"));
+        EXPECT_EQ(normalized(resolved.resolvedWorkingDirectory), normalized(resolved.rootBuilderLaunchCacheDirectory));
+        EXPECT_EQ(readTextFile(resolved.rootBuilderLaunchCacheDirectory / L"d3dx9_42.dll"), "mod-fixed");
+        EXPECT_EQ(readTextFile(game / L"d3dx9_42.dll"), "stock-bad");
+    }
+
     TEST(ExecutableServiceTests, RootBuilderLaunchCacheSkipsUnchangedFilesOnWarmResolve)
     {
         TempDirectory temp;
@@ -247,6 +326,76 @@ namespace fluxora::tests
             "high");
     }
 
+    TEST(ExecutableServiceTests, RootBuilderLaunchCacheUsesSealedManifestFastPathOnWarmResolve)
+    {
+        TempDirectory temp;
+        const RootBuilderLaunchCacheTestProject paths = createRootBuilderLaunchCacheTestProject(temp);
+
+        const ResolvedExecutableLaunch cold = resolveSkseExecutable(paths.config);
+
+        ASSERT_FALSE(cold.rootBuilderLaunchCacheDirectory.empty());
+        const std::filesystem::path manifest =
+            cold.rootBuilderLaunchCacheDirectory / L".fluxora-root-launch-cache.json";
+        ASSERT_TRUE(std::filesystem::is_regular_file(manifest));
+        const std::string manifestText = readTextFile(manifest);
+        ASSERT_NE(manifestText.find("\"sealed\":true"), std::string::npos);
+        ASSERT_NE(manifestText.find("\"directories\":"), std::string::npos);
+
+        std::error_code error;
+        const auto oldTime =
+            std::filesystem::file_time_type::clock::now() - std::chrono::hours(1);
+        std::filesystem::last_write_time(manifest, oldTime, error);
+        if (error)
+        {
+            GTEST_SKIP() << "Could not adjust launch cache manifest timestamp.";
+        }
+
+        const auto before = std::filesystem::last_write_time(manifest, error);
+        ASSERT_FALSE(error);
+
+        const ResolvedExecutableLaunch warm = resolveSkseExecutable(paths.config);
+
+        EXPECT_EQ(
+            normalized(warm.rootBuilderLaunchCacheDirectory),
+            normalized(cold.rootBuilderLaunchCacheDirectory));
+        EXPECT_EQ(
+            normalized(warm.resolvedExecutablePath),
+            normalized(cold.resolvedExecutablePath));
+        EXPECT_EQ(std::filesystem::last_write_time(manifest), before);
+    }
+
+    TEST(ExecutableServiceTests, RootBuilderLaunchCacheRefreshesAddedRuntimeFileAfterWarmManifestCheck)
+    {
+        TempDirectory temp;
+        const RootBuilderLaunchCacheTestProject paths = createRootBuilderLaunchCacheTestProject(temp);
+
+        const ResolvedExecutableLaunch cold = resolveSkseExecutable(paths.config);
+        ASSERT_FALSE(cold.rootBuilderLaunchCacheDirectory.empty());
+
+        const std::filesystem::path newPlugin =
+            paths.runtimeHigh / L"SKSE" / L"Plugins" / L"late.dll";
+        writeTextFile(newPlugin, "late");
+
+        std::error_code error;
+        std::filesystem::last_write_time(
+            newPlugin.parent_path(),
+            std::filesystem::file_time_type::clock::now() + std::chrono::hours(1),
+            error);
+        if (error)
+        {
+            GTEST_SKIP() << "Could not adjust runtime plugin directory timestamp.";
+        }
+
+        const ResolvedExecutableLaunch warm = resolveSkseExecutable(paths.config);
+
+        EXPECT_EQ(
+            normalized(warm.rootBuilderLaunchCacheDirectory),
+            normalized(cold.rootBuilderLaunchCacheDirectory));
+        EXPECT_EQ(
+            readTextFile(warm.rootBuilderLaunchCacheDirectory / L"Data" / L"SKSE" / L"Plugins" / L"late.dll"),
+            "late");
+    }
+
     TEST(ExecutableServiceTests, RootBuilderLaunchCacheRefreshesChangedOverlayFileInPlace)
     {
         TempDirectory temp;
@@ -269,6 +418,47 @@ namespace fluxora::tests
         EXPECT_EQ(
             readTextFile(warm.rootBuilderLaunchCacheDirectory / L"skse64_loader.exe"),
             "MZ executable stub");
+    }
+
+    TEST(ExecutableServiceTests, RootBuilderLaunchCacheParallelWarmValidationRefreshesChangedOverlayFile)
+    {
+        TempDirectory temp;
+        const RootBuilderLaunchCacheTestProject paths = createRootBuilderLaunchCacheTestProject(temp);
+
+        for (int index = 0; index < 96; ++index)
+        {
+            writeTextFile(
+                paths.runtimeHigh / L"SKSE" / L"Plugins" /
+                    (std::wstring(L"bulk-") + std::to_wstring(index) + L".dll"),
+                "v1");
+        }
+
+        const ResolvedExecutableLaunch cold = resolveSkseExecutable(paths.config);
+        ASSERT_FALSE(cold.rootBuilderLaunchCacheDirectory.empty());
+
+        const std::filesystem::path changedSource =
+            paths.runtimeHigh / L"SKSE" / L"Plugins" / L"bulk-73.dll";
+        writeTextFile(changedSource, "v2");
+
+        std::error_code error;
+        std::filesystem::last_write_time(
+            changedSource,
+            std::filesystem::file_time_type::clock::now() + std::chrono::hours(1),
+            error);
+        if (error)
+        {
+            GTEST_SKIP() << "Could not adjust changed runtime DLL timestamp.";
+        }
+
+        const ResolvedExecutableLaunch warm = resolveSkseExecutable(paths.config);
+
+        EXPECT_EQ(
+            normalized(warm.rootBuilderLaunchCacheDirectory),
+            normalized(cold.rootBuilderLaunchCacheDirectory));
+        EXPECT_EQ(
+            readTextFile(
+                warm.rootBuilderLaunchCacheDirectory / L"Data" / L"SKSE" / L"Plugins" / L"bulk-73.dll"),
+            "v2");
     }
 
     TEST(ExecutableServiceTests, RootBuilderLaunchCachePrunesDisabledModFilesAndRestoresLowerPriorityOverlay)

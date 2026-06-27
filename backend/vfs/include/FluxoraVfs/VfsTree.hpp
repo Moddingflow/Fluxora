@@ -23,6 +23,7 @@ namespace fluxora::vfs
         std::wstring nameLower;  // normalized lowercase lookup key
         std::wstring realPath;   // absolute backing path on disk
         bool isDirectory{false};
+        bool realExists{false};  // for directories: the real game folder has this child too
         ULONG attributes{FILE_ATTRIBUTE_NORMAL};
         LARGE_INTEGER creationTime{};
         LARGE_INTEGER lastAccessTime{};
@@ -122,6 +123,7 @@ namespace fluxora::vfs
             const std::wstring& displayRel,
             const std::wstring& directory,
             bool overrideExisting,
+            bool sourceIsReal,
             bool applyRootExclusions,
             std::unordered_map<std::wstring, DirChild>& children,
             std::unordered_set<std::wstring>* overlayChildNamesLower) const;
@@ -147,6 +149,10 @@ namespace fluxora::vfs
         mutable std::unordered_map<std::wstring, DirNode> dirMap_;
         // rel(lower) -> mount revision where no enabled mod provides this path.
         mutable std::unordered_map<std::wstring, std::uint64_t> overlayMissRevisions_;
+        // parent rel(lower) -> lookup count since the last mount rebuild. The
+        // first child keeps the cheap direct probe path; later siblings amortize
+        // by building the parent listing once.
+        mutable std::unordered_map<std::wstring, std::size_t> parentLookupCounts_;
 
         bool built_{false};
         std::uint64_t revision_{0};

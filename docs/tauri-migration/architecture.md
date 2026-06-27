@@ -731,7 +731,7 @@ The host may wrap several low-level C ABI functions into one bridge method when 
 
 ### Native libraries
 
-- Windows ships `FluxoraBridgeHost.exe`, `FluxoraCore.dll` and, when available, `FluxoraVfs.dll`.
+- Windows ships `FluxoraBridgeHost.exe`, `FluxoraCore.dll` and `FluxoraVfs.dll`.
 - Linux ships `FluxoraBridgeHost`, `libFluxoraCore.so` and any Linux platform adapter libraries.
 - macOS ships `FluxoraBridgeHost`, `libFluxoraCore.dylib` and any signed/notarized helper libraries.
 - Tauri main locates the host through packaged app resources, not current working directory assumptions.

@@ -202,6 +202,7 @@ namespace fluxora::vfs
             fileMap_ = std::move(other.fileMap_);
             dirMap_ = std::move(other.dirMap_);
             overlayMissRevisions_ = std::move(other.overlayMissRevisions_);
+            parentLookupCounts_ = std::move(other.parentLookupCounts_);
             built_ = other.built_;
             revision_ = other.revision_;
 
@@ -213,6 +214,7 @@ namespace fluxora::vfs
             other.fileMap_.clear();
             other.dirMap_.clear();
             other.overlayMissRevisions_.clear();
+            other.parentLookupCounts_.clear();
             other.revision_ = 0;
         }
 
@@ -306,6 +308,7 @@ namespace fluxora::vfs
         const std::wstring& displayRel,
         const std::wstring& directory,
         bool overrideExisting,
+        bool sourceIsReal,
         bool applyRootExclusions,
         std::unordered_map<std::wstring, DirChild>& children,
         std::unordered_set<std::wstring>* overlayChildNamesLower) const
@@ -333,6 +336,17 @@ namespace fluxora::vfs
             const std::wstring fullChild = joinPath(directory, name);
             DirChild child = childFromFindData(fullChild, data);
             const std::wstring key = child.nameLower;
+            if (child.isDirectory)
+            {
+                child.realExists = sourceIsReal;
+                if (!sourceIsReal)
+                {
+                    const auto existing = children.find(key);
+                    child.realExists = existing != children.end() &&
+                        existing->second.isDirectory &&
+                        existing->second.realExists;
+                }
+            }
             if (overrideExisting)
             {
                 if (overlayChildNamesLower != nullptr)
@@ -402,6 +416,64 @@ namespace fluxora::vfs
                 : cacheFile(path);
         };
 
+        std::wstring parentLower;
+        std::wstring nameLower;
+        bool parentWasSeen = false;
+        if (!relLower.empty())
+        {
+            const std::size_t separator = relLower.find_last_of(L'\\');
+            parentLower = separator == std::wstring::npos
+                ? std::wstring()
+                : relLower.substr(0, separator);
+            nameLower = separator == std::wstring::npos
+                ? relLower
+                : relLower.substr(separator + 1);
+
+            std::size_t& parentLookupCount = parentLookupCounts_[parentLower];
+            parentWasSeen = parentLookupCount > 0;
+            ++parentLookupCount;
+        }
+
+        const auto lookupFromParentListing = [&]() -> PathLookup
+        {
+            if (relLower.empty())
+            {
+                return {};
+            }
+
+            const auto parentBeforeBuild = dirMap_.find(parentLower);
+            if (parentBeforeBuild == dirMap_.end() || !parentBeforeBuild->second.childrenBuilt)
+            {
+                buildDirectoryLocked(parentLower);
+            }
+
+            if (const auto dir = dirMap_.find(relLower);
+                dir != dirMap_.end() && !dir->second.openPath.empty())
+            {
+                return PathLookup{
+                    PathInfo::Kind::Directory,
+                    dir->second.openPath,
+                    dir->second.realExists
+                };
+            }
+
+            if (const auto file = fileMap_.find(relLower); file != fileMap_.end())
+            {
+                return PathLookup{PathInfo::Kind::File, file->second, false};
+            }
+
+            const auto parent = dirMap_.find(parentLower);
+            if (parent != dirMap_.end() &&
+                parent->second.childrenBuilt &&
+                parent->second.overlayChildNamesLower.find(nameLower) ==
+                    parent->second.overlayChildNamesLower.end())
+            {
+                cacheOverlayMissLocked(relLower);
+            }
+
+            return {};
+        };
+
         if (!isExcludedRelativePath(relLower))
         {
             if (!overwrite_.empty())
@@ -419,15 +491,27 @@ namespace fluxora::vfs
             }
             else if (!hasCurrentOverlayMissLocked(relLower))
             {
-                for (auto it = mods_.rbegin(); it != mods_.rend(); ++it)
+                if (parentWasSeen)
                 {
-                    if (PathLookup lookup = probe(rel.empty() ? *it : joinPath(*it, rel));
+                    if (PathLookup lookup = lookupFromParentListing();
                         lookup.kind != PathInfo::Kind::Unknown)
                     {
                         return lookup;
                     }
                 }
-                cacheOverlayMissLocked(relLower);
+
+                if (!hasCurrentOverlayMissLocked(relLower))
+                {
+                    for (auto it = mods_.rbegin(); it != mods_.rend(); ++it)
+                    {
+                        if (PathLookup lookup = probe(rel.empty() ? *it : joinPath(*it, rel));
+                            lookup.kind != PathInfo::Kind::Unknown)
+                        {
+                            return lookup;
+                        }
+                    }
+                    cacheOverlayMissLocked(relLower);
+                }
             }
         }
 
@@ -470,6 +554,7 @@ namespace fluxora::vfs
                 displayRel,
                 realDir,
                 /*overrideExisting=*/false,
+                /*sourceIsReal=*/true,
                 /*applyRootExclusions=*/false,
                 children,
                 nullptr);
@@ -492,6 +577,7 @@ namespace fluxora::vfs
                     displayRel,
                     directory,
                     /*overrideExisting=*/true,
+                    /*sourceIsReal=*/false,
                     applyRootExclusions,
                     children,
                     &overlayChildNamesLower);
@@ -508,6 +594,7 @@ namespace fluxora::vfs
                         displayRel,
                         directory,
                         /*overrideExisting=*/true,
+                        /*sourceIsReal=*/false,
                         applyRootExclusions,
                         children,
                         &overlayChildNamesLower);
@@ -525,6 +612,9 @@ namespace fluxora::vfs
                 : relLower + L"\\" + nameLower;
             if (child.isDirectory)
             {
+                DirNode& childNode = ensureDir(childRelLower);
+                childNode.openPath = child.realPath;
+                childNode.realExists = child.realExists;
                 fileMap_.erase(childRelLower);
             }
             else
@@ -573,6 +663,7 @@ namespace fluxora::vfs
         fileMap_.clear();
         dirMap_.clear();
         overlayMissRevisions_.clear();
+        parentLookupCounts_.clear();
         ++revision_;
         ensureDir(L"");
         built_ = true;

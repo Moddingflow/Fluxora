@@ -800,14 +800,19 @@ Invoke-BuildStep "Preparing output folders" {
 }
 
 Invoke-BuildStep "Configuring C++ backend" {
-    Invoke-CheckedCommand -FilePath 'cmake' -Arguments @('-S', $BackendSource, '-B', $BackendBuild)
+    $backendConfigureArgs = @('-S', $BackendSource, '-B', $BackendBuild)
+    if ($Runtime -like 'win-*') {
+        $backendConfigureArgs += @('-DFLUXORA_ENABLE_VFS=ON')
+    }
+
+    Invoke-CheckedCommand -FilePath 'cmake' -Arguments $backendConfigureArgs
 
     $cmakeCachePath = Join-Path $BackendBuild 'CMakeCache.txt'
     $cmakeCache = Get-Content -LiteralPath $cmakeCachePath -Raw
     $isMultiConfigGenerator = $cmakeCache -match '(?m)^CMAKE_CONFIGURATION_TYPES(:[A-Z]+)?='
 
     if (-not $isMultiConfigGenerator) {
-        Invoke-CheckedCommand -FilePath 'cmake' -Arguments @('-S', $BackendSource, '-B', $BackendBuild, "-DCMAKE_BUILD_TYPE=$Configuration")
+        Invoke-CheckedCommand -FilePath 'cmake' -Arguments ($backendConfigureArgs + @("-DCMAKE_BUILD_TYPE=$Configuration"))
     }
 }
 
@@ -852,6 +857,10 @@ Invoke-BuildStep "Preparing Tauri native resources ($($tauriTarget.Platform)/$($
         # The injected virtual file system hook must sit next to FluxoraCore.dll so the
         # core can locate and inject it when launching a game.
         $nativeVfsPath = Get-NativeVfsPath
+        if ((-not $nativeVfsPath) -and ($Runtime -like 'win-*')) {
+            throw "FluxoraVfs.dll was not found; Windows Fluxora builds require the VFS hook. Reconfigure the backend with -DFLUXORA_ENABLE_VFS=ON and rebuild."
+        }
+
         if ($nativeVfsPath) {
             Copy-Item -LiteralPath $nativeVfsPath -Destination $tauriNativeTargetDir -Force
             Copy-Item -LiteralPath $nativeVfsPath -Destination $TauriNativeResourcesDir -Force
@@ -862,7 +871,7 @@ Invoke-BuildStep "Preparing Tauri native resources ($($tauriTarget.Platform)/$($
             }
         }
         else {
-            Write-Warning "FluxoraVfs.dll was not found; VFS launch will stay unavailable in this Tauri package."
+            Write-Warning "FluxoraVfs.dll was not found for this non-Windows package."
         }
 }
 
@@ -892,11 +901,15 @@ Invoke-BuildStep "Packaging Tauri app ($($tauriTarget.Platform)/$($tauriTarget.A
 
         $packagedBridgeHostPath = Join-Path $OutputDir 'resources\native\FluxoraBridgeHost.exe'
         $packagedCorePath = Join-Path $OutputDir 'resources\native\FluxoraCore.dll'
+        $packagedVfsPath = Join-Path $OutputDir 'resources\native\FluxoraVfs.dll'
         if (-not (Test-Path -LiteralPath $packagedBridgeHostPath -PathType Leaf)) {
             throw "Tauri package is missing bundled native bridge host at '$packagedBridgeHostPath'."
         }
         if (-not (Test-Path -LiteralPath $packagedCorePath -PathType Leaf)) {
             throw "Tauri package is missing bundled native core at '$packagedCorePath'."
+        }
+        if (($Runtime -like 'win-*') -and (-not (Test-Path -LiteralPath $packagedVfsPath -PathType Leaf))) {
+            throw "Tauri package is missing bundled VFS hook at '$packagedVfsPath'."
         }
 }
 

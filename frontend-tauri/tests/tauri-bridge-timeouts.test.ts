@@ -103,6 +103,48 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('gives executable launches enough time for VFS preparation', async () => {
+    const executable: FluxoraExecutable = {
+      id: 'skse',
+      displayName: 'SKSE',
+      executablePath: 'E:\\Steam\\Skyrim Special Edition\\skse64_loader.exe',
+      arguments: '',
+      workingDirectory: 'E:\\Steam\\Skyrim Special Edition',
+      iconPath: ''
+    };
+    const launchResult = {
+      ...executable,
+      resolvedExecutablePath: executable.executablePath,
+      resolvedWorkingDirectory: executable.workingDirectory,
+      launchTrackingKind: 'directProcess',
+      expectedChildProcessNames: [],
+      handoffDisplayName: '',
+      handoffTimeoutMs: 30_000,
+      processId: 24_680
+    };
+    const request: OperationRequest = { operationId: 'op_executables_launch' };
+    invokeMock.mockResolvedValue(launchResult);
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.executables.launch('C:\\Fluxora\\Builds\\Foundation.json', 'skse', 'Default', request)
+    ).resolves.toMatchObject({
+      ...launchResult,
+      operationId: 'op_executables_launch'
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'executables.launch',
+      params: {
+        configPath: 'C:\\Fluxora\\Builds\\Foundation.json',
+        executableId: 'skse',
+        profileName: 'Default'
+      },
+      request,
+      timeoutMs: 120_000
+    });
+  });
+
   it('routes overwrite clearing through the typed native bridge', async () => {
     const request: OperationRequest = { operationId: 'op_clear_overwrite' };
     invokeMock.mockResolvedValue({ accepted: true });

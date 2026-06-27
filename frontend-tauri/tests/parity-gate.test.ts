@@ -187,6 +187,35 @@ describe('Tauri parity gate', () => {
     expect(logger).toContain('FLUXORA_LOG_DIR');
   });
 
+  it('prefers packaged native bridge resources before build fallbacks', () => {
+    const rustShell = readText('frontend-tauri', 'src-tauri', 'src', 'lib.rs');
+
+    expect(rustShell).toContain('push_packaged_native_candidate');
+    expect(rustShell).toContain('.join("resources").join("native").join(executable)');
+    expect(rustShell).toContain('hostPath=');
+    expect(
+      rustShell.indexOf('push_packaged_native_candidate(&mut candidates, &current_dir, executable)')
+    ).toBeLessThan(
+      rustShell.indexOf('for configuration in ["Release", "RelWithDebInfo", "Debug", "MinSizeRel"]')
+    );
+  });
+
+  it('keeps Windows packages VFS-enabled for MO2-style launches', () => {
+    const buildScript = readText('Build.ps1');
+    const stageScript = readText('frontend-tauri', 'scripts', 'stage-native-resources.ps1');
+    const launchApi = readText('backend', 'src', 'FluxoraCoreApi.cpp');
+    const vfsService = readText('backend', 'src', 'Services', 'VirtualFileSystemService.cpp');
+
+    expect(buildScript).toContain('-DFLUXORA_ENABLE_VFS=ON');
+    expect(buildScript).toContain('Windows Fluxora builds require the VFS hook');
+    expect(buildScript).toContain("resources\\native\\FluxoraVfs.dll");
+    expect(stageScript).toContain("$requiredArtifacts += 'FluxoraVfs.dll'");
+    expect(stageScript).toContain('FLUXORA_ENABLE_VFS:BOOL=OFF');
+    expect(launchApi).toContain('missing VFS support is a build error');
+    expect(vfsService).toContain('virtual file system support is not compiled into this Fluxora build');
+    expect(vfsService).not.toContain('Fluxora was built without VFS support for this platform');
+  });
+
   it('keeps MO2 transfer handoff in the Rust shell and closes Settings on launch', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const facade = readText('frontend-tauri', 'src', 'tauri', 'fluxora-api.ts');

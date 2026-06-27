@@ -10,6 +10,8 @@
 #include <fstream>
 #include <algorithm>
 #include <cwctype>
+#include <map>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -124,6 +126,30 @@ namespace fluxora
             std::vector<std::wstring> excludedRootNames;
         };
 
+        struct ActiveVfsMod
+        {
+            std::filesystem::path path;
+            std::wstring contentFingerprint;
+        };
+
+        struct VfsContentPlacementCacheEntry
+        {
+            std::wstring contentFingerprint;
+            VfsContentPlacementRoots roots;
+        };
+
+        std::mutex& vfsContentPlacementCacheMutex()
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        std::map<std::wstring, VfsContentPlacementCacheEntry>& vfsContentPlacementCache()
+        {
+            static std::map<std::wstring, VfsContentPlacementCacheEntry> cache;
+            return cache;
+        }
+
         [[nodiscard]] std::string joinVfsList(const std::vector<std::wstring>& values)
         {
             std::string joined;
@@ -205,6 +231,11 @@ namespace fluxora
                 return direct;
             }
 
+#ifdef _WIN32
+            // Windows directory lookup is case-insensitive, so the direct probe
+            // avoids scanning large profile/mod roots for casing variants.
+            return {};
+#else
             std::error_code error;
             if (!std::filesystem::exists(parent, error) || !std::filesystem::is_directory(parent, error))
             {
@@ -230,6 +261,7 @@ namespace fluxora
             }
 
             return {};
+#endif
         }
 
         std::wstring normalizedPathForComparison(const std::filesystem::path& path)
@@ -639,20 +671,57 @@ namespace fluxora
 #endif
         }
 
-        std::vector<std::filesystem::path> collectEnabledMods(
+        VfsContentPlacementRoots analyzeVfsContentPlacement(
+            const ActiveVfsMod& mod,
+            const VfsContentPlacementAnalyzer& placementAnalyzer,
+            const ContentLayoutSupportRules& contentRules,
+            const std::wstring& dataDirectory,
+            const std::wstring& rootBuilderDirectoryName,
+            Logger& logger)
+        {
+            const std::wstring cacheKey = normalizedPathForComparison(mod.path);
+            if (!cacheKey.empty() && !mod.contentFingerprint.empty())
+            {
+                std::lock_guard lock(vfsContentPlacementCacheMutex());
+                const auto cached = vfsContentPlacementCache().find(cacheKey);
+                if (cached != vfsContentPlacementCache().end() &&
+                    cached->second.contentFingerprint == mod.contentFingerprint)
+                {
+                    return cached->second.roots;
+                }
+            }
+
+            const VfsContentPlacementRoots roots = placementAnalyzer.analyze(
+                mod.path,
+                contentRules,
+                dataDirectory,
+                rootBuilderDirectoryName,
+                &logger);
+
+            if (!cacheKey.empty() && !mod.contentFingerprint.empty())
+            {
+                std::lock_guard lock(vfsContentPlacementCacheMutex());
+                vfsContentPlacementCache()[cacheKey] =
+                    VfsContentPlacementCacheEntry{mod.contentFingerprint, roots};
+            }
+
+            return roots;
+        }
+
+        std::vector<ActiveVfsMod> collectEnabledMods(
             const ProfileOrderService& profileOrder,
             const std::filesystem::path& projectDirectory,
             std::wstring_view profileName)
         {
-            std::vector<std::filesystem::path> mods;
-            for (const ProfileModOrderItem& item : profileOrder.listModOrder(projectDirectory, profileName))
+            std::vector<ActiveVfsMod> mods;
+            for (const ProfileModOrderItem& item : profileOrder.listCachedModOrder(projectDirectory, profileName))
             {
                 const bool isFullyOverwritten =
                     item.fileCount > 0 &&
                     item.overwrittenFileCount >= item.fileCount;
                 if (item.kind == L"mod" && item.isEnabled && !item.id.empty() && !isFullyOverwritten)
                 {
-                    mods.push_back(item.id);
+                    mods.push_back(ActiveVfsMod{item.id, item.contentFingerprint});
                 }
             }
 
@@ -660,7 +729,7 @@ namespace fluxora
         }
 
         std::vector<std::filesystem::path> collectRootBuilderMods(
-            const std::vector<std::filesystem::path>& mods,
+            const std::vector<ActiveVfsMod>& mods,
             const std::vector<VfsContentPlacementRoots>& placements,
             const std::wstring& rootBuilderDirectoryName)
         {
@@ -673,18 +742,14 @@ namespace fluxora
                     continue;
                 }
 
-                const std::filesystem::path root = mods[index] / rootBuilderDirectoryName;
-                if (isDirectory(root))
-                {
-                    rootMods.push_back(root);
-                }
+                rootMods.push_back(mods[index].path / rootBuilderDirectoryName);
             }
 
             return rootMods;
         }
 
         std::vector<std::filesystem::path> collectDataMountMods(
-            const std::vector<std::filesystem::path>& mods,
+            const std::vector<ActiveVfsMod>& mods,
             const std::vector<VfsContentPlacementRoots>& placements,
             const std::wstring& dataDirectory,
             bool rootBuilderEnabled,
@@ -699,7 +764,7 @@ namespace fluxora
                     continue;
                 }
 
-                const std::filesystem::path& mod = mods[index];
+                const std::filesystem::path& mod = mods[index].path;
                 const VfsContentPlacementRoots& placement = placements[index];
                 if (placement.dataAtModRoot)
                 {
@@ -707,7 +772,7 @@ namespace fluxora
                 }
 
                 const std::filesystem::path nestedData = mod / dataDirectory;
-                if (placement.dataWrapper && isDirectory(nestedData))
+                if (placement.dataWrapper)
                 {
                     dataMods.push_back(nestedData);
                 }
@@ -719,7 +784,7 @@ namespace fluxora
 
                 const std::filesystem::path rootData =
                     mod / rootBuilderDirectoryName / dataDirectory;
-                if (placement.rootBuilderData && isDirectory(rootData))
+                if (placement.rootBuilderData)
                 {
                     dataMods.push_back(rootData);
                 }
@@ -978,14 +1043,19 @@ namespace fluxora
                 "\", executablePath=\"" + toUtf8(resolved.resolvedExecutablePath.wstring()) + "\".");
 
 #if !defined(FLUXORA_ENABLE_VFS) || !defined(_WIN32)
-        // Built without the virtual file system: behave exactly like a plain run.
+        // A Windows MO2-style build must not degrade to a plain launch: that hides
+        // missing VFS packaging and lets transferred builds crash inside the game.
+        const std::string reason =
+            "virtual file system support is not compiled into this Fluxora build.";
         logger_.writeOperation(
-            LogLevel::Warning,
+            LogLevel::Error,
             "VfsDiagnostics",
-            "vfsOperation fallback selectedGameId=\"" + toUtf8(resolved.gameId.value()) +
+            "vfsOperation failed selectedGameId=\"" + toUtf8(resolved.gameId.value()) +
                 "\", definitionVersion=\"" + toUtf8(resolved.gameDefinitionVersion) +
-                "\", reason=\"Fluxora was built without VFS support for this platform.\".");
-                return executables_.launchProjectExecutable(configPath, executableId, profileName);
+                "\", unsupportedCapabilityError=\"" + reason + "\".");
+        throw std::runtime_error(
+            "Virtual file system launch failed: " + reason +
+            " Rebuild the Windows package with FLUXORA_ENABLE_VFS=ON and FluxoraVfs.dll bundled next to FluxoraCore.dll.");
 #else
         const auto fallbackPlainLaunch = [&](const std::string& reason) -> GameExecutableLaunchResult
         {
@@ -1072,19 +1142,20 @@ namespace fluxora
         const std::filesystem::path dataTarget = resolved.gamePath / dataDirectory;
 
         std::wstring profile = resolved.defaultProfile.empty() ? L"Default" : resolved.defaultProfile;
-        const std::vector<std::filesystem::path> mods =
+        const std::vector<ActiveVfsMod> mods =
             collectEnabledMods(profileOrder_, resolved.projectDirectory, profile);
         const VfsContentPlacementAnalyzer placementAnalyzer;
         std::vector<VfsContentPlacementRoots> placements;
         placements.reserve(mods.size());
-        for (const std::filesystem::path& mod : mods)
+        for (const ActiveVfsMod& mod : mods)
         {
-            placements.push_back(placementAnalyzer.analyze(
+            placements.push_back(analyzeVfsContentPlacement(
                 mod,
+                placementAnalyzer,
                 *contentRules,
                 dataDirectory,
                 rootBuilderDirectoryName,
-                &logger_));
+                logger_));
         }
 
         const std::filesystem::path overwrite = pathSettings_.overwriteDirectory(resolved.projectDirectory);

@@ -62,7 +62,8 @@ export const OperationOverlay = ({
   const progressLabel = isIndeterminate ? 'Waiting for progress' : `${percent}%`;
   const stepText =
     overlay.errorText || overlay.resultText || overlay.statusText || 'Preparing operation';
-  const detailText = overlay.currentItem || overlay.title;
+  const showCurrentItemDetail = !(overlay.kind === 'build-delete' && tone === 'running');
+  const detailText = showCurrentItemDetail ? overlay.currentItem || overlay.title : null;
   const canCancelBuildCreate =
     overlay.kind === 'build-create' && (overlay.isRunning || overlay.createdProject !== null);
   const canCancelNativeOperation = overlay.isRunning && cancellationSupported;
@@ -124,7 +125,7 @@ export const OperationOverlay = ({
           </span>
           <div className="operation-splash__copy">
             <h2>{overlay.title}</h2>
-            <p>{detailText}</p>
+            {detailText ? <p>{detailText}</p> : null}
           </div>
         </div>
 

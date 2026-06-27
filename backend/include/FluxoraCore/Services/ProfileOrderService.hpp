@@ -39,6 +39,7 @@ namespace fluxora
         bool isPatch{false};
         std::wstring modUuid;
         std::wstring separatorTitle;
+        std::wstring contentFingerprint;
     };
 
     class ProfileOrderService final : public IService
@@ -53,6 +54,10 @@ namespace fluxora
         void shutdown() override;
 
         [[nodiscard]] std::vector<ProfileModOrderItem> listModOrder(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName) const;
+
+        [[nodiscard]] std::vector<ProfileModOrderItem> listCachedModOrder(
             const std::filesystem::path& projectDirectory,
             std::wstring_view profileName) const;
 

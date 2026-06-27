@@ -3347,6 +3347,28 @@ namespace fluxora
         return readProfileOrderItems(database, projectDirectory, normalizedProfileName, modsRoot);
     }
 
+    std::vector<ProfileOrderItemRecord> InstanceMetadataStore::listCachedProfileOrderItems(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName,
+        const std::filesystem::path& modsRoot)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const std::wstring normalizedProfileName = profileNameOrDefault(profileName);
+        Database database = openInstanceDatabase(projectDirectory);
+
+        Transaction transaction(database);
+        syncProfileOrderItems(database, normalizedProfileName);
+        transaction.commit();
+
+        return readProfileOrderItems(database, projectDirectory, normalizedProfileName, modsRoot);
+    }
+
     std::vector<std::wstring> InstanceMetadataStore::listProfileNames(
         const std::filesystem::path& projectDirectory)
     {

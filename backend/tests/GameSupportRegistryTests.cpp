@@ -136,6 +136,7 @@ namespace fluxora::tests
             components.contentLayoutRulesProvider->contentLayoutRules();
         EXPECT_EQ(layoutRules.dataFolder, L"Data");
         EXPECT_TRUE(layoutRules.supportsRootFiles);
+        EXPECT_TRUE(layoutRules.gameDataDirectoryKeys.contains(L"grass"));
         EXPECT_TRUE(containsPath(layoutRules.scriptExtenderDataPaths, L"SKSE/Plugins"));
         EXPECT_TRUE(containsPath(layoutRules.scriptExtenderDataPaths, L"DLLPlugins"));
         EXPECT_TRUE(containsPath(layoutRules.scriptExtenderDataPaths, L"NetScriptFramework"));

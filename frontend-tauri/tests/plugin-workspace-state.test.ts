@@ -316,6 +316,7 @@ describe('plugin workspace state', () => {
     expect(supported.projectSupported).toBe(true);
     expect(supported.loadOrderSupported).toBe(true);
     expect(supported.bulkToggleSupported).toBe(true);
+    expect(supported.nativeBulkToggleSupported).toBe(true);
 
     const unsupported = pluginCapabilityView(
       project({ supportsPlugins: false, supportsLoadOrder: false }),
@@ -325,7 +326,7 @@ describe('plugin workspace state', () => {
     expect(unsupported.reason).toContain('does not support plugins');
   });
 
-  it('keeps plugin listing available when an older bridge lacks bulk toggles', () => {
+  it('keeps plugin bulk toggles available through single-plugin fallback when an older bridge lacks native bulk support', () => {
     const bridgeWithoutBulkToggle: NativeBridgeStatus = {
       ...readyBridge,
       capabilities: {
@@ -347,7 +348,8 @@ describe('plugin workspace state', () => {
 
     expect(capabilities.bridgeAvailable).toBe(true);
     expect(capabilities.projectSupported).toBe(true);
-    expect(capabilities.bulkToggleSupported).toBe(false);
+    expect(capabilities.bulkToggleSupported).toBe(true);
+    expect(capabilities.nativeBulkToggleSupported).toBe(false);
   });
 
   it('accepts domain-qualified plugin capability method names', () => {
@@ -379,5 +381,6 @@ describe('plugin workspace state', () => {
 
     expect(capabilities.bridgeAvailable).toBe(true);
     expect(capabilities.bulkToggleSupported).toBe(true);
+    expect(capabilities.nativeBulkToggleSupported).toBe(true);
   });
 });

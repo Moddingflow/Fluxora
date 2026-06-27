@@ -161,6 +161,14 @@ namespace fluxora
             std::wstring_view profileName,
             const std::filesystem::path& modsDirectory = {});
 
+        // Launch paths use the saved profile order as the hot-path source of
+        // truth and avoid refreshing the whole mods directory immediately before
+        // process creation.
+        [[nodiscard]] static std::vector<ProfileOrderItemRecord> listCachedProfileOrderItems(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName,
+            const std::filesystem::path& modsDirectory = {});
+
         [[nodiscard]] static std::vector<std::wstring> listProfileNames(
             const std::filesystem::path& projectDirectory);
 

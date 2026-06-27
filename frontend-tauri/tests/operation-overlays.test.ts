@@ -65,6 +65,22 @@ describe('operation overlays', () => {
     expect(markup).toContain('Waiting for progress');
   });
 
+  it('does not render the rapidly changing file path during build deletion', () => {
+    const markup = renderOverlay(
+      overlay({
+        kind: 'build-delete',
+        title: 'Deleting build',
+        statusText: 'Удаляю файлы сборки',
+        currentItem: 'mods\\Tomato\\textures\\architecture\\column01.dds',
+        percent: 62
+      })
+    );
+
+    expect(markup).toContain('Deleting build');
+    expect(markup).toContain('Удаляю файлы сборки');
+    expect(markup).not.toContain('mods\\Tomato\\textures\\architecture\\column01.dds');
+  });
+
   it('renders mod deletion as the full loading splash with percent feedback', () => {
     const markup = renderOverlay(
       overlay({ kind: 'mod-delete', title: 'Удаляем мод', percent: 37 })

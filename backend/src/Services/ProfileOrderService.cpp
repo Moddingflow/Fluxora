@@ -157,7 +157,8 @@ namespace fluxora
                 false,
                 false,
                 {},
-                record.separatorTitle
+                record.separatorTitle,
+                {}
             };
         }
 
@@ -189,7 +190,8 @@ namespace fluxora
                 mod.isTranslation,
                 mod.isPatch,
                 record.mod.uuid,
-                {}
+                {},
+                record.mod.contentFingerprint
             };
         }
 
@@ -222,7 +224,8 @@ namespace fluxora
                 mod.isTranslation,
                 mod.isPatch,
                 record.mod.uuid,
-                {}
+                {},
+                mod.contentFingerprint
             };
         }
 
@@ -253,7 +256,8 @@ namespace fluxora
                 mod.isTranslation,
                 mod.isPatch,
                 mod.uuid,
-                {}
+                {},
+                mod.contentFingerprint
             };
         }
 
@@ -402,6 +406,23 @@ namespace fluxora
 
         const std::vector<ProfileOrderItemRecord> records =
             InstanceMetadataStore::listProfileOrderItems(
+                projectDirectory,
+                profileName,
+                pathSettings_.modsDirectory(projectDirectory));
+        return buildModOrder(records);
+    }
+
+    std::vector<ProfileModOrderItem> ProfileOrderService::listCachedModOrder(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName) const
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const std::vector<ProfileOrderItemRecord> records =
+            InstanceMetadataStore::listCachedProfileOrderItems(
                 projectDirectory,
                 profileName,
                 pathSettings_.modsDirectory(projectDirectory));

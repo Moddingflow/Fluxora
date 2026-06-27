@@ -26,6 +26,8 @@ export const FluxoraIpcChannels = {
   executablesLaunch: 'fluxora:executables:launch',
   executablesList: 'fluxora:executables:list',
   executablesSave: 'fluxora:executables:save',
+  processesWaitForExit: 'fluxora:processes:wait-for-exit',
+  processesWatchLaunchReady: 'fluxora:processes:watch-launch-ready',
   linksOpenExternal: 'fluxora:links:open-external',
   modsCheckUpdates: 'fluxora:mods:check-updates',
   modsClearOverwrite: 'fluxora:mods:clear-overwrite',
@@ -282,6 +284,26 @@ export interface FluxoraExecutableLaunchResult extends FluxoraExecutable {
   handoffTimeoutMs: number;
   launchTrackingMetadata?: unknown;
   processId: number;
+  operationId: string;
+}
+
+export type FluxoraProcessWatchState = 'running' | 'exited' | 'notFound' | 'timeout';
+
+export interface FluxoraLaunchProcessWatchRequest {
+  processId: number;
+  processName?: string;
+  launchTrackingKind?: string;
+  expectedChildProcessNames?: string[];
+  handoffTimeoutMs?: number;
+  pollIntervalMs?: number;
+  operationId?: string;
+}
+
+export interface FluxoraProcessWatchResult {
+  processId: number;
+  processName: string;
+  state: FluxoraProcessWatchState;
+  trackedKind: string;
   operationId: string;
 }
 
@@ -989,6 +1011,16 @@ export interface FluxoraApi {
       executablePath: string,
       request?: OperationRequest
     ) => Promise<FluxoraExecutableIconResult>;
+  };
+  processes: {
+    waitForLaunchReady: (
+      launch: FluxoraLaunchProcessWatchRequest,
+      request?: OperationRequest
+    ) => Promise<FluxoraProcessWatchResult>;
+    waitForExit: (
+      processId: number,
+      request?: OperationRequest
+    ) => Promise<FluxoraProcessWatchResult>;
   };
   downloads: {
     list: (

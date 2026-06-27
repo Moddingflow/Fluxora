@@ -49,7 +49,7 @@ The hook searches these source layouts and copies the first match into `resource
 
 Expected payload examples:
 
-- Windows: `FluxoraBridgeHost.exe`, `FluxoraCore.dll`, optional `FluxoraVfs.dll`.
+- Windows: `FluxoraBridgeHost.exe`, `FluxoraCore.dll`, and `FluxoraVfs.dll`; the hook is required for MO2-style virtualized launches.
 - Linux: `FluxoraBridgeHost`, `libFluxoraCore.so`.
 - macOS: `FluxoraBridgeHost`, `libFluxoraCore.dylib`.
 

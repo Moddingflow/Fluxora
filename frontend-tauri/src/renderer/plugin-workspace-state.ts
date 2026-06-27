@@ -48,6 +48,7 @@ export interface PluginCapabilityView {
   projectSupported: boolean;
   loadOrderSupported: boolean;
   bulkToggleSupported: boolean;
+  nativeBulkToggleSupported: boolean;
   reason: string;
 }
 
@@ -389,7 +390,8 @@ export const pluginCapabilityView = (
     (bridgeFeatureState === 'available' || bridgeFeatureState === 'limited') &&
     supportsPluginMethod('list') &&
     supportsPluginMethod('setEnabled');
-  const bulkToggleSupported = bridgeAvailable && supportsPluginMethod('setAllEnabled');
+  const nativeBulkToggleSupported = bridgeAvailable && supportsPluginMethod('setAllEnabled');
+  const bulkToggleSupported = bridgeAvailable;
   const flags = project?.gameCapabilities ?? project?.template?.gameCapabilities ?? {};
   const templateHasPluginRules = (project?.template?.pluginExtensions?.length ?? 0) > 0;
   const projectSupported = Boolean(flags.supportsPlugins || templateHasPluginRules);
@@ -401,6 +403,7 @@ export const pluginCapabilityView = (
       projectSupported: false,
       loadOrderSupported: false,
       bulkToggleSupported,
+      nativeBulkToggleSupported,
       reason: 'Open a build before using plugins.'
     };
   }
@@ -411,6 +414,7 @@ export const pluginCapabilityView = (
       projectSupported,
       loadOrderSupported,
       bulkToggleSupported: false,
+      nativeBulkToggleSupported: false,
       reason: 'Native bridge is not ready.'
     };
   }
@@ -421,6 +425,7 @@ export const pluginCapabilityView = (
       projectSupported,
       loadOrderSupported,
       bulkToggleSupported: false,
+      nativeBulkToggleSupported: false,
       reason: 'This Fluxora bridge build does not expose plugin workspace methods.'
     };
   }
@@ -431,6 +436,7 @@ export const pluginCapabilityView = (
       projectSupported: false,
       loadOrderSupported: false,
       bulkToggleSupported,
+      nativeBulkToggleSupported,
       reason: 'This build game does not support plugins or load order management.'
     };
   }
@@ -441,6 +447,7 @@ export const pluginCapabilityView = (
       projectSupported,
       loadOrderSupported: false,
       bulkToggleSupported,
+      nativeBulkToggleSupported,
       reason: 'This build can show plugins, but load order editing is disabled by game capabilities.'
     };
   }
@@ -450,6 +457,7 @@ export const pluginCapabilityView = (
     projectSupported,
     loadOrderSupported,
     bulkToggleSupported,
+    nativeBulkToggleSupported,
     reason: ''
   };
 };

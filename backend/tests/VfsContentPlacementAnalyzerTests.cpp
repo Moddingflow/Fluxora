@@ -26,6 +26,7 @@ namespace fluxora::tests
                 L"meshes",
                 L"textures",
                 L"scripts",
+                L"grass",
                 L"skse"
             };
             rules.scriptExtenderDataPaths = {
@@ -66,6 +67,22 @@ namespace fluxora::tests
         EXPECT_FALSE(roots.dataWrapper);
         EXPECT_FALSE(roots.dataAtModRoot);
         EXPECT_TRUE(roots.rootBuilderData);
+        EXPECT_FALSE(roots.rootBuilderRoot);
+    }
+
+    TEST(VfsContentPlacementAnalyzerTests, DetectsGrassCacheOnlyModAsDataRootContent)
+    {
+        TempDirectory temp;
+        const std::filesystem::path mod = temp.path() / L"Grass Cache";
+
+        writeTextFile(mod / L"grass" / L"tamriel.cgid", "cached grass");
+
+        const VfsContentPlacementRoots roots =
+            VfsContentPlacementAnalyzer().analyze(mod, skyrimLikeRules(), L"Data", L"root");
+
+        EXPECT_FALSE(roots.dataWrapper);
+        EXPECT_TRUE(roots.dataAtModRoot);
+        EXPECT_FALSE(roots.rootBuilderData);
         EXPECT_FALSE(roots.rootBuilderRoot);
     }
 
