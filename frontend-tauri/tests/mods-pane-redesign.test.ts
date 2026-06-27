@@ -25,6 +25,22 @@ describe('mods pane redesign', () => {
     expect(app).not.toContain('className="mod-overwrite-check"');
   });
 
+  it('exposes bulk enable and disable actions from mod and plugin context menus', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+
+    expect(app).toContain('Включить все моды');
+    expect(app).toContain('Выключить все моды');
+    expect(app).toContain('void setAllModsEnabled(true)');
+    expect(app).toContain('void setAllModsEnabled(false)');
+    expect(app).toContain('Включить все плагины');
+    expect(app).toContain('Выключить все плагины');
+    expect(app).toContain('void setAllPluginsEnabled(true)');
+    expect(app).toContain('void setAllPluginsEnabled(false)');
+    expect(app).toContain('window.fluxora.plugins.setAllEnabled');
+    expect(app).not.toContain("'Enabling all plugins'");
+    expect(app).not.toContain("'Disabling all plugins'");
+  });
+
   it('keeps the table surface visually aligned with the build-page UI-kit', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
     const primitives = readText(

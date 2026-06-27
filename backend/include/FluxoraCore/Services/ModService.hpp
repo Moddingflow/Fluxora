@@ -79,6 +79,8 @@ namespace fluxora
         void setAllInstalledModsEnabled(
             const std::filesystem::path& projectDirectory,
             bool isEnabled) const;
+        void clearOverwriteFolder(
+            const std::filesystem::path& projectDirectory) const;
         [[nodiscard]] bool isInitialized() const noexcept;
 
     private:

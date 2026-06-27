@@ -21,7 +21,6 @@ import {
   Pencil,
   Play,
   Plus,
-  Power,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -77,10 +76,12 @@ import {
   upsertProject
 } from './services/project-catalog-service';
 import {
+  appendOverwriteOrderItem,
+  createOverwriteOrderItem,
   emptyModWorkspaceState,
-  filterModOrderItems,
   formatFileSize,
   hasConflict,
+  isModOverwriteItem,
   isModNestedUnderSeparator,
   modItemTitle,
   modLatestVersionText,
@@ -90,27 +91,36 @@ import {
   modTableStatusView,
   modVersionText,
   modWorkspaceReducer,
+  reorderModOrderItems,
   selectedModOrderItem,
   targetIndexForDrop,
-  targetIndexForMove
+  targetIndexForMove,
+  visibleModOrderItems
 } from './mod-workspace-state';
 import {
   canDragPluginOrderItem,
   emptyPluginWorkspaceState,
-  filterPluginOrderItems,
+  isPluginNestedUnderSeparator,
+  mergePendingPluginEnabledStates,
   pluginCapabilityView,
   pluginHexIndex,
   pluginItemTitle,
+  pluginSeparatorChildCount,
+  pluginSourceLabel,
   pluginStatusText,
   pluginTypeLabel,
   pluginWorkspaceReducer,
+  reorderPluginOrderItems,
   selectedPluginOrderItem,
   targetIndexForPluginDrop,
-  targetIndexForPluginMove
+  targetIndexForPluginMove,
+  type PendingPluginEnabledState,
+  visiblePluginOrderItems
 } from './plugin-workspace-state';
 import {
   downloadCapabilityView,
   downloadProgressValue,
+  downloadRawTitle,
   downloadStatusText,
   downloadTitle,
   downloadWorkspaceReducer,
@@ -229,6 +239,12 @@ interface ProjectMenuPosition {
   maxHeight: number;
 }
 
+interface RowContextMenuPosition {
+  left: number;
+  top: number;
+  maxHeight: number;
+}
+
 interface StartMo2TransferOptions {
   analysis?: FluxoraModOrganizerImportAnalysis | null;
   skipMainHandoff?: boolean;
@@ -242,6 +258,12 @@ interface LaunchSplashState {
 }
 
 interface OpeningBuildSplashState {
+  buildName: string;
+  operationId: string;
+  progress: number;
+}
+
+interface OverwriteClearSplashState {
   buildName: string;
   operationId: string;
   progress: number;
@@ -282,9 +304,10 @@ interface WorkspaceMutationOptions {
   reload?: WorkspaceLoadOptions;
 }
 
-interface ReorderMutationOptions {
-  busyText?: string;
-  showBusy?: boolean;
+interface PendingPluginEnableSave extends PendingPluginEnabledState {
+  contextKey: string;
+  pending: boolean;
+  sequence: number;
 }
 
 const navItems: Array<{ id: RouteId; label: string; icon: typeof Home }> = [
@@ -314,6 +337,13 @@ const openingBuildMessages = [
   'Еще чуть-чуть'
 ] as const;
 
+const overwriteClearMessages = [
+  'Очищаем override',
+  'Удаляем временные файлы',
+  'Обновляем список модов',
+  'Почти готово'
+] as const;
+
 const projectMatchesSelection = (project: FluxoraProject, selection: string): boolean =>
   project.id === selection ||
   project.configPath === selection ||
@@ -328,9 +358,122 @@ const pluginOverscanRows = 8;
 const downloadRowHeight = 48;
 const downloadVisibleRows = 28;
 const downloadOverscanRows = 8;
+const downloadSkeletonRows = [
+  {
+    id: 'skyui',
+    titleWidth: 68,
+    progressWidth: 46,
+    barWidth: 78,
+    stateWidth: 50,
+    sizeWidth: 42,
+    sourceWidth: 62
+  },
+  {
+    id: 'fomod',
+    titleWidth: 84,
+    progressWidth: 38,
+    barWidth: 100,
+    stateWidth: 68,
+    sizeWidth: 56,
+    sourceWidth: 74
+  },
+  {
+    id: 'textures',
+    titleWidth: 74,
+    progressWidth: 54,
+    barWidth: 64,
+    stateWidth: 44,
+    sizeWidth: 48,
+    sourceWidth: 58
+  },
+  {
+    id: 'weather',
+    titleWidth: 58,
+    progressWidth: 42,
+    barWidth: 86,
+    stateWidth: 60,
+    sizeWidth: 52,
+    sourceWidth: 70
+  },
+  {
+    id: 'animations',
+    titleWidth: 77,
+    progressWidth: 50,
+    barWidth: 72,
+    stateWidth: 54,
+    sizeWidth: 46,
+    sourceWidth: 64
+  },
+  {
+    id: 'ui',
+    titleWidth: 63,
+    progressWidth: 36,
+    barWidth: 94,
+    stateWidth: 66,
+    sizeWidth: 58,
+    sourceWidth: 78
+  },
+  {
+    id: 'lod',
+    titleWidth: 88,
+    progressWidth: 48,
+    barWidth: 58,
+    stateWidth: 48,
+    sizeWidth: 44,
+    sourceWidth: 60
+  },
+  {
+    id: 'audio',
+    titleWidth: 70,
+    progressWidth: 44,
+    barWidth: 82,
+    stateWidth: 58,
+    sizeWidth: 54,
+    sourceWidth: 68
+  },
+  {
+    id: 'patches',
+    titleWidth: 80,
+    progressWidth: 40,
+    barWidth: 76,
+    stateWidth: 52,
+    sizeWidth: 50,
+    sourceWidth: 66
+  },
+  {
+    id: 'landscape',
+    titleWidth: 61,
+    progressWidth: 52,
+    barWidth: 90,
+    stateWidth: 64,
+    sizeWidth: 40,
+    sourceWidth: 72
+  },
+  {
+    id: 'npc',
+    titleWidth: 73,
+    progressWidth: 34,
+    barWidth: 68,
+    stateWidth: 46,
+    sizeWidth: 62,
+    sourceWidth: 56
+  },
+  {
+    id: 'quests',
+    titleWidth: 66,
+    progressWidth: 56,
+    barWidth: 96,
+    stateWidth: 62,
+    sizeWidth: 46,
+    sourceWidth: 76
+  }
+] as const;
 const projectMenuWidth = 174;
 const projectMenuEstimatedHeight = 116;
 const projectMenuViewportPadding = 8;
+const rowContextMenuWidth = 224;
+const rowContextMenuEstimatedHeight = 268;
+const rowContextMenuViewportPadding = 8;
 const rowReorderDragThreshold = 5;
 const rowReorderAutoScrollEdge = 36;
 const rowReorderAutoScrollMaxStep = 18;
@@ -339,6 +482,9 @@ const backgroundReorderLoadOptions: WorkspaceLoadOptions = {
   showBusy: false,
   showLoading: false
 };
+
+const pluginWorkspaceContextKey = (project: FluxoraProject, profileName: string): string =>
+  `${project.projectDirectory}\u0000${project.templateId}\u0000${profileName}`;
 
 const projectMenuPositionFromAnchor = (anchor: DOMRect): ProjectMenuPosition => {
   const left = Math.max(
@@ -361,6 +507,39 @@ const projectMenuPositionFromAnchor = (anchor: DOMRect): ProjectMenuPosition => 
     )
   };
 };
+
+const rowContextMenuPositionFromPreferredPoint = (
+  preferredLeft: number,
+  preferredTop: number
+): RowContextMenuPosition => {
+  const maxLeft = Math.max(
+    rowContextMenuViewportPadding,
+    window.innerWidth - rowContextMenuWidth - rowContextMenuViewportPadding
+  );
+  const maxTop = Math.max(
+    rowContextMenuViewportPadding,
+    window.innerHeight - rowContextMenuEstimatedHeight - rowContextMenuViewportPadding
+  );
+  const left = Math.max(rowContextMenuViewportPadding, Math.min(preferredLeft, maxLeft));
+  const top = Math.max(rowContextMenuViewportPadding, Math.min(preferredTop, maxTop));
+
+  return {
+    left,
+    top,
+    maxHeight: Math.max(
+      64,
+      Math.min(rowContextMenuEstimatedHeight, window.innerHeight - top - rowContextMenuViewportPadding)
+    )
+  };
+};
+
+const rowContextMenuPositionFromPointer = (
+  clientX: number,
+  clientY: number
+): RowContextMenuPosition => rowContextMenuPositionFromPreferredPoint(clientX, clientY);
+
+const rowContextMenuPositionFromAnchor = (anchor: DOMRect): RowContextMenuPosition =>
+  rowContextMenuPositionFromPreferredPoint(anchor.right - rowContextMenuWidth, anchor.top + 8);
 
 const isInteractiveRowDragTarget = (target: EventTarget | null): boolean => {
   if (!(target instanceof Element)) {
@@ -406,6 +585,9 @@ export const App = () => {
     useState<OpeningBuildSplashState | null>(null);
   const openingBuildCancelRequestsRef = useRef<Set<string>>(new Set());
   const openingBuildOperationIdRef = useRef<string | null>(null);
+  const [overwriteClearSplash, setOverwriteClearSplash] =
+    useState<OverwriteClearSplashState | null>(null);
+  const overwriteClearOperationIdRef = useRef<string | null>(null);
   const [languageBusy, setLanguageBusy] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<FluxoraThemeMode>('dark');
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('connections');
@@ -443,6 +625,7 @@ export const App = () => {
   const [installedMods, setInstalledMods] = useState<FluxoraInstalledMod[]>([]);
   const [modsBusyLabel, setModsBusyLabel] = useState<string | null>(null);
   const [modMenuOrderId, setModMenuOrderId] = useState<string | null>(null);
+  const [modMenuPosition, setModMenuPosition] = useState<RowContextMenuPosition | null>(null);
   const [modListScrollTop, setModListScrollTop] = useState(0);
   const [draggedModOrderId, setDraggedModOrderId] = useState<string | null>(null);
   const [modDropTarget, setModDropTarget] = useState<RowDropTargetState | null>(null);
@@ -459,6 +642,8 @@ export const App = () => {
   );
   const [pluginsBusyLabel, setPluginsBusyLabel] = useState<string | null>(null);
   const [pluginMenuOrderId, setPluginMenuOrderId] = useState<string | null>(null);
+  const [pluginMenuPosition, setPluginMenuPosition] =
+    useState<RowContextMenuPosition | null>(null);
   const [pluginListScrollTop, setPluginListScrollTop] = useState(0);
   const [draggedPluginOrderId, setDraggedPluginOrderId] = useState<string | null>(null);
   const [pluginDropTarget, setPluginDropTarget] = useState<RowDropTargetState | null>(null);
@@ -469,6 +654,8 @@ export const App = () => {
   );
   const [downloadsBusyLabel, setDownloadsBusyLabel] = useState<string | null>(null);
   const [downloadMenuId, setDownloadMenuId] = useState<string | null>(null);
+  const [downloadMenuPosition, setDownloadMenuPosition] =
+    useState<RowContextMenuPosition | null>(null);
   const [downloadListScrollTop, setDownloadListScrollTop] = useState(0);
   const [activeRightPane, setActiveRightPane] = useState<RightPaneId>('plugins');
   const [archiveTreeScrollTop, setArchiveTreeScrollTop] = useState(0);
@@ -507,6 +694,17 @@ export const App = () => {
   const refreshInFlightRef = useRef(false);
   const refreshCurrentViewRef = useRef<() => void | Promise<void>>(() => undefined);
   const rowReorderSessionRef = useRef<RowReorderSession | null>(null);
+  const modOrderSaveSequenceRef = useRef(0);
+  const pendingModOrderSavesRef = useRef<Set<Promise<void>>>(new Set());
+  const modEnableSaveSequenceRef = useRef(0);
+  const latestModEnableSequenceByOrderIdRef = useRef<Map<string, number>>(new Map());
+  const modBulkEnableSequenceRef = useRef(0);
+  const pluginOrderSaveSequenceRef = useRef(0);
+  const pendingPluginOrderSavesRef = useRef<Set<Promise<void>>>(new Set());
+  const pluginEnableSaveSequenceRef = useRef(0);
+  const latestPluginEnableSequenceByOrderIdRef = useRef<Map<string, number>>(new Map());
+  const pendingPluginEnableStatesByOrderIdRef =
+    useRef<Map<string, PendingPluginEnableSave>>(new Map());
   const suppressNextRowClickRef = useRef(false);
   const [isTransferPageOpen, setIsTransferPageOpen] = useState(false);
 
@@ -545,13 +743,50 @@ export const App = () => {
   );
 
   const filteredModItems = useMemo(
-    () => filterModOrderItems(modsWorkspace.items, deferredModSearchText),
-    [modsWorkspace.items, deferredModSearchText]
+    () =>
+      visibleModOrderItems(
+        modsWorkspace.items,
+        deferredModSearchText,
+        modsWorkspace.collapsedSeparatorOrderIds
+      ),
+    [modsWorkspace.items, deferredModSearchText, modsWorkspace.collapsedSeparatorOrderIds]
+  );
+
+  const overwriteModItem = useMemo(
+    () =>
+      selectedProject?.paths?.overwriteDirectory
+        ? createOverwriteOrderItem(
+            selectedProject.name,
+            selectedProject.paths.overwriteDirectory,
+            bridgeStatus?.language
+          )
+        : null,
+    [bridgeStatus?.language, selectedProject?.name, selectedProject?.paths?.overwriteDirectory]
+  );
+
+  const displayedModItems = useMemo(
+    () => appendOverwriteOrderItem(filteredModItems, overwriteModItem, deferredModSearchText),
+    [deferredModSearchText, filteredModItems, overwriteModItem]
   );
 
   const selectedModItem = useMemo(
-    () => selectedModOrderItem(modsWorkspace.items, modsWorkspace.selectedOrderId),
-    [modsWorkspace.items, modsWorkspace.selectedOrderId]
+    () => {
+      if (modsWorkspace.selectedOrderId === overwriteModItem?.orderId) {
+        return overwriteModItem;
+      }
+
+      return selectedModOrderItem(
+        modsWorkspace.items,
+        modsWorkspace.selectedOrderId,
+        modsWorkspace.collapsedSeparatorOrderIds
+      );
+    },
+    [
+      modsWorkspace.items,
+      modsWorkspace.selectedOrderId,
+      modsWorkspace.collapsedSeparatorOrderIds,
+      overwriteModItem
+    ]
   );
 
   const totalModCount = useMemo(
@@ -565,13 +800,31 @@ export const App = () => {
   );
 
   const filteredPluginItems = useMemo(
-    () => filterPluginOrderItems(pluginsWorkspace.items, deferredPluginSearchText),
-    [pluginsWorkspace.items, deferredPluginSearchText]
+    () =>
+      visiblePluginOrderItems(
+        pluginsWorkspace.items,
+        deferredPluginSearchText,
+        pluginsWorkspace.collapsedSeparatorOrderIds
+      ),
+    [
+      pluginsWorkspace.items,
+      deferredPluginSearchText,
+      pluginsWorkspace.collapsedSeparatorOrderIds
+    ]
   );
 
   const selectedPluginItem = useMemo(
-    () => selectedPluginOrderItem(pluginsWorkspace.items, pluginsWorkspace.selectedOrderId),
-    [pluginsWorkspace.items, pluginsWorkspace.selectedOrderId]
+    () =>
+      selectedPluginOrderItem(
+        pluginsWorkspace.items,
+        pluginsWorkspace.selectedOrderId,
+        pluginsWorkspace.collapsedSeparatorOrderIds
+      ),
+    [
+      pluginsWorkspace.items,
+      pluginsWorkspace.selectedOrderId,
+      pluginsWorkspace.collapsedSeparatorOrderIds
+    ]
   );
 
   const filteredDownloadItems = useMemo(
@@ -739,12 +992,12 @@ export const App = () => {
   const transferCancellationSupported = settingsCapabilities.transferCancellationAvailable;
 
   const visibleModWindow = useMemo(() => {
-    return createVirtualWindow(filteredModItems, modListScrollTop, {
+    return createVirtualWindow(displayedModItems, modListScrollTop, {
       rowHeight: modRowHeight,
       visibleRows: modVisibleRows,
       overscanRows: modOverscanRows
     });
-  }, [filteredModItems, modListScrollTop]);
+  }, [displayedModItems, modListScrollTop]);
 
   const visiblePluginWindow = useMemo(() => {
     return createVirtualWindow(filteredPluginItems, pluginListScrollTop, {
@@ -912,16 +1165,130 @@ export const App = () => {
     }
   };
 
+  const trackModOrderSave = (promise: Promise<void>) => {
+    pendingModOrderSavesRef.current.add(promise);
+    void promise.catch(() => undefined).finally(() => {
+      pendingModOrderSavesRef.current.delete(promise);
+    });
+  };
+
+  const trackPluginOrderSave = (promise: Promise<void>) => {
+    pendingPluginOrderSavesRef.current.add(promise);
+    void promise.catch(() => undefined).finally(() => {
+      pendingPluginOrderSavesRef.current.delete(promise);
+    });
+  };
+
+  const pendingPluginEnableStatesForContext = (
+    contextKey: string,
+    snapshotSequence: number
+  ): ReadonlyMap<string, PendingPluginEnabledState> => {
+    const pending = pendingPluginEnableStatesByOrderIdRef.current;
+    if (pending.size === 0) {
+      return pending;
+    }
+
+    const scoped = new Map<string, PendingPluginEnabledState>();
+    pending.forEach((state, orderId) => {
+      if (state.contextKey === contextKey && (state.pending || state.sequence > snapshotSequence)) {
+        scoped.set(orderId, state);
+      }
+    });
+    return scoped;
+  };
+
+  const applyPendingPluginEnableStates = (
+    items: FluxoraPluginOrderItem[],
+    contextKey: string,
+    snapshotSequence: number
+  ): FluxoraPluginOrderItem[] =>
+    mergePendingPluginEnabledStates(
+      items,
+      pendingPluginEnableStatesForContext(contextKey, snapshotSequence)
+    );
+
+  const completeLatestPluginEnableSave = (orderId: string, sequence: number): boolean => {
+    if (latestPluginEnableSequenceByOrderIdRef.current.get(orderId) !== sequence) {
+      return false;
+    }
+
+    latestPluginEnableSequenceByOrderIdRef.current.delete(orderId);
+    const pending = pendingPluginEnableStatesByOrderIdRef.current.get(orderId);
+    if (pending?.sequence === sequence) {
+      pendingPluginEnableStatesByOrderIdRef.current.set(orderId, {
+        ...pending,
+        pending: false
+      });
+    }
+    return true;
+  };
+
+  const revertLatestPluginEnableSave = (orderId: string, sequence: number): boolean => {
+    if (latestPluginEnableSequenceByOrderIdRef.current.get(orderId) !== sequence) {
+      return false;
+    }
+
+    latestPluginEnableSequenceByOrderIdRef.current.delete(orderId);
+    pendingPluginEnableStatesByOrderIdRef.current.delete(orderId);
+    return true;
+  };
+
+  const waitForPendingOrderSaves = async (): Promise<boolean> => {
+    const pendingSaves = [
+      ...Array.from(pendingModOrderSavesRef.current),
+      ...Array.from(pendingPluginOrderSavesRef.current)
+    ];
+    if (pendingSaves.length === 0) {
+      return true;
+    }
+
+    setMessage('Saving order...');
+    const results = await Promise.allSettled(pendingSaves);
+    return results.every((result) => result.status === 'fulfilled');
+  };
+
+  const updateInstalledModEnabled = (modPath: string, isEnabled: boolean) => {
+    setInstalledMods((current) =>
+      current.map((mod) => (mod.id === modPath ? { ...mod, isEnabled } : mod))
+    );
+  };
+
+  const updateAllInstalledModsEnabled = (isEnabled: boolean) => {
+    setInstalledMods((current) => current.map((mod) => ({ ...mod, isEnabled })));
+  };
+
   const setModEnabled = async (item: FluxoraModOrderItem, isEnabled: boolean) => {
-    if (!selectedProject || !item.isMod) {
+    if (!selectedProject || !item.isMod || item.isEnabled === isEnabled) {
       return;
     }
 
-    await runModMutation(isEnabled ? 'Enabling mod' : 'Disabling mod', (operationId) =>
-      window.fluxora.mods.setEnabled(selectedProject.projectDirectory, item.id, isEnabled, {
+    const project = selectedProject;
+    const orderId = item.orderId;
+    const previousEnabled = item.isEnabled;
+    const sequence = modEnableSaveSequenceRef.current + 1;
+    modEnableSaveSequenceRef.current = sequence;
+    latestModEnableSequenceByOrderIdRef.current.set(orderId, sequence);
+
+    setMessage(null);
+    dispatchModsWorkspace({ type: 'item-enabled-set', orderId, isEnabled });
+    updateInstalledModEnabled(item.id, isEnabled);
+
+    try {
+      const operationId = createRendererOperationId('mods_set_enabled');
+      await window.fluxora.mods.setEnabled(project.projectDirectory, item.id, isEnabled, {
         operationId
-      })
-    );
+      });
+    } catch (error) {
+      if (latestModEnableSequenceByOrderIdRef.current.get(orderId) === sequence) {
+        dispatchModsWorkspace({ type: 'item-enabled-set', orderId, isEnabled: previousEnabled });
+        updateInstalledModEnabled(item.id, previousEnabled);
+        setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} ${modItemTitle(item)}: ${errorMessage(error)}`);
+      }
+    } finally {
+      if (latestModEnableSequenceByOrderIdRef.current.get(orderId) === sequence) {
+        latestModEnableSequenceByOrderIdRef.current.delete(orderId);
+      }
+    }
   };
 
   const setAllModsEnabled = async (isEnabled: boolean) => {
@@ -929,17 +1296,108 @@ export const App = () => {
       return;
     }
 
-    await runModMutation(isEnabled ? 'Enabling all mods' : 'Disabling all mods', (operationId) =>
-      window.fluxora.mods.setAllEnabled(selectedProject.projectDirectory, isEnabled, {
+    const project = selectedProject;
+    const previousItems = modsWorkspace.items;
+    const previousInstalledMods = installedMods;
+    const sequence = modBulkEnableSequenceRef.current + 1;
+    modBulkEnableSequenceRef.current = sequence;
+
+    setMessage(null);
+    dispatchModsWorkspace({ type: 'all-items-enabled-set', isEnabled });
+    updateAllInstalledModsEnabled(isEnabled);
+
+    try {
+      const operationId = createRendererOperationId('mods_set_all_enabled');
+      await window.fluxora.mods.setAllEnabled(project.projectDirectory, isEnabled, {
         operationId
-      })
+      });
+    } catch (error) {
+      if (modBulkEnableSequenceRef.current === sequence) {
+        dispatchModsWorkspace({ type: 'items-loaded', items: previousItems });
+        setInstalledMods(previousInstalledMods);
+        setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} all mods: ${errorMessage(error)}`);
+        await loadModsWorkspace(project, backgroundReorderLoadOptions);
+      }
+    }
+  };
+
+  const setAllPluginsEnabled = async (isEnabled: boolean) => {
+    if (
+      !selectedProject ||
+      !pluginCapabilities.bridgeAvailable ||
+      !pluginCapabilities.projectSupported
+    ) {
+      return;
+    }
+
+    if (!pluginCapabilities.bulkToggleSupported) {
+      setMessage('This Fluxora bridge build does not expose bulk plugin toggles.');
+      return;
+    }
+
+    const targetItems = pluginsWorkspace.items.filter(
+      (candidate) =>
+        candidate.isPlugin && !candidate.isLocked && candidate.isEnabled !== isEnabled
     );
+    if (targetItems.length === 0) {
+      return;
+    }
+
+    const project = selectedProject;
+    const profileName = selectedProjectProfileName;
+    const contextKey = pluginWorkspaceContextKey(project, profileName);
+    const previousItems = pluginsWorkspace.items;
+    const sequence = pluginEnableSaveSequenceRef.current + 1;
+    pluginEnableSaveSequenceRef.current = sequence;
+    targetItems.forEach((candidate) => {
+      latestPluginEnableSequenceByOrderIdRef.current.set(candidate.orderId, sequence);
+      pendingPluginEnableStatesByOrderIdRef.current.set(candidate.orderId, {
+        contextKey,
+        isEnabled,
+        pending: true,
+        sequence
+      });
+    });
+
+    setMessage(null);
+    dispatchPluginsWorkspace({ type: 'unlocked-items-enabled-set', isEnabled });
+
+    try {
+      const operationId = createRendererOperationId('plugins_set_all_enabled');
+      const confirmedOrder = await window.fluxora.plugins.setAllEnabled(
+        project.projectDirectory,
+        project.templateId,
+        profileName,
+        isEnabled,
+        { operationId }
+      );
+
+      targetItems.forEach((candidate) =>
+        completeLatestPluginEnableSave(candidate.orderId, sequence)
+      );
+      dispatchPluginsWorkspace({
+        type: 'items-loaded',
+        items: applyPendingPluginEnableStates(confirmedOrder, contextKey, sequence)
+      });
+    } catch (error) {
+      let shouldRevert = false;
+      targetItems.forEach((candidate) => {
+        if (revertLatestPluginEnableSave(candidate.orderId, sequence)) {
+          shouldRevert = true;
+        }
+      });
+
+      if (shouldRevert) {
+        dispatchPluginsWorkspace({ type: 'items-loaded', items: previousItems });
+        setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} all plugins: ${errorMessage(error)}`);
+        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+      }
+    }
   };
 
   const moveModOrderItemToIndex = async (
     item: FluxoraModOrderItem,
-    targetIndex: number,
-    options: ReorderMutationOptions = {}
+    targetIndex: number
   ) => {
     if (!selectedProject) {
       return;
@@ -950,33 +1408,64 @@ export const App = () => {
       return;
     }
 
-    const showBusy = options.showBusy ?? false;
-    await runModMutation(
-      options.busyText ?? 'Moving mod',
-      (operationId) =>
-        window.fluxora.mods.moveOrderItem(
-          selectedProject.projectDirectory,
-          selectedProjectProfileName,
+    const optimisticItems = reorderModOrderItems(modsWorkspace.items, item.orderId, targetIndex);
+    if (!optimisticItems) {
+      return;
+    }
+
+    const sequence = modOrderSaveSequenceRef.current + 1;
+    modOrderSaveSequenceRef.current = sequence;
+    const previousItems = modsWorkspace.items;
+    const project = selectedProject;
+    const profileName = selectedProjectProfileName;
+
+    setMessage(null);
+    dispatchModsWorkspace({
+      type: 'items-reordered',
+      orderId: item.orderId,
+      targetIndex
+    });
+
+    const save = (async () => {
+      const operationId = createRendererOperationId('mods_reorder');
+      try {
+        const confirmedOrder = await window.fluxora.mods.moveOrderItem(
+          project.projectDirectory,
+          profileName,
           item.orderId,
           targetIndex,
           { operationId }
-        ),
-      {
-        reload: showBusy ? undefined : backgroundReorderLoadOptions,
-        showBusy
+        );
+
+        if (modOrderSaveSequenceRef.current === sequence) {
+          dispatchModsWorkspace({ type: 'items-loaded', items: confirmedOrder });
+        }
+      } catch (error) {
+        const message = errorMessage(error);
+        setMessage(`Could not save mod order: ${message}`);
+        if (modOrderSaveSequenceRef.current === sequence) {
+          dispatchModsWorkspace({ type: 'items-loaded', items: previousItems });
+          await loadModsWorkspace(project, backgroundReorderLoadOptions);
+        }
+        throw error;
       }
-    );
+    })();
+
+    trackModOrderSave(save);
   };
 
   const moveModOrderItem = async (item: FluxoraModOrderItem, direction: -1 | 1) => {
-    const targetIndex = targetIndexForMove(modsWorkspace.items, item.orderId, direction);
+    const targetIndex = targetIndexForMove(
+      modsWorkspace.items,
+      item.orderId,
+      direction,
+      modsWorkspace.collapsedSeparatorOrderIds
+    );
     if (targetIndex === null) {
       return;
     }
 
-    await moveModOrderItemToIndex(item, targetIndex, {
-      busyText: direction < 0 ? 'Moving mod up' : 'Moving mod down'
-    });
+    await moveModOrderItemToIndex(item, targetIndex);
   };
 
   const createModSeparator = async () => {
@@ -1042,15 +1531,48 @@ export const App = () => {
       return;
     }
 
-    if (!window.confirm(`Delete installed mod "${modItemTitle(item)}"?`)) {
+    const project = selectedProject;
+    const deletedModTitle = modItemTitle(item);
+
+    if (!window.confirm(`Удалить установленный мод "${deletedModTitle}"?`)) {
       return;
     }
 
-    await runModMutation('Deleting mod', (operationId) =>
-      window.fluxora.mods.deleteInstalled(selectedProject.projectDirectory, item.id, {
+    const operationId = createRendererOperationId('mods_delete');
+    beginOperationOverlay({
+      operationId,
+      kind: 'mod-delete',
+      title: 'Удаляем мод',
+      statusText: 'Удаляем файлы мода',
+      currentItem: deletedModTitle,
+      percent: 8
+    });
+    setMessage(null);
+
+    try {
+      await window.fluxora.mods.deleteInstalled(project.projectDirectory, item.id, {
         operationId
-      })
-    );
+      });
+      setOperationOverlay((current) =>
+        current && current.operationId === operationId
+          ? {
+              ...current,
+              statusText: 'Обновляем список модов',
+              percent: Math.max(current.percent ?? 0, 84)
+            }
+          : current
+      );
+      await loadModsWorkspace(project, {
+        resetScroll: false,
+        showBusy: false,
+        showLoading: false
+      });
+      closeOperationOverlay(operationId);
+    } catch (error) {
+      const nextMessage = errorMessage(error);
+      setMessage(nextMessage);
+      failOperationOverlay(operationId, nextMessage);
+    }
   };
 
   const openInstalledMod = async (item: FluxoraModOrderItem) => {
@@ -1061,6 +1583,70 @@ export const App = () => {
     const result = await window.fluxora.shell.openPath(item.id);
     if (!result.ok) {
       setMessage(result.message ?? 'Mod folder could not be opened.');
+    }
+  };
+
+  const openOverwriteFolder = async () => {
+    const path = selectedProject?.paths?.overwriteDirectory;
+    if (!path) {
+      setMessage('Overwrite folder is not reported for this build.');
+      return;
+    }
+
+    const result = await window.fluxora.shell.openPath(path);
+    if (!result.ok) {
+      setMessage(result.message ?? 'Overwrite folder could not be opened.');
+    }
+  };
+
+  const clearOverwriteFolder = async () => {
+    if (!selectedProject) {
+      return;
+    }
+
+    const path = selectedProject.paths?.overwriteDirectory;
+    if (!path) {
+      setMessage('Overwrite folder is not reported for this build.');
+      return;
+    }
+
+    if (!window.confirm(`Очистить папку перезаписи "${path}"?`)) {
+      return;
+    }
+
+    const operationId = createRendererOperationId('mods_clear_overwrite');
+    overwriteClearOperationIdRef.current = operationId;
+    setOverwriteClearSplash({
+      operationId,
+      buildName: selectedProject.name,
+      progress: 6
+    });
+    setModsBusyLabel('Очищаем override');
+    setMessage(null);
+
+    try {
+      await window.fluxora.mods.clearOverwrite(selectedProject.projectDirectory, {
+        operationId
+      });
+      setOverwriteClearSplash((current) =>
+        current?.operationId === operationId ? { ...current, progress: 100 } : current
+      );
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, 380);
+      });
+      setOverwriteClearSplash((current) =>
+        current?.operationId === operationId ? null : current
+      );
+    } catch (error) {
+      setOverwriteClearSplash((current) =>
+        current?.operationId === operationId ? null : current
+      );
+      setMessage(errorMessage(error));
+    } finally {
+      if (overwriteClearOperationIdRef.current === operationId) {
+        overwriteClearOperationIdRef.current = null;
+        setModsBusyLabel(null);
+      }
     }
   };
 
@@ -1114,6 +1700,8 @@ export const App = () => {
     const resetScroll = options.resetScroll ?? true;
     const operationId = createRendererOperationId('plugins_load');
     const profileName = selectedProjectProfileName;
+    const contextKey = pluginWorkspaceContextKey(project, profileName);
+    const snapshotSequence = pluginEnableSaveSequenceRef.current;
     if (showLoading) {
       dispatchPluginsWorkspace({ type: 'load-started' });
     }
@@ -1129,7 +1717,10 @@ export const App = () => {
         profileName,
         { operationId }
       );
-      dispatchPluginsWorkspace({ type: 'items-loaded', items: nextPlugins });
+      dispatchPluginsWorkspace({
+        type: 'items-loaded',
+        items: applyPendingPluginEnableStates(nextPlugins, contextKey, snapshotSequence)
+      });
       if (resetScroll) {
         setPluginListScrollTop(0);
       }
@@ -1174,64 +1765,136 @@ export const App = () => {
   };
 
   const setPluginEnabled = async (item: FluxoraPluginOrderItem, isEnabled: boolean) => {
-    if (!selectedProject || !item.isPlugin || item.isLocked) {
+    if (!selectedProject || !item.isPlugin || item.isLocked || item.isEnabled === isEnabled) {
       return;
     }
 
-    await runPluginMutation(isEnabled ? 'Enabling plugin' : 'Disabling plugin', (operationId) =>
-      window.fluxora.plugins.setEnabled(
-        selectedProject.projectDirectory,
-        selectedProject.templateId,
-        selectedProjectProfileName,
+    const project = selectedProject;
+    const profileName = selectedProjectProfileName;
+    const contextKey = pluginWorkspaceContextKey(project, profileName);
+    const orderId = item.orderId;
+    const previousEnabled = item.isEnabled;
+    const sequence = pluginEnableSaveSequenceRef.current + 1;
+    pluginEnableSaveSequenceRef.current = sequence;
+    latestPluginEnableSequenceByOrderIdRef.current.set(orderId, sequence);
+    pendingPluginEnableStatesByOrderIdRef.current.set(orderId, {
+      contextKey,
+      isEnabled,
+      pending: true,
+      sequence
+    });
+
+    setMessage(null);
+    dispatchPluginsWorkspace({ type: 'item-enabled-set', orderId, isEnabled });
+
+    try {
+      const operationId = createRendererOperationId('plugins_set_enabled');
+      const confirmedOrder = await window.fluxora.plugins.setEnabled(
+        project.projectDirectory,
+        project.templateId,
+        profileName,
         item.name,
         isEnabled,
         { operationId }
-      )
-    );
+      );
+
+      if (completeLatestPluginEnableSave(orderId, sequence)) {
+        dispatchPluginsWorkspace({
+          type: 'items-loaded',
+          items: applyPendingPluginEnableStates(confirmedOrder, contextKey, sequence)
+        });
+      }
+    } catch (error) {
+      if (revertLatestPluginEnableSave(orderId, sequence)) {
+        dispatchPluginsWorkspace({
+          type: 'item-enabled-set',
+          orderId,
+          isEnabled: previousEnabled
+        });
+        setMessage(`Could not ${isEnabled ? 'enable' : 'disable'} ${pluginItemTitle(item)}: ${errorMessage(error)}`);
+      }
+    }
   };
 
   const movePluginOrderItemToIndex = async (
     item: FluxoraPluginOrderItem,
-    targetIndex: number,
-    options: ReorderMutationOptions = {}
+    targetIndex: number
   ) => {
     if (!selectedProject || !pluginCapabilities.loadOrderSupported) {
       return;
     }
 
-    const sourceIndex = pluginsWorkspace.items.findIndex((candidate) => candidate.orderId === item.orderId);
-    if (sourceIndex < 0 || sourceIndex === targetIndex) {
+    if (!canDragPluginOrderItem(pluginsWorkspace.items, item.orderId)) {
       return;
     }
 
-    const showBusy = options.showBusy ?? false;
-    await runPluginMutation(
-      options.busyText ?? 'Moving plugin',
-      (operationId) =>
-        window.fluxora.plugins.move(
-          selectedProject.projectDirectory,
-          selectedProject.templateId,
-          selectedProjectProfileName,
+    const optimisticItems = reorderPluginOrderItems(pluginsWorkspace.items, item.orderId, targetIndex);
+    if (!optimisticItems) {
+      return;
+    }
+
+    const sequence = pluginOrderSaveSequenceRef.current + 1;
+    pluginOrderSaveSequenceRef.current = sequence;
+    const previousItems = pluginsWorkspace.items;
+    const project = selectedProject;
+    const profileName = selectedProjectProfileName;
+    const contextKey = pluginWorkspaceContextKey(project, profileName);
+    const snapshotSequence = pluginEnableSaveSequenceRef.current;
+
+    setMessage(null);
+    dispatchPluginsWorkspace({
+      type: 'items-reordered',
+      orderId: item.orderId,
+      targetIndex
+    });
+
+    const save = (async () => {
+      const operationId = createRendererOperationId('plugins_reorder');
+      try {
+        const confirmedOrder = await window.fluxora.plugins.move(
+          project.projectDirectory,
+          project.templateId,
+          profileName,
           item.orderId,
           targetIndex,
           { operationId }
-        ),
-      {
-        reload: showBusy ? undefined : backgroundReorderLoadOptions,
-        showBusy
+        );
+
+        if (pluginOrderSaveSequenceRef.current === sequence) {
+          dispatchPluginsWorkspace({
+            type: 'items-loaded',
+            items: applyPendingPluginEnableStates(confirmedOrder, contextKey, snapshotSequence)
+          });
+        }
+      } catch (error) {
+        const message = errorMessage(error);
+        setMessage(`Could not save plugin order: ${message}`);
+        if (pluginOrderSaveSequenceRef.current === sequence) {
+          dispatchPluginsWorkspace({
+            type: 'items-loaded',
+            items: applyPendingPluginEnableStates(previousItems, contextKey, snapshotSequence)
+          });
+          await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+        }
+        throw error;
       }
-    );
+    })();
+
+    trackPluginOrderSave(save);
   };
 
   const movePluginOrderItem = async (item: FluxoraPluginOrderItem, direction: -1 | 1) => {
-    const targetIndex = targetIndexForPluginMove(pluginsWorkspace.items, item.orderId, direction);
+    const targetIndex = targetIndexForPluginMove(
+      pluginsWorkspace.items,
+      item.orderId,
+      direction,
+      pluginsWorkspace.collapsedSeparatorOrderIds
+    );
     if (targetIndex === null) {
       return;
     }
 
-    await movePluginOrderItemToIndex(item, targetIndex, {
-      busyText: direction < 0 ? 'Moving plugin up' : 'Moving plugin down'
-    });
+    await movePluginOrderItemToIndex(item, targetIndex);
   };
 
   const clearRowReorderSession = () => {
@@ -1267,8 +1930,20 @@ export const App = () => {
     placement: RowDropPlacement
   ): number | null =>
     kind === 'mod'
-      ? targetIndexForDrop(modsWorkspace.items, sourceOrderId, targetOrderId, placement)
-      : targetIndexForPluginDrop(pluginsWorkspace.items, sourceOrderId, targetOrderId, placement);
+      ? targetIndexForDrop(
+          modsWorkspace.items,
+          sourceOrderId,
+          targetOrderId,
+          placement,
+          modsWorkspace.collapsedSeparatorOrderIds
+        )
+      : targetIndexForPluginDrop(
+          pluginsWorkspace.items,
+          sourceOrderId,
+          targetOrderId,
+          placement,
+          pluginsWorkspace.collapsedSeparatorOrderIds
+        );
 
   const applyRowReorderAutoScroll = (session: RowReorderSession) => {
     const container = session.scrollContainer;
@@ -2537,6 +3212,67 @@ export const App = () => {
   }, [projectMenuId]);
 
   useEffect(() => {
+    if (!modMenuOrderId) {
+      setModMenuPosition(null);
+    }
+  }, [modMenuOrderId]);
+
+  useEffect(() => {
+    if (!pluginMenuOrderId) {
+      setPluginMenuPosition(null);
+    }
+  }, [pluginMenuOrderId]);
+
+  useEffect(() => {
+    if (!downloadMenuId) {
+      setDownloadMenuPosition(null);
+    }
+  }, [downloadMenuId]);
+
+  useEffect(() => {
+    if (!modMenuOrderId && !pluginMenuOrderId && !downloadMenuId) {
+      return;
+    }
+
+    const closeRowContextMenus = () => {
+      setModMenuOrderId(null);
+      setPluginMenuOrderId(null);
+      setDownloadMenuId(null);
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest(
+          '[data-row-context-menu-surface="true"], [data-row-context-menu-trigger="true"]'
+        )
+      ) {
+        return;
+      }
+
+      closeRowContextMenus();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeRowContextMenus();
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', closeRowContextMenus);
+    window.addEventListener('scroll', closeRowContextMenus, true);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', closeRowContextMenus);
+      window.removeEventListener('scroll', closeRowContextMenus, true);
+    };
+  }, [downloadMenuId, modMenuOrderId, pluginMenuOrderId]);
+
+  useEffect(() => {
     if (
       !bridgeStatus?.ready ||
       draft.projectName.trim().length === 0 ||
@@ -2821,6 +3557,12 @@ export const App = () => {
 
   const closeWindow = async () => {
     try {
+      const orderSaved = await waitForPendingOrderSaves();
+      if (!orderSaved) {
+        setMessage('Order is still not saved. Fix the error before closing Fluxora.');
+        return;
+      }
+
       await window.fluxora.windowControls.close();
     } catch (error) {
       setMessage(errorMessage(error));
@@ -3006,6 +3748,30 @@ export const App = () => {
 
     return () => window.clearInterval(timer);
   }, [openingBuildSplash?.operationId]);
+
+  useEffect(() => {
+    if (!overwriteClearSplash) {
+      return undefined;
+    }
+
+    const operationId = overwriteClearSplash.operationId;
+    const timer = window.setInterval(() => {
+      setOverwriteClearSplash((current) => {
+        if (!current || current.operationId !== operationId || current.progress >= 94) {
+          return current;
+        }
+
+        const remaining = 94 - current.progress;
+        const step = Math.max(0.8, Math.min(5.5, remaining * 0.12));
+        return {
+          ...current,
+          progress: Math.min(94, current.progress + step)
+        };
+      });
+    }, 420);
+
+    return () => window.clearInterval(timer);
+  }, [overwriteClearSplash?.operationId]);
 
   const renameProject = async (project: FluxoraProject) => {
     const newName = window.prompt('Build name', project.name)?.trim();
@@ -4476,35 +5242,180 @@ export const App = () => {
     );
   };
 
-  const renderModRowMenu = (item: FluxoraModOrderItem) => (
-    <div className="mod-row-menu" role="menu" aria-label={`${modItemTitle(item)} actions`}>
-      {item.isMod ? (
-        <button type="button" role="menuitem" onClick={() => void setModEnabled(item, !item.isEnabled)}>
-          {item.isEnabled ? 'Disable' : 'Enable'}
+  const renderModRowMenu = (item: FluxoraModOrderItem) => {
+    if (modMenuOrderId !== item.orderId || !modMenuPosition) {
+      return null;
+    }
+
+    if (isModOverwriteItem(item)) {
+      return createPortal(
+        <div
+          className="mod-row-menu mod-row-menu--context"
+          role="menu"
+          aria-label={`${modItemTitle(item)} actions`}
+          data-row-context-menu-surface="true"
+          style={{
+            left: modMenuPosition.left,
+            top: modMenuPosition.top,
+            maxHeight: modMenuPosition.maxHeight
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setModMenuOrderId(null);
+              void clearOverwriteFolder();
+            }}
+          >
+            <Trash2 size={14} aria-hidden="true" />
+            <span>Очистить папку перезаписи</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setModMenuOrderId(null);
+              void openOverwriteFolder();
+            }}
+          >
+            <FolderOpen size={14} aria-hidden="true" />
+            <span>Открыть в проводнике</span>
+          </button>
+        </div>,
+        document.body
+      );
+    }
+
+    const isCollapsed =
+      item.isSeparator && modsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
+
+    return createPortal(
+      <div
+        className="mod-row-menu mod-row-menu--context"
+        role="menu"
+        aria-label={`${modItemTitle(item)} actions`}
+        data-row-context-menu-surface="true"
+        style={{
+          left: modMenuPosition.left,
+          top: modMenuPosition.top,
+          maxHeight: modMenuPosition.maxHeight
+        }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {item.isMod ? (
+          <>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setModMenuOrderId(null);
+                void setModEnabled(item, !item.isEnabled);
+              }}
+            >
+              {item.isEnabled ? 'Disable' : 'Enable'}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={Boolean(modsBusyLabel)}
+              onClick={() => {
+                setModMenuOrderId(null);
+                void setAllModsEnabled(true);
+              }}
+            >
+              <CheckCircle2 size={14} aria-hidden="true" />
+              <span>Включить все моды</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={Boolean(modsBusyLabel)}
+              onClick={() => {
+                setModMenuOrderId(null);
+                void setAllModsEnabled(false);
+              }}
+            >
+              <XCircle size={14} aria-hidden="true" />
+              <span>Выключить все моды</span>
+            </button>
+          </>
+        ) : null}
+        {item.isSeparator ? (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              dispatchModsWorkspace({
+                type: 'separator-collapse-toggled',
+                orderId: item.orderId
+              });
+              setModMenuOrderId(null);
+            }}
+          >
+            {isCollapsed ? 'Expand separator' : 'Collapse separator'}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            setModMenuOrderId(null);
+            void moveModOrderItem(item, -1);
+          }}
+        >
+          Move up
         </button>
-      ) : null}
-      <button type="button" role="menuitem" onClick={() => void moveModOrderItem(item, -1)}>
-        Move up
-      </button>
-      <button type="button" role="menuitem" onClick={() => void moveModOrderItem(item, 1)}>
-        Move down
-      </button>
-      {item.isMod ? (
-        <button type="button" role="menuitem" onClick={() => void openInstalledMod(item)}>
-          Open folder
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            setModMenuOrderId(null);
+            void moveModOrderItem(item, 1);
+          }}
+        >
+          Move down
         </button>
-      ) : null}
-      {item.isSeparator ? (
-        <button type="button" role="menuitem" onClick={() => void deleteModSeparator(item)}>
-          Delete separator
-        </button>
-      ) : (
-        <button type="button" role="menuitem" onClick={() => void deleteInstalledMod(item)}>
-          Delete mod
-        </button>
-      )}
-    </div>
-  );
+        {item.isMod ? (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setModMenuOrderId(null);
+              void openInstalledMod(item);
+            }}
+          >
+            Open folder
+          </button>
+        ) : null}
+        {item.isSeparator ? (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setModMenuOrderId(null);
+              void deleteModSeparator(item);
+            }}
+          >
+            Delete separator
+          </button>
+        ) : (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setModMenuOrderId(null);
+              void deleteInstalledMod(item);
+            }}
+          >
+            Delete mod
+          </button>
+        )}
+      </div>,
+      document.body
+    );
+  };
 
   const renderModRows = () => {
     if (modsWorkspace.loadState === 'loading') {
@@ -4529,7 +5440,7 @@ export const App = () => {
       );
     }
 
-    if (filteredModItems.length === 0) {
+    if (displayedModItems.length === 0) {
       return (
         <EmptyState
           icon={<Box size={18} aria-hidden="true" />}
@@ -4564,7 +5475,10 @@ export const App = () => {
           {visibleModWindow.items.map((item) => {
             const isSelected = item.orderId === modsWorkspace.selectedOrderId;
             const isMenuOpen = item.orderId === modMenuOrderId;
+            const isOverwrite = isModOverwriteItem(item);
             const isNested = isModNestedUnderSeparator(modsWorkspace.items, item.orderId);
+            const isCollapsed =
+              item.isSeparator && modsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
             const overwrite = modOverwriteView(item);
             const status = modTableStatusView(item);
             const separatorModCount = item.isSeparator
@@ -4573,11 +5487,11 @@ export const App = () => {
             const isDragging = draggedModOrderId === item.orderId;
             const isDropTarget =
               modDropTarget?.orderId === item.orderId && draggedModOrderId !== item.orderId;
-            const canDragModRow = !modsBusyLabel;
+            const canDragModRow = !modsBusyLabel && !isOverwrite;
 
             return (
               <div
-                className={`mod-list-row${item.isSeparator ? ' mod-list-row--separator' : ''}`}
+                className={`mod-list-row${item.isSeparator ? ' mod-list-row--separator' : ''}${isOverwrite ? ' mod-list-row--overwrite' : ''}`}
                 role="row"
                 tabIndex={0}
                 draggable={false}
@@ -4585,14 +5499,17 @@ export const App = () => {
                 data-order-id={item.orderId}
                 data-selected={isSelected}
                 data-separator={item.isSeparator}
+                data-overwrite={isOverwrite}
                 data-in-separator={isNested}
+                data-collapsed={isCollapsed}
                 data-dragging={isDragging}
                 data-drop-target={isDropTarget}
                 data-drop-placement={isDropTarget ? modDropTarget?.placement : undefined}
                 data-reorder-disabled={!canDragModRow}
                 data-menu-open={isMenuOpen}
                 key={item.orderId}
-                aria-label={`${modItemTitle(item)} ${item.isSeparator ? 'separator' : 'mod'}`}
+                aria-label={`${modItemTitle(item)} ${isOverwrite ? 'overwrite folder' : item.isSeparator ? 'separator' : 'mod'}`}
+                aria-expanded={item.isSeparator ? !isCollapsed : undefined}
                 onClick={() => {
                   if (consumeSuppressedRowClick()) {
                     return;
@@ -4604,6 +5521,9 @@ export const App = () => {
                 onContextMenu={(event) => {
                   event.preventDefault();
                   dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
+                  setModMenuPosition(
+                    rowContextMenuPositionFromPointer(event.clientX, event.clientY)
+                  );
                   setModMenuOrderId(item.orderId);
                 }}
                 onPointerDown={(event) => {
@@ -4631,6 +5551,9 @@ export const App = () => {
                   if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
                     event.preventDefault();
                     dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
+                    setModMenuPosition(
+                      rowContextMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
+                    );
                     setModMenuOrderId(item.orderId);
                   }
                 }}
@@ -4640,9 +5563,46 @@ export const App = () => {
                     Сюда
                   </span>
                 ) : null}
-                {item.isSeparator ? (
+                {isOverwrite ? (
+                  <>
+                    <div className="mod-overwrite-cell" role="cell">
+                      <span className="mod-overwrite-icon" aria-hidden="true">
+                        <FolderOpen size={16} />
+                      </span>
+                      <div className="mod-overwrite-title">
+                        <strong>{modItemTitle(item)}</strong>
+                        <span>{item.id || 'overwrite'}</span>
+                      </div>
+                      <span className="mod-status-chip" data-status="local">
+                        overwrite
+                      </span>
+                    </div>
+                    {isMenuOpen ? renderModRowMenu(item) : null}
+                  </>
+                ) : item.isSeparator ? (
                   <>
                     <div className="mod-separator-cell" role="cell">
+                      <button
+                        className="separator-toggle-button"
+                        type="button"
+                        title={isCollapsed ? 'Expand separator' : 'Collapse separator'}
+                        aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${modItemTitle(item)}`}
+                        aria-expanded={!isCollapsed}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          dispatchModsWorkspace({
+                            type: 'separator-collapse-toggled',
+                            orderId: item.orderId
+                          });
+                          setModMenuOrderId(null);
+                        }}
+                      >
+                        {isCollapsed ? (
+                          <ChevronRight size={15} aria-hidden="true" />
+                        ) : (
+                          <ChevronDown size={15} aria-hidden="true" />
+                        )}
+                      </button>
                       <span className="mod-separator-line" aria-hidden="true" />
                       <strong className="mod-separator-title">{modItemTitle(item)}</strong>
                       <span className="mod-separator-count">
@@ -4775,7 +5735,7 @@ export const App = () => {
         </div>
         <div>
           <dt>Version</dt>
-          <dd>{selectedModItem?.isMod ? selectedModItem.version || 'local' : 'separator'}</dd>
+          <dd>{selectedModItem?.isMod ? selectedModItem.version || 'local' : isModOverwriteItem(selectedModItem) ? 'overwrite' : 'separator'}</dd>
         </div>
         <div>
           <dt>Files</dt>
@@ -4919,41 +5879,111 @@ export const App = () => {
     );
   };
 
-  const renderPluginRowMenu = (item: FluxoraPluginOrderItem) => (
-    <div className="mod-row-menu" role="menu" aria-label={`${pluginItemTitle(item)} actions`}>
-      {item.isPlugin ? (
+  const renderPluginRowMenu = (item: FluxoraPluginOrderItem) => {
+    if (pluginMenuOrderId !== item.orderId || !pluginMenuPosition) {
+      return null;
+    }
+
+    const canMoveItem =
+      pluginCapabilities.loadOrderSupported &&
+      canDragPluginOrderItem(pluginsWorkspace.items, item.orderId);
+    const isCollapsed =
+      item.isSeparator && pluginsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
+
+    return createPortal(
+      <div
+        className="mod-row-menu mod-row-menu--context"
+        role="menu"
+        aria-label={`${pluginItemTitle(item)} actions`}
+        data-row-context-menu-surface="true"
+        style={{
+          left: pluginMenuPosition.left,
+          top: pluginMenuPosition.top,
+          maxHeight: pluginMenuPosition.maxHeight
+        }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {item.isPlugin ? (
+          <>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={Boolean(pluginsBusyLabel) || !pluginCapabilities.bulkToggleSupported}
+              onClick={() => {
+                setPluginMenuOrderId(null);
+                void setAllPluginsEnabled(true);
+              }}
+            >
+              <CheckCircle2 size={14} aria-hidden="true" />
+              <span>Включить все плагины</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={Boolean(pluginsBusyLabel) || !pluginCapabilities.bulkToggleSupported}
+              onClick={() => {
+                setPluginMenuOrderId(null);
+                void setAllPluginsEnabled(false);
+              }}
+            >
+              <XCircle size={14} aria-hidden="true" />
+              <span>Выключить все плагины</span>
+            </button>
+          </>
+        ) : null}
+        {item.isSeparator ? (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              dispatchPluginsWorkspace({
+                type: 'separator-collapse-toggled',
+                orderId: item.orderId
+              });
+              setPluginMenuOrderId(null);
+            }}
+          >
+            {isCollapsed ? 'Expand separator' : 'Collapse separator'}
+          </button>
+        ) : null}
         <button
           type="button"
           role="menuitem"
-          disabled={item.isLocked}
-          onClick={() => void setPluginEnabled(item, !item.isEnabled)}
+          disabled={!canMoveItem}
+          onClick={() => {
+            setPluginMenuOrderId(null);
+            void movePluginOrderItem(item, -1);
+          }}
         >
-          {item.isEnabled ? 'Disable' : 'Enable'}
+          Move up
         </button>
-      ) : null}
-      <button
-        type="button"
-        role="menuitem"
-        disabled={!pluginCapabilities.loadOrderSupported}
-        onClick={() => void movePluginOrderItem(item, -1)}
-      >
-        Move up
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        disabled={!pluginCapabilities.loadOrderSupported}
-        onClick={() => void movePluginOrderItem(item, 1)}
-      >
-        Move down
-      </button>
-      {item.isSeparator ? (
-        <button type="button" role="menuitem" onClick={() => void deletePluginSeparator(item)}>
-          Delete separator
+        <button
+          type="button"
+          role="menuitem"
+          disabled={!canMoveItem}
+          onClick={() => {
+            setPluginMenuOrderId(null);
+            void movePluginOrderItem(item, 1);
+          }}
+        >
+          Move down
         </button>
-      ) : null}
-    </div>
-  );
+        {item.isSeparator ? (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setPluginMenuOrderId(null);
+              void deletePluginSeparator(item);
+            }}
+          >
+            Delete separator
+          </button>
+        ) : null}
+      </div>,
+      document.body
+    );
+  };
 
   const renderPluginRows = () => {
     if (pluginsWorkspace.loadState === 'loading') {
@@ -5013,6 +6043,12 @@ export const App = () => {
             const isSelected = item.orderId === pluginsWorkspace.selectedOrderId;
             const isMenuOpen = item.orderId === pluginMenuOrderId;
             const state = pluginStatusText(item);
+            const isNested = isPluginNestedUnderSeparator(pluginsWorkspace.items, item.orderId);
+            const isCollapsed =
+              item.isSeparator && pluginsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
+            const separatorPluginCount = item.isSeparator
+              ? pluginSeparatorChildCount(pluginsWorkspace.items, item.orderId)
+              : 0;
             const isDragging = draggedPluginOrderId === item.orderId;
             const isDropTarget =
               pluginDropTarget?.orderId === item.orderId && draggedPluginOrderId !== item.orderId;
@@ -5031,6 +6067,8 @@ export const App = () => {
                 data-order-id={item.orderId}
                 data-selected={isSelected}
                 data-separator={item.isSeparator}
+                data-in-separator={isNested}
+                data-collapsed={isCollapsed}
                 data-locked={item.isLocked}
                 data-dragging={isDragging}
                 data-drop-target={isDropTarget}
@@ -5039,6 +6077,7 @@ export const App = () => {
                 data-menu-open={isMenuOpen}
                 key={item.orderId}
                 aria-label={`${pluginItemTitle(item)} ${item.isSeparator ? 'separator' : 'plugin'}`}
+                aria-expanded={item.isSeparator ? !isCollapsed : undefined}
                 onClick={() => {
                   if (consumeSuppressedRowClick()) {
                     return;
@@ -5050,6 +6089,9 @@ export const App = () => {
                 onContextMenu={(event) => {
                   event.preventDefault();
                   dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
+                  setPluginMenuPosition(
+                    rowContextMenuPositionFromPointer(event.clientX, event.clientY)
+                  );
                   setPluginMenuOrderId(item.orderId);
                 }}
                 onPointerDown={(event) => {
@@ -5077,6 +6119,9 @@ export const App = () => {
                   if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
                     event.preventDefault();
                     dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
+                    setPluginMenuPosition(
+                      rowContextMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
+                    );
                     setPluginMenuOrderId(item.orderId);
                   }
                 }}
@@ -5087,15 +6132,67 @@ export const App = () => {
                   </span>
                 ) : null}
                 <span className="plugin-hex-index" role="cell">
-                  {pluginHexIndex(item)}
+                  {item.isSeparator ? (
+                    <button
+                      className="separator-toggle-button"
+                      type="button"
+                      title={isCollapsed ? 'Expand separator' : 'Collapse separator'}
+                      aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${pluginItemTitle(item)}`}
+                      aria-expanded={!isCollapsed}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        dispatchPluginsWorkspace({
+                          type: 'separator-collapse-toggled',
+                          orderId: item.orderId
+                        });
+                        setPluginMenuOrderId(null);
+                      }}
+                    >
+                      {isCollapsed ? (
+                        <ChevronRight size={15} aria-hidden="true" />
+                      ) : (
+                        <ChevronDown size={15} aria-hidden="true" />
+                      )}
+                    </button>
+                  ) : (
+                    pluginHexIndex(item)
+                  )}
                 </span>
-                <div className="mod-row__main" role="cell">
-                  <strong>{pluginItemTitle(item)}</strong>
-                  <span>
-                    {item.isSeparator
-                      ? 'separator'
-                      : item.lockReason || item.missingMasters.join(', ') || item.orderId}
-                  </span>
+                <div
+                  className={item.isPlugin ? 'mod-row__main plugin-row__main' : 'mod-row__main'}
+                  role="cell"
+                >
+                  {item.isPlugin ? (
+                    <label
+                      className="mod-enable-checkbox plugin-enable-checkbox"
+                      title={item.isEnabled ? 'Disable plugin' : 'Enable plugin'}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                        <input
+                          type="checkbox"
+                          checked={item.isEnabled}
+                          disabled={item.isLocked || Boolean(pluginsBusyLabel)}
+                          aria-label={
+                            item.isEnabled
+                              ? `Disable ${pluginItemTitle(item)}`
+                            : `Enable ${pluginItemTitle(item)}`
+                        }
+                        title={item.isEnabled ? 'Disable plugin' : 'Enable plugin'}
+                        onChange={(event) => void setPluginEnabled(item, event.currentTarget.checked)}
+                      />
+                      <span aria-hidden="true" />
+                    </label>
+                  ) : null}
+                  <div className="plugin-row__title">
+                    <strong>{pluginItemTitle(item)}</strong>
+                    <span>
+                      {item.isSeparator
+                        ? `${separatorPluginCount} ${
+                            separatorPluginCount === 1 ? 'plugin' : 'plugins'
+                          }`
+                        : pluginSourceLabel(item)}
+                    </span>
+                  </div>
                 </div>
                 <span role="cell">
                   {item.isSeparator ? null : (
@@ -5116,25 +6213,11 @@ export const App = () => {
                 </span>
                 <span role="cell">{item.isSeparator ? '' : item.sourceMod || 'game data'}</span>
                 <div className="row-actions mod-actions" role="cell" data-menu-open={isMenuOpen}>
-                  {item.isPlugin ? (
-                    <button
-                      className="icon-button"
-                      type="button"
-                      title={item.isEnabled ? 'Disable plugin' : 'Enable plugin'}
-                      disabled={item.isLocked || Boolean(pluginsBusyLabel)}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void setPluginEnabled(item, !item.isEnabled);
-                      }}
-                    >
-                      <Power size={16} aria-hidden="true" />
-                    </button>
-                  ) : null}
                   <button
                     className="icon-button"
                     type="button"
                     title="Move up"
-                    disabled={!pluginCapabilities.loadOrderSupported || Boolean(pluginsBusyLabel)}
+                    disabled={!canDragPluginRow}
                     onClick={(event) => {
                       event.stopPropagation();
                       void movePluginOrderItem(item, -1);
@@ -5146,7 +6229,7 @@ export const App = () => {
                     className="icon-button"
                     type="button"
                     title="Move down"
-                    disabled={!pluginCapabilities.loadOrderSupported || Boolean(pluginsBusyLabel)}
+                    disabled={!canDragPluginRow}
                     onClick={(event) => {
                       event.stopPropagation();
                       void movePluginOrderItem(item, 1);
@@ -5158,12 +6241,21 @@ export const App = () => {
                     className="icon-button"
                     type="button"
                     title="Actions"
+                    data-row-context-menu-trigger="true"
                     onClick={(event) => {
                       event.stopPropagation();
                       dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
-                      setPluginMenuOrderId((current) =>
-                        current === item.orderId ? null : item.orderId
+                      const nextPosition = rowContextMenuPositionFromAnchor(
+                        event.currentTarget.getBoundingClientRect()
                       );
+                      setPluginMenuOrderId((current) => {
+                        if (current === item.orderId) {
+                          return null;
+                        }
+
+                        setPluginMenuPosition(nextPosition);
+                        return item.orderId;
+                      });
                     }}
                   >
                     <MoreHorizontal size={16} aria-hidden="true" />
@@ -5311,60 +6403,149 @@ export const App = () => {
     );
   };
 
-  const renderDownloadRowMenu = (entry: FluxoraDownloadEntry) => (
-    <div className="mod-row-menu" role="menu" aria-label={`${downloadTitle(entry)} actions`}>
-      <button
-        type="button"
-        role="menuitem"
-        disabled={!entry.canInstall || Boolean(downloadsBusyLabel)}
-        onClick={() => void installDownload(entry)}
+  const renderDownloadRowMenu = (entry: FluxoraDownloadEntry) => {
+    if (downloadMenuId !== entry.id || !downloadMenuPosition) {
+      return null;
+    }
+
+    return createPortal(
+      <div
+        className="mod-row-menu mod-row-menu--context"
+        role="menu"
+        aria-label={`${downloadTitle(entry)} actions`}
+        data-row-context-menu-surface="true"
+        style={{
+          left: downloadMenuPosition.left,
+          top: downloadMenuPosition.top,
+          maxHeight: downloadMenuPosition.maxHeight
+        }}
+        onClick={(event) => event.stopPropagation()}
       >
-        Install
-      </button>
-      {entry.isDownloading ? (
         <button
           type="button"
           role="menuitem"
-          disabled={Boolean(downloadsBusyLabel)}
-          onClick={() => void cancelDownload(entry)}
+          disabled={!entry.canInstall || Boolean(downloadsBusyLabel)}
+          onClick={() => {
+            setDownloadMenuId(null);
+            void installDownload(entry);
+          }}
         >
-          Cancel
+          Install
         </button>
-      ) : null}
-      {entry.canResume ? (
+        {entry.isDownloading ? (
+          <button
+            type="button"
+            role="menuitem"
+            disabled={Boolean(downloadsBusyLabel)}
+            onClick={() => {
+              setDownloadMenuId(null);
+              void cancelDownload(entry);
+            }}
+          >
+            Cancel
+          </button>
+        ) : null}
+        {entry.canResume ? (
+          <button
+            type="button"
+            role="menuitem"
+            disabled={Boolean(downloadsBusyLabel)}
+            onClick={() => {
+              setDownloadMenuId(null);
+              void resumeDownload(entry);
+            }}
+          >
+            Resume
+          </button>
+        ) : null}
         <button
           type="button"
           role="menuitem"
-          disabled={Boolean(downloadsBusyLabel)}
-          onClick={() => void resumeDownload(entry)}
+          onClick={() => {
+            setDownloadMenuId(null);
+            void openDownloadInShell(entry);
+          }}
         >
-          Resume
+          Show in folder
         </button>
-      ) : null}
-      <button type="button" role="menuitem" onClick={() => void openDownloadInShell(entry)}>
-        Show in folder
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        disabled={!entry.canDelete || Boolean(downloadsBusyLabel)}
-        onClick={() => void deleteDownload(entry)}
-      >
-        Delete
-      </button>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={!entry.canDelete || Boolean(downloadsBusyLabel)}
+          onClick={() => {
+            setDownloadMenuId(null);
+            void deleteDownload(entry);
+          }}
+        >
+          Delete
+        </button>
+      </div>,
+      document.body
+    );
+  };
+
+  const renderDownloadSkeletonRows = () => (
+    <div
+      className="mod-table download-table download-table--skeleton"
+      role="table"
+      aria-label="Downloads"
+      aria-busy="true"
+    >
+      <div className="mod-row download-row mod-row--head" role="row">
+        <span role="columnheader">File</span>
+        <span role="columnheader">Progress</span>
+        <span role="columnheader">State</span>
+        <span role="columnheader">Size</span>
+        <span role="columnheader">Source</span>
+      </div>
+      <div className="mod-table__body" role="rowgroup">
+        {downloadSkeletonRows.map((row) => (
+          <div className="mod-row download-row download-row--skeleton" role="row" key={row.id}>
+            <div className="mod-row__main" role="cell">
+              <span
+                className="download-skeleton download-skeleton--title"
+                style={{ width: `${row.titleWidth}%` }}
+              />
+            </div>
+            <div className="download-progress download-progress--skeleton" role="cell">
+              <div
+                className="download-progress__bar download-progress__bar--skeleton"
+                aria-hidden="true"
+              >
+                <span style={{ width: `${row.barWidth}%` }} />
+              </div>
+              <span
+                className="download-skeleton download-skeleton--progress-text"
+                style={{ width: `${row.progressWidth}%` }}
+              />
+            </div>
+            <span role="cell">
+              <span
+                className="download-skeleton download-skeleton--state"
+                style={{ width: `${row.stateWidth}%` }}
+              />
+            </span>
+            <span role="cell">
+              <span
+                className="download-skeleton download-skeleton--size"
+                style={{ width: `${row.sizeWidth}%` }}
+              />
+            </span>
+            <span role="cell">
+              <span
+                className="download-skeleton download-skeleton--source"
+                style={{ width: `${row.sourceWidth}%` }}
+              />
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 
   const renderDownloadRows = () => {
     if (downloadsWorkspace.loadState === 'loading') {
-      return (
-        <EmptyState
-          icon={<RefreshCw size={18} aria-hidden="true" />}
-          title="Loading downloads"
-          description={selectedProject?.projectDirectory ?? 'Selected build'}
-          tone="loading"
-        />
-      );
+      return renderDownloadSkeletonRows();
     }
 
     if (downloadsWorkspace.loadState === 'error') {
@@ -5400,7 +6581,6 @@ export const App = () => {
           <span role="columnheader">State</span>
           <span role="columnheader">Size</span>
           <span role="columnheader">Source</span>
-          <span role="columnheader">Actions</span>
         </div>
         <div
           className="mod-table__body"
@@ -5436,6 +6616,9 @@ export const App = () => {
                 onContextMenu={(event) => {
                   event.preventDefault();
                   dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
+                  setDownloadMenuPosition(
+                    rowContextMenuPositionFromPointer(event.clientX, event.clientY)
+                  );
                   setDownloadMenuId(entry.id);
                 }}
                 onKeyDown={(event) => {
@@ -5452,13 +6635,15 @@ export const App = () => {
                   if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
                     event.preventDefault();
                     dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
+                    setDownloadMenuPosition(
+                      rowContextMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
+                    );
                     setDownloadMenuId(entry.id);
                   }
                 }}
               >
                 <div className="mod-row__main" role="cell">
-                  <strong>{downloadTitle(entry)}</strong>
-                  <span>{entry.fileName || shortPath(downloadPath(entry))}</span>
+                  <strong title={downloadRawTitle(entry)}>{downloadTitle(entry)}</strong>
                 </div>
                 <div className="download-progress" role="cell">
                   <div className="download-progress__bar" aria-hidden="true">
@@ -5471,72 +6656,7 @@ export const App = () => {
                 </span>
                 <span role="cell">{entry.sizeText || '-'}</span>
                 <span role="cell">{entry.source || 'local'}</span>
-                <div className="row-actions mod-actions" role="cell" data-menu-open={isMenuOpen}>
-                  <button
-                    className="icon-button"
-                    type="button"
-                    title="Install"
-                    disabled={!entry.canInstall || Boolean(downloadsBusyLabel)}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void installDownload(entry);
-                    }}
-                  >
-                    <Play size={16} aria-hidden="true" />
-                  </button>
-                  {entry.isDownloading ? (
-                    <button
-                      className="icon-button"
-                      type="button"
-                      title="Cancel download"
-                      disabled={Boolean(downloadsBusyLabel)}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void cancelDownload(entry);
-                      }}
-                    >
-                      <XCircle size={16} aria-hidden="true" />
-                    </button>
-                  ) : (
-                    <button
-                      className="icon-button"
-                      type="button"
-                      title="Resume download"
-                      disabled={!entry.canResume || Boolean(downloadsBusyLabel)}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void resumeDownload(entry);
-                      }}
-                    >
-                      <RefreshCw size={16} aria-hidden="true" />
-                    </button>
-                  )}
-                  <button
-                    className="icon-button"
-                    type="button"
-                    title="Delete download"
-                    disabled={!entry.canDelete || Boolean(downloadsBusyLabel)}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void deleteDownload(entry);
-                    }}
-                  >
-                    <Trash2 size={16} aria-hidden="true" />
-                  </button>
-                  <button
-                    className="icon-button"
-                    type="button"
-                    title="Actions"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
-                      setDownloadMenuId((current) => (current === entry.id ? null : entry.id));
-                    }}
-                  >
-                    <MoreHorizontal size={16} aria-hidden="true" />
-                  </button>
-                  {isMenuOpen ? renderDownloadRowMenu(entry) : null}
-                </div>
+                {isMenuOpen ? renderDownloadRowMenu(entry) : null}
               </div>
             );
           })}
@@ -5547,57 +6667,6 @@ export const App = () => {
       </div>
     );
   };
-
-  const renderDownloadsInspector = () => (
-    <aside className="inspector plugins-inspector" aria-label="Selected download details">
-      <div className="surface-header surface-header--compact">
-        <div>
-          <p className="eyebrow">Selected download</p>
-          <h2>{selectedDownloadItem ? downloadTitle(selectedDownloadItem) : 'None'}</h2>
-        </div>
-      </div>
-      <dl className="fact-list">
-        <div>
-          <dt>Queued</dt>
-          <dd>{downloadsWorkspace.items.length}</dd>
-        </div>
-        <div>
-          <dt>Visible</dt>
-          <dd>{filteredDownloadItems.length}</dd>
-        </div>
-        <div>
-          <dt>Status</dt>
-          <dd>{downloadStatusText(selectedDownloadItem)}</dd>
-        </div>
-        <div>
-          <dt>Progress</dt>
-          <dd>
-            {selectedDownloadItem
-              ? selectedDownloadItem.progressText || `${downloadProgressValue(selectedDownloadItem)}%`
-              : 'none'}
-          </dd>
-        </div>
-        <div>
-          <dt>Speed</dt>
-          <dd>{selectedDownloadItem?.downloadSpeedText || selectedDownloadItem?.etaText || 'none'}</dd>
-        </div>
-        <div>
-          <dt>Path</dt>
-          <dd>{selectedDownloadItem ? shortPath(downloadPath(selectedDownloadItem)) : 'none'}</dd>
-        </div>
-      </dl>
-      <div className="plugin-capability-panel">
-        <strong>NXM protocol</strong>
-        <span>
-          {downloadCapabilities.nxmRegistrationState === 'available'
-            ? 'Protocol registration is available on this platform.'
-            : downloadCapabilities.nxmRegistrationState === 'limited'
-              ? 'Protocol capture is wired; installer packaging must finish OS registration.'
-              : 'Protocol state is not reported by the bridge.'}
-        </span>
-      </div>
-    </aside>
-  );
 
   const renderRightPanePluginDetails = () => (
     <section className="right-pane-detail-card" aria-label="Selected plugin detail">
@@ -5625,37 +6694,6 @@ export const App = () => {
               ? selectedPluginItem.missingMasters.join(', ')
               : 'none'}
           </dd>
-        </div>
-      </dl>
-    </section>
-  );
-
-  const renderRightPaneDownloadDetails = () => (
-    <section className="right-pane-detail-card" aria-label="Selected download detail">
-      <div>
-        <span>Selected download</span>
-        <strong>{selectedDownloadItem ? downloadTitle(selectedDownloadItem) : 'None'}</strong>
-      </div>
-      <dl>
-        <div>
-          <dt>Status</dt>
-          <dd>{downloadStatusText(selectedDownloadItem)}</dd>
-        </div>
-        <div>
-          <dt>Progress</dt>
-          <dd>
-            {selectedDownloadItem
-              ? selectedDownloadItem.progressText || `${downloadProgressValue(selectedDownloadItem)}%`
-              : 'none'}
-          </dd>
-        </div>
-        <div>
-          <dt>Path</dt>
-          <dd>{selectedDownloadItem ? shortPath(downloadPath(selectedDownloadItem)) : 'none'}</dd>
-        </div>
-        <div>
-          <dt>NXM</dt>
-          <dd>{downloadCapabilities.nxmRegistrationState}</dd>
         </div>
       </dl>
     </section>
@@ -6091,7 +7129,7 @@ export const App = () => {
           disabled={!downloadCapabilities.bridgeAvailable}
         />
       </label>
-      {downloadsBusyLabel ? (
+      {downloadsBusyLabel && downloadsWorkspace.loadState !== 'loading' ? (
         <div className="mod-busy-strip" role="status">
           <RefreshCw size={15} aria-hidden="true" />
           <span>{downloadsBusyLabel}</span>
@@ -6106,7 +7144,6 @@ export const App = () => {
       ) : (
         renderDownloadRows()
       )}
-      {renderRightPaneDownloadDetails()}
     </div>
   );
 
@@ -6227,7 +7264,7 @@ export const App = () => {
               <span>{message}</span>
             </div>
           ) : null}
-          {downloadsBusyLabel ? (
+          {downloadsBusyLabel && downloadsWorkspace.loadState !== 'loading' ? (
             <div className="mod-busy-strip" role="status">
               <RefreshCw size={15} aria-hidden="true" />
               <span>{downloadsBusyLabel}</span>
@@ -6235,7 +7272,6 @@ export const App = () => {
           ) : null}
           {renderDownloadRows()}
         </section>
-        {renderDownloadsInspector()}
       </section>
     );
   };
@@ -6976,6 +8012,19 @@ export const App = () => {
     />
   );
 
+  const renderOverwriteClearSplash = () => (
+    <LoadingSplash
+      aria-label="Очистка override"
+      buildName={overwriteClearSplash?.buildName}
+      detail="Прогресс очистки override"
+      messages={overwriteClearMessages}
+      open={Boolean(overwriteClearSplash)}
+      progress={overwriteClearSplash?.progress ?? 0}
+      subtitle={overwriteClearSplash?.buildName}
+      title="Очистка override"
+    />
+  );
+
   const renderTransferOperationPage = () => (
     <TransferMo2Page
       bridgeReady={Boolean(bridgeStatus?.ready)}
@@ -7292,6 +8341,7 @@ export const App = () => {
                   : null}
                 {renderInstallDialog()}
                 {renderOperationOverlay()}
+                {renderOverwriteClearSplash()}
                 {renderOpeningBuildSplash()}
                 {renderLaunchSplash()}
               </>

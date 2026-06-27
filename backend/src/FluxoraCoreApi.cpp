@@ -3363,6 +3363,32 @@ extern "C"
         }
     }
 
+    int fluxora_clear_overwrite_folder(
+        const wchar_t* projectDirectory)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Overwrite",
+                std::string("Clear overwrite folder requested. projectDirectory=\"") +
+                    pathForLog(std::filesystem::path(projectDirectory)) + "\"");
+            core().mods().clearOverwriteFolder(std::filesystem::path(projectDirectory));
+            logOperation(fluxora::LogLevel::Info, "Overwrite", "Clear overwrite folder completed.");
+            return FluxoraCoreResultOk;
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
     int fluxora_check_mod_updates(
         const wchar_t* projectDirectory,
         wchar_t* jsonBuffer,
@@ -3559,6 +3585,36 @@ extern "C"
                 rules,
                 isBlank(profileName) ? L"" : profileName,
                 pluginName,
+                isEnabled != 0));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_set_all_plugins_enabled(
+        const wchar_t* projectDirectory,
+        const wchar_t* templateId,
+        const wchar_t* profileName,
+        int isEnabled,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const fluxora::PluginRuleContext rules = resolvePluginRuleContextForTemplate(templateId);
+            const std::wstring json = serializePlugins(core().plugins().setAllPluginsEnabled(
+                std::filesystem::path(projectDirectory),
+                rules,
+                isBlank(profileName) ? L"" : profileName,
                 isEnabled != 0));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }

@@ -102,4 +102,44 @@ describe('Tauri bridge request timeouts', () => {
       timeoutMs: 30_000
     });
   });
+
+  it('routes overwrite clearing through the typed native bridge', async () => {
+    const request: OperationRequest = { operationId: 'op_clear_overwrite' };
+    invokeMock.mockResolvedValue({ accepted: true });
+
+    const api = createTauriFluxoraApi();
+    await expect(api.mods.clearOverwrite(project().projectDirectory, request)).resolves.toMatchObject({
+      accepted: true,
+      operationId: 'op_clear_overwrite'
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'mods.clearOverwrite',
+      params: { projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition' },
+      request,
+      timeoutMs: undefined
+    });
+  });
+
+  it('routes bulk plugin enable through one typed native bridge call', async () => {
+    const request: OperationRequest = { operationId: 'op_plugins_set_all' };
+    invokeMock.mockResolvedValue([]);
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.plugins.setAllEnabled(project().projectDirectory, 'skyrimse', 'Default', false, request)
+    ).resolves.toEqual([]);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'plugins.setAllEnabled',
+      params: {
+        projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+        templateId: 'skyrimse',
+        profileName: 'Default',
+        isEnabled: false
+      },
+      request,
+      timeoutMs: undefined
+    });
+  });
 });

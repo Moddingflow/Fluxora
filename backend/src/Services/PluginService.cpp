@@ -32,6 +32,14 @@ namespace fluxora
         constexpr std::wstring_view separatorKind = L"separator";
         constexpr std::wstring_view stockGameSourceLabel = L"Stock Game";
 
+        std::wstring sourceDirectoryLabel(
+            const std::filesystem::path& directory,
+            std::wstring_view fallback)
+        {
+            const std::wstring folderName = directory.filename().wstring();
+            return folderName.empty() ? std::wstring(fallback) : folderName;
+        }
+
         struct DetectedPlugin
         {
             std::wstring name;
@@ -1192,7 +1200,7 @@ namespace fluxora
                             break;
                         }
 
-                        addPlugin(entry, std::wstring(stockGameSourceLabel), true);
+                        addPlugin(entry, sourceDirectoryLabel(searchDirectory, stockGameSourceLabel), true);
                     }
                 }
             }
@@ -1993,6 +2001,77 @@ namespace fluxora
         }
 
         match->isEnabled = isBasePlugin(pluginRules, match->name) ? true : isEnabled;
+
+        std::vector<ProfilePluginOrderItemRecord> orderRecords =
+            syncPluginOrderItems(projectDirectory, profileName, stored);
+        std::vector<PluginEntry> entries =
+            buildEntries(projectDirectory, rules, stored, orderRecords, detected);
+        writeStoredPluginsIfChanged(
+            pathSettings_,
+            projectDirectory,
+            rules,
+            profileName,
+            previousStored,
+            storedPluginsFromEntries(entries));
+        return entries;
+    }
+
+    std::vector<PluginEntry> PluginService::setAllPluginsEnabled(
+        const std::filesystem::path& projectDirectory,
+        const BuildTemplate& resolvedTemplate,
+        std::wstring_view profileName,
+        bool isEnabled) const
+    {
+        return withTemplatePluginRules(
+            resolvedTemplate,
+            [this, &projectDirectory, profileName, isEnabled](const PluginRuleContext& rules)
+            {
+                return setAllPluginsEnabled(projectDirectory, rules, profileName, isEnabled);
+            });
+    }
+
+    std::vector<PluginEntry> PluginService::setAllPluginsEnabled(
+        const std::filesystem::path& projectDirectory,
+        const PluginRuleContext& rules,
+        std::wstring_view profileName,
+        bool isEnabled) const
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        ensurePluginSystemSupported(rules, false, &logger_, "setAllPluginsEnabled");
+        logAppliedPluginRules(logger_, "setAllPluginsEnabled", rules, profileName);
+        const PluginSupportRules& pluginRules = rules.rulesProvider->pluginRules();
+        std::filesystem::create_directories(
+            profileDirectory(pathSettings_, projectDirectory, rules, profileName));
+
+        const std::map<std::wstring, DetectedPlugin> detected =
+            detectInstalledPlugins(pathSettings_, projectDirectory, rules, profileName);
+        std::vector<StoredPlugin> stored =
+            reconcileStoredPlugins(pathSettings_, projectDirectory, rules, profileName, detected);
+        const std::vector<StoredPlugin> previousStored = stored;
+
+        for (StoredPlugin& plugin : stored)
+        {
+            if (isBasePlugin(pluginRules, plugin.name))
+            {
+                plugin.isEnabled = true;
+                continue;
+            }
+
+            if (!isEnabled)
+            {
+                plugin.isEnabled = false;
+                continue;
+            }
+
+            const auto detectedPlugin = detected.find(toLower(plugin.name));
+            plugin.isEnabled =
+                detectedPlugin != detected.end() &&
+                detectedPlugin->second.sourceModEnabled;
+        }
 
         std::vector<ProfilePluginOrderItemRecord> orderRecords =
             syncPluginOrderItems(projectDirectory, profileName, stored);

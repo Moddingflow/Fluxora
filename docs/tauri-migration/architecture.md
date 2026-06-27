@@ -48,7 +48,7 @@ Phase 5 extends the first bridge slice to cover the build catalog and creation e
 
 Phase 6 extends `fluxora.bridge.v1` to the installed-mod workspace:
 
-- Native host routes `mods.listInstalled`, `mods.getOrder`, `mods.createSeparator`, `mods.deleteSeparator`, `mods.moveOrderItem`, `mods.deleteInstalled`, `mods.createEmpty`, `mods.setEnabled`, `mods.setAllEnabled`, `mods.checkUpdates` and `mods.getFileTree` to existing C++ C ABI functions.
+- Native host routes `mods.listInstalled`, `mods.getOrder`, `mods.createSeparator`, `mods.deleteSeparator`, `mods.moveOrderItem`, `mods.deleteInstalled`, `mods.createEmpty`, `mods.setEnabled`, `mods.setAllEnabled`, `mods.checkUpdates`, `mods.clearOverwrite` and `mods.getFileTree` to existing C++ C ABI functions.
 - Tauri Rust shell/facade expose typed `window.fluxora.mods.*` calls only; renderer still has no Node.js, filesystem or raw command access.
 - Renderer owns local mod search, selection, row action menus, scroll windowing and expanded file-tree state.
 - C++ core remains the owner of installed mod records, profile order, enabled state, separator persistence, update checks, file tree indexing and filesystem mutations.
@@ -58,7 +58,7 @@ Phase 6 extends `fluxora.bridge.v1` to the installed-mod workspace:
 
 Phase 7 extends `fluxora.bridge.v1` to the plugin/load-order workspace:
 
-- Native host routes `plugins.list`, `plugins.move`, `plugins.createSeparator`, `plugins.deleteSeparator` and `plugins.setEnabled` to existing C++ C ABI functions backed by `PluginService`.
+- Native host routes `plugins.list`, `plugins.move`, `plugins.createSeparator`, `plugins.deleteSeparator`, `plugins.setEnabled` and `plugins.setAllEnabled` to existing C++ C ABI functions backed by `PluginService`.
 - Tauri Rust shell/facade expose typed `window.fluxora.plugins.*` calls only; renderer still has no Node.js, filesystem or raw command access.
 - Renderer owns local plugin search, selection, row action menus, scroll windowing, selected-plugin details and capability explanation only.
 - C++ core remains the owner of plugin detection, active plugin state, base-plugin locks, missing masters, separator persistence and load-order mutation rules.
@@ -151,12 +151,14 @@ Implemented MVP methods:
 - `mods.setEnabled`
 - `mods.setAllEnabled`
 - `mods.checkUpdates`
+- `mods.clearOverwrite`
 - `mods.getFileTree`
 - `plugins.list`
 - `plugins.move`
 - `plugins.createSeparator`
 - `plugins.deleteSeparator`
 - `plugins.setEnabled`
+- `plugins.setAllEnabled`
 - `profiles.list`
 - `profiles.create`
 - `profiles.clone`
@@ -673,6 +675,7 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `mods.setEnabled`
 - `mods.setAllEnabled`
 - `mods.checkUpdates`
+- `mods.clearOverwrite`
 - `mods.getFileTree`
 
 ### Plugins
@@ -682,6 +685,7 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `plugins.createSeparator`
 - `plugins.deleteSeparator`
 - `plugins.setEnabled`
+- `plugins.setAllEnabled`
 
 ### Downloads and install
 

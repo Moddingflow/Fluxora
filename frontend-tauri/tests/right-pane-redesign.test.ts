@@ -26,6 +26,7 @@ describe('right pane redesign', () => {
     expect(app).toContain('className="right-pane-detail-card"');
     expect(app).toContain('className="right-pane-path-tree"');
     expect(app).toContain('aria-label="Selected mod data tree"');
+    expect(app).not.toContain('Selected download');
   });
 
   it('keeps right pane actions routed through the typed facade and existing helpers', () => {
@@ -33,6 +34,7 @@ describe('right pane redesign', () => {
 
     expect(app).toContain('window.fluxora.plugins.list');
     expect(app).toContain('window.fluxora.plugins.setEnabled');
+    expect(app).toContain('window.fluxora.plugins.setAllEnabled');
     expect(app).toContain('window.fluxora.plugins.move');
     expect(app).toContain('window.fluxora.downloads.importFile');
     expect(app).toContain('window.fluxora.downloads.install');
@@ -58,5 +60,16 @@ describe('right pane redesign', () => {
     expect(styles).toContain('.right-pane-detail-card');
     expect(styles).toContain('.right-pane-path-row code');
     expect(styles).toContain('.right-pane-section--fluxpack .fluxpack-panel');
+  });
+
+  it('uses table-shaped skeleton rows while downloads are loading', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+
+    expect(app).toContain('downloadSkeletonRows.map');
+    expect(app).toContain('download-table--skeleton');
+    expect(app).toContain("downloadsBusyLabel && downloadsWorkspace.loadState !== 'loading'");
+    expect(styles).toContain('.download-row--skeleton');
+    expect(styles).toContain('@keyframes downloadSkeletonSweep');
   });
 });

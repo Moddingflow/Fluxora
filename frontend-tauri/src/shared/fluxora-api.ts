@@ -28,6 +28,7 @@ export const FluxoraIpcChannels = {
   executablesSave: 'fluxora:executables:save',
   linksOpenExternal: 'fluxora:links:open-external',
   modsCheckUpdates: 'fluxora:mods:check-updates',
+  modsClearOverwrite: 'fluxora:mods:clear-overwrite',
   modsCreateEmpty: 'fluxora:mods:create-empty',
   modsCreateSeparator: 'fluxora:mods:create-separator',
   modsDeleteInstalled: 'fluxora:mods:delete-installed',
@@ -42,6 +43,7 @@ export const FluxoraIpcChannels = {
   pluginsDeleteSeparator: 'fluxora:plugins:delete-separator',
   pluginsList: 'fluxora:plugins:list',
   pluginsMove: 'fluxora:plugins:move',
+  pluginsSetAllEnabled: 'fluxora:plugins:set-all-enabled',
   pluginsSetEnabled: 'fluxora:plugins:set-enabled',
   profilesClone: 'fluxora:profiles:clone',
   profilesCreate: 'fluxora:profiles:create',
@@ -436,6 +438,7 @@ export interface FluxoraModOrderItem extends FluxoraInstalledMod {
   order: number;
   isSeparator: boolean;
   isMod: boolean;
+  isOverwrite?: boolean;
   modUuid: string;
   separatorTitle: string;
 }
@@ -875,6 +878,10 @@ export interface FluxoraApi {
       projectDirectory: string,
       request?: OperationRequest
     ) => Promise<FluxoraInstalledMod[]>;
+    clearOverwrite: (
+      projectDirectory: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraModMutationResult>;
     getFileTree: (
       projectDirectory: string,
       modPath: string,
@@ -917,6 +924,13 @@ export interface FluxoraApi {
       templateId: string,
       profileName: string | undefined,
       pluginName: string,
+      isEnabled: boolean,
+      request?: OperationRequest
+    ) => Promise<FluxoraPluginOrderItem[]>;
+    setAllEnabled: (
+      projectDirectory: string,
+      templateId: string,
+      profileName: string | undefined,
       isEnabled: boolean,
       request?: OperationRequest
     ) => Promise<FluxoraPluginOrderItem[]>;

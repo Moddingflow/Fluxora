@@ -1,11 +1,12 @@
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 
-import { FacetSpinner, ProgressBar } from '../../design-system';
+import { FacetSpinner, LoadingSplash, ProgressBar } from '../../design-system';
 import type { FluxoraProject } from '../../../shared/fluxora-api';
 
 export type OperationOverlayKind =
   | 'build-create'
   | 'build-delete'
+  | 'mod-delete'
   | 'fluxpack-export'
   | 'fluxpack-install';
 
@@ -68,6 +69,22 @@ export const OperationOverlay = ({
   const showCancel = canCancelBuildCreate || canCancelNativeOperation;
   const cancelDisabled = overlay.cancelRequested && overlay.isRunning;
   const showClose = overlay.canClose && !showCancel;
+
+  if (overlay.kind === 'mod-delete' && tone === 'running') {
+    return (
+      <LoadingSplash
+        aria-label={overlay.title}
+        className="operation-overlay operation-overlay--loading-splash operation-overlay--mod-delete"
+        data-state={tone}
+        detail="Удаление мода"
+        messages={[overlay.title]}
+        open
+        progress={percent}
+        subtitle=""
+        title={overlay.title}
+      />
+    );
+  }
 
   return (
     <div

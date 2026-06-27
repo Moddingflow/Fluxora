@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   downloadCapabilityView,
+  downloadDisplayName,
   downloadProgressValue,
   downloadStatusText,
   downloadTitle,
@@ -122,6 +123,24 @@ describe('download workspace state', () => {
     expect(downloadStatusText(items[1])).toBe('Paused');
     expect(downloadStatusText(items[2])).toBe('1.2 MB/s');
     expect(downloadProgressValue(items[2])).toBe(12);
+  });
+
+  it('trims Nexus archive id tails while preserving meaningful numbers', () => {
+    expect(downloadDisplayName('Aetherius - A Race Overhaul-26686-2-14-1-1719514447.7z')).toBe(
+      'Aetherius - A Race Overhaul'
+    );
+    expect(
+      downloadDisplayName(
+        'Aetherius - A Race Overhaul - Russian Translation-96334-2-14-1-1719514447.7z'
+      )
+    ).toBe('Aetherius - A Race Overhaul - Russian Translation');
+    expect(downloadDisplayName('SkyUI 5.2 SE-3863-5-2-1579093884.7z')).toBe(
+      'SkyUI 5.2 SE'
+    );
+    expect(downloadDisplayName('Texture Pack 2024-12345-1-0-1719514447.zip')).toBe(
+      'Texture Pack 2024'
+    );
+    expect(downloadDisplayName('Archive 2048 Edition.7z')).toBe('Archive 2048 Edition');
   });
 
   it('describes download capabilities from bridge feature state', () => {

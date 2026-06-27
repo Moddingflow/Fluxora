@@ -814,6 +814,18 @@ namespace fluxora
             return candidateText.starts_with(directoryText);
         }
 
+        bool isSameFilesystemPath(
+            const std::filesystem::path& left,
+            const std::filesystem::path& right)
+        {
+            if (left.empty() || right.empty())
+            {
+                return false;
+            }
+
+            return normalizedPathText(left) == normalizedPathText(right);
+        }
+
         std::filesystem::path nativeDeletePath(const std::filesystem::path& path)
         {
 #ifdef _WIN32
@@ -975,6 +987,39 @@ namespace fluxora
             }
 
             removeDirectoryTreePostOrder(nativeRoot);
+        }
+
+        void removeDirectoryContents(const std::filesystem::path& directory)
+        {
+            std::error_code iterateError;
+            DirectoryIterator iterator(
+                directory,
+                std::filesystem::directory_options::skip_permission_denied,
+                iterateError);
+            if (iterateError)
+            {
+                throw std::runtime_error(
+                    "Failed to scan overwrite folder \"" +
+                    toUtf8(directory.wstring()) + "\": " + iterateError.message());
+            }
+
+            std::vector<std::filesystem::path> children;
+            for (const DirectoryIterator end; iterator != end; iterator.increment(iterateError))
+            {
+                if (iterateError)
+                {
+                    throw std::runtime_error(
+                        "Failed to scan overwrite folder \"" +
+                        toUtf8(directory.wstring()) + "\": " + iterateError.message());
+                }
+
+                children.push_back(iterator->path());
+            }
+
+            for (const std::filesystem::path& child : children)
+            {
+                removeModFilesystemPath(child);
+            }
         }
 
         ModFileSummary deferredFileSummary()
@@ -1240,6 +1285,44 @@ namespace fluxora
             projectDirectory,
             isEnabled,
             pathSettings_.modsDirectory(projectDirectory));
+    }
+
+    void ModService::clearOverwriteFolder(
+        const std::filesystem::path& projectDirectory) const
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const BuildPathSettings settings = pathSettings_.loadForProjectDirectory(projectDirectory);
+        const std::filesystem::path overwriteDirectory = settings.overwriteDirectory;
+        if (overwriteDirectory.empty())
+        {
+            throw std::invalid_argument("Overwrite directory is required.");
+        }
+
+        if (isSameFilesystemPath(overwriteDirectory, projectDirectory) ||
+            isSameFilesystemPath(overwriteDirectory, settings.modsDirectory) ||
+            isSameFilesystemPath(overwriteDirectory, settings.profilesDirectory) ||
+            isSameFilesystemPath(overwriteDirectory, settings.downloadsDirectory) ||
+            isSameFilesystemPath(overwriteDirectory, settings.gameDirectory))
+        {
+            throw std::invalid_argument("Overwrite directory must be a dedicated folder.");
+        }
+
+        const PathSafetyService safety;
+        safety.validateDirectoryWriteRoot(overwriteDirectory)
+            .throwIfUnsafe("Overwrite directory is unsafe");
+
+        std::filesystem::create_directories(overwriteDirectory);
+        removeDirectoryContents(overwriteDirectory);
+        std::filesystem::create_directories(overwriteDirectory);
+
+        logger_.writeOperation(
+            LogLevel::Info,
+            "Overwrite",
+            "Cleared overwrite folder path=\"" + toUtf8(overwriteDirectory.wstring()) + "\"");
     }
 
     bool ModService::isInitialized() const noexcept

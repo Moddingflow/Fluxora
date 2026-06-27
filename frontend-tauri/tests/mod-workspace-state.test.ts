@@ -1,21 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  appendOverwriteOrderItem,
+  createOverwriteOrderItem,
   emptyModWorkspaceState,
   filterModOrderItems,
   formatFileSize,
   hasConflict,
   isModNestedUnderSeparator,
+  isModOverwriteItem,
   modLatestVersionText,
   modStatusText,
   modOverwriteView,
+  reorderModOrderItems,
   modSeparatorChildCount,
   modTableStatusView,
   modVersionText,
   modWorkspaceReducer,
   selectedModOrderItem,
   targetIndexForDrop,
-  targetIndexForMove
+  targetIndexForMove,
+  visibleModOrderItems
 } from '../src/renderer/mod-workspace-state';
 import type {
   FluxoraModFileTreeEntry,
@@ -88,6 +93,36 @@ describe('mod workspace state', () => {
     expect(filterModOrderItems(items, '')).toEqual(items);
   });
 
+  it('appends localized overwrite output folder row after visible mods only', () => {
+    const overwrite = createOverwriteOrderItem(
+      'Skyrim Graphics',
+      'C:\\Builds\\Skyrim\\overwrite',
+      'ru-ru'
+    );
+
+    expect(overwrite.name).toBe('Skyrim Graphics · Папка выхода файлов');
+    expect(overwrite.id).toBe('C:\\Builds\\Skyrim\\overwrite');
+    expect(overwrite.isMod).toBe(false);
+    expect(overwrite.isSeparator).toBe(false);
+    expect(isModOverwriteItem(overwrite)).toBe(true);
+    expect(appendOverwriteOrderItem(items, overwrite, '').map((item) => item.orderId)).toEqual([
+      'sep_visuals',
+      'mod_skyui',
+      'mod_smoothcam',
+      overwrite.orderId
+    ]);
+    const englishOverwrite = createOverwriteOrderItem(
+      'Skyrim Graphics',
+      'C:\\Builds\\Skyrim\\overwrite',
+      'en-us'
+    );
+    expect(appendOverwriteOrderItem([items[1]], englishOverwrite, 'output').map((item) => item.orderId)).toEqual([
+      'mod_skyui',
+      englishOverwrite.orderId
+    ]);
+    expect(appendOverwriteOrderItem([items[1]], overwrite, 'skyui')).toEqual([items[1]]);
+  });
+
   it('keeps selection stable after reload and falls back to the first mod', () => {
     const loaded = modWorkspaceReducer(
       { ...emptyModWorkspaceState(), selectedOrderId: 'mod_smoothcam' },
@@ -108,6 +143,22 @@ describe('mod workspace state', () => {
     expect(targetIndexForDrop(items, 'mod_skyui', 'mod_skyui')).toBeNull();
   });
 
+  it('optimistically reorders mod rows and renumbers order values', () => {
+    const reordered = reorderModOrderItems(items, 'mod_skyui', 2);
+
+    expect(reordered?.map((item) => item.orderId)).toEqual([
+      'sep_visuals',
+      'mod_smoothcam',
+      'mod_skyui'
+    ]);
+    expect(reordered?.map((item) => item.order)).toEqual([0, 1, 2]);
+    expect(items.map((item) => item.orderId)).toEqual([
+      'sep_visuals',
+      'mod_skyui',
+      'mod_smoothcam'
+    ]);
+  });
+
   it('calculates separator block drop indexes for precise row slots', () => {
     const groupedItems = [
       ...items,
@@ -115,9 +166,148 @@ describe('mod workspace state', () => {
       modItem('mod_music', 'Music - HQ', 4)
     ];
 
-    expect(targetIndexForDrop(groupedItems, 'sep_visuals', 'mod_music', 'after')).toBe(4);
-    expect(targetIndexForDrop(groupedItems, 'sep_visuals', 'sep_audio', 'before')).toBeNull();
+    expect(targetIndexForDrop(groupedItems, 'sep_visuals', 'mod_music', 'after')).toBeNull();
+    expect(targetIndexForDrop(groupedItems, 'sep_visuals', 'mod_smoothcam', 'before')).toBeNull();
+    expect(targetIndexForDrop(groupedItems, 'sep_visuals', 'sep_audio', 'before')).toBe(2);
+    expect(targetIndexForDrop(groupedItems, 'sep_visuals', 'sep_audio', 'after')).toBe(4);
     expect(targetIndexForDrop(groupedItems, 'sep_audio', 'sep_visuals', 'before')).toBe(0);
+  });
+
+  it('optimistically moves separators without moving their child mods', () => {
+    const groupedItems = [
+      ...items,
+      separatorItem('sep_audio', 'Audio', 3),
+      modItem('mod_music', 'Music - HQ', 4)
+    ];
+    const targetIndex = targetIndexForDrop(groupedItems, 'sep_visuals', 'sep_audio', 'after');
+    const reordered = targetIndex === null
+      ? null
+      : reorderModOrderItems(groupedItems, 'sep_visuals', targetIndex);
+
+    expect(reordered?.map((item) => item.orderId)).toEqual([
+      'mod_skyui',
+      'mod_smoothcam',
+      'sep_audio',
+      'mod_music',
+      'sep_visuals'
+    ]);
+    expect(reordered?.map((item) => item.order)).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('hides collapsed separator children without removing them from reorder blocks', () => {
+    const groupedItems = [
+      ...items,
+      separatorItem('sep_audio', 'Audio', 3),
+      modItem('mod_music', 'Music - HQ', 4)
+    ];
+    const collapsed = new Set(['sep_visuals']);
+
+    expect(visibleModOrderItems(groupedItems, '', collapsed).map((item) => item.orderId)).toEqual([
+      'sep_visuals',
+      'sep_audio',
+      'mod_music'
+    ]);
+    expect(visibleModOrderItems(groupedItems, 'skyui', collapsed).map((item) => item.orderId)).toEqual([
+      'mod_skyui'
+    ]);
+    expect(targetIndexForDrop(groupedItems, 'mod_music', 'sep_visuals', 'after', collapsed)).toBe(3);
+    expect(targetIndexForMove(groupedItems, 'sep_visuals', 1, collapsed)).toBe(4);
+
+    const reordered = reorderModOrderItems(groupedItems, 'sep_visuals', 4);
+    expect(reordered?.map((item) => item.orderId)).toEqual([
+      'mod_skyui',
+      'mod_smoothcam',
+      'sep_audio',
+      'mod_music',
+      'sep_visuals'
+    ]);
+  });
+
+  it('applies optimistic reorder actions and restores authoritative order on reload', () => {
+    const moved = modWorkspaceReducer(
+      { ...emptyModWorkspaceState(), items, selectedOrderId: 'mod_skyui', loadState: 'ready' },
+      { type: 'items-reordered', orderId: 'mod_skyui', targetIndex: 2 }
+    );
+
+    expect(moved.items.map((item) => item.orderId)).toEqual([
+      'sep_visuals',
+      'mod_smoothcam',
+      'mod_skyui'
+    ]);
+    expect(moved.selectedOrderId).toBe('mod_skyui');
+
+    const restored = modWorkspaceReducer(moved, { type: 'items-loaded', items });
+    expect(restored.items.map((item) => item.orderId)).toEqual([
+      'sep_visuals',
+      'mod_skyui',
+      'mod_smoothcam'
+    ]);
+    expect(restored.selectedOrderId).toBe('mod_skyui');
+  });
+
+  it('applies optimistic enabled state without changing the current row context', () => {
+    const loaded = modWorkspaceReducer(
+      { ...emptyModWorkspaceState(), selectedOrderId: 'mod_smoothcam' },
+      { type: 'items-loaded', items }
+    );
+    const collapsed = modWorkspaceReducer(loaded, {
+      type: 'separator-collapse-toggled',
+      orderId: 'sep_visuals'
+    });
+    const enabled = modWorkspaceReducer(collapsed, {
+      type: 'item-enabled-set',
+      orderId: 'mod_smoothcam',
+      isEnabled: true
+    });
+
+    expect(enabled.items.map((item) => item.orderId)).toEqual(items.map((item) => item.orderId));
+    expect(enabled.items.find((item) => item.orderId === 'mod_smoothcam')?.isEnabled).toBe(true);
+    expect(enabled.selectedOrderId).toBe('sep_visuals');
+    expect(enabled.collapsedSeparatorOrderIds.has('sep_visuals')).toBe(true);
+  });
+
+  it('applies optimistic bulk enabled state only to mod rows', () => {
+    const overwrite = createOverwriteOrderItem(
+      'Skyrim Graphics',
+      'C:\\Builds\\Skyrim\\overwrite',
+      'en-us'
+    );
+    const disabled = modWorkspaceReducer(
+      {
+        ...emptyModWorkspaceState(),
+        items: [...items, overwrite],
+        selectedOrderId: 'mod_skyui',
+        loadState: 'ready'
+      },
+      { type: 'all-items-enabled-set', isEnabled: false }
+    );
+
+    expect(disabled.items.filter((item) => item.isMod).every((item) => !item.isEnabled)).toBe(true);
+    expect(disabled.items.find((item) => item.isSeparator)?.isEnabled).toBe(true);
+    expect(disabled.items.find((item) => isModOverwriteItem(item))?.isEnabled).toBe(true);
+    expect(disabled.selectedOrderId).toBe('mod_skyui');
+  });
+
+  it('stores collapsed separator state in the reducer while preserving full order', () => {
+    const loaded = modWorkspaceReducer(
+      { ...emptyModWorkspaceState(), selectedOrderId: 'mod_skyui' },
+      { type: 'items-loaded', items }
+    );
+    const collapsed = modWorkspaceReducer(loaded, {
+      type: 'separator-collapse-toggled',
+      orderId: 'sep_visuals'
+    });
+
+    expect(collapsed.collapsedSeparatorOrderIds.has('sep_visuals')).toBe(true);
+    expect(collapsed.selectedOrderId).toBe('sep_visuals');
+    expect(collapsed.items.map((item) => item.orderId)).toEqual([
+      'sep_visuals',
+      'mod_skyui',
+      'mod_smoothcam'
+    ]);
+    expect(visibleModOrderItems(collapsed.items, '', collapsed.collapsedSeparatorOrderIds)).toEqual([
+      items[0]
+    ]);
   });
 
   it('marks mods as nested when they belong to a separator group', () => {

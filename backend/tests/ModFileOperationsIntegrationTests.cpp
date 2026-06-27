@@ -332,6 +332,11 @@ namespace fluxora::tests
             return pathSettings_.downloadsDirectory(project_);
         }
 
+        std::filesystem::path overwriteDirectory() const
+        {
+            return pathSettings_.overwriteDirectory(project_);
+        }
+
         DownloadEntry importArchive(
             std::wstring_view archiveName,
             const std::vector<ZipEntry>& entries)
@@ -506,6 +511,62 @@ namespace fluxora::tests
         EXPECT_EQ(order[0].separatorTitle, L"Outputs");
         EXPECT_EQ(order[1].kind, L"mod");
         EXPECT_EQ(order[1].name, L"Nemesis Output");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ClearOverwriteFolderDeletesGeneratedFilesAndKeepsFolder)
+    {
+        const std::filesystem::path overwrite = overwriteDirectory();
+        writeTextFile(overwrite / L"meshes" / L"generated.nif", "generated mesh");
+        writeTextFile(overwrite / L"Nemesis_Engine" / L"cache.txt", "cache");
+        writeTextFile(modsDirectory() / L"Keep Mod" / L"data.txt", "keep");
+
+        mods_.clearOverwriteFolder(project_);
+
+        EXPECT_TRUE(std::filesystem::is_directory(overwrite));
+        EXPECT_FALSE(std::filesystem::exists(overwrite / L"meshes"));
+        EXPECT_FALSE(std::filesystem::exists(overwrite / L"Nemesis_Engine"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(modsDirectory() / L"Keep Mod" / L"data.txt"));
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ClearOverwriteFolderRejectsProjectRootOverride)
+    {
+        writeTextFile(
+            project_ / L".fluxora" / L"paths.json",
+            "{\"overwriteDirectory\":\".\"}");
+
+        EXPECT_THROW(
+            mods_.clearOverwriteFolder(project_),
+            std::invalid_argument);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, MoveModSeparatorDoesNotMoveContainedMods)
+    {
+        (void)profileOrder_.createModSeparator(project_, L"Default", L"Visuals", 0);
+        (void)mods_.createEmptyMod(project_, L"SkyUI");
+        (void)mods_.createEmptyMod(project_, L"SmoothCam");
+        (void)profileOrder_.createModSeparator(project_, L"Default", L"Audio", 3);
+        (void)mods_.createEmptyMod(project_, L"Music HQ");
+
+        const std::vector<ProfileModOrderItem> initial =
+            profileOrder_.listModOrder(project_, L"Default");
+        ASSERT_EQ(initial.size(), 5U);
+        ASSERT_EQ(initial[0].kind, L"separator");
+        const std::wstring visualsSeparatorId = initial[0].orderId;
+
+        const std::vector<ProfileModOrderItem> moved =
+            profileOrder_.moveModOrderItem(project_, L"Default", visualsSeparatorId, 4);
+
+        ASSERT_EQ(moved.size(), 5U);
+        EXPECT_EQ(moved[0].kind, L"mod");
+        EXPECT_EQ(moved[0].name, L"SkyUI");
+        EXPECT_EQ(moved[1].kind, L"mod");
+        EXPECT_EQ(moved[1].name, L"SmoothCam");
+        EXPECT_EQ(moved[2].kind, L"separator");
+        EXPECT_EQ(moved[2].separatorTitle, L"Audio");
+        EXPECT_EQ(moved[3].kind, L"mod");
+        EXPECT_EQ(moved[3].name, L"Music HQ");
+        EXPECT_EQ(moved[4].kind, L"separator");
+        EXPECT_EQ(moved[4].separatorTitle, L"Visuals");
     }
 
     TEST_F(ModFileOperationsIntegrationTests, ImportLocalSkyrimBsaUsesGameDefinitionArchiveRules)

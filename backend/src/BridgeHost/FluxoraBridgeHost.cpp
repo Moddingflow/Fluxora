@@ -527,6 +527,7 @@ namespace
                 L"createEmpty",
                 L"deleteInstalled",
                 L"checkUpdates",
+                L"clearOverwrite",
                 L"getFileTree"
             });
         writer.endObject();
@@ -539,7 +540,8 @@ namespace
                 L"move",
                 L"createSeparator",
                 L"deleteSeparator",
-                L"setEnabled"
+                L"setEnabled",
+                L"setAllEnabled"
             });
         writer.endObject();
         writer.key(L"profiles").beginObject();
@@ -1432,6 +1434,23 @@ namespace
             });
     }
 
+    std::wstring payloadClearOverwriteFolder(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const int result = fluxora_clear_overwrite_folder(projectDirectory.c_str());
+        if (result != FluxoraCoreResultOk)
+        {
+            throw coreError(L"core.overwriteClearFailed");
+        }
+
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"accepted", true);
+        writer.endObject();
+        return writer.str();
+    }
+
     std::wstring payloadGetModFileTree(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -1554,6 +1573,27 @@ namespace
                     templateId.c_str(),
                     profileName.empty() ? nullptr : profileName.c_str(),
                     pluginName.c_str(),
+                    isEnabled ? 1 : 0,
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadSetAllPluginsEnabled(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring templateId = requiredStringField(params, L"templateId");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        const bool isEnabled = requiredBooleanField(params, L"isEnabled");
+        return payloadFromCoreJson(
+            L"core.pluginsSetAllEnabledFailed",
+            [&projectDirectory, &templateId, &profileName, isEnabled](wchar_t* buffer, int length)
+            {
+                return fluxora_set_all_plugins_enabled(
+                    projectDirectory.c_str(),
+                    templateId.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
                     isEnabled ? 1 : 0,
                     buffer,
                     length);
@@ -2159,6 +2199,10 @@ namespace
         {
             return payloadCheckModUpdates(request);
         }
+        if (request.method == L"mods.clearOverwrite")
+        {
+            return payloadClearOverwriteFolder(request);
+        }
         if (request.method == L"mods.getFileTree")
         {
             return payloadGetModFileTree(request);
@@ -2182,6 +2226,10 @@ namespace
         if (request.method == L"plugins.setEnabled")
         {
             return payloadSetPluginEnabled(request);
+        }
+        if (request.method == L"plugins.setAllEnabled")
+        {
+            return payloadSetAllPluginsEnabled(request);
         }
         if (request.method == L"nexus.getAuthStatus")
         {

@@ -68,6 +68,13 @@ test.beforeEach(async ({ page }) => {
       installRootDirectory: 'D:\\Fluxora\\Builds',
       projectDirectory: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul',
       configPath: 'D:\\Fluxora\\Configs\\skyrim-main.json',
+      paths: {
+        downloadsDirectory: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\downloads',
+        gameDirectory: 'C:\\Games\\Skyrim',
+        modsDirectory: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods',
+        overwriteDirectory: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\overwrite',
+        profilesDirectory: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\profiles'
+      },
       projectFingerprint: {
         modCount: 248,
         pluginCount: 92,
@@ -100,6 +107,10 @@ test.beforeEach(async ({ page }) => {
     const waitForOperationPaint = () =>
       new Promise<void>((resolve) =>
         setTimeout(resolve, Number((window as any).__fluxoraOperationDelayMs ?? 180))
+      );
+    const waitForDownloadsList = () =>
+      new Promise<void>((resolve) =>
+        setTimeout(resolve, Number((window as any).__fluxoraDownloadsListDelayMs ?? 0))
       );
     const template = {
       id: 'skyrim-special-edition',
@@ -287,6 +298,26 @@ test.beforeEach(async ({ page }) => {
         hasKnownProgress: true,
         canResume: true,
         canInstall: false,
+        canDelete: true
+      },
+      {
+        id: 'aetherius_archive',
+        name: 'Aetherius - A Race Overhaul-26686-2-14-1-1719514447',
+        fileName: 'Aetherius - A Race Overhaul-26686-2-14-1-1719514447.7z',
+        localPath:
+          'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\downloads\\Aetherius - A Race Overhaul-26686-2-14-1-1719514447.7z',
+        source: 'Nexus Mods',
+        status: 'Ready',
+        sizeText: '3.6 MB',
+        createdAtText: 'today',
+        progressPercent: 100,
+        progressText: '100%',
+        etaText: '',
+        downloadSpeedText: '',
+        isDownloading: false,
+        hasKnownProgress: true,
+        canResume: false,
+        canInstall: true,
         canDelete: true
       }
     ];
@@ -537,7 +568,10 @@ test.beforeEach(async ({ page }) => {
           calls.push({ method: 'downloads.installFomod', payload: { operation, request } });
           return { name: request.modName, operationId: operation?.operationId ?? 'op_download_fomod' };
         },
-        list: async () => downloadRows,
+        list: async () => {
+          await waitForDownloadsList();
+          return downloadRows;
+        },
         resume: async () => ({})
       },
       executables: {
@@ -588,6 +622,10 @@ test.beforeEach(async ({ page }) => {
         checkUpdates: async (projectDirectory: any, operation: any) => {
           calls.push({ method: 'mods.checkUpdates', payload: { operation, projectDirectory } });
           return modRows.filter((item) => item.isMod);
+        },
+        clearOverwrite: async (projectDirectory: any, operation: any) => {
+          calls.push({ method: 'mods.clearOverwrite', payload: { operation, projectDirectory } });
+          return {};
         },
         createEmpty: async (projectDirectory: any, modName: any, operation: any) => {
           calls.push({ method: 'mods.createEmpty', payload: { modName, operation, projectDirectory } });
@@ -673,6 +711,13 @@ test.beforeEach(async ({ page }) => {
             payload: { isEnabled, operation, pluginName, profileName, projectDirectory, templateId }
           });
           return pluginRows;
+        },
+        setAllEnabled: async (projectDirectory: any, templateId: any, profileName: any, isEnabled: any, operation: any) => {
+          calls.push({
+            method: 'plugins.setAllEnabled',
+            payload: { isEnabled, operation, profileName, projectDirectory, templateId }
+          });
+          return pluginRows;
         }
       },
       profiles: {
@@ -739,8 +784,14 @@ test.beforeEach(async ({ page }) => {
         setTheme: async () => ({ operationId: 'op_theme', theme: 'dark' })
       },
       shell: {
-        openPath: async () => ({ ok: true }),
-        showItemInFolder: async () => ({ ok: true })
+        openPath: async (path: any) => {
+          calls.push({ method: 'shell.openPath', payload: { path } });
+          return { ok: true };
+        },
+        showItemInFolder: async (path: any) => {
+          calls.push({ method: 'shell.showItemInFolder', payload: { path } });
+          return { ok: true };
+        }
       },
       templates: {
         list: async () => [template],
@@ -957,6 +1008,10 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await expect(page.getByRole('row', { name: /Core fixes separator/ })).toBeVisible();
   await expect(page.getByRole('row', { name: /Unofficial Patch mod/ })).toBeVisible();
   await expect(page.getByRole('img', { name: /Overwrites 4 files/ })).toBeVisible();
+  const overwriteRow = page.getByRole('row', {
+    name: /Skyrim graphics overhaul .* Output files folder overwrite folder/
+  });
+  await expect(overwriteRow).toBeVisible();
 
   await page.getByLabel('Disable Unofficial Patch').click({ force: true });
   await expect
@@ -980,6 +1035,28 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
       )
     )
     .toContain('mods.moveOrderItem');
+
+  await overwriteRow.focus();
+  await page.keyboard.press('Shift+F10');
+  await page.getByRole('menuitem', { name: 'Очистить папку перезаписи' }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.map((call) => call.method)
+      )
+    )
+    .toContain('mods.clearOverwrite');
+  await expect(page.getByLabel('Очистка override')).toBeHidden();
+
+  await overwriteRow.click();
+  await page.keyboard.press('Shift+F10');
+  await page.getByRole('menuitem', { name: 'Открыть в проводнике' }).click();
+  await expect
+    .poll(() => latestCallPayload(page, 'shell.openPath'))
+    .toMatchObject({
+      path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\overwrite'
+    });
 });
 
 test('drags mod order rows with pointer placement feedback', async ({ page }) => {
@@ -998,6 +1075,26 @@ test('drags mod order rows with pointer placement feedback', async ({ page }) =>
       orderId: 'mod_ussep',
       targetIndex: 2
     });
+});
+
+test('renders downloads right pane as skeleton rows while the list loads', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
+      900;
+  });
+  await page.goto(baseUrl);
+
+  await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
+  await page.getByRole('button', { name: 'Open', exact: true }).click();
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+
+  const skeletonTable = rightPane.locator('.download-table--skeleton');
+  await expect(skeletonTable).toBeVisible();
+  await expect(skeletonTable.locator('.download-row--skeleton')).toHaveCount(12);
+  await expect(rightPane.getByText('Loading downloads', { exact: true })).toHaveCount(0);
+  await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
 });
 
 test('uses the redesigned right pane tabs for plugins, data, downloads and build actions', async ({ page }) => {
@@ -1037,8 +1134,13 @@ test('uses the redesigned right pane tabs for plugins, data, downloads and build
   await expect(rightPane.getByText('scripts')).toBeVisible();
 
   await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
-  await expect(page.getByRole('table', { name: 'Downloads' })).toBeVisible();
+  const downloadsTable = rightPane.getByRole('table', { name: 'Downloads' });
+  await expect(downloadsTable).toBeVisible();
   await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
+  await expect(downloadsTable.getByRole('columnheader', { name: 'Actions' })).toHaveCount(0);
+  await expect(rightPane.getByText('Selected download')).toHaveCount(0);
+  await expect(downloadsTable.getByText('Aetherius - A Race Overhaul', { exact: true })).toBeVisible();
+  await expect(downloadsTable.getByText(/26686-2-14-1-1719514447/)).toHaveCount(0);
   await rightPane.getByRole('button', { name: 'Import' }).click();
   await rightPane.getByRole('button', { name: 'NXM' }).click();
   await expect

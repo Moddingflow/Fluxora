@@ -2262,6 +2262,12 @@ namespace fluxora
             std::wstring kind;
         };
 
+        enum class ProfileOrderSeparatorMoveMode
+        {
+            Single,
+            Block
+        };
+
         std::vector<ProfileOrderStorageItem> readProfileOrderStorageItems(
             Database& database,
             std::wstring_view profileName,
@@ -2307,11 +2313,27 @@ namespace fluxora
             return static_cast<int>(items.size());
         }
 
+        int profileOrderMoveEnd(
+            const std::vector<ProfileOrderStorageItem>& items,
+            int sourceIndex,
+            std::wstring_view separatorKind,
+            ProfileOrderSeparatorMoveMode separatorMoveMode)
+        {
+            if (separatorMoveMode == ProfileOrderSeparatorMoveMode::Single &&
+                items[static_cast<std::size_t>(sourceIndex)].kind == separatorKind)
+            {
+                return sourceIndex + 1;
+            }
+
+            return profileOrderMoveBlockEnd(items, sourceIndex, separatorKind);
+        }
+
         bool reorderProfileOrderStorageItems(
             std::vector<ProfileOrderStorageItem>& items,
             std::wstring_view orderItemId,
             int targetIndex,
-            std::wstring_view separatorKind)
+            std::wstring_view separatorKind,
+            ProfileOrderSeparatorMoveMode separatorMoveMode)
         {
             const auto source = std::find_if(
                 items.begin(),
@@ -2331,7 +2353,11 @@ namespace fluxora
             }
 
             const int sourceIndex = static_cast<int>(std::distance(items.begin(), source));
-            const int blockEnd = profileOrderMoveBlockEnd(items, sourceIndex, separatorKind);
+            const int blockEnd = profileOrderMoveEnd(
+                items,
+                sourceIndex,
+                separatorKind,
+                separatorMoveMode);
             const int blockLength = blockEnd - sourceIndex;
 
             if (blockLength <= 1)
@@ -2406,11 +2432,17 @@ namespace fluxora
             const char* tableName,
             std::wstring_view orderItemId,
             int targetIndex,
-            std::wstring_view separatorKind)
+            std::wstring_view separatorKind,
+            ProfileOrderSeparatorMoveMode separatorMoveMode)
         {
             std::vector<ProfileOrderStorageItem> items =
                 readProfileOrderStorageItems(database, profileName, tableName);
-            if (reorderProfileOrderStorageItems(items, orderItemId, targetIndex, separatorKind))
+            if (reorderProfileOrderStorageItems(
+                items,
+                orderItemId,
+                targetIndex,
+                separatorKind,
+                separatorMoveMode))
             {
                 writeProfileOrderStorageItemPositions(database, profileName, tableName, items);
             }
@@ -3581,7 +3613,8 @@ namespace fluxora
             "profile_order_items",
             id,
             targetIndex,
-            profileOrderSeparatorKind);
+            profileOrderSeparatorKind,
+            ProfileOrderSeparatorMoveMode::Single);
 
         transaction.commit();
         return readProfileOrderItems(database, projectDirectory, normalizedProfileName, modsRoot);
@@ -3907,7 +3940,8 @@ namespace fluxora
             "profile_plugin_order_items",
             id,
             targetIndex,
-            profilePluginOrderSeparatorKind);
+            profilePluginOrderSeparatorKind,
+            ProfileOrderSeparatorMoveMode::Block);
 
         transaction.commit();
         return readProfilePluginOrderItems(database, normalizedProfileName);

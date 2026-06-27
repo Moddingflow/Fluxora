@@ -291,6 +291,13 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         projectDirectory,
         request
       ),
+    clearOverwrite: (projectDirectory: string, request?: OperationRequest) =>
+      invokeTyped<FluxoraModMutationResult>(
+        ipc,
+        FluxoraIpcChannels.modsClearOverwrite,
+        projectDirectory,
+        request
+      ),
     getFileTree: (
       projectDirectory: string,
       modPath: string,
@@ -388,6 +395,22 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         templateId,
         profileName,
         pluginName,
+        isEnabled,
+        request
+      ),
+    setAllEnabled: (
+      projectDirectory: string,
+      templateId: string,
+      profileName: string | undefined,
+      isEnabled: boolean,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraPluginOrderItem[]>(
+        ipc,
+        FluxoraIpcChannels.pluginsSetAllEnabled,
+        projectDirectory,
+        templateId,
+        profileName,
         isEnabled,
         request
       )
@@ -1346,6 +1369,15 @@ const createTauriInvoker = (): IpcInvoker => ({
         return bridgeRequest('mods.createEmpty', { projectDirectory: args[0], modName: args[1] }, requestWithOperationId(args[2], 'mods_create_empty'));
       case FluxoraIpcChannels.modsCheckUpdates:
         return bridgeRequest('mods.checkUpdates', { projectDirectory: args[0] }, requestWithOperationId(args[1], 'mods_check_updates'));
+      case FluxoraIpcChannels.modsClearOverwrite: {
+        const request = requestWithOperationId(args[1], 'mods_clear_overwrite');
+        const data = await bridgeRequest<Record<string, unknown>>(
+          'mods.clearOverwrite',
+          { projectDirectory: args[0] },
+          request
+        );
+        return withOperationId(data, request, 'mods_clear_overwrite');
+      }
       case FluxoraIpcChannels.modsGetFileTree:
         return bridgeRequest('mods.getFileTree', { projectDirectory: args[0], modPath: args[1], relativeDirectory: optionalString(args[2]) }, requestWithOperationId(args[3], 'mods_get_file_tree'));
 
@@ -1377,6 +1409,8 @@ const createTauriInvoker = (): IpcInvoker => ({
         return bridgeRequest('plugins.move', { projectDirectory: args[0], templateId: args[1], profileName: optionalString(args[2]), orderItemId: args[3], targetIndex: args[4] }, requestWithOperationId(args[5], 'plugins_move'));
       case FluxoraIpcChannels.pluginsSetEnabled:
         return bridgeRequest('plugins.setEnabled', { projectDirectory: args[0], templateId: args[1], profileName: optionalString(args[2]), pluginName: args[3], isEnabled: args[4] }, requestWithOperationId(args[5], 'plugins_set_enabled'));
+      case FluxoraIpcChannels.pluginsSetAllEnabled:
+        return bridgeRequest('plugins.setAllEnabled', { projectDirectory: args[0], templateId: args[1], profileName: optionalString(args[2]), isEnabled: args[3] }, requestWithOperationId(args[4], 'plugins_set_all_enabled'));
 
       case FluxoraIpcChannels.profilesList:
         return bridgeRequest('profiles.list', { projectDirectory: args[0], defaultProfileName: optionalString(args[1]) }, requestWithOperationId(args[2], 'profiles_list'));

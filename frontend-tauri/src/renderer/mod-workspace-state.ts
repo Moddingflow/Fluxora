@@ -2,12 +2,25 @@ import type {
   FluxoraModFileTreeEntry,
   FluxoraModOrderItem
 } from '../shared/fluxora-api';
+import {
+  isOrderItemHiddenByCollapsedSeparator,
+  orderItemNestedUnderSeparator,
+  parentSeparatorForOrderItem,
+  pruneCollapsedSeparators,
+  reorderOrderItems,
+  separatorChildCount,
+  targetIndexForOrderDrop,
+  targetIndexForOrderMove,
+  visibleOrderItems,
+  type OrderDropPlacement
+} from './order-list-state';
 
 export type ModWorkspaceLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface ModWorkspaceState {
   items: FluxoraModOrderItem[];
   selectedOrderId: string | null;
+  collapsedSeparatorOrderIds: ReadonlySet<string>;
   searchText: string;
   loadState: ModWorkspaceLoadState;
   errorMessage: string | null;
@@ -17,19 +30,85 @@ export type ModWorkspaceAction =
   | { type: 'load-started' }
   | { type: 'load-failed'; message: string }
   | { type: 'items-loaded'; items: FluxoraModOrderItem[] }
+  | { type: 'items-reordered'; orderId: string; targetIndex: number }
+  | { type: 'item-enabled-set'; orderId: string; isEnabled: boolean }
+  | { type: 'all-items-enabled-set'; isEnabled: boolean }
+  | { type: 'separator-collapse-toggled'; orderId: string }
   | { type: 'search-changed'; searchText: string }
   | { type: 'selected'; orderId: string | null };
 
 export const emptyModWorkspaceState = (): ModWorkspaceState => ({
   items: [],
   selectedOrderId: null,
+  collapsedSeparatorOrderIds: new Set<string>(),
   searchText: '',
   loadState: 'idle',
   errorMessage: null
 });
 
+export const overwriteOrderItemId = '__fluxora_overwrite__';
+
+export const isModOverwriteItem = (item: FluxoraModOrderItem | null | undefined): boolean =>
+  item?.isOverwrite === true || item?.kind === 'overwrite';
+
+export const overwriteFolderLabel = (
+  projectName: string,
+  language: string | undefined
+): string => {
+  const buildName = projectName.trim() || 'Build';
+  const normalizedLanguage = language?.toLocaleLowerCase() ?? '';
+
+  if (normalizedLanguage.startsWith('ru')) {
+    return `${buildName} · Папка выхода файлов`;
+  }
+
+  if (normalizedLanguage.startsWith('de')) {
+    return `${buildName} · Ausgabedateien`;
+  }
+
+  return `${buildName} · Output files folder`;
+};
+
+export const createOverwriteOrderItem = (
+  projectName: string,
+  overwriteDirectory: string,
+  language?: string
+): FluxoraModOrderItem => ({
+  id: overwriteDirectory,
+  orderId: overwriteOrderItemId,
+  kind: 'overwrite',
+  order: Number.MAX_SAFE_INTEGER,
+  isSeparator: false,
+  isMod: false,
+  isOverwrite: true,
+  modUuid: '',
+  separatorTitle: '',
+  name: overwriteFolderLabel(projectName, language),
+  version: '',
+  latestVersion: '',
+  lastCheckedAt: '',
+  updateStatus: '',
+  conflictStatus: '',
+  fileCount: 0,
+  conflictingFileCount: 0,
+  overwrittenFileCount: 0,
+  overwritingFileCount: 0,
+  isEnabled: true,
+  canCheckUpdates: false,
+  hasUpdate: false,
+  sourceIsNexus: false,
+  sourceIsModdingFlow: false,
+  isLocal: true,
+  isTranslation: false,
+  isPatch: false
+});
+
 export const modItemTitle = (item: FluxoraModOrderItem): string =>
-  item.isSeparator ? item.separatorTitle || 'Separator' : item.name || item.id;
+  isModOverwriteItem(item)
+    ? item.name || 'Overwrite'
+    : item.isSeparator
+      ? item.separatorTitle || 'Separator'
+      : item.name || item.id;
 
 export type ModOverwriteState = 'none' | 'overwrites' | 'overwritten' | 'mixed' | 'fully-overwritten';
 
@@ -42,6 +121,14 @@ export interface ModOverwriteView {
 const safeCount = (value: number): number => (Number.isFinite(value) ? Math.max(0, value) : 0);
 
 export const modOverwriteView = (item: FluxoraModOrderItem): ModOverwriteView => {
+  if (isModOverwriteItem(item)) {
+    return {
+      state: 'none',
+      label: '',
+      title: 'Generated game and tool files are written here after mods'
+    };
+  }
+
   if (!item.isMod) {
     return {
       state: 'none',
@@ -134,6 +221,13 @@ export interface ModTableStatusView {
 }
 
 export const modTableStatusView = (item: FluxoraModOrderItem): ModTableStatusView => {
+  if (isModOverwriteItem(item)) {
+    return {
+      label: 'Output folder',
+      tone: 'local'
+    };
+  }
+
   if (!item.isMod) {
     return {
       label: 'Separator',
@@ -172,54 +266,33 @@ export const modTableStatusView = (item: FluxoraModOrderItem): ModTableStatusVie
 export const modSeparatorChildCount = (
   items: FluxoraModOrderItem[],
   separatorOrderId: string
-): number => {
-  const separatorIndex = items.findIndex((item) => item.orderId === separatorOrderId);
-  if (separatorIndex < 0 || !items[separatorIndex]?.isSeparator) {
-    return 0;
-  }
-
-  let count = 0;
-
-  for (let index = separatorIndex + 1; index < items.length; index += 1) {
-    const item = items[index];
-    if (item.isSeparator) {
-      break;
-    }
-
-    if (item.isMod) {
-      count += 1;
-    }
-  }
-
-  return count;
-};
+): number => separatorChildCount(items, separatorOrderId);
 
 export const isModNestedUnderSeparator = (
   items: FluxoraModOrderItem[],
   orderId: string
-): boolean => {
-  const index = items.findIndex((item) => item.orderId === orderId);
-  if (index <= 0 || !items[index]?.isMod) {
-    return false;
-  }
-
-  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
-    if (items[cursor].isSeparator) {
-      return true;
-    }
-  }
-
-  return false;
-};
+): boolean => orderItemNestedUnderSeparator(items, orderId);
 
 export const selectedModOrderItem = (
   items: FluxoraModOrderItem[],
-  selectedOrderId: string | null
-): FluxoraModOrderItem | null =>
-  items.find((item) => item.orderId === selectedOrderId) ??
-  items.find((item) => item.isMod) ??
-  items[0] ??
-  null;
+  selectedOrderId: string | null,
+  collapsedSeparatorOrderIds: ReadonlySet<string> = new Set<string>()
+): FluxoraModOrderItem | null => {
+  const selected = items.find((item) => item.orderId === selectedOrderId) ?? null;
+  if (selected && !isOrderItemHiddenByCollapsedSeparator(items, selected.orderId, collapsedSeparatorOrderIds)) {
+    return selected;
+  }
+
+  const parentSeparator = selected
+    ? parentSeparatorForOrderItem(items, selected.orderId)
+    : null;
+  if (parentSeparator && collapsedSeparatorOrderIds.has(parentSeparator.orderId)) {
+    return parentSeparator;
+  }
+
+  const visibleItems = visibleOrderItems(items, collapsedSeparatorOrderIds);
+  return visibleItems.find((item) => item.isMod) ?? visibleItems[0] ?? null;
+};
 
 export const filterModOrderItems = (
   items: FluxoraModOrderItem[],
@@ -254,65 +327,75 @@ export const filterModOrderItems = (
   });
 };
 
+export const appendOverwriteOrderItem = (
+  items: FluxoraModOrderItem[],
+  overwriteItem: FluxoraModOrderItem | null,
+  searchText: string
+): FluxoraModOrderItem[] => {
+  if (!overwriteItem) {
+    return items;
+  }
+
+  if (searchText.trim().length > 0 && filterModOrderItems([overwriteItem], searchText).length === 0) {
+    return items;
+  }
+
+  return [...items, overwriteItem];
+};
+
+export const visibleModOrderItems = (
+  items: FluxoraModOrderItem[],
+  searchText: string,
+  collapsedSeparatorOrderIds: ReadonlySet<string>
+): FluxoraModOrderItem[] => {
+  const filtered = filterModOrderItems(items, searchText);
+  return searchText.trim().length > 0
+    ? filtered
+    : visibleOrderItems(filtered, collapsedSeparatorOrderIds);
+};
+
 export const targetIndexForMove = (
   items: FluxoraModOrderItem[],
   orderId: string,
-  direction: -1 | 1
-): number | null => {
-  const index = items.findIndex((item) => item.orderId === orderId);
-  if (index < 0) {
-    return null;
-  }
-
-  const targetIndex = index + direction;
-  if (targetIndex < 0 || targetIndex >= items.length) {
-    return null;
-  }
-
-  return targetIndex;
-};
+  direction: -1 | 1,
+  collapsedSeparatorOrderIds: ReadonlySet<string> = new Set<string>()
+): number | null =>
+  targetIndexForOrderMove(items, orderId, direction, {
+    collapsedSeparatorOrderIds,
+    separatorDropTargets: 'separators',
+    separatorMoveMode: 'single'
+  });
 
 export const targetIndexForDrop = (
   items: FluxoraModOrderItem[],
   sourceOrderId: string,
   targetOrderId: string,
-  placement: 'before' | 'after' = 'after'
+  placement: OrderDropPlacement = 'after',
+  collapsedSeparatorOrderIds: ReadonlySet<string> = new Set<string>()
 ): number | null => {
-  const sourceIndex = items.findIndex((item) => item.orderId === sourceOrderId);
-  const targetIndex = items.findIndex((item) => item.orderId === targetOrderId);
-
-  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
-    return null;
-  }
-
-  const blockEnd = modOrderMoveBlockEnd(items, sourceIndex);
-  const slotIndex = targetIndex + (placement === 'after' ? 1 : 0);
-
-  if (slotIndex >= sourceIndex && slotIndex <= blockEnd) {
-    return null;
-  }
-
-  return slotIndex > sourceIndex ? slotIndex - 1 : slotIndex;
+  const source = items.find((item) => item.orderId === sourceOrderId);
+  return targetIndexForOrderDrop(items, sourceOrderId, targetOrderId, placement, {
+    collapsedSeparatorOrderIds,
+    separatorDropTargets: source?.isSeparator === true ? 'separators' : 'all',
+    separatorMoveMode: 'single',
+    treatAfterSeparatorTargetAsBlock: source?.isSeparator === true
+  });
 };
 
-const modOrderMoveBlockEnd = (
+export const reorderModOrderItems = (
   items: FluxoraModOrderItem[],
-  sourceIndex: number
-): number => {
-  const source = items[sourceIndex];
-  if (!source?.isSeparator) {
-    return sourceIndex + 1;
-  }
-
-  const nextSeparatorIndex = items.findIndex(
-    (item, index) => index > sourceIndex && item.isSeparator
-  );
-  return nextSeparatorIndex >= 0 ? nextSeparatorIndex : items.length;
-};
+  orderId: string,
+  targetIndex: number
+): FluxoraModOrderItem[] | null =>
+  reorderOrderItems(items, orderId, targetIndex, { separatorMoveMode: 'single' });
 
 export const modStatusText = (item: FluxoraModOrderItem | null): string => {
   if (!item) {
     return 'No mod selected';
+  }
+
+  if (isModOverwriteItem(item)) {
+    return 'Overwrite folder';
   }
 
   if (item.isSeparator) {
@@ -369,13 +452,82 @@ export const modWorkspaceReducer = (
         errorMessage: action.message
       };
     case 'items-loaded': {
-      const selected = selectedModOrderItem(action.items, state.selectedOrderId);
+      const collapsedSeparatorOrderIds = pruneCollapsedSeparators(
+        action.items,
+        state.collapsedSeparatorOrderIds
+      );
+      const selected = selectedModOrderItem(
+        action.items,
+        state.selectedOrderId,
+        collapsedSeparatorOrderIds
+      );
       return {
         ...state,
         items: action.items,
         selectedOrderId: selected?.orderId ?? null,
+        collapsedSeparatorOrderIds,
         loadState: 'ready',
         errorMessage: null
+      };
+    }
+    case 'items-reordered': {
+      const items = reorderModOrderItems(state.items, action.orderId, action.targetIndex);
+      if (!items) {
+        return state;
+      }
+
+      const selected = selectedModOrderItem(
+        items,
+        state.selectedOrderId,
+        state.collapsedSeparatorOrderIds
+      );
+      return {
+        ...state,
+        items,
+        selectedOrderId: selected?.orderId ?? null,
+        loadState: 'ready',
+        errorMessage: null
+      };
+    }
+    case 'item-enabled-set': {
+      const items = state.items.map((item) =>
+        item.isMod && item.orderId === action.orderId
+          ? { ...item, isEnabled: action.isEnabled }
+          : item
+      );
+      return {
+        ...state,
+        items,
+        loadState: 'ready',
+        errorMessage: null
+      };
+    }
+    case 'all-items-enabled-set':
+      return {
+        ...state,
+        items: state.items.map((item) =>
+          item.isMod ? { ...item, isEnabled: action.isEnabled } : item
+        ),
+        loadState: 'ready',
+        errorMessage: null
+      };
+    case 'separator-collapse-toggled': {
+      const separator = state.items.find((item) => item.orderId === action.orderId);
+      if (!separator?.isSeparator) {
+        return state;
+      }
+
+      const collapsedSeparatorOrderIds = new Set(state.collapsedSeparatorOrderIds);
+      if (collapsedSeparatorOrderIds.has(action.orderId)) {
+        collapsedSeparatorOrderIds.delete(action.orderId);
+      } else {
+        collapsedSeparatorOrderIds.add(action.orderId);
+      }
+
+      return {
+        ...state,
+        collapsedSeparatorOrderIds,
+        selectedOrderId: action.orderId
       };
     }
     case 'search-changed':

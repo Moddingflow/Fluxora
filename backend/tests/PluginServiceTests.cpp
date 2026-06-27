@@ -267,7 +267,7 @@ namespace fluxora::tests
         EXPECT_TRUE(stockMaster->isEnabled);
         EXPECT_TRUE(stockMaster->isMaster);
         EXPECT_FALSE(stockMaster->isLocked);
-        EXPECT_EQ(stockMaster->sourceMod, L"Stock Game");
+        EXPECT_EQ(stockMaster->sourceMod, L"Data");
 
         const PluginEntry* overriddenLight = findPlugin(entries, L"ccQDRSSE001-SurvivalMode.esl");
         ASSERT_NE(overriddenLight, nullptr);
@@ -325,6 +325,66 @@ namespace fluxora::tests
         EXPECT_EQ(findPlugin(entries, L"Root.ABC"), nullptr);
         EXPECT_TRUE(std::filesystem::exists(project / L"profiles" / L"Default" / L"enabled.dat"));
         EXPECT_FALSE(std::filesystem::exists(project / L"profiles" / L"Default" / L"plugins.txt"));
+#endif
+    }
+
+    TEST(PluginServiceTests, BulkPluginEnablePersistsUnlockedPluginsTogether)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Bulk Plugin Build";
+        const std::filesystem::path mods = project / L"mods";
+        writeTextFile(mods / L"Custom Mod" / L"AddOns" / L"Custom.ABC", "plugin");
+        writeTextFile(mods / L"Patch Mod" / L"AddOns" / L"Patch.ABC", "plugin");
+
+        InstanceMetadataStore::ensureInstance(project, L"customgame");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{mods / L"Custom Mod", L"Custom Mod", {}, true, {}},
+                InstalledModImportRecord{mods / L"Patch Mod", L"Patch Mod", {}, true, {}}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+
+        FakePluginRulesProvider provider(customRules());
+        const CapabilitySet caps = capabilities(true, true);
+        const PluginRuleContext context{&provider, &caps, nullptr, L"Default"};
+
+        const std::vector<PluginEntry> disabled =
+            plugins.setAllPluginsEnabled(project, context, L"Default", false);
+        const PluginEntry* disabledBase = findPlugin(disabled, L"Base.master");
+        const PluginEntry* disabledCustom = findPlugin(disabled, L"Custom.ABC");
+        const PluginEntry* disabledPatch = findPlugin(disabled, L"Patch.ABC");
+        ASSERT_NE(disabledBase, nullptr);
+        ASSERT_NE(disabledCustom, nullptr);
+        ASSERT_NE(disabledPatch, nullptr);
+        EXPECT_TRUE(disabledBase->isEnabled);
+        EXPECT_FALSE(disabledCustom->isEnabled);
+        EXPECT_FALSE(disabledPatch->isEnabled);
+        EXPECT_EQ(
+            readTextFile(project / L"profiles" / L"Default" / L"enabled.dat"),
+            "*Base.master\nCustom.ABC\nPatch.ABC\n");
+
+        const std::vector<PluginEntry> enabled =
+            plugins.setAllPluginsEnabled(project, context, L"Default", true);
+        const PluginEntry* enabledBase = findPlugin(enabled, L"Base.master");
+        const PluginEntry* enabledCustom = findPlugin(enabled, L"Custom.ABC");
+        const PluginEntry* enabledPatch = findPlugin(enabled, L"Patch.ABC");
+        ASSERT_NE(enabledBase, nullptr);
+        ASSERT_NE(enabledCustom, nullptr);
+        ASSERT_NE(enabledPatch, nullptr);
+        EXPECT_TRUE(enabledBase->isEnabled);
+        EXPECT_TRUE(enabledCustom->isEnabled);
+        EXPECT_TRUE(enabledPatch->isEnabled);
+        EXPECT_EQ(
+            readTextFile(project / L"profiles" / L"Default" / L"enabled.dat"),
+            "*Base.master\n*Custom.ABC\n*Patch.ABC\n");
 #endif
     }
 

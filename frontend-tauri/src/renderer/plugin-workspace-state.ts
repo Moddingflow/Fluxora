@@ -3,12 +3,26 @@ import type {
   FluxoraProject,
   NativeBridgeStatus
 } from '../shared/fluxora-api';
+import {
+  isOrderItemHiddenByCollapsedSeparator,
+  orderItemNestedUnderSeparator,
+  orderMoveBlockEnd,
+  parentSeparatorForOrderItem,
+  pruneCollapsedSeparators,
+  reorderOrderItems,
+  separatorChildCount,
+  targetIndexForOrderDrop,
+  targetIndexForOrderMove,
+  visibleOrderItems,
+  type OrderDropPlacement
+} from './order-list-state';
 
 export type PluginWorkspaceLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface PluginWorkspaceState {
   items: FluxoraPluginOrderItem[];
   selectedOrderId: string | null;
+  collapsedSeparatorOrderIds: ReadonlySet<string>;
   searchText: string;
   loadState: PluginWorkspaceLoadState;
   errorMessage: string | null;
@@ -18,19 +32,29 @@ export type PluginWorkspaceAction =
   | { type: 'load-started' }
   | { type: 'load-failed'; message: string }
   | { type: 'items-loaded'; items: FluxoraPluginOrderItem[] }
+  | { type: 'items-reordered'; orderId: string; targetIndex: number }
+  | { type: 'item-enabled-set'; orderId: string; isEnabled: boolean }
+  | { type: 'unlocked-items-enabled-set'; isEnabled: boolean }
+  | { type: 'separator-collapse-toggled'; orderId: string }
   | { type: 'search-changed'; searchText: string }
   | { type: 'selected'; orderId: string | null };
+
+export interface PendingPluginEnabledState {
+  isEnabled: boolean;
+}
 
 export interface PluginCapabilityView {
   bridgeAvailable: boolean;
   projectSupported: boolean;
   loadOrderSupported: boolean;
+  bulkToggleSupported: boolean;
   reason: string;
 }
 
 export const emptyPluginWorkspaceState = (): PluginWorkspaceState => ({
   items: [],
   selectedOrderId: null,
+  collapsedSeparatorOrderIds: new Set<string>(),
   searchText: '',
   loadState: 'idle',
   errorMessage: null
@@ -39,17 +63,41 @@ export const emptyPluginWorkspaceState = (): PluginWorkspaceState => ({
 export const pluginItemTitle = (item: FluxoraPluginOrderItem): string =>
   item.isSeparator ? item.separatorTitle || 'Separator' : item.name || item.id;
 
+export const pluginSourceLabel = (item: FluxoraPluginOrderItem | null): string => {
+  if (!item) {
+    return 'No plugin selected';
+  }
+
+  if (item.isSeparator) {
+    return 'Separator';
+  }
+
+  return item.sourceMod.trim() || 'game data';
+};
+
 export const pluginHexIndex = (item: FluxoraPluginOrderItem): string =>
   item.isSeparator ? '--' : Math.max(0, item.order).toString(16).toUpperCase().padStart(2, '0');
 
 export const selectedPluginOrderItem = (
   items: FluxoraPluginOrderItem[],
-  selectedOrderId: string | null
-): FluxoraPluginOrderItem | null =>
-  items.find((item) => item.orderId === selectedOrderId) ??
-  items.find((item) => item.isPlugin) ??
-  items[0] ??
-  null;
+  selectedOrderId: string | null,
+  collapsedSeparatorOrderIds: ReadonlySet<string> = new Set<string>()
+): FluxoraPluginOrderItem | null => {
+  const selected = items.find((item) => item.orderId === selectedOrderId) ?? null;
+  if (selected && !isOrderItemHiddenByCollapsedSeparator(items, selected.orderId, collapsedSeparatorOrderIds)) {
+    return selected;
+  }
+
+  const parentSeparator = selected
+    ? parentSeparatorForOrderItem(items, selected.orderId)
+    : null;
+  if (parentSeparator && collapsedSeparatorOrderIds.has(parentSeparator.orderId)) {
+    return parentSeparator;
+  }
+
+  const visibleItems = visibleOrderItems(items, collapsedSeparatorOrderIds);
+  return visibleItems.find((item) => item.isPlugin) ?? visibleItems[0] ?? null;
+};
 
 export const filterPluginOrderItems = (
   items: FluxoraPluginOrderItem[],
@@ -84,22 +132,48 @@ export const filterPluginOrderItems = (
   });
 };
 
+export const visiblePluginOrderItems = (
+  items: FluxoraPluginOrderItem[],
+  searchText: string,
+  collapsedSeparatorOrderIds: ReadonlySet<string>
+): FluxoraPluginOrderItem[] => {
+  const filtered = filterPluginOrderItems(items, searchText);
+  return searchText.trim().length > 0
+    ? filtered
+    : visibleOrderItems(filtered, collapsedSeparatorOrderIds);
+};
+
+export const pluginSeparatorChildCount = (
+  items: FluxoraPluginOrderItem[],
+  separatorOrderId: string
+): number => separatorChildCount(items, separatorOrderId);
+
+export const isPluginNestedUnderSeparator = (
+  items: FluxoraPluginOrderItem[],
+  orderId: string
+): boolean => orderItemNestedUnderSeparator(items, orderId);
+
 export const targetIndexForPluginMove = (
   items: FluxoraPluginOrderItem[],
   orderId: string,
-  direction: -1 | 1
+  direction: -1 | 1,
+  collapsedSeparatorOrderIds: ReadonlySet<string> = new Set<string>()
 ): number | null => {
-  const index = items.findIndex((item) => item.orderId === orderId);
-  if (index < 0) {
+  if (!canDragPluginOrderItem(items, orderId)) {
     return null;
   }
 
-  const targetIndex = index + direction;
-  if (targetIndex < 0 || targetIndex >= items.length) {
+  const sourceIndex = items.findIndex((item) => item.orderId === orderId);
+  const blockEnd = pluginOrderMoveBlockEnd(items, sourceIndex);
+  const targetIndex = targetIndexForOrderMove(items, orderId, direction, {
+    collapsedSeparatorOrderIds
+  });
+  if (targetIndex === null) {
     return null;
   }
 
-  return targetIndex;
+  const minTargetIndex = pluginOrderMinimumTargetIndex(items, sourceIndex, blockEnd);
+  return targetIndex >= minTargetIndex ? targetIndex : null;
 };
 
 export const canDragPluginOrderItem = (
@@ -119,12 +193,11 @@ export const targetIndexForPluginDrop = (
   items: FluxoraPluginOrderItem[],
   sourceOrderId: string,
   targetOrderId: string,
-  placement: 'before' | 'after' = 'after'
+  placement: OrderDropPlacement = 'after',
+  collapsedSeparatorOrderIds: ReadonlySet<string> = new Set<string>()
 ): number | null => {
   const sourceIndex = items.findIndex((item) => item.orderId === sourceOrderId);
-  const targetIndex = items.findIndex((item) => item.orderId === targetOrderId);
-
-  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
+  if (sourceIndex < 0) {
     return null;
   }
 
@@ -134,32 +207,73 @@ export const targetIndexForPluginDrop = (
   }
 
   const blockEnd = pluginOrderMoveBlockEnd(items, sourceIndex);
-  const slotIndex = targetIndex + (placement === 'after' ? 1 : 0);
-
-  if (slotIndex >= sourceIndex && slotIndex <= blockEnd) {
+  const requestedTargetIndex = targetIndexForOrderDrop(
+    items,
+    sourceOrderId,
+    targetOrderId,
+    placement,
+    {
+      collapsedSeparatorOrderIds,
+      treatAfterSeparatorTargetAsBlock: source.isSeparator
+    }
+  );
+  if (requestedTargetIndex === null) {
     return null;
   }
 
-  const requestedTargetIndex = slotIndex > sourceIndex ? slotIndex - 1 : slotIndex;
   const minTargetIndex = pluginOrderMinimumTargetIndex(items, sourceIndex, blockEnd);
 
   return requestedTargetIndex >= minTargetIndex ? requestedTargetIndex : null;
 };
 
+export const reorderPluginOrderItems = (
+  items: FluxoraPluginOrderItem[],
+  orderId: string,
+  targetIndex: number
+): FluxoraPluginOrderItem[] | null => {
+  const sourceIndex = items.findIndex((item) => item.orderId === orderId);
+  if (sourceIndex < 0 || !canDragPluginOrderItem(items, orderId)) {
+    return null;
+  }
+
+  const blockEnd = pluginOrderMoveBlockEnd(items, sourceIndex);
+  const minTargetIndex = pluginOrderMinimumTargetIndex(items, sourceIndex, blockEnd);
+  if (targetIndex < minTargetIndex) {
+    return null;
+  }
+
+  return reorderOrderItems(items, orderId, targetIndex);
+};
+
+export const mergePendingPluginEnabledStates = (
+  items: FluxoraPluginOrderItem[],
+  pendingByOrderId: ReadonlyMap<string, PendingPluginEnabledState>
+): FluxoraPluginOrderItem[] => {
+  if (pendingByOrderId.size === 0) {
+    return items;
+  }
+
+  let changed = false;
+  const merged = items.map((item) => {
+    const pending = item.isPlugin ? pendingByOrderId.get(item.orderId) : undefined;
+    if (!pending || item.isEnabled === pending.isEnabled) {
+      return item;
+    }
+
+    changed = true;
+    return {
+      ...item,
+      isEnabled: pending.isEnabled
+    };
+  });
+
+  return changed ? merged : items;
+};
+
 const pluginOrderMoveBlockEnd = (
   items: FluxoraPluginOrderItem[],
   sourceIndex: number
-): number => {
-  const source = items[sourceIndex];
-  if (!source?.isSeparator) {
-    return sourceIndex + 1;
-  }
-
-  const nextSeparatorIndex = items.findIndex(
-    (item, index) => index > sourceIndex && item.isSeparator
-  );
-  return nextSeparatorIndex >= 0 ? nextSeparatorIndex : items.length;
-};
+): number => orderMoveBlockEnd(items, sourceIndex);
 
 const pluginOrderBlockContainsLockedPlugin = (
   items: FluxoraPluginOrderItem[],
@@ -264,10 +378,18 @@ export const pluginCapabilityView = (
   project: FluxoraProject | null,
   bridgeStatus: NativeBridgeStatus | null
 ): PluginCapabilityView => {
-  const bridgeFeature = bridgeStatus?.capabilities?.features.plugins?.state;
+  const bridgeFeature = bridgeStatus?.capabilities?.features.plugins;
+  const bridgeFeatureState = bridgeFeature?.state;
+  const pluginMethodNames = (method: string): string[] => [method, `plugins.${method}`];
+  const supportsPluginMethod = (method: string): boolean =>
+    !bridgeFeature?.supports ||
+    pluginMethodNames(method).some((candidate) => bridgeFeature.supports?.includes(candidate));
   const bridgeAvailable =
     bridgeStatus?.ready === true &&
-    (bridgeFeature === 'available' || bridgeFeature === 'limited');
+    (bridgeFeatureState === 'available' || bridgeFeatureState === 'limited') &&
+    supportsPluginMethod('list') &&
+    supportsPluginMethod('setEnabled');
+  const bulkToggleSupported = bridgeAvailable && supportsPluginMethod('setAllEnabled');
   const flags = project?.gameCapabilities ?? project?.template?.gameCapabilities ?? {};
   const templateHasPluginRules = (project?.template?.pluginExtensions?.length ?? 0) > 0;
   const projectSupported = Boolean(flags.supportsPlugins || templateHasPluginRules);
@@ -278,6 +400,7 @@ export const pluginCapabilityView = (
       bridgeAvailable,
       projectSupported: false,
       loadOrderSupported: false,
+      bulkToggleSupported,
       reason: 'Open a build before using plugins.'
     };
   }
@@ -287,6 +410,7 @@ export const pluginCapabilityView = (
       bridgeAvailable: false,
       projectSupported,
       loadOrderSupported,
+      bulkToggleSupported: false,
       reason: 'Native bridge is not ready.'
     };
   }
@@ -296,6 +420,7 @@ export const pluginCapabilityView = (
       bridgeAvailable: false,
       projectSupported,
       loadOrderSupported,
+      bulkToggleSupported: false,
       reason: 'This Fluxora bridge build does not expose plugin workspace methods.'
     };
   }
@@ -305,6 +430,7 @@ export const pluginCapabilityView = (
       bridgeAvailable,
       projectSupported: false,
       loadOrderSupported: false,
+      bulkToggleSupported,
       reason: 'This build game does not support plugins or load order management.'
     };
   }
@@ -314,6 +440,7 @@ export const pluginCapabilityView = (
       bridgeAvailable,
       projectSupported,
       loadOrderSupported: false,
+      bulkToggleSupported,
       reason: 'This build can show plugins, but load order editing is disabled by game capabilities.'
     };
   }
@@ -322,6 +449,7 @@ export const pluginCapabilityView = (
     bridgeAvailable,
     projectSupported,
     loadOrderSupported,
+    bulkToggleSupported,
     reason: ''
   };
 };
@@ -344,13 +472,82 @@ export const pluginWorkspaceReducer = (
         errorMessage: action.message
       };
     case 'items-loaded': {
-      const selected = selectedPluginOrderItem(action.items, state.selectedOrderId);
+      const collapsedSeparatorOrderIds = pruneCollapsedSeparators(
+        action.items,
+        state.collapsedSeparatorOrderIds
+      );
+      const selected = selectedPluginOrderItem(
+        action.items,
+        state.selectedOrderId,
+        collapsedSeparatorOrderIds
+      );
       return {
         ...state,
         items: action.items,
         selectedOrderId: selected?.orderId ?? null,
+        collapsedSeparatorOrderIds,
         loadState: 'ready',
         errorMessage: null
+      };
+    }
+    case 'items-reordered': {
+      const items = reorderPluginOrderItems(state.items, action.orderId, action.targetIndex);
+      if (!items) {
+        return state;
+      }
+
+      const selected = selectedPluginOrderItem(
+        items,
+        state.selectedOrderId,
+        state.collapsedSeparatorOrderIds
+      );
+      return {
+        ...state,
+        items,
+        selectedOrderId: selected?.orderId ?? null,
+        loadState: 'ready',
+        errorMessage: null
+      };
+    }
+    case 'item-enabled-set': {
+      const items = state.items.map((item) =>
+        item.isPlugin && item.orderId === action.orderId
+          ? { ...item, isEnabled: action.isEnabled }
+          : item
+      );
+      return {
+        ...state,
+        items,
+        loadState: 'ready',
+        errorMessage: null
+      };
+    }
+    case 'unlocked-items-enabled-set':
+      return {
+        ...state,
+        items: state.items.map((item) =>
+          item.isPlugin && !item.isLocked ? { ...item, isEnabled: action.isEnabled } : item
+        ),
+        loadState: 'ready',
+        errorMessage: null
+      };
+    case 'separator-collapse-toggled': {
+      const separator = state.items.find((item) => item.orderId === action.orderId);
+      if (!separator?.isSeparator) {
+        return state;
+      }
+
+      const collapsedSeparatorOrderIds = new Set(state.collapsedSeparatorOrderIds);
+      if (collapsedSeparatorOrderIds.has(action.orderId)) {
+        collapsedSeparatorOrderIds.delete(action.orderId);
+      } else {
+        collapsedSeparatorOrderIds.add(action.orderId);
+      }
+
+      return {
+        ...state,
+        collapsedSeparatorOrderIds,
+        selectedOrderId: action.orderId
       };
     }
     case 'search-changed':

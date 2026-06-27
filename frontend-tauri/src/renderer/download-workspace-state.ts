@@ -35,8 +35,58 @@ export const emptyDownloadWorkspaceState = (): DownloadWorkspaceState => ({
   errorMessage: null
 });
 
+const archiveExtensionPattern =
+  /\.(?:7z|zip|rar|ba2|bsa|fomod|omod|tar\.gz|tar\.bz2|tar\.xz|tgz|gz|bz2|xz)$/i;
+
+const hasTextualName = (value: string): boolean => /[^\d\s._-]/.test(value);
+
+const trimTrailingSeparators = (value: string): string =>
+  value.replace(/[\s._-]+$/g, '').trim();
+
+const stripArchiveExtension = (value: string): string =>
+  value.replace(archiveExtensionPattern, '').trim();
+
+const looksLikeNexusNumericSuffix = (tokens: string[]): boolean => {
+  if (tokens.length < 3) {
+    return false;
+  }
+
+  const firstToken = tokens[0] ?? '';
+  const lastToken = tokens[tokens.length - 1] ?? '';
+  return /^\d{4,8}$/.test(firstToken) && /^\d{9,}$/.test(lastToken);
+};
+
+export const downloadDisplayName = (rawName: string): string => {
+  const stem = stripArchiveExtension(rawName.trim());
+  if (!stem) {
+    return '';
+  }
+
+  const parts = stem.split('-');
+  for (let start = parts.length - 3; start >= 1; start -= 1) {
+    const tokens = parts.slice(start).map((part) => part.trim());
+    if (tokens.some((token) => !/^\d+$/.test(token))) {
+      continue;
+    }
+
+    if (!looksLikeNexusNumericSuffix(tokens)) {
+      continue;
+    }
+
+    const candidate = trimTrailingSeparators(parts.slice(0, start).join('-'));
+    if (candidate && hasTextualName(candidate)) {
+      return candidate;
+    }
+  }
+
+  return trimTrailingSeparators(stem);
+};
+
 export const downloadTitle = (entry: FluxoraDownloadEntry): string =>
-  entry.name || entry.fileName || entry.id || 'Download';
+  downloadDisplayName(entry.name || entry.fileName || entry.id) || 'Download';
+
+export const downloadRawTitle = (entry: FluxoraDownloadEntry): string =>
+  entry.fileName || entry.name || entry.localPath || entry.id || 'Download';
 
 export const selectedDownloadEntry = (
   items: FluxoraDownloadEntry[],

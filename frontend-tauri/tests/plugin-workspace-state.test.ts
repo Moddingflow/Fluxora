@@ -4,14 +4,20 @@ import {
   canDragPluginOrderItem,
   emptyPluginWorkspaceState,
   filterPluginOrderItems,
+  isPluginNestedUnderSeparator,
+  mergePendingPluginEnabledStates,
   pluginCapabilityView,
   pluginHexIndex,
+  pluginSeparatorChildCount,
+  pluginSourceLabel,
   pluginStatusText,
   pluginTypeLabel,
   pluginWorkspaceReducer,
+  reorderPluginOrderItems,
   selectedPluginOrderItem,
   targetIndexForPluginDrop,
-  targetIndexForPluginMove
+  targetIndexForPluginMove,
+  visiblePluginOrderItems
 } from '../src/renderer/plugin-workspace-state';
 import type {
   FluxoraPluginOrderItem,
@@ -91,7 +97,15 @@ const readyBridge: NativeBridgeStatus = {
     },
     features: {
       plugins: {
-        state: 'available'
+        state: 'available',
+        supports: [
+          'list',
+          'move',
+          'createSeparator',
+          'deleteSeparator',
+          'setEnabled',
+          'setAllEnabled'
+        ]
       }
     }
   },
@@ -158,6 +172,127 @@ describe('plugin workspace state', () => {
     expect(targetIndexForPluginDrop(lockedGroup, 'sep_base', 'plugin_skyui', 'after')).toBeNull();
   });
 
+  it('hides collapsed plugin separator children but moves the separator as a block', () => {
+    const groupedItems = [
+      items[0],
+      separatorItem('sep_ui', 'Interface', 1),
+      pluginItem('plugin_skyui', 'SkyUI.esp', 2),
+      pluginItem('plugin_light', 'TinyPatch.esl', 3, { isLight: true }),
+      separatorItem('sep_late', 'Late patches', 4),
+      pluginItem('plugin_patch', 'Patch.esp', 5)
+    ];
+    const collapsed = new Set(['sep_ui']);
+
+    expect(visiblePluginOrderItems(groupedItems, '', collapsed).map((item) => item.orderId)).toEqual([
+      'plugin_skyrim',
+      'sep_ui',
+      'sep_late',
+      'plugin_patch'
+    ]);
+    expect(visiblePluginOrderItems(groupedItems, 'SkyUI.esp', collapsed).map((item) => item.orderId)).toEqual([
+      'plugin_skyui'
+    ]);
+    expect(targetIndexForPluginDrop(groupedItems, 'plugin_patch', 'sep_ui', 'after', collapsed)).toBe(4);
+    expect(targetIndexForPluginDrop(groupedItems, 'sep_ui', 'sep_late', 'after')).toBe(5);
+    expect(targetIndexForPluginMove(groupedItems, 'sep_ui', 1, collapsed)).toBe(5);
+
+    const reordered = reorderPluginOrderItems(groupedItems, 'sep_ui', 5);
+    expect(reordered?.map((item) => item.orderId)).toEqual([
+      'plugin_skyrim',
+      'sep_late',
+      'plugin_patch',
+      'sep_ui',
+      'plugin_skyui',
+      'plugin_light'
+    ]);
+    expect(pluginSeparatorChildCount(groupedItems, 'sep_ui')).toBe(2);
+    expect(isPluginNestedUnderSeparator(groupedItems, 'plugin_skyui')).toBe(true);
+  });
+
+  it('stores collapsed plugin separator state in the reducer', () => {
+    const loaded = pluginWorkspaceReducer(
+      { ...emptyPluginWorkspaceState(), selectedOrderId: 'plugin_skyui' },
+      { type: 'items-loaded', items }
+    );
+    const collapsed = pluginWorkspaceReducer(loaded, {
+      type: 'separator-collapse-toggled',
+      orderId: 'sep_patches'
+    });
+
+    expect(collapsed.collapsedSeparatorOrderIds.has('sep_patches')).toBe(true);
+    expect(collapsed.selectedOrderId).toBe('sep_patches');
+    expect(visiblePluginOrderItems(collapsed.items, '', collapsed.collapsedSeparatorOrderIds).map((item) => item.orderId)).toEqual([
+      'plugin_skyrim',
+      'sep_patches'
+    ]);
+
+    const moved = pluginWorkspaceReducer(collapsed, {
+      type: 'items-reordered',
+      orderId: 'sep_patches',
+      targetIndex: 1
+    });
+    expect(moved.items.map((item) => item.orderId)).toEqual(items.map((item) => item.orderId));
+    expect(moved.collapsedSeparatorOrderIds.has('sep_patches')).toBe(true);
+  });
+
+  it('applies optimistic plugin enabled state without changing selection or collapsed separators', () => {
+    const loaded = pluginWorkspaceReducer(
+      { ...emptyPluginWorkspaceState(), selectedOrderId: 'plugin_light' },
+      { type: 'items-loaded', items }
+    );
+    const collapsed = pluginWorkspaceReducer(loaded, {
+      type: 'separator-collapse-toggled',
+      orderId: 'sep_patches'
+    });
+    const enabled = pluginWorkspaceReducer(collapsed, {
+      type: 'item-enabled-set',
+      orderId: 'plugin_light',
+      isEnabled: true
+    });
+
+    expect(enabled.items.map((item) => item.orderId)).toEqual(items.map((item) => item.orderId));
+    expect(enabled.items.find((item) => item.orderId === 'plugin_light')?.isEnabled).toBe(true);
+    expect(enabled.selectedOrderId).toBe('sep_patches');
+    expect(enabled.collapsedSeparatorOrderIds.has('sep_patches')).toBe(true);
+  });
+
+  it('applies bulk plugin enable state only to unlocked plugins', () => {
+    const loaded = pluginWorkspaceReducer(
+      { ...emptyPluginWorkspaceState(), selectedOrderId: 'plugin_light' },
+      { type: 'items-loaded', items }
+    );
+
+    const disabled = pluginWorkspaceReducer(loaded, {
+      type: 'unlocked-items-enabled-set',
+      isEnabled: false
+    });
+
+    expect(disabled.items.find((item) => item.orderId === 'plugin_skyrim')?.isEnabled).toBe(true);
+    expect(disabled.items.find((item) => item.orderId === 'sep_patches')?.isEnabled).toBe(true);
+    expect(disabled.items.find((item) => item.orderId === 'plugin_skyui')?.isEnabled).toBe(false);
+    expect(disabled.items.find((item) => item.orderId === 'plugin_light')?.isEnabled).toBe(false);
+    expect(disabled.selectedOrderId).toBe('plugin_light');
+  });
+
+  it('keeps pending plugin enabled states over stale confirmed snapshots', () => {
+    const staleSnapshot = items.map((item) =>
+      item.orderId === 'plugin_light' || item.orderId === 'plugin_skyui'
+        ? { ...item, isEnabled: false }
+        : item
+    );
+
+    const merged = mergePendingPluginEnabledStates(
+      staleSnapshot,
+      new Map([
+        ['plugin_light', { isEnabled: true }]
+      ])
+    );
+
+    expect(merged.find((item) => item.orderId === 'plugin_light')?.isEnabled).toBe(true);
+    expect(merged.find((item) => item.orderId === 'plugin_skyui')?.isEnabled).toBe(false);
+    expect(merged.find((item) => item.orderId === 'sep_patches')?.isEnabled).toBe(true);
+  });
+
   it('formats plugin status and type for dense rows', () => {
     expect(pluginHexIndex(items[0])).toBe('00');
     expect(pluginHexIndex(items[1])).toBe('--');
@@ -167,6 +302,10 @@ describe('plugin workspace state', () => {
     expect(pluginStatusText(items[3])).toBe('Disabled');
     expect(pluginTypeLabel(items[0])).toBe('master');
     expect(pluginTypeLabel(items[3])).toBe('light');
+    expect(pluginSourceLabel(items[2])).toBe('SkyUI');
+    expect(
+      pluginSourceLabel(pluginItem('plugin_game_data', 'Loose.esp', 4, { sourceMod: '' }))
+    ).toBe('game data');
   });
 
   it('describes unsupported plugin capabilities without calling the bridge domain path', () => {
@@ -176,6 +315,7 @@ describe('plugin workspace state', () => {
     );
     expect(supported.projectSupported).toBe(true);
     expect(supported.loadOrderSupported).toBe(true);
+    expect(supported.bulkToggleSupported).toBe(true);
 
     const unsupported = pluginCapabilityView(
       project({ supportsPlugins: false, supportsLoadOrder: false }),
@@ -183,5 +323,61 @@ describe('plugin workspace state', () => {
     );
     expect(unsupported.projectSupported).toBe(false);
     expect(unsupported.reason).toContain('does not support plugins');
+  });
+
+  it('keeps plugin listing available when an older bridge lacks bulk toggles', () => {
+    const bridgeWithoutBulkToggle: NativeBridgeStatus = {
+      ...readyBridge,
+      capabilities: {
+        ...readyBridge.capabilities!,
+        features: {
+          ...readyBridge.capabilities!.features,
+          plugins: {
+            state: 'available',
+            supports: ['list', 'setEnabled']
+          }
+        }
+      }
+    };
+
+    const capabilities = pluginCapabilityView(
+      project({ supportsPlugins: true, supportsLoadOrder: true }),
+      bridgeWithoutBulkToggle
+    );
+
+    expect(capabilities.bridgeAvailable).toBe(true);
+    expect(capabilities.projectSupported).toBe(true);
+    expect(capabilities.bulkToggleSupported).toBe(false);
+  });
+
+  it('accepts domain-qualified plugin capability method names', () => {
+    const bridgeWithDomainQualifiedMethods: NativeBridgeStatus = {
+      ...readyBridge,
+      capabilities: {
+        ...readyBridge.capabilities!,
+        features: {
+          ...readyBridge.capabilities!.features,
+          plugins: {
+            state: 'available',
+            supports: [
+              'plugins.list',
+              'plugins.move',
+              'plugins.createSeparator',
+              'plugins.deleteSeparator',
+              'plugins.setEnabled',
+              'plugins.setAllEnabled'
+            ]
+          }
+        }
+      }
+    };
+
+    const capabilities = pluginCapabilityView(
+      project({ supportsPlugins: true, supportsLoadOrder: true }),
+      bridgeWithDomainQualifiedMethods
+    );
+
+    expect(capabilities.bridgeAvailable).toBe(true);
+    expect(capabilities.bulkToggleSupported).toBe(true);
   });
 });

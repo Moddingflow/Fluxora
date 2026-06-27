@@ -115,6 +115,18 @@ namespace fluxora
             std::wstring_view pluginName,
             bool isEnabled) const;
 
+        [[nodiscard]] std::vector<PluginEntry> setAllPluginsEnabled(
+            const std::filesystem::path& projectDirectory,
+            const BuildTemplate& resolvedTemplate,
+            std::wstring_view profileName,
+            bool isEnabled) const;
+
+        [[nodiscard]] std::vector<PluginEntry> setAllPluginsEnabled(
+            const std::filesystem::path& projectDirectory,
+            const PluginRuleContext& rules,
+            std::wstring_view profileName,
+            bool isEnabled) const;
+
         [[nodiscard]] bool isInitialized() const noexcept;
 
     private:
