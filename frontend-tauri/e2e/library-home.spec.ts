@@ -528,6 +528,13 @@ test.beforeEach(async ({ page }) => {
         }),
         save: async () => ({ operationId: 'op_build_paths_save' })
       },
+      buildSettings: {
+        notifyPathsSaved: async (project: any) => {
+          calls.push({ method: 'buildSettings.notifyPathsSaved', payload: { project } });
+          return undefined;
+        },
+        onPathsSaved: () => () => undefined
+      },
       dialogs: {
         pickArchive: async () => ({
           canceled: false,
@@ -1097,7 +1104,7 @@ test('renders downloads right pane as skeleton rows while the list loads', async
   await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
 });
 
-test('uses the redesigned right pane tabs for plugins, data, downloads and build actions', async ({ page }) => {
+test('uses the redesigned right pane tabs for plugins, data and downloads', async ({ page }) => {
   await page.goto(baseUrl);
 
   await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
@@ -1107,9 +1114,11 @@ test('uses the redesigned right pane tabs for plugins, data, downloads and build
   await expect(rightPane.getByRole('tab', { name: /Плагины/ })).toBeVisible();
   await expect(rightPane.getByRole('tab', { name: /Данные/ })).toBeVisible();
   await expect(rightPane.getByRole('tab', { name: /Загрузки/ })).toBeVisible();
-  await expect(rightPane.getByRole('tab', { name: /Сборка/ })).toBeVisible();
+  await expect(rightPane.getByRole('tab', { name: /Сборка/ })).toHaveCount(0);
 
-  await expect(page.getByRole('table', { name: 'Plugin load order' })).toBeVisible();
+  const pluginsTable = page.getByRole('table', { name: 'Plugin load order' });
+  await expect(pluginsTable).toBeVisible();
+  await expect(pluginsTable.getByRole('columnheader', { name: 'State' })).toHaveCount(0);
   await expect(page.getByRole('row', { name: /Skyrim.esm/ })).toBeVisible();
   await expect(rightPane.getByText('00')).toBeVisible();
   await expect(rightPane.locator('.plugin-type-badge', { hasText: 'master' }).first()).toBeVisible();
@@ -1151,20 +1160,6 @@ test('uses the redesigned right pane tabs for plugins, data, downloads and build
       )
     )
     .toEqual(expect.arrayContaining(['downloads.importFile', 'nxm.importInboundDownloads']));
-
-  await rightPane.getByRole('tab', { name: /Сборка/ }).click();
-  await expect(rightPane.getByText('Build paths')).toBeVisible();
-  await expect(rightPane.getByText('Executable config')).toBeVisible();
-  await expect(rightPane.getByText('FluxPack', { exact: true })).toBeVisible();
-  await rightPane.getByRole('button', { name: 'Package' }).click();
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
-          ?.map((call) => call.method)
-      )
-    )
-    .toContain('fluxPack.export');
 });
 
 test('drags plugin rows without selecting text', async ({ page }) => {

@@ -50,6 +50,20 @@ describe('right pane redesign', () => {
     expect(app).not.toContain('@tauri-apps/api');
   });
 
+  it('keeps the plugin table free of the noisy state column', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const pluginTableHeader =
+      app.match(/aria-label="Plugin load order"[\s\S]*?<div\s+className="mod-table__body"/)?.[0] ??
+      '';
+
+    expect(pluginTableHeader).toContain('<span role="columnheader">Order</span>');
+    expect(pluginTableHeader).toContain('<span role="columnheader">Plugin</span>');
+    expect(pluginTableHeader).toContain('<span role="columnheader">Type</span>');
+    expect(pluginTableHeader).toContain('<span role="columnheader">Source</span>');
+    expect(pluginTableHeader).toContain('<span role="columnheader">Actions</span>');
+    expect(pluginTableHeader).not.toContain('<span role="columnheader">State</span>');
+  });
+
   it('keeps the compact right pane styling aligned with the build-page UI-kit', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
 
@@ -58,6 +72,7 @@ describe('right pane redesign', () => {
     expect(styles).toContain('.right-pane-content--build');
     expect(styles).toContain('.plugin-hex-index');
     expect(styles).toContain('.plugin-type-badge[data-master="true"]');
+    expect(styles).toContain('.build-pane--right .plugin-row > :nth-child(4)');
     expect(styles).toContain('.right-pane-detail-card');
     expect(styles).toContain('.right-pane-path-row code');
     expect(styles).toContain('.right-pane-section--fluxpack .fluxpack-panel');

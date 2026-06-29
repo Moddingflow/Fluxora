@@ -6185,7 +6185,6 @@ export const App = () => {
           <span role="columnheader">Order</span>
           <span role="columnheader">Plugin</span>
           <span role="columnheader">Type</span>
-          <span role="columnheader">State</span>
           <span role="columnheader">Source</span>
           <span role="columnheader">Actions</span>
         </div>
@@ -6199,7 +6198,6 @@ export const App = () => {
           {visiblePluginWindow.items.map((item) => {
             const isSelected = item.orderId === pluginsWorkspace.selectedOrderId;
             const isMenuOpen = item.orderId === pluginMenuOrderId;
-            const state = pluginStatusText(item);
             const isNested = isPluginNestedUnderSeparator(pluginsWorkspace.items, item.orderId);
             const isCollapsed =
               item.isSeparator && pluginsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
@@ -6361,12 +6359,6 @@ export const App = () => {
                       {pluginTypeLabel(item)}
                     </span>
                   )}
-                </span>
-                <span
-                  role="cell"
-                  data-status={item.isLocked || item.missingMasters.length > 0 ? 'checking' : item.isEnabled ? 'ready' : 'error'}
-                >
-                  {item.isSeparator ? '' : state}
                 </span>
                 <span role="cell">{item.isSeparator ? '' : item.sourceMod || 'game data'}</span>
                 <div className="row-actions mod-actions" role="cell" data-menu-open={isMenuOpen}>
