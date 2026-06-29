@@ -3,6 +3,7 @@
 
 #include "FluxoraVfs/VfsConfig.hpp"
 #include "FluxoraVfs/VfsHooks.hpp"
+#include "FluxoraVfs/VfsLifecycle.hpp"
 #include "FluxoraVfs/VfsLog.hpp"
 
 #include <cstdint>
@@ -59,9 +60,17 @@ namespace
 
     bool startManagerLifetimeWatcher(HMODULE module, std::uint32_t managerProcessId)
     {
-        if (managerProcessId == 0 || managerProcessId == GetCurrentProcessId())
+        switch (managerLifetimeWatchPlan(managerProcessId, GetCurrentProcessId()))
         {
+        case ManagerLifetimeWatchPlan::RefuseMissingManager:
+            VfsLog::write(L"FluxoraVfs descriptor did not include a manager process id; refusing unmanaged VFS session.");
+            return false;
+
+        case ManagerLifetimeWatchPlan::CurrentProcessOwnsSession:
             return true;
+
+        case ManagerLifetimeWatchPlan::WatchExternalManager:
+            break;
         }
 
         HANDLE managerProcess = OpenProcess(SYNCHRONIZE, FALSE, managerProcessId);
@@ -152,11 +161,15 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID /*reserved*/)
             {
                 VfsLog::open(config.logPath);
                 VfsLog::writef(L"FluxoraVfs attached to \"%s\".", currentProcessImage().c_str());
-                if (!installHooks(config))
+                const bool hooksInstalled = installHooks(config);
+                if (!hooksInstalled)
                 {
-                    VfsLog::write(L"FluxoraVfs did not install hooks (nothing to virtualize or hook error).");
+                    VfsLog::write(
+                        L"FluxoraVfs did not install hooks (nothing to virtualize or hook error); "
+                        L"manager lifetime watcher will still unload the injected DLL.");
                 }
-                else if (!startManagerLifetimeWatcher(module, config.managerProcessId))
+
+                if (!startManagerLifetimeWatcher(module, config.managerProcessId))
                 {
                     uninstallHooks();
                     VfsLog::write(L"FluxoraVfs unloaded hooks because the VFS session has no live manager.");

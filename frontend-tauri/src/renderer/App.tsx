@@ -4550,6 +4550,9 @@ export const App = () => {
       return;
     }
 
+    const currentOperationSupportsCancellation =
+      operationOverlay.kind === 'grass-cache' || operationCancellationSupported;
+
     if (operationOverlay.kind === 'build-create') {
       if (operationOverlay.createdProject) {
         await cleanupCreatedBuild(operationOverlay.createdProject, operationOverlay.operationId);
@@ -4569,10 +4572,10 @@ export const App = () => {
       );
       setMessage('Build creation will be cleaned up as soon as the current core step returns.');
 
-      if (!operationOverlay.isRunning || !operationCancellationSupported) {
+      if (!operationOverlay.isRunning || !currentOperationSupportsCancellation) {
         return;
       }
-    } else if (!operationOverlay.isRunning || !operationCancellationSupported) {
+    } else if (!operationOverlay.isRunning || !currentOperationSupportsCancellation) {
       return;
     }
 

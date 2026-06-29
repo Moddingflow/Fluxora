@@ -767,7 +767,8 @@ impl BridgeProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env("FLUXORA_LOG_DIR", &native_log_dir)
-            .env("FLUXORA_OPERATION_CANCEL_DIR", &cancel_dir);
+            .env("FLUXORA_OPERATION_CANCEL_DIR", &cancel_dir)
+            .env("FLUXORA_TAURI_PROCESS_ID", std::process::id().to_string());
 
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);

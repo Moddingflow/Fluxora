@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <stdexcept>
 #include <utility>
 
 namespace fluxora::tests
@@ -79,8 +80,14 @@ namespace fluxora::tests
             {
             }
 
-            void launchAndWait(const GrassCacheLaunchSpec& spec) override
+            void launchAndWait(
+                const GrassCacheLaunchSpec& spec,
+                const std::function<bool()>& cancellationRequested) override
             {
+                if (cancellationRequested && cancellationRequested())
+                {
+                    throw std::runtime_error("NGIO grass cache generation was canceled.");
+                }
                 ++launchCount;
                 lastSpec = spec;
                 EXPECT_EQ(spec.additionalArguments, L"-forcesteamloader");
@@ -88,6 +95,10 @@ namespace fluxora::tests
                 if (launchHook_)
                 {
                     launchHook_(launchCount);
+                }
+                if (cancellationRequested && cancellationRequested())
+                {
+                    throw std::runtime_error("NGIO grass cache generation was canceled.");
                 }
 
                 if (launchCount >= writeOutputAfterLaunch_)
@@ -287,7 +298,7 @@ namespace fluxora::tests
         FakeGrassCacheRunner runner(
             paths.gameDirectory,
             paths.overwriteDirectory,
-            99,
+            2,
             2,
             [&](int)
             {
@@ -366,5 +377,121 @@ namespace fluxora::tests
         EXPECT_EQ(runner.launchCount, 1);
         EXPECT_EQ(result.launchCount, 1);
         EXPECT_FALSE(std::filesystem::exists(paths.gameDirectory / L"PrecacheGrass.txt"));
+    }
+
+    TEST_F(GrassCacheServiceTestFixture, NgioGenerationRecreatesMissingPrecacheMarkerWhenOutputIsMissing)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 1, 2);
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+
+        const GrassCacheGenerationResult result =
+            service.generateNgioGrassCache(config_, L"Default", GrassCacheGenerationOptions{3, 0});
+
+        EXPECT_EQ(runner.launchCount, 2);
+        EXPECT_EQ(result.launchCount, 2);
+        EXPECT_FALSE(std::filesystem::exists(paths.gameDirectory / L"PrecacheGrass.txt"));
+    }
+
+    TEST_F(GrassCacheServiceTestFixture, OrdinaryLaunchCleanupRemovesVfsVisiblePrecacheMarkers)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        writeTextFile(paths.gameDirectory / L"PrecacheGrass.txt", "stock marker");
+        writeTextFile(paths.overwriteDirectory / L"root" / L"PrecacheGrass.txt", "vfs marker");
+        writeTextFile(
+            project_ / L".flow" / L"root-launch" / L"SKSE64" / L"PrecacheGrass.txt",
+            "cache marker");
+
+        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 1);
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+
+        EXPECT_EQ(service.clearStaleNgioPrecacheMarkersForLaunch(config_), 3);
+        EXPECT_FALSE(std::filesystem::exists(paths.gameDirectory / L"PrecacheGrass.txt"));
+        EXPECT_FALSE(std::filesystem::exists(paths.overwriteDirectory / L"root" / L"PrecacheGrass.txt"));
+        EXPECT_FALSE(std::filesystem::exists(
+            project_ / L".flow" / L"root-launch" / L"SKSE64" / L"PrecacheGrass.txt"));
+    }
+
+    TEST_F(GrassCacheServiceTestFixture, NgioGenerationStopsWhenOperationCancelMarkerExists)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        const std::filesystem::path cancelDirectory = temp_.path() / L"operation-cancel";
+        const std::filesystem::path cancelMarker = cancelDirectory / L"op_grass_cancel.cancel";
+        ScopedEnvironmentVariable cancelDir(L"FLUXORA_OPERATION_CANCEL_DIR", cancelDirectory.wstring());
+        Logger::setOperationId(L"op_grass_cancel");
+
+        FakeGrassCacheRunner runner(
+            paths.gameDirectory,
+            paths.overwriteDirectory,
+            99,
+            99,
+            [&](int)
+            {
+                writeTextFile(cancelMarker, "1\n");
+            });
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+
+        EXPECT_THROW(
+            (void)service.generateNgioGrassCache(config_, L"Default", GrassCacheGenerationOptions{3, 0}),
+            std::runtime_error);
+        Logger::clearOperationId();
+
+        EXPECT_EQ(runner.launchCount, 1);
+        EXPECT_FALSE(std::filesystem::exists(paths.gameDirectory / L"PrecacheGrass.txt"));
+        EXPECT_FALSE(std::filesystem::exists(paths.overwriteDirectory / L"Grass"));
+    }
+
+    TEST_F(GrassCacheServiceTestFixture, NgioGenerationStopsWhenServiceShutsDownAfterLaunch)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        GrassCacheService* servicePtr = nullptr;
+        FakeGrassCacheRunner runner(
+            paths.gameDirectory,
+            paths.overwriteDirectory,
+            99,
+            99,
+            [&](int)
+            {
+                ASSERT_NE(servicePtr, nullptr);
+                servicePtr->shutdown();
+            });
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+        servicePtr = &service;
+
+        EXPECT_THROW(
+            (void)service.generateNgioGrassCache(config_, L"Default", GrassCacheGenerationOptions{3, 0}),
+            std::runtime_error);
+
+        EXPECT_EQ(runner.launchCount, 1);
+        EXPECT_FALSE(std::filesystem::exists(paths.gameDirectory / L"PrecacheGrass.txt"));
+        EXPECT_FALSE(std::filesystem::exists(paths.overwriteDirectory / L"Grass"));
     }
 }

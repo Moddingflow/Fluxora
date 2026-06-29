@@ -4,6 +4,7 @@
 #include "FluxoraCore/Services/IService.hpp"
 
 #include <cstdint>
+#include <atomic>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -58,7 +59,9 @@ namespace fluxora
     {
     public:
         virtual ~IGrassCacheProcessRunner() = default;
-        virtual void launchAndWait(const GrassCacheLaunchSpec& spec) = 0;
+        virtual void launchAndWait(
+            const GrassCacheLaunchSpec& spec,
+            const std::function<bool()>& cancellationRequested) = 0;
     };
 
     class GrassCacheService final : public IService
@@ -93,6 +96,9 @@ namespace fluxora
             const GrassCacheGenerationOptions& options = {},
             const ProgressCallback& progress = {}) const;
 
+        [[nodiscard]] int clearStaleNgioPrecacheMarkersForLaunch(
+            const std::filesystem::path& configPath) const;
+
         [[nodiscard]] bool isInitialized() const noexcept;
 
     private:
@@ -104,6 +110,7 @@ namespace fluxora
         const BuildPathSettingsService& pathSettings_;
         std::unique_ptr<IGrassCacheProcessRunner> ownedRunner_;
         IGrassCacheProcessRunner& runner_;
+        mutable std::atomic_bool shutdownRequested_{false};
         bool initialized_{false};
     };
 }

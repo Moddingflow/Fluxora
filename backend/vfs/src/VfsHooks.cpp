@@ -1,6 +1,7 @@
 #include "FluxoraVfs/VfsHooks.hpp"
 
 #include "FluxoraVfs/NtApi.hpp"
+#include "FluxoraVfs/VfsLifecycle.hpp"
 #include "FluxoraVfs/VfsLog.hpp"
 #include "FluxoraVfs/VfsProtocol.hpp"
 #include "FluxoraVfs/VfsTree.hpp"
@@ -101,6 +102,25 @@ namespace fluxora::vfs
             std::string out(static_cast<size_t>(size), '\0');
             WideCharToMultiByte(
                 CP_ACP, 0, value.data(), static_cast<int>(value.size()), out.data(), size, nullptr, nullptr);
+            return out;
+        }
+
+        std::wstring fromAnsi(const char* value)
+        {
+            if (value == nullptr || *value == '\0')
+            {
+                return {};
+            }
+
+            const int size = MultiByteToWideChar(CP_ACP, 0, value, -1, nullptr, 0);
+            if (size <= 1)
+            {
+                return {};
+            }
+
+            std::wstring out(static_cast<std::size_t>(size), L'\0');
+            MultiByteToWideChar(CP_ACP, 0, value, -1, out.data(), size);
+            out.resize(static_cast<std::size_t>(size - 1));
             return out;
         }
 
@@ -206,6 +226,77 @@ namespace fluxora::vfs
                 block.push_back('\0');
             }
             block.push_back('\0');
+            return block;
+        }
+
+        std::vector<wchar_t> environmentBlockWithoutConfig(const wchar_t* environment)
+        {
+            std::vector<wchar_t> block;
+            if (environment == nullptr)
+            {
+                return block;
+            }
+
+            const std::wstring variableName = protocol::configEnvironmentVariable;
+            const wchar_t* cursor = environment;
+            while (*cursor != L'\0')
+            {
+                const std::wstring entry(cursor);
+                if (!isEnvironmentEntryForName(entry, variableName))
+                {
+                    block.insert(block.end(), entry.begin(), entry.end());
+                    block.push_back(L'\0');
+                }
+                cursor += entry.size() + 1;
+            }
+
+            block.push_back(L'\0');
+            if (block.size() == 1)
+            {
+                block.push_back(L'\0');
+            }
+            return block;
+        }
+
+        std::vector<char> environmentBlockWithoutConfig(const char* environment)
+        {
+            std::vector<char> block;
+            if (environment == nullptr)
+            {
+                return block;
+            }
+
+            const std::string variableName = toAnsi(protocol::configEnvironmentVariable);
+            const char* cursor = environment;
+            while (*cursor != '\0')
+            {
+                const std::string entry(cursor);
+                if (!isEnvironmentEntryForName(entry, variableName))
+                {
+                    block.insert(block.end(), entry.begin(), entry.end());
+                    block.push_back('\0');
+                }
+                cursor += entry.size() + 1;
+            }
+
+            block.push_back('\0');
+            if (block.size() == 1)
+            {
+                block.push_back('\0');
+            }
+            return block;
+        }
+
+        std::vector<wchar_t> currentEnvironmentBlockWithoutConfig()
+        {
+            wchar_t* environment = GetEnvironmentStringsW();
+            if (environment == nullptr)
+            {
+                return {};
+            }
+
+            std::vector<wchar_t> block = environmentBlockWithoutConfig(environment);
+            FreeEnvironmentStringsW(environment);
             return block;
         }
 
@@ -1791,6 +1882,64 @@ namespace fluxora::vfs
             }
 
             Guard guard;
+            const std::wstring_view applicationName =
+                lpApplicationName == nullptr ? std::wstring_view{} : std::wstring_view(lpApplicationName);
+            const std::wstring_view commandLine =
+                lpCommandLine == nullptr ? std::wstring_view{} : std::wstring_view(lpCommandLine);
+            if (childProcessVirtualizationPlan(applicationName, commandLine) ==
+                ChildProcessVirtualizationPlan::LaunchExternalBootstrap)
+            {
+                std::vector<wchar_t> externalUnicodeEnvironment;
+                std::vector<char> externalAnsiEnvironment;
+                LPVOID externalEnvironment = lpEnvironment;
+                DWORD externalCreationFlags = dwCreationFlags;
+
+                if (!g_configPath.empty())
+                {
+                    if (lpEnvironment == nullptr)
+                    {
+                        externalUnicodeEnvironment = currentEnvironmentBlockWithoutConfig();
+                        if (!externalUnicodeEnvironment.empty())
+                        {
+                            externalEnvironment = externalUnicodeEnvironment.data();
+                            externalCreationFlags |= CREATE_UNICODE_ENVIRONMENT;
+                        }
+                    }
+                    else if ((dwCreationFlags & CREATE_UNICODE_ENVIRONMENT) != 0)
+                    {
+                        externalUnicodeEnvironment =
+                            environmentBlockWithoutConfig(static_cast<const wchar_t*>(lpEnvironment));
+                        if (!externalUnicodeEnvironment.empty())
+                        {
+                            externalEnvironment = externalUnicodeEnvironment.data();
+                        }
+                    }
+                    else
+                    {
+                        externalAnsiEnvironment =
+                            environmentBlockWithoutConfig(static_cast<const char*>(lpEnvironment));
+                        if (!externalAnsiEnvironment.empty())
+                        {
+                            externalEnvironment = externalAnsiEnvironment.data();
+                        }
+                    }
+                }
+
+                VfsLog::write(
+                    L"Launching external Steam bootstrap process without FluxoraVfs injection.");
+                return Real_CreateProcessW(
+                    lpApplicationName,
+                    lpCommandLine,
+                    lpProcessAttributes,
+                    lpThreadAttributes,
+                    bInheritHandles,
+                    externalCreationFlags,
+                    externalEnvironment,
+                    lpCurrentDirectory,
+                    lpStartupInfo,
+                    lpProcessInformation);
+            }
+
             std::vector<wchar_t> unicodeEnvironment;
             std::vector<char> ansiEnvironment;
             LPVOID environment = lpEnvironment;
@@ -1853,6 +2002,62 @@ namespace fluxora::vfs
             }
 
             Guard guard;
+            const std::wstring applicationName = fromAnsi(lpApplicationName);
+            const std::wstring commandLine = fromAnsi(lpCommandLine);
+            if (childProcessVirtualizationPlan(applicationName, commandLine) ==
+                ChildProcessVirtualizationPlan::LaunchExternalBootstrap)
+            {
+                std::vector<wchar_t> externalUnicodeEnvironment;
+                std::vector<char> externalAnsiEnvironment;
+                LPVOID externalEnvironment = lpEnvironment;
+                DWORD externalCreationFlags = dwCreationFlags;
+
+                if (!g_configPath.empty())
+                {
+                    if (lpEnvironment == nullptr)
+                    {
+                        externalUnicodeEnvironment = currentEnvironmentBlockWithoutConfig();
+                        if (!externalUnicodeEnvironment.empty())
+                        {
+                            externalEnvironment = externalUnicodeEnvironment.data();
+                            externalCreationFlags |= CREATE_UNICODE_ENVIRONMENT;
+                        }
+                    }
+                    else if ((dwCreationFlags & CREATE_UNICODE_ENVIRONMENT) != 0)
+                    {
+                        externalUnicodeEnvironment =
+                            environmentBlockWithoutConfig(static_cast<const wchar_t*>(lpEnvironment));
+                        if (!externalUnicodeEnvironment.empty())
+                        {
+                            externalEnvironment = externalUnicodeEnvironment.data();
+                        }
+                    }
+                    else
+                    {
+                        externalAnsiEnvironment =
+                            environmentBlockWithoutConfig(static_cast<const char*>(lpEnvironment));
+                        if (!externalAnsiEnvironment.empty())
+                        {
+                            externalEnvironment = externalAnsiEnvironment.data();
+                        }
+                    }
+                }
+
+                VfsLog::write(
+                    L"Launching external Steam bootstrap process without FluxoraVfs injection.");
+                return Real_CreateProcessA(
+                    lpApplicationName,
+                    lpCommandLine,
+                    lpProcessAttributes,
+                    lpThreadAttributes,
+                    bInheritHandles,
+                    externalCreationFlags,
+                    externalEnvironment,
+                    lpCurrentDirectory,
+                    lpStartupInfo,
+                    lpProcessInformation);
+            }
+
             std::vector<wchar_t> unicodeEnvironment;
             std::vector<char> ansiEnvironment;
             LPVOID environment = lpEnvironment;

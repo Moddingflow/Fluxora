@@ -263,6 +263,7 @@ if(FLUXORA_ENABLE_VFS AND WIN32)
         vfs/src/DllMain.cpp
         vfs/src/VfsConfig.cpp
         vfs/src/VfsHooks.cpp
+        vfs/src/VfsLifecycle.cpp
         vfs/src/VfsLog.cpp
         vfs/src/VfsTree.cpp
         # Detours injects this payload by importing ordinal #1 from it, so the DLL

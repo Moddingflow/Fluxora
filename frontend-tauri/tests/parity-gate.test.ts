@@ -180,6 +180,7 @@ describe('Tauri parity gate', () => {
     expect(rustShell).toContain('Fluxora Tauri shell started');
     expect(rustShell).toContain('FLUXORA_LOG_DIR');
     expect(rustShell).toContain('FLUXORA_OPERATION_CANCEL_DIR');
+    expect(rustShell).toContain('FLUXORA_TAURI_PROCESS_ID');
     expect(rustShell).toContain('operation_cancel_marker_path');
     expect(rustShell).toContain('nativeLogDirectory');
     expect(sharedApi).toContain('nativeLogDirectory');

@@ -65,6 +65,18 @@ describe('operation overlays', () => {
     expect(markup).toContain('Waiting for progress');
   });
 
+  it('lets NGIO grass cache generation cancel through its operation marker', () => {
+    const markup = renderOverlay(
+      overlay({
+        kind: 'grass-cache',
+        title: 'Генерация кэша травы'
+      }),
+      false
+    );
+
+    expect(markup).toContain('Отменить');
+  });
+
   it('does not render the rapidly changing file path during build deletion', () => {
     const markup = renderOverlay(
       overlay({

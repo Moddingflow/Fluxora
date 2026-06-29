@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cwctype>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -68,6 +69,27 @@ namespace fluxora
             HANDLE handle = OpenProcess(SYNCHRONIZE, FALSE, processId);
             if (handle == nullptr)
             {
+                HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+                if (snapshot == INVALID_HANDLE_VALUE)
+                {
+                    return false;
+                }
+
+                PROCESSENTRY32W entry{};
+                entry.dwSize = sizeof(entry);
+                BOOL hasEntry = Process32FirstW(snapshot, &entry);
+                while (hasEntry)
+                {
+                    if (static_cast<std::uint32_t>(entry.th32ProcessID) == processId)
+                    {
+                        CloseHandle(snapshot);
+                        return true;
+                    }
+
+                    hasEntry = Process32NextW(snapshot, &entry);
+                }
+
+                CloseHandle(snapshot);
                 return false;
             }
 
@@ -76,21 +98,12 @@ namespace fluxora
             return waitResult == WAIT_TIMEOUT;
         }
 
-        void waitForProcessExit(std::uint32_t processId)
+        void throwIfCancellationRequested(const std::function<bool()>& cancellationRequested)
         {
-            if (processId == 0)
+            if (cancellationRequested && cancellationRequested())
             {
-                return;
+                throw std::runtime_error("NGIO grass cache generation was canceled.");
             }
-
-            HANDLE handle = OpenProcess(SYNCHRONIZE, FALSE, processId);
-            if (handle == nullptr)
-            {
-                return;
-            }
-
-            WaitForSingleObject(handle, INFINITE);
-            CloseHandle(handle);
         }
 
         std::wstring processName(const PROCESSENTRY32W& entry)
@@ -146,6 +159,21 @@ namespace fluxora
             CloseHandle(snapshot);
             return std::nullopt;
         }
+
+        std::string joinExpectedProcessNames(const std::vector<std::wstring>& names)
+        {
+            std::string joined;
+            for (const std::wstring& name : names)
+            {
+                if (!joined.empty())
+                {
+                    joined += "|";
+                }
+                joined += toUtf8(name);
+            }
+
+            return joined.empty() ? std::string("<none>") : joined;
+        }
 #endif
 
         class VirtualFileSystemGrassCacheProcessRunner final : public IGrassCacheProcessRunner
@@ -159,12 +187,16 @@ namespace fluxora
             {
             }
 
-            void launchAndWait(const GrassCacheLaunchSpec& spec) override
+            void launchAndWait(
+                const GrassCacheLaunchSpec& spec,
+                const std::function<bool()>& cancellationRequested) override
             {
 #ifndef _WIN32
                 (void)spec;
+                (void)cancellationRequested;
                 throw std::runtime_error("NGIO grass cache generation is only implemented on Windows.");
 #else
+                throwIfCancellationRequested(cancellationRequested);
                 const GameExecutableLaunchResult launch =
                     virtualFileSystem_.launchExecutable(
                         spec.configPath,
@@ -181,6 +213,7 @@ namespace fluxora
                         std::chrono::milliseconds(timeoutMs);
                     while (std::chrono::steady_clock::now() < deadline)
                     {
+                        throwIfCancellationRequested(cancellationRequested);
                         if (const auto child = findProcessByNames(launch.expectedChildProcessNames))
                         {
                             logger_.writeOperation(
@@ -189,17 +222,29 @@ namespace fluxora
                                 "NGIO grass cache handoff process detected pid=" +
                                     std::to_string(child->first) +
                                     ", name=\"" + toUtf8(child->second) + "\".");
-                            waitForProcessExit(child->first);
+                            while (isProcessRunning(child->first))
+                            {
+                                throwIfCancellationRequested(cancellationRequested);
+                                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                            }
                             return;
                         }
 
                         std::this_thread::sleep_for(std::chrono::milliseconds(500));
                     }
+                    logger_.writeOperation(
+                        LogLevel::Warning,
+                        "GrassCache",
+                        "NGIO grass cache handoff timed out waiting for expected child process. launchedPid=" +
+                            std::to_string(launch.processId) +
+                            ", expectedChildren=\"" +
+                            joinExpectedProcessNames(launch.expectedChildProcessNames) +
+                            "\"; waiting for launched process instead.");
                 }
 
-                waitForProcessExit(launch.processId);
                 while (isProcessRunning(launch.processId))
                 {
+                    throwIfCancellationRequested(cancellationRequested);
                     std::this_thread::sleep_for(std::chrono::milliseconds(250));
                 }
 #endif

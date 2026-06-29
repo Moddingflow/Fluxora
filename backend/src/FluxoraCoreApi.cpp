@@ -2846,6 +2846,8 @@ extern "C"
                     pathForLog(std::filesystem::path(configPath)) + "\", executableId=\"" +
                     textForLog(executableId) + "\", profile=\"" +
                     textForLog(isBlank(profileName) ? L"" : profileName) + "\"");
+            (void)core().grassCache().clearStaleNgioPrecacheMarkersForLaunch(
+                std::filesystem::path(configPath));
             const std::wstring json = serializeGameExecutableLaunch(
                 core().virtualFileSystem().launchExecutable(
                     std::filesystem::path(configPath),

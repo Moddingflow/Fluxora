@@ -86,7 +86,9 @@ if(WIN32)
         PRIVATE
             VfsTreeTests.cpp
             VfsConfigTests.cpp
+            VfsLifecycleTests.cpp
             ../vfs/src/VfsConfig.cpp
+            ../vfs/src/VfsLifecycle.cpp
             ../vfs/src/VfsLog.cpp
             ../vfs/src/VfsTree.cpp
     )

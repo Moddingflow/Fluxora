@@ -67,7 +67,9 @@ export const OperationOverlay = ({
   const detailText = showCurrentItemDetail ? overlay.currentItem || overlay.title : null;
   const canCancelBuildCreate =
     overlay.kind === 'build-create' && (overlay.isRunning || overlay.createdProject !== null);
-  const canCancelNativeOperation = overlay.isRunning && cancellationSupported;
+  const canCancelGrassCache = overlay.kind === 'grass-cache' && overlay.isRunning;
+  const canCancelNativeOperation =
+    overlay.isRunning && (cancellationSupported || canCancelGrassCache);
   const showCancel = canCancelBuildCreate || canCancelNativeOperation;
   const cancelDisabled = overlay.cancelRequested && overlay.isRunning;
   const showClose = overlay.canClose && !showCancel;

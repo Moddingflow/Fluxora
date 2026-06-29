@@ -81,6 +81,7 @@ For bridge changes, update DTO/protocol docs, tests and operation/logging expect
 
 - **Speed as the top priority.** Fluxora focuses on fast game startup, responsive UI feedback and minimal waiting while working with mods. Heavy operations stay in the native C++ core or bridge host so the Tauri renderer remains responsive.
 - **Full offline mode.** Installed games, profiles and mods remain available without an internet connection, so users can launch the game and play with the selected build even when offline.
+- **Skyrim-focused automation for Parallax Gen and NGIO.** Fluxora automatically creates the required `Output` folder for Parallax Gen and includes built-in grass cache generation for No Grass In Objects.
 - **One-click mod pack sharing.** Users can prepare and share their builds without manual packaging, complicated instructions or lengthy setup.
 - **Import existing Mod Organizer 2 builds.** Fluxora helps import an existing MO2 build so users can continue working with it in this application.
 

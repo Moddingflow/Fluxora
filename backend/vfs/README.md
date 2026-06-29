@@ -77,9 +77,11 @@ the hook DLL relative to itself when launching.
   requiring the Visual C++ redistributable.
 * A diagnostic log is written per run to `<instance>\.flow\vfs\vfs.log`.
 * The VFS session is owned by the Fluxora bridge/core process that wrote the
-  descriptor. Injected copies unload their hooks and DLL when that owner exits,
-  so launcher processes such as Steam do not keep Fluxora's VFS active after
-  the app is closed.
+  descriptor. Injected copies always watch that owner and unload their hooks and
+  DLL when it exits, even in child processes where hook installation was skipped
+  or failed. External Steam bootstrap processes are launched without VFS
+  injection and without `FLUXORA_VFS_CONFIG`, so a cold-started Steam client does
+  not keep Fluxora's VFS active.
 * The merged tree is built once at launch from the active profile's enabled
   mods; changes made in the UI take effect on the next launch.
 * Directory-relative opens that cross between two different mod folders are a

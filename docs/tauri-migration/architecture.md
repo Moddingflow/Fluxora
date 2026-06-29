@@ -125,6 +125,9 @@ The Skyrim-only No Grass In Objects integration extends `fluxora.bridge.v1` with
 - Tauri Rust shell/facade expose typed `window.fluxora.grassCache.generate` only; renderer still has no filesystem, shell, process or direct `invoke` access.
 - Renderer owns only the visibility button, localized tooltip, custom confirmation dialog and operation overlay.
 - C++ core remains the owner of Skyrim/NGIO validation, `PrecacheGrass.txt`, SKSE/VFS launch, `overwrite/Grass` collection and generated mod creation at `<build name> · Grass Cache`.
+- C++ core treats NGIO generation as complete only after `PrecacheGrass.txt` disappears and `overwrite/Grass` contains output; partial `Grass` output while the marker remains is treated as an incomplete run that must restart.
+- Ordinary Skyrim launches remove stale VFS-visible `PrecacheGrass.txt` markers from the game root, `overwrite/root`, and root-launch cache before SKSE starts so NGIO does not resume unless the user requested grass-cache generation.
+- C++ core checks the operation cancel marker and the Tauri manager process before each launch/restart so closing Fluxora or cancelling the operation stops the generation loop before another Skyrim launch.
 - The bridge capability key is `grassCacheGeneration`; unsupported platforms or bridge builds disable the visible action with a reason.
 
 Implemented MVP methods:
