@@ -46,6 +46,7 @@ export type ModWorkspaceAction =
   | { type: 'item-enabled-set'; orderId: string; isEnabled: boolean }
   | { type: 'all-items-enabled-set'; isEnabled: boolean }
   | { type: 'separator-collapse-toggled'; orderId: string }
+  | { type: 'all-separators-collapse-set'; isCollapsed: boolean }
   | { type: 'search-changed'; searchText: string }
   | { type: 'selected'; orderId: string | null }
   | { type: 'selection-toggled'; orderId: string; orderedOrderIds: readonly string[] }
@@ -560,6 +561,13 @@ export const modWorkspaceReducer = (
         collapsedSeparatorOrderIds
       };
     }
+    case 'all-separators-collapse-set':
+      return {
+        ...state,
+        collapsedSeparatorOrderIds: action.isCollapsed
+          ? new Set(state.items.filter((item) => item.isSeparator).map((item) => item.orderId))
+          : new Set<string>()
+      };
     case 'search-changed':
       return {
         ...state,

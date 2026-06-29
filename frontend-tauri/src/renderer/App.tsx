@@ -31,12 +31,21 @@ import {
 import { useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type {
+  CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   ReactElement
 } from 'react';
 
+import menuChevronDownIcon from '../../../Icons/chevron-down.svg';
+import menuChevronUpIcon from '../../../Icons/chevron-up.svg';
+import menuCircleCheckIcon from '../../../Icons/circle-check.svg';
+import menuCircleXIcon from '../../../Icons/circle-x.svg';
+import menuFolderOpenIcon from '../../../Icons/folder-open.svg';
+import menuToggleLeftIcon from '../../../Icons/toggle-left.svg';
+import menuToggleRightIcon from '../../../Icons/toggle-right.svg';
+import menuTrashIcon from '../../../Icons/trash-2.svg';
 import { AppTitlebar } from './components/chrome/AppTitlebar';
 import { Button, EmptyState, LoadingSplash, StatusDot } from './design-system';
 import { PrimitivePreview } from './design-system/PrimitivePreview';
@@ -100,7 +109,6 @@ import {
   reorderModOrderItems,
   selectedModOrderItem,
   targetIndexForDrop,
-  targetIndexForMove,
   visibleModOrderItems
 } from './mod-workspace-state';
 import {
@@ -318,6 +326,18 @@ interface PendingPluginEnableSave extends PendingPluginEnabledState {
   contextKey: string;
   pending: boolean;
   sequence: number;
+}
+
+type MenuIconStyle = CSSProperties & { '--menu-icon': string };
+
+function MenuIcon({ source }: { source: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="mod-row-menu__icon"
+      style={{ '--menu-icon': `url("${source}")` } as MenuIconStyle}
+    />
+  );
 }
 
 const navItems: Array<{ id: RouteId; label: string; icon: typeof Home }> = [
@@ -1524,20 +1544,6 @@ export const App = () => {
     })();
 
     trackModOrderSave(save);
-  };
-
-  const moveModOrderItem = async (item: FluxoraModOrderItem, direction: -1 | 1) => {
-    const targetIndex = targetIndexForMove(
-      modsWorkspace.items,
-      item.orderId,
-      direction,
-      modsWorkspace.collapsedSeparatorOrderIds
-    );
-    if (targetIndex === null) {
-      return;
-    }
-
-    await moveModOrderItemToIndex(item, targetIndex);
   };
 
   const createModSeparator = async () => {
@@ -5650,6 +5656,7 @@ export const App = () => {
           onClick={(event) => event.stopPropagation()}
         >
           <button
+            className="mod-row-menu__danger"
             type="button"
             role="menuitem"
             onClick={() => {
@@ -5657,7 +5664,7 @@ export const App = () => {
               void clearOverwriteFolder();
             }}
           >
-            <Trash2 size={14} aria-hidden="true" />
+            <MenuIcon source={menuTrashIcon} />
             <span>Очистить папку перезаписи</span>
           </button>
           <button
@@ -5668,7 +5675,7 @@ export const App = () => {
               void openOverwriteFolder();
             }}
           >
-            <FolderOpen size={14} aria-hidden="true" />
+            <MenuIcon source={menuFolderOpenIcon} />
             <span>Открыть в проводнике</span>
           </button>
         </div>,
@@ -5678,6 +5685,15 @@ export const App = () => {
 
     const isCollapsed =
       item.isSeparator && modsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
+    const modSeparatorOrderIds = item.isSeparator
+      ? modsWorkspace.items.filter((candidate) => candidate.isSeparator).map((candidate) => candidate.orderId)
+      : [];
+    const hasCollapsedModSeparators = modSeparatorOrderIds.some((orderId) =>
+      modsWorkspace.collapsedSeparatorOrderIds.has(orderId)
+    );
+    const hasExpandedModSeparators = modSeparatorOrderIds.some(
+      (orderId) => !modsWorkspace.collapsedSeparatorOrderIds.has(orderId)
+    );
 
     return createPortal(
       <div
@@ -5702,7 +5718,8 @@ export const App = () => {
                 void setModEnabled(item, !item.isEnabled);
               }}
             >
-              {item.isEnabled ? 'Disable' : 'Enable'}
+              <MenuIcon source={item.isEnabled ? menuToggleLeftIcon : menuToggleRightIcon} />
+              <span>{item.isEnabled ? 'Disable' : 'Enable'}</span>
             </button>
             <button
               type="button"
@@ -5713,7 +5730,7 @@ export const App = () => {
                 void setAllModsEnabled(true);
               }}
             >
-              <CheckCircle2 size={14} aria-hidden="true" />
+              <MenuIcon source={menuCircleCheckIcon} />
               <span>Включить все моды</span>
             </button>
             <button
@@ -5725,46 +5742,53 @@ export const App = () => {
                 void setAllModsEnabled(false);
               }}
             >
-              <XCircle size={14} aria-hidden="true" />
+              <MenuIcon source={menuCircleXIcon} />
               <span>Выключить все моды</span>
             </button>
           </>
         ) : null}
         {item.isSeparator ? (
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              dispatchModsWorkspace({
-                type: 'separator-collapse-toggled',
-                orderId: item.orderId
-              });
-              setModMenuOrderId(null);
-            }}
-          >
-            {isCollapsed ? 'Expand separator' : 'Collapse separator'}
-          </button>
+          <>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                dispatchModsWorkspace({
+                  type: 'separator-collapse-toggled',
+                  orderId: item.orderId
+                });
+                setModMenuOrderId(null);
+              }}
+            >
+              <MenuIcon source={isCollapsed ? menuChevronDownIcon : menuChevronUpIcon} />
+              <span>{isCollapsed ? 'Expand separator' : 'Collapse separator'}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!hasExpandedModSeparators}
+              onClick={() => {
+                dispatchModsWorkspace({ type: 'all-separators-collapse-set', isCollapsed: true });
+                setModMenuOrderId(null);
+              }}
+            >
+              <MenuIcon source={menuChevronUpIcon} />
+              <span>Свернуть все</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!hasCollapsedModSeparators}
+              onClick={() => {
+                dispatchModsWorkspace({ type: 'all-separators-collapse-set', isCollapsed: false });
+                setModMenuOrderId(null);
+              }}
+            >
+              <MenuIcon source={menuChevronDownIcon} />
+              <span>Развернуть все</span>
+            </button>
+          </>
         ) : null}
-        <button
-          type="button"
-          role="menuitem"
-          onClick={() => {
-            setModMenuOrderId(null);
-            void moveModOrderItem(item, -1);
-          }}
-        >
-          Move up
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          onClick={() => {
-            setModMenuOrderId(null);
-            void moveModOrderItem(item, 1);
-          }}
-        >
-          Move down
-        </button>
         {item.isMod ? (
           <button
             type="button"
@@ -5774,11 +5798,13 @@ export const App = () => {
               void openInstalledMod(item);
             }}
           >
-            Open folder
+            <MenuIcon source={menuFolderOpenIcon} />
+            <span>Open folder</span>
           </button>
         ) : null}
         {item.isSeparator ? (
           <button
+            className="mod-row-menu__danger"
             type="button"
             role="menuitem"
             onClick={() => {
@@ -5786,10 +5812,12 @@ export const App = () => {
               void deleteModSeparator(item);
             }}
           >
-            Delete separator
+            <MenuIcon source={menuTrashIcon} />
+            <span>Delete separator</span>
           </button>
         ) : (
           <button
+            className="mod-row-menu__danger"
             type="button"
             role="menuitem"
             onClick={() => {
@@ -5797,7 +5825,8 @@ export const App = () => {
               void deleteInstalledMod(item);
             }}
           >
-            Delete mod
+            <MenuIcon source={menuTrashIcon} />
+            <span>Delete mod</span>
           </button>
         )}
       </div>,
@@ -6199,6 +6228,15 @@ export const App = () => {
       canDragPluginOrderItem(pluginsWorkspace.items, item.orderId);
     const isCollapsed =
       item.isSeparator && pluginsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
+    const pluginSeparatorOrderIds = item.isSeparator
+      ? pluginsWorkspace.items.filter((candidate) => candidate.isSeparator).map((candidate) => candidate.orderId)
+      : [];
+    const hasCollapsedPluginSeparators = pluginSeparatorOrderIds.some((orderId) =>
+      pluginsWorkspace.collapsedSeparatorOrderIds.has(orderId)
+    );
+    const hasExpandedPluginSeparators = pluginSeparatorOrderIds.some(
+      (orderId) => !pluginsWorkspace.collapsedSeparatorOrderIds.has(orderId)
+    );
 
     return createPortal(
       <div
@@ -6242,44 +6280,76 @@ export const App = () => {
           </>
         ) : null}
         {item.isSeparator ? (
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              dispatchPluginsWorkspace({
-                type: 'separator-collapse-toggled',
-                orderId: item.orderId
-              });
-              setPluginMenuOrderId(null);
-            }}
-          >
-            {isCollapsed ? 'Expand separator' : 'Collapse separator'}
-          </button>
+          <>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                dispatchPluginsWorkspace({
+                  type: 'separator-collapse-toggled',
+                  orderId: item.orderId
+                });
+                setPluginMenuOrderId(null);
+              }}
+            >
+              <MenuIcon source={isCollapsed ? menuChevronDownIcon : menuChevronUpIcon} />
+              <span>{isCollapsed ? 'Expand separator' : 'Collapse separator'}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!hasExpandedPluginSeparators}
+              onClick={() => {
+                dispatchPluginsWorkspace({ type: 'all-separators-collapse-set', isCollapsed: true });
+                setPluginMenuOrderId(null);
+              }}
+            >
+              <MenuIcon source={menuChevronUpIcon} />
+              <span>Свернуть все</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!hasCollapsedPluginSeparators}
+              onClick={() => {
+                dispatchPluginsWorkspace({ type: 'all-separators-collapse-set', isCollapsed: false });
+                setPluginMenuOrderId(null);
+              }}
+            >
+              <MenuIcon source={menuChevronDownIcon} />
+              <span>Развернуть все</span>
+            </button>
+          </>
         ) : null}
-        <button
-          type="button"
-          role="menuitem"
-          disabled={!canMoveItem}
-          onClick={() => {
-            setPluginMenuOrderId(null);
-            void movePluginOrderItem(item, -1);
-          }}
-        >
-          Move up
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          disabled={!canMoveItem}
-          onClick={() => {
-            setPluginMenuOrderId(null);
-            void movePluginOrderItem(item, 1);
-          }}
-        >
-          Move down
-        </button>
+        {item.isPlugin ? (
+          <>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!canMoveItem}
+              onClick={() => {
+                setPluginMenuOrderId(null);
+                void movePluginOrderItem(item, -1);
+              }}
+            >
+              Move up
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!canMoveItem}
+              onClick={() => {
+                setPluginMenuOrderId(null);
+                void movePluginOrderItem(item, 1);
+              }}
+            >
+              Move down
+            </button>
+          </>
+        ) : null}
         {item.isSeparator ? (
           <button
+            className="mod-row-menu__danger"
             type="button"
             role="menuitem"
             onClick={() => {
@@ -6287,7 +6357,8 @@ export const App = () => {
               void deletePluginSeparator(item);
             }}
           >
-            Delete separator
+            <MenuIcon source={menuTrashIcon} />
+            <span>Delete separator</span>
           </button>
         ) : null}
       </div>,
@@ -6729,6 +6800,7 @@ export const App = () => {
           Show in folder
         </button>
         <button
+          className="mod-row-menu__danger"
           type="button"
           role="menuitem"
           disabled={!entry.canDelete || Boolean(downloadsBusyLabel)}

@@ -1085,8 +1085,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
-    "mtime": 1782745278.8572152,
-    "ast_hash": "eda18dc6ba4516cf067628c2fd51d92d",
+    "mtime": 1782754210.658577,
+    "ast_hash": "43f5e4ae68d672f9e2985e06f968fd87",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferMo2Page.tsx": {
@@ -1125,13 +1125,13 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/mod-workspace-state.ts": {
-    "mtime": 1782723622.7053964,
-    "ast_hash": "8964e20b18e3d93fc6da6839bd995979",
+    "mtime": 1782753509.8756497,
+    "ast_hash": "e12f4b8861d0b8df9f58813934633e40",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/plugin-workspace-state.ts": {
-    "mtime": 1782723622.7053964,
-    "ast_hash": "478dd8809164ed8736526acb03a79fc8",
+    "mtime": 1782753509.876649,
+    "ast_hash": "31eecec683253ab30b5ce0171ae8a5d8",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/profiles-executables-workspace-state.ts": {
@@ -1190,7 +1190,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/.last-run.json": {
-    "mtime": 1782723140.2648678,
+    "mtime": 1782753853.3164227,
     "ast_hash": "f196824657d8858bc7fa44eecbba38b1",
     "semantic_hash": ""
   },
@@ -1215,8 +1215,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/mod-workspace-state.test.ts": {
-    "mtime": 1782721954.5283947,
-    "ast_hash": "f9f29e9e5366bc388ee1176779bc6b78",
+    "mtime": 1782753509.878649,
+    "ast_hash": "c3bef0ae19c6a9cfdc06d1f580e3fab6",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/parity-gate.test.ts": {
@@ -1225,8 +1225,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/plugin-workspace-state.test.ts": {
-    "mtime": 1782721966.6121018,
-    "ast_hash": "fb204473bb04dc173f758506b12f961e",
+    "mtime": 1782753509.8796487,
+    "ast_hash": "486bf9bf1a095c463ae985a0b508338a",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/profiles-executables-workspace-state.test.ts": {
@@ -1645,8 +1645,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/library-home.spec.ts": {
-    "mtime": 1782723120.0509238,
-    "ast_hash": "8d90236cf4c4350b2a1ae5b9ab11330b",
+    "mtime": 1782753563.487367,
+    "ast_hash": "32c7fb8ff906a905376df63ad8b3f143",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/LibraryHome.tsx": {
@@ -1710,8 +1710,8 @@
     "semantic_hash": ""
   },
   "Icons/README.md": {
-    "mtime": 1782460164.8563733,
-    "ast_hash": "e4b6ae9ccca4875bcd343b781d3aa27c",
+    "mtime": 1782752871.0296466,
+    "ast_hash": "3a40fc3d8dffed376f7f83f59b9a943c",
     "semantic_hash": ""
   },
   "Icons/flag-germany.svg": {
@@ -3942,6 +3942,51 @@
   "backend/vfs/src/VfsLifecycle.cpp": {
     "mtime": 1782746200.5605881,
     "ast_hash": "d33779d3f6200dbd85aae65644ee8fd9",
+    "semantic_hash": ""
+  },
+  "Icons/LUCIDE-LICENSE.txt": {
+    "mtime": 1782383744.2784243,
+    "ast_hash": "0ac379ab65904bcb1cf0c068528e82ce",
+    "semantic_hash": ""
+  },
+  "Icons/chevron-down.svg": {
+    "mtime": 1782752679.356464,
+    "ast_hash": "401cb93b87962ef28fc973f14c62cedf",
+    "semantic_hash": ""
+  },
+  "Icons/chevron-up.svg": {
+    "mtime": 1782752679.3957205,
+    "ast_hash": "5d3f9fdbc9711281e44732a588f2ce6f",
+    "semantic_hash": ""
+  },
+  "Icons/circle-check.svg": {
+    "mtime": 1782752679.2256625,
+    "ast_hash": "6ca9a6246ff8697fcc13322e70c6c7d4",
+    "semantic_hash": ""
+  },
+  "Icons/circle-x.svg": {
+    "mtime": 1782752679.2692327,
+    "ast_hash": "9f8b2c7ec3301eaca930d9583db30c37",
+    "semantic_hash": ""
+  },
+  "Icons/folder-open.svg": {
+    "mtime": 1782752679.3138487,
+    "ast_hash": "1ad282810c4c57a85169f4a69d19c799",
+    "semantic_hash": ""
+  },
+  "Icons/toggle-left.svg": {
+    "mtime": 1782752679.1306083,
+    "ast_hash": "92f45e06c7ea43476ec27840cf37f9a4",
+    "semantic_hash": ""
+  },
+  "Icons/toggle-right.svg": {
+    "mtime": 1782752679.1767342,
+    "ast_hash": "e71c004c2815e862fdddf61b4d38cd61",
+    "semantic_hash": ""
+  },
+  "Icons/trash-2.svg": {
+    "mtime": 1782752679.4440346,
+    "ast_hash": "1f06755fcb5a7c7295edd24287087048",
     "semantic_hash": ""
   }
 }

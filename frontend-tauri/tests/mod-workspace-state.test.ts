@@ -353,6 +353,34 @@ describe('mod workspace state', () => {
     ]);
   });
 
+  it('collapses and expands every separator without changing selection', () => {
+    const groupedItems = [
+      ...items,
+      separatorItem('sep_audio', 'Audio', 3),
+      modItem('mod_audio', 'Audio Fixes', 4)
+    ];
+    const loaded = modWorkspaceReducer(
+      { ...emptyModWorkspaceState(), selectedOrderId: 'mod_skyui' },
+      { type: 'items-loaded', items: groupedItems }
+    );
+
+    const collapsed = modWorkspaceReducer(loaded, {
+      type: 'all-separators-collapse-set',
+      isCollapsed: true
+    });
+
+    expect([...collapsed.collapsedSeparatorOrderIds].sort()).toEqual(['sep_audio', 'sep_visuals']);
+    expect(collapsed.selectedOrderId).toBe('mod_skyui');
+
+    const expanded = modWorkspaceReducer(collapsed, {
+      type: 'all-separators-collapse-set',
+      isCollapsed: false
+    });
+
+    expect(expanded.collapsedSeparatorOrderIds.size).toBe(0);
+    expect(expanded.selectedOrderId).toBe('mod_skyui');
+  });
+
   it('marks mods as nested when they belong to a separator group', () => {
     expect(isModNestedUnderSeparator(items, 'sep_visuals')).toBe(false);
     expect(isModNestedUnderSeparator(items, 'mod_skyui')).toBe(true);

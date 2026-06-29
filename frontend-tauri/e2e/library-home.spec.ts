@@ -1047,15 +1047,24 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   const modRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
   await modRow.focus();
   await page.keyboard.press('Shift+F10');
-  await page.getByRole('menuitem', { name: 'Move down' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Move up' })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: 'Move down' })).toHaveCount(0);
+  await page.getByRole('menuitem', { name: 'Open folder' }).click();
   await expect
-    .poll(() =>
-      page.evaluate(() =>
-        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
-          ?.map((call) => call.method)
-      )
-    )
-    .toContain('mods.moveOrderItem');
+    .poll(() => latestCallPayload(page, 'shell.openPath'))
+    .toMatchObject({
+      path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Unofficial Patch'
+    });
+
+  const separatorRow = page.getByRole('row', { name: /Core fixes separator/ });
+  await separatorRow.focus();
+  await page.keyboard.press('Shift+F10');
+  await expect(page.getByRole('menuitem', { name: 'Move up' })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: 'Move down' })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: 'Свернуть все' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Развернуть все' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Delete separator' })).toBeVisible();
+  await page.keyboard.press('Escape');
 
   await overwriteRow.focus();
   await page.keyboard.press('Shift+F10');
@@ -1151,6 +1160,16 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   await expect(page.getByRole('row', { name: /Skyrim.esm/ })).toBeVisible();
   await expect(rightPane.getByText('00')).toBeVisible();
   await expect(rightPane.locator('.plugin-type-badge', { hasText: 'master' }).first()).toBeVisible();
+
+  const pluginSeparatorRow = page.getByRole('row', { name: /Late patches separator/ });
+  await pluginSeparatorRow.focus();
+  await page.keyboard.press('Shift+F10');
+  await expect(page.getByRole('menuitem', { name: 'Move up' })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: 'Move down' })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: 'Свернуть все' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Развернуть все' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Delete separator' })).toBeVisible();
+  await page.keyboard.press('Escape');
 
   const pluginRow = page.getByRole('row', { name: /SkyUI\.esp/ });
   await pluginRow.focus();

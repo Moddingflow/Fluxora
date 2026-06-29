@@ -970,11 +970,6 @@ input::placeholder {
   flex: 0 0 auto;
 }
 
-.project-row-menu__danger:hover,
-.project-row-menu__danger:focus-visible {
-  color: var(--danger);
-}
-
 .library-detail-panel .fact-list {
   padding: 8px 0;
 }
@@ -3872,6 +3867,10 @@ body.row-reorder-active * {
 }
 
 .mod-row-menu {
+  --menu-item-danger-bg: rgba(150, 72, 66, 0.16);
+  --menu-item-danger-color: #c9877f;
+  --menu-item-hover-bg: rgba(255, 255, 255, 0.07);
+
   position: absolute;
   top: 34px;
   right: 18px;
@@ -3901,20 +3900,48 @@ body.row-reorder-active * {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   min-height: 30px;
-  padding: 0 9px;
+  padding: 0 9px 0 7px;
   border-radius: 5px;
   color: var(--muted);
   background: transparent;
   text-align: left;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.mod-row-menu button:hover,
+.mod-row-menu__icon {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  margin-left: -2px;
+  background: currentColor;
+  mask: var(--menu-icon) center / contain no-repeat;
+  -webkit-mask: var(--menu-icon) center / contain no-repeat;
+}
+
+.mod-row-menu button > svg {
+  margin-left: -2px;
+  flex: 0 0 auto;
+}
+
+.mod-row-menu button.mod-row-menu__danger,
+.mod-row-menu button.project-row-menu__danger {
+  color: var(--menu-item-danger-color);
+}
+
+.mod-row-menu button:hover:not(:disabled),
 .mod-row-menu button:focus-visible {
-  color: var(--text);
-  background: var(--surface-strong);
+  background: var(--menu-item-hover-bg);
   outline: none;
+}
+
+.mod-row-menu button.mod-row-menu__danger:hover:not(:disabled),
+.mod-row-menu button.mod-row-menu__danger:focus-visible,
+.mod-row-menu button.project-row-menu__danger:hover:not(:disabled),
+.mod-row-menu button.project-row-menu__danger:focus-visible {
+  background: var(--menu-item-danger-bg);
 }
 
 .mods-inspector {
@@ -7391,6 +7418,10 @@ body.row-reorder-active * {
 }
 
 :root[data-theme="light"] .mod-row-menu {
+  --menu-item-danger-bg: rgba(150, 72, 66, 0.13);
+  --menu-item-danger-color: #a65f57;
+  --menu-item-hover-bg: rgba(25, 35, 25, 0.07);
+
   background: #f8faf5;
   box-shadow: 0 12px 28px rgba(25, 35, 25, 0.16);
 }

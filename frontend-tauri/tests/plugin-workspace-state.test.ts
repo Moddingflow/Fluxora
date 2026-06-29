@@ -284,6 +284,34 @@ describe('plugin workspace state', () => {
     expect(moved.collapsedSeparatorOrderIds.has('sep_patches')).toBe(true);
   });
 
+  it('collapses and expands every plugin separator without changing selection', () => {
+    const groupedItems = [
+      ...items,
+      separatorItem('sep_ui', 'Interface', 5),
+      pluginItem('plugin_ui', 'InterfacePatch.esp', 6)
+    ];
+    const loaded = pluginWorkspaceReducer(
+      { ...emptyPluginWorkspaceState(), selectedOrderId: 'plugin_skyui' },
+      { type: 'items-loaded', items: groupedItems }
+    );
+
+    const collapsed = pluginWorkspaceReducer(loaded, {
+      type: 'all-separators-collapse-set',
+      isCollapsed: true
+    });
+
+    expect([...collapsed.collapsedSeparatorOrderIds].sort()).toEqual(['sep_patches', 'sep_ui']);
+    expect(collapsed.selectedOrderId).toBe('plugin_skyui');
+
+    const expanded = pluginWorkspaceReducer(collapsed, {
+      type: 'all-separators-collapse-set',
+      isCollapsed: false
+    });
+
+    expect(expanded.collapsedSeparatorOrderIds.size).toBe(0);
+    expect(expanded.selectedOrderId).toBe('plugin_skyui');
+  });
+
   it('applies optimistic plugin enabled state without changing selection or collapsed separators', () => {
     const loaded = pluginWorkspaceReducer(
       { ...emptyPluginWorkspaceState(), selectedOrderId: 'plugin_light' },
