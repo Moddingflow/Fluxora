@@ -1,7 +1,7 @@
 {
   ".codex/hooks.json": {
-    "mtime": 1782210938.6812668,
-    "ast_hash": "2a2872e14a60827416e76b2b4d273595",
+    "mtime": 1782726919.2809236,
+    "ast_hash": "895c66c3e89954d49c2699644dfa93b9",
     "semantic_hash": ""
   },
   "Build.ps1": {
@@ -110,8 +110,8 @@
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/Services/ExecutableService.hpp": {
-    "mtime": 1782711228.2092035,
-    "ast_hash": "9349a81254824ac712bcb184b1246417",
+    "mtime": 1782727555.9456809,
+    "ast_hash": "cff66f638e1feef3f2ea6fa66567530b",
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/Services/FluxPackService.hpp": {
@@ -325,8 +325,8 @@
     "semantic_hash": ""
   },
   "backend/src/Services/ExecutableService.cpp": {
-    "mtime": 1782711228.2112038,
-    "ast_hash": "0b442b0b74d951ac11d42a6c6dee66a5",
+    "mtime": 1782728134.620265,
+    "ast_hash": "46a778f6565eb36b8ee94acde819edc7",
     "semantic_hash": ""
   },
   "backend/src/Services/FluxPackService.cpp": {
@@ -410,8 +410,8 @@
     "semantic_hash": ""
   },
   "backend/src/Services/VirtualFileSystemService.cpp": {
-    "mtime": 1782718901.41117,
-    "ast_hash": "0a3d7fb5da2b9d6ffaa8e8f96c01c898",
+    "mtime": 1782727555.9481857,
+    "ast_hash": "b326e4c2b1b8c939fce371393d63993f",
     "semantic_hash": ""
   },
   "backend/src/Storage/AtomicFileStore.cpp": {
@@ -420,8 +420,8 @@
     "semantic_hash": ""
   },
   "backend/src/Storage/InstanceMetadataStore.cpp": {
-    "mtime": 1782557927.4132545,
-    "ast_hash": "1961c75d8a40b9664ecd01c05fd13909",
+    "mtime": 1782728187.1432061,
+    "ast_hash": "6d0dee72f653701487154f7f108d912d",
     "semantic_hash": ""
   },
   "backend/src/Storage/ProjectStateTransaction.cpp": {
@@ -455,8 +455,8 @@
     "semantic_hash": ""
   },
   "backend/tests/ExecutableServiceTests.cpp": {
-    "mtime": 1782561635.9489634,
-    "ast_hash": "317097092507b27e5148f49f15d2a862",
+    "mtime": 1782728150.768164,
+    "ast_hash": "0bbca9bad971c13d3ed74012b776190e",
     "semantic_hash": ""
   },
   "backend/tests/FluxPackServiceTests.cpp": {
@@ -1085,8 +1085,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
-    "mtime": 1782722272.286302,
-    "ast_hash": "727c1357ca72f5eb33ac47a53803ef61",
+    "mtime": 1782725056.5295713,
+    "ast_hash": "8ffc0f9c80b3610d0733a234a430253f",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferMo2Page.tsx": {
@@ -1820,8 +1820,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/launch-process-watch.test.ts": {
-    "mtime": 1782547127.8409593,
-    "ast_hash": "58279686fe94c2ae41e868a04ff5a380",
+    "mtime": 1782725350.875203,
+    "ast_hash": "9814c3e9261496b3af554423df17fba8",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/design-system/primitives/custom-select.tsx": {
@@ -1882,6 +1882,2051 @@
   "frontend-tauri/tests/focus-modality-service.test.ts": {
     "mtime": 1782723063.469693,
     "ast_hash": "f8f1c0b217f009d2e58359e11d9cfe38",
+    "semantic_hash": ""
+  },
+  ".agents/skills/fluxora-architecture-boundaries/SKILL.md": {
+    "mtime": 1782725285.9256382,
+    "ast_hash": "8283616a13807af9738978ac1c4643e7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/fluxora-architecture-boundaries/agents/openai.yaml": {
+    "mtime": 1782725285.9276447,
+    "ast_hash": "2fd598b00dd9e6f80e398b2ae9b8a110",
+    "semantic_hash": ""
+  },
+  ".agents/skills/fluxora-tauri-bridge-contract/SKILL.md": {
+    "mtime": 1782725285.9266417,
+    "ast_hash": "30ab69d2a52e93a8be1359c5330e8d93",
+    "semantic_hash": ""
+  },
+  ".agents/skills/fluxora-tauri-bridge-contract/agents/openai.yaml": {
+    "mtime": 1782725285.9286451,
+    "ast_hash": "7db9a2307652e84d71ed47f871facb60",
+    "semantic_hash": ""
+  },
+  ".agents/skills/fluxora-frontend-tauri-ui/SKILL.md": {
+    "mtime": 1782725285.9276447,
+    "ast_hash": "00d41eafcfd4f473cd33651f557b32b8",
+    "semantic_hash": ""
+  },
+  ".agents/skills/fluxora-frontend-tauri-ui/agents/openai.yaml": {
+    "mtime": 1782725210.9054456,
+    "ast_hash": "b6661b5c0bcd37aa0768147c7490b081",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/checks/analyze.py": {
+    "mtime": 1782725813.517937,
+    "ast_hash": "e76f375fb31f4cda8b7b7e1feedc36d1",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/checks/check.sh": {
+    "mtime": 1782725813.5189364,
+    "ast_hash": "dc89f5a8f6de3a188ceb976679c1788d",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/checks/gen.py": {
+    "mtime": 1782725813.5189364,
+    "ast_hash": "30b58064360e96cbfe49b25c18f7a0d8",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/checks/gen_index.py": {
+    "mtime": 1782725813.5199368,
+    "ast_hash": "650b39e2b85fbcb8dd7f0523619d7277",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/checks/src/lib.rs": {
+    "mtime": 1782725813.5199368,
+    "ast_hash": "4be03eb85ad43a7d74595c17370c76eb",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/checks/validate.py": {
+    "mtime": 1782725813.5209365,
+    "ast_hash": "93ca970e10726fd81941d00b751a35d1",
+    "semantic_hash": ""
+  },
+  ".agents/skills/skill-security-auditor/scripts/skill_security_auditor.py": {
+    "mtime": 1782725818.388545,
+    "ast_hash": "4a0dbe2750ec06ae51c6ff370fb41c3d",
+    "semantic_hash": ""
+  },
+  ".agents/skills/accessibility-basic-check/SKILL.md": {
+    "mtime": 1782725813.2923822,
+    "ast_hash": "69975ea271a6016f7fb11767cbf0c338",
+    "semantic_hash": ""
+  },
+  ".agents/skills/bug-hunt-swarm/SKILL.md": {
+    "mtime": 1782725813.3414526,
+    "ast_hash": "7538f783729f3b3df4914b78ed705a26",
+    "semantic_hash": ""
+  },
+  ".agents/skills/bug-hunt-swarm/agents/openai.yaml": {
+    "mtime": 1782725813.3414526,
+    "ast_hash": "615ee368cf5c37bfa65016e50422c2a4",
+    "semantic_hash": ""
+  },
+  ".agents/skills/css-layout-helper/SKILL.md": {
+    "mtime": 1782725813.2933824,
+    "ast_hash": "9af1246be784d3a1adf72c58a14d2586",
+    "semantic_hash": ""
+  },
+  ".agents/skills/debug-mode/SKILL.md": {
+    "mtime": 1782725812.9765837,
+    "ast_hash": "89ed147f583ea8abec6495756fe5d8ca",
+    "semantic_hash": ""
+  },
+  ".agents/skills/dependency-upgrade-plan/SKILL.md": {
+    "mtime": 1782725813.300895,
+    "ast_hash": "dfa55e981cc74c38f2d2e2d1f87ba383",
+    "semantic_hash": ""
+  },
+  ".agents/skills/pr-reviewer/SKILL.md": {
+    "mtime": 1782725813.3018944,
+    "ast_hash": "c6394df019d82cccce22f689df0beed7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/react-component-performance/SKILL.md": {
+    "mtime": 1782725813.358474,
+    "ast_hash": "87e41b1e6bc4b463d53d3a42ce4e3ddd",
+    "semantic_hash": ""
+  },
+  ".agents/skills/react-component-performance/agents/openai.yaml": {
+    "mtime": 1782725813.3594737,
+    "ast_hash": "e803312c0e5051e92a1a7822a9f64a84",
+    "semantic_hash": ""
+  },
+  ".agents/skills/react-component-performance/references/examples.md": {
+    "mtime": 1782725813.3594737,
+    "ast_hash": "02952f7169657ca892834a08491d0e47",
+    "semantic_hash": ""
+  },
+  ".agents/skills/review-and-simplify-changes/SKILL.md": {
+    "mtime": 1782725813.3604734,
+    "ast_hash": "1705285dfa1e0df2e884fc414086f20b",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/.github/workflows/ci.yml": {
+    "mtime": 1782725813.511915,
+    "ast_hash": "8b3451e016559f89776e0042912bb3fe",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/AGENTS.md": {
+    "mtime": 1782725813.511915,
+    "ast_hash": "77427c33fabab0e470f53b2098bf2780",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/CHANGELOG.md": {
+    "mtime": 1782725813.512419,
+    "ast_hash": "1af5ae4ef69afa5ef784aa1f23250387",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/CLAUDE.md": {
+    "mtime": 1782725813.513424,
+    "ast_hash": "77427c33fabab0e470f53b2098bf2780",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/CONTRIBUTING.md": {
+    "mtime": 1782725813.513424,
+    "ast_hash": "8b3711ec0a6d5de9ea6ebd1341022e86",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/README.md": {
+    "mtime": 1782725813.5144243,
+    "ast_hash": "e339ce73627ede6b8b77539f9a38bc88",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/SKILL.md": {
+    "mtime": 1782725837.9233658,
+    "ast_hash": "b44d52582af06aa7b83fb9de17dda6bf",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/checks/README.md": {
+    "mtime": 1782725813.5169327,
+    "ast_hash": "20dba3c3a858edabfdfb7b685389382e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/checks/baseline.txt": {
+    "mtime": 1782725813.517937,
+    "ast_hash": "5a10ec385580ea920fc46294c3150616",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-clone-excessive.md": {
+    "mtime": 1782725813.5209365,
+    "ast_hash": "7345628b7340fd061f89f9c073ad6549",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-collect-intermediate.md": {
+    "mtime": 1782725813.5219364,
+    "ast_hash": "1686caa7141a8f7d5e0fae029ed1b413",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-empty-catch.md": {
+    "mtime": 1782725813.5229392,
+    "ast_hash": "2bfba5d20d7544af3a55087c29ffe087",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-expect-lazy.md": {
+    "mtime": 1782725813.5229392,
+    "ast_hash": "9d16ce1b5e230444fa1418aed86d5aa9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-format-hot-path.md": {
+    "mtime": 1782725813.5239367,
+    "ast_hash": "7063e7ed617167762c939224d35560ad",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-index-over-iter.md": {
+    "mtime": 1782725813.5239367,
+    "ast_hash": "c79fb11b8c4caa57fbafdc8926e12061",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-lock-across-await.md": {
+    "mtime": 1782725813.5239367,
+    "ast_hash": "197d2bf321be1f5eb6f6e083249cbed3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-over-abstraction.md": {
+    "mtime": 1782725813.5239367,
+    "ast_hash": "eecee6df4985d50a8b7510b44e846850",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-panic-expected.md": {
+    "mtime": 1782725813.525442,
+    "ast_hash": "02ee1f30889f9452e1b8f760b175ded7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-premature-optimize.md": {
+    "mtime": 1782725813.525442,
+    "ast_hash": "f614f99092136cba80c6fac2a8d974c2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-string-for-str.md": {
+    "mtime": 1782725813.5264468,
+    "ast_hash": "9bb07094eaf26e2d121bb7f04e18ac70",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-stringly-typed.md": {
+    "mtime": 1782725813.5264468,
+    "ast_hash": "70403c53c2ab52ec0b986dc70e73a85a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-type-erasure.md": {
+    "mtime": 1782725813.5274477,
+    "ast_hash": "760b84eb9cc3ebfbc54fc24279737d9f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-unwrap-abuse.md": {
+    "mtime": 1782725813.5274477,
+    "ast_hash": "35521f52bb2d66d445c5024832c8a845",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/anti-vec-for-slice.md": {
+    "mtime": 1782725813.5284524,
+    "ast_hash": "40c796e6ffa0e0b45c2740f154d43e24",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-builder-must-use.md": {
+    "mtime": 1782725813.5284524,
+    "ast_hash": "1a5ebac7ac20b5fa7b463f66d28e40a4",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-builder-pattern.md": {
+    "mtime": 1782725813.5284524,
+    "ast_hash": "4439e187ed1f80e1c6269a1094d4db21",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-common-traits.md": {
+    "mtime": 1782725813.5294528,
+    "ast_hash": "7e42b9e3dd2c406ac44d19203dce0948",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-default-impl.md": {
+    "mtime": 1782725813.5304525,
+    "ast_hash": "7d763454169350a642688571ea053b1f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-extension-trait.md": {
+    "mtime": 1782725813.5304525,
+    "ast_hash": "0fbe6a8c5093a4415931569ef1e085eb",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-from-not-into.md": {
+    "mtime": 1782725813.5314524,
+    "ast_hash": "bcac52706fd053972a6df4cd1bea9401",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-impl-asref.md": {
+    "mtime": 1782725813.532452,
+    "ast_hash": "2d05a1e199d5341d5915574bb012b093",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-impl-fromiterator.md": {
+    "mtime": 1782725813.532452,
+    "ast_hash": "8e35bcc1758ba26097f9523ad246058b",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-impl-into.md": {
+    "mtime": 1782725813.5334527,
+    "ast_hash": "ac3947bdf0de3219e7947fa8ac968b8a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-must-use.md": {
+    "mtime": 1782725813.5334527,
+    "ast_hash": "ccf707e149db6ae398f422e5e16cd5d6",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-newtype-safety.md": {
+    "mtime": 1782725813.534453,
+    "ast_hash": "3945e80411f260b5e574a2ee9a76c772",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-non-exhaustive.md": {
+    "mtime": 1782725813.534453,
+    "ast_hash": "45c56014f34017259e1bc8ad6e6be564",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-operator-overload.md": {
+    "mtime": 1782725813.5354528,
+    "ast_hash": "b8dfae21bcd231e9dc356b6e9bebb512",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-parse-dont-validate.md": {
+    "mtime": 1782725813.535958,
+    "ast_hash": "37bc01d74a67d5b7ee6c56ea030d9396",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-sealed-trait.md": {
+    "mtime": 1782725813.5369644,
+    "ast_hash": "54bc90a9c02ac2c09366b0daacd5dadc",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-serde-optional.md": {
+    "mtime": 1782725813.5369644,
+    "ast_hash": "5c38edde10824384dd291424187b2df0",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/api-typestate.md": {
+    "mtime": 1782725813.53797,
+    "ast_hash": "ac2a42013156c039ae108572dac693b8",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-async-fn-bounds.md": {
+    "mtime": 1782725813.53797,
+    "ast_hash": "7b906749bfcfa055abd410e3fa395187",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-bounded-channel.md": {
+    "mtime": 1782725813.5389693,
+    "ast_hash": "329adb449a67cf1f4ff52c7d80714dba",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-broadcast-pubsub.md": {
+    "mtime": 1782725813.5399685,
+    "ast_hash": "35df2395508907d7ce962f87c1fd5fba",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-cancel-safety.md": {
+    "mtime": 1782725813.5399685,
+    "ast_hash": "94dd9311fe1755fd2f3bfe2c371eb9aa",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-clone-before-await.md": {
+    "mtime": 1782725813.5409698,
+    "ast_hash": "3a24b4b6478fcc0b1d96990fdbbe3df1",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-fn-in-trait.md": {
+    "mtime": 1782725813.54197,
+    "ast_hash": "b8ddec874f5678bcb0965fa3b131eb4f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-join-parallel.md": {
+    "mtime": 1782725813.54197,
+    "ast_hash": "a093c8815e5a63b3631dae32dc8df217",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-joinset-structured.md": {
+    "mtime": 1782725813.542969,
+    "ast_hash": "50b1122ec8f1eee123cf03939d3b40db",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-mpsc-queue.md": {
+    "mtime": 1782725813.543969,
+    "ast_hash": "949e20f491d47c277f20fca1c64a6c87",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-no-lock-await.md": {
+    "mtime": 1782725813.543969,
+    "ast_hash": "1f30669b880257e47719956d9e975797",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-oneshot-response.md": {
+    "mtime": 1782725813.543969,
+    "ast_hash": "c6df740447bd96bba9aea7677ece360e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-select-racing.md": {
+    "mtime": 1782725813.545473,
+    "ast_hash": "d33f8ce636023b74a4236cdded4cb882",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-spawn-blocking.md": {
+    "mtime": 1782725813.545473,
+    "ast_hash": "eaede0110a5b6d3251b35a8d35a0a7e0",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-tokio-fs.md": {
+    "mtime": 1782725813.5464787,
+    "ast_hash": "0245973dc44ae5241494908c0ebec216",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-tokio-runtime.md": {
+    "mtime": 1782725813.5464787,
+    "ast_hash": "a568f334afb411b3c4d358812df834dc",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-try-join.md": {
+    "mtime": 1782725813.5474794,
+    "ast_hash": "50c7a4af18984756cd7000ec1d8af38f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/async-watch-latest.md": {
+    "mtime": 1782725813.5474794,
+    "ast_hash": "15b937458f4cb5422dcfc250cb8e1ac7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/closure-disjoint-capture.md": {
+    "mtime": 1782725813.5484843,
+    "ast_hash": "391251186e6284370e4fb91c1f6b42b9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/closure-fn-trait-bounds.md": {
+    "mtime": 1782725813.5484843,
+    "ast_hash": "fd07083a1d928e83d0ea6f2a985b0bc9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/closure-impl-fn-return.md": {
+    "mtime": 1782725813.5494847,
+    "ast_hash": "9c305a6b01af522e84aeba04259f2a3a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/closure-move-capture.md": {
+    "mtime": 1782725813.5494847,
+    "ast_hash": "61fbc3485e350cb60d630efe8401fd98",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/closure-static-vs-dyn.md": {
+    "mtime": 1782725813.5504851,
+    "ast_hash": "fbbd77aae0963ad97789492e33a76755",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/coll-binaryheap.md": {
+    "mtime": 1782725813.5504851,
+    "ast_hash": "41a9b2525b3008855239b121793941c7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/coll-map-choice.md": {
+    "mtime": 1782725813.551484,
+    "ast_hash": "04b3672277d81bc70348fe8a2fc31e88",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/coll-seq-choice.md": {
+    "mtime": 1782725813.551484,
+    "ast_hash": "7ef2f6de3881744120e816ea96c78a7b",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/coll-set-membership.md": {
+    "mtime": 1782725813.5524845,
+    "ast_hash": "4b680d915dcc44f6011a279cc19a8701",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/conc-atomic-ordering.md": {
+    "mtime": 1782725813.5524845,
+    "ast_hash": "f605a7c9fed7467aaa24fb21a8f886f8",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/conc-rayon-par-iter.md": {
+    "mtime": 1782725813.553485,
+    "ast_hash": "debca57571e1f275c1badb7f05d27494",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/conc-scoped-threads.md": {
+    "mtime": 1782725813.554485,
+    "ast_hash": "28bca2c478f70db368253c44274ef158",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/conc-thread-local.md": {
+    "mtime": 1782725813.554485,
+    "ast_hash": "c1de7043e6df167d99a18792ad859189",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/const-block.md": {
+    "mtime": 1782725813.5554852,
+    "ast_hash": "69e202784c22f8cd4949d32dd0e3adf7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/const-fn.md": {
+    "mtime": 1782725813.5559895,
+    "ast_hash": "d69bdf312c4717d9144a218e5ef35ed9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/const-generics.md": {
+    "mtime": 1782725813.5559895,
+    "ast_hash": "5451bcdf1cc8ea99c7ece30fca96c662",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/const-vs-static.md": {
+    "mtime": 1782725813.5569944,
+    "ast_hash": "0b68217511d646864e8f6fe501e40693",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/conv-asmut-mutable.md": {
+    "mtime": 1782725813.5569944,
+    "ast_hash": "5dbe4946d25ba5e33aa12b9fdfbe5f04",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/conv-fromstr-parsing.md": {
+    "mtime": 1782725813.558,
+    "ast_hash": "15ae1ec41dcce6bb923a103823a28b50",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/conv-tryfrom-fallible.md": {
+    "mtime": 1782725813.558,
+    "ast_hash": "32113624ca5970b652251fded2b5a24c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/doc-all-public.md": {
+    "mtime": 1782725813.5589986,
+    "ast_hash": "d1fb9b1125827fd081b81403ab80f04c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/doc-cargo-metadata.md": {
+    "mtime": 1782725813.5589986,
+    "ast_hash": "a2aee750f5981fd973dfb53ac3b69fe3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/doc-crate-readme.md": {
+    "mtime": 1782725813.5600002,
+    "ast_hash": "44fbdaa0b2403d3e531b81f767fbfaae",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/doc-errors-section.md": {
+    "mtime": 1782725813.5600002,
+    "ast_hash": "b19dd46eda7b384938d6ad81c82583d0",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/doc-examples-section.md": {
+    "mtime": 1782725813.5609987,
+    "ast_hash": "0fc26cb56bf0edc33c645fa9e1b38e72",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/doc-hidden-setup.md": {
+    "mtime": 1782725813.5619998,
+    "ast_hash": "218a79a1072c396a9b9e4cc88085ca9c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/doc-intra-links.md": {
+    "mtime": 1782725813.5619998,
+    "ast_hash": "35dda6da2437ab42150b816a9f43d5a1",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/doc-link-types.md": {
+    "mtime": 1782725813.562999,
+    "ast_hash": "c74abb8b897f15e818ad6f2c7925706e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/doc-module-inner.md": {
+    "mtime": 1782725813.562999,
+    "ast_hash": "5388297385d1ca4cea5a05e747637609",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/doc-panics-section.md": {
+    "mtime": 1782725813.564,
+    "ast_hash": "b14ee6a425e2d0222d151152e8dec8ec",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/doc-question-mark.md": {
+    "mtime": 1782725813.564,
+    "ast_hash": "179d01a3be221bf319c72bff6356cc05",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/doc-safety-section.md": {
+    "mtime": 1782725813.5655053,
+    "ast_hash": "cde0bc839817651ad4880276f1557393",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/err-anyhow-app.md": {
+    "mtime": 1782725813.5655053,
+    "ast_hash": "ab65cbb3f844ed46a674638839a25433",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/err-context-chain.md": {
+    "mtime": 1782725813.5665119,
+    "ast_hash": "ad51db6e11372d2450e6761aa3dcd1bc",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/err-custom-type.md": {
+    "mtime": 1782725813.5675113,
+    "ast_hash": "ed5554faab64ab550ed2e3ca3f98050f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/err-doc-errors.md": {
+    "mtime": 1782725813.5685163,
+    "ast_hash": "6bf0e0e5eceafa5ee33e62f80e002173",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/err-expect-bugs-only.md": {
+    "mtime": 1782725813.569516,
+    "ast_hash": "85154dea665379d553bdbf3e645dc679",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/err-from-impl.md": {
+    "mtime": 1782725813.570516,
+    "ast_hash": "a3b9aa9e495a9ecf7e1b15703e43bbb2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/err-lowercase-msg.md": {
+    "mtime": 1782725813.570516,
+    "ast_hash": "127aa8418877469cae90414d60a7fd99",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/err-no-unwrap-prod.md": {
+    "mtime": 1782725813.5715163,
+    "ast_hash": "511936c15fbdf00f80b7a4e3fe4ae2b4",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/err-question-mark.md": {
+    "mtime": 1782725813.5715163,
+    "ast_hash": "5e902fd6015ec71578e9c620556c71a7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/err-result-over-panic.md": {
+    "mtime": 1782725813.5725162,
+    "ast_hash": "250511c80b5581a72f0d9a50b90b0581",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/err-source-chain.md": {
+    "mtime": 1782725813.5735176,
+    "ast_hash": "04e56384e5883a753f10c4c6fc067fe9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/err-thiserror-lib.md": {
+    "mtime": 1782725813.5735176,
+    "ast_hash": "9c70a1df1209028bca094f32bd8a60f8",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-cargo-metadata.md": {
+    "mtime": 1782725813.5745175,
+    "ast_hash": "39ae07c2d756b7d1fdcafa138f8681ee",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-cfg-check.md": {
+    "mtime": 1782725813.5745175,
+    "ast_hash": "89d092c38f451c56744a95bd26ee65f2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-clippy-nursery-selected.md": {
+    "mtime": 1782725813.5755174,
+    "ast_hash": "46e28311c60d422dd8fae0dc926bb26f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-deny-correctness.md": {
+    "mtime": 1782725813.5760224,
+    "ast_hash": "32be07c8bcedaa2968f72efb101953d4",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-missing-docs.md": {
+    "mtime": 1782725813.5760224,
+    "ast_hash": "75137430a23ae6f5ed209dbaa8206bf6",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-pedantic-selective.md": {
+    "mtime": 1782725813.5770292,
+    "ast_hash": "8b6f5b8b3923f662723da08b6ee3d6a5",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-rustfmt-check.md": {
+    "mtime": 1782725813.5770292,
+    "ast_hash": "2216cde2d9dc9b23b16c0045ea332d26",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-unsafe-doc.md": {
+    "mtime": 1782725813.5780332,
+    "ast_hash": "e46089930275e0de097d58190120cc88",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-warn-complexity.md": {
+    "mtime": 1782725813.5780332,
+    "ast_hash": "c3c59ac6f0ce827def64f09cbfa9a492",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-warn-perf.md": {
+    "mtime": 1782725813.5790348,
+    "ast_hash": "5d459ad7524a259ea5d2b13ead279b5d",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-warn-style.md": {
+    "mtime": 1782725813.5790348,
+    "ast_hash": "6d64a91323328d1ea5936a3307aac56f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-warn-suspicious.md": {
+    "mtime": 1782725813.5800352,
+    "ast_hash": "823883bfd0434fa508ae4ad3c1bde920",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/lint-workspace-lints.md": {
+    "mtime": 1782725813.5810354,
+    "ast_hash": "3754d1fecd251a03d482871ed9ac5929",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/macro-export-crate-path.md": {
+    "mtime": 1782725813.5810354,
+    "ast_hash": "85d283da4f79cddbff25f097374c7843",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/macro-fragment-specifiers.md": {
+    "mtime": 1782725813.5820353,
+    "ast_hash": "d32d348979dd9af734e59f7f72b9743c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/macro-prefer-functions.md": {
+    "mtime": 1782725813.5820353,
+    "ast_hash": "ee62bdbd76337d1ead4af0d868989a54",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/macro-private-helpers.md": {
+    "mtime": 1782725813.5830352,
+    "ast_hash": "ed5b38b28c7246493889f7feedfad10b",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/macro-proc-error-spans.md": {
+    "mtime": 1782725813.5840342,
+    "ast_hash": "b42898c2018f4050ed7c2cc38214e101",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/macro-proc-syn-quote.md": {
+    "mtime": 1782725813.5840342,
+    "ast_hash": "567be87b74fc6ef9904ddf24c38193dc",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/macro-proc-two-crate.md": {
+    "mtime": 1782725813.5840342,
+    "ast_hash": "2fe6a67ccdd876fcc4ed3261d07fe1b9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/macro-rules-hygiene.md": {
+    "mtime": 1782725813.5855384,
+    "ast_hash": "025c13d1aa507de597c5ed50bda9e70d",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-arena-allocator.md": {
+    "mtime": 1782725813.5855384,
+    "ast_hash": "8ad9c3cb08c4fceecb51c0f87cd93a73",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-arrayvec.md": {
+    "mtime": 1782725813.5865445,
+    "ast_hash": "751054f9b4a0b9329296c3d184e0ce5e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-assert-type-size.md": {
+    "mtime": 1782725813.5865445,
+    "ast_hash": "63cfb06c20ffaa1bfcc07bac023756f7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-avoid-format.md": {
+    "mtime": 1782725813.5875435,
+    "ast_hash": "91aaacec2d76ef3897dcab2d1cdcf6d8",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-box-large-variant.md": {
+    "mtime": 1782725813.5875435,
+    "ast_hash": "a891f46fea1cffe24cb3af370761a380",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-boxed-slice.md": {
+    "mtime": 1782725813.5885491,
+    "ast_hash": "c3536c0d72f71d557b82c701647d64a1",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-clone-from.md": {
+    "mtime": 1782725813.5885491,
+    "ast_hash": "8176430d00783313d1fbd04b66913c02",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-compact-string.md": {
+    "mtime": 1782725813.5895486,
+    "ast_hash": "13194f117783f550bea774bd5b7e0933",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-drop-order.md": {
+    "mtime": 1782725813.5905478,
+    "ast_hash": "a986db79bbc6a7c817d0513918c096fa",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-reuse-collections.md": {
+    "mtime": 1782725813.5905478,
+    "ast_hash": "c5c0f4722a894057d03ec11e27c50dfe",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-smaller-integers.md": {
+    "mtime": 1782725813.591549,
+    "ast_hash": "e650b50d54a60448ddd87be0bcdff8ec",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-smallvec.md": {
+    "mtime": 1782725813.5935476,
+    "ast_hash": "4e9eee6322119a5131482bce5299b201",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-take-replace.md": {
+    "mtime": 1782725813.5935476,
+    "ast_hash": "684bc38f28fa7f11a2fd1ea0ea47c0c3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-thinvec.md": {
+    "mtime": 1782725813.594548,
+    "ast_hash": "d9bbcdbe2aaa66e1906776b2457c0d3b",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-with-capacity.md": {
+    "mtime": 1782725813.594548,
+    "ast_hash": "2fd3960f0fa84e5350623228716d4460",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-write-over-format.md": {
+    "mtime": 1782725813.5955486,
+    "ast_hash": "d79ccbf0322e218c30ac77bf603c13e9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/mem-zero-copy.md": {
+    "mtime": 1782725813.5960526,
+    "ast_hash": "bb24d4cc2e7cc41c6aa6d090e20a78e2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-acronym-word.md": {
+    "mtime": 1782725813.5960526,
+    "ast_hash": "399adb22de31c86a638dc9a32a0d3a83",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-as-free.md": {
+    "mtime": 1782725813.5970583,
+    "ast_hash": "cfeae31f20f3908c7ce985f60f8828b3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-consts-screaming.md": {
+    "mtime": 1782725813.5970583,
+    "ast_hash": "f3319b8ee5e4513837518e8202c69675",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-crate-no-rs.md": {
+    "mtime": 1782725813.5980628,
+    "ast_hash": "95b2420d093bbb8c6cb0d04bc962fa8d",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-funcs-snake.md": {
+    "mtime": 1782725813.5990639,
+    "ast_hash": "5e017b3acce7673da03c80fed312b04a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-into-ownership.md": {
+    "mtime": 1782725813.5990639,
+    "ast_hash": "bf09bf483c1c8fe52f0ee9a79e79a379",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-is-has-bool.md": {
+    "mtime": 1782725813.6000638,
+    "ast_hash": "81b6fa50523e9d407f00055aefb3fe48",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-iter-convention.md": {
+    "mtime": 1782725813.6000638,
+    "ast_hash": "bb767f6055cf477e86a391e0f1f9a6ef",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-iter-method.md": {
+    "mtime": 1782725813.601063,
+    "ast_hash": "d88eead5013ca655a0dc335dfc1ad53b",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-iter-type-match.md": {
+    "mtime": 1782725813.601063,
+    "ast_hash": "881212125eb6bab1e6dd36dafe04391a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-lifetime-short.md": {
+    "mtime": 1782725813.6020634,
+    "ast_hash": "134095ce75581159763ed44df1437439",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-no-get-prefix.md": {
+    "mtime": 1782725813.6030624,
+    "ast_hash": "917e268bacf5bb50141593783a2c6eab",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-to-expensive.md": {
+    "mtime": 1782725813.6030624,
+    "ast_hash": "a1ff186c0ffca6ca307164c48c507426",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-type-param-single.md": {
+    "mtime": 1782725813.6040633,
+    "ast_hash": "5cc7774ecdf4b0ef07dcea6fee3a5949",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-types-camel.md": {
+    "mtime": 1782725813.6040633,
+    "ast_hash": "d90cf5c5a7182ff551019fde3ce6e649",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/name-variants-camel.md": {
+    "mtime": 1782725813.6040633,
+    "ast_hash": "9667e71eb0d9b58cf2dc0dcc9a4fa0c1",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/num-cast-try-from.md": {
+    "mtime": 1782725813.6055686,
+    "ast_hash": "fa9db3608c41377946758ec8a5ac7b61",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/num-float-compare.md": {
+    "mtime": 1782725813.606574,
+    "ast_hash": "a8ea0516012fe2bf5ec9b8267f5c7f6e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/num-nonzero.md": {
+    "mtime": 1782725813.606574,
+    "ast_hash": "a903c971a04e90e48d2edd66b99ae8f7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/num-overflow-explicit.md": {
+    "mtime": 1782725813.6075742,
+    "ast_hash": "91f2ce5b2a9b3645e9250088e90847e5",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/num-saturating-clamp.md": {
+    "mtime": 1782725813.6075742,
+    "ast_hash": "a95a8ed29005376d8341ab8183d29bec",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/obs-error-chain.md": {
+    "mtime": 1782725813.6095788,
+    "ast_hash": "a04c330d2f8d82348cdf5455f95c2857",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/obs-instrument-spans.md": {
+    "mtime": 1782725813.6105783,
+    "ast_hash": "a6222e97bf70f1bfd72efff0356585c6",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/obs-levels-filter.md": {
+    "mtime": 1782725813.613087,
+    "ast_hash": "a305cb369dd9242678ccae6d01e3dea3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/obs-library-facade.md": {
+    "mtime": 1782725813.6155915,
+    "ast_hash": "224b3d91d92b24fb8cce9595130d8b6f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/obs-no-sensitive-data.md": {
+    "mtime": 1782725813.6155915,
+    "ast_hash": "4a1e50e730c8676be71a804046209a2f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/obs-structured-fields.md": {
+    "mtime": 1782725813.6155915,
+    "ast_hash": "9e8ebf04a1ebf2c7285ee879170b5657",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/obs-tracing-over-log.md": {
+    "mtime": 1782725813.6175966,
+    "ast_hash": "5a48ce6a2b959054431c34ba44402423",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/opt-bounds-check.md": {
+    "mtime": 1782725813.6175966,
+    "ast_hash": "9c997b7659bb7c5b9a18b4f704416e48",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/opt-cache-friendly.md": {
+    "mtime": 1782725813.6186008,
+    "ast_hash": "c6577266466cc5c90b26bb13516b44f9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/opt-codegen-units.md": {
+    "mtime": 1782725813.6196024,
+    "ast_hash": "5718cf7720224ad5fd6b912ac3e4a5cf",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/opt-cold-unlikely.md": {
+    "mtime": 1782725813.6196024,
+    "ast_hash": "bf8f23ac108276538945070473fe35c6",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/opt-inline-always-rare.md": {
+    "mtime": 1782725813.6246016,
+    "ast_hash": "4b4225628d19219819acc029239d134b",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/opt-inline-never-cold.md": {
+    "mtime": 1782725813.6256013,
+    "ast_hash": "9608e0fb1cbbd347d91dc0c4631d8164",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/opt-inline-small.md": {
+    "mtime": 1782725813.6261048,
+    "ast_hash": "04daeedf9f2501ee90ae4101bbf9cab3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/opt-likely-hint.md": {
+    "mtime": 1782725813.627111,
+    "ast_hash": "1a8f77731fca1377bd078b94ab571db9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/opt-lto-release.md": {
+    "mtime": 1782725813.627111,
+    "ast_hash": "5bba2127e36975696632f9f794babcf3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/opt-pgo-profile.md": {
+    "mtime": 1782725813.6281147,
+    "ast_hash": "4ab35642071e93b93ceeec9ee3e3bb68",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/opt-simd-portable.md": {
+    "mtime": 1782725813.6281147,
+    "ast_hash": "9cfea28ebe81fb559159f22a07b1b675",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/opt-target-cpu.md": {
+    "mtime": 1782725813.629115,
+    "ast_hash": "f143922acd12d76fa0a715b6b42c8b0b",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/own-arc-shared.md": {
+    "mtime": 1782725813.629115,
+    "ast_hash": "792071909c2dbc32a555ec88f6fc33aa",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/own-borrow-over-clone.md": {
+    "mtime": 1782725813.630117,
+    "ast_hash": "7b37f140aa33911d6a72af7e03b124be",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/own-clone-explicit.md": {
+    "mtime": 1782725813.630117,
+    "ast_hash": "721accdd02908f8993ae84ac2f6054fe",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/own-copy-small.md": {
+    "mtime": 1782725813.6311152,
+    "ast_hash": "6388378ac3b98c86ab9bf6dd6476c7d0",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/own-cow-conditional.md": {
+    "mtime": 1782725813.6311152,
+    "ast_hash": "37d2b7a8be9c49d1ae4f9c4e2d525133",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/own-lifetime-elision.md": {
+    "mtime": 1782725813.6321151,
+    "ast_hash": "7390eb854351614ffcbd2ccfbad581eb",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/own-move-large.md": {
+    "mtime": 1782725813.6321151,
+    "ast_hash": "6219116e212c77613ec556a960bb639e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/own-mutex-interior.md": {
+    "mtime": 1782725813.6331148,
+    "ast_hash": "d06f5970326d2c1abaaa519cc9828f0d",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/own-rc-single-thread.md": {
+    "mtime": 1782725813.6341157,
+    "ast_hash": "a297b9fe208361b1cd244836d05b2f42",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/own-refcell-interior.md": {
+    "mtime": 1782725813.6341157,
+    "ast_hash": "cd93cc8b5cf47bb7bb17ea21185590be",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/own-rwlock-readers.md": {
+    "mtime": 1782725813.6356196,
+    "ast_hash": "e7d1ee9b28f9de731a068c96d60d0f07",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/own-slice-over-vec.md": {
+    "mtime": 1782725813.6356196,
+    "ast_hash": "d375ea8ec7e4cae69cc07051f84972a4",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/pat-at-bindings.md": {
+    "mtime": 1782725813.6366248,
+    "ast_hash": "f8768bf315052c09206c4b7fdf6e082c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/pat-exhaustive-enum.md": {
+    "mtime": 1782725813.6376245,
+    "ast_hash": "0810e221ecd96fce8f86445149bf0a63",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/pat-if-let-chains.md": {
+    "mtime": 1782725813.6376245,
+    "ast_hash": "14405caeb3f81db2323f75d094955cee",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/pat-let-else.md": {
+    "mtime": 1782725813.6386278,
+    "ast_hash": "478c99bd8d69c8a243f7a3313690bd75",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/pat-matches-macro.md": {
+    "mtime": 1782725813.6396282,
+    "ast_hash": "3263b4da08c648eaa5a9f604425889f5",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-ahash.md": {
+    "mtime": 1782725813.6406298,
+    "ast_hash": "bb1a2318b86d904106e621d99513ccb3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-black-box-bench.md": {
+    "mtime": 1782725813.6426296,
+    "ast_hash": "7f3d145e21276d2c858ecce3cb358fd1",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-chain-avoid.md": {
+    "mtime": 1782725813.6426296,
+    "ast_hash": "03d60349db89ec8b26637fd28a3fb0af",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-collect-into.md": {
+    "mtime": 1782725813.6436286,
+    "ast_hash": "4d32a639f3243a432ce8a48d46f9b254",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-collect-once.md": {
+    "mtime": 1782725813.6436286,
+    "ast_hash": "5f807ee9ab59834c2ccde6203adc3e1e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-drain-reuse.md": {
+    "mtime": 1782725813.6446283,
+    "ast_hash": "38254abfc86bc89f500fe860fce2089c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-entry-api.md": {
+    "mtime": 1782725813.6461346,
+    "ast_hash": "e5487b34b15e64780ec41ede31fa46fb",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-extend-batch.md": {
+    "mtime": 1782725813.6461346,
+    "ast_hash": "b8003618b730f96d81525dd77798f244",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-io-buffering.md": {
+    "mtime": 1782725813.6471398,
+    "ast_hash": "3e7651037ad90ab6f17dfca02469e690",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-iter-lazy.md": {
+    "mtime": 1782725813.6471398,
+    "ast_hash": "169d4a7f1d0eabb4cce60d1ecd88997f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-iter-over-index.md": {
+    "mtime": 1782725813.6481454,
+    "ast_hash": "dcc4a5462f922b95c052456e797b59e7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-profile-first.md": {
+    "mtime": 1782725813.6481454,
+    "ast_hash": "8dca26a5f55ebd3f64ccdf4004d0cae2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/perf-release-profile.md": {
+    "mtime": 1782725813.6491454,
+    "ast_hash": "66febb43ecac1c6bf3dba35806c7f023",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-bin-dir.md": {
+    "mtime": 1782725813.650146,
+    "ast_hash": "926c4a2c3d2c12a492c3836eaba0baf3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-build-rs-minimal.md": {
+    "mtime": 1782725813.651146,
+    "ast_hash": "8b51ac45adbf8ec315272a0232279c28",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-feature-additive.md": {
+    "mtime": 1782725813.651146,
+    "ast_hash": "8f05432e6c32326f6a9721e208d61597",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-flat-small.md": {
+    "mtime": 1782725813.652146,
+    "ast_hash": "393335f5f0a2b0bd32a7a95d0a49322f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-lib-main-split.md": {
+    "mtime": 1782725813.652146,
+    "ast_hash": "79f6db30eb93241b16ddaf4a01d7b409",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-mod-by-feature.md": {
+    "mtime": 1782725813.652146,
+    "ast_hash": "fedbaacd06851f5d1b9890da071bc645",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-mod-rs-dir.md": {
+    "mtime": 1782725813.653145,
+    "ast_hash": "4101d038bdaa06502444b393058a93ae",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-msrv-declare.md": {
+    "mtime": 1782725813.6721728,
+    "ast_hash": "2b05b5319330bad40a55bd83431df0b5",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-prelude-module.md": {
+    "mtime": 1782725813.6721728,
+    "ast_hash": "5d165e0e08ddfc57650b563a76ef97ab",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-pub-crate-internal.md": {
+    "mtime": 1782725813.6731725,
+    "ast_hash": "53f24e0db859a58935bc4f6a0fee0a71",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-pub-super-parent.md": {
+    "mtime": 1782725813.6741734,
+    "ast_hash": "1c9c3aef83c6269cac739d0099dfb331",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-pub-use-reexport.md": {
+    "mtime": 1782725813.6741734,
+    "ast_hash": "e941f126e436ee470f77bdc2126134f8",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-workspace-deps.md": {
+    "mtime": 1782725813.6756787,
+    "ast_hash": "8335105705da8ce80cb6c0f3d8005060",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/proj-workspace-large.md": {
+    "mtime": 1782725813.6766846,
+    "ast_hash": "99399819a706922400a9f2b4c7703ca2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/serde-custom-with.md": {
+    "mtime": 1782725813.6766846,
+    "ast_hash": "222ade9b8d88b55301ae2e14a6071b20",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/serde-default-compat.md": {
+    "mtime": 1782725813.6776843,
+    "ast_hash": "a422b1e270aa48e36feea0917e3eb747",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/serde-deny-unknown-fields.md": {
+    "mtime": 1782725813.6786888,
+    "ast_hash": "e1b65736b0e78c8849586fce31f3772e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/serde-enum-representation.md": {
+    "mtime": 1782725813.6786888,
+    "ast_hash": "6e209ee9d62f760f9e5f98bd73604c8c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/serde-flatten.md": {
+    "mtime": 1782725813.680688,
+    "ast_hash": "fb81dc9800a39e8b1068fe085eeb5305",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/serde-rename-all.md": {
+    "mtime": 1782725813.680688,
+    "ast_hash": "21669e4662b8bc7c897d67538d4bcb58",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/serde-skip-empty.md": {
+    "mtime": 1782725813.680688,
+    "ast_hash": "39fa8c061004d1d432150384b76fa18f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/serde-try-from-validate.md": {
+    "mtime": 1782725813.6826885,
+    "ast_hash": "2e4a8353ccc9c3b9badf3392650460d7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-arrange-act-assert.md": {
+    "mtime": 1782725813.6836884,
+    "ast_hash": "7de3e0f796fff8bbbafc60b6914ab52f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-cfg-test-module.md": {
+    "mtime": 1782725813.6846888,
+    "ast_hash": "1b2350e3a15332e8ed0a65c9cd77420a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-criterion-bench.md": {
+    "mtime": 1782725813.6846888,
+    "ast_hash": "45bd5347c2f7de8a1e7c9b6cbcb9cd1c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-descriptive-names.md": {
+    "mtime": 1782725813.687199,
+    "ast_hash": "6a4f1ec18329f6ad1cd5d8f447a52214",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-doctest-examples.md": {
+    "mtime": 1782725813.6882048,
+    "ast_hash": "3863e3672a8907d0adc5dc8ac194dfe9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-fixture-raii.md": {
+    "mtime": 1782725813.6882048,
+    "ast_hash": "feec85ba1de3aafc852ee86689013b7c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-integration-dir.md": {
+    "mtime": 1782725813.6892045,
+    "ast_hash": "1aa1c059dfcec1c64fa29e63c604389a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-loom-concurrency.md": {
+    "mtime": 1782725813.6902041,
+    "ast_hash": "72a7ac940b2b635ee76a5ce1ab0b167a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-mock-traits.md": {
+    "mtime": 1782725813.6912038,
+    "ast_hash": "38686ace65702764aa81665532b118f8",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-mockall-mocking.md": {
+    "mtime": 1782725813.6912038,
+    "ast_hash": "a2196663463cb43936616096e5dab474",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-proptest-properties.md": {
+    "mtime": 1782725813.6922038,
+    "ast_hash": "922e09dfdc232eb514778311c03884c9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-should-panic.md": {
+    "mtime": 1782725813.6922038,
+    "ast_hash": "c65661d395bda5cd8a5972d62e9174e4",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-snapshot-testing.md": {
+    "mtime": 1782725813.693205,
+    "ast_hash": "464c91dbd3429f25a6699964c22ff96f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-tokio-async.md": {
+    "mtime": 1782725813.693205,
+    "ast_hash": "ff339665273a820646bcfc2b701fb1ea",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/test-use-super.md": {
+    "mtime": 1782725813.694205,
+    "ast_hash": "c63fbcdb297b52d8f4b11a3b1221f3bc",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/trait-associated-type-vs-generic.md": {
+    "mtime": 1782725813.694205,
+    "ast_hash": "f6cff5600151f5a776f1658d63411e43",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/trait-blanket-impl.md": {
+    "mtime": 1782725813.6967156,
+    "ast_hash": "ac678b5f6c306b8bc68cf6f14412fd08",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/trait-coherence-newtype.md": {
+    "mtime": 1782725813.6967156,
+    "ast_hash": "6510cc25abbb9b689c5532911b92b716",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/trait-default-methods.md": {
+    "mtime": 1782725813.697716,
+    "ast_hash": "704019ea0a8515336b58b01688946b80",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/trait-dyn-vs-generic.md": {
+    "mtime": 1782725813.6987202,
+    "ast_hash": "bf50eb8eb93ff0bde0126a819601c8a2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/trait-object-safety.md": {
+    "mtime": 1782725813.6987202,
+    "ast_hash": "bf7ece652d3482c4fd27f55810ebfa96",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-deref-coercion.md": {
+    "mtime": 1782725813.6997206,
+    "ast_hash": "17fd582f4c06d0a6206a50575f8bc9a4",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-display-vs-debug.md": {
+    "mtime": 1782725813.7007208,
+    "ast_hash": "5e0d94fc7b8dc492e87214467aa4507e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-enum-states.md": {
+    "mtime": 1782725813.7007208,
+    "ast_hash": "75169af023c356bee6baecb51f1ed133",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-generic-bounds.md": {
+    "mtime": 1782725813.701721,
+    "ast_hash": "4a55fceff4190241cbcbc88c0f49969d",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-never-diverge.md": {
+    "mtime": 1782725813.701721,
+    "ast_hash": "ff1f560c66f5ccf8c4fb2fbbf8668b92",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-newtype-ids.md": {
+    "mtime": 1782725813.7027206,
+    "ast_hash": "066634deefda5c5346131f5e8d8fda26",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-newtype-validated.md": {
+    "mtime": 1782725813.7037206,
+    "ast_hash": "7a506582d9f839ea229076973a70f848",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-no-stringly.md": {
+    "mtime": 1782725813.7037206,
+    "ast_hash": "d65131cffe7c7985d6d86169e714ba59",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-numeric-fmt.md": {
+    "mtime": 1782725813.704721,
+    "ast_hash": "e7e73b9069fcc7c66a1c3c678977b1d4",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-option-nullable.md": {
+    "mtime": 1782725813.704721,
+    "ast_hash": "abeb5460c951dae926d83ba4fb5dad65",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-phantom-marker.md": {
+    "mtime": 1782725813.7057207,
+    "ast_hash": "8d7b2c25ff9da967b186c53fe0770694",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-repr-transparent.md": {
+    "mtime": 1782725813.7062244,
+    "ast_hash": "09eb81a58778a58e66e60464098c84ab",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/type-result-fallible.md": {
+    "mtime": 1782725813.7072306,
+    "ast_hash": "17d005a734d556e7831ec10f00c552ee",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/unsafe-extern-block.md": {
+    "mtime": 1782725813.7072306,
+    "ast_hash": "92e4fd7f73dc957cbbbcb3959d091153",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/unsafe-maybeuninit.md": {
+    "mtime": 1782725813.7082365,
+    "ast_hash": "760696d60b71607476051812f1162147",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/unsafe-minimize-scope.md": {
+    "mtime": 1782725813.7082365,
+    "ast_hash": "35b2128f6afa8cedec5aaeb299e98242",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/unsafe-miri-ci.md": {
+    "mtime": 1782725813.709235,
+    "ast_hash": "7e9605782cefeb501b4cdb62c742c751",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/unsafe-no-mangle-unsafe.md": {
+    "mtime": 1782725813.7102354,
+    "ast_hash": "7a18df41d5906e8fba21cb988c3305e5",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/unsafe-safety-comment.md": {
+    "mtime": 1782725813.7102354,
+    "ast_hash": "44fccf5d453c2eada404f6bc68a6e2ef",
+    "semantic_hash": ""
+  },
+  ".agents/skills/rust-skills/rules/unsafe-send-sync-manual.md": {
+    "mtime": 1782725813.7112353,
+    "ast_hash": "ccdd5f2320a825164f7eebbb265abebb",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/LICENSE.txt": {
+    "mtime": 1782725813.980835,
+    "ast_hash": "0bfdc0ac8ba46ed583d8fccc1e347dff",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/SKILL.md": {
+    "mtime": 1782725813.9818344,
+    "ast_hash": "9f3a5b389f97c0951dfc588da8391679",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/agents/openai.yaml": {
+    "mtime": 1782725813.982833,
+    "ast_hash": "3efbd5602298c0bdd0194f1624c67cc4",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/references/golang-general-backend-security.md": {
+    "mtime": 1782725813.9838328,
+    "ast_hash": "8aafcb3ddf00de8a535b07f5200e879d",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/references/javascript-express-web-server-security.md": {
+    "mtime": 1782725813.9838328,
+    "ast_hash": "6278ffde1496f5181877da91c412cf86",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/references/javascript-general-web-frontend-security.md": {
+    "mtime": 1782725813.9848325,
+    "ast_hash": "57282066da904716d09286eb62fb6ac2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/references/javascript-jquery-web-frontend-security.md": {
+    "mtime": 1782725813.9858322,
+    "ast_hash": "47d53f17b7fd956c95fc182420aaeda6",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/references/javascript-typescript-nextjs-web-server-security.md": {
+    "mtime": 1782725813.9858322,
+    "ast_hash": "1159172e24aeda71e5e787a5ecb28300",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/references/javascript-typescript-react-web-frontend-security.md": {
+    "mtime": 1782725813.9870746,
+    "ast_hash": "37eeb767688b551f656d094aa4e09540",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/references/javascript-typescript-vue-web-frontend-security.md": {
+    "mtime": 1782725813.98808,
+    "ast_hash": "a45286291832a9b7d7307b0b624e1cdb",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/references/python-django-web-server-security.md": {
+    "mtime": 1782725813.98808,
+    "ast_hash": "22aa199aca7d03c436774d603d966dc2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/references/python-fastapi-web-server-security.md": {
+    "mtime": 1782725813.989079,
+    "ast_hash": "56ad2634eda6b9f80eab5fb7eecca76b",
+    "semantic_hash": ""
+  },
+  ".agents/skills/security-best-practices/references/python-flask-web-server-security.md": {
+    "mtime": 1782725813.9900792,
+    "ast_hash": "d95cae787eb7a2df05c96c3107722498",
+    "semantic_hash": ""
+  },
+  ".agents/skills/skill-security-auditor/SKILL.md": {
+    "mtime": 1782725818.3875437,
+    "ast_hash": "bb29132c8207acfe3c542118a1105059",
+    "semantic_hash": ""
+  },
+  ".agents/skills/skill-security-auditor/references/threat-model.md": {
+    "mtime": 1782725818.388545,
+    "ast_hash": "090e247a9b626339727f02f339c217a7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/command-metadata.json": {
+    "mtime": 1782726919.2252128,
+    "ast_hash": "883d1962f87b23b4a0f6229e1aadd484",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/context-signals.mjs": {
+    "mtime": 1782726919.226717,
+    "ast_hash": "ed7a5fe15dbaebb1513d5e6db09cc32c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/context.mjs": {
+    "mtime": 1782726919.2277224,
+    "ast_hash": "a50540ddca0d7ab788f6ad8ce018f6b5",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/critique-storage.mjs": {
+    "mtime": 1782726919.2287223,
+    "ast_hash": "942bbd0169358eecab57d82ad9c29f18",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detect-csp.mjs": {
+    "mtime": 1782726919.2287223,
+    "ast_hash": "02c5a9a8ad69f87d23af72bf580fd3f4",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detect.mjs": {
+    "mtime": 1782726919.2297256,
+    "ast_hash": "11dbeb9341477d06d1a24c3ad1f37ac9",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/browser/injected/index.mjs": {
+    "mtime": 1782726919.231727,
+    "ast_hash": "debb68b8803d28963da5e428b02a36b6",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/cli/main.mjs": {
+    "mtime": 1782726919.231727,
+    "ast_hash": "a6adc91f040378f8206f036a7cac01ab",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/design-system.mjs": {
+    "mtime": 1782726919.2327263,
+    "ast_hash": "e783b3750787dcaf0d4e0d8925a7c17a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/detect-antipatterns-browser.js": {
+    "mtime": 1782726919.23423,
+    "ast_hash": "c4c41525b05aac0d2bf6f34a24bb4c3b",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/detect-antipatterns.mjs": {
+    "mtime": 1782726919.23423,
+    "ast_hash": "1153e262200605dcc367717e5cb9958e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/engines/browser/detect-url.mjs": {
+    "mtime": 1782726919.2367394,
+    "ast_hash": "79bad2870a43795ad3827691393c02d6",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/engines/regex/detect-text.mjs": {
+    "mtime": 1782726919.2377448,
+    "ast_hash": "2541e2c63b3a84944287a5dd71eb3482",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/engines/static-html/css-cascade.mjs": {
+    "mtime": 1782726919.2387438,
+    "ast_hash": "657919a4b2292ed8c5f7f400c94e7709",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/engines/static-html/detect-html.mjs": {
+    "mtime": 1782726919.2387438,
+    "ast_hash": "c124c697ee3d2aab2f476e54559b1b18",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/engines/visual/screenshot-contrast.mjs": {
+    "mtime": 1782726919.2417445,
+    "ast_hash": "6312c6dbc048c4445f50e69f167a297d",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/findings.mjs": {
+    "mtime": 1782726919.2417445,
+    "ast_hash": "f7f3de6f00121150c4762809df00df9f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/node/file-system.mjs": {
+    "mtime": 1782726919.2427435,
+    "ast_hash": "21d55d864c78f1a6c20794551e3901d5",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/profile/profiler.mjs": {
+    "mtime": 1782726919.243745,
+    "ast_hash": "88c5d2027852842be578edf349a0f9c8",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/registry/antipatterns.mjs": {
+    "mtime": 1782726919.2447443,
+    "ast_hash": "1897a8a19ecef77f02775f538ff919b6",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/rules/checks.mjs": {
+    "mtime": 1782726919.2457438,
+    "ast_hash": "f9c05f30fb5bac95ba4edd7512770836",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/shared/color.mjs": {
+    "mtime": 1782726919.2472496,
+    "ast_hash": "2363d500ccf490f9ff285119b613276d",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/shared/constants.mjs": {
+    "mtime": 1782726919.2472496,
+    "ast_hash": "5700477c8a86d876b90de9d6eb63f191",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/shared/inline-ignores.mjs": {
+    "mtime": 1782726919.248255,
+    "ast_hash": "6e3e7e639661186078ea93a849f57c64",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/detector/shared/page.mjs": {
+    "mtime": 1782726919.2492537,
+    "ast_hash": "ab3a243b690b4f70c4ef639cdf970d82",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/hook-admin.mjs": {
+    "mtime": 1782726919.2492537,
+    "ast_hash": "07dc4be8ab6cf4ca82e7e6b8570e540e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/hook-before-edit.mjs": {
+    "mtime": 1782726919.2502544,
+    "ast_hash": "2cfaf154ba846c585f4ab80234c2f711",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/hook-lib.mjs": {
+    "mtime": 1782726919.2512538,
+    "ast_hash": "d68d10de50a82a49b4968e312ae7a8ba",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/hook.mjs": {
+    "mtime": 1782726919.253255,
+    "ast_hash": "b17a38c988ec5694067ec8b042813315",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/lib/design-parser.mjs": {
+    "mtime": 1782726919.2542553,
+    "ast_hash": "d158b9b1742ff7bf726431595a4bbfb1",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/lib/impeccable-config.mjs": {
+    "mtime": 1782726919.2542553,
+    "ast_hash": "4d8cfd9e0e92963ed8814180ee258b2c",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/lib/impeccable-paths.mjs": {
+    "mtime": 1782726919.2552538,
+    "ast_hash": "0322682dc887b01e013633b0436a4811",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/lib/is-generated.mjs": {
+    "mtime": 1782726919.2552538,
+    "ast_hash": "edd718b1a4737edbf9631ff7f6f512ef",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/lib/target-args.mjs": {
+    "mtime": 1782726919.2567577,
+    "ast_hash": "442e04a03b6ba43330a859a537a956b2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-accept.mjs": {
+    "mtime": 1782726919.2657678,
+    "ast_hash": "63a98882c6e9cee6155ec14f0541cf6b",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-browser-dom.js": {
+    "mtime": 1782726919.2657678,
+    "ast_hash": "b96db5b10874366237a40305c5dc72a1",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-browser-session.js": {
+    "mtime": 1782726919.2667682,
+    "ast_hash": "5dec3dae6158050d69762fb79facaf48",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-browser.js": {
+    "mtime": 1782726919.2678862,
+    "ast_hash": "6b2234d749d9afec5dcf31dd930d1bd4",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-commit-manual-edits.mjs": {
+    "mtime": 1782726919.2678862,
+    "ast_hash": "866079c1dea82be936f92cf11adf01d3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-complete.mjs": {
+    "mtime": 1782726919.268886,
+    "ast_hash": "18ddd6db2567d7d385291b813d310518",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-copy-edit-agent.mjs": {
+    "mtime": 1782726919.2698865,
+    "ast_hash": "1c4926b56d5442775dab0138bf71a790",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-discard-manual-edits.mjs": {
+    "mtime": 1782726919.2698865,
+    "ast_hash": "bbd49a16f77178fc8e778759653dd4c5",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-inject.mjs": {
+    "mtime": 1782726919.2708867,
+    "ast_hash": "953ad604895fa47278b7a98c0195b4b7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-insert.mjs": {
+    "mtime": 1782726919.2718863,
+    "ast_hash": "a0ce4a29836987cc67cad70e630d5dcf",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-manual-edit-evidence.mjs": {
+    "mtime": 1782726919.2718863,
+    "ast_hash": "aafd35ccb714ec883362d7dde83f61d1",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-poll.mjs": {
+    "mtime": 1782726919.2728858,
+    "ast_hash": "33b5ef512bb2f50016a4c9b819b7ec5a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-resume.mjs": {
+    "mtime": 1782726919.2728858,
+    "ast_hash": "0791b79bb824ffc6b52fcec25c6982a7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-server.mjs": {
+    "mtime": 1782726919.273886,
+    "ast_hash": "23c56ff420df13777f0c1ec46c88351e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-status.mjs": {
+    "mtime": 1782726919.2748861,
+    "ast_hash": "039529830229f091246f26baabaaa0dd",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-target.mjs": {
+    "mtime": 1782726919.275887,
+    "ast_hash": "7a25beda7cdc4c5a6eb2a7f135ec50fd",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live-wrap.mjs": {
+    "mtime": 1782726919.275887,
+    "ast_hash": "fe8eb439e106eeeabab75941c62e6867",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live.mjs": {
+    "mtime": 1782726919.2768855,
+    "ast_hash": "cd3b7e1e4a35a37fbc651b6bb1f3f12f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live/browser-script-parts.mjs": {
+    "mtime": 1782726919.2577631,
+    "ast_hash": "f04f047fda5e9b2a3b1e510983da153d",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live/completion.mjs": {
+    "mtime": 1782726919.2577631,
+    "ast_hash": "77185bc6cced6322e6892af8e05839f0",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live/event-validation.mjs": {
+    "mtime": 1782726919.258763,
+    "ast_hash": "97a304ab4b04080bcdbaf3816d3ee968",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live/insert-ui.mjs": {
+    "mtime": 1782726919.2597694,
+    "ast_hash": "b6c5c82e14218c0c1b1e66f0851bff3f",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live/manual-apply.mjs": {
+    "mtime": 1782726919.2597694,
+    "ast_hash": "043d0a1a7a4a373178648502bbe7da81",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live/manual-edit-routes.mjs": {
+    "mtime": 1782726919.2607684,
+    "ast_hash": "5f801f9370461d1faa9ae4cde85a96be",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live/manual-edits-buffer.mjs": {
+    "mtime": 1782726919.2617671,
+    "ast_hash": "a36834f2a77dd6a81ee324ef4f6f8baa",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live/session-store.mjs": {
+    "mtime": 1782726919.2617671,
+    "ast_hash": "1f464fe28989247246d53927a1698265",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live/svelte-component.mjs": {
+    "mtime": 1782726919.262767,
+    "ast_hash": "b23495379a1527dbb9c7c3171041819e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live/sveltekit-adapter.mjs": {
+    "mtime": 1782726919.2637684,
+    "ast_hash": "66e07d2c07827af6099ce81a442bd66e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live/ui-core.mjs": {
+    "mtime": 1782726919.2637684,
+    "ast_hash": "fd7d2bdbdab291957cffacfce95a19d1",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/live/vocabulary.mjs": {
+    "mtime": 1782726919.264768,
+    "ast_hash": "e7e5650764fceb61f2197769c7f5864e",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/modern-screenshot.umd.js": {
+    "mtime": 1782726919.2779193,
+    "ast_hash": "4fe5f9e490ab4f107afc707d7eafc819",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/palette.mjs": {
+    "mtime": 1782726919.2779193,
+    "ast_hash": "adbc82e1e9021b4948901b21563277a2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/scripts/pin.mjs": {
+    "mtime": 1782726919.2789237,
+    "ast_hash": "867ca7fdded9987e84a128a3b4fb6bab",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/SKILL.md": {
+    "mtime": 1782726919.2799242,
+    "ast_hash": "fb09a069370f54cb8514c0801da81239",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/agents/openai.yaml": {
+    "mtime": 1782726919.2057202,
+    "ast_hash": "f6a36117ebc5ff8f67efb518ad1fe775",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/adapt.md": {
+    "mtime": 1782726919.2067194,
+    "ast_hash": "d349a7700926a5d51c1f7de8d66965ef",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/animate.md": {
+    "mtime": 1782726919.2067194,
+    "ast_hash": "a81ce3c8c233b189a76b7b7e734308bc",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/audit.md": {
+    "mtime": 1782726919.2080145,
+    "ast_hash": "6fcb6455f2051f6e40c61d3553295c62",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/bolder.md": {
+    "mtime": 1782726919.2090175,
+    "ast_hash": "68705d6f0c6a82691163fa9870c626d0",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/brand.md": {
+    "mtime": 1782726919.2090175,
+    "ast_hash": "f70d1cd822ae916a55a2c26e775885aa",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/clarify.md": {
+    "mtime": 1782726919.2100194,
+    "ast_hash": "25946f47983871d36205f2e50b6a4519",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/codex.md": {
+    "mtime": 1782726919.2110178,
+    "ast_hash": "4cf0b41300869b9b5e80bad1804ccdf3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/colorize.md": {
+    "mtime": 1782726919.2110178,
+    "ast_hash": "bcaa5f7d07ee6a0548f6b1bc74e33e96",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/craft.md": {
+    "mtime": 1782726919.2120183,
+    "ast_hash": "d49d10ec508c66cb95795231822c3dfb",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/critique.md": {
+    "mtime": 1782726919.2130184,
+    "ast_hash": "1856287847ab325594e79063db408e6a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/delight.md": {
+    "mtime": 1782726919.2130184,
+    "ast_hash": "7b79555d08e21cd6acb5300eea797309",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/distill.md": {
+    "mtime": 1782726919.2140195,
+    "ast_hash": "03f5a189dfee0d929eed41e2428a3d16",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/document.md": {
+    "mtime": 1782726919.2150195,
+    "ast_hash": "7823c7d9f0fee4669e839f5845ed3cb3",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/extract.md": {
+    "mtime": 1782726919.2160184,
+    "ast_hash": "6f3be96d7d72a8f99d3d7a8219710cc7",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/harden.md": {
+    "mtime": 1782726919.2160184,
+    "ast_hash": "d547667e282ba223077e496ef9df4c18",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/hooks.md": {
+    "mtime": 1782726919.2170186,
+    "ast_hash": "f45244d1bde9f1a3b7ad823dda75865a",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/init.md": {
+    "mtime": 1782726919.2170186,
+    "ast_hash": "fed2bf05470b81836bdc6585323e3064",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/interaction-design.md": {
+    "mtime": 1782726919.2182086,
+    "ast_hash": "1dd83bb8a96d7e250914064aa7389f8b",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/layout.md": {
+    "mtime": 1782726919.2192118,
+    "ast_hash": "d0e7cb7de94bac343cbe982cd81b12d2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/live.md": {
+    "mtime": 1782726919.2192118,
+    "ast_hash": "9f51cbfd5e050a2c41d3fe74a10a5467",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/onboard.md": {
+    "mtime": 1782726919.2202127,
+    "ast_hash": "e1439e7cb4d19ea29a8990f008aa60f2",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/optimize.md": {
+    "mtime": 1782726919.2212124,
+    "ast_hash": "7355a3b5927b2b9b507def36f4b89b53",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/overdrive.md": {
+    "mtime": 1782726919.2212124,
+    "ast_hash": "ff1a1fe7400aa845f65fca05ffc028d5",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/polish.md": {
+    "mtime": 1782726919.2222114,
+    "ast_hash": "b70a3e30a38f00e6730ef1da472a0e84",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/product.md": {
+    "mtime": 1782726919.2232113,
+    "ast_hash": "6408a63ddbfe7003c732650381506860",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/quieter.md": {
+    "mtime": 1782726919.2232113,
+    "ast_hash": "2eda6743707424e946e4e88874500986",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/shape.md": {
+    "mtime": 1782726919.224212,
+    "ast_hash": "8cbc6f4bc6e66d60e009f8fb687f7c82",
+    "semantic_hash": ""
+  },
+  ".agents/skills/impeccable/reference/typeset.md": {
+    "mtime": 1782726919.2252128,
+    "ast_hash": "aa7076c91c2d1095ac405a80f30cc470",
     "semantic_hash": ""
   }
 }

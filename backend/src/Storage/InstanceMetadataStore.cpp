@@ -279,6 +279,7 @@ namespace fluxora
         constexpr std::wstring_view profilePluginOrderPluginKind = L"plugin";
         constexpr std::wstring_view profilePluginOrderSeparatorKind = L"separator";
         constexpr std::wstring_view modInventoryRevisionKey = L"mod_inventory_revision";
+        constexpr std::wstring_view generatedPgPatcherProvider = L"generated-pgpatcher";
 
         using SqliteDestructor = void (*)(void*);
 
@@ -595,6 +596,11 @@ namespace fluxora
 
         bool portableManifestNeedsWrite(const InstalledModRecord& record, bool stateChanged)
         {
+            if (toLower(trim(record.source.provider)) == std::wstring(generatedPgPatcherProvider))
+            {
+                return false;
+            }
+
             if (stateChanged)
             {
                 return true;
@@ -3256,7 +3262,10 @@ namespace fluxora
                 record.path = entry.path();
 
                 upsertModRecord(database, record);
-                writePortableManifest(record);
+                if (portableManifestNeedsWrite(record, false))
+                {
+                    writePortableManifest(record);
+                }
             }
 
             markInstalledModsMissingFromDiskDeleted(database, diskFolders);
@@ -4002,7 +4011,10 @@ namespace fluxora
         transaction.commit();
 
         record = readRecordByFolder(database, projectDirectory, record.folderName, modDirectory.parent_path());
-        writePortableManifest(record);
+        if (portableManifestNeedsWrite(record, false))
+        {
+            writePortableManifest(record);
+        }
         return record;
     }
 
@@ -4138,7 +4150,10 @@ namespace fluxora
 
         for (const InstalledModRecord& record : records)
         {
-            writePortableManifest(record);
+            if (portableManifestNeedsWrite(record, false))
+            {
+                writePortableManifest(record);
+            }
         }
     }
 

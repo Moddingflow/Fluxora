@@ -2829,6 +2829,11 @@ export const App = () => {
           ready.state === 'timeout'
             ? `Fluxora не обнаружила ${processName} до истечения времени запуска.`
             : `${processName} завершился до того, как Fluxora смогла отследить процесс.`;
+        await loadModsWorkspace(selectedProject, {
+          resetScroll: false,
+          showBusy: false,
+          showLoading: false
+        });
         setMessage(reason);
         return;
       }
@@ -2848,6 +2853,11 @@ export const App = () => {
       );
       setMessage('Процесс запущен. Закройте процесс, чтобы продолжить работу в Mod Manager.');
       await window.fluxora.processes.waitForExit(ready.processId, { operationId });
+      await loadModsWorkspace(selectedProject, {
+        resetScroll: false,
+        showBusy: false,
+        showLoading: false
+      });
       setMessage(`${trackedProcessName} закрыт. Можно продолжить работу в Mod Manager.`);
     } catch (error) {
       setMessage(errorMessage(error));

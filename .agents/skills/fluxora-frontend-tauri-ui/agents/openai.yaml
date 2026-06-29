@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fluxora Frontend Tauri UI"
+  short_description: "Build clear minimal Fluxora UI"
+  default_prompt: "Use $fluxora-frontend-tauri-ui before changing Fluxora frontend-tauri UI."

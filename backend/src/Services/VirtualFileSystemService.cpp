@@ -112,6 +112,9 @@ namespace fluxora
 
             return description;
         }
+
+        constexpr std::wstring_view parallaxGenIgnoreMo2VfsCheckArgument =
+            L"--ignore-mo2vfscheck";
 #else
         std::string toUtf8(const std::wstring& value)
         {
@@ -194,6 +197,11 @@ namespace fluxora
         bool equalsIgnoreCase(std::wstring_view left, std::wstring_view right)
         {
             return toLower(std::wstring(left)) == toLower(std::wstring(right));
+        }
+
+        bool containsIgnoreCase(std::wstring_view value, std::wstring_view needle)
+        {
+            return toLower(std::wstring(value)).find(toLower(std::wstring(needle))) != std::wstring::npos;
         }
 
         bool isDirectory(const std::filesystem::path& path)
@@ -1359,7 +1367,19 @@ namespace fluxora
         // Children inherit this, so the whole process tree shares one virtual view.
         SetEnvironmentVariableW(vfs::protocol::configEnvironmentVariable, descriptorPath.c_str());
 
-        std::vector<wchar_t> commandLineBuffer(resolved.commandLine.begin(), resolved.commandLine.end());
+        std::wstring commandLine = resolved.commandLine;
+        if (resolved.requiresParallaxGenMo2VfsCompatibilityFlag &&
+            !containsIgnoreCase(commandLine, parallaxGenIgnoreMo2VfsCheckArgument))
+        {
+            commandLine.push_back(L' ');
+            commandLine.append(parallaxGenIgnoreMo2VfsCheckArgument);
+            logger_.writeOperation(
+                LogLevel::Info,
+                "ParallaxGen",
+                "Applied PGPatcher MO2 compatibility launch flag for Fluxora VFS.");
+        }
+
+        std::vector<wchar_t> commandLineBuffer(commandLine.begin(), commandLine.end());
         commandLineBuffer.push_back(L'\0');
         const std::string hookDllAnsi = toAnsi(hookDll.wstring());
 

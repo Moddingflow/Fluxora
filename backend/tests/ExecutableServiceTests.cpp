@@ -3,12 +3,19 @@
 #include "FluxoraCore/Services/ExecutableService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
+#include "FluxoraCore/Support/JsonReader.hpp"
 
 #include "TestFilesystem.hpp"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
+#include <stdexcept>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace fluxora::tests
 {
@@ -17,6 +24,92 @@ namespace fluxora::tests
         void writeExecutableStub(const std::filesystem::path& path)
         {
             writeTextFile(path, "MZ executable stub");
+        }
+
+        std::string toUtf8(const std::wstring& value)
+        {
+#ifdef _WIN32
+            if (value.empty())
+            {
+                return {};
+            }
+
+            const int size = WideCharToMultiByte(
+                CP_UTF8,
+                0,
+                value.data(),
+                static_cast<int>(value.size()),
+                nullptr,
+                0,
+                nullptr,
+                nullptr);
+            if (size <= 0)
+            {
+                throw std::invalid_argument("Text could not be converted to UTF-8.");
+            }
+
+            std::string out(static_cast<std::size_t>(size), '\0');
+            WideCharToMultiByte(
+                CP_UTF8,
+                0,
+                value.data(),
+                static_cast<int>(value.size()),
+                out.data(),
+                size,
+                nullptr,
+                nullptr);
+            return out;
+#else
+            return std::string(value.begin(), value.end());
+#endif
+        }
+
+        std::wstring fromUtf8(const std::string& value)
+        {
+#ifdef _WIN32
+            if (value.empty())
+            {
+                return {};
+            }
+
+            const int size = MultiByteToWideChar(
+                CP_UTF8,
+                MB_ERR_INVALID_CHARS,
+                value.data(),
+                static_cast<int>(value.size()),
+                nullptr,
+                0);
+            if (size <= 0)
+            {
+                throw std::invalid_argument("Text is not valid UTF-8.");
+            }
+
+            std::wstring out(static_cast<std::size_t>(size), L'\0');
+            MultiByteToWideChar(
+                CP_UTF8,
+                MB_ERR_INVALID_CHARS,
+                value.data(),
+                static_cast<int>(value.size()),
+                out.data(),
+                size);
+            return out;
+#else
+            return std::wstring(value.begin(), value.end());
+#endif
+        }
+
+        const InstalledModRecord* findInstalledMod(
+            const std::vector<InstalledModRecord>& records,
+            std::wstring_view folderName)
+        {
+            const auto match = std::find_if(
+                records.begin(),
+                records.end(),
+                [folderName](const InstalledModRecord& record)
+                {
+                    return record.folderName == folderName;
+                });
+            return match == records.end() ? nullptr : &*match;
         }
 
         struct RootBuilderLaunchCacheTestProject
@@ -602,6 +695,200 @@ namespace fluxora::tests
         EXPECT_EQ(resolved.handoffTimeoutMs, 0U);
         EXPECT_FALSE(resolved.vfsRules.has_value());
         EXPECT_FALSE(resolved.contentLayoutRules.has_value());
+    }
+
+    TEST(ExecutableServiceTests, SkyrimParallaxGenResolvePreparesOutputModAndSettings)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Parallax Build";
+        const std::filesystem::path config = project / L"build.json";
+        const std::filesystem::path game = project / L"Stock Game";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path parallaxGenMod = mods / L"Parallax Gen";
+        const std::filesystem::path parallaxGenRoot = parallaxGenMod / L"root";
+        const std::filesystem::path parallaxGenExe = parallaxGenRoot / L"PGPatcher.exe";
+        const std::filesystem::path parallaxGenSettings =
+            parallaxGenRoot / L"cfg" / L"settings.json";
+        const std::filesystem::path lowMeshes = mods / L"Low Meshes";
+        const std::filesystem::path highMeshes = mods / L"High Meshes";
+
+        writeExecutableStub(game / L"SkyrimSE.exe");
+        std::filesystem::create_directories(game / L"Data");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+        writeExecutableStub(parallaxGenExe);
+        writeTextFile(lowMeshes / L"meshes" / L"shared.nif", "low");
+        writeTextFile(highMeshes / L"meshes" / L"shared.nif", "high");
+        writeTextFile(
+            parallaxGenSettings,
+            "{\"params\":{\"output\":{\"dir\":\"Old Output\",\"zip\":true},"
+            "\"processing\":{\"multithread\":false}},\"custom\":true}");
+
+        writeTextFile(
+            config,
+            "{"
+            "\"schemaVersion\":\"1\","
+            "\"name\":\"Parallax Build\","
+            "\"templateId\":\"skyrimse\","
+            "\"gameName\":\"Skyrim Special Edition\","
+            "\"gamePath\":\"Stock Game\","
+            "\"dataDirectory\":\"Data\","
+            "\"defaultProfile\":\"Default\","
+            "\"launchExecutables\":[{"
+            "\"id\":\"pg\","
+            "\"displayName\":\"PG Patcher\","
+            "\"executablePath\":\"mods\\\\Parallax Gen\\\\root\\\\PGPatcher.exe\","
+            "\"arguments\":\"\","
+            "\"workingDirectory\":\"\""
+            "}]"
+            "}");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{parallaxGenMod, L"Parallax Gen", {}, true, {}},
+                InstalledModImportRecord{lowMeshes, L"Low Meshes", {}, true, {}},
+                InstalledModImportRecord{highMeshes, L"High Meshes", {}, true, {}}
+            });
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"mod", L"Parallax Gen", {}},
+                ProfileOrderImportItemRecord{L"mod", L"Low Meshes", {}},
+                ProfileOrderImportItemRecord{L"mod", L"High Meshes", {}}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        ExecutableIconService iconService(logger);
+        ExecutableService service(logger, iconService, pathSettings);
+
+        const std::wstring expectedName = L"Parallax Build \x2014 ParallaxGen Output";
+        const std::filesystem::path outputMod = mods / std::filesystem::path(expectedName);
+        writeTextFile(outputMod / L".flow" / L"manifest.json", "{}");
+
+        const ResolvedExecutableLaunch resolved = service.resolveExecutable(config, L"pg");
+
+        EXPECT_TRUE(std::filesystem::is_directory(outputMod));
+        EXPECT_FALSE(std::filesystem::exists(outputMod / L".flow"));
+        EXPECT_TRUE(resolved.requiresParallaxGenMo2VfsCompatibilityFlag);
+        EXPECT_EQ(resolved.commandLine.find(L"--ignore-mo2vfscheck"), std::wstring::npos);
+
+        const std::vector<InstalledModRecord> records =
+            InstanceMetadataStore::listInstalledMods(project, mods);
+        const InstalledModRecord* record = findInstalledMod(records, expectedName);
+        ASSERT_NE(record, nullptr);
+        EXPECT_EQ(record->source.provider, L"generated-pgpatcher");
+        InstanceMetadataStore::refreshInstalledModsFromDisk(project, mods);
+        EXPECT_FALSE(std::filesystem::exists(outputMod / L".flow"));
+
+        const std::vector<ProfileOrderItemRecord> order =
+            InstanceMetadataStore::listCachedProfileOrderItems(project, L"Default", mods);
+        ASSERT_GE(order.size(), 2U);
+        EXPECT_EQ(order.back().mod.folderName, expectedName);
+        EXPECT_EQ(order.back().mod.state, L"installed");
+
+        const JsonValue settings = JsonReader::parse(fromUtf8(readTextFile(parallaxGenSettings)));
+        const JsonValue* params = settings.find(L"params");
+        ASSERT_NE(params, nullptr);
+        const JsonValue* gameSettings = params->find(L"game");
+        ASSERT_NE(gameSettings, nullptr);
+        EXPECT_EQ(gameSettings->find(L"dir")->asString(), game.wstring());
+        EXPECT_EQ(gameSettings->find(L"type")->asNumber(), L"0");
+        const std::filesystem::path shadowMo2 =
+            project / L".flow" / L"pgpatcher-mo2";
+        const JsonValue* modManager = params->find(L"modmanager");
+        ASSERT_NE(modManager, nullptr);
+        EXPECT_EQ(modManager->find(L"type")->asNumber(), L"2");
+        EXPECT_EQ(modManager->find(L"mo2instancedir")->asString(), shadowMo2.wstring());
+        EXPECT_FALSE(modManager->find(L"mo2useloosefileorder")->asBoolean());
+        const JsonValue* output = params->find(L"output");
+        ASSERT_NE(output, nullptr);
+        const JsonValue* dir = output->find(L"dir");
+        ASSERT_NE(dir, nullptr);
+        EXPECT_EQ(dir->asString(), outputMod.wstring());
+        const JsonValue* zip = output->find(L"zip");
+        ASSERT_NE(zip, nullptr);
+        EXPECT_FALSE(zip->asBoolean());
+        ASSERT_NE(settings.find(L"custom"), nullptr);
+
+        ASSERT_FALSE(resolved.rootBuilderLaunchCacheDirectory.empty());
+        const JsonValue cachedSettings = JsonReader::parse(fromUtf8(readTextFile(
+            resolved.rootBuilderLaunchCacheDirectory / L"cfg" / L"settings.json")));
+        EXPECT_EQ(
+            cachedSettings.find(L"params")->find(L"output")->find(L"dir")->asString(),
+            outputMod.wstring());
+        EXPECT_EQ(
+            cachedSettings.find(L"params")->find(L"modmanager")->find(L"mo2instancedir")->asString(),
+            shadowMo2.wstring());
+
+        const std::string mo2Ini = readTextFile(shadowMo2 / L"modorganizer.ini");
+        EXPECT_NE(mo2Ini.find("base_directory="), std::string::npos);
+        EXPECT_NE(mo2Ini.find("profiles_directory=%BASE_DIR%\\profiles"), std::string::npos);
+        EXPECT_NE(mo2Ini.find("mod_directory=" + toUtf8(mods.wstring())), std::string::npos);
+        EXPECT_NE(mo2Ini.find("selected_profile=Fluxora"), std::string::npos);
+        EXPECT_NE(mo2Ini.find("gamePath=" + toUtf8(game.wstring())), std::string::npos);
+
+        const std::string modList =
+            readTextFile(shadowMo2 / L"profiles" / L"Fluxora" / L"modlist.txt");
+        EXPECT_NE(
+            modList.find("-" + toUtf8(expectedName) + "\n+High Meshes\n+Low Meshes\n+Parallax Gen\n"),
+            std::string::npos);
+    }
+
+    TEST(ExecutableServiceTests, NonSkyrimParallaxGenResolveDoesNotPrepareOutputMod)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Unknown PG Build";
+        const std::filesystem::path config = project / L"build.json";
+        const std::filesystem::path game = project / L"Stock Game";
+        const std::filesystem::path tools = project / L"tools";
+        const std::filesystem::path parallaxGenExe = tools / L"PGPatcher.exe";
+        const std::filesystem::path parallaxGenSettings = tools / L"cfg" / L"settings.json";
+
+        writeExecutableStub(parallaxGenExe);
+        writeTextFile(
+            parallaxGenSettings,
+            "{\"params\":{\"output\":{\"dir\":\"Old Output\",\"zip\":true}}}");
+
+        writeTextFile(
+            config,
+            "{"
+            "\"schemaVersion\":\"1\","
+            "\"name\":\"Unknown PG Build\","
+            "\"templateId\":\"unknown-game\","
+            "\"gameName\":\"Unknown Game\","
+            "\"gamePath\":\"Stock Game\","
+            "\"defaultProfile\":\"Default\","
+            "\"launchExecutables\":[{"
+            "\"id\":\"pg\","
+            "\"displayName\":\"PG Patcher\","
+            "\"executablePath\":\"tools\\\\PGPatcher.exe\","
+            "\"arguments\":\"\","
+            "\"workingDirectory\":\"\""
+            "}]"
+            "}");
+        std::filesystem::create_directories(game);
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        ExecutableIconService iconService(logger);
+        ExecutableService service(logger, iconService, pathSettings);
+
+        const ResolvedExecutableLaunch resolved = service.resolveExecutable(config, L"pg");
+
+        EXPECT_TRUE(resolved.gameId.empty());
+        EXPECT_FALSE(resolved.requiresParallaxGenMo2VfsCompatibilityFlag);
+        EXPECT_FALSE(std::filesystem::exists(
+            project / L"mods" / L"Unknown PG Build \x2014 ParallaxGen Output"));
+        EXPECT_FALSE(std::filesystem::exists(project / L".flow" / L"pgpatcher-mo2"));
+
+        const JsonValue settings = JsonReader::parse(fromUtf8(readTextFile(parallaxGenSettings)));
+        const JsonValue* output = settings.find(L"params")->find(L"output");
+        ASSERT_NE(output, nullptr);
+        EXPECT_EQ(output->find(L"dir")->asString(), L"Old Output");
+        EXPECT_TRUE(output->find(L"zip")->asBoolean());
     }
 
     TEST(ExecutableServiceTests, LegacyScriptExtenderManifestFieldDoesNotDriveUnknownTemplate)

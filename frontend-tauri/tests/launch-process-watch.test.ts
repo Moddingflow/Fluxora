@@ -25,5 +25,11 @@ describe('launch process watch wiring', () => {
     expect(app).toContain('Процесс запускается');
     expect(app).toContain('Процесс запущен');
     expect(app).toContain('Закройте процесс, чтобы продолжить работу в Mod Manager.');
+    expect(app).toMatch(
+      /ready\.state !== 'running'[\s\S]*await loadModsWorkspace\(selectedProject, \{\s*resetScroll: false,\s*showBusy: false,\s*showLoading: false\s*\}\);/
+    );
+    expect(app).toMatch(
+      /await window\.fluxora\.processes\.waitForExit\(ready\.processId, \{ operationId \}\);[\s\S]*await loadModsWorkspace\(selectedProject, \{\s*resetScroll: false,\s*showBusy: false,\s*showLoading: false\s*\}\);/
+    );
   });
 });

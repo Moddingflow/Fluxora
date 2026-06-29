@@ -58,6 +58,7 @@ namespace fluxora
         std::wstring defaultProfile;
         std::optional<VfsSupportRules> vfsRules;
         std::optional<ContentLayoutSupportRules> contentLayoutRules;
+        bool requiresParallaxGenMo2VfsCompatibilityFlag{false};
         LaunchTrackingKind launchTrackingKind{LaunchTrackingKind::DirectProcess};
         std::vector<std::wstring> expectedChildProcessNames;
         std::wstring handoffDisplayName;

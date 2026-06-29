@@ -38,6 +38,14 @@ namespace fluxora
         constexpr int rootBuilderLaunchCacheManifestSchemaVersion = 1;
         constexpr std::wstring_view rootBuilderLaunchCacheManifestFileName =
             L".fluxora-root-launch-cache.json";
+        constexpr std::wstring_view skyrimGameId = L"skyrimse";
+        constexpr int parallaxGenSkyrimSeGameType = 0;
+        constexpr int parallaxGenModOrganizer2Type = 2;
+        constexpr std::wstring_view parallaxGenOutputSuffix =
+            L" \x2014 ParallaxGen Output";
+        constexpr std::wstring_view parallaxGenShadowInstanceRoot = L"pgpatcher-mo2";
+        constexpr std::wstring_view parallaxGenShadowProfileName = L"Fluxora";
+        constexpr std::wstring_view parallaxGenGeneratedProvider = L"generated-pgpatcher";
 
         struct ProjectExecutableContext
         {
@@ -412,6 +420,74 @@ namespace fluxora
         bool equalsIgnoreCase(std::wstring_view left, std::wstring_view right)
         {
             return toLower(std::wstring(left)) == toLower(std::wstring(right));
+        }
+
+        bool containsIgnoreCase(std::wstring_view value, std::wstring_view needle)
+        {
+            return toLower(std::wstring(value)).find(toLower(std::wstring(needle))) != std::wstring::npos;
+        }
+
+        bool containsInvalidFileNameCharacter(std::wstring_view value)
+        {
+            for (const wchar_t character : value)
+            {
+                if (character < 32)
+                {
+                    return true;
+                }
+
+                switch (character)
+                {
+                case L'<':
+                case L'>':
+                case L':':
+                case L'"':
+                case L'/':
+                case L'\\':
+                case L'|':
+                case L'?':
+                case L'*':
+                    return true;
+                default:
+                    break;
+                }
+            }
+
+            return false;
+        }
+
+        bool isReservedDeviceName(std::wstring_view value)
+        {
+            std::wstring name(value);
+            const std::size_t dot = name.find(L'.');
+            if (dot != std::wstring::npos)
+            {
+                name.resize(dot);
+            }
+
+            name = toLower(std::move(name));
+            return name == L"con" ||
+                name == L"prn" ||
+                name == L"aux" ||
+                name == L"nul" ||
+                name == L"com1" ||
+                name == L"com2" ||
+                name == L"com3" ||
+                name == L"com4" ||
+                name == L"com5" ||
+                name == L"com6" ||
+                name == L"com7" ||
+                name == L"com8" ||
+                name == L"com9" ||
+                name == L"lpt1" ||
+                name == L"lpt2" ||
+                name == L"lpt3" ||
+                name == L"lpt4" ||
+                name == L"lpt5" ||
+                name == L"lpt6" ||
+                name == L"lpt7" ||
+                name == L"lpt8" ||
+                name == L"lpt9";
         }
 
         bool isRegularFile(const std::filesystem::path& path)
@@ -3314,6 +3390,452 @@ namespace fluxora
             writeProjectManifest(context.configPath, toUtf8(writer.str()));
         }
 
+        bool isSkyrimProject(const ProjectExecutableContext& context)
+        {
+            return equalsIgnoreCase(context.gameId.value(), skyrimGameId);
+        }
+
+        bool isParallaxGenExecutable(
+            const GameExecutable& executable,
+            const std::filesystem::path& resolvedExecutablePath)
+        {
+            const std::wstring fileName = resolvedExecutablePath.filename().wstring();
+            const std::wstring stem = resolvedExecutablePath.stem().wstring();
+            if (equalsIgnoreCase(fileName, L"ParallaxGen.exe") ||
+                equalsIgnoreCase(fileName, L"PGPatcher.exe") ||
+                equalsIgnoreCase(fileName, L"PG.exe"))
+            {
+                return true;
+            }
+
+            const std::wstring displayName = trim(executable.displayName);
+            const std::wstring id = trim(executable.id);
+            return containsIgnoreCase(displayName, L"parallax gen") ||
+                containsIgnoreCase(displayName, L"parallaxgen") ||
+                containsIgnoreCase(displayName, L"pg patcher") ||
+                containsIgnoreCase(displayName, L"pgpatcher") ||
+                equalsIgnoreCase(displayName, L"PG") ||
+                equalsIgnoreCase(stem, L"ParallaxGen") ||
+                equalsIgnoreCase(stem, L"PGPatcher") ||
+                equalsIgnoreCase(stem, L"PG") ||
+                equalsIgnoreCase(id, L"parallaxgen") ||
+                equalsIgnoreCase(id, L"pgpatcher");
+        }
+
+        std::wstring validateOutputModName(std::wstring value)
+        {
+            value = trim(std::move(value));
+            if (value.empty())
+            {
+                throw std::invalid_argument("ParallaxGen output mod name is required.");
+            }
+            if (containsInvalidFileNameCharacter(value))
+            {
+                throw std::invalid_argument("ParallaxGen output mod name contains invalid path characters.");
+            }
+            if (isReservedDeviceName(value))
+            {
+                throw std::invalid_argument("ParallaxGen output mod name is reserved by Windows.");
+            }
+            return value;
+        }
+
+        std::wstring parallaxGenOutputModName(const JsonValue& manifest)
+        {
+            const std::wstring buildName = trim(readStringOrDefault(manifest, L"name", L"Build"));
+            return validateOutputModName(
+                (buildName.empty() ? std::wstring(L"Build") : buildName) +
+                std::wstring(parallaxGenOutputSuffix));
+        }
+
+        std::filesystem::path ensureParallaxGenOutputMod(
+            const ProjectExecutableContext& context,
+            Logger& logger)
+        {
+            if (context.projectDirectory.empty())
+            {
+                throw std::invalid_argument("Project directory is required for ParallaxGen output.");
+            }
+            if (context.modsDirectory.empty())
+            {
+                throw std::invalid_argument("Mods directory is required for ParallaxGen output.");
+            }
+
+            const std::wstring modName = parallaxGenOutputModName(context.manifest);
+            const std::filesystem::path outputMod = context.modsDirectory / std::filesystem::path(modName);
+
+            const PathSafetyService safety;
+            safety.validateDirectoryWriteRoot(context.modsDirectory)
+                .throwIfUnsafe("Mods directory is unsafe");
+            safety.validateWritePath(context.modsDirectory, outputMod)
+                .throwIfUnsafe("ParallaxGen output mod path is unsafe");
+
+            std::error_code error;
+            const bool existed = std::filesystem::exists(outputMod, error);
+            if (error)
+            {
+                throw std::runtime_error(
+                    "Could not inspect ParallaxGen output mod path: " + filesystemErrorForLog(error));
+            }
+            if (existed && !std::filesystem::is_directory(outputMod, error))
+            {
+                throw std::invalid_argument("ParallaxGen output mod path already exists and is not a directory.");
+            }
+            if (error)
+            {
+                throw std::runtime_error(
+                    "Could not inspect ParallaxGen output mod directory: " + filesystemErrorForLog(error));
+            }
+
+            bool created = false;
+            try
+            {
+                if (!existed)
+                {
+                    std::filesystem::create_directories(outputMod);
+                    created = true;
+                }
+
+                const std::filesystem::path portableMetadata = outputMod / L".flow";
+                safety.validateWritePath(outputMod, portableMetadata)
+                    .throwIfUnsafe("ParallaxGen output metadata path is unsafe");
+                std::filesystem::remove_all(portableMetadata);
+
+                const InstalledModRecord record = InstanceMetadataStore::registerInstalledMod(
+                    context.projectDirectory,
+                    outputMod,
+                    modName,
+                    {},
+                    ModSourceRecord{std::wstring(parallaxGenGeneratedProvider)});
+                (void)record;
+            }
+            catch (...)
+            {
+                if (created)
+                {
+                    std::error_code cleanupError;
+                    std::filesystem::remove_all(outputMod, cleanupError);
+                }
+                throw;
+            }
+
+            logger.writeOperation(
+                LogLevel::Info,
+                "ParallaxGen",
+                "Prepared ParallaxGen output mod path=\"" + toUtf8(outputMod.wstring()) + "\".");
+            return outputMod;
+        }
+
+        void writeJsonObjectFile(
+            const std::filesystem::path& path,
+            const JsonValue::Object& object,
+            std::wstring_view stateName)
+        {
+            JsonWriter writer;
+            writeJsonValue(writer, JsonValue::object(object));
+            AtomicFileStore().writeTextFile(
+                path,
+                toUtf8(writer.str()),
+                AtomicFileWriteOptions{
+                    std::wstring(stateName),
+                    ProjectStateValidation::JsonObject
+                });
+        }
+
+        void writeUtf8TextFile(
+            const std::filesystem::path& path,
+            const std::string& content,
+            std::wstring_view stateName)
+        {
+            AtomicFileStore().writeTextFile(
+                path,
+                content,
+                AtomicFileWriteOptions{
+                    std::wstring(stateName),
+                    ProjectStateValidation::Utf8Text
+                });
+        }
+
+        std::filesystem::path parallaxGenShadowInstancePath(const ProjectExecutableContext& context)
+        {
+            if (context.projectDirectory.empty())
+            {
+                throw std::invalid_argument("Project directory is required for ParallaxGen MO2 metadata.");
+            }
+
+            const std::filesystem::path shadowInstance =
+                context.projectDirectory /
+                L".flow" /
+                std::filesystem::path(parallaxGenShadowInstanceRoot);
+            const PathSafetyService safety;
+            safety.validateDirectoryWriteRoot(context.projectDirectory)
+                .throwIfUnsafe("Project directory is unsafe");
+            safety.validateWritePath(context.projectDirectory, shadowInstance)
+                .throwIfUnsafe("ParallaxGen MO2 metadata path is unsafe");
+            return shadowInstance;
+        }
+
+        bool isOutputModRecord(
+            const ProfileOrderItemRecord& item,
+            const std::filesystem::path& outputMod,
+            const std::wstring& outputModFolderName)
+        {
+            return equalsIgnoreCase(item.mod.folderName, outputModFolderName) ||
+                (!item.mod.path.empty() && comparablePathText(item.mod.path) == comparablePathText(outputMod));
+        }
+
+        std::string parallaxGenMo2ModList(
+            const ProjectExecutableContext& context,
+            const std::filesystem::path& outputMod)
+        {
+            const std::wstring profile = context.defaultProfile.empty() ? L"Default" : context.defaultProfile;
+            const std::wstring outputModFolderName = outputMod.filename().wstring();
+            const std::vector<ProfileOrderItemRecord> order =
+                InstanceMetadataStore::listCachedProfileOrderItems(
+                    context.projectDirectory,
+                    profile,
+                    context.modsDirectory);
+
+            std::string text;
+            text += "# Generated by Fluxora for ParallaxGen Patcher.\n";
+            text += "# Active Fluxora profile: " + toUtf8(profile) + "\n";
+
+            bool wroteOutputMod = false;
+            for (auto item = order.rbegin(); item != order.rend(); ++item)
+            {
+                if (item->kind != L"mod" || !item->hasMod)
+                {
+                    continue;
+                }
+
+                const std::wstring folderName = trim(item->mod.folderName);
+                if (folderName.empty())
+                {
+                    continue;
+                }
+
+                if (isOutputModRecord(*item, outputMod, outputModFolderName))
+                {
+                    text += "-" + toUtf8(folderName) + "\n";
+                    wroteOutputMod = true;
+                    continue;
+                }
+
+                text += (item->mod.state == L"disabled" ? "-" : "+");
+                text += toUtf8(folderName);
+                text += "\n";
+            }
+
+            if (!wroteOutputMod)
+            {
+                text += "-" + toUtf8(outputModFolderName) + "\n";
+            }
+
+            return text;
+        }
+
+        std::string parallaxGenMo2Ini(
+            const ProjectExecutableContext& context,
+            const std::filesystem::path& shadowInstance)
+        {
+            std::string text;
+            text += "[General]\n";
+            text += "base_directory=" + toUtf8(shadowInstance.wstring()) + "\n";
+            text += "profiles_directory=%BASE_DIR%\\profiles\n";
+            text += "mod_directory=" + toUtf8(context.modsDirectory.wstring()) + "\n";
+            text += "selected_profile=" + toUtf8(std::wstring(parallaxGenShadowProfileName)) + "\n";
+            text += "gamePath=" + toUtf8(context.gamePath.wstring()) + "\n";
+            text += "gameName=Skyrim Special Edition\n";
+            text += "game_edition=Steam\n";
+            return text;
+        }
+
+        std::filesystem::path prepareParallaxGenMo2Metadata(
+            const ProjectExecutableContext& context,
+            const std::filesystem::path& outputMod,
+            Logger& logger)
+        {
+            if (context.gamePath.empty())
+            {
+                throw std::invalid_argument("Game directory is required for ParallaxGen MO2 metadata.");
+            }
+            if (context.modsDirectory.empty())
+            {
+                throw std::invalid_argument("Mods directory is required for ParallaxGen MO2 metadata.");
+            }
+
+            const std::filesystem::path shadowInstance = parallaxGenShadowInstancePath(context);
+            const std::filesystem::path shadowProfile =
+                shadowInstance /
+                L"profiles" /
+                std::filesystem::path(parallaxGenShadowProfileName);
+
+            const PathSafetyService safety;
+            safety.validateWritePath(context.projectDirectory, shadowProfile)
+                .throwIfUnsafe("ParallaxGen MO2 profile path is unsafe");
+
+            writeUtf8TextFile(
+                shadowInstance / L"modorganizer.ini",
+                parallaxGenMo2Ini(context, shadowInstance),
+                L"ParallaxGen MO2 settings");
+            writeUtf8TextFile(
+                shadowProfile / L"modlist.txt",
+                parallaxGenMo2ModList(context, outputMod),
+                L"ParallaxGen MO2 modlist");
+
+            logger.writeOperation(
+                LogLevel::Info,
+                "ParallaxGen",
+                "Prepared ParallaxGen MO2 metadata instance=\"" +
+                    toUtf8(shadowInstance.wstring()) +
+                    "\", profile=\"" + toUtf8(std::wstring(parallaxGenShadowProfileName)) + "\".");
+            return shadowInstance;
+        }
+
+        void configureParallaxGenSettings(
+            const std::filesystem::path& executableDirectory,
+            const std::filesystem::path& outputMod,
+            const std::filesystem::path& shadowMo2Instance,
+            const std::filesystem::path& gamePath,
+            Logger& logger)
+        {
+            if (executableDirectory.empty() || outputMod.empty())
+            {
+                return;
+            }
+
+            const std::filesystem::path settingsPath =
+                executableDirectory / L"cfg" / L"settings.json";
+            JsonValue::Object rootObject;
+            std::error_code error;
+            if (std::filesystem::exists(settingsPath, error))
+            {
+                try
+                {
+                    const JsonValue existing = JsonReader::parse(fromUtf8(readTextFile(settingsPath)));
+                    if (!existing.isObject())
+                    {
+                        logger.write(
+                            LogLevel::Warning,
+                            "ParallaxGen settings were not updated because settings.json is not a JSON object: " +
+                                toUtf8(settingsPath.wstring()));
+                        return;
+                    }
+                    rootObject = existing.asObject();
+                }
+                catch (const std::exception& exception)
+                {
+                    logger.write(
+                        LogLevel::Warning,
+                        "ParallaxGen settings were not updated because settings.json could not be parsed: " +
+                            toUtf8(settingsPath.wstring()) + " (" + exception.what() + ")");
+                    return;
+                }
+            }
+
+            JsonValue::Object paramsObject;
+            if (const auto params = rootObject.find(L"params");
+                params != rootObject.end() && params->second.isObject())
+            {
+                paramsObject = params->second.asObject();
+            }
+
+            if (!gamePath.empty())
+            {
+                JsonValue::Object gameObject;
+                if (const auto game = paramsObject.find(L"game");
+                    game != paramsObject.end() && game->second.isObject())
+                {
+                    gameObject = game->second.asObject();
+                }
+                gameObject.insert_or_assign(L"dir", JsonValue::string(gamePath.wstring()));
+                gameObject.insert_or_assign(
+                    L"type",
+                    JsonValue::number(std::to_wstring(parallaxGenSkyrimSeGameType)));
+                paramsObject.insert_or_assign(L"game", JsonValue::object(std::move(gameObject)));
+            }
+
+            if (!shadowMo2Instance.empty())
+            {
+                JsonValue::Object modManagerObject;
+                if (const auto modManager = paramsObject.find(L"modmanager");
+                    modManager != paramsObject.end() && modManager->second.isObject())
+                {
+                    modManagerObject = modManager->second.asObject();
+                }
+                modManagerObject.insert_or_assign(
+                    L"type",
+                    JsonValue::number(std::to_wstring(parallaxGenModOrganizer2Type)));
+                modManagerObject.insert_or_assign(
+                    L"mo2instancedir",
+                    JsonValue::string(shadowMo2Instance.wstring()));
+                modManagerObject.insert_or_assign(
+                    L"mo2useloosefileorder",
+                    JsonValue::boolean(false));
+                paramsObject.insert_or_assign(
+                    L"modmanager",
+                    JsonValue::object(std::move(modManagerObject)));
+            }
+
+            JsonValue::Object outputObject;
+            if (const auto output = paramsObject.find(L"output");
+                output != paramsObject.end() && output->second.isObject())
+            {
+                outputObject = output->second.asObject();
+            }
+
+            outputObject.insert_or_assign(L"dir", JsonValue::string(outputMod.wstring()));
+            outputObject.insert_or_assign(L"zip", JsonValue::boolean(false));
+            paramsObject.insert_or_assign(L"output", JsonValue::object(std::move(outputObject)));
+            rootObject.insert_or_assign(L"params", JsonValue::object(std::move(paramsObject)));
+
+            try
+            {
+                std::filesystem::create_directories(settingsPath.parent_path());
+                writeJsonObjectFile(settingsPath, rootObject, L"ParallaxGen settings");
+                logger.writeOperation(
+                    LogLevel::Info,
+                    "ParallaxGen",
+                    "Configured ParallaxGen output settings path=\"" +
+                        toUtf8(settingsPath.wstring()) +
+                        "\", outputMod=\"" + toUtf8(outputMod.wstring()) +
+                        "\", shadowMo2Instance=\"" + toUtf8(shadowMo2Instance.wstring()) + "\".");
+            }
+            catch (const std::exception& exception)
+            {
+                logger.write(
+                    LogLevel::Warning,
+                    "ParallaxGen settings were not updated: " +
+                        toUtf8(settingsPath.wstring()) + " (" + exception.what() + ")");
+            }
+        }
+
+        std::optional<std::filesystem::path> prepareParallaxGenOutputForLaunch(
+            ProjectExecutableContext& context,
+            const GameExecutable& executable,
+            const std::filesystem::path& resolvedExecutablePath,
+            Logger& logger)
+        {
+            if (!isSkyrimProject(context) ||
+                !isParallaxGenExecutable(executable, resolvedExecutablePath))
+            {
+                return std::nullopt;
+            }
+
+            std::filesystem::path outputMod = ensureParallaxGenOutputMod(context, logger);
+            context.activeProfileModPathsCache.reset();
+            context.activeRootBuilderOverlayRootsCache.reset();
+            const std::filesystem::path shadowMo2Instance =
+                prepareParallaxGenMo2Metadata(context, outputMod, logger);
+            configureParallaxGenSettings(
+                resolvedExecutablePath.parent_path(),
+                outputMod,
+                shadowMo2Instance,
+                context.gamePath,
+                logger);
+            return outputMod;
+        }
+
         std::optional<std::filesystem::path> tryResolveExistingFile(
             const ProjectExecutableContext& context,
             const std::wstring& pathText)
@@ -3611,6 +4133,8 @@ namespace fluxora
         }
 
         std::filesystem::path resolvedExecutablePath = resolveExistingFile(context, match->executablePath);
+        const std::optional<std::filesystem::path> parallaxGenOutputMod =
+            prepareParallaxGenOutputForLaunch(context, *match, resolvedExecutablePath, logger_);
         std::filesystem::path rootBuilderLaunchCacheDirectory;
         const std::optional<std::filesystem::path> rootBuilderVirtualPath =
             rootBuilderVirtualPathForBackingFile(context, resolvedExecutablePath);
@@ -3625,6 +4149,20 @@ namespace fluxora
                     "Prepared Root Builder launch cache: " + toUtf8(cachedExecutable->executablePath.wstring()));
                 resolvedExecutablePath = cachedExecutable->executablePath;
                 rootBuilderLaunchCacheDirectory = cachedExecutable->rootDirectory;
+                if (parallaxGenOutputMod.has_value())
+                {
+                    const std::filesystem::path shadowMo2Instance =
+                        prepareParallaxGenMo2Metadata(
+                            context,
+                            parallaxGenOutputMod.value(),
+                            logger_);
+                    configureParallaxGenSettings(
+                        resolvedExecutablePath.parent_path(),
+                        parallaxGenOutputMod.value(),
+                        shadowMo2Instance,
+                        context.gamePath,
+                        logger_);
+                }
             }
             else
             {
@@ -3708,6 +4246,7 @@ namespace fluxora
             context.defaultProfile,
             context.vfsRules,
             context.contentLayoutRules,
+            parallaxGenOutputMod.has_value(),
             trackingMetadata.kind,
             trackingMetadata.expectedChildProcessNames,
             trackingMetadata.handoffDisplayName,

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fluxora Tauri Bridge Contract"
+  short_description: "Protect Tauri facade and bridge changes"
+  default_prompt: "Use $fluxora-tauri-bridge-contract before changing Fluxora Tauri facade, Rust shell commands, or bridge DTOs."

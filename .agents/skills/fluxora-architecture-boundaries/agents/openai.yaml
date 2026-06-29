@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fluxora Architecture Boundaries"
+  short_description: "Keep Fluxora code in the right layer"
+  default_prompt: "Use $fluxora-architecture-boundaries before changing Fluxora architecture or feature ownership."
