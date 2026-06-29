@@ -388,6 +388,59 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(PluginServiceTests, DisabledSourceModPluginsAreRemovedFromStateFiles)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Disabled Source Plugin Build";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path visibleMod = mods / L"Visible Mod";
+        const std::filesystem::path hiddenMod = mods / L"Hidden Mod";
+        const std::filesystem::path pluginState = project / L"profiles" / L"Default" / L"enabled.dat";
+        writeTextFile(visibleMod / L"AddOns" / L"Visible.ABC", "plugin");
+        writeTextFile(hiddenMod / L"AddOns" / L"Hidden.ABC", "plugin");
+        writeTextFile(pluginState, "*Base.master\n*Visible.ABC\n*Hidden.ABC\n");
+
+        InstanceMetadataStore::ensureInstance(project, L"customgame");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{visibleMod, L"Visible Mod", {}, true, {}},
+                InstalledModImportRecord{hiddenMod, L"Hidden Mod", {}, false, {}}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+
+        FakePluginRulesProvider provider(customRules());
+        const CapabilitySet caps = capabilities(true, true);
+        const PluginRuleContext context{&provider, &caps, nullptr, L"Default"};
+
+        const std::vector<PluginEntry> disabledEntries =
+            plugins.listPlugins(project, context, L"Default");
+        EXPECT_NE(findPlugin(disabledEntries, L"Visible.ABC"), nullptr);
+        EXPECT_EQ(findPlugin(disabledEntries, L"Hidden.ABC"), nullptr);
+        const std::string afterDisable = readTextFile(pluginState);
+        EXPECT_NE(afterDisable.find("*Visible.ABC\n"), std::string::npos) << afterDisable;
+        EXPECT_EQ(afterDisable.find("Hidden.ABC"), std::string::npos) << afterDisable;
+
+        InstanceMetadataStore::setInstalledModEnabled(project, hiddenMod, true);
+        plugins.syncPluginsForInstalledMods(project, context, L"Default", true);
+
+        const std::vector<PluginEntry> enabledEntries =
+            plugins.listPlugins(project, context, L"Default");
+        const PluginEntry* hidden = findPlugin(enabledEntries, L"Hidden.ABC");
+        ASSERT_NE(hidden, nullptr);
+        EXPECT_TRUE(hidden->isEnabled);
+        EXPECT_EQ(hidden->sourceMod, L"Hidden Mod");
+        EXPECT_NE(readTextFile(pluginState).find("*Hidden.ABC\n"), std::string::npos);
+#endif
+    }
+
     TEST(PluginServiceTests, PluginEntriesReportMissingMasterFiles)
     {
 #ifndef _WIN32

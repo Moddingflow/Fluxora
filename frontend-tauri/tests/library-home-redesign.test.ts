@@ -58,7 +58,6 @@ const renderLibrary = (selectedProject: FluxoraProject | null = projects[0]) =>
       catalogState: 'ready',
       filteredProjects: projects,
       isNewBuildDisabled: false,
-      message: null,
       onNewBuild: noop,
       onOpenProject: noop,
       onOpenProjectDirectory: noop,
@@ -103,6 +102,8 @@ describe('library home redesign', () => {
     expect(styles).toContain('grid-template-columns: 290px minmax(0, 1fr);');
     expect(styles).toContain('min-height: 56px;');
     expect(styles).toContain('.library-build-actions[data-menu-open="true"]');
+    expect(styles).not.toContain('activity-banner');
+    expect(styles).not.toContain('library-message');
     expect(styles).not.toContain('.library-build-open {');
   });
 

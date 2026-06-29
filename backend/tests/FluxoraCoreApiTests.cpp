@@ -4,8 +4,12 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -50,6 +54,132 @@ namespace fluxora::tests
 #endif
         }
 
+        struct ZipEntry
+        {
+            std::wstring path;
+            std::string content;
+        };
+
+        struct CentralDirectoryEntry
+        {
+            std::string name;
+            std::uint32_t crc{0};
+            std::uint32_t size{0};
+            std::uint32_t localHeaderOffset{0};
+        };
+
+        std::uint32_t crc32(const std::string& content)
+        {
+            std::uint32_t crc = 0xFFFFFFFFU;
+            for (unsigned char byte : content)
+            {
+                crc ^= byte;
+                for (int bit = 0; bit < 8; ++bit)
+                {
+                    crc = (crc >> 1) ^ (0xEDB88320U & (0U - (crc & 1U)));
+                }
+            }
+
+            return ~crc;
+        }
+
+        void writeU16(std::ofstream& file, std::uint16_t value)
+        {
+            const std::array<unsigned char, 2> bytes{
+                static_cast<unsigned char>(value & 0xFFU),
+                static_cast<unsigned char>((value >> 8) & 0xFFU)
+            };
+            file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        }
+
+        void writeU32(std::ofstream& file, std::uint32_t value)
+        {
+            const std::array<unsigned char, 4> bytes{
+                static_cast<unsigned char>(value & 0xFFU),
+                static_cast<unsigned char>((value >> 8) & 0xFFU),
+                static_cast<unsigned char>((value >> 16) & 0xFFU),
+                static_cast<unsigned char>((value >> 24) & 0xFFU)
+            };
+            file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        }
+
+        std::uint32_t tellU32(std::ofstream& file)
+        {
+            return static_cast<std::uint32_t>(file.tellp());
+        }
+
+        void writeZipArchive(const std::filesystem::path& path, const std::vector<ZipEntry>& entries)
+        {
+            std::filesystem::create_directories(path.parent_path());
+
+            std::ofstream file(path, std::ios::out | std::ios::binary | std::ios::trunc);
+            if (!file)
+            {
+                throw std::runtime_error("Failed to create test archive.");
+            }
+
+            std::vector<CentralDirectoryEntry> centralDirectory;
+            centralDirectory.reserve(entries.size());
+
+            for (ZipEntry entry : entries)
+            {
+                std::replace(entry.path.begin(), entry.path.end(), L'\\', L'/');
+                const std::string name = toUtf8(entry.path);
+                const std::uint32_t crc = crc32(entry.content);
+                const std::uint32_t size = static_cast<std::uint32_t>(entry.content.size());
+                const std::uint32_t localHeaderOffset = tellU32(file);
+
+                writeU32(file, 0x04034B50U);
+                writeU16(file, 20);
+                writeU16(file, 0x0800);
+                writeU16(file, 0);
+                writeU16(file, 0);
+                writeU16(file, 0);
+                writeU32(file, crc);
+                writeU32(file, size);
+                writeU32(file, size);
+                writeU16(file, static_cast<std::uint16_t>(name.size()));
+                writeU16(file, 0);
+                file.write(name.data(), static_cast<std::streamsize>(name.size()));
+                file.write(entry.content.data(), static_cast<std::streamsize>(entry.content.size()));
+
+                centralDirectory.push_back(CentralDirectoryEntry{name, crc, size, localHeaderOffset});
+            }
+
+            const std::uint32_t centralDirectoryOffset = tellU32(file);
+            for (const CentralDirectoryEntry& entry : centralDirectory)
+            {
+                writeU32(file, 0x02014B50U);
+                writeU16(file, 20);
+                writeU16(file, 20);
+                writeU16(file, 0x0800);
+                writeU16(file, 0);
+                writeU16(file, 0);
+                writeU16(file, 0);
+                writeU32(file, entry.crc);
+                writeU32(file, entry.size);
+                writeU32(file, entry.size);
+                writeU16(file, static_cast<std::uint16_t>(entry.name.size()));
+                writeU16(file, 0);
+                writeU16(file, 0);
+                writeU16(file, 0);
+                writeU16(file, 0);
+                writeU32(file, 0);
+                writeU32(file, entry.localHeaderOffset);
+                file.write(entry.name.data(), static_cast<std::streamsize>(entry.name.size()));
+            }
+
+            const std::uint32_t centralDirectorySize = tellU32(file) - centralDirectoryOffset;
+            writeU32(file, 0x06054B50U);
+            writeU16(file, 0);
+            writeU16(file, 0);
+            writeU16(file, static_cast<std::uint16_t>(centralDirectory.size()));
+            writeU16(file, static_cast<std::uint16_t>(centralDirectory.size()));
+            writeU32(file, centralDirectorySize);
+            writeU32(file, centralDirectoryOffset);
+            writeU16(file, 0);
+        }
+
         std::string catalogProjectManifestWithLaunchExecutables(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& installRoot)
@@ -81,6 +211,30 @@ namespace fluxora::tests
                 "\"defaultProfile\":\"Default\","
                 "\"launchExecutables\":[" + launchExecutables + "]"
                 "}";
+        }
+
+        std::wstring copyBufferedApiOutput()
+        {
+            const int requiredLength = fluxora_get_last_required_buffer_length();
+            EXPECT_GT(requiredLength, 0);
+            std::vector<wchar_t> jsonBuffer(static_cast<std::size_t>(requiredLength));
+            EXPECT_EQ(
+                fluxora_copy_last_output(jsonBuffer.data(), requiredLength),
+                FluxoraCoreResultOk);
+            return std::wstring(jsonBuffer.data());
+        }
+
+        std::wstring lastCoreError()
+        {
+            std::array<wchar_t, 2048> buffer{};
+            const int result = fluxora_get_last_error(buffer.data(), static_cast<int>(buffer.size()));
+            EXPECT_EQ(result, FluxoraCoreResultOk);
+            return std::wstring(buffer.data());
+        }
+
+        bool isMissingExtractorError(const std::wstring& error)
+        {
+            return error.find(L"Failed to extract archive") != std::wstring::npos;
         }
     }
 
@@ -127,5 +281,83 @@ namespace fluxora::tests
         EXPECT_FALSE(std::filesystem::exists(projectDirectory / L"instance.db-shm"));
 
         fluxora_core_shutdown();
+    }
+
+    TEST(FluxoraCoreApiTests, SkyrimModMutationsSynchronizePluginStateFiles)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Core API plugin sync test uses the Windows instance metadata store.";
+#else
+        fluxora_core_shutdown();
+
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path project = installRoot / L"Skyrim Plugin Sync Build";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path skyUi = mods / L"SkyUI";
+        const std::filesystem::path profilePlugins = project / L"profiles" / L"Default" / L"plugins.txt";
+        const std::filesystem::path archivePath = temp.path() / L"Archives" / L"SkyUI.zip";
+
+        writeTextFile(game / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+        writeZipArchive(
+            archivePath,
+            {
+                ZipEntry{L"SkyUI_SE.esp", "plugin"}
+            });
+
+        std::array<wchar_t, 4> smallBuffer{};
+        const int createResult = fluxora_create_project(
+            L"Skyrim Plugin Sync Build",
+            L"skyrimse",
+            game.c_str(),
+            installRoot.c_str(),
+            smallBuffer.data(),
+            static_cast<int>(smallBuffer.size()));
+        ASSERT_EQ(createResult, FluxoraCoreResultBufferTooSmall);
+        EXPECT_NE(copyBufferedApiOutput().find(L"Skyrim Plugin Sync Build"), std::wstring::npos);
+
+        const int installResult = fluxora_install_archive_with_layout(
+            project.c_str(),
+            archivePath.c_str(),
+            L"SkyUI",
+            0,
+            nullptr,
+            smallBuffer.data(),
+            static_cast<int>(smallBuffer.size()));
+        if (installResult == FluxoraCoreResultCoreError && isMissingExtractorError(lastCoreError()))
+        {
+            GTEST_SKIP() << "No supported archive extractor was available.";
+        }
+        ASSERT_EQ(installResult, FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        EXPECT_NE(copyBufferedApiOutput().find(L"SkyUI"), std::wstring::npos);
+        const std::string afterInstallPlugins = readTextFile(profilePlugins);
+        EXPECT_TRUE(std::filesystem::is_regular_file(skyUi / L"SkyUI_SE.esp"));
+        EXPECT_NE(afterInstallPlugins.find("*SkyUI_SE.esp\n"), std::string::npos)
+            << afterInstallPlugins;
+
+        ASSERT_EQ(
+            fluxora_set_installed_mod_enabled(project.c_str(), skyUi.c_str(), 0),
+            FluxoraCoreResultOk);
+        const std::string afterDisablePlugins = readTextFile(profilePlugins);
+        EXPECT_EQ(afterDisablePlugins.find("SkyUI_SE.esp"), std::string::npos)
+            << afterDisablePlugins;
+
+        ASSERT_EQ(
+            fluxora_set_installed_mod_enabled(project.c_str(), skyUi.c_str(), 1),
+            FluxoraCoreResultOk);
+        EXPECT_NE(readTextFile(profilePlugins).find("*SkyUI_SE.esp\n"), std::string::npos);
+
+        ASSERT_EQ(
+            fluxora_delete_installed_mod(project.c_str(), skyUi.c_str()),
+            FluxoraCoreResultOk);
+        EXPECT_EQ(readTextFile(profilePlugins).find("SkyUI_SE.esp"), std::string::npos);
+        EXPECT_NE(readTextFile(profilePlugins).find("*Skyrim.esm\n"), std::string::npos);
+
+        fluxora_core_shutdown();
+#endif
     }
 }

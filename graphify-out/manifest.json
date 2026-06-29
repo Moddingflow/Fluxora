@@ -175,8 +175,8 @@
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/Services/PluginService.hpp": {
-    "mtime": 1782544333.8838627,
-    "ast_hash": "dddd7511c67b835cd89240cd745e5b9b",
+    "mtime": 1782729503.2913175,
+    "ast_hash": "ff0d581a6bced483f91648fed62464e3",
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/Services/ProfileOrderService.hpp": {
@@ -250,8 +250,8 @@
     "semantic_hash": ""
   },
   "backend/src/FluxoraCoreApi.cpp": {
-    "mtime": 1782711503.6723883,
-    "ast_hash": "6b672983080f278fb90cfe24bf592be2",
+    "mtime": 1782729523.2036788,
+    "ast_hash": "d5ec2eb28abadec0a9dc2ad3ee0a31e4",
     "semantic_hash": ""
   },
   "backend/src/GameSupport/DefinitionBackedGameSupport.cpp": {
@@ -385,8 +385,8 @@
     "semantic_hash": ""
   },
   "backend/src/Services/PluginService.cpp": {
-    "mtime": 1782544333.8853667,
-    "ast_hash": "bc50076304bab94f710ab1b01358724d",
+    "mtime": 1782730178.650834,
+    "ast_hash": "61c462ad3505faed857cc39ebc6cd5a5",
     "semantic_hash": ""
   },
   "backend/src/Services/ProfileOrderService.cpp": {
@@ -545,8 +545,8 @@
     "semantic_hash": ""
   },
   "backend/tests/PluginServiceTests.cpp": {
-    "mtime": 1782544429.8028717,
-    "ast_hash": "3581307d239061bd5ecaf46eeae09f40",
+    "mtime": 1782730204.6967824,
+    "ast_hash": "1d6bcd97930fbc587eeb7c6c26759af6",
     "semantic_hash": ""
   },
   "backend/tests/ProjectServiceTests.cpp": {
@@ -1085,8 +1085,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
-    "mtime": 1782725056.5295713,
-    "ast_hash": "8ffc0f9c80b3610d0733a234a430253f",
+    "mtime": 1782730807.842897,
+    "ast_hash": "a000e93b09f6d32556200b5e9d648a3f",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferMo2Page.tsx": {
@@ -1650,13 +1650,13 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/LibraryHome.tsx": {
-    "mtime": 1782391021.7527611,
-    "ast_hash": "510a5380f1658e520ac96b8bf55f2ad6",
+    "mtime": 1782730782.3637276,
+    "ast_hash": "b5cf051864c60e20012f941a8e3c4419",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/library-home-redesign.test.ts": {
-    "mtime": 1782463552.5490448,
-    "ast_hash": "0d080720fc1666de544246937f3092d9",
+    "mtime": 1782730782.3697288,
+    "ast_hash": "b81e50a853a05294fbc4aa592b3e9645",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/build-detail-header.test.ts": {
@@ -1695,8 +1695,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/settings/SettingsWorkspace.tsx": {
-    "mtime": 1782464008.6501462,
-    "ast_hash": "217fce84d726dcbad5cd86c4e0f47918",
+    "mtime": 1782730782.364728,
+    "ast_hash": "2e7dc9c3c1f42e42b8bf79d3d1e19df8",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/project-library-stats.test.ts": {
@@ -1795,8 +1795,8 @@
     "semantic_hash": ""
   },
   "backend/tests/FluxoraCoreApiTests.cpp": {
-    "mtime": 1782500622.283446,
-    "ast_hash": "8a80a9a9f14db3711a897dc16cda3474",
+    "mtime": 1782730211.5400858,
+    "ast_hash": "6b3a977a1060727df11738ad1427aab2",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/tauri-bridge-timeouts.test.ts": {
@@ -1830,8 +1830,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/build-settings-window.test.ts": {
-    "mtime": 1782602466.978236,
-    "ast_hash": "603dc167862c62ad0c992932c42458d0",
+    "mtime": 1782730782.3697288,
+    "ast_hash": "c2a601ad1c0682f73d5c6f439dd8dc5f",
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/Services/GrassCacheService.hpp": {
@@ -1845,13 +1845,13 @@
     "semantic_hash": ""
   },
   "backend/src/Services/GrassCacheService.cpp": {
-    "mtime": 1782715982.360247,
-    "ast_hash": "01217ef96f672df27577326b35883f18",
+    "mtime": 1782732759.26983,
+    "ast_hash": "f9e5864c7f7d7940f684da61c584101e",
     "semantic_hash": ""
   },
   "backend/tests/GrassCacheServiceTests.cpp": {
-    "mtime": 1782716019.0506504,
-    "ast_hash": "1ffd896aa047ab2a6d5cad65a1944a0a",
+    "mtime": 1782732676.9795854,
+    "ast_hash": "6e4d5c576141ba67b06f487ed42d2936",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/assets/icons/grass-cache.svg": {

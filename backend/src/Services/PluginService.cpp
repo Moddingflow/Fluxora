@@ -1307,11 +1307,15 @@ namespace fluxora
                 {
                     continue;
                 }
+                if (!detectedPlugin->second.sourceModEnabled)
+                {
+                    continue;
+                }
 
                 included.insert(key);
                 reconciled.push_back(StoredPlugin{
                     detectedPlugin->second.name,
-                    detectedPlugin->second.sourceModEnabled ? plugin.isEnabled : false
+                    plugin.isEnabled
                 });
             }
 
@@ -1751,6 +1755,59 @@ namespace fluxora
             stored,
             storedPluginsFromEntries(entries));
         return entries;
+    }
+
+    void PluginService::syncPluginsForInstalledMods(
+        const std::filesystem::path& projectDirectory,
+        const PluginRuleContext& rules,
+        std::wstring_view profileName,
+        bool enablePluginsFromEnabledMods) const
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        ensurePluginSystemSupported(rules, false, &logger_, "syncPluginsForInstalledMods");
+        logAppliedPluginRules(logger_, "syncPluginsForInstalledMods", rules, profileName);
+        std::filesystem::create_directories(
+            profileDirectory(pathSettings_, projectDirectory, rules, profileName));
+
+        const std::map<std::wstring, DetectedPlugin> detected =
+            detectInstalledPlugins(pathSettings_, projectDirectory, rules, profileName);
+        std::vector<StoredPlugin> stored =
+            reconcileStoredPlugins(pathSettings_, projectDirectory, rules, profileName, detected);
+        const std::vector<StoredPlugin> previousStored = stored;
+        if (enablePluginsFromEnabledMods)
+        {
+            const PluginSupportRules& pluginRules = rules.rulesProvider->pluginRules();
+            for (StoredPlugin& plugin : stored)
+            {
+                if (isBasePlugin(pluginRules, plugin.name))
+                {
+                    plugin.isEnabled = true;
+                    continue;
+                }
+
+                const auto detectedPlugin = detected.find(toLower(plugin.name));
+                if (detectedPlugin != detected.end() && detectedPlugin->second.sourceModEnabled)
+                {
+                    plugin.isEnabled = true;
+                }
+            }
+        }
+
+        std::vector<ProfilePluginOrderItemRecord> orderRecords =
+            syncPluginOrderItems(projectDirectory, profileName, stored);
+        const std::vector<PluginEntry> entries =
+            buildEntries(projectDirectory, rules, stored, orderRecords, detected);
+        writeStoredPluginsIfChanged(
+            pathSettings_,
+            projectDirectory,
+            rules,
+            profileName,
+            previousStored,
+            storedPluginsFromEntries(entries));
     }
 
     std::vector<PluginEntry> PluginService::movePlugin(

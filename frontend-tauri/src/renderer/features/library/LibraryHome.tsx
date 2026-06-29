@@ -31,7 +31,6 @@ interface LibraryHomeProps {
   catalogState: LibraryCatalogState;
   filteredProjects: FluxoraProject[];
   isNewBuildDisabled: boolean;
-  message: string | null;
   onNewBuild: () => void;
   onOpenProject: (project: FluxoraProject) => void;
   onOpenProjectDirectory: (project: FluxoraProject) => void;
@@ -81,7 +80,6 @@ export function LibraryHome({
   catalogState,
   filteredProjects,
   isNewBuildDisabled,
-  message,
   onNewBuild,
   onOpenProject,
   onOpenProjectDirectory,
@@ -150,13 +148,6 @@ export function LibraryHome({
       </aside>
 
       <section className="library-home-main" aria-label="Selected build summary">
-        {message ? (
-          <div className="activity-banner library-message" role="status">
-            <Icon name="conflict-dot" size={16} aria-hidden="true" />
-            <span>{message}</span>
-          </div>
-        ) : null}
-
         {selectedProject && selectedProjectStats ? (
           <article className="library-detail-card" aria-label={`${selectedProject.name} summary`}>
             <header className="library-detail-hero">

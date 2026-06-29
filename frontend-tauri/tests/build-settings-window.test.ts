@@ -35,7 +35,6 @@ describe('build settings window', () => {
         draft,
         error: null,
         isLoading: false,
-        message: null,
         projectName: 'Foundation Edition',
         projectReady: true,
         onBrowseDirectory: noop,

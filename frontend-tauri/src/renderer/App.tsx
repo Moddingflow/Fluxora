@@ -591,7 +591,7 @@ export const App = () => {
   const [catalogState, setCatalogState] = useState<CatalogState>('idle');
   const [searchText, setSearchText] = useState('');
   const [templateSearchText, setTemplateSearchText] = useState('');
-  const [message, setMessage] = useState<string | null>(null);
+  const [, setMessage] = useState<string | null>(null);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [openingBuildSplash, setOpeningBuildSplash] =
     useState<OpeningBuildSplashState | null>(null);
@@ -1330,6 +1330,9 @@ export const App = () => {
       await window.fluxora.mods.setEnabled(project.projectDirectory, item.id, isEnabled, {
         operationId
       });
+      if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
+        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+      }
     } catch (error) {
       if (latestModEnableSequenceByOrderIdRef.current.get(orderId) === sequence) {
         dispatchModsWorkspace({ type: 'item-enabled-set', orderId, isEnabled: previousEnabled });
@@ -1363,6 +1366,13 @@ export const App = () => {
       await window.fluxora.mods.setAllEnabled(project.projectDirectory, isEnabled, {
         operationId
       });
+      if (
+        modBulkEnableSequenceRef.current === sequence &&
+        pluginCapabilities.bridgeAvailable &&
+        pluginCapabilities.projectSupported
+      ) {
+        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+      }
     } catch (error) {
       if (modBulkEnableSequenceRef.current === sequence) {
         dispatchModsWorkspace({ type: 'items-loaded', items: previousItems });
@@ -1629,6 +1639,9 @@ export const App = () => {
         showBusy: false,
         showLoading: false
       });
+      if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
+        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+      }
       closeOperationOverlay(operationId);
     } catch (error) {
       const nextMessage = errorMessage(error);
@@ -5577,12 +5590,11 @@ export const App = () => {
   const renderHome = () => {
     return (
       <LibraryHome
-        bridgeErrorMessage={bridgeStatus?.error?.message ?? message ?? undefined}
+        bridgeErrorMessage={bridgeStatus?.error?.message ?? undefined}
         catalogPath={catalog.buildConfigsDirectory}
         catalogState={catalogState}
         filteredProjects={filteredProjects}
         isNewBuildDisabled={!bridgeStatus?.ready || isTransferRunning}
-        message={message}
         onNewBuild={startCreate}
         onOpenProject={(project) => void openProjectByConfig(project.configPath)}
         onOpenProjectDirectory={(project) => void openProjectDirectory(project)}
@@ -6161,12 +6173,6 @@ export const App = () => {
               <h2>{selectedProject.name}</h2>
             </div>
           </div>
-          {message ? (
-            <div className="activity-banner" role="status">
-              <CircleDot size={16} aria-hidden="true" />
-              <span>{message}</span>
-            </div>
-          ) : null}
           {modsBusyLabel ? (
             <div className="mod-busy-strip" role="status">
               <RefreshCw size={15} aria-hidden="true" />
@@ -6635,12 +6641,6 @@ export const App = () => {
               <h2>{selectedProject.name}</h2>
             </div>
           </div>
-          {message ? (
-            <div className="activity-banner" role="status">
-              <CircleDot size={16} aria-hidden="true" />
-              <span>{message}</span>
-            </div>
-          ) : null}
           {pluginsBusyLabel ? (
             <div className="mod-busy-strip" role="status">
               <RefreshCw size={15} aria-hidden="true" />
@@ -7495,12 +7495,6 @@ export const App = () => {
               </button>
             </div>
           </div>
-          {message ? (
-            <div className="activity-banner" role="status">
-              <CircleDot size={16} aria-hidden="true" />
-              <span>{message}</span>
-            </div>
-          ) : null}
           {downloadsBusyLabel && downloadsWorkspace.loadState !== 'loading' ? (
             <div className="mod-busy-strip" role="status">
               <RefreshCw size={15} aria-hidden="true" />
@@ -7805,12 +7799,6 @@ export const App = () => {
               </button>
             </div>
           </div>
-          {message ? (
-            <div className="activity-banner" role="status">
-              <CircleDot size={16} aria-hidden="true" />
-              <span>{message}</span>
-            </div>
-          ) : null}
           {profilesBusyLabel ? (
             <div className="mod-busy-strip" role="status">
               <RefreshCw size={15} aria-hidden="true" />
@@ -8140,12 +8128,6 @@ export const App = () => {
               </button>
             </div>
           </div>
-          {message ? (
-            <div className="activity-banner" role="status">
-              <CircleDot size={16} aria-hidden="true" />
-              <span>{message}</span>
-            </div>
-          ) : null}
           {executablesBusyLabel ? (
             <div className="mod-busy-strip" role="status">
               <RefreshCw size={15} aria-hidden="true" />
@@ -8178,7 +8160,6 @@ export const App = () => {
       draft={buildPathDraft}
       error={buildPathsError}
       isLoading={catalogState === 'loading' || Boolean(buildPathsBusyLabel)}
-      message={message}
       projectName={selectedProject?.name ?? (buildSettingsInitialName || 'Build')}
       projectReady={Boolean(selectedProject)}
       onBrowseDirectory={(title, field) => void browseBuildPathDirectory(title, field)}
@@ -8361,7 +8342,6 @@ export const App = () => {
       bridgeStatus={bridgeStatus}
       isTransferRunning={isTransferRunning}
       languageBusy={languageBusy}
-      message={message}
       nexusBusy={nexusBusy}
       nexusStatus={nexusStatus}
       section={settingsSection}
@@ -8418,13 +8398,6 @@ export const App = () => {
           selectedProfileName={selectedProjectProfileName}
           settingsBusyLabel={buildPathsBusyLabel}
         />
-
-        {message ? (
-          <div className="activity-banner build-message" role="status">
-            <CircleDot size={16} aria-hidden="true" />
-            <span>{message}</span>
-          </div>
-        ) : null}
 
         <section className="build-workbench" aria-label="Mod Organizer style workspace">
           <section className="build-pane build-pane--mods" aria-label="Mods">

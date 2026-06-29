@@ -256,6 +256,29 @@ namespace fluxora
             return counts;
         }
 
+        bool removeDirectoryIfPresent(
+            const std::filesystem::path& directory,
+            std::string_view errorMessage)
+        {
+            std::error_code error;
+            if (!std::filesystem::exists(directory, error))
+            {
+                return false;
+            }
+            if (error)
+            {
+                throw std::runtime_error(std::string(errorMessage));
+            }
+
+            std::filesystem::remove_all(directory, error);
+            if (error)
+            {
+                throw std::runtime_error(std::string(errorMessage));
+            }
+
+            return true;
+        }
+
         void writeMarkerFile(const std::filesystem::path& markerPath)
         {
             std::filesystem::create_directories(markerPath.parent_path());
@@ -418,6 +441,19 @@ namespace fluxora
                 : std::wstring(L"-forcesteamloader");
         const std::filesystem::path markerPath =
             paths.gameDirectory / std::filesystem::path(std::wstring(precacheMarkerFileName));
+        const std::wstring modName = outputModName(opened.project.name);
+        const std::filesystem::path targetMod = paths.modsDirectory / std::filesystem::path(modName);
+        const std::filesystem::path targetGrass = targetMod / std::filesystem::path(std::wstring(grassFolderName));
+
+        const PathSafetyService safety;
+        safety.validateDirectoryWriteRoot(paths.modsDirectory)
+            .throwIfUnsafe("Mods directory is unsafe");
+        safety.validateWritePath(paths.modsDirectory, targetMod)
+            .throwIfUnsafe("Grass cache output mod path is unsafe");
+        safety.validateWritePath(targetMod, targetGrass)
+            .throwIfUnsafe("Grass cache output folder path is unsafe");
+        safety.validateDirectoryWriteRoot(paths.overwriteDirectory)
+            .throwIfUnsafe("Overwrite directory is unsafe");
 
         if (progress)
         {
@@ -432,6 +468,28 @@ namespace fluxora
 
         std::error_code cleanupError;
         std::filesystem::remove(markerPath, cleanupError);
+        if (const std::filesystem::path staleSourceGrass = findGrassOutputDirectory(paths.overwriteDirectory);
+            !staleSourceGrass.empty())
+        {
+            safety.validateWritePath(paths.overwriteDirectory, staleSourceGrass)
+                .throwIfUnsafe("Stale overwrite grass cache path is unsafe");
+            (void)removeDirectoryIfPresent(
+                staleSourceGrass,
+                "Could not remove stale overwrite grass cache output.");
+            logger_.writeOperation(
+                LogLevel::Info,
+                "GrassCache",
+                "Removed stale overwrite grass cache output before starting NGIO generation.");
+        }
+        if (removeDirectoryIfPresent(
+                targetGrass,
+                "Could not remove previous generated grass cache output."))
+        {
+            logger_.writeOperation(
+                LogLevel::Info,
+                "GrassCache",
+                "Removed previous generated grass cache output before starting NGIO generation.");
+        }
         writeMarkerFile(markerPath);
 
         int launchCount = 0;
@@ -509,18 +567,6 @@ namespace fluxora
         {
             throw std::runtime_error("NGIO finished but no overwrite Grass output was found.");
         }
-
-        const std::wstring modName = outputModName(opened.project.name);
-        const std::filesystem::path targetMod = paths.modsDirectory / std::filesystem::path(modName);
-        const std::filesystem::path targetGrass = targetMod / std::filesystem::path(std::wstring(grassFolderName));
-
-        const PathSafetyService safety;
-        safety.validateDirectoryWriteRoot(paths.modsDirectory)
-            .throwIfUnsafe("Mods directory is unsafe");
-        safety.validateWritePath(paths.modsDirectory, targetMod)
-            .throwIfUnsafe("Grass cache output mod path is unsafe");
-        safety.validateWritePath(targetMod, targetGrass)
-            .throwIfUnsafe("Grass cache output folder path is unsafe");
 
         if (progress)
         {

@@ -1,5 +1,4 @@
 import {
-  CircleDot,
   Languages,
   Link2,
   RefreshCw,
@@ -28,7 +27,6 @@ interface SettingsWorkspaceProps {
   bridgeStatus: NativeBridgeStatus | null;
   isTransferRunning: boolean;
   languageBusy: string | null;
-  message: string | null;
   nexusBusy: boolean;
   nexusStatus: FluxoraNexusModsAuthStatus | null;
   onOpenTransfer: () => void;
@@ -44,7 +42,6 @@ export function SettingsWorkspace({
   bridgeStatus,
   isTransferRunning,
   languageBusy,
-  message,
   nexusBusy,
   nexusStatus,
   onOpenTransfer,
@@ -166,12 +163,6 @@ export function SettingsWorkspace({
     <section className="settings-layout" aria-label="Settings">
       {renderSettingsNav()}
       <section className="work-surface settings-surface">
-        {message ? (
-          <div className="activity-banner" role="status">
-            <CircleDot size={16} aria-hidden="true" />
-            <span>{message}</span>
-          </div>
-        ) : null}
         {settingsBusyLabel ? (
           <div className="mod-busy-strip" role="status">
             <RefreshCw size={15} aria-hidden="true" />

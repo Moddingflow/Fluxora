@@ -22,6 +22,7 @@
 #include "FluxoraCore/Services/ProjectService.hpp"
 #include "FluxoraCore/Services/TemplateService.hpp"
 #include "FluxoraCore/Services/VirtualFileSystemService.hpp"
+#include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
 
@@ -34,6 +35,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -51,6 +53,7 @@ namespace
 
     bool isBlank(const wchar_t* value);
     fluxora::Core& core();
+    void logOperation(fluxora::LogLevel level, std::string_view category, std::string_view message) noexcept;
 
     void writeCapabilities(fluxora::JsonWriter& writer, const fluxora::BuildTemplate& tpl)
     {
@@ -1770,6 +1773,45 @@ namespace
         };
     }
 
+    [[nodiscard]] bool shouldSyncSkyrimPluginsForProject(const std::filesystem::path& projectDirectory)
+    {
+        const std::wstring gameId = fluxora::InstanceMetadataStore::gameId(projectDirectory);
+        return fluxora::toAsciiLower(fluxora::trimAscii(gameId)) == L"skyrimse";
+    }
+
+    void syncSkyrimPluginsForInstalledMods(
+        const std::filesystem::path& projectDirectory,
+        std::string_view sourceOperation,
+        bool enablePluginsFromEnabledMods)
+    {
+        try
+        {
+            if (!shouldSyncSkyrimPluginsForProject(projectDirectory))
+            {
+                return;
+            }
+
+            const fluxora::PluginRuleContext rules = resolvePluginRuleContextForTemplate(L"skyrimse");
+            core().plugins().syncPluginsForInstalledMods(
+                projectDirectory,
+                rules,
+                L"",
+                enablePluginsFromEnabledMods);
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Plugins",
+                std::string(sourceOperation) + " synced Skyrim plugin state files.");
+        }
+        catch (const std::exception& exception)
+        {
+            logOperation(
+                fluxora::LogLevel::Warning,
+                "Plugins",
+                std::string(sourceOperation) +
+                    " could not sync Skyrim plugin state files: " + exception.what());
+        }
+    }
+
     fluxora::Core& core()
     {
         static fluxora::Core instance;
@@ -2070,6 +2112,7 @@ namespace
                     modName,
                     mode,
                     placementOverrides));
+            syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Install download", true);
             logOperation(fluxora::LogLevel::Info, "Downloads", "Install download completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
@@ -2122,6 +2165,7 @@ namespace
                     modName,
                     mode,
                     placementOverrides));
+            syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Install archive", true);
             logOperation(fluxora::LogLevel::Info, "Mods", "Install archive completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
@@ -3285,6 +3329,7 @@ extern "C"
             core().mods().deleteInstalledMod(
                 std::filesystem::path(projectDirectory),
                 std::filesystem::path(modPath));
+            syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Delete installed mod", false);
             logOperation(fluxora::LogLevel::Info, "Mods", "Delete installed mod completed.");
             return FluxoraCoreResultOk;
         }
@@ -3319,6 +3364,7 @@ extern "C"
                 core().mods().createEmptyMod(
                     std::filesystem::path(projectDirectory),
                     modName));
+            syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Create empty mod", true);
             logOperation(fluxora::LogLevel::Info, "Mods", "Create empty mod completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
@@ -3352,6 +3398,10 @@ extern "C"
                 std::filesystem::path(projectDirectory),
                 std::filesystem::path(modPath),
                 isEnabled != 0);
+            syncSkyrimPluginsForInstalledMods(
+                std::filesystem::path(projectDirectory),
+                "Set installed mod state",
+                isEnabled != 0);
             logOperation(fluxora::LogLevel::Info, "Mods", "Set installed mod state completed.");
             return FluxoraCoreResultOk;
         }
@@ -3381,6 +3431,10 @@ extern "C"
                     (isEnabled != 0 ? "true" : "false"));
             core().mods().setAllInstalledModsEnabled(
                 std::filesystem::path(projectDirectory),
+                isEnabled != 0);
+            syncSkyrimPluginsForInstalledMods(
+                std::filesystem::path(projectDirectory),
+                "Set all installed mods state",
                 isEnabled != 0);
             logOperation(fluxora::LogLevel::Info, "Mods", "Set all installed mods state completed.");
             return FluxoraCoreResultOk;
@@ -4160,6 +4214,7 @@ extern "C"
                     modName,
                     mode,
                     selectedOptionIds));
+            syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Install FOMOD download", true);
             logOperation(fluxora::LogLevel::Info, "Downloads", "Install FOMOD download completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
@@ -4211,6 +4266,7 @@ extern "C"
                     modName,
                     mode,
                     selectedOptionIds));
+            syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Install FOMOD archive", true);
             logOperation(fluxora::LogLevel::Info, "Mods", "Install FOMOD archive completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
@@ -4267,6 +4323,7 @@ extern "C"
                     mode,
                     selectedOptionIds,
                     placementOverrides));
+            syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Install FOMOD download", true);
             logOperation(fluxora::LogLevel::Info, "Downloads", "Install FOMOD download completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
@@ -4323,6 +4380,7 @@ extern "C"
                     mode,
                     selectedOptionIds,
                     placementOverrides));
+            syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Install FOMOD archive", true);
             logOperation(fluxora::LogLevel::Info, "Mods", "Install FOMOD archive completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }

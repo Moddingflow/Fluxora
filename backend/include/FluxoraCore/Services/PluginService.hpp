@@ -61,6 +61,12 @@ namespace fluxora
             const PluginRuleContext& rules,
             std::wstring_view profileName) const;
 
+        void syncPluginsForInstalledMods(
+            const std::filesystem::path& projectDirectory,
+            const PluginRuleContext& rules,
+            std::wstring_view profileName,
+            bool enablePluginsFromEnabledMods = false) const;
+
         [[nodiscard]] std::vector<PluginEntry> movePlugin(
             const std::filesystem::path& projectDirectory,
             const BuildTemplate& resolvedTemplate,

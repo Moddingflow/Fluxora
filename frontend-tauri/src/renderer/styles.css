@@ -815,15 +815,6 @@ input::placeholder {
   padding: 10px;
 }
 
-.library-message {
-  position: absolute;
-  top: 16px;
-  right: 20px;
-  z-index: 2;
-  max-width: min(520px, calc(100% - 40px));
-  margin: 0;
-}
-
 .library-home-main {
   position: relative;
   display: grid;
@@ -1236,46 +1227,6 @@ input::placeholder {
   border-color: rgba(var(--flx-accent-rgb), 0.35);
   color: var(--warning);
   background: rgba(var(--flx-accent-rgb), 0.09);
-}
-
-.bridge-banner,
-.activity-banner {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-  min-height: 52px;
-  margin: 12px 18px 0;
-  padding: 11px;
-  border-radius: 8px;
-  font-size: 12px;
-}
-
-.bridge-banner {
-  border: 1px solid rgba(var(--flx-accent-rgb), 0.32);
-  color: var(--danger);
-  background: var(--danger-soft);
-}
-
-.activity-banner {
-  border: 1px solid rgba(var(--flx-accent-rgb), 0.28);
-  color: var(--accent-secondary);
-  background: rgba(var(--flx-accent-rgb), 0.08);
-}
-
-.bridge-banner div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.bridge-banner strong {
-  color: var(--text);
-}
-
-.bridge-banner span {
-  color: var(--flx-accent-bright);
-  line-height: 1.35;
 }
 
 .project-table {
@@ -2629,10 +2580,6 @@ input::placeholder {
 }
 
 .right-pane-section--fluxpack .fluxpack-panel {
-  margin: 0;
-}
-
-.build-message {
   margin: 0;
 }
 
