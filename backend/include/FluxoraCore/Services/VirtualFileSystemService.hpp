@@ -38,7 +38,8 @@ namespace fluxora
         [[nodiscard]] GameExecutableLaunchResult launchExecutable(
             const std::filesystem::path& configPath,
             std::wstring_view executableId,
-            std::wstring_view profileName = {}) const;
+            std::wstring_view profileName = {},
+            std::wstring_view additionalArguments = {}) const;
 
         [[nodiscard]] bool isInitialized() const noexcept;
 

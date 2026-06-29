@@ -23,6 +23,8 @@ import type {
   FluxoraContentLayoutPreview,
   FluxoraFomodInstaller,
   FluxoraFluxPackExportRequest,
+  FluxoraGrassCacheGenerationRequest,
+  FluxoraGrassCacheGenerationResult,
   FluxoraFluxPackInstallRequest,
   FluxoraFluxPackInstallResult,
   FluxoraFluxPackSummary,
@@ -803,6 +805,15 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         operation
       )
   },
+  grassCache: {
+    generate: (request: FluxoraGrassCacheGenerationRequest, operation?: OperationRequest) =>
+      invokeTyped<FluxoraGrassCacheGenerationResult>(
+        ipc,
+        FluxoraIpcChannels.grassCacheGenerate,
+        request,
+        operation
+      )
+  },
   operations: {
     cancel: (operationId: string, request?: OperationRequest) =>
       invokeTyped<FluxoraOperationCancelResult>(
@@ -922,6 +933,7 @@ const projectOpenConfigTimeoutMs = 60_000;
 const executablesListTimeoutMs = 30_000;
 const executablesLaunchTimeoutMs = 2 * 60 * 1000;
 const transferImportTimeoutMs = 2 * 60 * 60 * 1000;
+const grassCacheGenerationTimeoutMs = 6 * 60 * 60 * 1000;
 
 const createOperationId = (scope: string): string =>
   `op_${new Date().toISOString().replace(/[-:.TZ]/g, '')}_${scope}_${crypto.randomUUID().slice(0, 8)}`;
@@ -1431,6 +1443,17 @@ const createTauriInvoker = (): IpcInvoker => ({
           summary: { ...data.summary, operationId },
           operationId
         };
+      }
+
+      case FluxoraIpcChannels.grassCacheGenerate: {
+        const request = requestWithOperationId(args[1], 'grass_cache_generate');
+        const data = await bridgeRequest<Record<string, unknown>>(
+          'grassCache.generate',
+          args[0] as Record<string, unknown>,
+          request,
+          grassCacheGenerationTimeoutMs
+        );
+        return withOperationId(data, request, 'grass_cache_generate');
       }
 
       case FluxoraIpcChannels.modsListInstalled:

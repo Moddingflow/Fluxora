@@ -6,6 +6,7 @@
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
 #include "FluxoraCore/Services/ExecutableService.hpp"
 #include "FluxoraCore/Services/FluxPackService.hpp"
+#include "FluxoraCore/Services/GrassCacheService.hpp"
 #include "FluxoraCore/Services/HookService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/ModService.hpp"
@@ -37,7 +38,15 @@ namespace fluxora
           projects_(std::make_unique<ProjectService>(*logger_, *templates_)),
           fluxPacks_(std::make_unique<FluxPackService>(*logger_, *projects_, *downloads_, *buildPathSettings_)),
           modOrganizerImport_(std::make_unique<ModOrganizerImportService>(*logger_, *templates_, *projects_, *buildPathSettings_)),
-          virtualFileSystem_(std::make_unique<VirtualFileSystemService>(*logger_, *executables_, *profileOrder_, *buildPathSettings_))
+          virtualFileSystem_(std::make_unique<VirtualFileSystemService>(*logger_, *executables_, *profileOrder_, *buildPathSettings_)),
+          grassCache_(std::make_unique<GrassCacheService>(
+              *logger_,
+              *projects_,
+              *executables_,
+              *virtualFileSystem_,
+              *mods_,
+              *profileOrder_,
+              *buildPathSettings_))
     {
     }
 
@@ -70,6 +79,7 @@ namespace fluxora
         fluxPacks_->initialize();
         modOrganizerImport_->initialize();
         virtualFileSystem_->initialize();
+        grassCache_->initialize();
 
         initialized_ = true;
         logger_->write(LogLevel::Info, "Fluxora core initialized.");
@@ -82,6 +92,7 @@ namespace fluxora
             return;
         }
 
+        grassCache_->shutdown();
         virtualFileSystem_->shutdown();
         modOrganizerImport_->shutdown();
         fluxPacks_->shutdown();
@@ -162,6 +173,11 @@ namespace fluxora
     FluxPackService& Core::fluxPacks() noexcept
     {
         return *fluxPacks_;
+    }
+
+    GrassCacheService& Core::grassCache() noexcept
+    {
+        return *grassCache_;
     }
 
     VirtualFileSystemService& Core::virtualFileSystem() noexcept

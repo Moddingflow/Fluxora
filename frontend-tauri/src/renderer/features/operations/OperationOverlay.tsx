@@ -8,7 +8,8 @@ export type OperationOverlayKind =
   | 'build-delete'
   | 'mod-delete'
   | 'fluxpack-export'
-  | 'fluxpack-install';
+  | 'fluxpack-install'
+  | 'grass-cache';
 
 export interface OperationOverlayState {
   operationId: string;

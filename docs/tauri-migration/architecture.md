@@ -117,6 +117,16 @@ Phase 12 extends `fluxora.bridge.v1` to WPF-parity build path settings and FluxP
 - Renderer owns the Build Paths inspector, primary executable form state, native browse/save/open dialog orchestration, FluxPack summary display and operation overlays. C++ core remains the owner of path persistence, executable persistence, FluxPack recipe creation, package inspection, package install, provider/source handling and filesystem mutation.
 - Generic operation cancellation remains capability-reported as unsupported until each operation has a cancellable C++ path. Build creation/deletion and FluxPack overlays show close/cancel rules honestly: close is disabled while running, and cancel is disabled unless the bridge capability reports support.
 
+## NGIO Grass Cache Generation
+
+The Skyrim-only No Grass In Objects integration extends `fluxora.bridge.v1` with `grassCache.generate` backed by `GrassCacheService` in C++:
+
+- Native host routes `grassCache.generate` to `fluxora_generate_ngio_grass_cache` and emits `operations.progress` events during marker setup, SKSE launch/restart, output collection and mod registration.
+- Tauri Rust shell/facade expose typed `window.fluxora.grassCache.generate` only; renderer still has no filesystem, shell, process or direct `invoke` access.
+- Renderer owns only the visibility button, localized tooltip, custom confirmation dialog and operation overlay.
+- C++ core remains the owner of Skyrim/NGIO validation, `PrecacheGrass.txt`, SKSE/VFS launch, `overwrite/Grass` collection and generated mod creation at `<build name> · Grass Cache`.
+- The bridge capability key is `grassCacheGeneration`; unsupported platforms or bridge builds disable the visible action with a reason.
+
 Implemented MVP methods:
 
 - `system.handshake`
@@ -141,6 +151,7 @@ Implemented MVP methods:
 - `fluxPack.export`
 - `fluxPack.inspect`
 - `fluxPack.install`
+- `grassCache.generate`
 - `mods.listInstalled`
 - `mods.getOrder`
 - `mods.createSeparator`
@@ -677,6 +688,7 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `mods.checkUpdates`
 - `mods.clearOverwrite`
 - `mods.getFileTree`
+- `grassCache.generate`
 
 ### Plugins
 
@@ -723,7 +735,7 @@ The native host initially maps bridge methods to the existing exported functions
 - Templates/projects/build paths: `fluxora_get_game_templates`, `fluxora_resolve_template`, `fluxora_preview_project_directory`, `fluxora_create_project`, `fluxora_open_project_config`, `fluxora_list_project_configs`, `fluxora_rename_project`, `fluxora_delete_project`, `fluxora_delete_project_with_progress`, `fluxora_get_build_path_settings`, `fluxora_save_build_path_settings`.
 - FluxPack and transfer: `fluxora_export_fluxpack`, `fluxora_inspect_fluxpack`, `fluxora_install_fluxpack`, `fluxora_analyze_mod_organizer_instance`, `fluxora_import_mod_organizer_instance`.
 - Settings/executables/Nexus/NXM: `fluxora_get_app_language`, `fluxora_set_app_language`, `fluxora_get_app_theme`, `fluxora_set_app_theme`, `fluxora_get_game_executables`, `fluxora_save_game_executables`, `fluxora_launch_game_executable`, `fluxora_get_executable_icon`, `fluxora_get_nexusmods_auth_status`, `fluxora_connect_nexusmods`, `fluxora_disconnect_nexusmods`, `fluxora_register_nxm_protocol`.
-- Mods/profiles/plugins/downloads/install: every exported `fluxora_get_*`, `fluxora_create_*`, `fluxora_delete_*`, `fluxora_move_*`, `fluxora_set_*`, `fluxora_capture_nxm_links`, `fluxora_import_*`, `fluxora_install_*`, `fluxora_analyze_*` function listed in `FluxoraCoreApi.hpp`.
+- Mods/profiles/plugins/downloads/install: every exported `fluxora_get_*`, `fluxora_create_*`, `fluxora_delete_*`, `fluxora_move_*`, `fluxora_set_*`, `fluxora_capture_nxm_links`, `fluxora_import_*`, `fluxora_install_*`, `fluxora_analyze_*` function listed in `FluxoraCoreApi.hpp`, plus `fluxora_generate_ngio_grass_cache` for Skyrim NGIO cache generation.
 
 The host may wrap several low-level C ABI functions into one bridge method when that produces a cleaner UI contract. It must not move business rules into TypeScript.
 

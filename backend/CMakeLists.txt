@@ -107,6 +107,8 @@ add_library(FluxoraCore SHARED
     src/Services/ExecutableService.cpp
     src/Services/FomodInstallerService.cpp
     src/Services/FluxPackService.cpp
+    src/Services/GrassCacheProcessRunner.cpp
+    src/Services/GrassCacheService.cpp
     src/Services/Logger.cpp
     src/Services/ModService.cpp
     src/Services/ModOrganizerExecutableImportService.cpp

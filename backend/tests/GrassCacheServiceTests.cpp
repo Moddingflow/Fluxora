@@ -1,0 +1,262 @@
+#include "FluxoraCore/Services/AppSettingsService.hpp"
+#include "FluxoraCore/Services/BuildPathSettingsService.hpp"
+#include "FluxoraCore/Services/ExecutableIconService.hpp"
+#include "FluxoraCore/Services/ExecutableService.hpp"
+#include "FluxoraCore/Services/GrassCacheService.hpp"
+#include "FluxoraCore/Services/Logger.hpp"
+#include "FluxoraCore/Services/ModService.hpp"
+#include "FluxoraCore/Services/ProfileOrderService.hpp"
+#include "FluxoraCore/Services/ProjectService.hpp"
+#include "FluxoraCore/Services/TemplateService.hpp"
+#include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
+
+#include "TestFilesystem.hpp"
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+
+namespace fluxora::tests
+{
+    namespace
+    {
+        std::string jsonPath(const std::filesystem::path& path)
+        {
+            std::string text = path.string();
+            std::string escaped;
+            escaped.reserve(text.size());
+            for (char character : text)
+            {
+                if (character == '\\')
+                {
+                    escaped += "\\\\";
+                }
+                else
+                {
+                    escaped.push_back(character);
+                }
+            }
+            return escaped;
+        }
+
+        void writeExecutableStub(const std::filesystem::path& path)
+        {
+            writeTextFile(path, "MZ executable stub");
+        }
+
+        const InstalledModRecord* findInstalledMod(
+            const std::vector<InstalledModRecord>& records,
+            std::wstring_view folderName)
+        {
+            const auto match = std::find_if(
+                records.begin(),
+                records.end(),
+                [folderName](const InstalledModRecord& record)
+                {
+                    return record.folderName == folderName;
+                });
+            return match == records.end() ? nullptr : &*match;
+        }
+
+        class FakeGrassCacheRunner final : public IGrassCacheProcessRunner
+        {
+        public:
+            FakeGrassCacheRunner(
+                std::filesystem::path gameDirectory,
+                std::filesystem::path overwriteDirectory,
+                int removeMarkerAfterLaunch)
+                : gameDirectory_(std::move(gameDirectory)),
+                  overwriteDirectory_(std::move(overwriteDirectory)),
+                  removeMarkerAfterLaunch_(removeMarkerAfterLaunch)
+            {
+            }
+
+            void launchAndWait(const GrassCacheLaunchSpec& spec) override
+            {
+                ++launchCount;
+                lastSpec = spec;
+                EXPECT_EQ(spec.additionalArguments, L"-forcesteamloader");
+                EXPECT_TRUE(std::filesystem::is_regular_file(gameDirectory_ / L"PrecacheGrass.txt"));
+
+                writeTextFile(overwriteDirectory_ / L"Grass" / L"Tamriel.cgid", "grass cache");
+                writeTextFile(overwriteDirectory_ / L"Grass" / L"Tamriel.fail", "failed cell");
+                if (launchCount >= removeMarkerAfterLaunch_)
+                {
+                    std::filesystem::remove(gameDirectory_ / L"PrecacheGrass.txt");
+                }
+            }
+
+            int launchCount{0};
+            GrassCacheLaunchSpec lastSpec;
+
+        private:
+            std::filesystem::path gameDirectory_;
+            std::filesystem::path overwriteDirectory_;
+            int removeMarkerAfterLaunch_{1};
+        };
+
+        class GrassCacheServiceTestFixture : public testing::Test
+        {
+        protected:
+            GrassCacheServiceTestFixture()
+                : appData_(L"APPDATA", (temp_.path() / L"AppData").wstring()),
+                  project_(temp_.path() / L"Skyrim Main"),
+                  config_(project_ / L"build.json"),
+                  game_(project_ / L"stock game"),
+                  settings_(logger_),
+                  pathSettings_(logger_),
+                  templates_(logger_),
+                  projects_(logger_, templates_),
+                  mods_(logger_, settings_, pathSettings_),
+                  profileOrder_(logger_, mods_, pathSettings_),
+                  executableIcons_(logger_),
+                  executables_(logger_, executableIcons_, pathSettings_)
+            {
+            }
+
+            void SetUp() override
+            {
+#ifndef _WIN32
+                GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+                writeExecutableStub(game_ / L"SkyrimSE.exe");
+                writeExecutableStub(game_ / L"skse64_loader.exe");
+                writeTextFile(game_ / L"Data" / L"Skyrim.esm", "master");
+                writeTextFile(
+                    config_,
+                    "{"
+                    "\"schemaVersion\":\"1\","
+                    "\"name\":\"Skyrim Main\","
+                    "\"templateId\":\"skyrimse\","
+                    "\"gameName\":\"Skyrim Special Edition\","
+                    "\"projectDirectory\":\"" + jsonPath(project_) + "\","
+                    "\"gamePath\":\"stock game\","
+                    "\"dataDirectory\":\"Data\","
+                    "\"defaultProfile\":\"Default\","
+                    "\"launchExecutables\":[{"
+                    "\"id\":\"script-extender\","
+                    "\"displayName\":\"SKSE64\","
+                    "\"executablePath\":\"skse64_loader.exe\","
+                    "\"arguments\":\"\","
+                    "\"workingDirectory\":\"\""
+                    "}]"
+                    "}");
+
+                const BuildPathSettings paths{
+                    game_,
+                    project_ / L"mods",
+                    project_ / L"profiles",
+                    project_ / L"downloads",
+                    project_ / L"overwrite"
+                };
+                pathSettings_.saveForConfig(config_, paths);
+
+                const std::filesystem::path ngioMod = paths.modsDirectory / L"No Grass In Objects";
+                writeTextFile(
+                    ngioMod / L"NetScriptFramework" / L"Plugins" / L"GrassControl.dll",
+                    "dll");
+                writeTextFile(
+                    ngioMod / L"SKSE" / L"Plugins" / L"GrassControl.ini",
+                    "Use-grass-cache = true");
+
+                InstanceMetadataStore::ensureInstance(project_, L"skyrimse");
+                InstanceMetadataStore::registerInstalledMods(
+                    project_,
+                    {InstalledModImportRecord{ngioMod, L"No Grass In Objects", {}, true, {}}});
+                InstanceMetadataStore::replaceProfileOrderItems(
+                    project_,
+                    L"Default",
+                    {ProfileOrderImportItemRecord{L"mod", L"No Grass In Objects", {}}});
+#endif
+            }
+
+            TempDirectory temp_;
+            Logger logger_;
+            ScopedEnvironmentVariable appData_;
+            std::filesystem::path project_;
+            std::filesystem::path config_;
+            std::filesystem::path game_;
+            AppSettingsService settings_;
+            BuildPathSettingsService pathSettings_;
+            TemplateService templates_;
+            ProjectService projects_;
+            ModService mods_;
+            ProfileOrderService profileOrder_;
+            ExecutableIconService executableIcons_;
+            ExecutableService executables_;
+        };
+    }
+
+    TEST_F(GrassCacheServiceTestFixture, NgioGenerationMovesOverwriteGrassIntoGeneratedMod)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 1);
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+
+        const GrassCacheGenerationResult result =
+            service.generateNgioGrassCache(config_, L"Default", GrassCacheGenerationOptions{3, 0});
+
+        const std::wstring expectedModName = L"Skyrim Main \x00B7 Grass Cache";
+        EXPECT_EQ(runner.launchCount, 1);
+        EXPECT_EQ(runner.lastSpec.executableId, L"script-extender");
+        EXPECT_EQ(runner.lastSpec.profileName, L"Default");
+        EXPECT_EQ(result.outputModName, expectedModName);
+        EXPECT_EQ(result.launchCount, 1);
+        EXPECT_EQ(result.generatedFileCount, 2);
+        EXPECT_EQ(result.failedFileCount, 1);
+
+        const std::filesystem::path outputMod = paths.modsDirectory / expectedModName;
+        EXPECT_TRUE(std::filesystem::is_regular_file(outputMod / L"Grass" / L"Tamriel.cgid"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(outputMod / L"Grass" / L"Tamriel.fail"));
+        EXPECT_FALSE(std::filesystem::exists(paths.overwriteDirectory / L"Grass"));
+
+        const std::vector<InstalledModRecord> records =
+            InstanceMetadataStore::listInstalledMods(project_, paths.modsDirectory);
+        const InstalledModRecord* record = findInstalledMod(records, expectedModName);
+        ASSERT_NE(record, nullptr);
+        EXPECT_EQ(record->displayName, expectedModName);
+        EXPECT_EQ(record->state, L"installed");
+        EXPECT_EQ(record->source.provider, L"generated-ngio");
+
+        const std::vector<ProfileModOrderItem> order =
+            profileOrder_.listCachedModOrder(project_, L"Default");
+        const auto orderItem = std::find_if(
+            order.begin(),
+            order.end(),
+            [&expectedModName](const ProfileModOrderItem& item)
+            {
+                return item.kind == L"mod" && item.name == expectedModName;
+            });
+        ASSERT_NE(orderItem, order.end());
+        EXPECT_EQ(orderItem->id, outputMod);
+        EXPECT_TRUE(orderItem->isEnabled);
+    }
+
+    TEST_F(GrassCacheServiceTestFixture, NgioGenerationRestartsWhilePrecacheMarkerStillExists)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 2);
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+
+        const GrassCacheGenerationResult result =
+            service.generateNgioGrassCache(config_, L"Default", GrassCacheGenerationOptions{3, 0});
+
+        EXPECT_EQ(runner.launchCount, 2);
+        EXPECT_EQ(result.launchCount, 2);
+        EXPECT_FALSE(std::filesystem::exists(paths.gameDirectory / L"PrecacheGrass.txt"));
+    }
+}

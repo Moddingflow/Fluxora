@@ -29,6 +29,7 @@ add_executable(FluxoraCoreTests
     JsonSupportTests.cpp
     FomodInstallerServiceTests.cpp
     FluxPackServiceTests.cpp
+    GrassCacheServiceTests.cpp
     LoggerTests.cpp
     ModFileOperationsIntegrationTests.cpp
     ModOrganizerImportServiceTests.cpp
@@ -59,6 +60,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/ExecutableService.cpp
     ../src/Services/FomodInstallerService.cpp
     ../src/Services/FluxPackService.cpp
+    ../src/Services/GrassCacheService.cpp
     ../src/Services/HookService.cpp
     ../src/Services/Logger.cpp
     ../src/Services/ModOrganizerExecutableImportService.cpp

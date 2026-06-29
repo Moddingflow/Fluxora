@@ -625,6 +625,17 @@ namespace
         writer.field(L"state", L"available");
         writer.stringArray(L"supports", std::vector<std::wstring>{L"export", L"inspect", L"install", L"progressEvents"});
         writer.endObject();
+        writer.key(L"grassCacheGeneration").beginObject();
+#ifdef _WIN32
+        writer.field(L"state", L"available");
+        writer.stringArray(L"platforms", std::vector<std::wstring>{L"win32"});
+        writer.stringArray(L"requires", std::vector<std::wstring>{L"Skyrim", L"No Grass In Objects", L"SKSE"});
+        writer.stringArray(L"supports", std::vector<std::wstring>{L"generate", L"progressEvents", L"outputMod"});
+#else
+        writer.field(L"state", L"unsupported");
+        writer.field(L"reason", L"NGIO grass cache generation requires Windows process launch support.");
+#endif
+        writer.endObject();
         writer.key(L"settings").beginObject();
         writer.field(L"state", L"available");
         writer.stringArray(L"supports", std::vector<std::wstring>{L"language", L"themeState"});
@@ -1451,6 +1462,26 @@ namespace
         return writer.str();
     }
 
+    std::wstring payloadGenerateNgioGrassCache(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring configPath = requiredStringField(params, L"configPath");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        ProgressCallbackContext progressContext{currentOperationId(request)};
+        return payloadFromCoreJson(
+            L"core.ngioGrassCacheFailed",
+            [&configPath, &profileName, &progressContext](wchar_t* buffer, int length)
+            {
+                return fluxora_generate_ngio_grass_cache(
+                    configPath.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    emitOperationProgress,
+                    &progressContext,
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadGetModFileTree(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -2202,6 +2233,10 @@ namespace
         if (request.method == L"mods.clearOverwrite")
         {
             return payloadClearOverwriteFolder(request);
+        }
+        if (request.method == L"grassCache.generate")
+        {
+            return payloadGenerateNgioGrassCache(request);
         }
         if (request.method == L"mods.getFileTree")
         {

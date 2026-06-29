@@ -67,6 +67,7 @@ export const FluxoraIpcChannels = {
   fluxPackExport: 'fluxora:flux-pack:export',
   fluxPackInspect: 'fluxora:flux-pack:inspect',
   fluxPackInstall: 'fluxora:flux-pack:install',
+  grassCacheGenerate: 'fluxora:grass-cache:generate',
   projectsCreate: 'fluxora:projects:create',
   projectsDelete: 'fluxora:projects:delete',
   projectsList: 'fluxora:projects:list',
@@ -432,6 +433,21 @@ export interface FluxoraFluxPackInstallResult {
   appliedConfigCount: number;
   appliedProfileOrderItemCount: number;
   hasWarnings: boolean;
+  operationId: string;
+}
+
+export interface FluxoraGrassCacheGenerationRequest {
+  configPath: string;
+  profileName?: string;
+}
+
+export interface FluxoraGrassCacheGenerationResult {
+  accepted: boolean;
+  outputModName: string;
+  outputModPath: string;
+  launchCount: number;
+  generatedFileCount: number;
+  failedFileCount: number;
   operationId: string;
 }
 
@@ -1146,6 +1162,12 @@ export interface FluxoraApi {
       request: FluxoraFluxPackInstallRequest,
       operation?: OperationRequest
     ) => Promise<FluxoraFluxPackInstallResult>;
+  };
+  grassCache: {
+    generate: (
+      request: FluxoraGrassCacheGenerationRequest,
+      operation?: OperationRequest
+    ) => Promise<FluxoraGrassCacheGenerationResult>;
   };
   operations: {
     cancel: (operationId: string, request?: OperationRequest) => Promise<FluxoraOperationCancelResult>;

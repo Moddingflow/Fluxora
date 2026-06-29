@@ -163,6 +163,42 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('keeps NGIO grass cache generation on a long-running typed bridge request', async () => {
+    const request: OperationRequest = { operationId: 'op_grass_cache' };
+    invokeMock.mockResolvedValue({
+      accepted: true,
+      outputModName: 'Foundation Edition · Grass Cache',
+      outputModPath: 'E:\\Fluxora Builds\\Foundation Edition\\mods\\Foundation Edition · Grass Cache',
+      launchCount: 2,
+      generatedFileCount: 18,
+      failedFileCount: 0
+    });
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.grassCache.generate(
+        {
+          configPath: 'C:\\Fluxora\\Builds\\Foundation.json',
+          profileName: 'Default'
+        },
+        request
+      )
+    ).resolves.toMatchObject({
+      outputModName: 'Foundation Edition · Grass Cache',
+      operationId: 'op_grass_cache'
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'grassCache.generate',
+      params: {
+        configPath: 'C:\\Fluxora\\Builds\\Foundation.json',
+        profileName: 'Default'
+      },
+      request,
+      timeoutMs: 21_600_000
+    });
+  });
+
   it('routes bulk plugin enable through one typed native bridge call', async () => {
     const request: OperationRequest = { operationId: 'op_plugins_set_all' };
     invokeMock.mockResolvedValue([]);

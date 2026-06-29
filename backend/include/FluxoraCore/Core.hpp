@@ -15,6 +15,7 @@ namespace fluxora
     class ExecutableService;
     class ExecutableIconService;
     class FluxPackService;
+    class GrassCacheService;
     class VirtualFileSystemService;
     class AppSettingsService;
     class BuildPathSettingsService;
@@ -47,6 +48,7 @@ namespace fluxora
         [[nodiscard]] ExecutableService& executables() noexcept;
         [[nodiscard]] ExecutableIconService& executableIcons() noexcept;
         [[nodiscard]] FluxPackService& fluxPacks() noexcept;
+        [[nodiscard]] GrassCacheService& grassCache() noexcept;
         [[nodiscard]] VirtualFileSystemService& virtualFileSystem() noexcept;
         [[nodiscard]] NexusModsAuthService& nexusModsAuth() noexcept;
         [[nodiscard]] ProjectService& projects() noexcept;
@@ -72,6 +74,7 @@ namespace fluxora
         std::unique_ptr<FluxPackService> fluxPacks_;
         std::unique_ptr<ModOrganizerImportService> modOrganizerImport_;
         std::unique_ptr<VirtualFileSystemService> virtualFileSystem_;
+        std::unique_ptr<GrassCacheService> grassCache_;
         bool initialized_{false};
     };
 }

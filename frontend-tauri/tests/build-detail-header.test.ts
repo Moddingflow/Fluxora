@@ -49,11 +49,16 @@ const defaultProps = {
   },
   executables: [executable],
   executablesBusyLabel: null,
+  grassCacheAvailable: false,
+  grassCacheReason: '',
+  grassCacheVisible: false,
   isOperationRunning: false,
+  language: 'en-us',
   launchAvailable: true,
   launchReason: '',
   onBack: noop,
   onExecutableChange: noop,
+  onGenerateGrassCache: noop,
   onLaunch: noop,
   onProfileChange: noop,
   onSettings: noop,
@@ -133,5 +138,36 @@ describe('build detail header redesign', () => {
     expect(app).toContain('window.fluxora.fluxPack.export');
     expect(app).toContain('window.fluxora.mods.checkUpdates');
     expect(app).toContain('window.fluxora.buildPaths.get');
+  });
+
+  it('renders the NGIO grass cache action with localized tooltip text when enabled', () => {
+    const markup = renderHeader({
+      grassCacheAvailable: true,
+      grassCacheVisible: true
+    });
+    const ruMarkup = renderHeader({
+      grassCacheAvailable: true,
+      grassCacheVisible: true,
+      language: 'ru'
+    });
+    const icon = readText('frontend-tauri', 'src', 'renderer', 'assets', 'icons', 'grass-cache.svg');
+
+    expect(markup).toContain('aria-label="No Grass In Objects Grass Cache Generation"');
+    expect(markup).toContain('build-header__grass-icon');
+    expect(markup).toContain('data:image/svg+xml');
+    expect(icon).toContain('M12 21V5.2');
+    expect(ruMarkup).toContain('aria-label="Генерация кэша травы No Grass In Objects"');
+  });
+
+  it('keeps NGIO generation wired through a custom dialog and typed facade call', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+
+    expect(app).toContain('renderGrassCacheConfirmation()');
+    expect(app).toContain('window.fluxora.grassCache.generate');
+    expect(app).toContain('Сейчас начнётся генерация кэша травы');
+    expect(app).not.toContain('window.confirm(`Generate grass cache');
+    expect(styles).toContain('.build-header__grass-button::after');
+    expect(styles).toContain('.grass-cache-dialog');
   });
 });

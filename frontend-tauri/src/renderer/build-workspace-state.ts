@@ -3,6 +3,7 @@ import type {
   FluxoraBuildPathSettingsSaveRequest,
   FluxoraExecutable,
   FluxoraFluxPackSummary,
+  FluxoraInstalledMod,
   FluxoraProject,
   NativeBridgeStatus
 } from '../shared/fluxora-api';
@@ -24,6 +25,12 @@ export interface BuildHeaderCapabilityView {
   refreshReason: string;
   settingsAvailable: boolean;
   settingsReason: string;
+}
+
+export interface NgioGrassCacheActionView {
+  visible: boolean;
+  available: boolean;
+  reason: string;
 }
 
 export const emptyBuildPathDraft = (project: FluxoraProject | null): BuildPathDraft => ({
@@ -169,6 +176,64 @@ export const buildHeaderCapabilityView = (
     refreshReason: refreshAction.reason,
     settingsAvailable: settingsAction.available,
     settingsReason: settingsAction.reason
+  };
+};
+
+const isSkyrimProject = (project: FluxoraProject | null): boolean => {
+  if (!project) {
+    return false;
+  }
+
+  return [
+    project.templateId,
+    project.uiTemplateId,
+    project.gameName,
+    project.template?.id,
+    project.template?.gameName,
+    project.template?.uiTemplateId
+  ]
+    .filter(Boolean)
+    .some((value) => /skyrim/i.test(String(value)));
+};
+
+const modLooksLikeNgio = (mod: Pick<FluxoraInstalledMod, 'id' | 'name'>): boolean => {
+  const normalized = `${mod.name} ${mod.id}`.replace(/[_-]+/g, ' ');
+  return /\bno\s*grass\s*in\s*objects\b/i.test(normalized) ||
+    /\bngio\b/i.test(normalized) ||
+    /grass\s*control/i.test(normalized);
+};
+
+export const ngioGrassCacheActionView = (
+  project: FluxoraProject | null,
+  installedMods: ReadonlyArray<Pick<FluxoraInstalledMod, 'id' | 'name' | 'isEnabled'>>,
+  bridgeStatus: NativeBridgeStatus | null
+): NgioGrassCacheActionView => {
+  if (!isSkyrimProject(project)) {
+    return {
+      visible: false,
+      available: false,
+      reason: ''
+    };
+  }
+
+  const hasEnabledNgio = installedMods.some((mod) => mod.isEnabled && modLooksLikeNgio(mod));
+  if (!hasEnabledNgio) {
+    return {
+      visible: false,
+      available: false,
+      reason: ''
+    };
+  }
+
+  const availability = buildActionAvailability(
+    bridgeStatus,
+    ['grassCacheGeneration', 'grassCache'],
+    'NGIO grass cache generation'
+  );
+  return {
+    visible: true,
+    available: availability.available,
+    reason: availability.reason
   };
 };
 

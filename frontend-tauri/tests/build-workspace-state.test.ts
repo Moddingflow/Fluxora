@@ -7,6 +7,7 @@ import {
   buildPrimaryExecutableList,
   directoryFromExecutablePath,
   emptyBuildPathDraft,
+  ngioGrassCacheActionView,
   validateBuildPathDraft
 } from '../src/renderer/build-workspace-state';
 import type { FluxoraExecutable, FluxoraProject, NativeBridgeStatus } from '../src/shared/fluxora-api';
@@ -143,6 +144,62 @@ describe('build workspace state', () => {
     expect(buildHeaderCapabilityView(unsupportedFluxPack)).toMatchObject({
       packageAvailable: false,
       packageReason: 'FluxPack export is disabled for this smoke bridge.'
+    });
+  });
+
+  it('shows NGIO grass cache generation only for enabled Skyrim NGIO mods', () => {
+    const enabledNgio = {
+      id: 'C:\\Fluxora Projects\\Skyrim Main\\mods\\No Grass In Objects',
+      name: 'No Grass In Objects',
+      isEnabled: true
+    };
+    const disabledNgio = {
+      ...enabledNgio,
+      isEnabled: false
+    };
+    const oblivionProject: FluxoraProject = {
+      ...project,
+      templateId: 'oblivion',
+      uiTemplateId: 'oblivion',
+      gameName: 'Oblivion'
+    };
+
+    expect(ngioGrassCacheActionView(project, [enabledNgio], readyBridge)).toEqual({
+      visible: true,
+      available: true,
+      reason: ''
+    });
+    expect(ngioGrassCacheActionView(project, [disabledNgio], readyBridge).visible).toBe(false);
+    expect(ngioGrassCacheActionView(project, [], readyBridge).visible).toBe(false);
+    expect(ngioGrassCacheActionView(oblivionProject, [enabledNgio], readyBridge).visible).toBe(
+      false
+    );
+  });
+
+  it('keeps a visible NGIO action disabled when the bridge capability blocks generation', () => {
+    const unsupportedBridge: NativeBridgeStatus = {
+      ...readyBridge,
+      capabilities: {
+        ...readyBridge.capabilities!,
+        features: {
+          grassCacheGeneration: {
+            state: 'unsupported',
+            reason: 'Grass cache generation is not available on this platform.'
+          }
+        }
+      }
+    };
+
+    expect(
+      ngioGrassCacheActionView(
+        project,
+        [{ id: 'ngio', name: 'NGIO', isEnabled: true }],
+        unsupportedBridge
+      )
+    ).toEqual({
+      visible: true,
+      available: false,
+      reason: 'Grass cache generation is not available on this platform.'
     });
   });
 });

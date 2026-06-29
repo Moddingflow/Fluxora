@@ -3582,7 +3582,8 @@ namespace fluxora
     ResolvedExecutableLaunch ExecutableService::resolveExecutable(
         const std::filesystem::path& configPath,
         std::wstring_view executableId,
-        std::wstring_view profileName) const
+        std::wstring_view profileName,
+        std::wstring_view additionalArguments) const
     {
         if (executableId.empty())
         {
@@ -3666,6 +3667,11 @@ namespace fluxora
             commandLine.push_back(L' ');
             commandLine.append(match->arguments);
         }
+        if (!additionalArguments.empty())
+        {
+            commandLine.push_back(L' ');
+            commandLine.append(additionalArguments);
+        }
 
         logger_.write(
             LogLevel::Info,
@@ -3712,9 +3718,11 @@ namespace fluxora
     GameExecutableLaunchResult ExecutableService::launchProjectExecutable(
         const std::filesystem::path& configPath,
         std::wstring_view executableId,
-        std::wstring_view profileName) const
+        std::wstring_view profileName,
+        std::wstring_view additionalArguments) const
     {
-        const ResolvedExecutableLaunch resolved = resolveExecutable(configPath, executableId, profileName);
+        const ResolvedExecutableLaunch resolved =
+            resolveExecutable(configPath, executableId, profileName, additionalArguments);
         logger_.writeOperation(
             LogLevel::Info,
             "LaunchDiagnostics",

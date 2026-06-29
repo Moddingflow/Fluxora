@@ -1031,9 +1031,11 @@ namespace fluxora
     GameExecutableLaunchResult VirtualFileSystemService::launchExecutable(
         const std::filesystem::path& configPath,
         std::wstring_view executableId,
-        std::wstring_view profileName) const
+        std::wstring_view profileName,
+        std::wstring_view additionalArguments) const
     {
-        const ResolvedExecutableLaunch resolved = executables_.resolveExecutable(configPath, executableId, profileName);
+        const ResolvedExecutableLaunch resolved =
+            executables_.resolveExecutable(configPath, executableId, profileName, additionalArguments);
         logger_.writeOperation(
             LogLevel::Info,
             "VfsDiagnostics",
@@ -1068,7 +1070,11 @@ namespace fluxora
                     "\", appliedVfsRules=\"" +
                     vfsRulesSummary(resolved.vfsRules.has_value() ? &resolved.vfsRules->rules : nullptr) +
                     "\", reason=\"" + reason + "\".");
-            return executables_.launchProjectExecutable(configPath, executableId, profileName);
+            return executables_.launchProjectExecutable(
+                configPath,
+                executableId,
+                profileName,
+                additionalArguments);
         };
         const auto failVfsLaunch = [&](const std::string& reason) -> GameExecutableLaunchResult
         {

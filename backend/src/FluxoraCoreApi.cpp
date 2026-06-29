@@ -11,6 +11,7 @@
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
 #include "FluxoraCore/Services/ExecutableService.hpp"
 #include "FluxoraCore/Services/FluxPackService.hpp"
+#include "FluxoraCore/Services/GrassCacheService.hpp"
 #include "FluxoraCore/Services/ModService.hpp"
 #include "FluxoraCore/Services/ModOrganizerImportService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
@@ -1568,6 +1569,33 @@ namespace
             writer.value(value);
         }
         writer.endArray();
+        return writer.str();
+    }
+
+    std::wstring serializeGrassCacheProgress(const fluxora::GrassCacheGenerationProgress& progress)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"phase", progress.phase);
+        writer.field(L"currentStep", progress.currentStep);
+        writer.field(L"currentItem", progress.currentItem);
+        writer.field(L"overallPercent", progress.overallPercent);
+        writer.field(L"launchCount", progress.launchCount);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeGrassCacheResult(const fluxora::GrassCacheGenerationResult& result)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"accepted", result.accepted);
+        writer.field(L"outputModName", result.outputModName);
+        writer.field(L"outputModPath", result.outputModPath.wstring());
+        writer.field(L"launchCount", result.launchCount);
+        writer.field(L"generatedFileCount", result.generatedFileCount);
+        writer.field(L"failedFileCount", result.failedFileCount);
+        writer.endObject();
         return writer.str();
     }
 
@@ -3382,6 +3410,56 @@ extern "C"
             core().mods().clearOverwriteFolder(std::filesystem::path(projectDirectory));
             logOperation(fluxora::LogLevel::Info, "Overwrite", "Clear overwrite folder completed.");
             return FluxoraCoreResultOk;
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_generate_ngio_grass_cache(
+        const wchar_t* configPath,
+        const wchar_t* profileName,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(configPath))
+            {
+                lastError = L"Build config path is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            logBridge(fluxora::LogLevel::Info, "fluxora_generate_ngio_grass_cache started.");
+            logOperation(
+                fluxora::LogLevel::Info,
+                "GrassCache",
+                std::string("NGIO grass cache generation requested. configPath=\"") +
+                    pathForLog(std::filesystem::path(configPath)) + "\", profile=\"" +
+                    textForLog(isBlank(profileName) ? L"" : profileName) + "\"");
+
+            const fluxora::GrassCacheGenerationResult result =
+                core().grassCache().generateNgioGrassCache(
+                    std::filesystem::path(configPath),
+                    isBlank(profileName) ? L"" : std::wstring_view(profileName),
+                    {},
+                    [progressCallback, progressUserData](const fluxora::GrassCacheGenerationProgress& progress)
+                    {
+                        if (progressCallback != nullptr)
+                        {
+                            const std::wstring json = serializeGrassCacheProgress(progress);
+                            progressCallback(json.c_str(), progressUserData);
+                        }
+                    });
+
+            logOperation(
+                fluxora::LogLevel::Info,
+                "GrassCache",
+                "NGIO grass cache generation completed.");
+            return writeToBuffer(serializeGrassCacheResult(result), jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)
         {

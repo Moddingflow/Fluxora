@@ -329,6 +329,14 @@ extern "C"
     FLUXORA_CORE_API int fluxora_clear_overwrite_folder(
         const wchar_t* projectDirectory);
 
+    FLUXORA_CORE_API int fluxora_generate_ngio_grass_cache(
+        const wchar_t* configPath,
+        const wchar_t* profileName,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_check_mod_updates(
         const wchar_t* projectDirectory,
         wchar_t* jsonBuffer,

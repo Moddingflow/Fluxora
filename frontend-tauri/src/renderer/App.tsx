@@ -33,7 +33,7 @@ import { createPortal } from 'react-dom';
 import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react';
 
 import { AppTitlebar } from './components/chrome/AppTitlebar';
-import { EmptyState, LoadingSplash, StatusDot } from './design-system';
+import { Button, EmptyState, LoadingSplash, StatusDot } from './design-system';
 import { PrimitivePreview } from './design-system/PrimitivePreview';
 import {
   LibraryHome,
@@ -165,6 +165,7 @@ import {
   draftFromBuildPathSettings,
   emptyBuildPathDraft,
   fluxPackSummaryFacts,
+  ngioGrassCacheActionView,
   validateBuildPathDraft,
   type BuildPathDraft
 } from './build-workspace-state';
@@ -696,6 +697,7 @@ export const App = () => {
   const [fluxPackInstallResult, setFluxPackInstallResult] =
     useState<FluxoraFluxPackInstallResult | null>(null);
   const [operationOverlay, setOperationOverlay] = useState<OperationOverlayState | null>(null);
+  const [grassCacheConfirmationOpen, setGrassCacheConfirmationOpen] = useState(false);
   const createCancelRequestsRef = useRef<Set<string>>(new Set());
   const refreshInFlightRef = useRef(false);
   const refreshCurrentViewRef = useRef<() => void | Promise<void>>(() => undefined);
@@ -998,6 +1000,19 @@ export const App = () => {
   const buildHeaderCapabilities = useMemo(
     () => buildHeaderCapabilityView(bridgeStatus),
     [bridgeStatus]
+  );
+
+  const grassCacheModEntries = useMemo(
+    () =>
+      installedMods.length > 0
+        ? installedMods
+        : modsWorkspace.items.filter((item) => item.isMod),
+    [installedMods, modsWorkspace.items]
+  );
+
+  const grassCacheAction = useMemo(
+    () => ngioGrassCacheActionView(selectedProject, grassCacheModEntries, bridgeStatus),
+    [bridgeStatus, grassCacheModEntries, selectedProject]
   );
 
   const settingsCapabilities = useMemo(
@@ -2692,6 +2707,65 @@ export const App = () => {
     }
   };
 
+  const requestGrassCacheGeneration = () => {
+    if (!selectedProject || !grassCacheAction.visible) {
+      return;
+    }
+
+    if (!grassCacheAction.available) {
+      setMessage(grassCacheAction.reason || 'NGIO grass cache generation is not available.');
+      return;
+    }
+
+    setMessage(null);
+    setGrassCacheConfirmationOpen(true);
+  };
+
+  const generateNgioGrassCache = async () => {
+    if (!selectedProject || !grassCacheAction.visible || !grassCacheAction.available) {
+      setGrassCacheConfirmationOpen(false);
+      return;
+    }
+
+    const project = selectedProject;
+    const profileName = selectedProjectProfileName;
+    const operationId = createRendererOperationId('grass_cache_generate');
+    setGrassCacheConfirmationOpen(false);
+    beginOperationOverlay({
+      operationId,
+      kind: 'grass-cache',
+      title: 'Генерация кэша травы',
+      statusText: 'Подготавливаем No Grass In Objects',
+      currentItem: project.name,
+      percent: null
+    });
+    setMessage(null);
+
+    try {
+      const result = await window.fluxora.grassCache.generate(
+        {
+          configPath: project.configPath,
+          profileName
+        },
+        { operationId }
+      );
+      const resultText = `Кэш травы создан: ${result.outputModName}`;
+      finishOperationOverlay(operationId, resultText);
+      setMessage(
+        `${resultText}. Файлов: ${result.generatedFileCount}, запусков: ${result.launchCount}.`
+      );
+      await loadModsWorkspace(project, {
+        resetScroll: false,
+        showBusy: false,
+        showLoading: false
+      });
+    } catch (error) {
+      const text = errorMessage(error);
+      failOperationOverlay(operationId, text);
+      setMessage(text);
+    }
+  };
+
   const downloadPath = (entry: FluxoraDownloadEntry): string => entry.localPath || entry.id;
 
   const refreshInstalledModNamesForInstall = async (
@@ -3582,6 +3656,7 @@ export const App = () => {
     setFluxPackSummary(null);
     setFluxPackInstallResult(null);
     setIsBuildPathsOpen(false);
+    setGrassCacheConfirmationOpen(false);
   }, [selectedProject?.configPath]);
 
   useEffect(() => {
@@ -8033,6 +8108,51 @@ export const App = () => {
     );
   };
 
+  const renderGrassCacheConfirmation = () => {
+    if (!grassCacheConfirmationOpen || !selectedProject) {
+      return null;
+    }
+
+    const outputName = `${selectedProject.name} · Grass Cache`;
+    return (
+      <div
+        className="grass-cache-confirmation"
+        role="presentation"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) {
+            setGrassCacheConfirmationOpen(false);
+          }
+        }}
+      >
+        <section
+          aria-labelledby="grass-cache-confirmation-title"
+          aria-modal="true"
+          className="grass-cache-dialog"
+          role="dialog"
+        >
+          <div className="grass-cache-dialog__copy">
+            <span>NGIO</span>
+            <h2 id="grass-cache-confirmation-title">Генерация кэша травы</h2>
+            <p>Сейчас начнётся генерация кэша травы для No Grass In Objects.</p>
+            <strong>{outputName}</strong>
+          </div>
+          <div className="grass-cache-dialog__actions">
+            <Button
+              onClick={() => setGrassCacheConfirmationOpen(false)}
+              size="sm"
+              variant="secondary"
+            >
+              Отмена
+            </Button>
+            <Button onClick={() => void generateNgioGrassCache()} size="sm">
+              Начать
+            </Button>
+          </div>
+        </section>
+      </div>
+    );
+  };
+
   const renderOperationOverlay = () => {
     return (
       <OperationOverlay
@@ -8152,7 +8272,11 @@ export const App = () => {
           buildCapabilities={buildHeaderCapabilities}
           executables={executablesWorkspace.items}
           executablesBusyLabel={executablesBusyLabel}
+          grassCacheAvailable={grassCacheAction.available}
+          grassCacheReason={grassCacheAction.reason}
+          grassCacheVisible={grassCacheAction.visible}
           isOperationRunning={Boolean(operationOverlay?.isRunning)}
+          language={bridgeStatus?.language}
           launchAvailable={executableCapabilities.launchAvailable}
           launchReason={executableCapabilities.launchReason}
           onBack={() => changeRoute('home')}
@@ -8165,6 +8289,7 @@ export const App = () => {
             setProfileDraftName(profileName);
             setProfileDeleteArmedName(null);
           }}
+          onGenerateGrassCache={() => requestGrassCacheGeneration()}
           onSettings={() => void openBuildPathSettings()}
           profileOptions={buildProfileOptions}
           profilesBusyLabel={profilesBusyLabel}
@@ -8351,6 +8476,7 @@ export const App = () => {
                   ? renderPlaceholder()
                   : null}
                 {renderInstallDialog()}
+                {renderGrassCacheConfirmation()}
                 {renderOperationOverlay()}
                 {renderOverwriteClearSplash()}
                 {renderOpeningBuildSplash()}
