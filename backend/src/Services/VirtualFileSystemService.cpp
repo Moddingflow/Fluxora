@@ -9,6 +9,7 @@
 
 #include <fstream>
 #include <algorithm>
+#include <cstdint>
 #include <cwctype>
 #include <map>
 #include <mutex>
@@ -966,6 +967,7 @@ namespace fluxora
         std::wstring buildDescriptor(
             const std::filesystem::path& logPath,
             const std::filesystem::path& hookDll,
+            std::uint32_t managerProcessId,
             const std::vector<VfsMountDescriptor>& mounts)
         {
             JsonWriter writer;
@@ -973,6 +975,9 @@ namespace fluxora
             writer.field(vfs::protocol::fields::schemaVersion, vfs::protocol::schemaVersion);
             writer.field(vfs::protocol::fields::logPath, logPath.wstring());
             writer.field(vfs::protocol::fields::hookDll, hookDll.wstring());
+            writer.field(
+                vfs::protocol::fields::managerProcessId,
+                static_cast<std::uintmax_t>(managerProcessId));
 
             if (!mounts.empty())
             {
@@ -1270,7 +1275,9 @@ namespace fluxora
 
         const std::filesystem::path descriptorPath = vfsDirectory / L"vfs-config.json";
         const std::filesystem::path logPath = vfsDirectory / L"vfs.log";
-        const std::string descriptorContent = toUtf8(buildDescriptor(logPath, hookDll, mounts));
+        const std::uint32_t managerProcessId = GetCurrentProcessId();
+        const std::string descriptorContent =
+            toUtf8(buildDescriptor(logPath, hookDll, managerProcessId, mounts));
 
         const PathSafetyService pathSafety;
         const PathSafetyResult vfsDirectorySafety =

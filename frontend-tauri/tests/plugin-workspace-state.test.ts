@@ -155,7 +155,7 @@ describe('plugin workspace state', () => {
     expect(targetIndexForPluginDrop(items, 'plugin_skyui', 'plugin_light', 'before')).toBeNull();
   });
 
-  it('blocks dragging separators that include locked plugins', () => {
+  it('allows plugin separators with locked children because only the separator row moves', () => {
     const lockedGroup = [
       separatorItem('sep_base', 'Base game', 0),
       pluginItem('plugin_skyrim', 'Skyrim.esm', 1, {
@@ -168,11 +168,12 @@ describe('plugin workspace state', () => {
       pluginItem('plugin_skyui', 'SkyUI.esp', 3)
     ];
 
-    expect(canDragPluginOrderItem(lockedGroup, 'sep_base')).toBe(false);
+    expect(canDragPluginOrderItem(lockedGroup, 'sep_base')).toBe(true);
     expect(targetIndexForPluginDrop(lockedGroup, 'sep_base', 'plugin_skyui', 'after')).toBeNull();
+    expect(targetIndexForPluginDrop(lockedGroup, 'sep_base', 'sep_patches', 'after')).toBe(3);
   });
 
-  it('hides collapsed plugin separator children but moves the separator as a block', () => {
+  it('hides collapsed plugin separator children but moves only separator rows between groups', () => {
     const groupedItems = [
       items[0],
       separatorItem('sep_ui', 'Interface', 1),
@@ -193,17 +194,25 @@ describe('plugin workspace state', () => {
       'plugin_skyui'
     ]);
     expect(targetIndexForPluginDrop(groupedItems, 'plugin_patch', 'sep_ui', 'after', collapsed)).toBe(4);
+    expect(targetIndexForPluginDrop(groupedItems, 'sep_ui', 'plugin_skyui', 'after')).toBeNull();
+    expect(targetIndexForPluginDrop(groupedItems, 'sep_ui', 'plugin_patch', 'before')).toBeNull();
     expect(targetIndexForPluginDrop(groupedItems, 'sep_ui', 'sep_late', 'after')).toBe(5);
     expect(targetIndexForPluginMove(groupedItems, 'sep_ui', 1, collapsed)).toBe(5);
 
     const reordered = reorderPluginOrderItems(groupedItems, 'sep_ui', 5);
     expect(reordered?.map((item) => item.orderId)).toEqual([
       'plugin_skyrim',
+      'plugin_skyui',
+      'plugin_light',
       'sep_late',
       'plugin_patch',
-      'sep_ui',
+      'sep_ui'
+    ]);
+    expect(reordered?.filter((item) => item.isPlugin).map((item) => item.orderId)).toEqual([
+      'plugin_skyrim',
       'plugin_skyui',
-      'plugin_light'
+      'plugin_light',
+      'plugin_patch'
     ]);
     expect(pluginSeparatorChildCount(groupedItems, 'sep_ui')).toBe(2);
     expect(isPluginNestedUnderSeparator(groupedItems, 'plugin_skyui')).toBe(true);

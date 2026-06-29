@@ -85,6 +85,8 @@ if(WIN32)
     target_sources(FluxoraCoreTests
         PRIVATE
             VfsTreeTests.cpp
+            VfsConfigTests.cpp
+            ../vfs/src/VfsConfig.cpp
             ../vfs/src/VfsLog.cpp
             ../vfs/src/VfsTree.cpp
     )

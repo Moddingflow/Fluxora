@@ -15,7 +15,8 @@ Fluxora (Tauri UI)
 FluxoraCore.dll  ── VirtualFileSystemService
         │  1. builds the load order (enabled mods, ascending priority)
         │  2. writes a tiny JSON descriptor (.flow/vfs/vfs-config.json):
-        │       { target: <game>\Data, overwrite, mods:[...], hookDll, logPath }
+        │       { target: <game>\Data, overwrite, mods:[...],
+        │         hookDll, logPath, managerProcessId }
         │  3. sets FLUXORA_VFS_CONFIG and starts the game with
         │     DetourCreateProcessWithDllEx → FluxoraVfs.dll injected
         ▼
@@ -28,6 +29,7 @@ game.exe  (+ every child process: script extender, launchers, tools)
         │      NtCreateFile, NtOpenFile, NtQueryAttributesFile,
         │      NtQueryFullAttributesFile, NtQueryDirectoryFile(Ex), NtClose
         │  • re-injects itself into child processes (CreateProcessW/A)
+        │  • watches managerProcessId and unloads itself when Fluxora closes
         ▼
 Windows now reports the merged data directory:
   • opening a modded file is redirected to the real file in mods\…
@@ -74,6 +76,10 @@ the hook DLL relative to itself when launching.
 * The injected DLL uses the **static CRT** so it loads into any game without
   requiring the Visual C++ redistributable.
 * A diagnostic log is written per run to `<instance>\.flow\vfs\vfs.log`.
+* The VFS session is owned by the Fluxora bridge/core process that wrote the
+  descriptor. Injected copies unload their hooks and DLL when that owner exits,
+  so launcher processes such as Steam do not keep Fluxora's VFS active after
+  the app is closed.
 * The merged tree is built once at launch from the active profile's enabled
   mods; changes made in the UI take effect on the next launch.
 * Directory-relative opens that cross between two different mod folders are a

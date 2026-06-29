@@ -2054,18 +2054,16 @@ input::placeholder {
   height: 34px;
 }
 
-.build-header__grass-button {
-  position: relative;
+.build-header__grass-trigger {
+  display: inline-flex;
+  align-items: center;
 }
 
-.build-header__grass-button::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  z-index: 16;
+.build-header__grass-tooltip {
+  position: fixed;
+  z-index: 80;
   width: max-content;
-  max-width: 260px;
+  max-width: min(260px, calc(100vw - 16px));
   padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -2075,16 +2073,17 @@ input::placeholder {
   font-size: 11px;
   font-weight: 700;
   line-height: 1.25;
-  opacity: 0;
   pointer-events: none;
-  transform: translateY(4px);
-  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.build-header__grass-button:hover::after,
-.build-header__grass-button:focus-visible::after {
-  opacity: 1;
-  transform: translateY(0);
+.build-header__grass-tooltip[data-placement='top'] {
+  transform-origin: bottom center;
+}
+
+.build-header__grass-tooltip[data-placement='bottom'] {
+  transform-origin: top center;
 }
 
 .build-header__grass-icon {
@@ -2348,16 +2347,45 @@ input::placeholder {
 
 .pane-search {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 16px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  justify-self: start;
+  gap: 7px;
+  width: min(267px, 100%);
+  height: 32px;
   min-width: 0;
   margin: 0;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   color: var(--subtle);
+  background: var(--surface-soft);
+}
+
+.pane-search:focus-within {
+  border-color: var(--flx-accent-hover);
+}
+
+.pane-search > svg {
+  pointer-events: none;
 }
 
 .pane-search input {
-  height: 32px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+}
+
+.pane-search input:focus {
+  box-shadow: none;
+}
+
+.build-pane > .pane-search {
+  width: min(267px, calc(100% - 24px));
+  margin: 6px 12px;
 }
 
 .build-pane .mod-busy-strip {

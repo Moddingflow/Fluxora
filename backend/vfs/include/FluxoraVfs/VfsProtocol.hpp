@@ -10,6 +10,8 @@
 // environment variable. The injected DLL reads the document, builds the virtual
 // tree and installs the file-system hooks. The same environment variable is
 // inherited by every child process, so the whole process tree shares one view.
+// The descriptor also carries the manager process id; injected copies watch that
+// process and unload themselves when the Fluxora-owned session ends.
 //
 // Nothing is ever copied into the game folder: the manager only ever writes this
 // tiny descriptor; the mod files stay in the instance "mods" folder and are made
@@ -22,7 +24,7 @@ namespace fluxora::vfs::protocol
 
     // Current descriptor schema version. Bump when the JSON layout changes in a
     // way the injected DLL must be able to detect.
-    inline constexpr int schemaVersion = 2;
+    inline constexpr int schemaVersion = 3;
 
     // JSON field names of the descriptor document.
     namespace fields
@@ -42,6 +44,10 @@ namespace fluxora::vfs::protocol
 
         // Absolute path of FluxoraVfs.dll, used when re-injecting child processes.
         inline constexpr const wchar_t* hookDll = L"hookDll";
+
+        // Process id of the Fluxora manager/bridge process that owns this VFS
+        // session. Injected processes unload the hook when this process exits.
+        inline constexpr const wchar_t* managerProcessId = L"managerProcessId";
 
         // Ordered array of absolute mod directories. Order is load order ascending:
         // the FIRST entry has the LOWEST priority and the LAST entry the HIGHEST.

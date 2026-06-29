@@ -64,10 +64,12 @@ namespace fluxora::tests
             FakeGrassCacheRunner(
                 std::filesystem::path gameDirectory,
                 std::filesystem::path overwriteDirectory,
-                int removeMarkerAfterLaunch)
+                int removeMarkerAfterLaunch,
+                int writeOutputAfterLaunch = 1)
                 : gameDirectory_(std::move(gameDirectory)),
                   overwriteDirectory_(std::move(overwriteDirectory)),
-                  removeMarkerAfterLaunch_(removeMarkerAfterLaunch)
+                  removeMarkerAfterLaunch_(removeMarkerAfterLaunch),
+                  writeOutputAfterLaunch_(writeOutputAfterLaunch)
             {
             }
 
@@ -78,8 +80,11 @@ namespace fluxora::tests
                 EXPECT_EQ(spec.additionalArguments, L"-forcesteamloader");
                 EXPECT_TRUE(std::filesystem::is_regular_file(gameDirectory_ / L"PrecacheGrass.txt"));
 
-                writeTextFile(overwriteDirectory_ / L"Grass" / L"Tamriel.cgid", "grass cache");
-                writeTextFile(overwriteDirectory_ / L"Grass" / L"Tamriel.fail", "failed cell");
+                if (launchCount >= writeOutputAfterLaunch_)
+                {
+                    writeTextFile(overwriteDirectory_ / L"Grass" / L"Tamriel.cgid", "grass cache");
+                    writeTextFile(overwriteDirectory_ / L"Grass" / L"Tamriel.fail", "failed cell");
+                }
                 if (launchCount >= removeMarkerAfterLaunch_)
                 {
                     std::filesystem::remove(gameDirectory_ / L"PrecacheGrass.txt");
@@ -93,6 +98,7 @@ namespace fluxora::tests
             std::filesystem::path gameDirectory_;
             std::filesystem::path overwriteDirectory_;
             int removeMarkerAfterLaunch_{1};
+            int writeOutputAfterLaunch_{1};
         };
 
         class GrassCacheServiceTestFixture : public testing::Test
@@ -149,7 +155,8 @@ namespace fluxora::tests
                     project_ / L"downloads",
                     project_ / L"overwrite"
                 };
-                pathSettings_.saveForConfig(config_, paths);
+                const BuildPathSettings savedPaths = pathSettings_.saveForConfig(config_, paths);
+                (void)savedPaths;
 
                 const std::filesystem::path ngioMod = paths.modsDirectory / L"No Grass In Objects";
                 writeTextFile(
@@ -239,10 +246,10 @@ namespace fluxora::tests
         EXPECT_TRUE(orderItem->isEnabled);
     }
 
-    TEST_F(GrassCacheServiceTestFixture, NgioGenerationRestartsWhilePrecacheMarkerStillExists)
+    TEST_F(GrassCacheServiceTestFixture, NgioGenerationRestartsWhilePrecacheMarkerStillExistsAndOutputIsMissing)
     {
         const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
-        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 2);
+        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 2, 2);
         GrassCacheService service(
             logger_,
             projects_,
@@ -257,6 +264,27 @@ namespace fluxora::tests
 
         EXPECT_EQ(runner.launchCount, 2);
         EXPECT_EQ(result.launchCount, 2);
+        EXPECT_FALSE(std::filesystem::exists(paths.gameDirectory / L"PrecacheGrass.txt"));
+    }
+
+    TEST_F(GrassCacheServiceTestFixture, NgioGenerationStopsWhenOutputExistsAndPrecacheMarkerRemains)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 99);
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+
+        const GrassCacheGenerationResult result =
+            service.generateNgioGrassCache(config_, L"Default", GrassCacheGenerationOptions{3, 0});
+
+        EXPECT_EQ(runner.launchCount, 1);
+        EXPECT_EQ(result.launchCount, 1);
         EXPECT_FALSE(std::filesystem::exists(paths.gameDirectory / L"PrecacheGrass.txt"));
     }
 }

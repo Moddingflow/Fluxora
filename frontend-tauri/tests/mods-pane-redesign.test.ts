@@ -55,6 +55,10 @@ describe('mods pane redesign', () => {
     );
 
     expect(styles).toContain('.build-pane__header--mods');
+    expect(styles).toContain('.build-pane > .pane-search');
+    expect(styles).toContain('width: min(267px, calc(100% - 24px));');
+    expect(styles).toMatch(/\.pane-search:focus-within\s*\{[^}]*border-color: var\(--flx-accent-hover\);[^}]*\}/);
+    expect(styles).not.toMatch(/\.pane-search:focus-within\s*\{[^}]*box-shadow:/);
     expect(styles).toContain('.mods-pane-toolbar');
     expect(styles).toContain('.mod-list__head');
     expect(styles).toContain('grid-template-columns: minmax(180px, 1fr) minmax(78px, 88px) minmax(78px, 88px) minmax(110px, 124px);');

@@ -1,7 +1,3 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <path d="M12 21V5.2" stroke="#9bd66b" stroke-width="2" stroke-linecap="round" />
-  <path d="M12 20.5C9.2 15.6 6.4 12.2 3.8 10.6" stroke="#77c864" stroke-width="2" stroke-linecap="round" />
-  <path d="M12 20.5c2.8-4.9 5.6-8.3 8.2-9.9" stroke="#77c864" stroke-width="2" stroke-linecap="round" />
-  <path d="M12 8.2c1.3 1.1 2.2 2.8 2.5 5" stroke="#c5ec8a" stroke-width="1.7" stroke-linecap="round" />
-  <path d="M12 8.2c-1.3 1.1-2.2 2.8-2.5 5" stroke="#c5ec8a" stroke-width="1.7" stroke-linecap="round" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Minimalistic white three-blade grass icon">
+  <path fill="#FFFFFF" d="M135 480 L377 480 C382 392 400 287 494 141 C407 154 345 199 304 276 C320 193 300 99 256 28 C212 99 192 193 208 276 C167 199 105 154 18 141 C112 287 130 392 135 480 Z"/>
 </svg>

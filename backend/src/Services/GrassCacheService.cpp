@@ -209,6 +209,12 @@ namespace fluxora
             return iterator != std::filesystem::directory_iterator{};
         }
 
+        bool grassOutputReady(const std::filesystem::path& overwriteDirectory)
+        {
+            const std::filesystem::path outputDirectory = findGrassOutputDirectory(overwriteDirectory);
+            return !outputDirectory.empty() && directoryHasEntries(outputDirectory);
+        }
+
         struct OutputFileCounts
         {
             int generated{0};
@@ -451,8 +457,20 @@ namespace fluxora
                     extraArguments
                 });
 
-                if (!std::filesystem::exists(markerPath))
+                const bool markerStillExists = std::filesystem::exists(markerPath);
+                const bool outputReady = grassOutputReady(paths.overwriteDirectory);
+                if (!markerStillExists || outputReady)
                 {
+                    if (markerStillExists && outputReady)
+                    {
+                        logger_.writeOperation(
+                            LogLevel::Info,
+                            "GrassCache",
+                            "NGIO produced grass output but left PrecacheGrass.txt in place; removing marker and finishing.");
+                        std::error_code removeError;
+                        std::filesystem::remove(markerPath, removeError);
+                    }
+
                     ++launchCount;
                     break;
                 }

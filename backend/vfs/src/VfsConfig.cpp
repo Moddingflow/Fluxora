@@ -7,6 +7,7 @@
 
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <utility>
 
 namespace fluxora::vfs
@@ -64,6 +65,32 @@ namespace fluxora::vfs
         {
             const JsonValue* value = object.find(field);
             return (value != nullptr && value->isString()) ? value->asString() : std::wstring{};
+        }
+
+        std::uint32_t readUInt32(const JsonValue& object, const wchar_t* field)
+        {
+            const JsonValue* value = object.find(field);
+            if (value == nullptr || !value->isNumber())
+            {
+                return 0;
+            }
+
+            try
+            {
+                std::size_t consumed = 0;
+                const unsigned long parsed = std::stoul(value->asNumber(), &consumed, 10);
+                if (consumed != value->asNumber().size() ||
+                    parsed > (std::numeric_limits<std::uint32_t>::max)())
+                {
+                    return 0;
+                }
+
+                return static_cast<std::uint32_t>(parsed);
+            }
+            catch (...)
+            {
+                return 0;
+            }
         }
 
         std::vector<std::wstring> readStringArray(const JsonValue& object, const wchar_t* field)
@@ -137,6 +164,7 @@ namespace fluxora::vfs
             config.overwrite = readString(root, protocol::fields::overwrite);
             config.logPath = readString(root, protocol::fields::logPath);
             config.hookDll = readString(root, protocol::fields::hookDll);
+            config.managerProcessId = readUInt32(root, protocol::fields::managerProcessId);
             config.mods = readStringArray(root, protocol::fields::mods);
 
             if (const JsonValue* mounts = root.find(protocol::fields::mounts);

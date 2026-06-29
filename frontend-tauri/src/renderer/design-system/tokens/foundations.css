@@ -42,32 +42,32 @@
   --flx-text-subtle: #6b6557;
 
   /* Single Fluxora accent: gold. */
-  --flx-accent: #e6b450;
-  --flx-accent-hover: #f0c76e;
-  --flx-accent-bright: #f8dd98;
-  --flx-accent-soft: #1e1a0f;
-  --flx-accent-line: #4b4024;
-  --flx-ink-on-accent: #0b0e14;
+  --flx-accent: #edb848;
+  --flx-accent-hover: #f8ca62;
+  --flx-accent-bright: #ffe4a3;
+  --flx-accent-soft: #211706;
+  --flx-accent-line: #563f14;
+  --flx-ink-on-accent: #090c11;
 
   /* Surface stack. */
-  --flx-bg-0: #06080c;
-  --flx-bg-1: #0b0e14;
-  --flx-bg-2: #0f131b;
-  --flx-panel-soft: #0d1017;
-  --flx-panel: #13171f;
-  --flx-panel-raised: #1a1f29;
-  --flx-panel-hover: #222732;
-  --flx-line: #262c36;
-  --flx-line-hover: #3a414d;
+  --flx-bg-0: #05070a;
+  --flx-bg-1: #090c11;
+  --flx-bg-2: #0d1017;
+  --flx-panel-soft: #0b0e14;
+  --flx-panel: #10141a;
+  --flx-panel-raised: #161a23;
+  --flx-panel-hover: #1d212b;
+  --flx-line: #20252e;
+  --flx-line-hover: #313741;
 
   /* Semantic states stay inside the gold/neutral identity. */
   --flx-error: #9a8f7a;
-  --flx-error-solid: #4a4234;
-  --flx-error-press: #3b3429;
+  --flx-error-solid: #3f382c;
+  --flx-error-press: #322c23;
   --flx-success: var(--flx-accent);
   --flx-conflict-overwrites: var(--flx-accent);
   --flx-conflict-overwritten: var(--flx-text-subtle);
-  --flx-conflict-fully-overwritten: #45413a;
+  --flx-conflict-fully-overwritten: #3b3731;
 
   /* Compatibility fills: the legacy names stay, but values are flat colors. */
   --flx-grad-app: var(--flx-bg-1);
@@ -78,11 +78,11 @@
   --flx-fill-accent: var(--flx-grad-accent);
 
   /* RGB channels for existing alpha-based styles. */
-  --flx-accent-rgb: 230, 180, 80;
-  --flx-accent-hover-rgb: 240, 199, 110;
-  --flx-bg-rgb: 11, 14, 20;
-  --flx-panel-rgb: 19, 23, 31;
-  --flx-line-rgb: 38, 44, 54;
+  --flx-accent-rgb: 237, 184, 72;
+  --flx-accent-hover-rgb: 248, 202, 98;
+  --flx-bg-rgb: 9, 12, 17;
+  --flx-panel-rgb: 16, 20, 26;
+  --flx-line-rgb: 32, 37, 46;
   --flx-error-rgb: 154, 143, 122;
 
   /* Redesign semantic aliases. */

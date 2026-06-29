@@ -165,9 +165,13 @@ export const targetIndexForPluginMove = (
   }
 
   const sourceIndex = items.findIndex((item) => item.orderId === orderId);
-  const blockEnd = pluginOrderMoveBlockEnd(items, sourceIndex);
+  const source = items[sourceIndex];
+  const blockEnd = pluginOrderMoveEnd(items, sourceIndex);
   const targetIndex = targetIndexForOrderMove(items, orderId, direction, {
-    collapsedSeparatorOrderIds
+    collapsedSeparatorOrderIds,
+    separatorDropTargets: source?.isSeparator === true ? 'separators' : 'all',
+    separatorMoveMode: 'single',
+    treatAfterSeparatorTargetAsBlock: source?.isSeparator === true
   });
   if (targetIndex === null) {
     return null;
@@ -182,12 +186,12 @@ export const canDragPluginOrderItem = (
   orderId: string
 ): boolean => {
   const sourceIndex = items.findIndex((item) => item.orderId === orderId);
-  if (sourceIndex < 0 || items[sourceIndex].isLocked) {
+  const source = items[sourceIndex];
+  if (!source || source.isLocked) {
     return false;
   }
 
-  const blockEnd = pluginOrderMoveBlockEnd(items, sourceIndex);
-  return !pluginOrderBlockContainsLockedPlugin(items, sourceIndex, blockEnd);
+  return true;
 };
 
 export const targetIndexForPluginDrop = (
@@ -207,7 +211,7 @@ export const targetIndexForPluginDrop = (
     return null;
   }
 
-  const blockEnd = pluginOrderMoveBlockEnd(items, sourceIndex);
+  const blockEnd = pluginOrderMoveEnd(items, sourceIndex);
   const requestedTargetIndex = targetIndexForOrderDrop(
     items,
     sourceOrderId,
@@ -215,6 +219,8 @@ export const targetIndexForPluginDrop = (
     placement,
     {
       collapsedSeparatorOrderIds,
+      separatorDropTargets: source.isSeparator ? 'separators' : 'all',
+      separatorMoveMode: 'single',
       treatAfterSeparatorTargetAsBlock: source.isSeparator
     }
   );
@@ -237,13 +243,13 @@ export const reorderPluginOrderItems = (
     return null;
   }
 
-  const blockEnd = pluginOrderMoveBlockEnd(items, sourceIndex);
+  const blockEnd = pluginOrderMoveEnd(items, sourceIndex);
   const minTargetIndex = pluginOrderMinimumTargetIndex(items, sourceIndex, blockEnd);
   if (targetIndex < minTargetIndex) {
     return null;
   }
 
-  return reorderOrderItems(items, orderId, targetIndex);
+  return reorderOrderItems(items, orderId, targetIndex, { separatorMoveMode: 'single' });
 };
 
 export const mergePendingPluginEnabledStates = (
@@ -276,20 +282,11 @@ const pluginOrderMoveBlockEnd = (
   sourceIndex: number
 ): number => orderMoveBlockEnd(items, sourceIndex);
 
-const pluginOrderBlockContainsLockedPlugin = (
+const pluginOrderMoveEnd = (
   items: FluxoraPluginOrderItem[],
-  sourceIndex: number,
-  blockEnd: number
-): boolean => {
-  for (let index = sourceIndex; index < blockEnd; index += 1) {
-    const item = items[index];
-    if (item?.isPlugin && item.isLocked) {
-      return true;
-    }
-  }
-
-  return false;
-};
+  sourceIndex: number
+): number =>
+  items[sourceIndex]?.isSeparator ? sourceIndex + 1 : pluginOrderMoveBlockEnd(items, sourceIndex);
 
 const pluginOrderBlockContainsPlugin = (
   items: FluxoraPluginOrderItem[],

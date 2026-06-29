@@ -34,6 +34,7 @@ namespace fluxora::vfs
         std::vector<RuntimeMount> g_mounts;
         std::string g_hookDllAnsi;
         std::wstring g_configPath;
+        bool g_hooksInstalled = false;
 
         // Re-entrancy guard. While a hook is doing its work it inevitably calls
         // back into the very APIs it hooks (GetFileAttributes, CopyFile, ...).
@@ -717,6 +718,7 @@ namespace fluxora::vfs
             g_mounts.clear();
             g_hookDllAnsi.clear();
             g_configPath.clear();
+            g_hooksInstalled = false;
         }
 
         // --- directory enumeration synthesis -------------------------------
@@ -2014,11 +2016,18 @@ namespace fluxora::vfs
         }
 
         VfsLog::write(L"Virtual file system hooks installed.");
+        g_hooksInstalled = true;
         return true;
     }
 
     void uninstallHooks()
     {
+        if (!g_hooksInstalled)
+        {
+            clearRuntimeState();
+            return;
+        }
+
         if (DetourTransactionBegin() != NO_ERROR)
         {
             return;

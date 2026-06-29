@@ -42,9 +42,10 @@ export function Button({
 
 export type IconButtonVariant = 'bare' | 'boxed' | 'danger';
 
-export interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label'> {
+export interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'title'> {
   label: string;
   size?: 'md' | 'sm';
+  title?: string | null;
   variant?: IconButtonVariant;
 }
 
@@ -64,7 +65,7 @@ export function IconButton({
       className={cx('flx-icon-button', className)}
       data-size={size}
       data-variant={variant}
-      title={title ?? label}
+      title={title === null ? undefined : title ?? label}
       type={type}
       {...rest}
     >

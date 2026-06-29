@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,7 @@ namespace fluxora::vfs
         std::wstring configPath; // descriptor path loaded from FLUXORA_VFS_CONFIG
         std::wstring logPath;
         std::wstring hookDll;    // FluxoraVfs.dll path, for child re-injection
+        std::uint32_t managerProcessId{0};
         std::vector<std::wstring> mods; // load order ascending (last wins)
         std::vector<VfsMountConfig> mounts;
 

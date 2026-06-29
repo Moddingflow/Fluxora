@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Fluxora">
-  <rect width="64" height="64" rx="14" fill="#0B0E14"/>
-  <path d="M16 20h31v7H24v9h18v7H24v13h-8V20Z" fill="#E6B450"/>
-  <path d="M35 34h13l-9 22H27l8-22Z" fill="#E6B450"/>
-  <path d="M42 8h8L39 30h-8L42 8Z" fill="#E6B450"/>
+  <rect width="64" height="64" rx="14" fill="#090C11"/>
+  <path d="M16 20h31v7H24v9h18v7H24v13h-8V20Z" fill="#EDB848"/>
+  <path d="M35 34h13l-9 22H27l8-22Z" fill="#EDB848"/>
+  <path d="M42 8h8L39 30h-8L42 8Z" fill="#EDB848"/>
 </svg>

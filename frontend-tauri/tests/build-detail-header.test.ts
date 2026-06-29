@@ -153,21 +153,30 @@ describe('build detail header redesign', () => {
     const icon = readText('frontend-tauri', 'src', 'renderer', 'assets', 'icons', 'grass-cache.svg');
 
     expect(markup).toContain('aria-label="No Grass In Objects Grass Cache Generation"');
+    expect(markup).toContain('class="build-header__grass-trigger"');
     expect(markup).toContain('build-header__grass-icon');
     expect(markup).toContain('data:image/svg+xml');
-    expect(icon).toContain('M12 21V5.2');
+    expect(markup).not.toContain('title="No Grass In Objects Grass Cache Generation"');
+    expect(icon).toContain('Minimalistic white three-blade grass icon');
+    expect(icon).toContain('fill="#FFFFFF"');
     expect(ruMarkup).toContain('aria-label="Генерация кэша травы No Grass In Objects"');
+    expect(ruMarkup).not.toContain('title="Генерация кэша травы No Grass In Objects"');
   });
 
   it('keeps NGIO generation wired through a custom dialog and typed facade call', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const header = readText('frontend-tauri', 'src', 'renderer', 'features', 'build', 'BuildDetailHeader.tsx');
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
 
     expect(app).toContain('renderGrassCacheConfirmation()');
     expect(app).toContain('window.fluxora.grassCache.generate');
     expect(app).toContain('Сейчас начнётся генерация кэша травы');
     expect(app).not.toContain('window.confirm(`Generate grass cache');
-    expect(styles).toContain('.build-header__grass-button::after');
+    expect(header).toContain('window.innerHeight');
+    expect(header).toContain('data-placement={grassTooltipPosition.placement}');
+    expect(header).toContain('title={null}');
+    expect(styles).toContain('.build-header__grass-tooltip');
+    expect(styles).toContain('position: fixed;');
     expect(styles).toContain('.grass-cache-dialog');
   });
 });
