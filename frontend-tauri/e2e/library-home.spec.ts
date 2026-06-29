@@ -899,6 +899,20 @@ const expectNoDocumentHorizontalOverflow = async (page: Page) => {
   expect(overflow.bodyScrollWidth).toBeLessThanOrEqual(overflow.bodyClientWidth + 2);
 };
 
+const elementFocusIndicator = async (locator: Locator) =>
+  locator.evaluate((element) => {
+    const style = getComputedStyle(element as HTMLElement);
+
+    return {
+      hasIndicator:
+        (style.outlineStyle !== 'none' && style.outlineWidth !== '0px') ||
+        style.boxShadow !== 'none',
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+      boxShadow: style.boxShadow
+    };
+  });
+
 const capturePhase13Screenshot = async (
   page: Page,
   testInfo: { outputPath(path: string): string },
@@ -1064,6 +1078,21 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
     .toMatchObject({
       path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\overwrite'
     });
+});
+
+test('does not show row focus rings when Shift is pressed without Tab navigation', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const modRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  await modRow.click();
+  await expect(modRow).toBeFocused();
+
+  await page.keyboard.press('Shift');
+
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.dataset.focusNavigation))
+    .toBeUndefined();
+  await expect.poll(async () => (await elementFocusIndicator(modRow)).hasIndicator).toBe(false);
 });
 
 test('drags mod order rows with pointer placement feedback', async ({ page }) => {

@@ -39,6 +39,14 @@ These rules are project-specific and apply to all Codex/agent work in this repos
 - Preserve user changes already present in the worktree.
 - After modifying code, project instructions or agent configuration, run `graphify update .`.
 
+## Skill Selection
+
+- At task start, match the request against available skill names and short descriptions only. Do not read every `SKILL.md`, scan full skill folders, or recurse through skill assets to discover possible matches.
+- Use the smallest directly relevant skill set. Prefer a specific Fluxora, Tauri, roadmap, validation or task skill over broad design, frontend, migration or testing skills.
+- Once a skill is selected, read its `SKILL.md` completely, then open only the directly referenced instructions, references, scripts, templates or assets needed for the current task variant.
+- Do not load unrelated skill references, examples, sibling skills or entire skill directories for context.
+- If no dedicated skill clearly applies, stop skill lookup, define the validation plan from these repository rules, and run the smallest relevant checks.
+
 ## Validation Expectations
 
 - Backend changes should be validated with the relevant CMake build and targeted Google Test/CTest run when available.

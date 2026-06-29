@@ -143,6 +143,7 @@ describe('plugin workspace state', () => {
     );
 
     expect(loaded.selectedOrderId).toBe('plugin_light');
+    expect([...loaded.selectedOrderIds]).toEqual(['plugin_light']);
     expect(selectedPluginOrderItem(items, 'missing')?.orderId).toBe('plugin_skyrim');
     expect(targetIndexForPluginMove(items, 'plugin_skyui', -1)).toBe(1);
     expect(targetIndexForPluginMove(items, 'plugin_skyui', 1)).toBe(3);
@@ -153,6 +154,45 @@ describe('plugin workspace state', () => {
     expect(targetIndexForPluginDrop(items, 'plugin_skyui', 'plugin_skyrim', 'after')).toBe(1);
     expect(targetIndexForPluginDrop(items, 'plugin_light', 'plugin_skyui', 'before')).toBe(2);
     expect(targetIndexForPluginDrop(items, 'plugin_skyui', 'plugin_light', 'before')).toBeNull();
+  });
+
+  it('tracks ctrl, shift and select-all selection across visible plugin rows', () => {
+    const orderIds = items.map((item) => item.orderId);
+    let state = pluginWorkspaceReducer(
+      { ...emptyPluginWorkspaceState(), items, loadState: 'ready' },
+      { type: 'selected', orderId: 'plugin_skyrim' }
+    );
+
+    state = pluginWorkspaceReducer(state, {
+      type: 'selection-range-selected',
+      orderId: 'plugin_light',
+      orderedOrderIds: orderIds,
+      additive: false
+    });
+    expect(orderIds.filter((orderId) => state.selectedOrderIds.has(orderId))).toEqual(orderIds);
+
+    state = pluginWorkspaceReducer(state, {
+      type: 'selection-toggled',
+      orderId: 'plugin_skyui',
+      orderedOrderIds: orderIds
+    });
+    state = pluginWorkspaceReducer(state, {
+      type: 'selection-range-selected',
+      orderId: 'plugin_light',
+      orderedOrderIds: orderIds,
+      additive: false
+    });
+    expect(orderIds.filter((orderId) => state.selectedOrderIds.has(orderId))).toEqual([
+      'plugin_skyrim',
+      'sep_patches',
+      'plugin_light'
+    ]);
+
+    state = pluginWorkspaceReducer(state, {
+      type: 'all-selected',
+      orderedOrderIds: orderIds
+    });
+    expect(orderIds.filter((orderId) => state.selectedOrderIds.has(orderId))).toEqual(orderIds);
   });
 
   it('allows plugin separators with locked children because only the separator row moves', () => {

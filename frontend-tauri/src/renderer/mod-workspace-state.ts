@@ -14,12 +14,24 @@ import {
   visibleOrderItems,
   type OrderDropPlacement
 } from './order-list-state';
+import {
+  emptyOrderSelectionState,
+  pruneOrderSelection,
+  selectAllOrderItems,
+  selectOrderItem,
+  selectOrderItemRange,
+  toggleOrderItemSelection
+} from './order-selection-state';
 
 export type ModWorkspaceLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface ModWorkspaceState {
   items: FluxoraModOrderItem[];
   selectedOrderId: string | null;
+  selectedOrderIds: ReadonlySet<string>;
+  selectionAnchorOrderId: string | null;
+  rangeExcludedOrderIds: ReadonlySet<string>;
+  rangeBaseOrderIds: ReadonlySet<string>;
   collapsedSeparatorOrderIds: ReadonlySet<string>;
   searchText: string;
   loadState: ModWorkspaceLoadState;
@@ -35,11 +47,19 @@ export type ModWorkspaceAction =
   | { type: 'all-items-enabled-set'; isEnabled: boolean }
   | { type: 'separator-collapse-toggled'; orderId: string }
   | { type: 'search-changed'; searchText: string }
-  | { type: 'selected'; orderId: string | null };
+  | { type: 'selected'; orderId: string | null }
+  | { type: 'selection-toggled'; orderId: string; orderedOrderIds: readonly string[] }
+  | {
+      type: 'selection-range-selected';
+      orderId: string;
+      orderedOrderIds: readonly string[];
+      additive: boolean;
+    }
+  | { type: 'all-selected'; orderedOrderIds: readonly string[] };
 
 export const emptyModWorkspaceState = (): ModWorkspaceState => ({
   items: [],
-  selectedOrderId: null,
+  ...emptyOrderSelectionState(),
   collapsedSeparatorOrderIds: new Set<string>(),
   searchText: '',
   loadState: 'idle',
@@ -461,10 +481,15 @@ export const modWorkspaceReducer = (
         state.selectedOrderId,
         collapsedSeparatorOrderIds
       );
+      const selection = pruneOrderSelection(
+        state,
+        action.items.map((item) => item.orderId),
+        selected?.orderId ?? null
+      );
       return {
         ...state,
+        ...selection,
         items: action.items,
-        selectedOrderId: selected?.orderId ?? null,
         collapsedSeparatorOrderIds,
         loadState: 'ready',
         errorMessage: null
@@ -481,10 +506,15 @@ export const modWorkspaceReducer = (
         state.selectedOrderId,
         state.collapsedSeparatorOrderIds
       );
+      const selection = pruneOrderSelection(
+        state,
+        items.map((item) => item.orderId),
+        selected?.orderId ?? null
+      );
       return {
         ...state,
+        ...selection,
         items,
-        selectedOrderId: selected?.orderId ?? null,
         loadState: 'ready',
         errorMessage: null
       };
@@ -526,8 +556,8 @@ export const modWorkspaceReducer = (
 
       return {
         ...state,
-        collapsedSeparatorOrderIds,
-        selectedOrderId: action.orderId
+        ...selectOrderItem(state, action.orderId),
+        collapsedSeparatorOrderIds
       };
     }
     case 'search-changed':
@@ -538,7 +568,24 @@ export const modWorkspaceReducer = (
     case 'selected':
       return {
         ...state,
-        selectedOrderId: action.orderId
+        ...selectOrderItem(state, action.orderId)
+      };
+    case 'selection-toggled':
+      return {
+        ...state,
+        ...toggleOrderItemSelection(state, action.orderId, action.orderedOrderIds)
+      };
+    case 'selection-range-selected':
+      return {
+        ...state,
+        ...selectOrderItemRange(state, action.orderId, action.orderedOrderIds, {
+          additive: action.additive
+        })
+      };
+    case 'all-selected':
+      return {
+        ...state,
+        ...selectAllOrderItems(state, action.orderedOrderIds)
       };
     default:
       return state;

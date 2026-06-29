@@ -7402,6 +7402,13 @@ body.row-reorder-active * {
   outline-offset: 2px;
 }
 
+:root:not([data-focus-navigation="tab"]) :focus-visible,
+:root:not([data-focus-navigation="tab"]) .mod-enable-checkbox input:focus-visible + span,
+:root:not([data-focus-navigation="tab"]) .flx-checkbox__native:focus-visible + .flx-checkbox__box {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

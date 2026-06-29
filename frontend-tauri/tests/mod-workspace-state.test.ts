@@ -130,7 +130,50 @@ describe('mod workspace state', () => {
     );
 
     expect(loaded.selectedOrderId).toBe('mod_smoothcam');
+    expect([...loaded.selectedOrderIds]).toEqual(['mod_smoothcam']);
     expect(selectedModOrderItem(items, 'missing')?.orderId).toBe('mod_skyui');
+  });
+
+  it('tracks ctrl, shift and select-all selection across visible mod rows', () => {
+    const orderIds = items.map((item) => item.orderId);
+    let state = modWorkspaceReducer(
+      { ...emptyModWorkspaceState(), items, loadState: 'ready' },
+      { type: 'selected', orderId: 'sep_visuals' }
+    );
+
+    state = modWorkspaceReducer(state, {
+      type: 'selection-range-selected',
+      orderId: 'mod_smoothcam',
+      orderedOrderIds: orderIds,
+      additive: false
+    });
+    expect(orderIds.filter((orderId) => state.selectedOrderIds.has(orderId))).toEqual([
+      'sep_visuals',
+      'mod_skyui',
+      'mod_smoothcam'
+    ]);
+
+    state = modWorkspaceReducer(state, {
+      type: 'selection-toggled',
+      orderId: 'mod_skyui',
+      orderedOrderIds: orderIds
+    });
+    state = modWorkspaceReducer(state, {
+      type: 'selection-range-selected',
+      orderId: 'mod_smoothcam',
+      orderedOrderIds: orderIds,
+      additive: false
+    });
+    expect(orderIds.filter((orderId) => state.selectedOrderIds.has(orderId))).toEqual([
+      'sep_visuals',
+      'mod_smoothcam'
+    ]);
+
+    state = modWorkspaceReducer(state, {
+      type: 'all-selected',
+      orderedOrderIds: orderIds
+    });
+    expect(orderIds.filter((orderId) => state.selectedOrderIds.has(orderId))).toEqual(orderIds);
   });
 
   it('calculates move target indexes without mutating order rows', () => {

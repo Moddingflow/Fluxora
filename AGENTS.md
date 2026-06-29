@@ -12,6 +12,14 @@ Current frontend reality:
 - Split work into small focused services. Avoid master files, catch-all managers and god objects.
 - Tauri UI must be split by responsibility into small renderer services, stores/hooks and focused components; do not grow a single App/MainWindow/master file with catalog, workspace, settings, install or operation orchestration.
 
+Skill selection rules:
+
+- At the start of each task, choose skills from the available skill names and short descriptions only. Do not read every `SKILL.md`, scan full skill folders, or recurse through skill assets just to decide what applies.
+- Use the smallest skill set that directly matches the task. Prefer the most specific project/task skill over broad taste, frontend, migration or testing skills.
+- After selecting a skill, read that skill's `SKILL.md` completely and only open the directly referenced files needed for the current task variant. Do not load unrelated references, examples, assets or sibling skills.
+- If no skill clearly applies, do not spend tokens searching for one. State the validation plan from these repository rules and continue with the smallest relevant checks.
+- When a task needs validation, use the relevant test skill only if it is clearly applicable; otherwise follow the validation rules below.
+
 Tauri product rules:
 
 - Before large UI or bridge work, read the current architecture, bridge, release and validation documentation. Treat WPF migration notes as archival references only.

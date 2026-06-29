@@ -30,7 +30,12 @@ import {
 } from 'lucide-react';
 import { useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { PointerEvent as ReactPointerEvent, ReactElement } from 'react';
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactElement
+} from 'react';
 
 import { AppTitlebar } from './components/chrome/AppTitlebar';
 import { Button, EmptyState, LoadingSplash, StatusDot } from './design-system';
@@ -790,6 +795,14 @@ export const App = () => {
     [deferredModSearchText, filteredModItems, overwriteModItem]
   );
 
+  const selectableModOrderIds = useMemo(
+    () =>
+      displayedModItems
+        .filter((item) => !isModOverwriteItem(item))
+        .map((item) => item.orderId),
+    [displayedModItems]
+  );
+
   const selectedModItem = useMemo(
     () => {
       if (modsWorkspace.selectedOrderId === overwriteModItem?.orderId) {
@@ -832,6 +845,11 @@ export const App = () => {
       deferredPluginSearchText,
       pluginsWorkspace.collapsedSeparatorOrderIds
     ]
+  );
+
+  const selectablePluginOrderIds = useMemo(
+    () => filteredPluginItems.map((item) => item.orderId),
+    [filteredPluginItems]
   );
 
   const selectedPluginItem = useMemo(
@@ -2059,6 +2077,9 @@ export const App = () => {
     if (
       !canDrag ||
       event.button !== 0 ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
       isInteractiveRowDragTarget(event.target)
     ) {
       return false;
@@ -2192,6 +2213,135 @@ export const App = () => {
 
     suppressNextRowClickRef.current = false;
     return true;
+  };
+
+  const isSelectionToggleModifier = (
+    event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>
+  ): boolean => event.ctrlKey || event.metaKey;
+
+  const isSelectAllShortcut = (event: ReactKeyboardEvent<HTMLElement>): boolean =>
+    isSelectionToggleModifier(event) &&
+    (event.key.toLocaleLowerCase() === 'a' || event.code === 'KeyA');
+
+  const handleModRowSelection = (
+    event: ReactMouseEvent<HTMLElement>,
+    item: FluxoraModOrderItem
+  ) => {
+    const canUseMultiSelection = selectableModOrderIds.includes(item.orderId);
+    const usesToggle = isSelectionToggleModifier(event);
+
+    if (event.shiftKey && canUseMultiSelection) {
+      dispatchModsWorkspace({
+        type: 'selection-range-selected',
+        orderId: item.orderId,
+        orderedOrderIds: selectableModOrderIds,
+        additive: usesToggle
+      });
+    } else if (usesToggle && canUseMultiSelection) {
+      dispatchModsWorkspace({
+        type: 'selection-toggled',
+        orderId: item.orderId,
+        orderedOrderIds: selectableModOrderIds
+      });
+    } else {
+      dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
+    }
+
+    setModMenuOrderId(null);
+  };
+
+  const handlePluginRowSelection = (
+    event: ReactMouseEvent<HTMLElement>,
+    item: FluxoraPluginOrderItem
+  ) => {
+    const usesToggle = isSelectionToggleModifier(event);
+
+    if (event.shiftKey) {
+      dispatchPluginsWorkspace({
+        type: 'selection-range-selected',
+        orderId: item.orderId,
+        orderedOrderIds: selectablePluginOrderIds,
+        additive: usesToggle
+      });
+    } else if (usesToggle) {
+      dispatchPluginsWorkspace({
+        type: 'selection-toggled',
+        orderId: item.orderId,
+        orderedOrderIds: selectablePluginOrderIds
+      });
+    } else {
+      dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
+    }
+
+    setPluginMenuOrderId(null);
+  };
+
+  const handleModRowKeyDown = (
+    event: ReactKeyboardEvent<HTMLElement>,
+    item: FluxoraModOrderItem
+  ) => {
+    if (event.currentTarget !== event.target) {
+      return;
+    }
+
+    if (isSelectAllShortcut(event) && selectableModOrderIds.length > 0) {
+      event.preventDefault();
+      dispatchModsWorkspace({
+        type: 'all-selected',
+        orderedOrderIds: selectableModOrderIds
+      });
+      setModMenuOrderId(null);
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
+      setModMenuOrderId(null);
+    }
+
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault();
+      dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
+      setModMenuPosition(
+        rowContextMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
+      );
+      setModMenuOrderId(item.orderId);
+    }
+  };
+
+  const handlePluginRowKeyDown = (
+    event: ReactKeyboardEvent<HTMLElement>,
+    item: FluxoraPluginOrderItem
+  ) => {
+    if (event.currentTarget !== event.target) {
+      return;
+    }
+
+    if (isSelectAllShortcut(event) && selectablePluginOrderIds.length > 0) {
+      event.preventDefault();
+      dispatchPluginsWorkspace({
+        type: 'all-selected',
+        orderedOrderIds: selectablePluginOrderIds
+      });
+      setPluginMenuOrderId(null);
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
+      setPluginMenuOrderId(null);
+    }
+
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault();
+      dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
+      setPluginMenuPosition(
+        rowContextMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
+      );
+      setPluginMenuOrderId(item.orderId);
+    }
   };
 
   const createPluginSeparator = async () => {
@@ -5686,7 +5836,7 @@ export const App = () => {
             <div style={{ height: visibleModWindow.topSpacer }} aria-hidden="true" />
           ) : null}
           {visibleModWindow.items.map((item) => {
-            const isSelected = item.orderId === modsWorkspace.selectedOrderId;
+            const isSelected = modsWorkspace.selectedOrderIds.has(item.orderId);
             const isMenuOpen = item.orderId === modMenuOrderId;
             const isOverwrite = isModOverwriteItem(item);
             const isNested = isModNestedUnderSeparator(modsWorkspace.items, item.orderId);
@@ -5723,13 +5873,14 @@ export const App = () => {
                 key={item.orderId}
                 aria-label={`${modItemTitle(item)} ${isOverwrite ? 'overwrite folder' : item.isSeparator ? 'separator' : 'mod'}`}
                 aria-expanded={item.isSeparator ? !isCollapsed : undefined}
-                onClick={() => {
+                aria-selected={isSelected}
+                onClick={(event) => {
                   if (consumeSuppressedRowClick()) {
                     return;
                   }
 
-                  dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
-                  setModMenuOrderId(null);
+                  event.currentTarget.focus({ preventScroll: true });
+                  handleModRowSelection(event, item);
                 }}
                 onContextMenu={(event) => {
                   event.preventDefault();
@@ -5751,24 +5902,7 @@ export const App = () => {
                 onPointerUp={endRowReorderDrag}
                 onPointerCancel={cancelRowReorderDrag}
                 onKeyDown={(event) => {
-                  if (event.currentTarget !== event.target) {
-                    return;
-                  }
-
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
-                    setModMenuOrderId(null);
-                  }
-
-                  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-                    event.preventDefault();
-                    dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
-                    setModMenuPosition(
-                      rowContextMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
-                    );
-                    setModMenuOrderId(item.orderId);
-                  }
+                  handleModRowKeyDown(event, item);
                 }}
               >
                 {isDropTarget ? (
@@ -6196,7 +6330,7 @@ export const App = () => {
             <div style={{ height: visiblePluginWindow.topSpacer }} aria-hidden="true" />
           ) : null}
           {visiblePluginWindow.items.map((item) => {
-            const isSelected = item.orderId === pluginsWorkspace.selectedOrderId;
+            const isSelected = pluginsWorkspace.selectedOrderIds.has(item.orderId);
             const isMenuOpen = item.orderId === pluginMenuOrderId;
             const isNested = isPluginNestedUnderSeparator(pluginsWorkspace.items, item.orderId);
             const isCollapsed =
@@ -6233,13 +6367,14 @@ export const App = () => {
                 key={item.orderId}
                 aria-label={`${pluginItemTitle(item)} ${item.isSeparator ? 'separator' : 'plugin'}`}
                 aria-expanded={item.isSeparator ? !isCollapsed : undefined}
-                onClick={() => {
+                aria-selected={isSelected}
+                onClick={(event) => {
                   if (consumeSuppressedRowClick()) {
                     return;
                   }
 
-                  dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
-                  setPluginMenuOrderId(null);
+                  event.currentTarget.focus({ preventScroll: true });
+                  handlePluginRowSelection(event, item);
                 }}
                 onContextMenu={(event) => {
                   event.preventDefault();
@@ -6261,24 +6396,7 @@ export const App = () => {
                 onPointerUp={endRowReorderDrag}
                 onPointerCancel={cancelRowReorderDrag}
                 onKeyDown={(event) => {
-                  if (event.currentTarget !== event.target) {
-                    return;
-                  }
-
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
-                    setPluginMenuOrderId(null);
-                  }
-
-                  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-                    event.preventDefault();
-                    dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
-                    setPluginMenuPosition(
-                      rowContextMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
-                    );
-                    setPluginMenuOrderId(item.orderId);
-                  }
+                  handlePluginRowKeyDown(event, item);
                 }}
               >
                 {isDropTarget ? (
