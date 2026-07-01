@@ -97,6 +97,149 @@ export const pluginSourceLabel = (item: FluxoraPluginOrderItem | null): string =
   return item.sourceMod.trim() || 'game data';
 };
 
+const missingMasterNameCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base'
+});
+
+export interface PluginMissingMasterSummary {
+  totalCount: number;
+  visibleMasters: string[];
+  hiddenCount: number;
+}
+
+export interface PluginMissingMasterContext {
+  enabledPluginNameKeys?: ReadonlySet<string>;
+  disabledSourceModNameKeys?: ReadonlySet<string>;
+}
+
+const emptyStringSet: ReadonlySet<string> = new Set<string>();
+
+const normalizedProjectSignal = (value: string | null | undefined): string =>
+  value?.trim().toLocaleLowerCase().replace(/[^a-z0-9]+/g, '') ?? '';
+
+export const isSkyrimMissingMasterStatusProject = (project: FluxoraProject | null): boolean => {
+  const signals = [
+    project?.templateId,
+    project?.uiTemplateId,
+    project?.gameName,
+    project?.template?.id,
+    project?.template?.uiTemplateId,
+    project?.template?.gameName
+  ].map(normalizedProjectSignal);
+
+  return signals.some((signal) =>
+    signal.includes('skyrimse') ||
+    signal.includes('skyrimspecialedition') ||
+    signal.includes('skyrimae') ||
+    signal.includes('skyrimanniversaryedition')
+  );
+};
+
+export const pluginSourceModKey = (value: string | null | undefined): string =>
+  value?.trim().toLocaleLowerCase() ?? '';
+
+const pluginNameKey = pluginSourceModKey;
+
+const isPluginSourceModDisabled = (
+  item: FluxoraPluginOrderItem,
+  disabledSourceModNameKeys: ReadonlySet<string>
+): boolean => {
+  const key = pluginSourceModKey(item.sourceMod);
+  return key.length > 0 && disabledSourceModNameKeys.has(key);
+};
+
+export const enabledPluginNameKeys = (
+  items: readonly FluxoraPluginOrderItem[],
+  disabledSourceModNameKeys: ReadonlySet<string> = emptyStringSet
+): Set<string> => {
+  const keys = new Set<string>();
+
+  items.forEach((item) => {
+    if (
+      item.isPlugin &&
+      item.isEnabled &&
+      !isPluginSourceModDisabled(item, disabledSourceModNameKeys)
+    ) {
+      const key = pluginNameKey(item.name);
+      if (key) {
+        keys.add(key);
+      }
+    }
+  });
+
+  return keys;
+};
+
+const missingMasterCandidates = (
+  item: FluxoraPluginOrderItem,
+  hasAvailabilityContext: boolean
+): readonly string[] =>
+  hasAvailabilityContext && item.masterFiles && item.masterFiles.length > 0
+    ? item.masterFiles
+    : item.missingMasters;
+
+const missingMasterSummaryFromMasters = (
+  masters: readonly string[],
+  limit: number
+): PluginMissingMasterSummary => {
+  const safeLimit = Math.max(0, limit);
+  const sortedMasters = [...masters].sort((left, right) =>
+    missingMasterNameCollator.compare(left, right)
+  );
+
+  return {
+    totalCount: sortedMasters.length,
+    visibleMasters: sortedMasters.slice(0, safeLimit),
+    hiddenCount: Math.max(0, sortedMasters.length - safeLimit)
+  };
+};
+
+export const sortedPluginMissingMasters = (
+  item: FluxoraPluginOrderItem | null,
+  context: PluginMissingMasterContext = {}
+): string[] => {
+  if (!item?.isPlugin || !item.isEnabled) {
+    return [];
+  }
+
+  const disabledSourceModNameKeys = context.disabledSourceModNameKeys ?? emptyStringSet;
+  if (isPluginSourceModDisabled(item, disabledSourceModNameKeys)) {
+    return [];
+  }
+
+  const hasAvailabilityContext = context.enabledPluginNameKeys !== undefined;
+  const uniqueByName = new Map<string, string>();
+  missingMasterCandidates(item, hasAvailabilityContext).forEach((master) => {
+    const trimmed = master.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const key = trimmed.toLocaleLowerCase();
+    if (context.enabledPluginNameKeys?.has(key)) {
+      return;
+    }
+
+    if (!uniqueByName.has(key)) {
+      uniqueByName.set(key, trimmed);
+    }
+  });
+
+  return [...uniqueByName.values()].sort((left, right) =>
+    missingMasterNameCollator.compare(left, right)
+  );
+};
+
+export const pluginMissingMasterSummary = (
+  item: FluxoraPluginOrderItem | null,
+  limit = 20,
+  context: PluginMissingMasterContext = {}
+): PluginMissingMasterSummary => {
+  const masters = sortedPluginMissingMasters(item, context);
+  return missingMasterSummaryFromMasters(masters, limit);
+};
+
 export const pluginHexIndex = (item: FluxoraPluginOrderItem): string =>
   item.isSeparator ? '--' : Math.max(0, item.order).toString(16).toUpperCase().padStart(2, '0');
 
@@ -141,12 +284,13 @@ export const filterPluginOrderItems = (
       item.orderId,
       item.kind,
       item.name,
-      item.separatorTitle,
-      item.extension,
-      item.sourceMod,
-      item.lockReason,
-      item.missingMasters.join(' ')
-    ]
+    item.separatorTitle,
+    item.extension,
+    item.sourceMod,
+    item.lockReason,
+    item.masterFiles?.join(' ') ?? '',
+    item.missingMasters.join(' ')
+  ]
       .join(' ')
       .toLocaleLowerCase();
 
@@ -169,6 +313,35 @@ export const pluginSeparatorChildCount = (
   items: FluxoraPluginOrderItem[],
   separatorOrderId: string
 ): number => separatorChildCount(items, separatorOrderId);
+
+export const pluginSeparatorMissingMasterSummary = (
+  items: readonly FluxoraPluginOrderItem[],
+  separatorOrderId: string,
+  limit = 20,
+  context: PluginMissingMasterContext = {}
+): PluginMissingMasterSummary => {
+  const separatorIndex = items.findIndex((item) => item.orderId === separatorOrderId);
+  if (separatorIndex < 0 || !items[separatorIndex]?.isSeparator) {
+    return missingMasterSummaryFromMasters([], limit);
+  }
+
+  const uniqueByName = new Map<string, string>();
+  for (let index = separatorIndex + 1; index < items.length; index += 1) {
+    const item = items[index];
+    if (!item || item.isSeparator) {
+      break;
+    }
+
+    sortedPluginMissingMasters(item, context).forEach((master) => {
+      const key = master.toLocaleLowerCase();
+      if (!uniqueByName.has(key)) {
+        uniqueByName.set(key, master);
+      }
+    });
+  }
+
+  return missingMasterSummaryFromMasters([...uniqueByName.values()], limit);
+};
 
 export const isPluginNestedUnderSeparator = (
   items: FluxoraPluginOrderItem[],
@@ -366,7 +539,7 @@ export const pluginStatusText = (item: FluxoraPluginOrderItem | null): string =>
     return 'Locked';
   }
 
-  if (item.missingMasters.length > 0) {
+  if (sortedPluginMissingMasters(item).length > 0) {
     return 'Missing masters';
   }
 

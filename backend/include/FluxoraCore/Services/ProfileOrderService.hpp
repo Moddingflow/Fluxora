@@ -40,6 +40,8 @@ namespace fluxora
         std::wstring modUuid;
         std::wstring separatorTitle;
         std::wstring contentFingerprint;
+        std::vector<std::wstring> overwritesModIds;
+        std::vector<std::wstring> overwrittenByModIds;
     };
 
     class ProfileOrderService final : public IService

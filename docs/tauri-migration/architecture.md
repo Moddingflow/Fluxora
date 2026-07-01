@@ -693,6 +693,12 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `mods.getFileTree`
 - `grassCache.generate`
 
+`mods.listInstalled` and `mods.getOrder` return conflict count fields plus directed
+`overwritesModIds` / `overwrittenByModIds` arrays. The C++ core computes those
+relationships from installed/profile file-owner order; the renderer may use them
+for selection highlighting, separator summaries and scrollbar markers, but must
+not recompute overwrite ownership from raw file paths.
+
 ### Plugins
 
 - `plugins.list`
@@ -701,6 +707,11 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `plugins.deleteSeparator`
 - `plugins.setEnabled`
 - `plugins.setAllEnabled`
+
+`plugins.list` returns plugin metadata read by the C++ core, including declared
+`masterFiles` and currently computed `missingMasters`. The renderer may derive
+status indicators from the current enabled state and collapsed separator groups,
+but must not parse plugin files or invent master dependency data.
 
 ### Downloads and install
 
@@ -724,8 +735,15 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `operations.progress`
 - `operations.cancel`
 - `operations.getStatus`
+- `operations.recentLogs`
 
-`operations.getStatus` is new in the typed contract. It allows renderer recovery after refresh, route changes or bridge reconnects without inventing UI-only operation truth.
+`operations.getStatus` is in the typed contract. It allows renderer and AI recovery after refresh, route changes or bridge reconnects without inventing UI-only operation truth. The Tauri shell keeps a small read-only cache of recent `operations.progress` envelopes and exposes it as a compact status snapshot until the native core grows a broader persistent operation queue.
+
+AI long-running jobs use a separate `fluxora.ai.autonomous-job.v1` / `fluxora.ai.autonomous-job-queue.v1` contract rather than overloading core operation snapshots. The AI queue records job plans, heartbeats, checkpoints, pause/cancel state and final reports for host orchestration, while C++ `operations.*` remains the source of truth for real domain operations and filesystem mutations.
+
+`operations.recentLogs` is a read-only Tauri shell helper for AI/build diagnostics. It tails only Fluxora-owned log files in the app log directory, filters operation-related lines, caps output size and returns typed compact entries. The renderer does not receive arbitrary filesystem access.
+
+`local.filesystemSnapshot` is a read-only AI context tool, not a renderer filesystem permission. It composes existing core-backed Fluxora APIs such as installed mods, mod file trees, plugin load order, profiles, downloads and operation logs into a bounded metadata snapshot for troubleshooting prompts. The snapshot can include relative paths, file kinds, sizes, SKSE DLL signals, missing masters and file-conflict samples, but it cannot read arbitrary OS paths or file contents and it cannot mutate the build.
 
 ## Mapping from current C ABI
 

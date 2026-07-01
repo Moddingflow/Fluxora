@@ -100,7 +100,6 @@
 .flx-button:not(:disabled):active,
 .flx-icon-button:not(:disabled):active,
 .flx-switch:not(:disabled):active,
-.flx-tabs__tab:not(:disabled):active,
 .flx-nav-item:not(:disabled):active {
   transform: translateY(1px);
 }
@@ -459,15 +458,25 @@
   justify-content: center;
   width: var(--flx-status-size, 22px);
   height: var(--flx-status-size, 22px);
-  border: var(--border-w) solid var(--border-default);
+  border: 0;
   border-radius: var(--radius-sm);
   color: var(--flx-conflict-overwrites);
-  background: var(--surface-inset);
+  background: transparent;
 }
 
 .flx-status-dot[data-state="none"] {
+  border-color: transparent;
   color: var(--text-subtle);
-  opacity: 0.72;
+  background: transparent;
+  opacity: 0.42;
+}
+
+.flx-status-dot__icon {
+  width: 72%;
+  height: 72%;
+  background: currentColor;
+  mask: var(--flx-status-icon) center / contain no-repeat;
+  -webkit-mask: var(--flx-status-icon) center / contain no-repeat;
 }
 
 .flx-status-dot[data-state="overwritten"] {
@@ -475,9 +484,7 @@
 }
 
 .flx-status-dot[data-state="mixed"] {
-  color: var(--accent-hover);
-  border-color: var(--border-accent);
-  background: var(--flx-accent-soft);
+  color: var(--flx-conflict-overwrites);
 }
 
 .flx-status-dot[data-state="fully-overwritten"] {
@@ -517,8 +524,7 @@
   transition:
     background-color var(--motion-fast),
     color var(--motion-fast),
-    opacity var(--motion-fast),
-    transform var(--motion-fast);
+    opacity var(--motion-fast);
 }
 
 .flx-tabs__tab[data-active="true"] {

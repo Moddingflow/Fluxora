@@ -26,9 +26,11 @@ namespace fluxora
         bool isEnabled{true};
         bool isMaster{false};
         bool isLight{false};
+        bool hasLightFlag{false};
         bool isLocked{false};
         std::wstring lockReason;
         std::wstring separatorTitle;
+        std::vector<std::wstring> masterFiles;
         std::vector<std::wstring> missingMasters;
     };
 

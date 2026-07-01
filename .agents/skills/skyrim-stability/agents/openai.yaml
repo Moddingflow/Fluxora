@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skyrim Stability"
+  short_description: "Diagnose Skyrim CTD and ILS stability issues"
+  default_prompt: "Use $skyrim-stability to diagnose Skyrim CTD, ILS, plugin conflicts, save health, and mod compatibility."

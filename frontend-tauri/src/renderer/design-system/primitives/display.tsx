@@ -1,6 +1,5 @@
 import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
 
-import { Icon } from '../icons';
 import { cx } from './utils';
 
 export type CardVariant = 'panel' | 'raised' | 'soft' | 'inset' | 'hero';
@@ -60,6 +59,14 @@ const STATUS_LABELS: Record<StatusDotState, string> = {
   'fully-overwritten': 'Fully overwritten'
 };
 
+const STATUS_ICON_URLS: Record<StatusDotState, string | null> = {
+  none: null,
+  overwritten: new URL('../../../../../Icons/conflict-overwritten-minus.svg', import.meta.url).href,
+  overwrites: new URL('../../../../../Icons/conflict-overwrites-plus.svg', import.meta.url).href,
+  mixed: new URL('../../../../../Icons/conflict-overwrites-plus.svg', import.meta.url).href,
+  'fully-overwritten': new URL('../../../../../Icons/conflict-fully-overwritten-dot.svg', import.meta.url).href
+};
+
 export interface StatusDotProps extends HTMLAttributes<HTMLSpanElement> {
   label?: string;
   size?: number;
@@ -76,8 +83,13 @@ export function StatusDot({
   ...rest
 }: StatusDotProps) {
   const accessibleLabel = label ?? STATUS_LABELS[state];
-  const mergedStyle: CSSProperties & Record<'--flx-status-size', string> = {
+  const iconUrl = STATUS_ICON_URLS[state];
+  const mergedStyle: CSSProperties & {
+    '--flx-status-icon'?: string;
+    '--flx-status-size': string;
+  } = {
     '--flx-status-size': `${size}px`,
+    ...(iconUrl ? { '--flx-status-icon': `url("${iconUrl}")` } : {}),
     ...style
   };
 
@@ -91,17 +103,7 @@ export function StatusDot({
       title={title ?? accessibleLabel}
       {...rest}
     >
-      <Icon
-        name={
-          state === 'overwrites'
-            ? 'conflict-plus'
-            : state === 'overwritten'
-              ? 'conflict-minus'
-              : 'conflict-dot'
-        }
-        size={Math.round(size * 0.58)}
-        strokeWidth={2.2}
-      />
+      {iconUrl ? <span className="flx-status-dot__icon" aria-hidden="true" /> : null}
     </span>
   );
 }

@@ -1,0 +1,35 @@
+{
+  "schema": "fluxora.skill.manifest.v1",
+  "id": "mo2-transfer-assistant",
+  "displayName": "MO2 transfer assistant",
+  "version": "0.1.0",
+  "origin": "built-in",
+  "description": "Helps map MO2 transfer steps onto Fluxora-owned import surfaces.",
+  "allowedTools": [
+    "projects.create",
+    "projects.openConfig",
+    "buildPaths.get",
+    "buildPaths.save",
+    "profiles.list",
+    "profiles.create",
+    "mods.listInstalled",
+    "plugins.list",
+    "downloads.importFile",
+    "archives.install",
+    "operations.getStatus"
+  ],
+  "requiredProviderCapabilities": ["streaming", "tool-planning"],
+  "examplePrompts": [
+    "Help transfer my MO2 profile",
+    "Plan an MO2 import into Fluxora"
+  ],
+  "validationChecklist": [
+    "No raw filesystem scan is requested by the skill.",
+    "Every path comes from user-selected Fluxora UI state.",
+    "Imported archives and profiles are verified after approved execution."
+  ],
+  "securityNotes": [
+    "MO2 paths are user data and must not be sent raw unless the user opted into AI context.",
+    "The skill cannot add filesystem tools beyond the safe action catalog."
+  ]
+}

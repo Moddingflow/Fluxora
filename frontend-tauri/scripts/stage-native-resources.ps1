@@ -6,10 +6,13 @@ $projectRoot = Resolve-Path -LiteralPath (Join-Path $scriptRoot '..')
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $projectRoot '..')
 $backendBuild = Join-Path $repoRoot 'build\backend'
 $resourcesDir = Join-Path $projectRoot 'src-tauri\resources\native'
+$tauriRustRoot = Join-Path $projectRoot 'src-tauri'
 $configuration = if ($env:FLUXORA_NATIVE_CONFIGURATION) { $env:FLUXORA_NATIVE_CONFIGURATION } else { 'Release' }
 $requiredArtifacts = @('FluxoraBridgeHost.exe', 'FluxoraCore.dll')
 $isWindows = [string]::Equals($env:OS, 'Windows_NT', [System.StringComparison]::OrdinalIgnoreCase)
 $optionalArtifacts = @()
+$aiHostCargoName = if ($isWindows) { 'fluxora-ai-host.exe' } else { 'fluxora-ai-host' }
+$aiHostResourceName = if ($isWindows) { 'FluxoraAIHost.exe' } else { 'FluxoraAIHost' }
 
 if ($isWindows) {
     $requiredArtifacts += 'FluxoraVfs.dll'
@@ -63,5 +66,23 @@ foreach ($artifact in $optionalArtifacts) {
         Copy-Item -LiteralPath $source -Destination (Join-Path $resourcesDir $artifact) -Force
     }
 }
+
+Push-Location $tauriRustRoot
+try {
+    & cargo build --release --bin fluxora-ai-host
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo build --release --bin fluxora-ai-host failed with exit code $LASTEXITCODE."
+    }
+}
+finally {
+    Pop-Location
+}
+
+$aiHostSource = Join-Path $tauriRustRoot (Join-Path 'target\release' $aiHostCargoName)
+if (-not (Test-Path -LiteralPath $aiHostSource -PathType Leaf)) {
+    throw "Fluxora AI host binary was not found at '$aiHostSource'."
+}
+
+Copy-Item -LiteralPath $aiHostSource -Destination (Join-Path $resourcesDir $aiHostResourceName) -Force
 
 Write-Host "Staged native resources in $resourcesDir"

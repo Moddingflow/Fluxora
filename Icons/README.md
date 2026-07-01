@@ -20,9 +20,40 @@ The following SVG assets are original Lucide icons downloaded from
 - `circle-check.svg`
 - `circle-x.svg`
 - `folder-open.svg`
+- `folder-tree.svg`
+- `git-compare-arrows.svg`
 - `toggle-left.svg`
 - `toggle-right.svg`
+- `triangle-alert.svg`
 - `trash-2.svg`
 
 Lucide is distributed under the ISC license and supports commercial use. The
 copied license text is stored in `LUCIDE-LICENSE.txt`.
+
+`folder-tree.svg` and `git-compare-arrows.svg` are used by the Tauri mod
+details window tabs. `circle-x.svg` is also used by AI chat tab close buttons.
+
+# Bootstrap missing-master icon
+
+The following SVG asset is the original Bootstrap Icons SVG downloaded from
+`twbs/icons` tag `v1.13.1` and is used by the SkyrimSE/AE plugin
+missing-master status indicator:
+
+- `exclamation-lg.svg`
+
+Bootstrap Icons are distributed under the MIT license and support commercial
+use. The copied license text is stored in `BOOTSTRAP-ICONS-LICENSE.txt`.
+
+# Material Design conflict icons
+
+The following SVG assets are original filled Material Design Icons downloaded
+from `@material-design-icons/svg` version `0.14.15` and are used by the Tauri
+mod conflict indicators:
+
+- `conflict-fully-overwritten-dot.svg` (from `filled/circle.svg`)
+- `conflict-overwritten-minus.svg` (from `filled/remove.svg`)
+- `conflict-overwrites-plus.svg` (from `filled/add.svg`)
+
+Material Design Icons are distributed under the Apache License 2.0 and support
+commercial use. The copied license text is stored in
+`MATERIAL-DESIGN-ICONS-LICENSE.txt`.

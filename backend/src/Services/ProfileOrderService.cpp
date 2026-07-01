@@ -191,7 +191,9 @@ namespace fluxora
                 mod.isPatch,
                 record.mod.uuid,
                 {},
-                record.mod.contentFingerprint
+                record.mod.contentFingerprint,
+                mod.overwritesModIds,
+                mod.overwrittenByModIds
             };
         }
 
@@ -225,7 +227,9 @@ namespace fluxora
                 mod.isPatch,
                 record.mod.uuid,
                 {},
-                mod.contentFingerprint
+                mod.contentFingerprint,
+                summary.overwritesModIds,
+                summary.overwrittenByModIds
             };
         }
 
@@ -339,6 +343,20 @@ namespace fluxora
             return items;
         }
 
+        std::vector<ProfileModOrderItem> buildLiveModOrder(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName,
+            const std::filesystem::path& modsDirectory,
+            const std::vector<ProfileOrderItemRecord>& records)
+        {
+            const std::vector<ModFileSummaryRecord> summaries =
+                InstanceMetadataStore::summarizeProfileModFiles(
+                    projectDirectory,
+                    profileName,
+                    modsDirectory);
+            return buildModOrder(records, summaries);
+        }
+
         std::vector<ProfileModOrderItem> buildModOrder(
             const std::vector<ProfileOrderItemRecord>& records)
         {
@@ -409,7 +427,8 @@ namespace fluxora
                 projectDirectory,
                 profileName,
                 pathSettings_.modsDirectory(projectDirectory));
-        return buildModOrder(records);
+        const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
+        return buildLiveModOrder(projectDirectory, profileName, modsDirectory, records);
     }
 
     std::vector<ProfileModOrderItem> ProfileOrderService::listCachedModOrder(
@@ -426,7 +445,12 @@ namespace fluxora
                 projectDirectory,
                 profileName,
                 pathSettings_.modsDirectory(projectDirectory));
-        return buildModOrder(records);
+        const std::vector<ModFileSummaryRecord> summaries =
+            InstanceMetadataStore::summarizeCachedProfileModFilesForLaunch(
+                projectDirectory,
+                profileName,
+                pathSettings_.modsDirectory(projectDirectory));
+        return buildModOrder(records, summaries);
     }
 
     std::vector<ProfileModOrderItem> ProfileOrderService::createModSeparator(
@@ -447,7 +471,8 @@ namespace fluxora
                 title,
                 targetIndex,
                 pathSettings_.modsDirectory(projectDirectory));
-        return buildModOrder(records);
+        const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
+        return buildLiveModOrder(projectDirectory, profileName, modsDirectory, records);
     }
 
     std::vector<ProfileModOrderItem> ProfileOrderService::deleteModSeparator(
@@ -466,7 +491,8 @@ namespace fluxora
                 profileName,
                 separatorId,
                 pathSettings_.modsDirectory(projectDirectory));
-        return buildModOrder(records);
+        const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
+        return buildLiveModOrder(projectDirectory, profileName, modsDirectory, records);
     }
 
     std::vector<ProfileModOrderItem> ProfileOrderService::moveModOrderItem(
@@ -487,7 +513,8 @@ namespace fluxora
                 orderItemId,
                 targetIndex,
                 pathSettings_.modsDirectory(projectDirectory));
-        return buildModOrder(records);
+        const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
+        return buildLiveModOrder(projectDirectory, profileName, modsDirectory, records);
     }
 
     bool ProfileOrderService::isInitialized() const noexcept

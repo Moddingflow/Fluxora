@@ -19,12 +19,35 @@ describe('mods pane redesign', () => {
     expect(app).toContain('visibleModWindow.items.map');
     expect(app).toContain('<StatusDot');
     expect(app).toContain('modTableStatusView(item)');
+    expect(app).toContain("const visibleConflictHighlight =");
+    expect(app).toContain("item.isSeparator ? (isCollapsed ? conflictHighlight : 'none') : conflictHighlight");
+    expect(app).toContain('data-conflict-highlight={visibleConflictHighlight}');
+    expect(app).toContain("item.isSeparator ? (isCollapsed ? conflictMarkerStates : []) : conflictMarkerStates");
+    expect(app).toContain('data-conflict-status={visibleConflictMarkerStates.join');
+    expect(app).toContain('modConflictScrollbarMarkers.map');
+    expect(app).toContain('modConflictMarkerStatesForHighlight(highlight)');
+    expect(app).toContain('modConflictMarkerStatesForHighlight(conflictHighlight)');
+    expect(app).toContain('className="mod-list-row__status mod-separator-status"');
+    expect(app).toContain('label={status.overwrite.title}');
+    expect(app).toContain('states={visibleConflictMarkerStates}');
+    expect(app).not.toContain('modSeparatorConflictMarkerStates(modsWorkspace.items, item.orderId)');
+    expect(app).not.toContain('modConflictHighlightFromMarkerStates');
+    expect(app).not.toContain('mergeModConflictMarkerStates');
+    expect(app).not.toContain('const statusMarkers = item.isSeparator');
     expect(app).toContain('window.fluxora.mods.setEnabled');
     expect(app).toContain('window.fluxora.mods.moveOrderItem');
     expect(app).toContain('window.fluxora.mods.createSeparator');
+    expect(app).toMatch(
+      /await window\.fluxora\.mods\.setEnabled[\s\S]*await loadModsWorkspace\(project, backgroundReorderLoadOptions\);/
+    );
+    expect(app).toMatch(
+      /await window\.fluxora\.mods\.setAllEnabled[\s\S]*await loadModsWorkspace\(project, backgroundReorderLoadOptions\);/
+    );
     expect(app).not.toContain('className="mod-overwrite-check"');
     expect(app).not.toContain('className="build-pane__tools mods-pane-toolbar"');
     expect(app).not.toContain('aria-label="Mod commands"');
+    expect(app).toContain('MissingMastersStatus');
+    expect(app).toContain('showPluginMissingMastersStatus');
   });
 
   it('exposes bulk enable and disable actions from mod and plugin context menus', () => {
@@ -45,6 +68,12 @@ describe('mods pane redesign', () => {
 
   it('keeps the table surface visually aligned with the build-page UI-kit', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+    const iconsReadme = readText('Icons', 'README.md');
+    const exclamationIcon = readText('Icons', 'exclamation-lg.svg');
+    const missingMasterTriggerBlock =
+      styles.match(/\.plugin-missing-master-trigger\s*\{[^}]*\}/)?.[0] ?? '';
+    const missingMasterHoverBlock =
+      styles.match(/\.plugin-missing-master-trigger:hover,\s*\n\.plugin-missing-master-trigger:focus-visible\s*\{[^}]*\}/)?.[0] ?? '';
     const primitives = readText(
       'frontend-tauri',
       'src',
@@ -61,10 +90,34 @@ describe('mods pane redesign', () => {
     expect(styles).not.toMatch(/\.pane-search:focus-within\s*\{[^}]*box-shadow:/);
     expect(styles).toContain('.mods-pane-toolbar');
     expect(styles).toContain('.mod-list__head');
-    expect(styles).toContain('grid-template-columns: minmax(180px, 1fr) minmax(78px, 88px) minmax(78px, 88px) minmax(110px, 124px);');
+    expect(styles).toContain('grid-template-columns: minmax(180px, 1fr) minmax(78px, 88px) minmax(78px, 88px) minmax(56px, 64px);');
     expect(styles).toContain('height: 48px;');
     expect(styles).toContain('.mod-separator-cell');
-    expect(styles).toContain('.mod-status-chip');
+    expect(styles).toContain('.mod-overwrite-state-cell');
+    expect(styles).toContain('.mod-list-row[data-conflict-highlight="overwrites"]');
+    expect(styles).toContain('.mod-list-row:not(.mod-list-row--separator)[data-conflict-highlight="overwrites"]::before');
+    expect(styles).not.toContain('.mod-list-row[data-conflict-highlight="overwrites"]::before');
+    expect(styles).toContain('.mod-list-row:not(.mod-list-row--separator)[data-conflict-highlight="mixed"]');
+    expect(styles).toContain('.mod-list-row--separator[data-conflict-highlight="overwrites"]');
+    expect(styles).toContain('.mod-list-row--separator[data-conflict-highlight="overwrites"] .mod-separator-line');
+    expect(styles).toContain('.mod-list-row--separator[data-conflict-highlight="overwritten"]');
+    expect(styles).toContain('.mod-list-row--separator[data-conflict-highlight="overwritten"] .mod-separator-line');
+    expect(styles).not.toContain('.mod-list-row--separator[data-conflict-highlight="mixed"]');
+    expect(styles).toContain('.mod-conflict-scrollbar');
+    expect(styles).toContain('.mod-conflict-markers > .flx-status-dot');
+    expect(styles).toContain('.mod-separator-conflicts');
+    expect(styles).toContain('.mod-separator-status');
+    expect(styles).toContain('.plugin-status-cell');
+    expect(styles).toContain('.plugin-missing-master-tooltip');
+    expect(missingMasterTriggerBlock).not.toContain('transform');
+    expect(missingMasterHoverBlock).not.toContain('transform');
+    expect(exclamationIcon).toContain('viewBox="0 0 16 16"');
+    expect(iconsReadme).toContain('exclamation-lg.svg');
+    expect(iconsReadme).toContain('BOOTSTRAP-ICONS-LICENSE.txt');
+    expect(iconsReadme).toContain('commercial use');
+    expect(styles).toMatch(/\.mod-separator-status\s*\{[^}]*grid-column: 4 \/ 5;[^}]*\}/);
+    expect(styles).not.toContain('.mod-conflict-markers > span');
+    expect(styles).not.toContain('.mod-status-chip');
     expect(primitives).toContain('.flx-status-dot[data-state="none"]');
     expect(primitives).toContain('.flx-status-dot[data-state="mixed"]');
   });

@@ -45,13 +45,15 @@ const stats: ProjectLibraryStats = {
   downloads: '-',
   lastLaunch: 'Jun 24, 2026',
   mods: '248',
-  plugins: '92',
   size: '32.4 GB'
 };
 
 const noop = () => undefined;
 
-const renderLibrary = (selectedProject: FluxoraProject | null = projects[0]) =>
+const renderLibrary = (
+  selectedProject: FluxoraProject | null = projects[0],
+  selectedStats: ProjectLibraryStats = stats
+) =>
   renderToStaticMarkup(
     React.createElement(LibraryHome, {
       catalogPath: 'D:\\Fluxora\\Configs',
@@ -67,11 +69,11 @@ const renderLibrary = (selectedProject: FluxoraProject | null = projects[0]) =>
       onSelectProject: noop,
       projectMenuId: null,
       projects,
-      projectStats: () => stats,
+      projectStats: () => selectedStats,
       renderProjectRowMenu: () => null,
       searchText: '',
       selectedProject,
-      selectedProjectStats: selectedProject ? stats : null
+      selectedProjectStats: selectedProject ? selectedStats : null
     })
   );
 
@@ -89,6 +91,41 @@ describe('library home redesign', () => {
     expect(markup).toContain('New build');
   });
 
+  it('renders the selected build summary without plugin counts or clipped accent badges', () => {
+    const markup = renderLibrary();
+
+    expect(markup).toContain('aria-label="Skyrim graphics overhaul summary"');
+    expect(markup).toContain('Skyrim Special Edition');
+    expect(markup).toContain('<dt>Mods</dt>');
+    expect(markup).toContain('<dd>248</dd>');
+    expect(markup).toContain('<dt>Last launched</dt>');
+    expect(markup).toContain('<dd>Jun 24, 2026</dd>');
+    expect(markup).toContain('<dt>Size</dt>');
+    expect(markup).toContain('<dd>32.4 GB</dd>');
+    expect(markup).toContain('Project path');
+    expect(markup).toContain('Open folder');
+    expect(markup).toContain('Open');
+    expect(markup).not.toContain('<dt>Plugins</dt>');
+    expect(markup).not.toContain('92');
+    expect(markup).not.toContain('data-tone="accent"');
+  });
+
+  it('keeps the summary metrics visible with instant fallback values', () => {
+    const markup = renderLibrary(projects[0], {
+      disabledMods: '-',
+      downloads: '-',
+      lastLaunch: 'Not tracked',
+      mods: '-',
+      size: '-'
+    });
+
+    expect(markup).toContain('<dt>Mods</dt>');
+    expect(markup).toContain('<dd>Not indexed</dd>');
+    expect(markup).toContain('<dt>Last launched</dt>');
+    expect(markup).toContain('<dd>Not launched</dd>');
+    expect(markup).toContain('<dt>Size</dt>');
+  });
+
   it('shows the composed choose-build empty state until a build is selected', () => {
     const markup = renderLibrary(null);
 
@@ -102,6 +139,9 @@ describe('library home redesign', () => {
     expect(styles).toContain('grid-template-columns: 290px minmax(0, 1fr);');
     expect(styles).toContain('min-height: 56px;');
     expect(styles).toContain('.library-build-actions[data-menu-open="true"]');
+    expect(styles).toContain('grid-template-columns: repeat(3, minmax(140px, 1fr));');
+    expect(styles).toContain('.library-detail-path-row');
+    expect(styles).not.toContain('.library-detail-actions');
     expect(styles).not.toContain('activity-banner');
     expect(styles).not.toContain('library-message');
     expect(styles).not.toContain('.library-build-open {');

@@ -107,6 +107,27 @@ describe('operation overlays', () => {
     expect(markup).not.toContain('Deleting mod');
   });
 
+  it('renders download deletion through the same full loading splash pattern', () => {
+    const markup = renderOverlay(
+      overlay({ kind: 'download-delete', title: 'Удаляем файл', percent: 42 })
+    );
+
+    expect(markup).toContain('flx-loading-splash');
+    expect(markup).toContain('operation-overlay--download-delete');
+    expect(markup).toContain('Удаляем файл');
+    expect(markup).toContain('42%');
+    expect(markup).toContain('aria-valuenow="42"');
+    expect(markup).not.toContain('operation-overlay__panel');
+  });
+
+  it('starts download deletion with a loading splash before calling the native delete API', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+
+    expect(app).toMatch(
+      /const deleteDownload = async \(entry: FluxoraDownloadEntry\) => \{[\s\S]*beginOperationOverlay\(\{[\s\S]*kind: 'download-delete'[\s\S]*await window\.fluxora\.downloads\.delete[\s\S]*closeOperationOverlay\(operationId\);/
+    );
+  });
+
   it('keeps the mod deletion splash progress bar at the standard loading width', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
     const loadingSplashRule =
@@ -115,6 +136,7 @@ describe('operation overlays', () => {
     expect(loadingSplashRule).toContain('display: flex;');
     expect(loadingSplashRule).toContain('align-items: center;');
     expect(loadingSplashRule).toContain('justify-content: center;');
+    expect(styles).toContain('.operation-overlay--download-delete .flx-loading-splash__panel');
   });
 
   it('renders user-safe error states as alerts', () => {

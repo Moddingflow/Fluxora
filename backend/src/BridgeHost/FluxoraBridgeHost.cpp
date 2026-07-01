@@ -528,7 +528,18 @@ namespace
                 L"deleteInstalled",
                 L"checkUpdates",
                 L"clearOverwrite",
-                L"getFileTree"
+                L"getFileTree",
+                L"readTextFile",
+                L"saveTextFile"
+            });
+        writer.endObject();
+        writer.key(L"textFiles").beginObject();
+        writer.field(L"state", L"available");
+        writer.stringArray(
+            L"supports",
+            std::vector<std::wstring>{
+                L"read",
+                L"save"
             });
         writer.endObject();
         writer.key(L"plugins").beginObject();
@@ -1501,6 +1512,75 @@ namespace
             });
     }
 
+    std::wstring payloadReadModTextFile(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring modPath = requiredStringField(params, L"modPath");
+        const std::wstring relativePath = requiredStringField(params, L"relativePath");
+        return payloadFromCoreJson(
+            L"core.modTextFileReadFailed",
+            [&projectDirectory, &modPath, &relativePath](wchar_t* buffer, int length)
+            {
+                return fluxora_read_mod_text_file(
+                    projectDirectory.c_str(),
+                    modPath.c_str(),
+                    relativePath.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadSaveModTextFile(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring modPath = requiredStringField(params, L"modPath");
+        const std::wstring relativePath = requiredStringField(params, L"relativePath");
+        const std::wstring content = optionalStringField(&params, L"content");
+        return payloadFromCoreJson(
+            L"core.modTextFileSaveFailed",
+            [&projectDirectory, &modPath, &relativePath, &content](wchar_t* buffer, int length)
+            {
+                return fluxora_save_mod_text_file(
+                    projectDirectory.c_str(),
+                    modPath.c_str(),
+                    relativePath.c_str(),
+                    content.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadReadTextFile(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring filePath = requiredStringField(params, L"path");
+        return payloadFromCoreJson(
+            L"core.textFileReadFailed",
+            [&filePath](wchar_t* buffer, int length)
+            {
+                return fluxora_read_text_file(filePath.c_str(), buffer, length);
+            });
+    }
+
+    std::wstring payloadSaveTextFile(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring filePath = requiredStringField(params, L"path");
+        const std::wstring content = optionalStringField(&params, L"content");
+        return payloadFromCoreJson(
+            L"core.textFileSaveFailed",
+            [&filePath, &content](wchar_t* buffer, int length)
+            {
+                return fluxora_save_text_file(
+                    filePath.c_str(),
+                    content.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadListPlugins(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -2241,6 +2321,22 @@ namespace
         if (request.method == L"mods.getFileTree")
         {
             return payloadGetModFileTree(request);
+        }
+        if (request.method == L"mods.readTextFile")
+        {
+            return payloadReadModTextFile(request);
+        }
+        if (request.method == L"mods.saveTextFile")
+        {
+            return payloadSaveModTextFile(request);
+        }
+        if (request.method == L"textFiles.read")
+        {
+            return payloadReadTextFile(request);
+        }
+        if (request.method == L"textFiles.save")
+        {
+            return payloadSaveTextFile(request);
         }
         if (request.method == L"plugins.list")
         {

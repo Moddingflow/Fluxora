@@ -4,8 +4,6 @@ import type { ProjectLibraryStats } from './LibraryHome';
 export interface ProjectRuntimeSummary {
   modCount?: number;
   disabledModCount?: number;
-  enabledPluginCount?: number;
-  pluginCount?: number;
   downloadsCount?: number;
 }
 
@@ -14,8 +12,6 @@ const projectMetricKeys = {
   size: ['sizeBytes', 'totalBytes', 'projectSizeBytes', 'installSizeBytes', 'diskSizeBytes'],
   mods: ['modCount', 'modsCount', 'installedModCount', 'totalMods'],
   disabledMods: ['disabledModCount', 'disabledMods', 'inactiveModCount'],
-  plugins: ['pluginCount', 'pluginsCount', 'totalPlugins'],
-  enabledPlugins: ['enabledPluginCount', 'enabledPlugins', 'activePluginCount'],
   downloads: ['downloadCount', 'downloadsCount', 'queuedDownloadCount']
 } as const;
 
@@ -117,10 +113,6 @@ export const buildProjectLibraryStats = (
   project: FluxoraProject,
   runtime?: ProjectRuntimeSummary
 ): ProjectLibraryStats => {
-  const enabledPlugins =
-    runtime?.enabledPluginCount ?? readNumberMetric(project, projectMetricKeys.enabledPlugins);
-  const pluginCount = runtime?.pluginCount ?? readNumberMetric(project, projectMetricKeys.plugins);
-
   return {
     lastLaunch: formatProjectDate(readTextMetric(project, projectMetricKeys.lastLaunch)),
     size: formatProjectBytes(readNumberMetric(project, projectMetricKeys.size)),
@@ -128,10 +120,6 @@ export const buildProjectLibraryStats = (
     disabledMods: formatOptionalCount(
       runtime?.disabledModCount ?? readNumberMetric(project, projectMetricKeys.disabledMods)
     ),
-    plugins:
-      enabledPlugins !== null && enabledPlugins !== undefined && pluginCount !== null && pluginCount !== undefined
-        ? `${enabledPlugins}/${pluginCount}`
-        : formatOptionalCount(pluginCount),
     downloads: formatOptionalCount(
       runtime?.downloadsCount ?? readNumberMetric(project, projectMetricKeys.downloads)
     )

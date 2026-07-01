@@ -1,5 +1,6 @@
 import { fluxoraLogo } from '../../design-system/assets';
 import { Icon } from '../../design-system/icons';
+import geminiIcon from '../../../../../Icons/gemini.svg';
 
 export type AppTitlebarMode = 'main' | 'settings';
 
@@ -7,8 +8,10 @@ export interface AppTitlebarProps {
   mode?: AppTitlebarMode;
   showShortcuts?: boolean;
   title?: string;
+  aiActive?: boolean;
   homeActive?: boolean;
   settingsActive?: boolean;
+  onToggleAi?: () => void | Promise<void>;
   onHome?: () => void | Promise<void>;
   onRefresh?: () => void | Promise<void>;
   onOpenSettings?: () => void | Promise<void>;
@@ -31,8 +34,10 @@ export function AppTitlebar({
   mode = 'main',
   showShortcuts = true,
   title,
+  aiActive = false,
   homeActive = false,
   settingsActive = false,
+  onToggleAi,
   onHome,
   onRefresh,
   onOpenSettings,
@@ -91,6 +96,20 @@ export function AppTitlebar({
           >
             <Icon name="settings" size={15} />
           </button>
+          {onToggleAi ? (
+            <button
+              aria-keyshortcuts="Control+Shift+G"
+              aria-label={aiActive ? 'Close AI chat' : 'Open AI chat'}
+              aria-pressed={aiActive}
+              className="titlebar__shortcut titlebar__shortcut--ai"
+              data-active={aiActive ? 'true' : undefined}
+              title="Toggle AI chat (Ctrl+Shift+G)"
+              type="button"
+              onClick={() => runTitlebarAction(onToggleAi)}
+            >
+              <img className="titlebar__shortcut-icon" src={geminiIcon} alt="" />
+            </button>
+          ) : null}
         </nav>
       ) : null}
 

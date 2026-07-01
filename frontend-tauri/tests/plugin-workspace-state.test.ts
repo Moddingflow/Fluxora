@@ -3,13 +3,18 @@ import { describe, expect, it } from 'vitest';
 import {
   canDragPluginOrderItem,
   emptyPluginWorkspaceState,
+  enabledPluginNameKeys,
   filterPluginOrderItems,
   isPluginNestedUnderSeparator,
+  isSkyrimMissingMasterStatusProject,
   mergePendingPluginEnabledStates,
+  pluginMissingMasterSummary,
   pluginCapabilityView,
   pluginHexIndex,
   pluginSeparatorChildCount,
+  pluginSeparatorMissingMasterSummary,
   pluginSourceLabel,
+  pluginSourceModKey,
   pluginStatusText,
   pluginTypeLabel,
   pluginWorkspaceReducer,
@@ -44,8 +49,10 @@ const pluginItem = (
   isEnabled: true,
   isMaster: false,
   isLight: false,
+  hasLightFlag: false,
   isLocked: false,
   lockReason: '',
+  masterFiles: [],
   missingMasters: [],
   ...extra
 });
@@ -154,6 +161,23 @@ describe('plugin workspace state', () => {
     expect(targetIndexForPluginDrop(items, 'plugin_skyui', 'plugin_skyrim', 'after')).toBe(1);
     expect(targetIndexForPluginDrop(items, 'plugin_light', 'plugin_skyui', 'before')).toBe(2);
     expect(targetIndexForPluginDrop(items, 'plugin_skyui', 'plugin_light', 'before')).toBeNull();
+  });
+
+  it('keeps existing rows available while a refresh load is running', () => {
+    const loaded = pluginWorkspaceReducer(
+      { ...emptyPluginWorkspaceState(), selectedOrderId: 'plugin_skyui' },
+      { type: 'items-loaded', items }
+    );
+    const loading = pluginWorkspaceReducer(loaded, { type: 'load-started' });
+
+    expect(loading.loadState).toBe('loading');
+    expect(loading.items.map((item) => item.orderId)).toEqual([
+      'plugin_skyrim',
+      'sep_patches',
+      'plugin_skyui',
+      'plugin_light'
+    ]);
+    expect(loading.selectedOrderId).toBe('plugin_skyui');
   });
 
   it('tracks ctrl, shift and select-all selection across visible plugin rows', () => {
@@ -383,6 +407,105 @@ describe('plugin workspace state', () => {
     expect(
       pluginSourceLabel(pluginItem('plugin_game_data', 'Loose.esp', 4, { sourceMod: '' }))
     ).toBe('game data');
+  });
+
+  it('summarizes missing master metadata for the SkyrimSE status tooltip', () => {
+    const masters = Array.from({ length: 24 }, (_value, index) =>
+      index === 0 ? '  zed.esm  ' : `Master${String(index).padStart(2, '0')}.esm`
+    );
+    const summary = pluginMissingMasterSummary(
+      pluginItem('plugin_missing', 'MissingPatch.esp', 4, {
+        missingMasters: ['Alpha.esm', ...masters, 'alpha.esm', '']
+      })
+    );
+
+    expect(summary.totalCount).toBe(25);
+    expect(summary.visibleMasters).toHaveLength(20);
+    expect(summary.visibleMasters[0]).toBe('Alpha.esm');
+    expect(summary.visibleMasters).not.toContain('zed.esm');
+    expect(summary.hiddenCount).toBe(5);
+    expect(isSkyrimMissingMasterStatusProject(project({ supportsPlugins: true }))).toBe(true);
+    expect(
+      isSkyrimMissingMasterStatusProject({
+        ...project({ supportsPlugins: true }),
+        templateId: 'fallout-4',
+        uiTemplateId: 'fallout',
+        gameName: 'Fallout 4'
+      })
+    ).toBe(false);
+  });
+
+  it('derives visible missing masters from declared masters and current enabled plugins', () => {
+    const runtimeItems = [
+      pluginItem('plugin_required', 'Required.esm', 0, {
+        isMaster: true,
+        sourceMod: 'Required Master'
+      }),
+      pluginItem('plugin_patch', 'Patch.esp', 1, {
+        masterFiles: ['Required.esm', 'Missing.esm'],
+        missingMasters: []
+      })
+    ];
+    const context = {
+      enabledPluginNameKeys: enabledPluginNameKeys(runtimeItems)
+    };
+
+    expect(pluginMissingMasterSummary(runtimeItems[1], 20, context).visibleMasters).toEqual([
+      'Missing.esm'
+    ]);
+
+    const disabledRequired = runtimeItems.map((item) =>
+      item.orderId === 'plugin_required' ? { ...item, isEnabled: false } : item
+    );
+    expect(
+      pluginMissingMasterSummary(disabledRequired[1], 20, {
+        enabledPluginNameKeys: enabledPluginNameKeys(disabledRequired)
+      }).visibleMasters
+    ).toEqual(['Missing.esm', 'Required.esm']);
+
+    expect(
+      pluginMissingMasterSummary({ ...runtimeItems[1], isEnabled: false }, 20, context).totalCount
+    ).toBe(0);
+
+    const disabledSourceModNameKeys = new Set([pluginSourceModKey('Required Master')]);
+    expect(
+      pluginMissingMasterSummary(runtimeItems[1], 20, {
+        disabledSourceModNameKeys,
+        enabledPluginNameKeys: enabledPluginNameKeys(runtimeItems, disabledSourceModNameKeys)
+      }).visibleMasters
+    ).toEqual(['Missing.esm', 'Required.esm']);
+  });
+
+  it('aggregates visible missing masters for a collapsed plugin separator', () => {
+    const groupedItems = [
+      pluginItem('plugin_skyrim', 'Skyrim.esm', 0, {
+        isLocked: true,
+        isMaster: true,
+        sourceMod: 'Skyrim Special Edition'
+      }),
+      separatorItem('sep_patches', 'Late patches', 1),
+      pluginItem('plugin_skyui', 'SkyUI.esp', 2, {
+        masterFiles: ['Skyrim.esm', 'Update.esm'],
+        missingMasters: []
+      }),
+      pluginItem('plugin_disabled', 'DisabledPatch.esp', 3, {
+        isEnabled: false,
+        masterFiles: ['MissingWhileDisabled.esm'],
+        missingMasters: ['MissingWhileDisabled.esm']
+      })
+    ];
+    const context = {
+      enabledPluginNameKeys: enabledPluginNameKeys(groupedItems)
+    };
+
+    expect(
+      pluginSeparatorMissingMasterSummary(
+        groupedItems,
+        'sep_patches',
+        20,
+        context
+      ).visibleMasters
+    ).toEqual(['Update.esm']);
   });
 
   it('describes unsupported plugin capabilities without calling the bridge domain path', () => {

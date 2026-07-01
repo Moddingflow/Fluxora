@@ -16,12 +16,14 @@
 #include "FluxoraCore/Services/ModOrganizerImportService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/NexusModsAuthService.hpp"
+#include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Services/PluginService.hpp"
 #include "FluxoraCore/Services/ProfileOrderService.hpp"
 #include "FluxoraCore/Services/ProfileService.hpp"
 #include "FluxoraCore/Services/ProjectService.hpp"
 #include "FluxoraCore/Services/TemplateService.hpp"
 #include "FluxoraCore/Services/VirtualFileSystemService.hpp"
+#include "FluxoraCore/Storage/AtomicFileStore.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
@@ -32,6 +34,7 @@
 #include <cwchar>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -50,6 +53,7 @@ namespace
     thread_local std::wstring lastBufferedOutput;
     thread_local bool hasLastBufferedOutput = false;
     fluxora::Core* currentCore = nullptr;
+    constexpr std::uintmax_t maxTextEditorFileBytes = 5ULL * 1024ULL * 1024ULL;
 
     bool isBlank(const wchar_t* value);
     fluxora::Core& core();
@@ -1291,6 +1295,8 @@ namespace
         writer.field(L"id", mod.id.wstring());
         writer.field(L"name", mod.name);
         writer.field(L"version", mod.version);
+        writer.field(L"installedAt", mod.installedAt);
+        writer.field(L"updatedAt", mod.updatedAt);
         writer.field(L"latestVersion", mod.latestVersion);
         writer.field(L"lastCheckedAt", mod.lastCheckedAt);
         writer.field(L"updateStatus", mod.updateStatus);
@@ -1307,6 +1313,8 @@ namespace
         writer.field(L"isLocal", mod.isLocal);
         writer.field(L"isTranslation", mod.isTranslation);
         writer.field(L"isPatch", mod.isPatch);
+        writer.stringArray(L"overwritesModIds", mod.overwritesModIds);
+        writer.stringArray(L"overwrittenByModIds", mod.overwrittenByModIds);
         writer.endObject();
     }
 
@@ -1360,6 +1368,8 @@ namespace
         writer.field(L"isLocal", item.isLocal);
         writer.field(L"isTranslation", item.isTranslation);
         writer.field(L"isPatch", item.isPatch);
+        writer.stringArray(L"overwritesModIds", item.overwritesModIds);
+        writer.stringArray(L"overwrittenByModIds", item.overwrittenByModIds);
         writer.endObject();
     }
 
@@ -1418,8 +1428,10 @@ namespace
         writer.field(L"isEnabled", plugin.isEnabled);
         writer.field(L"isMaster", plugin.isMaster);
         writer.field(L"isLight", plugin.isLight);
+        writer.field(L"hasLightFlag", plugin.hasLightFlag);
         writer.field(L"isLocked", plugin.isLocked);
         writer.field(L"lockReason", plugin.lockReason);
+        writer.stringArray(L"masterFiles", plugin.masterFiles);
         writer.stringArray(L"missingMasters", plugin.missingMasters);
         writer.endObject();
     }
@@ -1938,6 +1950,170 @@ namespace
 #endif
 
         return std::wstring(message.begin(), message.end());
+    }
+
+    std::string utf8FromWide(std::wstring_view value)
+    {
+        if (value.empty())
+        {
+            return {};
+        }
+
+#ifdef _WIN32
+        const int requiredLength = WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            value.data(),
+            static_cast<int>(value.size()),
+            nullptr,
+            0,
+            nullptr,
+            nullptr);
+        if (requiredLength <= 0)
+        {
+            throw std::invalid_argument("Text could not be encoded as UTF-8.");
+        }
+
+        std::string out(static_cast<std::size_t>(requiredLength), '\0');
+        WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            value.data(),
+            static_cast<int>(value.size()),
+            out.data(),
+            requiredLength,
+            nullptr,
+            nullptr);
+        return out;
+#else
+        return std::string(value.begin(), value.end());
+#endif
+    }
+
+    std::wstring readUtf8TextFileForEditor(const std::filesystem::path& path)
+    {
+        if (path.empty())
+        {
+            throw std::invalid_argument("Text file path is required.");
+        }
+
+        std::error_code statusError;
+        if (!std::filesystem::is_regular_file(path, statusError) || statusError)
+        {
+            throw std::invalid_argument("Text editor can only open regular files.");
+        }
+
+        const std::uintmax_t size = std::filesystem::file_size(path, statusError);
+        if (statusError)
+        {
+            throw std::runtime_error("Failed to inspect text file size.");
+        }
+        if (size > maxTextEditorFileBytes)
+        {
+            throw std::invalid_argument("Text file is too large for the editor.");
+        }
+
+        std::ifstream file(path, std::ios::binary);
+        if (!file)
+        {
+            throw std::runtime_error("Failed to open text file.");
+        }
+
+        std::string content(
+            (std::istreambuf_iterator<char>(file)),
+            std::istreambuf_iterator<char>());
+        if (content.find('\0') != std::string::npos)
+        {
+            throw std::invalid_argument("File is not a text document.");
+        }
+
+        return messageToWide(content);
+    }
+
+    void validateTextFileWritePath(
+        const std::filesystem::path& path,
+        std::uintmax_t contentBytes)
+    {
+        if (path.empty())
+        {
+            throw std::invalid_argument("Text file path is required.");
+        }
+
+        const std::filesystem::path absolutePath = std::filesystem::absolute(path);
+        fluxora::PathSafetyWriteOptions writeOptions;
+        writeOptions.requiredBytes = contentBytes;
+        fluxora::PathSafetyService()
+            .validateWritePath(absolutePath.parent_path(), absolutePath, writeOptions)
+            .throwIfUnsafe("Text editor save");
+
+        std::error_code statusError;
+        if (std::filesystem::exists(absolutePath, statusError) &&
+            !std::filesystem::is_regular_file(absolutePath, statusError))
+        {
+            throw std::invalid_argument("Text editor can only save regular files.");
+        }
+    }
+
+    void writeTextFileDocumentJson(
+        fluxora::JsonWriter& writer,
+        const std::filesystem::path& path,
+        std::wstring_view content,
+        std::uintmax_t size,
+        std::wstring_view relativePath = {})
+    {
+        writer.beginObject();
+        writer.field(L"path", path.wstring());
+        writer.field(L"fileName", path.filename().wstring());
+        if (!relativePath.empty())
+        {
+            writer.field(L"relativePath", relativePath);
+        }
+        writer.field(L"content", content);
+        writer.field(L"size", size);
+        writer.endObject();
+    }
+
+    std::wstring serializeTextFileDocument(
+        const std::filesystem::path& path,
+        std::wstring_view content,
+        std::uintmax_t size,
+        std::wstring_view relativePath = {})
+    {
+        fluxora::JsonWriter writer;
+        writeTextFileDocumentJson(writer, path, content, size, relativePath);
+        return writer.str();
+    }
+
+    std::wstring serializeTextFileSaveResult(
+        const std::filesystem::path& path,
+        std::uintmax_t size,
+        std::wstring_view relativePath = {})
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"path", path.wstring());
+        writer.field(L"fileName", path.filename().wstring());
+        if (!relativePath.empty())
+        {
+            writer.field(L"relativePath", relativePath);
+        }
+        writer.field(L"size", size);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeModTextFileDocument(const fluxora::ModTextFileDocument& document)
+    {
+        return serializeTextFileDocument(
+            document.path,
+            document.content,
+            document.size,
+            document.relativePath);
+    }
+
+    std::wstring serializeModTextFileSaveResult(const fluxora::ModTextFileSaveResult& result)
+    {
+        return serializeTextFileSaveResult(result.path, result.size, result.relativePath);
     }
 
     void logApiException(fluxora::LogLevel level, const std::exception& exception) noexcept
@@ -3567,6 +3743,137 @@ extern "C"
                     std::filesystem::path(modPath),
                     isBlank(relativeDirectory) ? L"" : std::wstring_view(relativeDirectory)));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_read_mod_text_file(
+        const wchar_t* projectDirectory,
+        const wchar_t* modPath,
+        const wchar_t* relativePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(modPath) || isBlank(relativePath))
+            {
+                lastError = L"Project directory, mod path and text file path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeModTextFileDocument(
+                core().mods().readModTextFile(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(modPath),
+                    std::wstring_view(relativePath)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_save_mod_text_file(
+        const wchar_t* projectDirectory,
+        const wchar_t* modPath,
+        const wchar_t* relativePath,
+        const wchar_t* content,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(modPath) || isBlank(relativePath) || content == nullptr)
+            {
+                lastError = L"Project directory, mod path, text file path and content are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeModTextFileSaveResult(
+                core().mods().saveModTextFile(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(modPath),
+                    std::wstring_view(relativePath),
+                    std::wstring_view(content)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_read_text_file(
+        const wchar_t* filePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(filePath))
+            {
+                lastError = L"Text file path is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::filesystem::path path(filePath);
+            const std::wstring content = readUtf8TextFileForEditor(path);
+            std::error_code sizeError;
+            const std::uintmax_t size = std::filesystem::file_size(path, sizeError);
+            return writeToBuffer(
+                serializeTextFileDocument(path, content, sizeError ? 0 : size),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_save_text_file(
+        const wchar_t* filePath,
+        const wchar_t* content,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(filePath) || content == nullptr)
+            {
+                lastError = L"Text file path and content are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::filesystem::path path(filePath);
+            const std::string bytes = utf8FromWide(std::wstring_view(content));
+            validateTextFileWritePath(path, static_cast<std::uintmax_t>(bytes.size()));
+            fluxora::AtomicFileStore().writeTextFile(
+                path,
+                bytes,
+                fluxora::AtomicFileWriteOptions{
+                    L"Text editor file",
+                    fluxora::ProjectStateValidation::Utf8Text,
+                    {},
+                    true
+                });
+
+            logOperation(
+                fluxora::LogLevel::Info,
+                "TextEditor",
+                "Saved text file path=\"" + pathForLog(path) + "\"");
+
+            std::error_code sizeError;
+            const std::uintmax_t size = std::filesystem::file_size(path, sizeError);
+            return writeToBuffer(
+                serializeTextFileSaveResult(path, sizeError ? 0 : size),
+                jsonBuffer,
+                jsonBufferLength);
         }
         catch (const std::exception& exception)
         {

@@ -75,6 +75,8 @@ namespace fluxora
         int conflictingFileCount{0};
         int overwrittenFileCount{0};
         int overwritingFileCount{0};
+        std::vector<std::wstring> overwritesModIds;
+        std::vector<std::wstring> overwrittenByModIds;
     };
 
     struct ModFileSummaryRecord
@@ -288,6 +290,13 @@ namespace fluxora
             const std::filesystem::path& modsDirectory = {});
 
         [[nodiscard]] static std::vector<ModFileSummaryRecord> summarizeProfileModFiles(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName,
+            const std::filesystem::path& modsDirectory = {});
+
+        // Launch-time reads use the prepared file cache only. This keeps the
+        // VFS hot path from walking the mods directory before process startup.
+        [[nodiscard]] static std::vector<ModFileSummaryRecord> summarizeCachedProfileModFilesForLaunch(
             const std::filesystem::path& projectDirectory,
             std::wstring_view profileName,
             const std::filesystem::path& modsDirectory = {});

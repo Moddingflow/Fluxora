@@ -106,7 +106,8 @@ namespace fluxora::tests
 
         void writeBethesdaPluginFile(
             const std::filesystem::path& path,
-            const std::vector<std::string_view>& masters)
+            const std::vector<std::string_view>& masters,
+            std::uint32_t recordFlags = 0)
         {
             std::string payload;
             appendPluginSubrecord(payload, "HEDR", std::string(12, '\0'));
@@ -121,7 +122,8 @@ namespace fluxora::tests
             std::string file;
             file.append("TES4", 4);
             appendLittleEndian32(file, static_cast<std::uint32_t>(payload.size()));
-            file.append(16, '\0');
+            appendLittleEndian32(file, recordFlags);
+            file.append(12, '\0');
             file.append(payload);
             writeTextFile(path, file);
         }
@@ -138,6 +140,10 @@ namespace fluxora::tests
         writeTextFile(mods / L"Weather" / L"Weather.esm", "master");
         writeTextFile(mods / L"SkyUI" / L"Data" / L"SkyUI.esp", "plugin");
         writeTextFile(mods / L"Light" / L"Data" / L"Light.esl", "light");
+        writeBethesdaPluginFile(
+            mods / L"ESL Flagged Patch" / L"Data" / L"ESLFlaggedPatch.esp",
+            {},
+            0x00000200);
 
         InstanceMetadataStore::ensureInstance(project, L"skyrimse");
         InstanceMetadataStore::registerInstalledMods(
@@ -145,7 +151,8 @@ namespace fluxora::tests
             {
                 InstalledModImportRecord{mods / L"Weather", L"Weather", {}, true, {}},
                 InstalledModImportRecord{mods / L"SkyUI", L"SkyUI", {}, true, {}},
-                InstalledModImportRecord{mods / L"Light", L"Light", {}, true, {}}
+                InstalledModImportRecord{mods / L"Light", L"Light", {}, true, {}},
+                InstalledModImportRecord{mods / L"ESL Flagged Patch", L"ESL Flagged Patch", {}, true, {}}
             });
 
         Logger logger;
@@ -188,10 +195,20 @@ namespace fluxora::tests
         ASSERT_NE(skyui, nullptr);
         EXPECT_EQ(skyui->extension, L"ESP");
         EXPECT_EQ(skyui->sourceMod, L"SkyUI");
+        EXPECT_FALSE(skyui->isLight);
+        EXPECT_FALSE(skyui->hasLightFlag);
 
         const PluginEntry* light = findPlugin(entries, L"Light.esl");
         ASSERT_NE(light, nullptr);
         EXPECT_TRUE(light->isLight);
+        EXPECT_FALSE(light->hasLightFlag);
+
+        const PluginEntry* eslFlaggedPatch = findPlugin(entries, L"ESLFlaggedPatch.esp");
+        ASSERT_NE(eslFlaggedPatch, nullptr);
+        EXPECT_EQ(eslFlaggedPatch->extension, L"ESP");
+        EXPECT_TRUE(eslFlaggedPatch->isLight);
+        EXPECT_TRUE(eslFlaggedPatch->hasLightFlag);
+        EXPECT_FALSE(eslFlaggedPatch->isMaster);
 
         EXPECT_THROW(
             (void)plugins.setPluginEnabled(
@@ -483,6 +500,11 @@ namespace fluxora::tests
 
         const PluginEntry* patch = findPlugin(entries, L"Patch.ABC");
         ASSERT_NE(patch, nullptr);
+        ASSERT_EQ(patch->masterFiles.size(), 4);
+        EXPECT_EQ(patch->masterFiles[0], L"Base.master");
+        EXPECT_EQ(patch->masterFiles[1], L"Existing.master");
+        EXPECT_EQ(patch->masterFiles[2], L"Missing.master");
+        EXPECT_EQ(patch->masterFiles[3], L"Disabled.master");
         ASSERT_EQ(patch->missingMasters.size(), 2);
         EXPECT_EQ(patch->missingMasters[0], L"Missing.master");
         EXPECT_EQ(patch->missingMasters[1], L"Disabled.master");

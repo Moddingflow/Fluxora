@@ -35,7 +35,6 @@ describe('project library stats', () => {
       downloads: '3',
       lastLaunch: 'manual-check',
       mods: '12',
-      plugins: '9/10',
       size: '1.5 KB'
     });
   });
@@ -45,15 +44,12 @@ describe('project library stats', () => {
       buildProjectLibraryStats(project, {
         disabledModCount: 1,
         downloadsCount: 4,
-        enabledPluginCount: 7,
-        modCount: 15,
-        pluginCount: 8
+        modCount: 15
       })
     ).toMatchObject({
       disabledMods: '1',
       downloads: '4',
-      mods: '15',
-      plugins: '7/8'
+      mods: '15'
     });
   });
 });

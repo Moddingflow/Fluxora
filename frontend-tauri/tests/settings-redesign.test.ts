@@ -68,6 +68,7 @@ describe('settings redesign', () => {
     expect(settingsWorkspace).toContain('className="settings-connections-list"');
     expect(settingsWorkspace).toContain('settings-service-row--connection');
     expect(settingsWorkspace).toContain('<LanguageSelect');
+    expect(settingsWorkspace).toContain('<AiSettingsPanel');
     expect(languageSelect).toContain('settings-language-row');
     expect(languageSelect).toContain('../../../../../Icons/flag-united-kingdom.svg');
     expect(languageSelect).toContain('languageMenuViewportHeight = 330');
@@ -140,6 +141,12 @@ describe('settings redesign', () => {
     expect(styles).toContain('box-shadow: inset 0 0 0 1px rgba(var(--flx-accent-rgb), 0.12);');
     expect(styles).not.toContain('linear-gradient(180deg, rgba(var(--flx-accent-rgb), 0.18), rgba(var(--flx-accent-rgb), 0.1))');
     expect(styles).toContain('.settings-panel--transfer');
+    expect(styles).toContain('.settings-panel--ai');
+    expect(styles).toContain('.settings-ai-presets');
+    expect(styles).toContain('.settings-ai-diagnostic');
+    expect(styles).toContain('.settings-ai-provider-list');
+    expect(styles).toContain('.ai-chat-diagnostic');
+    expect(styles).toContain('.ai-chat-message__diagnostics');
     expect(styles).toContain('.settings-service-row--transfer');
     expect(styles).toContain('.settings-transfer-button');
     expect(styles).not.toContain('.settings-card');

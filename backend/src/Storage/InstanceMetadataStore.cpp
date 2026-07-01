@@ -249,6 +249,14 @@ namespace fluxora
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
 
+    std::vector<ModFileSummaryRecord> InstanceMetadataStore::summarizeCachedProfileModFilesForLaunch(
+        const std::filesystem::path&,
+        std::wstring_view,
+        const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
     std::vector<ModFileTreeEntry> InstanceMetadataStore::listModFileTree(
         const std::filesystem::path&,
         const std::filesystem::path&,
@@ -2761,6 +2769,52 @@ namespace fluxora
             return names;
         }
 
+        void appendUniqueConflictTarget(
+            std::vector<std::wstring>& targets,
+            const std::wstring& modId)
+        {
+            if (modId.empty())
+            {
+                return;
+            }
+
+            if (std::find(targets.begin(), targets.end(), modId) == targets.end())
+            {
+                targets.push_back(modId);
+            }
+        }
+
+        void applyConflictOwnerRelations(
+            ModFileSummary& summary,
+            std::int64_t modId,
+            const std::vector<std::int64_t>& activeOwnerIds,
+            const std::map<std::int64_t, std::wstring>& modPathsById)
+        {
+            const auto selected = std::find(activeOwnerIds.begin(), activeOwnerIds.end(), modId);
+            if (selected == activeOwnerIds.end())
+            {
+                return;
+            }
+
+            for (auto owner = activeOwnerIds.begin(); owner != selected; ++owner)
+            {
+                const auto target = modPathsById.find(*owner);
+                if (target != modPathsById.end())
+                {
+                    appendUniqueConflictTarget(summary.overwritesModIds, target->second);
+                }
+            }
+
+            for (auto owner = std::next(selected); owner != activeOwnerIds.end(); ++owner)
+            {
+                const auto target = modPathsById.find(*owner);
+                if (target != modPathsById.end())
+                {
+                    appendUniqueConflictTarget(summary.overwrittenByModIds, target->second);
+                }
+            }
+        }
+
         void applyConflictOwnerSummary(
             ModFileSummary& summary,
             const std::vector<ConflictOwner>& owners,
@@ -2865,11 +2919,19 @@ namespace fluxora
         void applyInstalledConflictOwnerGroup(
             const std::vector<ConflictOwner>& owners,
             const std::map<std::int64_t, std::size_t>& summaryIndexes,
+            const std::map<std::int64_t, std::wstring>& modPathsById,
             std::vector<ModFileSummaryRecord>& summaries)
         {
             if (owners.size() <= 1)
             {
                 return;
+            }
+
+            std::vector<std::int64_t> activeOwnerIds;
+            activeOwnerIds.reserve(owners.size());
+            for (const ConflictOwner& owner : owners)
+            {
+                activeOwnerIds.push_back(owner.modId);
             }
 
             for (const ConflictOwner& owner : owners)
@@ -2880,7 +2942,9 @@ namespace fluxora
                     continue;
                 }
 
-                applyConflictOwnerSummary(summaries[summaryIndex->second].summary, owners, owner.modId);
+                ModFileSummary& summary = summaries[summaryIndex->second].summary;
+                applyConflictOwnerSummary(summary, owners, owner.modId);
+                applyConflictOwnerRelations(summary, owner.modId, activeOwnerIds, modPathsById);
             }
         }
 
@@ -2891,10 +2955,12 @@ namespace fluxora
             std::vector<ModFileSummaryRecord> summaries;
             summaries.reserve(records.size());
             std::map<std::int64_t, std::size_t> summaryIndexes;
+            std::map<std::int64_t, std::wstring> modPathsById;
             for (const InstalledModRecord& record : records)
             {
                 const std::size_t index = summaries.size();
                 summaryIndexes.emplace(record.id, index);
+                modPathsById.emplace(record.id, record.path.wstring());
                 summaries.push_back(ModFileSummaryRecord{
                     record.folderName,
                     record.path,
@@ -2925,7 +2991,11 @@ namespace fluxora
             std::vector<ConflictOwner> currentOwners;
             auto flushOwners = [&]()
             {
-                applyInstalledConflictOwnerGroup(currentOwners, summaryIndexes, summaries);
+                applyInstalledConflictOwnerGroup(
+                    currentOwners,
+                    summaryIndexes,
+                    modPathsById,
+                    summaries);
             };
 
             while (owners.stepRow())
@@ -2979,6 +3049,7 @@ namespace fluxora
         void applyProfileConflictGroup(
             const std::vector<ProfileFileOwner>& owners,
             const std::map<std::int64_t, std::size_t>& summaryIndexes,
+            const std::map<std::int64_t, std::wstring>& modPathsById,
             std::vector<ModFileSummaryRecord>& summaries)
         {
             std::vector<std::int64_t> activeOwnerIds;
@@ -3019,6 +3090,12 @@ namespace fluxora
                     ++summary.overwrittenFileCount;
                     ++summary.overwritingFileCount;
                 }
+
+                applyConflictOwnerRelations(
+                    summary,
+                    activeOwnerIds[index],
+                    activeOwnerIds,
+                    modPathsById);
             }
         }
 
@@ -3040,6 +3117,7 @@ namespace fluxora
             std::vector<ModFileSummaryRecord> summaries;
             summaries.reserve(orderItems.size());
             std::map<std::int64_t, std::size_t> summaryIndexes;
+            std::map<std::int64_t, std::wstring> modPathsById;
             for (const ProfileOrderItemRecord& item : orderItems)
             {
                 if (item.kind != profileOrderModKind || !item.hasMod)
@@ -3049,6 +3127,7 @@ namespace fluxora
 
                 const std::size_t index = summaries.size();
                 summaryIndexes.emplace(item.mod.id, index);
+                modPathsById.emplace(item.mod.id, item.mod.path.wstring());
                 summaries.push_back(ModFileSummaryRecord{
                     item.mod.folderName,
                     item.mod.path,
@@ -3075,7 +3154,7 @@ namespace fluxora
                 const std::wstring itemPathKey = statement.columnText(0);
                 if (!currentPathKey.empty() && itemPathKey != currentPathKey)
                 {
-                    applyProfileConflictGroup(owners, summaryIndexes, summaries);
+                    applyProfileConflictGroup(owners, summaryIndexes, modPathsById, summaries);
                     owners.clear();
                 }
 
@@ -3096,7 +3175,7 @@ namespace fluxora
 
             if (!owners.empty())
             {
-                applyProfileConflictGroup(owners, summaryIndexes, summaries);
+                applyProfileConflictGroup(owners, summaryIndexes, modPathsById, summaries);
             }
 
             return summaries;
@@ -4443,6 +4522,22 @@ namespace fluxora
 
         Database database = openInstanceDatabase(projectDirectory);
         ensureAllFileCachesPrepared(database, projectDirectory, modsRoot);
+        return summarizeCachedProfileModFiles(database, projectDirectory, profileName, modsRoot);
+    }
+
+    std::vector<ModFileSummaryRecord> InstanceMetadataStore::summarizeCachedProfileModFilesForLaunch(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName,
+        const std::filesystem::path& modsRoot)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
         return summarizeCachedProfileModFiles(database, projectDirectory, profileName, modsRoot);
     }
 

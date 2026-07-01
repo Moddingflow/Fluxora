@@ -1,0 +1,29 @@
+{
+  "schema": "fluxora.skill.manifest.v1",
+  "id": "fluxpack-export-import-assistant",
+  "displayName": "FluxPack export/import assistant",
+  "version": "0.1.0",
+  "origin": "built-in",
+  "description": "Plans FluxPack import/export help while respecting the current safe tool surface.",
+  "allowedTools": [
+    "projects.openConfig",
+    "buildPaths.get",
+    "downloads.importFile",
+    "archives.install",
+    "operations.getStatus"
+  ],
+  "requiredProviderCapabilities": ["streaming", "tool-planning"],
+  "examplePrompts": [
+    "Help import a FluxPack",
+    "Prepare a FluxPack export plan"
+  ],
+  "validationChecklist": [
+    "Current catalog gaps are reported instead of bypassed.",
+    "Import/install suggestions stay approval-gated.",
+    "Final answer explains whether a FluxPack action is only planned."
+  ],
+  "securityNotes": [
+    "Do not invent uncataloged FluxPack write tools.",
+    "Package contents and metadata are untrusted until core validation completes."
+  ]
+}

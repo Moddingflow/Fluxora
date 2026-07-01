@@ -1,22 +1,32 @@
+use keyring::Entry;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashSet;
+use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_opener::OpenerExt;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
 const BRIDGE_PROTOCOL_VERSION: &str = "1.0";
 const BRIDGE_TIMEOUT_MS: u64 = 10_000;
+const AI_HOST_PROTOCOL_VERSION: &str = "1.0";
+const AI_HOST_TIMEOUT_MS: u64 = 5_000;
+const AI_HOST_LONG_RUNNING_TIMEOUT_MS: u64 = 45 * 60 * 1_000;
+const AI_CREDENTIAL_SERVICE: &str = "app.fluxora.desktop.ai.provider";
 const PROGRESS_EVENT: &str = "fluxora:operations:progress";
 const MAIN_WINDOW_LABEL: &str = "main";
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 const BUILD_SETTINGS_WINDOW_LABEL_PREFIX: &str = "build-settings";
+const MOD_DETAILS_WINDOW_LABEL_PREFIX: &str = "mod-details";
+const TEXT_EDITOR_WINDOW_LABEL_PREFIX: &str = "text-editor";
 const BUILD_SETTINGS_PATHS_SAVED_EVENT: &str = "fluxora:build-settings:paths-saved";
 const TRANSFER_MO2_HANDOFF_EVENT: &str = "fluxora:transfer:mo2-handoff";
 const TRANSFER_MO2_OPEN_EVENT: &str = "fluxora:transfer:mo2-open";
@@ -27,6 +37,9 @@ const PROCESS_WATCH_DEFAULT_POLL_MS: u64 = 1_000;
 const PROCESS_WATCH_MIN_POLL_MS: u64 = 250;
 const PROCESS_WATCH_MAX_POLL_MS: u64 = 5_000;
 const PROCESS_WATCH_DEFAULT_HANDOFF_MS: u64 = 30_000;
+const OPERATION_PROGRESS_CACHE_LIMIT: usize = 100;
+const RECENT_OPERATION_LOG_MAX_LIMIT: usize = 80;
+const RECENT_OPERATION_LOG_TAIL_BYTES: u64 = 512 * 1024;
 
 fn encode_query_component(value: &str) -> String {
     let mut encoded = String::new();
@@ -200,9 +213,90 @@ fn operation_progress_payload(envelope: &Value) -> Value {
     payload
 }
 
+fn payload_string(payload: &Value, key: &str) -> String {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn payload_percent(payload: &Value) -> f64 {
+    payload
+        .get("overallPercent")
+        .and_then(Value::as_f64)
+        .unwrap_or_default()
+}
+
+fn operation_progress_state(payload: &Value) -> &'static str {
+    let phase = payload_string(payload, "phase").to_ascii_lowercase();
+    let current_step = payload_string(payload, "currentStep").to_ascii_lowercase();
+    let status_message = payload_string(payload, "statusMessage").to_ascii_lowercase();
+    let percent = payload_percent(payload);
+    if percent >= 100.0
+        || [
+            "done",
+            "complete",
+            "completed",
+            "cancelled",
+            "canceled",
+            "failed",
+        ]
+        .iter()
+        .any(|needle| {
+            phase.contains(needle)
+                || current_step.contains(needle)
+                || status_message.contains(needle)
+        })
+    {
+        "completed"
+    } else {
+        "running"
+    }
+}
+
+fn operation_status_snapshot(payload: &Value) -> Option<Value> {
+    let operation_id = payload
+        .get("operationId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())?;
+
+    Some(json!({
+        "operationId": operation_id,
+        "state": operation_progress_state(payload),
+        "phase": payload_string(payload, "phase"),
+        "currentStep": payload_string(payload, "currentStep"),
+        "currentItem": payload_string(payload, "currentItem"),
+        "overallPercent": payload_percent(payload),
+        "statusMessage": payload_string(payload, "statusMessage"),
+        "updatedAt": payload_string(payload, "updatedAt")
+    }))
+}
+
+async fn record_operation_progress(app: &AppHandle, payload: &Value) {
+    let state = app.state::<OperationStatusState>();
+    let mut progress = state.progress.lock().await;
+    let mut payload = payload.clone();
+    if let Value::Object(fields) = &mut payload {
+        fields
+            .entry("updatedAt".to_string())
+            .or_insert_with(|| Value::String(now_millis().to_string()));
+    }
+    progress.push(payload);
+    if progress.len() > OPERATION_PROGRESS_CACHE_LIMIT {
+        let extra = progress.len() - OPERATION_PROGRESS_CACHE_LIMIT;
+        progress.drain(0..extra);
+    }
+}
+
 #[derive(Default)]
 struct BridgeState {
     process: Mutex<BridgeProcess>,
+}
+
+#[derive(Default)]
+struct OperationStatusState {
+    progress: Mutex<Vec<Value>>,
 }
 
 #[derive(Default)]
@@ -214,10 +308,31 @@ struct BridgeProcess {
     handshake: Option<Value>,
 }
 
+#[derive(Default)]
+struct AiHostState {
+    process: Mutex<AiHostProcess>,
+}
+
+#[derive(Default)]
+struct AiHostProcess {
+    child: Option<Child>,
+    stdin: Option<ChildStdin>,
+    stdout: Option<BufReader<ChildStdout>>,
+    host_path: Option<PathBuf>,
+    handshake: Option<Value>,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 struct OperationRequest {
     #[serde(rename = "operationId")]
     operation_id: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct RecentOperationLogsOptions {
+    max_entries: Option<usize>,
+    operation_id_filter: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -634,8 +749,92 @@ async fn request_operation_cancel(
     }))
 }
 
+fn redact_query_key(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut rest = value;
+
+    while let Some(index) = rest.to_ascii_lowercase().find("key=") {
+        output.push_str(&rest[..index]);
+        output.push_str("key=[redacted-secret]");
+        let after_key = &rest[index + 4..];
+        let end = after_key
+            .find(|character: char| {
+                character == '&'
+                    || character.is_whitespace()
+                    || matches!(character, '"' | '\'' | ')' | ']')
+            })
+            .unwrap_or(after_key.len());
+        rest = &after_key[end..];
+    }
+
+    output.push_str(rest);
+    output
+}
+
+fn redact_bearer_tokens(value: &str) -> String {
+    let mut output = Vec::new();
+    let mut redact_next = false;
+    for token in value.split_whitespace() {
+        if redact_next {
+            output.push("[redacted-secret]".to_string());
+            redact_next = false;
+            continue;
+        }
+
+        output.push(token.to_string());
+        if token.eq_ignore_ascii_case("bearer") {
+            redact_next = true;
+        }
+    }
+
+    output.join(" ")
+}
+
+fn redact_named_secret_assignments(value: &str) -> String {
+    value
+        .split_whitespace()
+        .map(|token| {
+            let lower = token.to_ascii_lowercase();
+            for key in [
+                "api_key",
+                "apikey",
+                "token",
+                "secret",
+                "password",
+                "client_secret",
+            ] {
+                if lower.starts_with(&format!("{key}=")) || lower.starts_with(&format!("{key}:")) {
+                    return format!("{key}=[redacted-secret]");
+                }
+            }
+            token.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn sanitize_log(value: &str) -> String {
-    value.replace(['\r', '\n'], " ").trim().to_string()
+    let value = value.replace(['\r', '\n'], " ");
+    let value = redact_query_key(&value);
+    let value = redact_bearer_tokens(&value);
+    redact_named_secret_assignments(&value).trim().to_string()
+}
+
+fn safe_external_url(url: &str) -> Result<String, &'static str> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
+        return Err("invalid-url");
+    }
+
+    let parsed = Url::parse(trimmed).map_err(|_| "invalid-url")?;
+    if parsed.scheme() != "https" && parsed.scheme() != "mailto" {
+        return Err("unsupported-protocol");
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("embedded-credentials");
+    }
+
+    Ok(parsed.to_string())
 }
 
 async fn write_log(
@@ -682,7 +881,10 @@ fn candidate_host_paths(app: &AppHandle) -> Vec<PathBuf> {
     }
 
     if let Ok(resource_dir) = app.path().resource_dir() {
-        push_unique_candidate(&mut candidates, resource_dir.join("native").join(executable));
+        push_unique_candidate(
+            &mut candidates,
+            resource_dir.join("native").join(executable),
+        );
         push_packaged_native_candidate(&mut candidates, &resource_dir, executable);
     }
 
@@ -738,6 +940,106 @@ async fn resolve_host_path(app: &AppHandle) -> Result<PathBuf, String> {
     }
 
     Err("FluxoraBridgeHost was not found. Build backend target FluxoraBridgeHost or set FLUXORA_BRIDGE_HOST_PATH.".to_string())
+}
+
+fn ai_host_executable_name() -> &'static str {
+    if cfg!(windows) {
+        "FluxoraAIHost.exe"
+    } else {
+        "FluxoraAIHost"
+    }
+}
+
+fn ai_host_cargo_binary_name() -> &'static str {
+    if cfg!(windows) {
+        "fluxora-ai-host.exe"
+    } else {
+        "fluxora-ai-host"
+    }
+}
+
+fn push_tauri_ai_host_candidates(candidates: &mut Vec<PathBuf>, root: &Path) {
+    for profile in ["release", "debug"] {
+        push_unique_candidate(
+            candidates,
+            root.join("frontend-tauri")
+                .join("src-tauri")
+                .join("target")
+                .join(profile)
+                .join(ai_host_cargo_binary_name()),
+        );
+        push_unique_candidate(
+            candidates,
+            root.join("src-tauri")
+                .join("target")
+                .join(profile)
+                .join(ai_host_cargo_binary_name()),
+        );
+        push_unique_candidate(
+            candidates,
+            root.join("target")
+                .join(profile)
+                .join(ai_host_cargo_binary_name()),
+        );
+    }
+}
+
+fn candidate_ai_host_paths(app: &AppHandle) -> Vec<PathBuf> {
+    let executable = ai_host_executable_name();
+    let mut candidates = Vec::new();
+
+    if let Some(path) = std::env::var_os("FLUXORA_AI_HOST_PATH") {
+        push_unique_candidate(&mut candidates, PathBuf::from(path));
+    }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        push_unique_candidate(
+            &mut candidates,
+            resource_dir.join("native").join(executable),
+        );
+        push_packaged_native_candidate(&mut candidates, &resource_dir, executable);
+    }
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(executable_dir) = current_exe.parent() {
+            push_packaged_native_candidate(&mut candidates, executable_dir, executable);
+        }
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        push_packaged_native_candidate(&mut candidates, &current_dir, executable);
+        let roots = [
+            current_dir.clone(),
+            current_dir
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| current_dir.clone()),
+            current_dir
+                .parent()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| current_dir.clone()),
+        ];
+
+        for root in roots {
+            push_tauri_ai_host_candidates(&mut candidates, &root);
+        }
+    }
+
+    candidates
+}
+
+async fn resolve_ai_host_path(app: &AppHandle) -> Result<PathBuf, String> {
+    for candidate in candidate_ai_host_paths(app) {
+        if tokio::fs::try_exists(&candidate).await.unwrap_or(false) {
+            return Ok(candidate);
+        }
+    }
+
+    Err(
+        "FluxoraAIHost was not found. Build the Tauri ai host target or set FLUXORA_AI_HOST_PATH."
+            .to_string(),
+    )
 }
 
 impl BridgeProcess {
@@ -960,6 +1262,7 @@ impl BridgeProcess {
             if envelope.get("id").and_then(Value::as_str) != Some(request_id.as_str()) {
                 if envelope.get("method").and_then(Value::as_str) == Some("operations.progress") {
                     let payload = operation_progress_payload(&envelope);
+                    record_operation_progress(app, &payload).await;
                     let _ = app.emit(PROGRESS_EVENT, payload);
                 }
                 continue;
@@ -1033,8 +1336,474 @@ impl BridgeProcess {
     }
 }
 
+impl AiHostProcess {
+    async fn reset(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill().await;
+        }
+        self.stdin = None;
+        self.stdout = None;
+        self.handshake = None;
+    }
+
+    async fn ensure_started(&mut self, app: &AppHandle) -> Result<(), String> {
+        if self.child.is_some() && self.stdin.is_some() && self.stdout.is_some() {
+            return Ok(());
+        }
+
+        let host_path = resolve_ai_host_path(app).await?;
+        let ai_log_dir = logs_dir(app);
+        tokio::fs::create_dir_all(&ai_log_dir)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut command = Command::new(&host_path);
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env("FLUXORA_AI_LOG_DIR", &ai_log_dir)
+            .env("FLUXORA_TAURI_PROCESS_ID", std::process::id().to_string());
+
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+
+        let mut child = command.spawn().map_err(|error| error.to_string())?;
+
+        if let Some(stderr) = child.stderr.take() {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                while reader.read_line(&mut line).await.unwrap_or_default() > 0 {
+                    let message = line.trim();
+                    if !message.is_empty() {
+                        let _ =
+                            write_log(&app, "ai-host", "warning", "AiHost", message, None).await;
+                    }
+                    line.clear();
+                }
+            });
+        }
+
+        let host_path_for_log = host_path.to_string_lossy().to_string();
+        self.stdin = child.stdin.take();
+        self.stdout = child.stdout.take().map(BufReader::new);
+        self.child = Some(child);
+        self.host_path = Some(host_path);
+        self.handshake = None;
+
+        let _ = write_log(
+            app,
+            "ai-host",
+            "info",
+            "AiHost",
+            &format!("Started FluxoraAIHost with hostPath={}", host_path_for_log),
+            None,
+        )
+        .await;
+
+        Ok(())
+    }
+
+    async fn request(
+        &mut self,
+        app: &AppHandle,
+        method: &str,
+        params: Value,
+        request: OperationRequest,
+        timeout_ms: u64,
+    ) -> Result<Value, String> {
+        self.ensure_started(app).await?;
+        if method != "system.handshake" && self.handshake.is_none() {
+            let handshake = self
+                .send_request(
+                    app,
+                    "system.handshake",
+                    json!({ "supportedProtocolVersions": [AI_HOST_PROTOCOL_VERSION] }),
+                    request.clone(),
+                    timeout_ms,
+                )
+                .await?;
+            self.handshake = Some(handshake);
+        }
+
+        self.send_request(app, method, params, request, timeout_ms)
+            .await
+    }
+
+    async fn send_request(
+        &mut self,
+        app: &AppHandle,
+        method: &str,
+        params: Value,
+        request: OperationRequest,
+        timeout_ms: u64,
+    ) -> Result<Value, String> {
+        let request_id = format!("ai_req_{}_{}", now_millis(), method.replace('.', "_"));
+        let operation_id = operation_id(Some(&request), method);
+        let started_at = now_millis();
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params,
+            "meta": {
+                "protocolVersion": AI_HOST_PROTOCOL_VERSION,
+                "operationId": operation_id,
+                "requestSource": "tauri-shell",
+                "appVersion": "0.0.0",
+                "platform": platform_name(),
+                "arch": arch_name(),
+                "locale": "ru-RU"
+            }
+        });
+
+        let _ = write_log(
+            app,
+            "ai-host",
+            "info",
+            "AiHostRequest",
+            &format!(
+                "Request started. method={} timeoutMs={}",
+                sanitize_log(method),
+                timeout_ms
+            ),
+            Some(&operation_id),
+        )
+        .await;
+
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "AI host stdin is unavailable.".to_string())?;
+        if let Err(error) = stdin.write_all(format!("{}\n", payload).as_bytes()).await {
+            self.reset().await;
+            return Err(error.to_string());
+        }
+        if let Err(error) = stdin.flush().await {
+            self.reset().await;
+            return Err(error.to_string());
+        }
+
+        loop {
+            let mut line = String::new();
+            let read_result = {
+                let stdout = self
+                    .stdout
+                    .as_mut()
+                    .ok_or_else(|| "AI host stdout is unavailable.".to_string())?;
+                timeout(
+                    Duration::from_millis(timeout_ms),
+                    stdout.read_line(&mut line),
+                )
+                .await
+            };
+            let bytes = match read_result {
+                Ok(Ok(bytes)) => bytes,
+                Ok(Err(error)) => {
+                    self.reset().await;
+                    return Err(error.to_string());
+                }
+                Err(_) => {
+                    let message = format!("AI host request timed out: {}", method);
+                    let _ = write_log(
+                        app,
+                        "ai-host",
+                        "error",
+                        "AiHostRequest",
+                        &format!(
+                            "{}. Host process will be restarted for the next request.",
+                            message
+                        ),
+                        Some(&operation_id),
+                    )
+                    .await;
+                    self.reset().await;
+                    return Err(message);
+                }
+            };
+            if bytes == 0 {
+                self.reset().await;
+                return Err("AI host exited before replying.".to_string());
+            }
+
+            let envelope: Value = match serde_json::from_str(line.trim()) {
+                Ok(envelope) => envelope,
+                Err(error) => {
+                    let _ = write_log(
+                        app,
+                        "ai-host",
+                        "warning",
+                        "AiHostRequest",
+                        &format!(
+                            "Ignored non-JSON AI host stdout while waiting for method={}: {}",
+                            sanitize_log(method),
+                            sanitize_log(&error.to_string())
+                        ),
+                        Some(&operation_id),
+                    )
+                    .await;
+                    continue;
+                }
+            };
+            if envelope.get("id").and_then(Value::as_str) != Some(request_id.as_str()) {
+                continue;
+            }
+
+            if let Some(error) = envelope.get("error") {
+                let message = error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("AI host request failed.")
+                    .to_string();
+                let _ = write_log(
+                    app,
+                    "ai-host",
+                    "error",
+                    "AiHostRequest",
+                    &format!(
+                        "Request failed. method={} durationMs={} error={}",
+                        sanitize_log(method),
+                        now_millis().saturating_sub(started_at),
+                        sanitize_log(&message)
+                    ),
+                    Some(&operation_id),
+                )
+                .await;
+                return Err(message);
+            }
+
+            let result = envelope
+                .get("result")
+                .ok_or_else(|| "AI host response missing result.".to_string())?;
+            if result.get("ok").and_then(Value::as_bool) != Some(true) {
+                return Err("AI host response did not include an ok result.".to_string());
+            }
+            let _ = write_log(
+                app,
+                "ai-host",
+                "info",
+                "AiHostRequest",
+                &format!(
+                    "Request completed. method={} durationMs={}",
+                    sanitize_log(method),
+                    now_millis().saturating_sub(started_at)
+                ),
+                Some(&operation_id),
+            )
+            .await;
+            return Ok(result.get("data").cloned().unwrap_or(Value::Null));
+        }
+    }
+
+    async fn shutdown(&mut self, app: &AppHandle, request: OperationRequest) -> Result<(), String> {
+        if self.child.is_none() {
+            return Ok(());
+        }
+        let _ = self
+            .request(
+                app,
+                "system.shutdown",
+                json!({}),
+                request,
+                AI_HOST_TIMEOUT_MS,
+            )
+            .await;
+        self.reset().await;
+        Ok(())
+    }
+}
+
 fn bridge_state(app: &AppHandle) -> tauri::State<'_, BridgeState> {
     app.state::<BridgeState>()
+}
+
+fn ai_host_state(app: &AppHandle) -> tauri::State<'_, AiHostState> {
+    app.state::<AiHostState>()
+}
+
+fn normalized_ai_provider_id(value: &str) -> Option<String> {
+    let provider_id = value.trim().to_ascii_lowercase();
+    if provider_id.is_empty()
+        || !provider_id.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+    {
+        return None;
+    }
+    Some(provider_id)
+}
+
+fn ai_credential_entry(provider_id: &str) -> Result<Entry, String> {
+    Entry::new(AI_CREDENTIAL_SERVICE, provider_id)
+        .map_err(|_| "OS credential store is unavailable.".to_string())
+}
+
+fn ai_credential_available(provider_id: &str) -> bool {
+    ai_credential_entry(provider_id)
+        .and_then(|entry| entry.get_password().map_err(|_| "missing".to_string()))
+        .map(|secret| !secret.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn with_ai_provider_connection_state(mut providers: Value) -> Value {
+    if let Value::Array(items) = &mut providers {
+        for provider in items {
+            let Value::Object(fields) = provider else {
+                continue;
+            };
+
+            let provider_id = fields.get("id").and_then(Value::as_str).map(str::to_string);
+            let requires_credential = fields
+                .get("requiresCredential")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let host_connected = fields
+                .get("connected")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let local_connected = if requires_credential && !host_connected {
+                provider_id
+                    .as_deref()
+                    .map(ai_credential_available)
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            let connected = if requires_credential {
+                host_connected || local_connected
+            } else {
+                true
+            };
+            let credential_state = if requires_credential {
+                if connected {
+                    "connected"
+                } else {
+                    "disconnected"
+                }
+            } else {
+                "notRequired"
+            };
+
+            fields.insert("connected".to_string(), json!(connected));
+            fields.insert("credentialState".to_string(), json!(credential_state));
+        }
+    }
+
+    providers
+}
+
+fn ai_connection_result(
+    provider_id: &str,
+    connected: bool,
+    state: &str,
+    message: &str,
+    operation_id: &str,
+) -> Value {
+    json!({
+        "providerId": provider_id,
+        "connected": connected,
+        "state": state,
+        "message": message,
+        "operationId": operation_id
+    })
+}
+
+async fn ai_status_payload(app: &AppHandle, request: OperationRequest) -> Value {
+    let operation_id = operation_id(Some(&request), "ai_status");
+    let state = ai_host_state(app);
+    let mut host = state.process.lock().await;
+    let health = host
+        .request(
+            app,
+            "system.health",
+            json!({}),
+            request.clone(),
+            AI_HOST_TIMEOUT_MS,
+        )
+        .await;
+
+    match health {
+        Ok(health) => {
+            let providers = with_ai_provider_connection_state(
+                health
+                    .get("providers")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            );
+            let models = health.get("models").cloned().unwrap_or_else(|| json!([]));
+            let handshake = host.handshake.clone().unwrap_or_default();
+            json!({
+                "ready": true,
+                "operationId": operation_id,
+                "health": "ready",
+                "protocolVersion": handshake.get("protocolVersion").cloned().unwrap_or(json!(AI_HOST_PROTOCOL_VERSION)),
+                "hostVersion": handshake.get("hostVersion").cloned().unwrap_or(json!("0.0.0-dev")),
+                "hostPath": host.host_path.as_ref().map(|path| path.to_string_lossy().to_string()),
+                "processId": health.get("processId").cloned().unwrap_or(Value::Null),
+                "providers": providers,
+                "models": models,
+                "capabilities": health.get("capabilities").cloned().unwrap_or_else(|| json!({}))
+            })
+        }
+        Err(error) => {
+            let safe_error = sanitize_log(&error);
+            let _ = write_log(
+                app,
+                "ai-host",
+                "warning",
+                "AiHostStatus",
+                &format!("AI host unavailable. reason={}", safe_error),
+                Some(&operation_id),
+            )
+            .await;
+            json!({
+                "ready": false,
+                "operationId": operation_id,
+                "health": "unavailable",
+                "providers": [],
+                "models": [],
+                "capabilities": {},
+                "error": {
+                    "code": "ai.host.unavailable",
+                    "message": "AI host is unavailable.",
+                    "category": "transport",
+                    "retryable": true,
+                    "capabilityId": Value::Null,
+                    "details": {
+                        "reason": safe_error
+                    }
+                }
+            })
+        }
+    }
+}
+
+async fn ai_provider_known(
+    app: &AppHandle,
+    provider_id: &str,
+    request: OperationRequest,
+) -> Result<bool, String> {
+    let state = ai_host_state(app);
+    let mut host = state.process.lock().await;
+    let data = host
+        .request(
+            app,
+            "providers.list",
+            json!({}),
+            request,
+            AI_HOST_TIMEOUT_MS,
+        )
+        .await?;
+    Ok(data
+        .get("providers")
+        .and_then(Value::as_array)
+        .map(|providers| {
+            providers
+                .iter()
+                .any(|provider| provider.get("id").and_then(Value::as_str) == Some(provider_id))
+        })
+        .unwrap_or(false))
 }
 
 #[tauri::command]
@@ -1087,6 +1856,401 @@ async fn fluxora_log(app: AppHandle, entry: UiLogEntry) -> Result<(), String> {
         entry.operation_id.as_deref(),
     )
     .await
+}
+
+#[tauri::command]
+async fn fluxora_ai_get_status(
+    app: AppHandle,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, "ai_status")),
+    });
+    Ok(ai_status_payload(&app, request).await)
+}
+
+#[tauri::command]
+async fn fluxora_ai_restart_host(
+    app: AppHandle,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, "ai_restart_host")),
+    });
+
+    {
+        let state = ai_host_state(&app);
+        let mut host = state.process.lock().await;
+        host.shutdown(&app, request.clone()).await?;
+        host.reset().await;
+    }
+
+    Ok(ai_status_payload(&app, request).await)
+}
+
+#[tauri::command]
+async fn fluxora_ai_list_providers(
+    app: AppHandle,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, "ai_list_providers")),
+    });
+    let status = ai_status_payload(&app, request).await;
+    Ok(status
+        .get("providers")
+        .cloned()
+        .unwrap_or_else(|| json!([])))
+}
+
+#[tauri::command]
+async fn fluxora_ai_list_models(
+    app: AppHandle,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, "ai_list_models")),
+    });
+    let status = ai_status_payload(&app, request).await;
+    Ok(status.get("models").cloned().unwrap_or_else(|| json!([])))
+}
+
+#[tauri::command]
+async fn fluxora_ai_connect_provider(
+    app: AppHandle,
+    provider_id: String,
+    api_key: String,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, "ai_provider_connect")),
+    });
+    let operation_id = operation_id(Some(&request), "ai_provider_connect");
+    let Some(provider_id) = normalized_ai_provider_id(&provider_id) else {
+        return Ok(ai_connection_result(
+            "",
+            false,
+            "invalidProvider",
+            "AI provider id is invalid.",
+            &operation_id,
+        ));
+    };
+    let secret = api_key.trim();
+    if secret.is_empty() {
+        return Ok(ai_connection_result(
+            &provider_id,
+            false,
+            "invalidCredential",
+            "Provider credential is empty.",
+            &operation_id,
+        ));
+    }
+
+    match ai_provider_known(&app, &provider_id, request.clone()).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return Ok(ai_connection_result(
+                &provider_id,
+                false,
+                "unknownProvider",
+                "AI provider is not in the host registry.",
+                &operation_id,
+            ));
+        }
+        Err(error) => {
+            let _ = write_log(
+                &app,
+                "ai-host",
+                "warning",
+                "AiCredential",
+                &format!(
+                    "Provider connect failed closed before storing credential. providerId={} reason={}",
+                    sanitize_log(&provider_id),
+                    sanitize_log(&error)
+                ),
+                Some(&operation_id),
+            )
+            .await;
+            return Ok(ai_connection_result(
+                &provider_id,
+                false,
+                "hostUnavailable",
+                "AI host is unavailable.",
+                &operation_id,
+            ));
+        }
+    }
+
+    let entry = match ai_credential_entry(&provider_id) {
+        Ok(entry) => entry,
+        Err(message) => {
+            return Ok(ai_connection_result(
+                &provider_id,
+                false,
+                "credentialStoreUnavailable",
+                &message,
+                &operation_id,
+            ));
+        }
+    };
+    if entry.set_password(secret).is_err() {
+        return Ok(ai_connection_result(
+            &provider_id,
+            false,
+            "credentialStoreUnavailable",
+            "Provider credential could not be stored.",
+            &operation_id,
+        ));
+    }
+
+    let _ = write_log(
+        &app,
+        "ai-host",
+        "info",
+        "AiCredential",
+        &format!(
+            "Provider credential stored in OS credential manager. providerId={}",
+            sanitize_log(&provider_id)
+        ),
+        Some(&operation_id),
+    )
+    .await;
+
+    Ok(ai_connection_result(
+        &provider_id,
+        true,
+        "connected",
+        "Provider credential is connected.",
+        &operation_id,
+    ))
+}
+
+#[tauri::command]
+async fn fluxora_ai_disconnect_provider(
+    app: AppHandle,
+    provider_id: String,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, "ai_provider_disconnect")),
+    });
+    let operation_id = operation_id(Some(&request), "ai_provider_disconnect");
+    let Some(provider_id) = normalized_ai_provider_id(&provider_id) else {
+        return Ok(ai_connection_result(
+            "",
+            false,
+            "invalidProvider",
+            "AI provider id is invalid.",
+            &operation_id,
+        ));
+    };
+
+    let state = match ai_credential_entry(&provider_id) {
+        Ok(entry) => {
+            let _ = entry.delete_credential();
+            "disconnected"
+        }
+        Err(_) => "credentialStoreUnavailable",
+    };
+
+    let _ = write_log(
+        &app,
+        "ai-host",
+        "info",
+        "AiCredential",
+        &format!(
+            "Provider credential disconnected. providerId={} state={}",
+            sanitize_log(&provider_id),
+            state
+        ),
+        Some(&operation_id),
+    )
+    .await;
+
+    Ok(ai_connection_result(
+        &provider_id,
+        false,
+        state,
+        if state == "disconnected" {
+            "Provider credential is disconnected."
+        } else {
+            "Provider credential store is unavailable."
+        },
+        &operation_id,
+    ))
+}
+
+#[tauri::command]
+async fn fluxora_ai_test_provider(
+    app: AppHandle,
+    provider_id: String,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, "ai_provider_test")),
+    });
+    let operation_id = operation_id(Some(&request), "ai_provider_test");
+    let Some(provider_id) = normalized_ai_provider_id(&provider_id) else {
+        return Ok(json!({
+            "providerId": "",
+            "ok": false,
+            "state": "invalidProvider",
+            "message": "AI provider id is invalid.",
+            "operationId": operation_id,
+            "hostRoundTrip": false,
+            "checkedAt": now_millis(),
+            "modelIds": []
+        }));
+    };
+    let credential_available = ai_credential_available(&provider_id);
+    let state = ai_host_state(&app);
+    let mut host = state.process.lock().await;
+    let result = host
+        .request(
+            &app,
+            "providers.test",
+            json!({
+                "providerId": provider_id,
+                "credentialAvailable": credential_available
+            }),
+            request,
+            AI_HOST_TIMEOUT_MS,
+        )
+        .await;
+
+    match result {
+        Ok(mut data) => {
+            if let Value::Object(fields) = &mut data {
+                fields.insert("operationId".to_string(), json!(operation_id));
+                fields.insert("hostRoundTrip".to_string(), json!(true));
+            }
+            Ok(data)
+        }
+        Err(error) => {
+            let _ = write_log(
+                &app,
+                "ai-host",
+                "warning",
+                "AiProviderTest",
+                &format!(
+                    "Provider test failed closed. providerId={} reason={}",
+                    sanitize_log(&provider_id),
+                    sanitize_log(&error)
+                ),
+                Some(&operation_id),
+            )
+            .await;
+            Ok(json!({
+                "providerId": provider_id,
+                "ok": false,
+                "state": "hostUnavailable",
+                "message": "AI host is unavailable.",
+                "operationId": operation_id,
+                "hostRoundTrip": false,
+                "checkedAt": now_millis(),
+                "modelIds": []
+            }))
+        }
+    }
+}
+
+#[tauri::command]
+async fn fluxora_ai_chat_respond(app: AppHandle, request: Value) -> Result<Value, String> {
+    let operation_id = request
+        .get("operationId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| operation_id(None, "ai_chat_run"));
+    let operation_request = OperationRequest {
+        operation_id: Some(operation_id.clone()),
+    };
+    let state = ai_host_state(&app);
+    let mut host = state.process.lock().await;
+    let result = host
+        .request(
+            &app,
+            "chat.respond",
+            request,
+            operation_request,
+            AI_HOST_LONG_RUNNING_TIMEOUT_MS,
+        )
+        .await;
+
+    match result {
+        Ok(mut data) => {
+            if let Value::Object(fields) = &mut data {
+                fields.insert("operationId".to_string(), json!(operation_id.clone()));
+            }
+            let _ = write_log(
+                &app,
+                "ai-host",
+                "info",
+                "AiChat",
+                "Chat-only AI response completed.",
+                Some(&operation_id),
+            )
+            .await;
+            Ok(data)
+        }
+        Err(error) => {
+            let safe_error = sanitize_log(&error);
+            let _ = write_log(
+                &app,
+                "ai-host",
+                "warning",
+                "AiChat",
+                &format!("Chat-only AI response failed closed. reason={}", safe_error),
+                Some(&operation_id),
+            )
+            .await;
+            Ok(json!({
+                "operationId": operation_id,
+                "providerId": "local-dry-run",
+                "modelId": "local-dry-run",
+                "routingPreset": "free-demo",
+                "status": "blocked",
+                "text": "AI host is unavailable. Chat-only mode cannot answer until the host is ready.",
+                "streamChunks": [
+                    { "index": 0, "text": "AI host is unavailable. Chat-only mode cannot answer until the host is ready." }
+                ],
+                "sources": [],
+                "costEstimate": {
+                    "currency": "USD",
+                    "estimatedInputTokens": 0,
+                    "estimatedOutputTokens": 0,
+                    "estimatedCost": 0.0,
+                    "actualCost": Value::Null,
+                    "internalCost": 0.0,
+                    "pricingSource": "host-unavailable",
+                    "isEstimate": true
+                },
+                "ledgerEntry": {
+                    "operationId": operation_id,
+                    "providerId": "local-dry-run",
+                    "modelId": "local-dry-run",
+                    "routingPreset": "free-demo",
+                    "estimatedInternalCost": 0.0,
+                    "actualInternalCost": Value::Null,
+                    "currency": "USD",
+                    "billable": false,
+                    "createdAt": now_millis().to_string()
+                },
+                "fallbackProviders": [],
+                "toolCallsAllowed": false,
+                "error": {
+                    "code": "ai.host.unavailable",
+                    "message": "AI host is unavailable.",
+                    "category": "transport",
+                    "retryable": true,
+                    "capabilityId": Value::Null,
+                    "details": {
+                        "reason": safe_error
+                    }
+                }
+            }))
+        }
+    }
 }
 
 #[tauri::command]
@@ -1204,6 +2368,219 @@ async fn fluxora_bridge_status(
             }
         })),
     }
+}
+
+#[tauri::command]
+async fn fluxora_operations_get_status(
+    app: AppHandle,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, "operations_status")),
+    });
+    let operation_id = operation_id(Some(&request), "operations_status");
+    let state = app.state::<OperationStatusState>();
+    let progress = state.progress.lock().await;
+    let mut seen = HashSet::new();
+    let mut recent = Vec::new();
+
+    for payload in progress.iter().rev() {
+        let Some(snapshot) = operation_status_snapshot(payload) else {
+            continue;
+        };
+        let Some(snapshot_operation_id) = snapshot.get("operationId").and_then(Value::as_str)
+        else {
+            continue;
+        };
+        if seen.insert(snapshot_operation_id.to_string()) {
+            recent.push(snapshot);
+        }
+    }
+
+    let active: Vec<Value> = recent
+        .iter()
+        .filter(|snapshot| snapshot.get("state").and_then(Value::as_str) == Some("running"))
+        .cloned()
+        .collect();
+
+    Ok(json!({
+        "operationId": operation_id,
+        "source": "tauri-progress-cache",
+        "active": active,
+        "recent": recent,
+        "message": "Operation status is derived from recent bridge progress events."
+    }))
+}
+
+async fn read_log_tail(path: &Path) -> Result<String, String> {
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|error| error.to_string())?;
+    let length = file
+        .metadata()
+        .await
+        .map_err(|error| error.to_string())?
+        .len();
+    if length > RECENT_OPERATION_LOG_TAIL_BYTES {
+        file.seek(SeekFrom::Start(length - RECENT_OPERATION_LOG_TAIL_BYTES))
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(content)
+}
+
+async fn recent_log_files(app: &AppHandle) -> Result<Vec<PathBuf>, String> {
+    let dir = logs_dir(app);
+    let mut entries = match tokio::fs::read_dir(&dir).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut files = Vec::new();
+
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let lower_name = file_name.to_ascii_lowercase();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("log")
+            && lower_name.contains("fluxora")
+        {
+            files.push(path);
+        }
+    }
+
+    files.sort();
+    Ok(files)
+}
+
+fn log_level_from_line(line: &str) -> Option<&'static str> {
+    if line.contains("[ERROR]") {
+        Some("error")
+    } else if line.contains("[WARNING]") || line.contains("[WARN]") {
+        Some("warning")
+    } else if line.contains("[DEBUG]") {
+        Some("debug")
+    } else if line.contains("[INFO]") {
+        Some("info")
+    } else {
+        None
+    }
+}
+
+fn bracket_field(line: &str, index: usize) -> Option<String> {
+    line.split('[')
+        .nth(index + 1)
+        .and_then(|part| part.split(']').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn operation_id_from_log_line(line: &str) -> Option<String> {
+    line.split("[operationId=")
+        .nth(1)
+        .and_then(|part| part.split(']').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn operation_log_entry(source: &str, line: &str) -> Value {
+    let mut entry = json!({
+        "source": source,
+        "line": sanitize_log(line)
+    });
+    if let Value::Object(fields) = &mut entry {
+        if let Some(timestamp) = bracket_field(line, 0) {
+            fields.insert("timestamp".to_string(), json!(timestamp));
+        }
+        if let Some(level) = log_level_from_line(line) {
+            fields.insert("level".to_string(), json!(level));
+        }
+        if let Some(category) = bracket_field(line, 2) {
+            fields.insert("category".to_string(), json!(category));
+        }
+        if let Some(operation_id) = operation_id_from_log_line(line) {
+            fields.insert("operationId".to_string(), json!(operation_id));
+        }
+    }
+    entry
+}
+
+fn is_operation_log_line(line: &str, operation_id_filter: Option<&str>) -> bool {
+    if let Some(filter) = operation_id_filter.filter(|value| !value.trim().is_empty()) {
+        return line.contains(filter);
+    }
+
+    line.contains("operationId=") || line.to_ascii_lowercase().contains("operation")
+}
+
+#[tauri::command]
+async fn fluxora_recent_operation_logs(
+    app: AppHandle,
+    options: Option<RecentOperationLogsOptions>,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, "operations_recent_logs")),
+    });
+    let operation_id = operation_id(Some(&request), "operations_recent_logs");
+    let options = options.unwrap_or_default();
+    let max_entries = options
+        .max_entries
+        .unwrap_or(20)
+        .clamp(1, RECENT_OPERATION_LOG_MAX_LIMIT);
+    let operation_id_filter = options
+        .operation_id_filter
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let files = recent_log_files(&app).await?;
+    let mut entries = Vec::new();
+    let mut log_paths = Vec::new();
+
+    for path in &files {
+        let source = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("fluxora.log")
+            .to_string();
+        log_paths.push(path.to_string_lossy().to_string());
+        let content = match read_log_tail(path).await {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        for line in content.lines() {
+            if is_operation_log_line(line, operation_id_filter) {
+                entries.push(operation_log_entry(&source, line));
+            }
+        }
+    }
+
+    let truncated = entries.len() > max_entries;
+    if truncated {
+        let extra = entries.len() - max_entries;
+        entries.drain(0..extra);
+    }
+
+    Ok(json!({
+        "operationId": operation_id,
+        "entries": entries,
+        "logPaths": log_paths,
+        "maxEntries": max_entries,
+        "truncated": truncated
+    }))
 }
 
 #[tauri::command]
@@ -1596,16 +2973,19 @@ async fn fluxora_dialog_save_file(
 
 #[tauri::command]
 async fn fluxora_open_external(app: AppHandle, url: String) -> Result<OpenExternalResult, String> {
-    let url = url.trim().to_string();
-    if url.is_empty() || url.chars().any(char::is_whitespace) {
-        return Ok(OpenExternalResult {
-            ok: false,
-            reason: Some("invalid-url".to_string()),
-        });
-    }
+    let url = match safe_external_url(&url) {
+        Ok(url) => url,
+        Err(reason) => {
+            return Ok(OpenExternalResult {
+                ok: false,
+                reason: Some(reason.to_string()),
+            });
+        }
+    };
 
-    let lower_url = url.to_ascii_lowercase();
-    if !lower_url.starts_with("https://") && !lower_url.starts_with("mailto:") {
+    if !url.to_ascii_lowercase().starts_with("https://")
+        && !url.to_ascii_lowercase().starts_with("mailto:")
+    {
         return Ok(OpenExternalResult {
             ok: false,
             reason: Some("unsupported-protocol".to_string()),
@@ -1792,10 +3172,129 @@ async fn fluxora_open_build_settings_window(
 }
 
 #[tauri::command]
-async fn fluxora_build_settings_paths_saved(
+async fn fluxora_open_mod_details_window(
     app: AppHandle,
-    project: Value,
+    config_path: String,
+    mod_path: String,
+    mod_name: String,
+    profile_name: Option<String>,
 ) -> Result<(), String> {
+    let config_path = config_path.trim();
+    if config_path.is_empty() {
+        return Err("Mod details require a project config path.".to_string());
+    }
+
+    let mod_path = mod_path.trim();
+    if mod_path.is_empty() {
+        return Err("Mod details require a mod path.".to_string());
+    }
+
+    let mod_name = mod_name.trim();
+    let mod_title = if mod_name.is_empty() { "Mod" } else { mod_name };
+    let profile_name = profile_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let label = format!(
+        "{MOD_DETAILS_WINDOW_LABEL_PREFIX}:{}",
+        stable_label_suffix(&format!("{config_path}\u{0}{mod_path}\u{0}{profile_name}"))
+    );
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    let url = format!(
+        "/?window=mod-details&project={}&mod={}&name={}&profile={}",
+        encode_query_component(config_path),
+        encode_query_component(mod_path),
+        encode_query_component(mod_title),
+        encode_query_component(profile_name)
+    );
+
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()))
+        .title(format!("Mod \u{00B7} {mod_title}"))
+        .inner_size(1120.0, 760.0)
+        .min_inner_size(900.0, 620.0)
+        .resizable(true)
+        .decorations(false)
+        .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn fluxora_open_text_editor_window(
+    app: AppHandle,
+    config_path: String,
+    mod_path: Option<String>,
+    relative_path: Option<String>,
+    file_name: Option<String>,
+) -> Result<(), String> {
+    let config_path = config_path.trim();
+    if config_path.is_empty() {
+        return Err("Text editor requires a project config path.".to_string());
+    }
+
+    let mod_path = mod_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let relative_path = relative_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let file_name = file_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            relative_path
+                .rsplit(['/', '\\'])
+                .next()
+                .filter(|value| !value.is_empty())
+                .unwrap_or("Editor")
+        });
+
+    let label = format!(
+        "{TEXT_EDITOR_WINDOW_LABEL_PREFIX}:{}",
+        stable_label_suffix(&format!("{config_path}\u{0}{mod_path}\u{0}{relative_path}"))
+    );
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    let url = format!(
+        "/?window=text-editor&project={}&mod={}&path={}&name={}",
+        encode_query_component(config_path),
+        encode_query_component(mod_path),
+        encode_query_component(relative_path),
+        encode_query_component(file_name)
+    );
+
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()))
+        .title(format!("Editor \u{00B7} {file_name}"))
+        .inner_size(1344.0, 912.0)
+        .min_inner_size(1080.0, 720.0)
+        .resizable(true)
+        .decorations(false)
+        .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn fluxora_build_settings_paths_saved(app: AppHandle, project: Value) -> Result<(), String> {
     app.emit_to(MAIN_WINDOW_LABEL, BUILD_SETTINGS_PATHS_SAVED_EVENT, project)
         .map_err(|error| error.to_string())
 }
@@ -1803,6 +3302,8 @@ async fn fluxora_build_settings_paths_saved(
 pub fn run() {
     tauri::Builder::default()
         .manage(BridgeState::default())
+        .manage(AiHostState::default())
+        .manage(OperationStatusState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -1830,8 +3331,18 @@ pub fn run() {
             fluxora_current_executable,
             fluxora_security_state,
             fluxora_log,
+            fluxora_ai_get_status,
+            fluxora_ai_restart_host,
+            fluxora_ai_list_providers,
+            fluxora_ai_list_models,
+            fluxora_ai_connect_provider,
+            fluxora_ai_disconnect_provider,
+            fluxora_ai_test_provider,
+            fluxora_ai_chat_respond,
             fluxora_bridge_request,
             fluxora_bridge_status,
+            fluxora_operations_get_status,
+            fluxora_recent_operation_logs,
             fluxora_shutdown_bridge,
             fluxora_wait_for_launch_ready,
             fluxora_wait_for_process_exit,
@@ -1850,6 +3361,8 @@ pub fn run() {
             fluxora_window_close,
             fluxora_open_settings_window,
             fluxora_open_build_settings_window,
+            fluxora_open_mod_details_window,
+            fluxora_open_text_editor_window,
             fluxora_build_settings_paths_saved
         ])
         .run(tauri::generate_context!())
@@ -1889,6 +3402,76 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_log_redacts_provider_secrets_and_control_characters() {
+        let message = sanitize_log(
+            "provider failed\r\nurl=https://example.test?key=abcd1234 Bearer secret-bearer-token api_key=secret token:secret2",
+        );
+
+        assert!(!message.contains('\n'));
+        assert!(!message.contains('\r'));
+        assert!(!message.contains("abcd1234"));
+        assert!(!message.contains("secret-bearer-token"));
+        assert!(!message.contains("secret2"));
+        assert!(message.contains("key=[redacted-secret]"));
+        assert!(message.contains("Bearer [redacted-secret]"));
+        assert!(message.contains("api_key=[redacted-secret]"));
+        assert!(message.contains("token=[redacted-secret]"));
+    }
+
+    #[test]
+    fn ai_provider_state_preserves_host_supabase_connection() {
+        let providers = with_ai_provider_connection_state(json!([
+            {
+                "id": "gemini",
+                "displayName": "Google Gemini",
+                "requiresCredential": true,
+                "connected": true,
+                "credentialState": "connected"
+            },
+            {
+                "id": "local-dry-run",
+                "displayName": "Local dry run",
+                "requiresCredential": false,
+                "connected": false,
+                "credentialState": "notRequired"
+            }
+        ]));
+
+        assert_eq!(providers[0]["connected"], true);
+        assert_eq!(providers[0]["credentialState"], "connected");
+        assert_eq!(providers[1]["connected"], true);
+        assert_eq!(providers[1]["credentialState"], "notRequired");
+    }
+
+    #[test]
+    fn safe_external_url_allows_only_https_and_mailto_without_embedded_credentials() {
+        assert_eq!(
+            safe_external_url("https://www.nexusmods.com/skyrimspecialedition/mods/1").as_deref(),
+            Ok("https://www.nexusmods.com/skyrimspecialedition/mods/1")
+        );
+        assert_eq!(
+            safe_external_url("mailto:privacy@example.test").as_deref(),
+            Ok("mailto:privacy@example.test")
+        );
+        assert_eq!(
+            safe_external_url("http://example.test").unwrap_err(),
+            "unsupported-protocol"
+        );
+        assert_eq!(
+            safe_external_url("javascript:alert(1)").unwrap_err(),
+            "unsupported-protocol"
+        );
+        assert_eq!(
+            safe_external_url("https://user:pass@example.test/path").unwrap_err(),
+            "embedded-credentials"
+        );
+        assert_eq!(
+            safe_external_url("https://example.test/a b").unwrap_err(),
+            "invalid-url"
+        );
+    }
+
+    #[test]
     fn operation_progress_payload_adds_operation_id_from_meta() {
         let envelope = json!({
             "jsonrpc": "2.0",
@@ -1925,6 +3508,37 @@ mod tests {
         let payload = operation_progress_payload(&envelope);
 
         assert_eq!(payload["operationId"], "op_from_payload");
+    }
+
+    #[test]
+    fn operation_status_snapshot_marks_completed_progress() {
+        let payload = json!({
+            "operationId": "op_install",
+            "phase": "install",
+            "currentStep": "completed",
+            "currentItem": "Example Mod",
+            "overallPercent": 100,
+            "statusMessage": "Done",
+            "updatedAt": "123"
+        });
+
+        let snapshot = operation_status_snapshot(&payload).expect("snapshot");
+
+        assert_eq!(snapshot["operationId"], "op_install");
+        assert_eq!(snapshot["state"], "completed");
+        assert_eq!(snapshot["overallPercent"], 100.0);
+    }
+
+    #[test]
+    fn operation_log_entry_extracts_operation_id_and_category() {
+        let entry = operation_log_entry(
+            "fluxora-tauri-main-bridge-current.log",
+            "[123] [INFO] [AI.Tool] [operationId=op_ai_chat_run] tool=mods.installed phase=succeeded",
+        );
+
+        assert_eq!(entry["operationId"], "op_ai_chat_run");
+        assert_eq!(entry["category"], "AI.Tool");
+        assert_eq!(entry["level"], "info");
     }
 
     #[cfg(windows)]

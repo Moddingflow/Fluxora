@@ -6,6 +6,7 @@ import type { FluxoraProject } from '../../../shared/fluxora-api';
 export type OperationOverlayKind =
   | 'build-create'
   | 'build-delete'
+  | 'download-delete'
   | 'mod-delete'
   | 'fluxpack-export'
   | 'fluxpack-install'
@@ -74,13 +75,19 @@ export const OperationOverlay = ({
   const cancelDisabled = overlay.cancelRequested && overlay.isRunning;
   const showClose = overlay.canClose && !showCancel;
 
-  if (overlay.kind === 'mod-delete' && tone === 'running') {
+  const isDeletionSplash =
+    tone === 'running' && (overlay.kind === 'download-delete' || overlay.kind === 'mod-delete');
+
+  if (isDeletionSplash) {
+    const deletionDetail =
+      overlay.kind === 'download-delete' ? 'Удаление файла из загрузок' : 'Удаление мода';
+
     return (
       <LoadingSplash
         aria-label={overlay.title}
-        className="operation-overlay operation-overlay--loading-splash operation-overlay--mod-delete"
+        className={`operation-overlay operation-overlay--loading-splash operation-overlay--${overlay.kind}`}
         data-state={tone}
-        detail="Удаление мода"
+        detail={deletionDetail}
         messages={[overlay.title]}
         open
         progress={percent}

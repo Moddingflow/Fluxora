@@ -1,5 +1,5 @@
 Fluxora Datenschutzerklärung
-Stand: 24. Juni 2026
+Stand: 30. Juni 2026
 
 1. Verantwortlicher
 Fluxora wird als Teil des ModdingFlow Ökosystems bereitgestellt. Verantwortlicher für die Datenverarbeitung ist ModdingFlow, Deutschland, sofern in der offiziellen Distribution kein anderer rechtlicher Hinweis angegeben ist. Für Datenschutzanfragen nutzen Sie den offiziellen Kontaktkanal oder das Impressum von ModdingFlow.
@@ -8,7 +8,7 @@ Fluxora wird als Teil des ModdingFlow Ökosystems bereitgestellt. Verantwortlich
 Diese Datenschutzerklärung gilt für den Fluxora Installer, die Tauri-basierte Fluxora Desktop-App, die Plattform-Webview-Laufzeitumgebung für die App-Oberfläche, den nativen Bridge Host und den nativen C++ Core von Fluxora. Sie gilt nicht für Drittanbieter, Spielehersteller, Mod-Plattformen, Nexus Mods, Microsoft, Webseiten von Tauri- oder Webview-Projekten, npm-Paketwebseiten, Rust-Crate-Webseiten oder Webseiten, die Sie selbst öffnen.
 
 3. Kurzfassung
-Fluxora ist als lokale Desktop-Anwendung konzipiert. Der Installer erstellt kein Online-Konto und sendet keine Telemetrie. Aktuelle Tauri-Builds aktivieren keine Analytics und keinen automatischen Crash-Upload. Fluxora speichert Programmdateien, Einstellungen, Projektdaten und Protokolle auf Ihrem Gerät. Netzwerkkommunikation findet nur statt, wenn Sie eine Funktion nutzen, die dies benötigt, zum Beispiel Nexus Mods verbinden, eine Webseite öffnen, nxm Links registrieren, Mod-Daten prüfen oder ausgewählte Dateien herunterladen.
+Fluxora ist als lokale Desktop-Anwendung konzipiert. Der Installer erstellt kein Online-Konto und sendet keine Telemetrie. Aktuelle Tauri-Builds aktivieren keine Analytics und keinen automatischen Crash-Upload. Fluxora speichert Programmdateien, Einstellungen, Projektdaten und Protokolle auf Ihrem Gerät. Netzwerkkommunikation findet nur statt, wenn Sie eine Funktion nutzen, die dies benötigt, zum Beispiel Nexus Mods verbinden, eine Webseite öffnen, nxm Links registrieren, Mod-Daten prüfen, optionale AI-Web-/Nexus-Recherche nutzen oder ausgewählte Dateien herunterladen.
 
 4. Lokal verarbeitete Daten
 Fluxora kann folgende Daten lokal auf Ihrem Gerät speichern oder verarbeiten:
@@ -16,6 +16,7 @@ Fluxora kann folgende Daten lokal auf Ihrem Gerät speichern oder verarbeiten:
 - Installationsdaten: gewählter Installationsordner, installierte Dateien und optionaler Desktop-Link.
 - Einstellungen: Sprache, App-Konfiguration, Ordner für Build-Konfigurationen und weitere Präferenzen.
 - Projektdaten: Projektnamen, Spielpfade, Mod-Ordner, Profildateien, Plugin-Reihenfolge, Download-Einträge, importierte Mod Organizer Daten, ausführbare Dateien und zugehörige Metadaten.
+- Daten des AI-Assistenten, wenn Sie AI-Funktionen aktivieren oder nutzen: Chat-Eingaben, Chat-Verlauf, ausgewählte Modell-/Provider-Metadaten, lokale Kostenschätzungen, Run-IDs, kompakter read-only Build-Kontext, lokale Kontextgraph-Metadaten wie Source-IDs, Source-Fingerprints, Zeitstempel und Stale-Markierungen sowie optionale AI-Recherchemetadaten. Der kompakte Kontext kann Projektzusammenfassungen, installierte Mod-Zusammenfassungen, Plugin-/Load-Order-Zusammenfassungen, Dateibaumnamen des ausgewählten Mods, begrenzte lokale Datei-Metadaten aus Fluxora-eigenen Build-Ordnern wie relative Pfade, Dateiarten, Größen, SKSE-DLL-/Config-Signale und Konflikteigentümer, begrenzte Dateieigentümer-Samples für hochsignifikante Overwrite-/Konflikt-Evidence, Profilnamen, Download-Zusammenfassungen, Nexus-Verknüpfungsstatus, Vorgangsstatus-Snapshots und aktuelle Vorgangsprotokollzeilen enthalten. AI-Recherchemetadaten können Nexus-URLs oder nxm Links aus Ihrer Eingabe, offizielle Nexus-API-Metadaten oder Datei-Zusammenfassungen, Zusammenfassungen erlaubter öffentlicher Nexus-Seiten, Gemini/Google-Search-Grounding-Zitate, Source-IDs, Source-Snapshots, Rate-Limit-/Backoff-Metadaten und Gründe für blockierte Quellen enthalten. Fluxora nimmt in die Phase-7 AI-Kontext- und Recherche-Bundles standardmäßig keine Provider-Schlüssel, Nexus-Tokens, beliebigen OS-Pfade, beliebigen Dateiinhalte, Shell-Ausgaben, vollständigen Protokolldateien, Browser-Cookies oder authentifizierten privaten Seiten auf.
 - Protokolle und Crash-Diagnosen: Installer-Protokolle, Tauri UI-Protokolle, Tauri Main/Bridge-Protokolle, native Core-Protokolle, Vorgangsprotokolle und Crash-Protokolle mit Zeitstempeln, Vorgangsstatus, Vorgangs-IDs, Fehlermeldungen, ausgewählten Pfaden, Dateinamen, Prozess- oder Thread-Kennungen und Diagnosedaten. Protokolle können indirekt Ihren Betriebssystem-Benutzernamen enthalten, wenn er Teil eines Dateipfads ist.
 - Nexus Mods Verbindungsdaten, falls Sie Nexus Mods verbinden: Anzeigename, Benutzer-ID, Token-Typ, Ablaufzeit, Access- oder Refresh-Tokens und persönliche API-Schlüssel, geschützt mit Windows Datenschutz-APIs, soweit verfügbar.
 - Lokale Protokoll-Links: nxm Links, die an Fluxora übergeben werden, wenn Sie Fluxora als Handler auswählen.
@@ -29,6 +30,7 @@ Die Rechtsgrundlagen richten sich nach Artikel 6 DSGVO:
 - Lokale Einstellungen und Projektdaten: Artikel 6 Absatz 1 Buchstabe b DSGVO, weil diese Daten für angeforderte Funktionen erforderlich sind.
 - Protokolle und Diagnosedaten: Artikel 6 Absatz 1 Buchstabe f DSGVO, berechtigtes Interesse an Sicherheit, Fehlerbehebung, Missbrauchsprävention, Support und Stabilität.
 - Optionale Nexus Mods Verbindung oder andere optionale Online-Aktionen: Artikel 6 Absatz 1 Buchstabe b DSGVO für angeforderte Funktionen und, soweit die Aktion auf Ihrer ausdrücklichen Auswahl beruht, Artikel 6 Absatz 1 Buchstabe a DSGVO. Sie können Nexus Mods in der App trennen.
+- Optionale AI-Assistentenfunktionen: Artikel 6 Absatz 1 Buchstabe b DSGVO für angeforderte AI-Antworten und, soweit die Übermittlung an einen Cloud-Provider auf Ihrer ausdrücklichen Auswahl beruht, Artikel 6 Absatz 1 Buchstabe a DSGVO. Sie können AI-Funktionen deaktivieren oder Provider-Zugangsdaten in der App trennen.
 - Rechtliche Verpflichtungen, falls einschlägig: Artikel 6 Absatz 1 Buchstabe c DSGVO.
 
 6. Speicherorte
@@ -41,12 +43,16 @@ Fluxora speichert Daten typischerweise lokal an folgenden Orten:
 - Projektdateien: von Ihnen beim Erstellen oder Importieren gewählte Ordner.
 
 7. Speicherdauer
-Fluxora speichert lokale Daten, bis Sie diese löschen, Fluxora deinstallieren, die App zurücksetzen, ein Konto trennen oder das betreffende Projekt löschen. Protokolle werden als datierte lokale Dateien geschrieben und nicht automatisch hochgeladen. Aktuelle Builds erzwingen keine automatische Löschung von Protokollen; sie bleiben daher gespeichert, bis Sie oder Systembereinigungen sie löschen.
+Fluxora speichert lokale Daten, bis Sie diese löschen, Fluxora deinstallieren, die App zurücksetzen, ein Konto trennen oder das betreffende Projekt löschen. Lokaler AI-Chatverlauf, Kontextgraph-Metadaten und Recherche-Zusammenfassungen folgen demselben lokalen Aufbewahrungsprinzip, solange eine spätere Einstellungsansicht keine genaueren Löschfunktionen anbietet. Protokolle werden als datierte lokale Dateien geschrieben und nicht automatisch hochgeladen. Aktuelle Builds erzwingen keine automatische Löschung von Protokollen; sie bleiben daher gespeichert, bis Sie oder Systembereinigungen sie löschen.
 
 8. Empfänger und Übermittlungen
 Fluxora verkauft keine personenbezogenen Daten und sendet keine Protokolle oder Telemetrie automatisch an ModdingFlow. Daten können nur dann an Dritte übermittelt werden, wenn Sie eine Funktion starten, die dies erfordert, zum Beispiel:
 
 - Nexus Mods OAuth und API-Endpunkte, wenn Sie Nexus Mods verbinden oder Nexus Mods Funktionen nutzen.
+- Nexus Mods API-Endpunkte und erlaubte öffentliche Nexus-Seiten, wenn Sie AI-Nexus-/Web-Recherche anfordern.
+- Von Fluxora verwaltete Supabase-Konfigurationsendpunkte, wenn AI die Verfügbarkeit von Provider-Zugangsdaten auflösen muss; Chat-Eingaben und lokaler Build-Kontext werden für diese Abfrage nicht an Supabase gesendet.
+- Von Ihnen ausgewählte oder durch einen Fluxora-AI-Modus konfigurierte AI-Modellprovider, wenn Sie eine AI-Chatnachricht senden oder eine AI-Antwort anfordern. Die Verarbeitung durch Provider unterliegt deren eigenen Bedingungen und Datenschutzhinweisen und kann je nach Provider eine Übermittlung außerhalb Ihres Landes oder der EU/des EWR umfassen.
+- Google/Gemini Search Grounding, wenn es im ausgewählten AI-Recherchemodus aktiviert ist, um zitierbaren Web-Kontext für Ihre Anfrage zu erhalten.
 - Eine Download-URL oder ein Mod-Hosting-Dienst, wenn Sie eine Datei herunterladen.
 - Ihr Browser oder Betriebssystem, wenn Fluxora einen Link öffnet oder lokale Protokollverknüpfungen registriert.
 - Drittanbieter-Laufzeit- und Paketkomponenten, die mit Fluxora gebündelt sind, zum Beispiel Tauri, die Plattform-Webview-Laufzeitumgebung und weitere in den mitgelieferten Third-Party Notices aufgeführte Bibliotheken, laufen lokal als Teil der App oder des Installers.

@@ -8,6 +8,8 @@
 
 # .NET
 bin/
+!frontend-tauri/src-tauri/src/bin/
+!frontend-tauri/src-tauri/src/bin/**
 obj/
 TestResults/
 

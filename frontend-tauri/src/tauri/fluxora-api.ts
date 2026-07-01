@@ -20,6 +20,13 @@ import type {
   FluxoraGameTemplate,
   FluxoraAnalyzeContentLayoutRequest,
   FluxoraAnalyzeFomodContentLayoutRequest,
+  FluxoraAiChatRequest,
+  FluxoraAiChatResponse,
+  FluxoraAiHostStatus,
+  FluxoraAiModelCapability,
+  FluxoraAiProviderConnectionResult,
+  FluxoraAiProviderDescriptor,
+  FluxoraAiProviderTestResult,
   FluxoraContentLayoutPreview,
   FluxoraFomodInstaller,
   FluxoraFluxPackExportRequest,
@@ -44,12 +51,15 @@ import type {
   FluxoraNxmProtocolResult,
   FluxoraNexusModsAuthStatus,
   FluxoraOperationCancelResult,
+  FluxoraOperationLogEntry,
   FluxoraOperationProgress,
+  FluxoraOperationsStatus,
   FluxoraProcessWatchResult,
   FluxoraPluginOrderItem,
   FluxoraProject,
   FluxoraProjectCatalog,
   FluxoraProjectDirectoryPreview,
+  FluxoraRecentOperationLogs,
   NativeBridgeLanguageResult,
   NativeBridgeCapabilities,
   NativeBridgeThemeResult,
@@ -60,8 +70,19 @@ import type {
   OpenExternalResult,
   ShellOpenPathResult,
   ShellShowItemInFolderResult,
+  FluxoraTextFileDocument,
+  FluxoraTextFileSaveResult,
   UiLogEntry
 } from '../shared/fluxora-api';
+import {
+  AI_SAFE_ACTION_CATALOG,
+  AI_SAFE_ACTION_CATALOG_CAPABILITY
+} from '../shared/ai-safe-action-catalog';
+import { createFluxoraAiTaskPlanningBundle } from '../shared/ai-task-planner';
+import {
+  FLUXORA_SKILL_CATALOG,
+  FLUXORA_SKILL_CATALOG_CAPABILITY
+} from '../shared/ai-skills';
 import { FluxoraIpcChannels } from '../shared/fluxora-api';
 
 export interface IpcInvoker {
@@ -99,6 +120,46 @@ const listenTyped = <T>(
 export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   app: {
     getInfo: () => invokeTyped<FluxoraAppInfo>(ipc, FluxoraIpcChannels.appGetInfo)
+  },
+  ai: {
+    chatRespond: (request: FluxoraAiChatRequest) =>
+      invokeTyped<FluxoraAiChatResponse>(ipc, FluxoraIpcChannels.aiChatRespond, request),
+    getStatus: (request?: OperationRequest) =>
+      invokeTyped<FluxoraAiHostStatus>(ipc, FluxoraIpcChannels.aiGetStatus, request),
+    restartHost: (request?: OperationRequest) =>
+      invokeTyped<FluxoraAiHostStatus>(ipc, FluxoraIpcChannels.aiRestartHost, request),
+    listSafeActions: async () => AI_SAFE_ACTION_CATALOG,
+    listSkills: async () => FLUXORA_SKILL_CATALOG,
+    listProviders: (request?: OperationRequest) =>
+      invokeTyped<FluxoraAiProviderDescriptor[]>(
+        ipc,
+        FluxoraIpcChannels.aiListProviders,
+        request
+      ),
+    listModels: (request?: OperationRequest) =>
+      invokeTyped<FluxoraAiModelCapability[]>(ipc, FluxoraIpcChannels.aiListModels, request),
+    connectProvider: (providerId: string, apiKey: string, request?: OperationRequest) =>
+      invokeTyped<FluxoraAiProviderConnectionResult>(
+        ipc,
+        FluxoraIpcChannels.aiConnectProvider,
+        providerId,
+        apiKey,
+        request
+      ),
+    disconnectProvider: (providerId: string, request?: OperationRequest) =>
+      invokeTyped<FluxoraAiProviderConnectionResult>(
+        ipc,
+        FluxoraIpcChannels.aiDisconnectProvider,
+        providerId,
+        request
+      ),
+    testProvider: (providerId: string, request?: OperationRequest) =>
+      invokeTyped<FluxoraAiProviderTestResult>(
+        ipc,
+        FluxoraIpcChannels.aiTestProvider,
+        providerId,
+        request
+      )
   },
   bridge: {
     getStatus: (request?: OperationRequest) =>
@@ -172,10 +233,23 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         title,
         initialPath
       ),
+    pickTextFile: (initialDirectory?: string) =>
+      invokeTyped<DialogPickResult>(
+        ipc,
+        FluxoraIpcChannels.dialogPickTextFile,
+        initialDirectory
+      ),
     saveFluxPack: (defaultPath?: string, title?: string) =>
       invokeTyped<DialogSaveResult>(
         ipc,
         FluxoraIpcChannels.dialogSaveFluxPack,
+        defaultPath,
+        title
+      ),
+    saveTextFile: (defaultPath?: string, title?: string) =>
+      invokeTyped<DialogSaveResult>(
+        ipc,
+        FluxoraIpcChannels.dialogSaveTextFile,
         defaultPath,
         title
       )
@@ -314,6 +388,36 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         projectDirectory,
         modPath,
         relativeDirectory,
+        request
+      ),
+    readTextFile: (
+      projectDirectory: string,
+      modPath: string,
+      relativePath: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraTextFileDocument>(
+        ipc,
+        FluxoraIpcChannels.modsReadTextFile,
+        projectDirectory,
+        modPath,
+        relativePath,
+        request
+      ),
+    saveTextFile: (
+      projectDirectory: string,
+      modPath: string,
+      relativePath: string,
+      content: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraTextFileSaveResult>(
+        ipc,
+        FluxoraIpcChannels.modsSaveTextFile,
+        projectDirectory,
+        modPath,
+        relativePath,
+        content,
         request
       )
   },
@@ -822,6 +926,19 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         operationId,
         request
       ),
+    getStatus: (request?: OperationRequest) =>
+      invokeTyped<FluxoraOperationsStatus>(
+        ipc,
+        FluxoraIpcChannels.operationsGetStatus,
+        request
+      ),
+    recentLogs: (options = {}, request?: OperationRequest) =>
+      invokeTyped<FluxoraRecentOperationLogs>(
+        ipc,
+        FluxoraIpcChannels.operationsRecentLogs,
+        options,
+        request
+      ),
     onProgress: (callback: (progress: FluxoraOperationProgress) => void) =>
       listenTyped<FluxoraOperationProgress>(
         ipc,
@@ -899,6 +1016,23 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         request
       )
   },
+  textFiles: {
+    read: (path: string, request?: OperationRequest) =>
+      invokeTyped<FluxoraTextFileDocument>(
+        ipc,
+        FluxoraIpcChannels.textFilesRead,
+        path,
+        request
+      ),
+    save: (path: string, content: string, request?: OperationRequest) =>
+      invokeTyped<FluxoraTextFileSaveResult>(
+        ipc,
+        FluxoraIpcChannels.textFilesSave,
+        path,
+        content,
+        request
+      )
+  },
   ui: {
     log: (entry: UiLogEntry) => invokeTyped<void>(ipc, FluxoraIpcChannels.uiLog, entry)
   },
@@ -912,7 +1046,35 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         configPath,
         buildName
       ),
+    openModDetails: (
+      configPath: string,
+      modPath: string,
+      modName: string,
+      profileName?: string
+    ) =>
+      invokeTyped<void>(
+        ipc,
+        FluxoraIpcChannels.windowOpenModDetails,
+        configPath,
+        modPath,
+        modName,
+        profileName
+      ),
     openSettings: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowOpenSettings),
+    openTextEditor: (
+      configPath: string,
+      modPath?: string,
+      relativePath?: string,
+      fileName?: string
+    ) =>
+      invokeTyped<void>(
+        ipc,
+        FluxoraIpcChannels.windowOpenTextEditor,
+        configPath,
+        modPath,
+        relativePath,
+        fileName
+      ),
     toggleMaximize: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowToggleMaximize)
   }
 });
@@ -1003,6 +1165,260 @@ const normalizeStatus = (status: NativeBridgeStatus): NativeBridgeStatus => ({
   capabilities: status.capabilities ? bridgeCapabilities(status.capabilities) : status.capabilities
 });
 
+const browserPreviewAiProviders = (): FluxoraAiProviderDescriptor[] => [
+  {
+    id: 'local-dry-run',
+    displayName: 'Local dry run',
+    kind: 'local',
+    requiresCredential: false,
+    credentialStore: 'none',
+    credentialState: 'notRequired',
+    connected: true,
+    defaultModelId: 'local-dry-run',
+    supportedRunModes: ['offline'],
+    networkAdapters: 'disabled',
+    dataDisclosure: 'Browser preview does not call external AI providers.'
+  }
+];
+
+const browserPreviewAiModels = (): FluxoraAiModelCapability[] => [
+  {
+    id: 'local-dry-run',
+    providerId: 'local-dry-run',
+    displayName: 'Local dry run',
+    contextWindowTokens: 8192,
+    supportsTools: false,
+    supportsWeb: false,
+    supportsStreaming: false,
+    supportsBackground: false,
+    priceMetadata: {
+      currency: 'USD',
+      inputPerMillionTokens: null,
+      outputPerMillionTokens: null,
+      cacheReadPerMillionTokens: null,
+      cacheWritePerMillionTokens: null,
+      source: 'browser-preview',
+      isEstimated: true,
+      remoteConfigurable: true
+    }
+  }
+];
+
+const browserPreviewAiStatus = (rawRequest: unknown): FluxoraAiHostStatus => {
+  const request = requestWithOperationId(rawRequest, 'ai_status');
+  return {
+    ready: true,
+    operationId: operationIdOf(request, 'ai_status'),
+    health: 'ready',
+    protocolVersion: '1.0',
+    hostVersion: 'browser-preview',
+    processId: 0,
+    providers: browserPreviewAiProviders(),
+    models: browserPreviewAiModels(),
+    capabilities: {
+      providerRegistry: { state: 'available' },
+      providerCredentialBroker: { state: 'disabled', reason: 'browser-preview' },
+      providerTestCall: { state: 'available', network: 'disabled' },
+      modelCapabilitiesRegistry: { state: 'available' },
+      planner: {
+        state: 'available',
+        schema: 'fluxora.ai.task-plan.v1',
+        owner: 'FluxoraAIHost',
+        askUserOnlyIfBlocked: true
+      },
+      subagentScheduler: {
+        state: 'available',
+        schema: 'fluxora.ai.subagent-schedule.v1',
+        defaultSubagentLimit: 3,
+        maxSubagentsForLargeTasks: 10,
+        writeActionsOnlyThroughQueue: true,
+        hiddenDestructiveActions: false
+      },
+      safeActionCatalog: AI_SAFE_ACTION_CATALOG_CAPABILITY,
+      skillCatalog: FLUXORA_SKILL_CATALOG_CAPABILITY
+    }
+  };
+};
+
+const browserPreviewAiChatResponse = (rawRequest: unknown): FluxoraAiChatResponse => {
+  const chatRequest = (rawRequest && typeof rawRequest === 'object'
+    ? rawRequest
+    : {}) as Partial<FluxoraAiChatRequest>;
+  const request = requestWithOperationId(chatRequest, 'ai_chat_run');
+  const operationId = operationIdOf(request, 'ai_chat_run');
+  const prompt =
+    chatRequest.messages
+      ?.filter((message) => message.role === 'user')
+      .at(-1)
+      ?.text.trim() || 'Fluxora chat';
+  const text =
+    `Plan: review "${prompt}" and suggest the next safe Fluxora steps. ` +
+    'Chat-only mode cannot run tools or change the build.';
+  const estimatedInputTokens = Math.max(1, Math.ceil(prompt.length / 4));
+  const estimatedOutputTokens = Math.max(8, Math.ceil(text.length / 4));
+  const modelId = chatRequest.modelId || 'local-dry-run';
+  const routingPreset = chatRequest.routingPreset ?? 'free-demo';
+  const planningBundle = createFluxoraAiTaskPlanningBundle(prompt, operationId);
+  const status =
+    planningBundle.taskPlan.proposedMutations.length > 0 ? 'needs-approval' : 'done';
+
+  return {
+    operationId,
+    providerId: 'local-dry-run',
+    modelId,
+    routingPreset,
+    status,
+    text,
+    streamChunks: text.match(/.{1,36}(?:\s|$)/g)?.map((chunk, index) => ({
+      index,
+      text: chunk
+    })) ?? [{ index: 0, text }],
+    sources: [],
+    costEstimate: {
+      currency: 'USD',
+      actualInternalCost: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: estimatedInputTokens,
+      displayCost: 0,
+      estimatedInputTokens,
+      estimatedOutputTokens,
+      estimatedCost: 0,
+      actualCost: 0,
+      hardCost: 0,
+      internalCost: 0,
+      promptCache: {
+        key: `browser-preview-${operationId}`,
+        status: 'write',
+        rawPromptStored: false
+      },
+      pricingSource: 'browser-preview',
+      riskBuffer: 0,
+      usageBreakdown: {
+        inputTokens: estimatedInputTokens,
+        outputTokens: estimatedOutputTokens,
+        cacheReadTokens: 0,
+        cacheWriteTokens: estimatedInputTokens,
+        webSearchCalls: 0,
+        fetchUrlCalls: 0,
+        sandboxMinutes: 0,
+        providerRiskBuffer: 0
+      },
+      isEstimate: true
+    },
+    costPipeline: {
+      schema: 'fluxora.ai.cost-pipeline.v1',
+      generatedAt: new Date().toISOString(),
+      operationId,
+      classifyCheaply: true,
+      retrieveThroughContextGraph: true,
+      nexusApiCacheFirst: true,
+      compactContextBeforeStrongModel: true,
+      useCheapVerification: true,
+      structuredFinalReport: true,
+      promptCaching: true,
+      conversationCompaction: true,
+      deduplicateWebSources: true,
+      nexusMetadataCache: {
+        ttlMs: 3_600_000,
+        storesRateLimitHeaders: true
+      },
+      batchCheapChecks: true,
+      stopConditionsForLowValueLoops: true
+    },
+    costPreflight: {
+      schema: 'fluxora.ai.cost-preflight.v1',
+      generatedAt: new Date().toISOString(),
+      operationId,
+      routingPreset,
+      runSize: 'ordinary',
+      required: false,
+      decision: 'allowed',
+      estimatedRunCredits: 0,
+      estimatedMonthlyBudgetPercent: 0,
+      expensiveRunApprovalRequired: false,
+      wallet: {
+        tier: routingPreset === 'byok' ? 'byok' : routingPreset === 'free-demo' ? 'free' : 'paid',
+        currency: 'AI credits',
+        freeDemoWalletCredits: 0.01,
+        monthlyWalletCredits: routingPreset === 'byok' ? 0 : routingPreset === 'free-demo' ? 0.01 : 0.65,
+        remainingMonthlyCredits: routingPreset === 'byok' ? 0 : routingPreset === 'free-demo' ? 0.01 : 0.65,
+        webResearchSubBudgetCredits: routingPreset === 'byok' ? 0 : 0.12,
+        longJobPreflightBudgetCredits: routingPreset === 'byok' ? 0 : 0.25,
+        safePromptMaxMonthlyPercent: 0.2,
+        safePromptThresholdCredits: routingPreset === 'byok' ? 0 : 0.13,
+        byokChargesFluxoraBudget: false
+      },
+      fallbackChoices: ['economy', 'full', 'byok'],
+      appliedOptimizations: ['browser-preview']
+    },
+    ledgerEntry: {
+      operationId,
+      providerId: 'local-dry-run',
+      modelId,
+      routingPreset,
+      chargesFluxoraBudget: false,
+      creditDebit: 0,
+      estimatedInternalCost: 0,
+      actualInternalCost: 0,
+      currency: 'USD',
+      billable: false,
+      costPreflightDecision: 'allowed',
+      createdAt: new Date().toISOString(),
+      pricingVersion: 'browser-preview',
+      promptCacheKey: `browser-preview-${operationId}`,
+      usageBreakdown: {
+        inputTokens: estimatedInputTokens,
+        outputTokens: estimatedOutputTokens,
+        cacheReadTokens: 0,
+        cacheWriteTokens: estimatedInputTokens,
+        webSearchCalls: 0,
+        fetchUrlCalls: 0,
+        sandboxMinutes: 0,
+        providerRiskBuffer: 0
+      }
+    },
+    marginTelemetry: {
+      schema: 'fluxora.ai.margin-telemetry.v1',
+      generatedAt: new Date().toISOString(),
+      operationId,
+      metricName: 'gross_margin_after_ai_cost',
+      userTier: routingPreset === 'byok' ? 'byok' : routingPreset === 'free-demo' ? 'free' : 'paid',
+      grossRevenueEur: routingPreset === 'paid-economy' || routingPreset === 'paid-large-job' ? 4.99 : 0,
+      estimatedVatPaymentInfrastructureReserveEur:
+        routingPreset === 'paid-economy' || routingPreset === 'paid-large-job' ? 3.7 : 0,
+      aiProviderCost: 0,
+      webSearchCost: 0,
+      marginAfterAiCostEur:
+        routingPreset === 'paid-economy' || routingPreset === 'paid-large-job' ? 1.29 : 0,
+      grossMarginAfterAiCost:
+        routingPreset === 'paid-economy' || routingPreset === 'paid-large-job' ? 0.25852 : 0,
+      heavyUserDetected: false,
+      localEstimateOnly: true
+    },
+    routingDecision: {
+      schema: 'fluxora.ai.routing-decision.v1',
+      generatedAt: new Date().toISOString(),
+      operationId,
+      routingPreset,
+      runSize: 'ordinary',
+      cheapClassifierFirst: true,
+      candidateModelIds: [modelId],
+      selectedModelId: modelId,
+      selectedProviderId: 'local-dry-run',
+      selectedModelClass: 'local',
+      premiumRequiresByok: true,
+      webModelOnlyWhenNeeded: true,
+      localModelPreferredWhenPossible: true,
+      reasons: ['browser preview uses the local dry-run route']
+    },
+    fallbackProviders: [],
+    taskPlan: planningBundle.taskPlan,
+    subagentSchedule: planningBundle.subagentSchedule,
+    selectedSkill: planningBundle.selectedSkill,
+    toolCallsAllowed: false
+  };
+};
+
 const isTauriRuntime = (): boolean =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -1027,6 +1443,59 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
           allowedIpcChannels: Object.values(FluxoraIpcChannels),
           csp: 'browser-preview'
         } satisfies FluxoraSecurityState;
+
+      case FluxoraIpcChannels.aiGetStatus:
+      case FluxoraIpcChannels.aiRestartHost:
+        return browserPreviewAiStatus(args[0]);
+
+      case FluxoraIpcChannels.aiChatRespond:
+        return browserPreviewAiChatResponse(args[0]);
+
+      case FluxoraIpcChannels.aiListProviders:
+        return browserPreviewAiProviders();
+
+      case FluxoraIpcChannels.aiListModels:
+        return browserPreviewAiModels();
+
+      case FluxoraIpcChannels.aiConnectProvider: {
+        const request = requestWithOperationId(args[2], 'ai_provider_connect');
+        return {
+          providerId: optionalString(args[0]),
+          connected: false,
+          state: 'hostUnavailable',
+          message: 'Provider credentials are unavailable in browser preview.',
+          operationId: operationIdOf(request, 'ai_provider_connect')
+        } satisfies FluxoraAiProviderConnectionResult;
+      }
+
+      case FluxoraIpcChannels.aiDisconnectProvider: {
+        const request = requestWithOperationId(args[1], 'ai_provider_disconnect');
+        return {
+          providerId: optionalString(args[0]),
+          connected: false,
+          state: 'disconnected',
+          message: 'Provider credential is disconnected.',
+          operationId: operationIdOf(request, 'ai_provider_disconnect')
+        } satisfies FluxoraAiProviderConnectionResult;
+      }
+
+      case FluxoraIpcChannels.aiTestProvider: {
+        const request = requestWithOperationId(args[1], 'ai_provider_test');
+        const providerId = optionalString(args[0]) || 'local-dry-run';
+        return {
+          providerId,
+          ok: providerId === 'local-dry-run',
+          state: providerId === 'local-dry-run' ? 'ready' : 'missingCredential',
+          message:
+            providerId === 'local-dry-run'
+              ? 'Local dry-run provider is ready.'
+              : 'Provider credential is not connected.',
+          operationId: operationIdOf(request, 'ai_provider_test'),
+          hostRoundTrip: false,
+          checkedAt: Date.now(),
+          modelIds: providerId === 'local-dry-run' ? ['local-dry-run'] : []
+        } satisfies FluxoraAiProviderTestResult;
+      }
 
       case FluxoraIpcChannels.bridgeGetStatus: {
         const request = requestWithOperationId(args[0], 'bridge_status');
@@ -1074,7 +1543,9 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.windowClose:
       case FluxoraIpcChannels.windowMinimize:
       case FluxoraIpcChannels.windowOpenBuildSettings:
+      case FluxoraIpcChannels.windowOpenModDetails:
       case FluxoraIpcChannels.windowOpenSettings:
+      case FluxoraIpcChannels.windowOpenTextEditor:
       case FluxoraIpcChannels.windowToggleMaximize:
         return undefined;
 
@@ -1083,8 +1554,39 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.dialogPickExecutable:
       case FluxoraIpcChannels.dialogPickFluxPack:
       case FluxoraIpcChannels.dialogPickFolder:
+      case FluxoraIpcChannels.dialogPickTextFile:
       case FluxoraIpcChannels.dialogSaveFluxPack:
+      case FluxoraIpcChannels.dialogSaveTextFile:
         return { canceled: true } satisfies DialogPickResult;
+
+      case FluxoraIpcChannels.modsReadTextFile:
+      case FluxoraIpcChannels.textFilesRead: {
+        const request = requestWithOperationId(
+          channel === FluxoraIpcChannels.modsReadTextFile ? args[3] : args[1],
+          'text_file_read'
+        );
+        return {
+          path: optionalString(channel === FluxoraIpcChannels.modsReadTextFile ? args[2] : args[0]),
+          fileName: 'preview.txt',
+          content: '',
+          size: 0,
+          operationId: operationIdOf(request, 'text_file_read')
+        } satisfies FluxoraTextFileDocument;
+      }
+
+      case FluxoraIpcChannels.modsSaveTextFile:
+      case FluxoraIpcChannels.textFilesSave: {
+        const request = requestWithOperationId(
+          channel === FluxoraIpcChannels.modsSaveTextFile ? args[4] : args[2],
+          'text_file_save'
+        );
+        return {
+          path: optionalString(channel === FluxoraIpcChannels.modsSaveTextFile ? args[2] : args[0]),
+          fileName: 'preview.txt',
+          size: optionalString(channel === FluxoraIpcChannels.modsSaveTextFile ? args[3] : args[1]).length,
+          operationId: operationIdOf(request, 'text_file_save')
+        } satisfies FluxoraTextFileSaveResult;
+      }
 
       case FluxoraIpcChannels.shellOpenPath:
         return {
@@ -1128,6 +1630,28 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
         } satisfies FluxoraOperationCancelResult;
       }
 
+      case FluxoraIpcChannels.operationsGetStatus: {
+        const request = requestWithOperationId(args[0], 'operations_status');
+        return {
+          operationId: operationIdOf(request, 'operations_status'),
+          source: 'browser-preview',
+          active: [],
+          recent: [],
+          message: 'Operation status is unavailable in browser preview.'
+        } satisfies FluxoraOperationsStatus;
+      }
+
+      case FluxoraIpcChannels.operationsRecentLogs: {
+        const request = requestWithOperationId(args[1], 'operations_recent_logs');
+        return {
+          operationId: operationIdOf(request, 'operations_recent_logs'),
+          entries: [] satisfies FluxoraOperationLogEntry[],
+          logPaths: [],
+          maxEntries: 0,
+          truncated: false
+        } satisfies FluxoraRecentOperationLogs;
+      }
+
       default:
         throw new Error('Tauri runtime is unavailable in browser preview.');
     }
@@ -1145,6 +1669,56 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.securityGetState:
         return invoke<FluxoraSecurityState>('fluxora_security_state', {
           allowedChannels: Object.values(FluxoraIpcChannels)
+        });
+
+      case FluxoraIpcChannels.aiGetStatus:
+        return invoke<FluxoraAiHostStatus>('fluxora_ai_get_status', {
+          request: requestWithOperationId(args[0], 'ai_status')
+        });
+
+      case FluxoraIpcChannels.aiRestartHost:
+        return invoke<FluxoraAiHostStatus>('fluxora_ai_restart_host', {
+          request: requestWithOperationId(args[0], 'ai_restart_host')
+        });
+
+      case FluxoraIpcChannels.aiListProviders:
+        return invoke<FluxoraAiProviderDescriptor[]>('fluxora_ai_list_providers', {
+          request: requestWithOperationId(args[0], 'ai_list_providers')
+        });
+
+      case FluxoraIpcChannels.aiListModels:
+        return invoke<FluxoraAiModelCapability[]>('fluxora_ai_list_models', {
+          request: requestWithOperationId(args[0], 'ai_list_models')
+        });
+
+      case FluxoraIpcChannels.aiConnectProvider:
+        return invoke<FluxoraAiProviderConnectionResult>('fluxora_ai_connect_provider', {
+          providerId: optionalString(args[0]),
+          apiKey: optionalString(args[1]),
+          request: requestWithOperationId(args[2], 'ai_provider_connect')
+        });
+
+      case FluxoraIpcChannels.aiDisconnectProvider:
+        return invoke<FluxoraAiProviderConnectionResult>('fluxora_ai_disconnect_provider', {
+          providerId: optionalString(args[0]),
+          request: requestWithOperationId(args[1], 'ai_provider_disconnect')
+        });
+
+      case FluxoraIpcChannels.aiTestProvider:
+        return invoke<FluxoraAiProviderTestResult>('fluxora_ai_test_provider', {
+          providerId: optionalString(args[0]),
+          request: requestWithOperationId(args[1], 'ai_provider_test')
+        });
+
+      case FluxoraIpcChannels.aiChatRespond:
+        return invoke<FluxoraAiChatResponse>('fluxora_ai_chat_respond', {
+          request: {
+            ...(args[0] && typeof args[0] === 'object' ? args[0] as Record<string, unknown> : {}),
+            operationId: operationIdOf(
+              requestWithOperationId(args[0], 'ai_chat_run'),
+              'ai_chat_run'
+            )
+          }
         });
 
       case FluxoraIpcChannels.uiLog:
@@ -1218,6 +1792,121 @@ const createTauriInvoker = (): IpcInvoker => ({
           }
         });
 
+      case FluxoraIpcChannels.dialogPickTextFile:
+        return invoke<DialogPickResult>('fluxora_dialog_pick_file', {
+          request: {
+            title: 'Open text file',
+            initialDirectory: optionalString(args[0]) || undefined,
+            filters: [
+              {
+                name: 'Text documents',
+                extensions: [
+                  'txt',
+                  'json',
+                  'jsonc',
+                  'json5',
+                  'ini',
+                  'xml',
+                  'yaml',
+                  'yml',
+                  'toml',
+                  'cfg',
+                  'conf',
+                  'config',
+                  'properties',
+                  'log',
+                  'md',
+                  'markdown',
+                  'csv',
+                  'css',
+                  'scss',
+                  'sass',
+                  'less',
+                  'html',
+                  'htm',
+                  'js',
+                  'jsx',
+                  'mjs',
+                  'cjs',
+                  'ts',
+                  'tsx',
+                  'vue',
+                  'svelte',
+                  'py',
+                  'rb',
+                  'php',
+                  'java',
+                  'c',
+                  'cc',
+                  'cpp',
+                  'h',
+                  'hpp',
+                  'cs',
+                  'rs',
+                  'go',
+                  'swift',
+                  'kt',
+                  'kts',
+                  'sh',
+                  'bash',
+                  'zsh',
+                  'ps1',
+                  'bat',
+                  'cmd',
+                  'sql',
+                  'graphql',
+                  'gql',
+                  'lock',
+                  'meta',
+                  'strings',
+                  'po',
+                  'pot',
+                  'lua'
+                ]
+              },
+              { name: 'All files', extensions: ['*'] }
+            ]
+          }
+        });
+
+      case FluxoraIpcChannels.dialogSaveTextFile:
+        return invoke<DialogSaveResult>('fluxora_dialog_save_file', {
+          request: {
+            title: optionalString(args[1]) || 'Save text file',
+            defaultPath: optionalString(args[0]) || undefined,
+            filters: [
+              {
+                name: 'Text documents',
+                extensions: [
+                  'txt',
+                  'json',
+                  'jsonc',
+                  'json5',
+                  'ini',
+                  'xml',
+                  'yaml',
+                  'yml',
+                  'toml',
+                  'cfg',
+                  'conf',
+                  'config',
+                  'properties',
+                  'log',
+                  'md',
+                  'markdown',
+                  'csv',
+                  'css',
+                  'html',
+                  'js',
+                  'ts',
+                  'lua'
+                ]
+              },
+              { name: 'All files', extensions: ['*'] }
+            ]
+          }
+        });
+
       case FluxoraIpcChannels.linksOpenExternal:
         return invoke<OpenExternalResult>('fluxora_open_external', {
           url: optionalString(args[0])
@@ -1246,6 +1935,22 @@ const createTauriInvoker = (): IpcInvoker => ({
         return invoke('fluxora_open_build_settings_window', {
           configPath: optionalString(args[0]),
           buildName: optionalString(args[1])
+        });
+
+      case FluxoraIpcChannels.windowOpenModDetails:
+        return invoke('fluxora_open_mod_details_window', {
+          configPath: optionalString(args[0]),
+          modPath: optionalString(args[1]),
+          modName: optionalString(args[2]),
+          profileName: optionalString(args[3])
+        });
+
+      case FluxoraIpcChannels.windowOpenTextEditor:
+        return invoke('fluxora_open_text_editor_window', {
+          configPath: optionalString(args[0]),
+          modPath: optionalString(args[1]),
+          relativePath: optionalString(args[2]),
+          fileName: optionalString(args[3])
         });
 
       case FluxoraIpcChannels.windowOpenSettings:
@@ -1482,6 +2187,46 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.modsGetFileTree:
         return bridgeRequest('mods.getFileTree', { projectDirectory: args[0], modPath: args[1], relativeDirectory: optionalString(args[2]) }, requestWithOperationId(args[3], 'mods_get_file_tree'));
 
+      case FluxoraIpcChannels.modsReadTextFile: {
+        const request = requestWithOperationId(args[3], 'mods_read_text_file');
+        const data = await bridgeRequest<Record<string, unknown>>(
+          'mods.readTextFile',
+          { projectDirectory: args[0], modPath: args[1], relativePath: args[2] },
+          request
+        );
+        return withOperationId(data, request, 'mods_read_text_file');
+      }
+
+      case FluxoraIpcChannels.modsSaveTextFile: {
+        const request = requestWithOperationId(args[4], 'mods_save_text_file');
+        const data = await bridgeRequest<Record<string, unknown>>(
+          'mods.saveTextFile',
+          { projectDirectory: args[0], modPath: args[1], relativePath: args[2], content: args[3] },
+          request
+        );
+        return withOperationId(data, request, 'mods_save_text_file');
+      }
+
+      case FluxoraIpcChannels.textFilesRead: {
+        const request = requestWithOperationId(args[1], 'text_files_read');
+        const data = await bridgeRequest<Record<string, unknown>>(
+          'textFiles.read',
+          { path: args[0] },
+          request
+        );
+        return withOperationId(data, request, 'text_files_read');
+      }
+
+      case FluxoraIpcChannels.textFilesSave: {
+        const request = requestWithOperationId(args[2], 'text_files_save');
+        const data = await bridgeRequest<Record<string, unknown>>(
+          'textFiles.save',
+          { path: args[0], content: args[1] },
+          request
+        );
+        return withOperationId(data, request, 'text_files_save');
+      }
+
       case FluxoraIpcChannels.modsDeleteInstalled:
       case FluxoraIpcChannels.modsSetEnabled:
       case FluxoraIpcChannels.modsSetAllEnabled: {
@@ -1571,6 +2316,17 @@ const createTauriInvoker = (): IpcInvoker => ({
         const data = await bridgeRequest<Record<string, unknown>>('operations.cancel', { operationId: targetOperationId }, request);
         return { ...data, operationId: targetOperationId };
       }
+
+      case FluxoraIpcChannels.operationsGetStatus:
+        return invoke<FluxoraOperationsStatus>('fluxora_operations_get_status', {
+          request: requestWithOperationId(args[0], 'operations_status')
+        });
+
+      case FluxoraIpcChannels.operationsRecentLogs:
+        return invoke<FluxoraRecentOperationLogs>('fluxora_recent_operation_logs', {
+          options: args[0] ?? {},
+          request: requestWithOperationId(args[1], 'operations_recent_logs')
+        });
 
       case FluxoraIpcChannels.nxmRegisterProtocol: {
         const request = requestWithOperationId(args[0], 'nxm_register_protocol');

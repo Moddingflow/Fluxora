@@ -23,8 +23,12 @@ $TauriProject = Join-Path $ProjectRoot 'frontend-tauri'
 $TauriNativeResourcesRoot = Join-Path $ProjectRoot 'build\tauri-native'
 $TauriNativeResourcesDir = Join-Path $TauriProject 'src-tauri\resources\native'
 $TauriExecutableName = 'Fluxora.exe'
+$FluxoraSkillsSourceDir = Join-Path $ProjectRoot 'FLUXORASKILLS\skills'
+$FluxoraAiDirectoryName = 'Fluxora AI'
+$FluxoraAiSkillsRelativeDir = Join-Path $FluxoraAiDirectoryName 'Skills'
 $InstallerProject = Join-Path $ProjectRoot 'installer\Fluxora.Installer\Fluxora.Installer.csproj'
 $OutputDir = Join-Path $ProjectRoot 'output'
+$FluxoraAiSkillsOutputDir = Join-Path $OutputDir $FluxoraAiSkillsRelativeDir
 $SymbolsOutputDir = Join-Path $ProjectRoot 'output-symbols'
 $InstallerOutputDir = Join-Path $ProjectRoot 'output-installer'
 $InstallerPayloadDir = Join-Path $ProjectRoot 'installer\Fluxora.Installer\Resources\Payload'
@@ -144,6 +148,40 @@ function Get-NativeBridgeHostPath {
     }
 
     throw "$executableName was not found under '$BackendBuild'."
+}
+
+function Get-TauriAiHostResourceName {
+    if ($Runtime -like 'win-*') {
+        return 'FluxoraAIHost.exe'
+    }
+
+    return 'FluxoraAIHost'
+}
+
+function Get-TauriAiHostCargoOutputName {
+    if ($Runtime -like 'win-*') {
+        return 'fluxora-ai-host.exe'
+    }
+
+    return 'fluxora-ai-host'
+}
+
+function Build-TauriAiHost {
+    $tauriRustRoot = Join-Path $TauriProject 'src-tauri'
+    Push-Location $tauriRustRoot
+    try {
+        Invoke-CheckedCommand -FilePath 'cargo' -Arguments @('build', '--release', '--bin', 'fluxora-ai-host')
+    }
+    finally {
+        Pop-Location
+    }
+
+    $hostPath = Join-Path $tauriRustRoot (Join-Path 'target\release' (Get-TauriAiHostCargoOutputName))
+    if (Test-Path -LiteralPath $hostPath -PathType Leaf) {
+        return $hostPath
+    }
+
+    throw "Fluxora AI host build completed, but the binary was not found at '$hostPath'."
 }
 
 function Get-TauriPackageTarget {
@@ -778,6 +816,8 @@ Assert-ChildPath -Path $PayloadManifestPath -ParentPath $ProjectRoot
 Assert-ChildPath -Path $InstallerManifestPath -ParentPath $ProjectRoot
 Assert-ChildPath -Path $TauriNativeResourcesRoot -ParentPath $ProjectRoot
 Assert-ChildPath -Path $TauriNativeResourcesDir -ParentPath $ProjectRoot
+Assert-ChildPath -Path $FluxoraSkillsSourceDir -ParentPath $ProjectRoot
+Assert-ChildPath -Path $FluxoraAiSkillsOutputDir -ParentPath $ProjectRoot
 
 Invoke-BuildStep "Preparing output folders" {
     if ((Test-Path -LiteralPath $OutputDir) -and (-not $NoClean)) {
@@ -839,10 +879,14 @@ Invoke-BuildStep "Preparing Tauri native resources ($($tauriTarget.Platform)/$($
 
         $nativeBridgeHostPath = Get-NativeBridgeHostPath
         $nativeCorePath = Get-NativeCorePath
+        $aiHostPath = Build-TauriAiHost
+        $aiHostResourceName = Get-TauriAiHostResourceName
         Copy-Item -LiteralPath $nativeBridgeHostPath -Destination $tauriNativeTargetDir -Force
         Copy-Item -LiteralPath $nativeCorePath -Destination $tauriNativeTargetDir -Force
+        Copy-Item -LiteralPath $aiHostPath -Destination (Join-Path $tauriNativeTargetDir $aiHostResourceName) -Force
         Copy-Item -LiteralPath $nativeBridgeHostPath -Destination $TauriNativeResourcesDir -Force
         Copy-Item -LiteralPath $nativeCorePath -Destination $TauriNativeResourcesDir -Force
+        Copy-Item -LiteralPath $aiHostPath -Destination (Join-Path $TauriNativeResourcesDir $aiHostResourceName) -Force
 
         $nativeBridgeHostPdbPath = [System.IO.Path]::ChangeExtension($nativeBridgeHostPath, '.pdb')
         if ($IncludeSymbols -and (Copy-FluxoraSymbolFile -Path $nativeBridgeHostPdbPath -DestinationDirectory (Join-Path $SymbolsOutputDir 'native'))) {
@@ -898,18 +942,36 @@ Invoke-BuildStep "Packaging Tauri app ($($tauriTarget.Platform)/$($tauriTarget.A
         Copy-Item -LiteralPath $tauriExePath -Destination (Join-Path $OutputDir $TauriExecutableName) -Force
         New-Item -ItemType Directory -Path (Join-Path $OutputDir 'resources\native') -Force | Out-Null
         Copy-DirectoryContents -SourceDirectory $TauriNativeResourcesDir -DestinationDirectory (Join-Path $OutputDir 'resources\native')
+        New-Item -ItemType Directory -Path $FluxoraAiSkillsOutputDir -Force | Out-Null
+        Copy-DirectoryContents -SourceDirectory $FluxoraSkillsSourceDir -DestinationDirectory $FluxoraAiSkillsOutputDir
 
         $packagedBridgeHostPath = Join-Path $OutputDir 'resources\native\FluxoraBridgeHost.exe'
+        $packagedAiHostPath = Join-Path $OutputDir 'resources\native\FluxoraAIHost.exe'
         $packagedCorePath = Join-Path $OutputDir 'resources\native\FluxoraCore.dll'
         $packagedVfsPath = Join-Path $OutputDir 'resources\native\FluxoraVfs.dll'
+        $packagedGeneralSkillPath = Join-Path $FluxoraAiSkillsOutputDir 'GENERAL\ConciseResponse\SKILL.MD'
+        $packagedSkyrimDefaultSkillPath = Join-Path $FluxoraAiSkillsOutputDir 'SkyrimSE\DefaultRules\SKILL.MD'
+        $packagedSkyrimOptimizationSkillPath = Join-Path $FluxoraAiSkillsOutputDir 'SkyrimSE\BuildOptimization\SKILL.MD'
         if (-not (Test-Path -LiteralPath $packagedBridgeHostPath -PathType Leaf)) {
             throw "Tauri package is missing bundled native bridge host at '$packagedBridgeHostPath'."
+        }
+        if (-not (Test-Path -LiteralPath $packagedAiHostPath -PathType Leaf)) {
+            throw "Tauri package is missing bundled AI host at '$packagedAiHostPath'."
         }
         if (-not (Test-Path -LiteralPath $packagedCorePath -PathType Leaf)) {
             throw "Tauri package is missing bundled native core at '$packagedCorePath'."
         }
         if (($Runtime -like 'win-*') -and (-not (Test-Path -LiteralPath $packagedVfsPath -PathType Leaf))) {
             throw "Tauri package is missing bundled VFS hook at '$packagedVfsPath'."
+        }
+        if (-not (Test-Path -LiteralPath $packagedGeneralSkillPath -PathType Leaf)) {
+            throw "Fluxora AI skills package is missing bundled GENERAL skill at '$packagedGeneralSkillPath'."
+        }
+        if (-not (Test-Path -LiteralPath $packagedSkyrimDefaultSkillPath -PathType Leaf)) {
+            throw "Fluxora AI skills package is missing bundled SkyrimSE default skill at '$packagedSkyrimDefaultSkillPath'."
+        }
+        if (-not (Test-Path -LiteralPath $packagedSkyrimOptimizationSkillPath -PathType Leaf)) {
+            throw "Fluxora AI skills package is missing bundled SkyrimSE optimization skill at '$packagedSkyrimOptimizationSkillPath'."
         }
 }
 
@@ -1037,6 +1099,7 @@ Write-Host "Done. Project outputs are ready:"
 Write-Host "  Frontend payload: Tauri"
 Write-Host "  Build target: $Target"
 Write-Host "  App payload staging: $OutputDir"
+Write-Host "  Fluxora AI skills: $FluxoraAiSkillsOutputDir"
 Write-Host "  Tauri native resources: $TauriNativeResourcesRoot"
 if ($IncludeSymbols) {
     Write-Host "  Symbols artifact: $SymbolsOutputDir"

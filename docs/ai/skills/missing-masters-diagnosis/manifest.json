@@ -1,0 +1,29 @@
+{
+  "schema": "fluxora.skill.manifest.v1",
+  "id": "missing-masters-diagnosis",
+  "displayName": "Missing masters diagnosis",
+  "version": "0.1.0",
+  "origin": "built-in",
+  "description": "Diagnoses missing masters from plugin and installed-mod state.",
+  "allowedTools": [
+    "mods.listInstalled",
+    "plugins.list",
+    "downloads.list",
+    "nexus.getAuthStatus",
+    "operations.getStatus"
+  ],
+  "requiredProviderCapabilities": ["streaming"],
+  "examplePrompts": [
+    "Find missing masters",
+    "Why does this plugin have missing dependencies?"
+  ],
+  "validationChecklist": [
+    "Report distinguishes confirmed missing masters from guesses.",
+    "No install/delete action is implied without a later approved plan.",
+    "Relevant plugin state is cited in the final answer."
+  ],
+  "securityNotes": [
+    "A diagnosis skill is read-only by default.",
+    "Suggested downloads or installs must become a separate approved plan."
+  ]
+}

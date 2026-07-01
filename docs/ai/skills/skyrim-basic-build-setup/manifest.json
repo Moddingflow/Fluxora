@@ -1,0 +1,35 @@
+{
+  "schema": "fluxora.skill.manifest.v1",
+  "id": "skyrim-basic-build-setup",
+  "displayName": "Skyrim basic build setup",
+  "version": "0.1.0",
+  "origin": "built-in",
+  "description": "Plans a minimal Skyrim build setup with visible approvals before writes.",
+  "allowedTools": [
+    "projects.create",
+    "projects.rename",
+    "profiles.create",
+    "mods.createSeparator",
+    "mods.setEnabled",
+    "mods.moveOrderItem",
+    "downloads.importFile",
+    "downloads.install",
+    "archives.install",
+    "plugins.list",
+    "operations.getStatus"
+  ],
+  "requiredProviderCapabilities": ["streaming", "tool-planning"],
+  "examplePrompts": [
+    "Prepare a basic Skyrim build",
+    "Create a starter Skyrim profile with separators"
+  ],
+  "validationChecklist": [
+    "Plan is visible before any mutation.",
+    "Every write uses the ai-write-executor queue.",
+    "Verification runs before the final report."
+  ],
+  "securityNotes": [
+    "Do not mutate the build without user approval.",
+    "Destructive cleanup requires a separate step-by-step approval."
+  ]
+}

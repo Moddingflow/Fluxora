@@ -121,7 +121,9 @@ export const createOverwriteOrderItem = (
   sourceIsModdingFlow: false,
   isLocal: true,
   isTranslation: false,
-  isPatch: false
+  isPatch: false,
+  overwritesModIds: [],
+  overwrittenByModIds: []
 });
 
 export const modItemTitle = (item: FluxoraModOrderItem): string =>
@@ -132,6 +134,8 @@ export const modItemTitle = (item: FluxoraModOrderItem): string =>
       : item.name || item.id;
 
 export type ModOverwriteState = 'none' | 'overwrites' | 'overwritten' | 'mixed' | 'fully-overwritten';
+export type ModConflictMarkerState = 'overwrites' | 'overwritten' | 'fully-overwritten';
+export type ModConflictHighlight = 'none' | 'overwrites' | 'overwritten' | 'mixed';
 
 export interface ModOverwriteView {
   state: ModOverwriteState;
@@ -140,6 +144,19 @@ export interface ModOverwriteView {
 }
 
 const safeCount = (value: number): number => (Number.isFinite(value) ? Math.max(0, value) : 0);
+
+const conflictStatusLooksRelevant = (status: string): boolean => {
+  const normalized = status.trim().toLocaleLowerCase();
+  return Boolean(normalized) && ![
+    'none',
+    'ok',
+    'clean',
+    'normal',
+    'конфликтов нет',
+    'файлов нет',
+    'файлы не просканированы'
+  ].includes(normalized);
+};
 
 export const modOverwriteView = (item: FluxoraModOrderItem): ModOverwriteView => {
   if (isModOverwriteItem(item)) {
@@ -195,7 +212,7 @@ export const modOverwriteView = (item: FluxoraModOrderItem): ModOverwriteView =>
     };
   }
 
-  if (conflicting > 0 || item.conflictStatus.trim().length > 0) {
+  if (conflicting > 0 || conflictStatusLooksRelevant(item.conflictStatus)) {
     return {
       state: 'mixed',
       label: 'Conflict',
@@ -208,6 +225,185 @@ export const modOverwriteView = (item: FluxoraModOrderItem): ModOverwriteView =>
     label: 'No overwrite',
     title: 'No file overwrite conflicts'
   };
+};
+
+const conflictMarkerStateOrder: ModConflictMarkerState[] = [
+  'overwrites',
+  'overwritten',
+  'fully-overwritten'
+];
+
+const normalizedModReference = (value: string): string => value.trim().toLocaleLowerCase();
+
+const itemMatchesModReference = (
+  item: FluxoraModOrderItem,
+  reference: string
+): boolean => {
+  const normalized = normalizedModReference(reference);
+  if (!normalized) {
+    return false;
+  }
+
+  return [item.id, item.orderId, item.modUuid]
+    .map(normalizedModReference)
+    .includes(normalized);
+};
+
+const uniqueOrderedConflictStates = (
+  states: Iterable<ModConflictMarkerState>
+): ModConflictMarkerState[] => {
+  const set = new Set(states);
+  return conflictMarkerStateOrder.filter((state) => set.has(state));
+};
+
+const appendOverwriteStateMarkers = (
+  markers: Set<ModConflictMarkerState>,
+  state: ModOverwriteState
+) => {
+  if (state === 'overwrites' || state === 'mixed') {
+    markers.add('overwrites');
+  }
+
+  if (state === 'overwritten' || state === 'mixed') {
+    markers.add('overwritten');
+  }
+
+  if (state === 'fully-overwritten') {
+    markers.add('fully-overwritten');
+  }
+};
+
+const modSeparatorChildren = (
+  items: FluxoraModOrderItem[],
+  separatorOrderId: string
+): FluxoraModOrderItem[] => {
+  const separatorIndex = items.findIndex((item) => item.orderId === separatorOrderId);
+  if (separatorIndex < 0 || !items[separatorIndex]?.isSeparator) {
+    return [];
+  }
+
+  const children: FluxoraModOrderItem[] = [];
+  for (let index = separatorIndex + 1; index < items.length; index += 1) {
+    const item = items[index];
+    if (!item || item.isSeparator) {
+      break;
+    }
+
+    if (item.isMod) {
+      children.push(item);
+    }
+  }
+
+  return children;
+};
+
+export const modConflictMarkerStates = (
+  item: FluxoraModOrderItem
+): ModConflictMarkerState[] => {
+  if (!item.isMod || isModOverwriteItem(item)) {
+    return [];
+  }
+
+  const markers = new Set<ModConflictMarkerState>();
+  appendOverwriteStateMarkers(markers, modOverwriteView(item).state);
+  return uniqueOrderedConflictStates(markers);
+};
+
+export const modSeparatorConflictMarkerStates = (
+  items: FluxoraModOrderItem[],
+  separatorOrderId: string
+): ModConflictMarkerState[] => {
+  const markers = new Set<ModConflictMarkerState>();
+  modSeparatorChildren(items, separatorOrderId).forEach((item) => {
+    modConflictMarkerStates(item).forEach((state) => markers.add(state));
+  });
+
+  return uniqueOrderedConflictStates(markers);
+};
+
+export const modItemConflictHighlight = (
+  item: FluxoraModOrderItem,
+  selected: FluxoraModOrderItem | null
+): ModConflictHighlight => {
+  if (
+    !item.isMod ||
+    !selected?.isMod ||
+    item.orderId === selected.orderId ||
+    isModOverwriteItem(item) ||
+    isModOverwriteItem(selected)
+  ) {
+    return 'none';
+  }
+
+  const selectedOverwritesItem = (selected.overwritesModIds ?? []).some((modId) =>
+    itemMatchesModReference(item, modId)
+  );
+  const itemOverwritesSelected = (selected.overwrittenByModIds ?? []).some((modId) =>
+    itemMatchesModReference(item, modId)
+  );
+
+  if (selectedOverwritesItem && itemOverwritesSelected) {
+    return 'mixed';
+  }
+
+  if (selectedOverwritesItem) {
+    return 'overwrites';
+  }
+
+  if (itemOverwritesSelected) {
+    return 'overwritten';
+  }
+
+  return 'none';
+};
+
+export const modRowConflictHighlight = (
+  items: FluxoraModOrderItem[],
+  item: FluxoraModOrderItem,
+  selected: FluxoraModOrderItem | null
+): ModConflictHighlight => {
+  if (!item.isSeparator) {
+    return modItemConflictHighlight(item, selected);
+  }
+
+  if (!selected?.isMod || isModOverwriteItem(selected)) {
+    return 'none';
+  }
+
+  let selectedOverwritesSeparatorChild = false;
+  let separatorChildOverwritesSelected = false;
+  modSeparatorChildren(items, item.orderId).forEach((child) => {
+    selectedOverwritesSeparatorChild =
+      selectedOverwritesSeparatorChild ||
+      (selected.overwritesModIds ?? []).some((modId) => itemMatchesModReference(child, modId));
+    separatorChildOverwritesSelected =
+      separatorChildOverwritesSelected ||
+      (selected.overwrittenByModIds ?? []).some((modId) => itemMatchesModReference(child, modId));
+  });
+
+  if (selectedOverwritesSeparatorChild) {
+    return 'overwritten';
+  }
+
+  if (separatorChildOverwritesSelected) {
+    return 'overwrites';
+  }
+
+  return 'none';
+};
+
+export const modConflictMarkerStatesForHighlight = (
+  highlight: ModConflictHighlight
+): ModConflictMarkerState[] => {
+  if (highlight === 'mixed') {
+    return ['overwrites', 'overwritten'];
+  }
+
+  if (highlight === 'overwrites' || highlight === 'overwritten') {
+    return [highlight];
+  }
+
+  return [];
 };
 
 export const modVersionText = (item: FluxoraModOrderItem): string => {
@@ -238,6 +434,7 @@ export type ModTableStatusTone = 'disabled' | 'update' | 'conflict' | 'local' | 
 
 export interface ModTableStatusView {
   label: string;
+  overwrite: ModOverwriteView;
   tone: ModTableStatusTone;
 }
 
@@ -245,6 +442,7 @@ export const modTableStatusView = (item: FluxoraModOrderItem): ModTableStatusVie
   if (isModOverwriteItem(item)) {
     return {
       label: 'Output folder',
+      overwrite: modOverwriteView(item),
       tone: 'local'
     };
   }
@@ -252,34 +450,35 @@ export const modTableStatusView = (item: FluxoraModOrderItem): ModTableStatusVie
   if (!item.isMod) {
     return {
       label: 'Separator',
+      overwrite: modOverwriteView(item),
       tone: 'local'
     };
   }
 
+  const overwrite = modOverwriteView(item);
   if (!item.isEnabled) {
     return {
       label: 'Disabled',
+      overwrite: {
+        ...overwrite,
+        state: 'none',
+        title: 'Disabled mods do not participate in overwrite resolution'
+      },
       tone: 'disabled'
     };
   }
 
-  if (item.hasUpdate || item.updateStatus.trim()) {
-    return {
-      label: item.updateStatus.trim() || 'Update available',
-      tone: 'update'
-    };
-  }
-
-  const overwrite = modOverwriteView(item);
   if (overwrite.state !== 'none') {
     return {
       label: overwrite.label,
+      overwrite,
       tone: 'conflict'
     };
   }
 
   return {
-    label: item.canCheckUpdates ? 'Not checked' : 'Local',
+    label: 'No overwrite',
+    overwrite,
     tone: item.canCheckUpdates ? 'ready' : 'local'
   };
 };

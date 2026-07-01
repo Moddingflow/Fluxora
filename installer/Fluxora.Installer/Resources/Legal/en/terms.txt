@@ -1,5 +1,5 @@
 Fluxora Terms of Use
-Last updated: 24 June 2026
+Last updated: 30 June 2026
 
 1. Acceptance
 By installing or using Fluxora, you agree to these Terms of Use and to the Fluxora Privacy Policy. If you do not agree, do not install or use Fluxora.
@@ -21,6 +21,8 @@ Fluxora writes files into the installation folder you choose, stores settings an
 
 7. Online features
 Some features may open your browser, connect to Nexus Mods, access mod hosting services, download files or register nxm protocol handling. Those features are optional and may be subject to third-party terms, availability limits, API changes, rate limits, account rules and network errors.
+
+Optional AI assistant features may send your prompt, selected chat history, compact read-only build context and optional Nexus/web research summaries or citations to the selected or configured AI provider in order to answer your request. AI web research is source-limited and may use Nexus Mods API/public pages or Google/Gemini Search grounding when enabled. AI output is informational and may be incomplete or wrong. AI suggestions do not approve changes by themselves, web content cannot approve actions, and Fluxora read-only AI tools do not install, delete, move, enable or disable mods or plugins.
 
 Fluxora bundles third-party runtime, installer, build and test components, including Tauri, the platform webview runtime, React, Lucide, Tauri bundler, Vite, TypeScript, Rust crates, spdlog, Microsoft Detours where VFS is built, SharpVectors for the installer UI and other packages listed in the bundled third-party notices. These notices are provided for transparency and should be reviewed before public redistribution.
 

@@ -1,4 +1,5 @@
 import {
+  Bot,
   Languages,
   Link2,
   RefreshCw,
@@ -15,8 +16,11 @@ import {
 } from '../../settings-workspace-state';
 import { TransferSettingsPanel } from '../../TransferSettingsPanel';
 import { nexusModsIcon } from '../../design-system/assets';
+import { AiSettingsPanel } from '../ai/AiSettingsPanel';
+import type { AiChatSettings } from '../ai/ai-chat-settings';
 import { LanguageSelect } from './LanguageSelect';
 import type {
+  FluxoraAiHostStatus,
   FluxoraNexusModsAuthStatus,
   NativeBridgeStatus
 } from '../../../shared/fluxora-api';
@@ -24,11 +28,18 @@ import type {
 type SettingsCapabilities = ReturnType<typeof settingsCapabilityView>;
 
 interface SettingsWorkspaceProps {
+  aiHostStatus: FluxoraAiHostStatus | null;
+  aiSettings: AiChatSettings;
   bridgeStatus: NativeBridgeStatus | null;
   isTransferRunning: boolean;
   languageBusy: string | null;
   nexusBusy: boolean;
   nexusStatus: FluxoraNexusModsAuthStatus | null;
+  onAiSettingsChange: (settings: AiChatSettings) => void;
+  onClearAiLocalData: () => void;
+  onConnectAiProvider: (providerId: string) => void;
+  onDisconnectAiProvider: (providerId: string) => void;
+  onExportAiData: () => void;
   onOpenTransfer: () => void;
   onSectionChange: (section: SettingsSectionId) => void;
   onSetLanguage: (language: string) => void;
@@ -39,11 +50,18 @@ interface SettingsWorkspaceProps {
 }
 
 export function SettingsWorkspace({
+  aiHostStatus,
+  aiSettings,
   bridgeStatus,
   isTransferRunning,
   languageBusy,
   nexusBusy,
   nexusStatus,
+  onAiSettingsChange,
+  onClearAiLocalData,
+  onConnectAiProvider,
+  onDisconnectAiProvider,
+  onExportAiData,
   onOpenTransfer,
   onSectionChange,
   onSetLanguage,
@@ -60,6 +78,8 @@ export function SettingsWorkspace({
           const icon =
             item.id === 'connections'
               ? Link2
+              : item.id === 'ai'
+                ? Bot
               : item.id === 'language'
                 ? Languages
                 : UploadCloud;
@@ -152,9 +172,24 @@ export function SettingsWorkspace({
     />
   );
 
+  const renderAiSettings = () => (
+    <AiSettingsPanel
+      busyLabel={settingsBusyLabel}
+      settings={aiSettings}
+      status={aiHostStatus}
+      onChange={onAiSettingsChange}
+      onClearLocalData={onClearAiLocalData}
+      onConnectProvider={onConnectAiProvider}
+      onDisconnectProvider={onDisconnectAiProvider}
+      onExportData={onExportAiData}
+    />
+  );
+
   const activeSection =
     section === 'connections'
       ? renderNexusSettings()
+      : section === 'ai'
+        ? renderAiSettings()
       : section === 'language'
         ? renderLanguageSettings()
         : renderTransferSettings();

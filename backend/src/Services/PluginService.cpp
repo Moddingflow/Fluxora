@@ -46,6 +46,8 @@ namespace fluxora
             NormalizedExtension extension;
             std::wstring sourceMod;
             std::vector<std::wstring> masterFiles;
+            bool hasMasterFlag{false};
+            bool hasLightFlag{false};
             bool sourceModEnabled{true};
         };
 
@@ -187,10 +189,19 @@ namespace fluxora
             return trim(std::move(value));
         }
 
-        [[nodiscard]] std::vector<std::wstring> readPluginMasterFiles(const std::filesystem::path& path)
+        struct BethesdaPluginHeaderMetadata
+        {
+            std::vector<std::wstring> masterFiles;
+            bool hasMasterFlag{false};
+            bool hasLightFlag{false};
+        };
+
+        [[nodiscard]] BethesdaPluginHeaderMetadata readBethesdaPluginHeaderMetadata(const std::filesystem::path& path)
         {
             constexpr std::size_t tes4RecordHeaderSize = 24;
             constexpr std::uint32_t maxHeaderPayloadBytes = 8 * 1024 * 1024;
+            constexpr std::uint32_t masterRecordFlag = 0x00000001;
+            constexpr std::uint32_t lightRecordFlag = 0x00000200;
 
             std::ifstream file(path, std::ios::in | std::ios::binary);
             if (!file)
@@ -212,9 +223,14 @@ namespace fluxora
             }
 
             const std::uint32_t payloadSize = readLittleEndian32(headerView, 4);
+            const std::uint32_t recordFlags = readLittleEndian32(headerView, 8);
             if (payloadSize == 0 || payloadSize > maxHeaderPayloadBytes)
             {
-                return {};
+                return BethesdaPluginHeaderMetadata{
+                    {},
+                    (recordFlags & masterRecordFlag) != 0,
+                    (recordFlags & lightRecordFlag) != 0
+                };
             }
 
             std::string payload(payloadSize, '\0');
@@ -266,7 +282,11 @@ namespace fluxora
                 offset += fieldSize;
             }
 
-            return masters;
+            return BethesdaPluginHeaderMetadata{
+                std::move(masters),
+                (recordFlags & masterRecordFlag) != 0,
+                (recordFlags & lightRecordFlag) != 0
+            };
         }
 
         bool equalsIgnoreCase(std::wstring_view left, std::wstring_view right)
@@ -649,10 +669,21 @@ namespace fluxora
         bool isMasterPlugin(
             const PluginSupportRules& rules,
             std::wstring_view pluginName,
-            const NormalizedExtension& extension)
+            const NormalizedExtension& extension,
+            const DetectedPlugin* detectedPlugin)
         {
             return isBasePlugin(rules, pluginName) ||
+                (detectedPlugin != nullptr && detectedPlugin->hasMasterFlag) ||
                 containsExtension(rules.masterPluginExtensions, rules.masterPluginExtensionKeys, extension);
+        }
+
+        bool isLightPlugin(
+            const PluginSupportRules& rules,
+            const NormalizedExtension& extension,
+            const DetectedPlugin* detectedPlugin)
+        {
+            return containsExtension(rules.lightPluginExtensions, rules.lightPluginExtensionKeys, extension) ||
+                (detectedPlugin != nullptr && detectedPlugin->hasLightFlag);
         }
 
         [[nodiscard]] std::set<std::wstring> availablePluginKeys(
@@ -1169,11 +1200,15 @@ namespace fluxora
                     }
                 }
 
+                const BethesdaPluginHeaderMetadata headerMetadata =
+                    readBethesdaPluginHeaderMetadata(entry.path());
                 detected[key] = DetectedPlugin{
                     fileName,
                     extension,
                     sourceMod,
-                    readPluginMasterFiles(entry.path()),
+                    headerMetadata.masterFiles,
+                    headerMetadata.hasMasterFlag,
+                    headerMetadata.hasLightFlag,
                     sourceModEnabled
                 };
             };
@@ -1420,8 +1455,11 @@ namespace fluxora
                         false,
                         false,
                         false,
+                        false,
                         {},
-                        title
+                        title,
+                        {},
+                        {}
                     });
                     continue;
                 }
@@ -1449,6 +1487,9 @@ namespace fluxora
                     plugin.isEnabled &&
                     (detectedPlugin == detected.end() || detectedPlugin->second.sourceModEnabled));
                 const auto pluginMissingMasters = missingMasters.find(key);
+                const DetectedPlugin* detectedPluginInfo =
+                    detectedPlugin == detected.end() ? nullptr : &detectedPlugin->second;
+                const bool hasLightFlag = detectedPluginInfo != nullptr && detectedPluginInfo->hasLightFlag;
 
                 entries.push_back(PluginEntry{
                     record.id,
@@ -1461,13 +1502,17 @@ namespace fluxora
                         : rules.basePluginSourceLabel) :
                         (detectedPlugin == detected.end() ? std::wstring() : detectedPlugin->second.sourceMod),
                     enabled,
-                    isMasterPlugin(rules, plugin.name, extension),
-                    containsExtension(rules.lightPluginExtensions, rules.lightPluginExtensionKeys, extension),
+                    isMasterPlugin(rules, plugin.name, extension, detectedPluginInfo),
+                    isLightPlugin(rules, extension, detectedPluginInfo),
+                    hasLightFlag,
                     locked,
                     locked ? (rules.basePluginLockReason.empty()
                         ? std::wstring(L"Plugin is locked by the selected game's load-order rules.")
                         : rules.basePluginLockReason) : std::wstring(),
                     {},
+                    detectedPluginInfo == nullptr
+                        ? std::vector<std::wstring>()
+                        : detectedPluginInfo->masterFiles,
                     pluginMissingMasters == missingMasters.end()
                         ? std::vector<std::wstring>()
                         : pluginMissingMasters->second

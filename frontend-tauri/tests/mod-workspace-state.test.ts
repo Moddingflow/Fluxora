@@ -9,10 +9,15 @@ import {
   hasConflict,
   isModNestedUnderSeparator,
   isModOverwriteItem,
+  modConflictMarkerStates,
+  modConflictMarkerStatesForHighlight,
+  modItemConflictHighlight,
   modLatestVersionText,
   modStatusText,
   modOverwriteView,
+  modRowConflictHighlight,
   reorderModOrderItems,
+  modSeparatorConflictMarkerStates,
   modSeparatorChildCount,
   modTableStatusView,
   modVersionText,
@@ -59,6 +64,8 @@ const modItem = (
   isLocal: false,
   isTranslation: false,
   isPatch: false,
+  overwritesModIds: [],
+  overwrittenByModIds: [],
   ...extra
 });
 
@@ -132,6 +139,22 @@ describe('mod workspace state', () => {
     expect(loaded.selectedOrderId).toBe('mod_smoothcam');
     expect([...loaded.selectedOrderIds]).toEqual(['mod_smoothcam']);
     expect(selectedModOrderItem(items, 'missing')?.orderId).toBe('mod_skyui');
+  });
+
+  it('keeps existing rows available while a refresh load is running', () => {
+    const loaded = modWorkspaceReducer(
+      { ...emptyModWorkspaceState(), selectedOrderId: 'mod_skyui' },
+      { type: 'items-loaded', items }
+    );
+    const loading = modWorkspaceReducer(loaded, { type: 'load-started' });
+
+    expect(loading.loadState).toBe('loading');
+    expect(loading.items.map((item) => item.orderId)).toEqual([
+      'sep_visuals',
+      'mod_skyui',
+      'mod_smoothcam'
+    ]);
+    expect(loading.selectedOrderId).toBe('mod_skyui');
   });
 
   it('tracks ctrl, shift and select-all selection across visible mod rows', () => {
@@ -430,25 +453,103 @@ describe('mod workspace state', () => {
         })
       ).state
     ).toBe('fully-overwritten');
+    expect(
+      modOverwriteView(
+        modItem('mod_clean_text', 'Clean Text', 8, {
+          conflictStatus: 'Конфликтов нет'
+        })
+      ).state
+    ).toBe('none');
+  });
+
+  it('derives MO2-style selected conflict highlights from backend mod relations', () => {
+    const base = modItem('mod_base', 'Base Textures', 4, {
+      overwrittenFileCount: 1,
+      overwrittenByModIds: ['C:\\Builds\\Skyrim\\mods\\Patch Textures']
+    });
+    const patch = modItem('mod_patch', 'Patch Textures', 5, {
+      overwritingFileCount: 1,
+      overwritesModIds: ['C:\\Builds\\Skyrim\\mods\\Base Textures']
+    });
+
+    expect(modItemConflictHighlight(base, patch)).toBe('overwrites');
+    expect(modItemConflictHighlight(patch, base)).toBe('overwritten');
+    expect(modConflictMarkerStates(base)).toEqual(['overwritten']);
+    expect(modConflictMarkerStates(patch)).toEqual(['overwrites']);
+    expect(modConflictMarkerStatesForHighlight('none')).toEqual([]);
+    expect(modConflictMarkerStatesForHighlight('overwrites')).toEqual(['overwrites']);
+    expect(modConflictMarkerStatesForHighlight('overwritten')).toEqual(['overwritten']);
+    expect(modConflictMarkerStatesForHighlight('mixed')).toEqual([
+      'overwrites',
+      'overwritten'
+    ]);
+  });
+
+  it('aggregates overwrite, overwritten and fully overwritten markers on separators', () => {
+    const groupedItems = [
+      separatorItem('sep_conflicts', 'Conflicts', 4),
+      modItem('mod_winner', 'Winner', 5, {
+        overwritingFileCount: 2
+      }),
+      modItem('mod_middle', 'Middle', 6, {
+        overwrittenFileCount: 1,
+        overwritingFileCount: 1
+      }),
+      modItem('mod_lost', 'Lost', 7, {
+        fileCount: 3,
+        overwrittenFileCount: 3
+      })
+    ];
+
+    expect(modSeparatorConflictMarkerStates(groupedItems, 'sep_conflicts')).toEqual([
+      'overwrites',
+      'overwritten',
+      'fully-overwritten'
+    ]);
+    const selected = modItem('mod_selected', 'Selected', 8, {
+      overwritesModIds: [groupedItems[1].id],
+      overwrittenByModIds: [groupedItems[3].id]
+    });
+    expect(modRowConflictHighlight(groupedItems, groupedItems[0], null)).toBe('none');
+    expect(modRowConflictHighlight(groupedItems, groupedItems[0], selected)).toBe('overwritten');
+    expect(
+      modRowConflictHighlight(
+        groupedItems,
+        groupedItems[0],
+        modItem('mod_selected_loser', 'Selected Loser', 9, {
+          overwrittenByModIds: [groupedItems[1].id]
+        })
+      )
+    ).toBe('overwrites');
   });
 
   it('formats table columns and separator group counts for the redesigned mods pane', () => {
     expect(modSeparatorChildCount(items, 'sep_visuals')).toBe(2);
     expect(modVersionText(items[1])).toBe('1.0.0');
     expect(modLatestVersionText(items[1])).toBe('available');
-    expect(modTableStatusView(items[1])).toEqual({
-      label: 'Update available',
-      tone: 'update'
+    expect(modTableStatusView(items[1])).toMatchObject({
+      label: 'No overwrite',
+      overwrite: { state: 'none' },
+      tone: 'ready'
     });
-    expect(modTableStatusView(items[2])).toEqual({
+    expect(modTableStatusView(items[2])).toMatchObject({
       label: 'Disabled',
+      overwrite: { state: 'none' },
       tone: 'disabled'
     });
-    expect(modTableStatusView(modItem('mod_local', 'Local Mod', 8, {
+    expect(modTableStatusView(modItem('mod_never_checked', 'Never Checked', 8, {
+      updateStatus: 'Не проверялся'
+    }))).toMatchObject({
+      label: 'No overwrite',
+      overwrite: { state: 'none' },
+      tone: 'ready'
+    });
+    expect(modTableStatusView(modItem('mod_local', 'Local Mod', 9, {
       canCheckUpdates: false,
       sourceIsNexus: false
-    }))).toEqual({
-      label: 'Local',
+    }))).toMatchObject({
+      label: 'No overwrite',
+      overwrite: { state: 'none' },
       tone: 'local'
     });
   });

@@ -121,10 +121,51 @@ describe('redesign primitives', () => {
     expect(progress).toContain('aria-valuenow="42"');
     expect(status).toContain('role="img"');
     expect(status).toContain('aria-label="Overwritten by others"');
+    expect(status).toContain('flx-status-dot__icon');
     expect(cleanStatus).toContain('aria-label="No overwrite conflicts"');
+    expect(cleanStatus).not.toContain('flx-status-dot__icon');
     expect(mixedStatus).toContain('aria-label="Mixed overwrite conflicts"');
     expect(spinner).toContain('stroke-width="6"');
     expect(empty).toContain('role="alert"');
+  });
+
+  it('keeps mod conflict indicators as filled downloaded SVG masks', () => {
+    const plus = readText('Icons', 'conflict-overwrites-plus.svg');
+    const minus = readText('Icons', 'conflict-overwritten-minus.svg');
+    const circle = readText('Icons', 'conflict-fully-overwritten-dot.svg');
+    const foundations = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'design-system',
+      'tokens',
+      'foundations.css'
+    );
+    const primitiveCss = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'design-system',
+      'primitives',
+      'primitives.css'
+    );
+
+    expect(plus).toContain('M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z');
+    expect(minus).toContain('M19 13H5v-2h14v2z');
+    expect(circle).toContain('M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10');
+
+    for (const icon of [plus, minus, circle]) {
+      expect(icon).not.toContain('stroke=');
+      expect(icon).not.toContain('<circle');
+    }
+
+    expect(foundations).toContain('--flx-conflict-overwrites: #4ade80;');
+    expect(foundations).toContain('--flx-conflict-overwritten: #f87171;');
+    expect(foundations).toContain('--flx-conflict-fully-overwritten: #7a828e;');
+    expect(primitiveCss).toContain('border: 0;');
+    expect(primitiveCss).toContain('background: transparent;');
+    expect(primitiveCss).toContain('width: 72%;');
+    expect(primitiveCss).toContain('height: 72%;');
   });
 
   it('renders the loading splash with rotating copy, progress percent and an escape hatch', () => {
@@ -187,6 +228,7 @@ describe('redesign primitives', () => {
     expect(primitiveCss).toContain('.flx-button');
     expect(primitiveCss).toContain('.flx-icon-button');
     expect(primitiveCss).toContain('stroke: currentColor;');
+    expect(primitiveCss).not.toContain('.flx-tabs__tab:not(:disabled):active');
     expect(primitiveCss).toContain('.flx-loading-splash__cancel');
     expect(primitiveCss).toContain('@keyframes flx-splash-message-in');
     expect(primitiveCss).toContain('@media (prefers-reduced-motion: reduce)');

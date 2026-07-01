@@ -349,6 +349,32 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_read_mod_text_file(
+        const wchar_t* projectDirectory,
+        const wchar_t* modPath,
+        const wchar_t* relativePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_save_mod_text_file(
+        const wchar_t* projectDirectory,
+        const wchar_t* modPath,
+        const wchar_t* relativePath,
+        const wchar_t* content,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_read_text_file(
+        const wchar_t* filePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_save_text_file(
+        const wchar_t* filePath,
+        const wchar_t* content,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_get_plugins(
         const wchar_t* projectDirectory,
         const wchar_t* templateId,

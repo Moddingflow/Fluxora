@@ -21,7 +21,6 @@ export interface ProjectLibraryStats {
   size: string;
   mods: string;
   disabledMods: string;
-  plugins: string;
   downloads: string;
 }
 
@@ -51,6 +50,9 @@ const hiddenStatValues = new Set(['', '-', 'Not tracked']);
 
 const hasStatValue = (value: string): boolean => !hiddenStatValues.has(value.trim());
 
+const statValue = (value: string, fallback: string): string =>
+  hasStatValue(value) ? value : fallback;
+
 const projectGameLabel = (project: FluxoraProject): string =>
   project.gameName || project.templateId || 'Fluxora build';
 
@@ -68,11 +70,10 @@ const rowMeta = (project: FluxoraProject, stats: ProjectLibraryStats): string =>
 
 const detailMetrics = (stats: ProjectLibraryStats) =>
   [
-    { label: 'Last launch', value: stats.lastLaunch },
-    { label: 'Build size', value: stats.size },
-    { label: 'Mods', value: stats.mods },
-    { label: 'Plugins', value: stats.plugins }
-  ].filter((item) => hasStatValue(item.value));
+    { label: 'Mods', value: statValue(stats.mods, 'Not indexed') },
+    { label: 'Last launched', value: statValue(stats.lastLaunch, 'Not launched') },
+    { label: 'Size', value: statValue(stats.size, 'Not indexed') }
+  ];
 
 export function LibraryHome({
   bridgeErrorMessage,
@@ -152,40 +153,10 @@ export function LibraryHome({
           <article className="library-detail-card" aria-label={`${selectedProject.name} summary`}>
             <header className="library-detail-hero">
               <img src={projectIcon(selectedProject)} alt="" />
-              <div>
-                <div className="library-detail-title-row">
-                  <h2>{selectedProject.name}</h2>
-                  <Badge tone="accent" icon={<Icon name="gamepad" size={11} />}>
-                    {selectedGameLabel}
-                  </Badge>
-                </div>
-                <small title={projectDisplayPath(selectedProject)}>
-                  {shortPath(projectDisplayPath(selectedProject))}
-                </small>
+              <div className="library-detail-identity">
+                <h2>{selectedProject.name}</h2>
+                <span>{selectedGameLabel}</span>
               </div>
-            </header>
-
-            {selectedMetrics.length > 0 ? (
-              <dl className="library-detail-metrics">
-                {selectedMetrics.map((item) => (
-                  <div key={item.label}>
-                    <dt>{item.label}</dt>
-                    <dd>{item.value}</dd>
-                  </div>
-                ))}
-              </dl>
-            ) : null}
-
-            <div className="library-detail-paths">
-              <div>
-                <span>Project folder</span>
-                <strong title={selectedProject.projectDirectory}>
-                  {shortPath(selectedProject.projectDirectory)}
-                </strong>
-              </div>
-            </div>
-
-            <div className="library-detail-actions">
               <Button
                 disabled={isNewBuildDisabled}
                 iconLeft={<Icon name="open" size={15} />}
@@ -193,13 +164,33 @@ export function LibraryHome({
               >
                 Open
               </Button>
-              <Button
-                iconLeft={<Icon name="folder" size={15} />}
-                onClick={() => onOpenProjectDirectory(selectedProject)}
-                variant="secondary"
-              >
-                Folder
-              </Button>
+            </header>
+
+            <dl className="library-detail-metrics">
+              {selectedMetrics.map((item) => (
+                <div key={item.label}>
+                  <dt>{item.label}</dt>
+                  <dd>{item.value}</dd>
+                </div>
+              ))}
+            </dl>
+
+            <div className="library-detail-paths">
+              <div className="library-detail-path-row">
+                <div>
+                  <span>Project path</span>
+                  <strong title={projectDisplayPath(selectedProject)}>
+                    {shortPath(projectDisplayPath(selectedProject))}
+                  </strong>
+                </div>
+                <Button
+                  iconLeft={<Icon name="folder" size={15} />}
+                  onClick={() => onOpenProjectDirectory(selectedProject)}
+                  variant="secondary"
+                >
+                  Open folder
+                </Button>
+              </div>
             </div>
           </article>
         ) : (

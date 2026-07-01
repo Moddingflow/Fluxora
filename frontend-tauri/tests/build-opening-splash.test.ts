@@ -18,6 +18,9 @@ describe('build opening splash', () => {
     expect(app).toContain('setOpeningBuildSplash({');
     expect(app).toContain('openingBuildOperationIdRef.current = operationId');
     expect(app).toContain('openProjectConfig(configPath, operationId)');
+    expect(app).toContain('await loadBuildWorkspaceData(opened, {');
+    expect(app).toContain('profileName: openingProfileName');
+    expect(app).toContain('showBusy: false');
     expect(app).toContain('cancelOpeningBuild');
     expect(app).toContain('renderOpeningBuildSplash()');
     expect(app).toContain('messages={openingBuildMessages}');

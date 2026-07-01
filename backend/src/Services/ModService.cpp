@@ -4,6 +4,7 @@
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
+#include "FluxoraCore/Storage/AtomicFileStore.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
 
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <cwctype>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <initializer_list>
 #include <map>
@@ -213,6 +215,96 @@ namespace fluxora
 #else
             return std::wstring(value.begin(), value.end());
 #endif
+        }
+
+        constexpr std::uintmax_t maxTextEditorFileBytes = 5ULL * 1024ULL * 1024ULL;
+
+        void rejectBinaryTextContent(const std::string& content)
+        {
+            if (content.find('\0') != std::string::npos)
+            {
+                throw std::invalid_argument("File is not a text document.");
+            }
+        }
+
+        std::wstring readUtf8TextDocument(const std::filesystem::path& path)
+        {
+            std::error_code statusError;
+            if (!std::filesystem::is_regular_file(path, statusError) || statusError)
+            {
+                throw std::invalid_argument("Text editor can only open regular files.");
+            }
+
+            const std::uintmax_t size = std::filesystem::file_size(path, statusError);
+            if (statusError)
+            {
+                throw std::runtime_error("Failed to inspect text file size.");
+            }
+            if (size > maxTextEditorFileBytes)
+            {
+                throw std::invalid_argument("Text file is too large for the editor.");
+            }
+
+            std::ifstream file(path, std::ios::binary);
+            if (!file)
+            {
+                throw std::runtime_error("Failed to open text file.");
+            }
+
+            std::string content(
+                (std::istreambuf_iterator<char>(file)),
+                std::istreambuf_iterator<char>());
+            rejectBinaryTextContent(content);
+            return fromUtf8(content);
+        }
+
+        std::filesystem::path validateRelativeModTextPath(std::wstring_view relativePath)
+        {
+            std::filesystem::path requested(relativePath);
+            if (requested.empty())
+            {
+                throw std::invalid_argument("Text file path is required.");
+            }
+            if (requested.is_absolute())
+            {
+                throw std::invalid_argument("Text file path must be relative.");
+            }
+
+            PathSafetyService safety;
+            safety.validateRelativePath(requested).throwIfUnsafe("Mod text file path");
+
+            requested = requested.lexically_normal();
+            if (requested == L".")
+            {
+                throw std::invalid_argument("Text file path is required.");
+            }
+
+            return requested;
+        }
+
+        std::filesystem::path resolveModTextFilePath(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modPath,
+            std::wstring_view relativePath,
+            const std::filesystem::path& modsRoot)
+        {
+            if (projectDirectory.empty() || modPath.empty())
+            {
+                throw std::invalid_argument("Project directory and mod path are required.");
+            }
+
+            const std::filesystem::path requested = validateRelativeModTextPath(relativePath);
+            PathSafetyService safety;
+            safety.validateContainedPath(modsRoot, modPath).throwIfUnsafe("Installed mod folder");
+
+            const std::filesystem::path targetPath = modPath / requested;
+            safety.validateContainedPath(modPath, targetPath).throwIfUnsafe("Mod text file");
+            return targetPath;
+        }
+
+        std::wstring normalizedRelativeTextPath(std::wstring_view relativePath)
+        {
+            return validateRelativeModTextPath(relativePath).generic_wstring();
         }
 
         std::wstring percentEncode(std::wstring_view value)
@@ -769,6 +861,8 @@ namespace fluxora
                 mod.path,
                 mod.displayName.empty() ? mod.folderName : mod.displayName,
                 isUnknownVersion(mod.version) ? L"Unknown" : mod.version,
+                mod.installedAt,
+                mod.updatedAt,
                 mod.source.latestVersion,
                 mod.source.lastCheckedAt,
                 updateStatusText(mod),
@@ -784,8 +878,15 @@ namespace fluxora
                 mod.sourceIsModdingFlow,
                 mod.isLocal,
                 mod.isTranslation,
-                mod.isPatch
+                mod.isPatch,
+                summary.overwritesModIds,
+                summary.overwrittenByModIds
             };
+        }
+
+        std::wstring pathKey(const std::filesystem::path& path)
+        {
+            return toLower(path.wstring());
         }
 
         std::wstring normalizedPathText(const std::filesystem::path& path)
@@ -1077,13 +1178,26 @@ namespace fluxora
     std::vector<InstalledModEntry> ModService::listInstalledMods(
         const std::filesystem::path& projectDirectory) const
     {
-        std::vector<InstalledModEntry> entries;
         const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
-        for (const InstalledModRecord& mod : InstanceMetadataStore::listInstalledMods(projectDirectory, modsDirectory))
+        const std::vector<InstalledModRecord> mods =
+            InstanceMetadataStore::listInstalledMods(projectDirectory, modsDirectory);
+        const std::vector<ModFileSummaryRecord> summaries =
+            InstanceMetadataStore::summarizeInstalledModFiles(projectDirectory, modsDirectory);
+
+        std::map<std::wstring, ModFileSummary> summariesByPath;
+        for (const ModFileSummaryRecord& summary : summaries)
         {
+            summariesByPath.emplace(pathKey(summary.modPath), summary.summary);
+        }
+
+        std::vector<InstalledModEntry> entries;
+        entries.reserve(mods.size());
+        for (const InstalledModRecord& mod : mods)
+        {
+            const auto summary = summariesByPath.find(pathKey(mod.path));
             entries.push_back(entryFromRecord(
                 mod,
-                deferredFileSummary()));
+                summary == summariesByPath.end() ? deferredFileSummary() : summary->second));
         }
 
         return entries;
@@ -1154,6 +1268,80 @@ namespace fluxora
             modPath,
             relativeDirectory,
             pathSettings_.modsDirectory(projectDirectory));
+    }
+
+    ModTextFileDocument ModService::readModTextFile(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modPath,
+        std::wstring_view relativePath) const
+    {
+        const std::filesystem::path targetPath = resolveModTextFilePath(
+            projectDirectory,
+            modPath,
+            relativePath,
+            pathSettings_.modsDirectory(projectDirectory));
+
+        const std::wstring content = readUtf8TextDocument(targetPath);
+        std::error_code sizeError;
+        const std::uintmax_t size = std::filesystem::file_size(targetPath, sizeError);
+        return ModTextFileDocument{
+            targetPath,
+            normalizedRelativeTextPath(relativePath),
+            targetPath.filename().wstring(),
+            content,
+            sizeError ? 0 : size
+        };
+    }
+
+    ModTextFileSaveResult ModService::saveModTextFile(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modPath,
+        std::wstring_view relativePath,
+        std::wstring_view content) const
+    {
+        const std::filesystem::path targetPath = resolveModTextFilePath(
+            projectDirectory,
+            modPath,
+            relativePath,
+            pathSettings_.modsDirectory(projectDirectory));
+
+        std::error_code statusError;
+        if (std::filesystem::exists(targetPath, statusError) &&
+            !std::filesystem::is_regular_file(targetPath, statusError))
+        {
+            throw std::invalid_argument("Text editor can only save regular files.");
+        }
+
+        const std::string bytes = toUtf8(std::wstring(content));
+        PathSafetyWriteOptions writeOptions;
+        writeOptions.requiredBytes = static_cast<std::uintmax_t>(bytes.size());
+        PathSafetyService()
+            .validateWritePath(modPath, targetPath, writeOptions)
+            .throwIfUnsafe("Mod text file save");
+
+        AtomicFileStore().writeTextFile(
+            targetPath,
+            bytes,
+            AtomicFileWriteOptions{
+                L"Mod text file",
+                ProjectStateValidation::Utf8Text,
+                {},
+                true
+            });
+
+        logger_.writeOperation(
+            LogLevel::Info,
+            "ModTextFile",
+            "Saved mod text file path=\"" + toUtf8(targetPath.wstring()) + "\"");
+
+        std::error_code sizeError;
+        const std::uintmax_t size = std::filesystem::file_size(targetPath, sizeError);
+        return ModTextFileSaveResult{
+            targetPath,
+            normalizedRelativeTextPath(relativePath),
+            targetPath.filename().wstring(),
+            sizeError ? 0 : size
+        };
     }
 
     InstalledModEntry ModService::createEmptyMod(

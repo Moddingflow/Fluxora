@@ -174,7 +174,9 @@ test.beforeEach(async ({ page }) => {
         sourceIsModdingFlow: false,
         isLocal: false,
         isTranslation: false,
-        isPatch: true
+        isPatch: true,
+        overwritesModIds: ['D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI'],
+        overwrittenByModIds: []
       },
       {
         id: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI',
@@ -195,14 +197,16 @@ test.beforeEach(async ({ page }) => {
         conflictingFileCount: 2,
         overwrittenFileCount: 2,
         overwritingFileCount: 1,
-        isEnabled: false,
+        isEnabled: true,
         canCheckUpdates: true,
         hasUpdate: true,
         sourceIsNexus: true,
         sourceIsModdingFlow: false,
         isLocal: false,
         isTranslation: false,
-        isPatch: false
+        isPatch: false,
+        overwritesModIds: [],
+        overwrittenByModIds: ['D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Unofficial Patch']
       }
     ];
     const pluginRows = [
@@ -222,6 +226,7 @@ test.beforeEach(async ({ page }) => {
         isLight: false,
         isLocked: true,
         lockReason: 'Base game plugin',
+        masterFiles: [],
         missingMasters: []
       },
       {
@@ -240,6 +245,7 @@ test.beforeEach(async ({ page }) => {
         isLight: false,
         isLocked: false,
         lockReason: '',
+        masterFiles: [],
         missingMasters: []
       },
       {
@@ -258,7 +264,8 @@ test.beforeEach(async ({ page }) => {
         isLight: false,
         isLocked: false,
         lockReason: '',
-        missingMasters: []
+        masterFiles: ['Aardvark.esm', 'Update.esm', 'Zed.esm'],
+        missingMasters: ['Zed.esm', 'Update.esm', 'Aardvark.esm']
       }
     ];
     const downloadRows = [
@@ -1026,7 +1033,26 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await expect(page.getByRole('columnheader', { name: 'Версия' })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Latest' })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Статус' })).toBeVisible();
-  await expect(page.getByRole('row', { name: /Core fixes separator/ })).toBeVisible();
+  const separatorRow = page.getByRole('row', { name: /Core fixes separator/ });
+  await expect(separatorRow).toBeVisible();
+  await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'none');
+  await expect(separatorRow).toHaveAttribute('data-conflict-status', '');
+  await expect(separatorRow.locator('.mod-separator-status .flx-status-dot')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Collapse Core fixes' }).click();
+  await expect(separatorRow).toHaveAttribute('data-collapsed', 'true');
+  await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'mixed');
+  await expect(separatorRow).toHaveAttribute('data-conflict-status', 'overwrites overwritten');
+  await expect(separatorRow.locator('.mod-separator-cell .flx-status-dot')).toHaveCount(0);
+  await expect(separatorRow.locator('.mod-separator-status .flx-status-dot')).toHaveCount(2);
+  await expect
+    .poll(() => separatorRow.evaluate((row) => window.getComputedStyle(row, '::before').content))
+    .toBe('none');
+  await expect(separatorRow.getByRole('img', { name: 'Перезаписывает', exact: true })).toBeVisible();
+  await expect(separatorRow.getByRole('img', { name: 'Перезаписывается', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Expand Core fixes' }).click();
+  await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'none');
+  await expect(separatorRow).toHaveAttribute('data-conflict-status', '');
+  await expect(separatorRow.locator('.mod-separator-status .flx-status-dot')).toHaveCount(0);
   await expect(page.getByRole('row', { name: /Unofficial Patch mod/ })).toBeVisible();
   await expect(page.getByRole('img', { name: /Overwrites 4 files/ })).toBeVisible();
   const overwriteRow = page.getByRole('row', {
@@ -1056,7 +1082,6 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
       path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Unofficial Patch'
     });
 
-  const separatorRow = page.getByRole('row', { name: /Core fixes separator/ });
   await separatorRow.focus();
   await page.keyboard.press('Shift+F10');
   await expect(page.getByRole('menuitem', { name: 'Move up' })).toHaveCount(0);
@@ -1157,6 +1182,7 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   const pluginsTable = page.getByRole('table', { name: 'Plugin load order' });
   await expect(pluginsTable).toBeVisible();
   await expect(pluginsTable.getByRole('columnheader', { name: 'State' })).toHaveCount(0);
+  await expect(pluginsTable.getByRole('columnheader', { name: 'Статус' })).toBeVisible();
   await expect(page.getByRole('row', { name: /Skyrim.esm/ })).toBeVisible();
   await expect(rightPane.getByText('00')).toBeVisible();
   await expect(rightPane.locator('.plugin-type-badge', { hasText: 'master' }).first()).toBeVisible();
@@ -1171,7 +1197,27 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   await expect(page.getByRole('menuitem', { name: 'Delete separator' })).toBeVisible();
   await page.keyboard.press('Escape');
 
+  await page.getByRole('button', { name: 'Collapse Late patches' }).click();
+  await expect(pluginSeparatorRow).toHaveAttribute('data-collapsed', 'true');
+  await expect(pluginSeparatorRow).toHaveAttribute('data-missing-masters', 'true');
+  const separatorWarning = pluginSeparatorRow.getByRole('button', {
+    name: /Отсутствуют мастер-файлы/
+  });
+  await expect(separatorWarning).toBeVisible();
+  await separatorWarning.hover();
+  await expect(page.getByRole('tooltip')).toContainText('Aardvark.esm');
+  await page.getByRole('button', { name: 'Expand Late patches' }).click();
+  await expect(pluginSeparatorRow).toHaveAttribute('data-missing-masters', 'false');
+
   const pluginRow = page.getByRole('row', { name: /SkyUI\.esp/ });
+  const warning = pluginRow.getByRole('button', { name: /Отсутствуют мастер-файлы/ });
+  await expect(warning).toBeVisible();
+  await warning.hover();
+  const tooltip = page.getByRole('tooltip');
+  await expect(tooltip).toContainText('Отсутствующие мастер-файлы');
+  await expect(tooltip.locator('li').first()).toHaveText('Aardvark.esm');
+  await expect(tooltip).toContainText('Update.esm');
+  await expect(tooltip).toContainText('Zed.esm');
   await pluginRow.focus();
   await page.keyboard.press('Shift+F10');
   await page.getByRole('menuitem', { name: 'Move up' }).click();

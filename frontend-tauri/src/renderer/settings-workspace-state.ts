@@ -11,7 +11,7 @@ import type {
   NativeBridgeStatus
 } from '../shared/fluxora-api';
 
-export type SettingsSectionId = 'connections' | 'language' | 'transfer';
+export type SettingsSectionId = 'connections' | 'ai' | 'language' | 'transfer';
 
 export interface SettingsSection {
   id: SettingsSectionId;
@@ -24,6 +24,11 @@ export const settingsSections: SettingsSection[] = [
     id: 'connections',
     label: 'Connections',
     hint: ''
+  },
+  {
+    id: 'ai',
+    label: 'AI',
+    hint: 'Model'
   },
   {
     id: 'language',

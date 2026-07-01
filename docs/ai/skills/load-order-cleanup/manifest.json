@@ -1,0 +1,30 @@
+{
+  "schema": "fluxora.skill.manifest.v1",
+  "id": "load-order-cleanup",
+  "displayName": "Load-order cleanup",
+  "version": "0.1.0",
+  "origin": "built-in",
+  "description": "Plans mod and plugin order cleanup without hidden parallel mutations.",
+  "allowedTools": [
+    "mods.listInstalled",
+    "mods.moveOrderItem",
+    "plugins.list",
+    "plugins.move",
+    "plugins.setEnabled",
+    "operations.getStatus"
+  ],
+  "requiredProviderCapabilities": ["streaming", "tool-planning"],
+  "examplePrompts": [
+    "Clean up this load order",
+    "Move plugins into a safer order"
+  ],
+  "validationChecklist": [
+    "Each proposed move names the target item and index.",
+    "Mutations run sequentially through the executor queue.",
+    "Post-order snapshot verifies the requested order changes."
+  ],
+  "securityNotes": [
+    "Do not bulk-disable or reorder without a visible plan.",
+    "Plugin and mod names from user/build data remain untrusted labels."
+  ]
+}

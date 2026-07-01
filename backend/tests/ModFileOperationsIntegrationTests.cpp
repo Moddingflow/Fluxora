@@ -19,6 +19,7 @@
 #include <functional>
 #include <future>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -511,6 +512,42 @@ namespace fluxora::tests
         EXPECT_EQ(order[0].separatorTitle, L"Outputs");
         EXPECT_EQ(order[1].kind, L"mod");
         EXPECT_EQ(order[1].name, L"Nemesis Output");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ModTextFileEditorReadsAndSavesContainedUtf8Files)
+    {
+        const InstalledModEntry created = mods_.createEmptyMod(project_, L"Config Patch");
+        const std::filesystem::path modPath = created.id;
+        writeTextFile(modPath / L"config" / L"settings.json", "{\"enabled\":true}\n");
+
+        const ModTextFileDocument document =
+            mods_.readModTextFile(project_, modPath, L"config/settings.json");
+
+        EXPECT_EQ(document.fileName, L"settings.json");
+        EXPECT_EQ(document.relativePath, L"config/settings.json");
+        EXPECT_NE(document.content.find(L"enabled"), std::wstring::npos);
+
+        const ModTextFileSaveResult saved =
+            mods_.saveModTextFile(project_, modPath, L"config/settings.json", L"{\"enabled\":false}\n");
+
+        EXPECT_EQ(saved.fileName, L"settings.json");
+        EXPECT_EQ(saved.relativePath, L"config/settings.json");
+        EXPECT_EQ(readTextFile(modPath / L"config" / L"settings.json"), "{\"enabled\":false}\n");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ModTextFileEditorRejectsTraversalOutsideMod)
+    {
+        const InstalledModEntry created = mods_.createEmptyMod(project_, L"Config Patch");
+        const std::filesystem::path modPath = created.id;
+        writeTextFile(modPath / L"config" / L"settings.json", "{}\n");
+
+        EXPECT_THROW(
+            (void)mods_.readModTextFile(project_, modPath, L"../Other Mod/settings.json"),
+            std::invalid_argument);
+        EXPECT_THROW(
+            (void)mods_.saveModTextFile(project_, modPath, L"../Other Mod/settings.json", L"{}\n"),
+            std::invalid_argument);
+        EXPECT_EQ(readTextFile(modPath / L"config" / L"settings.json"), "{}\n");
     }
 
     TEST_F(ModFileOperationsIntegrationTests, ClearOverwriteFolderDeletesGeneratedFilesAndKeepsFolder)
@@ -1022,7 +1059,7 @@ namespace fluxora::tests
         EXPECT_EQ(record->version, L"2.0");
     }
 
-    TEST_F(ModFileOperationsIntegrationTests, ProfileModOrderDefersConflictScanning)
+    TEST_F(ModFileOperationsIntegrationTests, ProfileModOrderReturnsLiveConflictSummary)
     {
         std::string error;
         const std::optional<InstalledMod> installed = tryInstallArchive(
@@ -1045,14 +1082,8 @@ namespace fluxora::tests
             profileOrder_.listModOrder(project_, L"Default");
         const ProfileModOrderItem* orderItem = findModOrderItem(order, L"Deferred Scan");
         ASSERT_NE(orderItem, nullptr);
-        EXPECT_EQ(orderItem->fileCount, -1);
-        EXPECT_EQ(orderItem->conflictStatus, L"Файлы не просканированы");
-
-        const std::vector<ModFileSummaryRecord> summaries =
-            InstanceMetadataStore::summarizeProfileModFiles(project_, L"Default", modsDirectory());
-        const ModFileSummaryRecord* summary = findSummary(summaries, L"Deferred Scan");
-        ASSERT_NE(summary, nullptr);
-        EXPECT_EQ(summary->summary.fileCount, 2);
+        EXPECT_EQ(orderItem->fileCount, 2);
+        EXPECT_EQ(orderItem->conflictStatus, L"Конфликтов нет");
     }
 
     TEST_F(ModFileOperationsIntegrationTests, ListModFileTreeBuildsSelectedModCacheWithoutGlobalSummary)
@@ -1699,6 +1730,23 @@ namespace fluxora::tests
         EXPECT_EQ(secondSummary->summary.overwrittenFileCount, 0);
         EXPECT_EQ(secondSummary->summary.overwritingFileCount, 1);
 
+        const std::vector<ProfileModOrderItem> order =
+            profileOrder_.listCachedModOrder(project_, L"Default");
+        const ProfileModOrderItem* firstOrderItem = findModOrderItem(order, L"Armor A");
+        const ProfileModOrderItem* secondOrderItem = findModOrderItem(order, L"Armor B");
+        ASSERT_NE(firstOrderItem, nullptr);
+        ASSERT_NE(secondOrderItem, nullptr);
+        EXPECT_EQ(firstOrderItem->fileCount, 2);
+        EXPECT_EQ(firstOrderItem->overwrittenFileCount, 1);
+        EXPECT_EQ(firstOrderItem->overwritingFileCount, 0);
+        EXPECT_EQ(secondOrderItem->fileCount, 2);
+        EXPECT_EQ(secondOrderItem->overwrittenFileCount, 0);
+        EXPECT_EQ(secondOrderItem->overwritingFileCount, 1);
+        ASSERT_EQ(firstOrderItem->overwrittenByModIds.size(), 1U);
+        EXPECT_EQ(firstOrderItem->overwrittenByModIds[0], secondOrderItem->id.wstring());
+        ASSERT_EQ(secondOrderItem->overwritesModIds.size(), 1U);
+        EXPECT_EQ(secondOrderItem->overwritesModIds[0], firstOrderItem->id.wstring());
+
         const std::vector<ModFileTreeEntry> firstTree =
             InstanceMetadataStore::listModFileTree(project_, first->id, L"Textures/Armor", modsDirectory());
         ASSERT_EQ(firstTree.size(), 1U);
@@ -1713,6 +1761,66 @@ namespace fluxora::tests
         ASSERT_EQ(secondTree.size(), 1U);
         EXPECT_EQ(secondTree[0].name, L"iron.dds");
         EXPECT_EQ(secondTree[0].conflictState, L"overwrites");
+
+        const std::vector<ProfileModOrderItem> movedOrder =
+            profileOrder_.moveModOrderItem(project_, L"Default", secondOrderItem->orderId, 0);
+        const ProfileModOrderItem* movedFirst = findModOrderItem(movedOrder, L"Armor A");
+        const ProfileModOrderItem* movedSecond = findModOrderItem(movedOrder, L"Armor B");
+        ASSERT_NE(movedFirst, nullptr);
+        ASSERT_NE(movedSecond, nullptr);
+        EXPECT_EQ(movedFirst->overwrittenFileCount, 0);
+        EXPECT_EQ(movedFirst->overwritingFileCount, 1);
+        EXPECT_EQ(movedSecond->overwrittenFileCount, 1);
+        EXPECT_EQ(movedSecond->overwritingFileCount, 0);
+        ASSERT_EQ(movedFirst->overwritesModIds.size(), 1U);
+        EXPECT_EQ(movedFirst->overwritesModIds[0], movedSecond->id.wstring());
+        ASSERT_EQ(movedSecond->overwrittenByModIds.size(), 1U);
+        EXPECT_EQ(movedSecond->overwrittenByModIds[0], movedFirst->id.wstring());
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, CachedModOrderMarksFullyOverwrittenModsForLaunch)
+    {
+        std::string firstError;
+        const std::optional<InstalledMod> first = tryInstallArchive(
+            L"Fully Lost A.zip",
+            {{L"textures/shared/full.dds", "from-a"}},
+            L"Fully Lost A",
+            firstError);
+        if (!first.has_value() && isMissingExtractorError(firstError))
+        {
+            GTEST_SKIP() << "No supported archive extractor was available: " << firstError;
+        }
+        ASSERT_TRUE(first.has_value()) << firstError;
+
+        std::string secondError;
+        const std::optional<InstalledMod> second = tryInstallArchive(
+            L"Fully Wins B.zip",
+            {{L"textures/shared/full.dds", "from-b"}},
+            L"Fully Wins B",
+            secondError);
+        ASSERT_TRUE(second.has_value()) << secondError;
+
+        const std::vector<ModFileSummaryRecord> summaries =
+            InstanceMetadataStore::summarizeProfileModFiles(project_, L"Default", modsDirectory());
+        const ModFileSummaryRecord* firstSummary = findSummary(summaries, L"Fully Lost A");
+        ASSERT_NE(firstSummary, nullptr);
+        EXPECT_EQ(firstSummary->summary.fileCount, 1);
+        EXPECT_EQ(firstSummary->summary.overwrittenFileCount, 1);
+
+        const std::vector<ProfileModOrderItem> cachedOrder =
+            profileOrder_.listCachedModOrder(project_, L"Default");
+        const ProfileModOrderItem* fullyOverwritten =
+            findModOrderItem(cachedOrder, L"Fully Lost A");
+        const ProfileModOrderItem* winner =
+            findModOrderItem(cachedOrder, L"Fully Wins B");
+        ASSERT_NE(fullyOverwritten, nullptr);
+        ASSERT_NE(winner, nullptr);
+        EXPECT_EQ(fullyOverwritten->fileCount, 1);
+        EXPECT_EQ(fullyOverwritten->overwrittenFileCount, 1);
+        EXPECT_EQ(fullyOverwritten->overwritingFileCount, 0);
+        EXPECT_EQ(winner->fileCount, 1);
+        EXPECT_EQ(winner->overwrittenFileCount, 0);
+        EXPECT_EQ(winner->overwritingFileCount, 1);
     }
 
     TEST_F(ModFileOperationsIntegrationTests, UnicodeSpacesAndNonAsciiPathsRoundTrip)

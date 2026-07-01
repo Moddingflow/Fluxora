@@ -178,11 +178,13 @@ describe('settings workspace state', () => {
   it('keeps settings sections focused on user-facing configuration', () => {
     expect(settingsSections.map((section) => section.id)).toEqual([
       'connections',
+      'ai',
       'language',
       'transfer'
     ]);
     expect(settingsSections).toEqual([
       { id: 'connections', label: 'Connections', hint: '' },
+      { id: 'ai', label: 'AI', hint: 'Model' },
       { id: 'language', label: 'Languages', hint: 'EN / RU / DE' },
       { id: 'transfer', label: 'Transfer', hint: 'MO2 import' }
     ]);

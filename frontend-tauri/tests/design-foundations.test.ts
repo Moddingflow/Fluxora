@@ -28,8 +28,8 @@ describe('redesign foundations', () => {
     expect(styles).toContain('@import "./design-system/tokens/foundations.css";');
     expect(styles).not.toContain('fonts.googleapis.com');
     expect(styles).not.toContain('fonts.gstatic.com');
-    expect(tokens).toContain('--flx-accent: #e6b450;');
-    expect(tokens).toContain('--flx-accent-rgb: 230, 180, 80;');
+    expect(tokens).toContain('--flx-accent: #edb848;');
+    expect(tokens).toContain('--flx-accent-rgb: 237, 184, 72;');
     expect(tokens).toContain('--focus-ring: rgba(var(--flx-accent-hover-rgb), 0.72);');
     expect(tokens).not.toContain('--accent-blue');
   });

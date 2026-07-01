@@ -3,6 +3,7 @@
 #include "FluxoraCore/Services/IService.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -26,6 +27,8 @@ namespace fluxora
         std::filesystem::path id;
         std::wstring name;
         std::wstring version;
+        std::wstring installedAt;
+        std::wstring updatedAt;
         std::wstring latestVersion;
         std::wstring lastCheckedAt;
         std::wstring updateStatus;
@@ -42,6 +45,25 @@ namespace fluxora
         bool isLocal{false};
         bool isTranslation{false};
         bool isPatch{false};
+        std::vector<std::wstring> overwritesModIds;
+        std::vector<std::wstring> overwrittenByModIds;
+    };
+
+    struct ModTextFileDocument
+    {
+        std::filesystem::path path;
+        std::wstring relativePath;
+        std::wstring fileName;
+        std::wstring content;
+        std::uintmax_t size{0};
+    };
+
+    struct ModTextFileSaveResult
+    {
+        std::filesystem::path path;
+        std::wstring relativePath;
+        std::wstring fileName;
+        std::uintmax_t size{0};
     };
 
     class ModService final : public IService
@@ -66,6 +88,15 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modPath,
             std::wstring_view relativeDirectory) const;
+        [[nodiscard]] ModTextFileDocument readModTextFile(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modPath,
+            std::wstring_view relativePath) const;
+        [[nodiscard]] ModTextFileSaveResult saveModTextFile(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modPath,
+            std::wstring_view relativePath,
+            std::wstring_view content) const;
         [[nodiscard]] InstalledModEntry createEmptyMod(
             const std::filesystem::path& projectDirectory,
             std::wstring_view modName) const;

@@ -60,14 +60,14 @@
   --flx-line: #20252e;
   --flx-line-hover: #313741;
 
-  /* Semantic states stay inside the gold/neutral identity. */
+  /* Semantic states. */
   --flx-error: #9a8f7a;
   --flx-error-solid: #3f382c;
   --flx-error-press: #322c23;
   --flx-success: var(--flx-accent);
-  --flx-conflict-overwrites: var(--flx-accent);
-  --flx-conflict-overwritten: var(--flx-text-subtle);
-  --flx-conflict-fully-overwritten: #3b3731;
+  --flx-conflict-overwrites: #4ade80;
+  --flx-conflict-overwritten: #f87171;
+  --flx-conflict-fully-overwritten: #7a828e;
 
   /* Compatibility fills: the legacy names stay, but values are flat colors. */
   --flx-grad-app: var(--flx-bg-1);

@@ -43,6 +43,8 @@ import menuChevronUpIcon from '../../../Icons/chevron-up.svg';
 import menuCircleCheckIcon from '../../../Icons/circle-check.svg';
 import menuCircleXIcon from '../../../Icons/circle-x.svg';
 import menuFolderOpenIcon from '../../../Icons/folder-open.svg';
+import modDetailsFilesIcon from '../../../Icons/folder-tree.svg';
+import modDetailsConflictsIcon from '../../../Icons/git-compare-arrows.svg';
 import menuToggleLeftIcon from '../../../Icons/toggle-left.svg';
 import menuToggleRightIcon from '../../../Icons/toggle-right.svg';
 import menuTrashIcon from '../../../Icons/trash-2.svg';
@@ -57,9 +59,43 @@ import {
   buildProjectLibraryStats,
   type ProjectRuntimeSummary
 } from './features/library/projectLibraryStats';
+import { AiChatPanel } from './features/ai/AiChatPanel';
+import {
+  AI_CHAT_PANEL_COLLAPSED_WIDTH,
+  aiChatReducer,
+  createAiMessage,
+  createAiStreamEvent,
+  initialAiChatState
+} from './features/ai/ai-chat-state';
+import {
+  aiSessionStorageKey,
+  createAiSupportBundleSnapshot,
+  createAiSessionForScope,
+  createAiRunForPrompt,
+  loadAiSession,
+  saveAiSession,
+  startHostAiRun,
+  type AiLocalRunHandle,
+  type AiRuntimeLogEntry
+} from './features/ai/ai-chat-runtime';
+import { aiAutonomousJobQueueStorageKey } from './features/ai/ai-autonomous-jobs';
+import { collectAiBuildContext, type AiBuildOperationHint } from './features/ai/ai-build-tools';
+import {
+  aiProviderDiagnostic,
+  loadAiChatSettings,
+  normalizeAiChatSettings,
+  providerForModel,
+  saveAiChatSettings,
+  type AiChatSettings
+} from './features/ai/ai-chat-settings';
+import {
+  AI_CONTEXT_SOURCE_URL_PREFIX,
+  safeAiSourceUrl
+} from './features/ai/ai-chat-security';
 import { BuildPathsInspector } from './features/build/BuildPathsInspector';
 import { BuildSettingsWorkspace } from './features/build/BuildSettingsWorkspace';
 import { BuildDetailHeader } from './features/build/BuildDetailHeader';
+import { MissingMastersStatus } from './features/plugins/MissingMastersStatus';
 import {
   InstallDialog,
   type InstallDialogState
@@ -69,6 +105,10 @@ import {
   type OperationOverlayState
 } from './features/operations/OperationOverlay';
 import { SettingsWorkspace } from './features/settings/SettingsWorkspace';
+import {
+  isTextEditorFileName,
+  TextEditorWorkspace
+} from './features/text-editor/TextEditorWorkspace';
 import {
   emptyProjectDraft,
   filterProjects,
@@ -98,9 +138,12 @@ import {
   hasConflict,
   isModOverwriteItem,
   isModNestedUnderSeparator,
+  modConflictMarkerStates,
+  modConflictMarkerStatesForHighlight,
   modItemTitle,
   modLatestVersionText,
   modOverwriteView,
+  modRowConflictHighlight,
   modSeparatorChildCount,
   modStatusText,
   modTableStatusView,
@@ -109,18 +152,25 @@ import {
   reorderModOrderItems,
   selectedModOrderItem,
   targetIndexForDrop,
-  visibleModOrderItems
+  visibleModOrderItems,
+  type ModConflictHighlight,
+  type ModConflictMarkerState
 } from './mod-workspace-state';
 import {
   canDragPluginOrderItem,
   emptyPluginWorkspaceState,
+  enabledPluginNameKeys,
   isPluginNestedUnderSeparator,
+  isSkyrimMissingMasterStatusProject,
   mergePendingPluginEnabledStates,
   pluginCapabilityView,
   pluginHexIndex,
   pluginItemTitle,
+  pluginMissingMasterSummary,
   pluginSeparatorChildCount,
+  pluginSeparatorMissingMasterSummary,
   pluginSourceLabel,
+  pluginSourceModKey,
   pluginStatusText,
   pluginTypeLabel,
   pluginWorkspaceReducer,
@@ -128,6 +178,7 @@ import {
   selectedPluginOrderItem,
   targetIndexForPluginDrop,
   targetIndexForPluginMove,
+  type PluginMissingMasterContext,
   type PendingPluginEnabledState,
   visiblePluginOrderItems
 } from './plugin-workspace-state';
@@ -205,6 +256,7 @@ import {
 import { createVirtualWindow } from './ui-performance';
 import type {
   FluxoraAppInfo,
+  FluxoraAiHostStatus,
   FluxoraContentLayoutPreview,
   FluxoraDownloadEntry,
   FluxoraExecutable,
@@ -281,6 +333,11 @@ interface OpeningBuildSplashState {
   progress: number;
 }
 
+interface InterfaceRefreshSplashState {
+  buildName: string;
+  operationId: string;
+}
+
 interface OverwriteClearSplashState {
   buildName: string;
   operationId: string;
@@ -290,6 +347,7 @@ interface OverwriteClearSplashState {
 type RightPaneId = 'plugins' | 'data' | 'downloads' | 'build';
 type RowReorderKind = 'mod' | 'plugin';
 type RowDropPlacement = 'before' | 'after';
+type ModDetailsTabId = 'files' | 'conflicts';
 
 interface RowDropTargetState {
   orderId: string;
@@ -315,6 +373,8 @@ interface WorkspaceLoadOptions {
   showBusy?: boolean;
   showLoading?: boolean;
   resetScroll?: boolean;
+  operationId?: string;
+  profileName?: string;
 }
 
 interface WorkspaceMutationOptions {
@@ -329,6 +389,20 @@ interface PendingPluginEnableSave extends PendingPluginEnabledState {
 }
 
 type MenuIconStyle = CSSProperties & { '--menu-icon': string };
+type AssetIconStyle = CSSProperties & { '--asset-icon': string };
+type ModConflictMarkerStyle = CSSProperties & {
+  '--conflict-marker-top': string;
+  '--conflict-marker-offset': string;
+};
+
+const modConflictMarkerLabels: Record<ModConflictMarkerState, string> = {
+  overwrites: 'Перезаписывает',
+  overwritten: 'Перезаписывается',
+  'fully-overwritten': 'Полностью перезаписан'
+};
+
+const modConflictMarkerTitle = (states: ModConflictMarkerState[]): string =>
+  states.map((state) => modConflictMarkerLabels[state]).join(' · ');
 
 function MenuIcon({ source }: { source: string }) {
   return (
@@ -340,9 +414,56 @@ function MenuIcon({ source }: { source: string }) {
   );
 }
 
+function AssetIcon({ source }: { source: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="asset-icon"
+      style={{ '--asset-icon': `url("${source}")` } as AssetIconStyle}
+    />
+  );
+}
+
+function ModConflictMarkers({
+  className,
+  states
+}: {
+  className?: string;
+  states: ModConflictMarkerState[];
+}) {
+  if (states.length === 0) {
+    return null;
+  }
+
+  return (
+    <span
+      aria-label={modConflictMarkerTitle(states)}
+      className={['mod-conflict-markers', className].filter(Boolean).join(' ')}
+      role="group"
+      title={modConflictMarkerTitle(states)}
+    >
+      {states.map((state) => (
+        <StatusDot
+          className="mod-conflict-marker-dot"
+          key={state}
+          label={modConflictMarkerLabels[state]}
+          size={18}
+          state={state}
+          title={modConflictMarkerLabels[state]}
+        />
+      ))}
+    </span>
+  );
+}
+
 const navItems: Array<{ id: RouteId; label: string; icon: typeof Home }> = [
   { id: 'home', label: 'Home', icon: Home },
   { id: 'build', label: 'Build', icon: Layers }
+];
+
+const modDetailsTabs: Array<{ id: ModDetailsTabId; label: string; icon: string }> = [
+  { id: 'files', label: 'Файлы', icon: modDetailsFilesIcon },
+  { id: 'conflicts', label: 'Конфликты', icon: modDetailsConflictsIcon }
 ];
 
 const wizardSteps = [
@@ -366,6 +487,8 @@ const openingBuildMessages = [
   'Еще чуть-чуть'
 ] as const;
 
+const interfaceRefreshMessages = ['Обновляем интерфейс'] as const;
+
 const overwriteClearMessages = [
   'Очищаем override',
   'Удаляем временные файлы',
@@ -384,6 +507,9 @@ const modOverscanRows = 8;
 const pluginRowHeight = 48;
 const pluginVisibleRows = 28;
 const pluginOverscanRows = 8;
+const modLoadingSkeletonRows = Array.from({ length: 10 }, (_, index) => index);
+const pluginLoadingSkeletonRows = Array.from({ length: 10 }, (_, index) => index);
+const loadingSkeletonWidths = ['72%', '58%', '66%', '48%', '62%'] as const;
 const downloadRowHeight = 48;
 const downloadVisibleRows = 28;
 const downloadOverscanRows = 8;
@@ -506,6 +632,7 @@ const rowContextMenuViewportPadding = 8;
 const rowReorderDragThreshold = 5;
 const rowReorderAutoScrollEdge = 36;
 const rowReorderAutoScrollMaxStep = 18;
+const pluginMissingMasterStatusLimit = 20;
 const backgroundReorderLoadOptions: WorkspaceLoadOptions = {
   resetScroll: false,
   showBusy: false,
@@ -580,6 +707,12 @@ const isInteractiveRowDragTarget = (target: EventTarget | null): boolean => {
   );
 };
 
+const isEditableShortcutTarget = (target: EventTarget | null): boolean =>
+  target instanceof HTMLInputElement ||
+  target instanceof HTMLTextAreaElement ||
+  target instanceof HTMLSelectElement ||
+  (target instanceof HTMLElement && target.isContentEditable);
+
 const rowDropPlacementFromPointer = (
   row: HTMLElement,
   pointerY: number
@@ -593,11 +726,22 @@ export const App = () => {
   const windowMode = windowParameters.get('window');
   const isSettingsWindow = windowMode === 'settings';
   const isBuildSettingsWindow = windowMode === 'build-settings';
-  const isSecondaryWindow = isSettingsWindow || isBuildSettingsWindow;
+  const isModDetailsWindow = windowMode === 'mod-details';
+  const isTextEditorWindow = windowMode === 'text-editor';
+  const isSecondaryWindow =
+    isSettingsWindow || isBuildSettingsWindow || isModDetailsWindow || isTextEditorWindow;
   const buildSettingsProjectId = windowParameters.get('project');
   const buildSettingsInitialName = windowParameters.get('name')?.trim() ?? '';
+  const modDetailsProjectId = windowParameters.get('project');
+  const modDetailsModId = windowParameters.get('mod')?.trim() ?? '';
+  const modDetailsInitialName = windowParameters.get('name')?.trim() ?? '';
+  const modDetailsProfileName = windowParameters.get('profile')?.trim() ?? '';
+  const textEditorProjectId = windowParameters.get('project');
+  const textEditorModId = windowParameters.get('mod')?.trim() ?? '';
+  const textEditorInitialPath = windowParameters.get('path')?.trim() ?? '';
+  const textEditorInitialName = windowParameters.get('name')?.trim() ?? '';
   const [activeRoute, setActiveRoute] = useState<RouteId>(() =>
-    isSettingsWindow ? 'settings' : 'home'
+    isSettingsWindow ? 'settings' : isModDetailsWindow || isTextEditorWindow ? 'mods' : 'home'
   );
   const [appInfo, setAppInfo] = useState<FluxoraAppInfo | null>(null);
   const [securityState, setSecurityState] = useState<FluxoraSecurityState | null>(null);
@@ -613,10 +757,22 @@ export const App = () => {
   const [templateSearchText, setTemplateSearchText] = useState('');
   const [, setMessage] = useState<string | null>(null);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const [aiChat, dispatchAiChat] = useReducer(aiChatReducer, initialAiChatState);
+  const [aiHostStatus, setAiHostStatus] = useState<FluxoraAiHostStatus | null>(null);
+  const [aiChatSettings, setAiChatSettings] = useState<AiChatSettings>(() =>
+    loadAiChatSettings(window.localStorage)
+  );
+  const aiLocalRunRef = useRef<AiLocalRunHandle | null>(null);
   const [openingBuildSplash, setOpeningBuildSplash] =
     useState<OpeningBuildSplashState | null>(null);
+  const [interfaceRefreshSplash, setInterfaceRefreshSplash] =
+    useState<InterfaceRefreshSplashState | null>(null);
   const openingBuildCancelRequestsRef = useRef<Set<string>>(new Set());
   const openingBuildOperationIdRef = useRef<string | null>(null);
+  const openingBuildPreviousViewRef = useRef<{
+    route: RouteId;
+    selectedProjectId: string | null;
+  } | null>(null);
   const [overwriteClearSplash, setOverwriteClearSplash] =
     useState<OverwriteClearSplashState | null>(null);
   const overwriteClearOperationIdRef = useRef<string | null>(null);
@@ -667,6 +823,10 @@ export const App = () => {
     'idle'
   );
   const [fileTreeLoadingPath, setFileTreeLoadingPath] = useState<string | null>(null);
+  const [modDetailsTab, setModDetailsTab] = useState<ModDetailsTabId>('files');
+  const [modDetailsConflictScanState, setModDetailsConflictScanState] = useState<
+    'idle' | 'loading' | 'ready' | 'error'
+  >('idle');
   const [pluginsWorkspace, dispatchPluginsWorkspace] = useReducer(
     pluginWorkspaceReducer,
     undefined,
@@ -752,17 +912,43 @@ export const App = () => {
       ) ?? null,
     [projects, selectedProjectId]
   );
+  const aiSessionScope = useMemo(
+    () => ({
+      buildLabel: selectedProject?.name,
+      configPath: selectedProject?.configPath,
+      projectDirectory: selectedProject?.projectDirectory,
+      projectId: selectedProject?.id
+    }),
+    [
+      selectedProject?.configPath,
+      selectedProject?.id,
+      selectedProject?.name,
+      selectedProject?.projectDirectory
+    ]
+  );
   const windowTitle = useMemo(() => {
     if (isBuildSettingsWindow) {
       return `Settings · ${selectedProject?.name ?? (buildSettingsInitialName || 'Build')}`;
+    }
+
+    if (isModDetailsWindow) {
+      return `Mod · ${modDetailsInitialName || 'Details'}`;
+    }
+
+    if (isTextEditorWindow) {
+      return `Editor · ${textEditorInitialName || 'Text file'}`;
     }
 
     return isSettingsWindow ? 'Settings' : 'Fluxora';
   }, [
     buildSettingsInitialName,
     isBuildSettingsWindow,
+    isModDetailsWindow,
     isSettingsWindow,
-    selectedProject?.name
+    isTextEditorWindow,
+    modDetailsInitialName,
+    selectedProject?.name,
+    textEditorInitialName
   ]);
 
   const deferredSearchText = useDeferredValue(searchText);
@@ -843,6 +1029,23 @@ export const App = () => {
     ]
   );
 
+  const modDetailsConflictEntries = useMemo(() => {
+    const entries = Object.values(fileTreeCache)
+      .flat()
+      .filter((entry) => !entry.isDirectory && hasConflict(entry));
+
+    return {
+      overwrites: entries.filter((entry) => {
+        const state = entry.conflictState.toLocaleLowerCase();
+        return state === 'overwrites' || state === 'conflict';
+      }),
+      overwritten: entries.filter((entry) => {
+        const state = entry.conflictState.toLocaleLowerCase();
+        return state === 'overwritten' || state === 'conflict';
+      })
+    };
+  }, [fileTreeCache]);
+
   const totalModCount = useMemo(
     () => modsWorkspace.items.filter((item) => item.isMod).length,
     [modsWorkspace.items]
@@ -915,6 +1118,11 @@ export const App = () => {
     ]
   );
 
+  const modWorkspaceProfileName =
+    isModDetailsWindow && modDetailsProfileName
+      ? modDetailsProfileName
+      : selectedProjectProfileName;
+
   const filteredProfileItems = useMemo(
     () => filterProfileNames(profilesWorkspace.items, deferredProfileSearchText),
     [profilesWorkspace.items, deferredProfileSearchText]
@@ -947,18 +1155,12 @@ export const App = () => {
         ? installedMods
         : modsWorkspace.items.filter((item) => item.isMod);
     const hasModData = installedMods.length > 0 || modsWorkspace.loadState === 'ready';
-    const pluginEntries = pluginsWorkspace.items.filter((item) => item.isPlugin);
-    const hasPluginData = pluginsWorkspace.loadState === 'ready';
 
     return {
       modCount: hasModData ? modEntries.length : undefined,
       disabledModCount: hasModData
         ? modEntries.filter((item) => !item.isEnabled).length
         : undefined,
-      enabledPluginCount: hasPluginData
-        ? pluginEntries.filter((item) => item.isEnabled).length
-        : undefined,
-      pluginCount: hasPluginData ? pluginEntries.length : undefined,
       downloadsCount:
         downloadsWorkspace.loadState === 'ready' ? downloadsWorkspace.items.length : undefined
     };
@@ -967,9 +1169,7 @@ export const App = () => {
     downloadsWorkspace.loadState,
     installedMods,
     modsWorkspace.items,
-    modsWorkspace.loadState,
-    pluginsWorkspace.items,
-    pluginsWorkspace.loadState
+    modsWorkspace.loadState
   ]);
 
   const selectedProjectLibraryStats = useMemo(
@@ -1018,6 +1218,42 @@ export const App = () => {
   const pluginCapabilities = useMemo(
     () => pluginCapabilityView(selectedProject, bridgeStatus),
     [bridgeStatus, selectedProject]
+  );
+  const showPluginMissingMastersStatus = useMemo(
+    () => isSkyrimMissingMasterStatusProject(selectedProject),
+    [selectedProject]
+  );
+  const disabledPluginSourceModNameKeys = useMemo(() => {
+    const keys = new Set<string>();
+    const addSourceModKey = (value: string | null | undefined) => {
+      const key = pluginSourceModKey(value);
+      if (key) {
+        keys.add(key);
+      }
+    };
+
+    modsWorkspace.items.forEach((item) => {
+      if (item.isMod && !item.isEnabled) {
+        addSourceModKey(modItemTitle(item));
+      }
+    });
+    installedMods.forEach((mod) => {
+      if (!mod.isEnabled) {
+        addSourceModKey(mod.name);
+      }
+    });
+
+    return keys;
+  }, [installedMods, modsWorkspace.items]);
+  const pluginMissingMasterContext = useMemo<PluginMissingMasterContext>(
+    () => ({
+      disabledSourceModNameKeys: disabledPluginSourceModNameKeys,
+      enabledPluginNameKeys: enabledPluginNameKeys(
+        pluginsWorkspace.items,
+        disabledPluginSourceModNameKeys
+      )
+    }),
+    [disabledPluginSourceModNameKeys, pluginsWorkspace.items]
   );
 
   const downloadCapabilities = useMemo(
@@ -1070,6 +1306,35 @@ export const App = () => {
       overscanRows: modOverscanRows
     });
   }, [displayedModItems, modListScrollTop]);
+
+  const modConflictScrollbarMarkers = useMemo(() => {
+    if (displayedModItems.length === 0) {
+      return [];
+    }
+
+    return displayedModItems.flatMap((item, index) => {
+      const highlight = modRowConflictHighlight(modsWorkspace.items, item, selectedModItem);
+      const isCollapsedSeparator =
+        item.isSeparator && modsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
+      const states = item.isSeparator
+        ? isCollapsedSeparator
+          ? modConflictMarkerStatesForHighlight(highlight)
+          : []
+        : modConflictMarkerStatesForHighlight(highlight);
+
+      return states.map((state, stateIndex) => ({
+        key: `${item.orderId}:${state}`,
+        state,
+        offset: `${(stateIndex - (states.length - 1) / 2) * 4}px`,
+        top: `${((index + 0.5) / displayedModItems.length) * 100}%`
+      }));
+    });
+  }, [
+    displayedModItems,
+    modsWorkspace.collapsedSeparatorOrderIds,
+    modsWorkspace.items,
+    selectedModItem
+  ]);
 
   const visiblePluginWindow = useMemo(() => {
     return createVirtualWindow(filteredPluginItems, pluginListScrollTop, {
@@ -1146,7 +1411,8 @@ export const App = () => {
     const showBusy = options.showBusy ?? true;
     const showLoading = options.showLoading ?? true;
     const resetScroll = options.resetScroll ?? true;
-    const operationId = createRendererOperationId('mods_load');
+    const operationId = options.operationId ?? createRendererOperationId('mods_load');
+    const profileName = options.profileName ?? modWorkspaceProfileName;
     if (showLoading) {
       dispatchModsWorkspace({ type: 'load-started' });
     }
@@ -1158,7 +1424,7 @@ export const App = () => {
     try {
       const [nextInstalledMods, nextOrder] = await Promise.all([
         window.fluxora.mods.listInstalled(project.projectDirectory, { operationId }),
-        window.fluxora.mods.getOrder(project.projectDirectory, selectedProjectProfileName, {
+        window.fluxora.mods.getOrder(project.projectDirectory, profileName, {
           operationId
         })
       ]);
@@ -1350,6 +1616,9 @@ export const App = () => {
       await window.fluxora.mods.setEnabled(project.projectDirectory, item.id, isEnabled, {
         operationId
       });
+      if (latestModEnableSequenceByOrderIdRef.current.get(orderId) === sequence) {
+        await loadModsWorkspace(project, backgroundReorderLoadOptions);
+      }
       if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
         await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
       }
@@ -1386,6 +1655,9 @@ export const App = () => {
       await window.fluxora.mods.setAllEnabled(project.projectDirectory, isEnabled, {
         operationId
       });
+      if (modBulkEnableSequenceRef.current === sequence) {
+        await loadModsWorkspace(project, backgroundReorderLoadOptions);
+      }
       if (
         modBulkEnableSequenceRef.current === sequence &&
         pluginCapabilities.bridgeAvailable &&
@@ -1509,7 +1781,7 @@ export const App = () => {
     modOrderSaveSequenceRef.current = sequence;
     const previousItems = modsWorkspace.items;
     const project = selectedProject;
-    const profileName = selectedProjectProfileName;
+    const profileName = modWorkspaceProfileName;
 
     setMessage(null);
     dispatchModsWorkspace({
@@ -1564,7 +1836,7 @@ export const App = () => {
     await runModMutation('Creating separator', (operationId) =>
       window.fluxora.mods.createSeparator(
         selectedProject.projectDirectory,
-        selectedProjectProfileName,
+        modWorkspaceProfileName,
         title,
         targetIndex,
         { operationId }
@@ -1580,7 +1852,7 @@ export const App = () => {
     await runModMutation('Deleting separator', (operationId) =>
       window.fluxora.mods.deleteSeparator(
         selectedProject.projectDirectory,
-        selectedProjectProfileName,
+        modWorkspaceProfileName,
         item.orderId,
         { operationId }
       )
@@ -1664,6 +1936,23 @@ export const App = () => {
     const result = await window.fluxora.shell.openPath(item.id);
     if (!result.ok) {
       setMessage(result.message ?? 'Mod folder could not be opened.');
+    }
+  };
+
+  const openModDetailsWindow = async (item: FluxoraModOrderItem) => {
+    if (!selectedProject || !item.isMod) {
+      return;
+    }
+
+    try {
+      await window.fluxora.windowControls.openModDetails(
+        selectedProject.configPath,
+        item.id,
+        modItemTitle(item),
+        modWorkspaceProfileName
+      );
+    } catch (error) {
+      setMessage(errorMessage(error));
     }
   };
 
@@ -1761,15 +2050,82 @@ export const App = () => {
     }
   };
 
+  const openTextEditorForFile = async (entry: FluxoraModFileTreeEntry) => {
+    if (
+      !selectedProject ||
+      !selectedModItem?.isMod ||
+      entry.isDirectory ||
+      !isTextEditorFileName(entry.name)
+    ) {
+      return;
+    }
+
+    try {
+      await window.fluxora.windowControls.openTextEditor(
+        selectedProject.configPath,
+        selectedModItem.id,
+        entry.relativePath,
+        entry.name
+      );
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const loadModDetailsConflictTree = async (item: FluxoraModOrderItem | null = selectedModItem) => {
+    if (!selectedProject || !item?.isMod) {
+      return;
+    }
+
+    const operationId = createRendererOperationId('mods_conflict_tree');
+    const nextCache: Record<string, FluxoraModFileTreeEntry[]> = {};
+    const visited = new Set<string>();
+
+    const scanDirectory = async (relativeDirectory: string): Promise<void> => {
+      if (visited.has(relativeDirectory)) {
+        return;
+      }
+
+      visited.add(relativeDirectory);
+      const entries =
+        fileTreeCache[relativeDirectory] ??
+        (await window.fluxora.mods.getFileTree(
+          selectedProject.projectDirectory,
+          item.id,
+          relativeDirectory,
+          { operationId }
+        ));
+      nextCache[relativeDirectory] = entries;
+
+      await Promise.all(
+        entries
+          .filter((entry) => entry.isDirectory && entry.hasChildren)
+          .map((entry) => scanDirectory(entry.relativePath))
+      );
+    };
+
+    setModDetailsConflictScanState('loading');
+    try {
+      await scanDirectory('');
+      setFileTreeCache((current) => ({ ...current, ...nextCache }));
+      setFileTreeState('ready');
+      setModDetailsConflictScanState('ready');
+    } catch (error) {
+      setModDetailsConflictScanState('error');
+      setMessage(errorMessage(error));
+    }
+  };
+
   const loadPluginsWorkspace = async (
     project = selectedProject,
     options: WorkspaceLoadOptions = {}
   ) => {
-    if (!project || !bridgeStatus?.ready || !pluginCapabilities.bridgeAvailable) {
+    const capabilities = pluginCapabilityView(project, bridgeStatus);
+    if (!project || !bridgeStatus?.ready || !capabilities.bridgeAvailable) {
       return;
     }
 
-    if (!pluginCapabilities.projectSupported) {
+    if (!capabilities.projectSupported) {
       dispatchPluginsWorkspace({ type: 'items-loaded', items: [] });
       setDraggedPluginOrderId(null);
       setPluginDropTarget(null);
@@ -1779,8 +2135,8 @@ export const App = () => {
     const showBusy = options.showBusy ?? true;
     const showLoading = options.showLoading ?? true;
     const resetScroll = options.resetScroll ?? true;
-    const operationId = createRendererOperationId('plugins_load');
-    const profileName = selectedProjectProfileName;
+    const operationId = options.operationId ?? createRendererOperationId('plugins_load');
+    const profileName = options.profileName ?? selectedProjectProfileName;
     const contextKey = pluginWorkspaceContextKey(project, profileName);
     const snapshotSequence = pluginEnableSaveSequenceRef.current;
     if (showLoading) {
@@ -2421,15 +2777,25 @@ export const App = () => {
     );
   };
 
-  const loadProfilesWorkspace = async (project = selectedProject) => {
-    if (!project || !bridgeStatus?.ready || !profilesCapabilities.bridgeAvailable) {
-      return;
+  const loadProfilesWorkspace = async (
+    project = selectedProject,
+    options: WorkspaceLoadOptions = {}
+  ) => {
+    const capabilities = profilesCapabilityView(project, bridgeStatus);
+    if (!project || !bridgeStatus?.ready || !capabilities.bridgeAvailable) {
+      return null;
     }
 
-    const operationId = createRendererOperationId('profiles_load');
-    dispatchProfilesWorkspace({ type: 'load-started' });
-    setProfilesBusyLabel('Loading profiles');
-    setMessage(null);
+    const showBusy = options.showBusy ?? true;
+    const showLoading = options.showLoading ?? true;
+    const operationId = options.operationId ?? createRendererOperationId('profiles_load');
+    if (showLoading) {
+      dispatchProfilesWorkspace({ type: 'load-started' });
+    }
+    if (showBusy) {
+      setProfilesBusyLabel('Loading profiles');
+      setMessage(null);
+    }
 
     try {
       const profiles = await window.fluxora.profiles.list(
@@ -2442,11 +2808,15 @@ export const App = () => {
         items: profiles,
         defaultProfileName: projectDefaultProfileName(project)
       });
+      return profiles;
     } catch (error) {
       dispatchProfilesWorkspace({ type: 'load-failed', message: errorMessage(error) });
       setMessage(errorMessage(error));
+      return null;
     } finally {
-      setProfilesBusyLabel(null);
+      if (showBusy) {
+        setProfilesBusyLabel(null);
+      }
     }
   };
 
@@ -2604,15 +2974,25 @@ export const App = () => {
     }
   };
 
-  const loadExecutablesWorkspace = async (project = selectedProject) => {
-    if (!project || !bridgeStatus?.ready || !executableCapabilities.bridgeAvailable) {
-      return;
+  const loadExecutablesWorkspace = async (
+    project = selectedProject,
+    options: WorkspaceLoadOptions = {}
+  ) => {
+    const capabilities = executablesCapabilityView(project, bridgeStatus);
+    if (!project || !bridgeStatus?.ready || !capabilities.bridgeAvailable) {
+      return null;
     }
 
-    const operationId = createRendererOperationId('executables_load');
-    dispatchExecutablesWorkspace({ type: 'load-started' });
-    setExecutablesBusyLabel('Loading executables');
-    setMessage(null);
+    const showBusy = options.showBusy ?? true;
+    const showLoading = options.showLoading ?? true;
+    const operationId = options.operationId ?? createRendererOperationId('executables_load');
+    if (showLoading) {
+      dispatchExecutablesWorkspace({ type: 'load-started' });
+    }
+    if (showBusy) {
+      setExecutablesBusyLabel('Loading executables');
+      setMessage(null);
+    }
 
     try {
       const executables = await window.fluxora.executables.list(project.configPath, {
@@ -2620,11 +3000,15 @@ export const App = () => {
       });
       dispatchExecutablesWorkspace({ type: 'items-loaded', items: executables });
       cacheProjectExecutables(project, executables);
+      return executables;
     } catch (error) {
       dispatchExecutablesWorkspace({ type: 'load-failed', message: errorMessage(error) });
       setMessage(errorMessage(error));
+      return null;
     } finally {
-      setExecutablesBusyLabel(null);
+      if (showBusy) {
+        setExecutablesBusyLabel(null);
+      }
     }
   };
 
@@ -3062,15 +3446,26 @@ export const App = () => {
     }
   };
 
-  const loadDownloadsWorkspace = async (project = selectedProject) => {
-    if (!project || !bridgeStatus?.ready || !downloadCapabilities.bridgeAvailable) {
+  const loadDownloadsWorkspace = async (
+    project = selectedProject,
+    options: WorkspaceLoadOptions = {}
+  ) => {
+    const capabilities = downloadCapabilityView(project, bridgeStatus);
+    if (!project || !bridgeStatus?.ready || !capabilities.bridgeAvailable) {
       return;
     }
 
-    const operationId = createRendererOperationId('downloads_load');
-    dispatchDownloadsWorkspace({ type: 'load-started' });
-    setDownloadsBusyLabel('Loading downloads');
-    setMessage(null);
+    const showBusy = options.showBusy ?? true;
+    const showLoading = options.showLoading ?? true;
+    const resetScroll = options.resetScroll ?? true;
+    const operationId = options.operationId ?? createRendererOperationId('downloads_load');
+    if (showLoading) {
+      dispatchDownloadsWorkspace({ type: 'load-started' });
+    }
+    if (showBusy) {
+      setDownloadsBusyLabel('Loading downloads');
+      setMessage(null);
+    }
 
     try {
       await window.fluxora.nxm.importInboundDownloads(project.projectDirectory, { operationId });
@@ -3078,12 +3473,16 @@ export const App = () => {
         operationId
       });
       dispatchDownloadsWorkspace({ type: 'items-loaded', items: nextDownloads });
-      setDownloadListScrollTop(0);
+      if (resetScroll) {
+        setDownloadListScrollTop(0);
+      }
     } catch (error) {
       dispatchDownloadsWorkspace({ type: 'load-failed', message: errorMessage(error) });
       setMessage(errorMessage(error));
     } finally {
-      setDownloadsBusyLabel(null);
+      if (showBusy) {
+        setDownloadsBusyLabel(null);
+      }
     }
   };
 
@@ -3177,15 +3576,47 @@ export const App = () => {
       return;
     }
 
-    if (!window.confirm(`Delete download "${downloadTitle(entry)}"?`)) {
+    const project = selectedProject;
+    const deletedDownloadTitle = downloadTitle(entry);
+
+    if (!window.confirm(`Удалить файл из загрузок "${deletedDownloadTitle}"?`)) {
       return;
     }
 
-    await runDownloadMutation('Deleting download', (operationId) =>
-      window.fluxora.downloads.delete(selectedProject.projectDirectory, downloadPath(entry), {
+    const operationId = createRendererOperationId('downloads_delete');
+    beginOperationOverlay({
+      operationId,
+      kind: 'download-delete',
+      title: 'Удаляем файл',
+      statusText: 'Удаляем файл из загрузок',
+      currentItem: deletedDownloadTitle,
+      percent: 8
+    });
+    setDownloadsBusyLabel('Deleting download');
+    setMessage(null);
+
+    try {
+      await window.fluxora.downloads.delete(project.projectDirectory, downloadPath(entry), {
         operationId
-      })
-    );
+      });
+      setOperationOverlay((current) =>
+        current && current.operationId === operationId
+          ? {
+              ...current,
+              statusText: 'Обновляем список загрузок',
+              percent: Math.max(current.percent ?? 0, 84)
+            }
+          : current
+      );
+      await loadDownloadsWorkspace(project);
+      closeOperationOverlay(operationId);
+    } catch (error) {
+      const nextMessage = errorMessage(error);
+      setMessage(nextMessage);
+      failOperationOverlay(operationId, nextMessage);
+    } finally {
+      setDownloadsBusyLabel(null);
+    }
   };
 
   const cancelDownload = async (entry: FluxoraDownloadEntry) => {
@@ -3486,11 +3917,125 @@ export const App = () => {
     if (isBuildSettingsWindow && buildSettingsProjectId) {
       setSelectedProjectId(buildSettingsProjectId);
     }
-  }, [buildSettingsProjectId, isBuildSettingsWindow]);
+
+    if (isModDetailsWindow && modDetailsProjectId) {
+      setSelectedProjectId(modDetailsProjectId);
+    }
+
+    if (isTextEditorWindow && textEditorProjectId) {
+      setSelectedProjectId(textEditorProjectId);
+    }
+  }, [
+    buildSettingsProjectId,
+    isBuildSettingsWindow,
+    isModDetailsWindow,
+    isTextEditorWindow,
+    modDetailsProjectId,
+    textEditorProjectId
+  ]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
   }, [themeMode]);
+
+  useEffect(() => {
+    aiLocalRunRef.current?.dispose();
+    aiLocalRunRef.current = null;
+    dispatchAiChat({
+      type: 'restore-session',
+      session: loadAiSession(window.localStorage, aiSessionScope)
+    });
+  }, [aiSessionScope]);
+
+  useEffect(() => {
+    saveAiSession(window.localStorage, aiChat.session);
+  }, [aiChat.session]);
+
+  useEffect(() => {
+    saveAiChatSettings(window.localStorage, aiChatSettings);
+  }, [aiChatSettings]);
+
+  useEffect(() => {
+    setAiChatSettings((current) => {
+      const next = normalizeAiChatSettings(current, aiHostStatus);
+      return next.modelId === current.modelId && next.routingPreset === current.routingPreset
+        ? current
+        : next;
+    });
+  }, [aiHostStatus]);
+
+  useEffect(() => {
+    const shouldLoadAiStatus = aiChat.isOpen || activeRoute === 'settings' || isSettingsWindow;
+    if (!shouldLoadAiStatus || (isSecondaryWindow && !isSettingsWindow)) {
+      return;
+    }
+
+    let isCurrent = true;
+    const operationId = createRendererOperationId('ai_status');
+    window.fluxora.ai.getStatus({ operationId }).then(
+      (status) => {
+        if (isCurrent) {
+          setAiHostStatus(status);
+        }
+      },
+      (error) => {
+        if (!isCurrent) {
+          return;
+        }
+
+        setAiHostStatus({
+          ready: false,
+          operationId,
+          health: 'unavailable',
+          providers: [],
+          models: [],
+          capabilities: {},
+          error: {
+            code: 'ai.host.unavailable',
+            message: errorMessage(error),
+            category: 'transport',
+            retryable: true,
+            capabilityId: null,
+            details: {}
+          }
+        });
+      }
+    );
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [activeRoute, aiChat.isOpen, isSecondaryWindow, isSettingsWindow]);
+
+  useEffect(
+    () => () => {
+      aiLocalRunRef.current?.dispose();
+      aiLocalRunRef.current = null;
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (isSecondaryWindow) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.ctrlKey &&
+        event.shiftKey &&
+        event.key.toLowerCase() === 'g' &&
+        !isEditableShortcutTarget(event.target)
+      ) {
+        event.preventDefault();
+        dispatchAiChat({ type: 'toggle-open' });
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isSecondaryWindow]);
 
   useEffect(() => {
     if (projectMenuId) {
@@ -3646,7 +4191,8 @@ export const App = () => {
     if (
       (activeRoute !== 'build' && activeRoute !== 'mods') ||
       !selectedProject ||
-      !bridgeStatus?.ready
+      !bridgeStatus?.ready ||
+      openingBuildOperationIdRef.current
     ) {
       return;
     }
@@ -3656,14 +4202,40 @@ export const App = () => {
     activeRoute,
     bridgeStatus?.ready,
     selectedProject?.projectDirectory,
-    selectedProjectProfileName
+    modWorkspaceProfileName
+  ]);
+
+  useEffect(() => {
+    if (!isModDetailsWindow || !modDetailsModId || modsWorkspace.loadState !== 'ready') {
+      return;
+    }
+
+    const targetMod =
+      modsWorkspace.items.find(
+        (item) =>
+          item.isMod &&
+          (item.id === modDetailsModId ||
+            item.orderId === modDetailsModId ||
+            item.name === modDetailsModId)
+      ) ?? null;
+
+    if (targetMod && modsWorkspace.selectedOrderId !== targetMod.orderId) {
+      dispatchModsWorkspace({ type: 'selected', orderId: targetMod.orderId });
+    }
+  }, [
+    isModDetailsWindow,
+    modDetailsModId,
+    modsWorkspace.items,
+    modsWorkspace.loadState,
+    modsWorkspace.selectedOrderId
   ]);
 
   useEffect(() => {
     if (
       (activeRoute !== 'build' && activeRoute !== 'plugins') ||
       !selectedProject ||
-      !bridgeStatus?.ready
+      !bridgeStatus?.ready ||
+      openingBuildOperationIdRef.current
     ) {
       return;
     }
@@ -3688,7 +4260,8 @@ export const App = () => {
     if (
       (activeRoute !== 'build' && activeRoute !== 'downloads') ||
       !selectedProject ||
-      !bridgeStatus?.ready
+      !bridgeStatus?.ready ||
+      openingBuildOperationIdRef.current
     ) {
       return;
     }
@@ -3710,7 +4283,8 @@ export const App = () => {
     if (
       (activeRoute !== 'build' && activeRoute !== 'profiles') ||
       !selectedProject ||
-      !bridgeStatus?.ready
+      !bridgeStatus?.ready ||
+      openingBuildOperationIdRef.current
     ) {
       return;
     }
@@ -3742,7 +4316,8 @@ export const App = () => {
     if (
       (activeRoute !== 'build' && activeRoute !== 'executables') ||
       !selectedProject ||
-      !bridgeStatus?.ready
+      !bridgeStatus?.ready ||
+      openingBuildOperationIdRef.current
     ) {
       return;
     }
@@ -3846,6 +4421,7 @@ export const App = () => {
   useEffect(() => {
     setFileTreeCache({});
     setExpandedFileTree({});
+    setModDetailsConflictScanState('idle');
 
     if ((activeRoute !== 'build' && activeRoute !== 'mods') || !selectedModItem?.isMod) {
       setFileTreeState('idle');
@@ -3854,6 +4430,25 @@ export const App = () => {
 
     void loadModFileTree('', selectedModItem);
   }, [activeRoute, selectedModItem?.orderId, selectedModItem?.id]);
+
+  useEffect(() => {
+    if (
+      !isModDetailsWindow ||
+      modDetailsTab !== 'conflicts' ||
+      modDetailsConflictScanState !== 'idle' ||
+      !selectedModItem?.isMod
+    ) {
+      return;
+    }
+
+    void loadModDetailsConflictTree(selectedModItem);
+  }, [
+    isModDetailsWindow,
+    modDetailsConflictScanState,
+    modDetailsTab,
+    selectedModItem?.orderId,
+    selectedModItem?.id
+  ]);
 
   const changeRoute = (route: RouteId) => {
     if (route === 'home' && openingBuildOperationIdRef.current) {
@@ -3988,6 +4583,52 @@ export const App = () => {
     );
   };
 
+  const restoreOpeningBuildPreviousView = () => {
+    const previousView = openingBuildPreviousViewRef.current;
+    if (!previousView) {
+      return;
+    }
+
+    setSelectedProjectId(previousView.selectedProjectId);
+    setActiveRoute(previousView.route);
+    openingBuildPreviousViewRef.current = null;
+  };
+
+  const setOpeningBuildProgress = (
+    operationId: string,
+    progress: number,
+    buildName?: string
+  ) => {
+    setOpeningBuildSplash((current) =>
+      current?.operationId === operationId
+        ? {
+            ...current,
+            buildName: buildName ?? current.buildName,
+            progress: Math.max(current.progress, progress)
+          }
+        : current
+    );
+  };
+
+  const loadBuildWorkspaceData = async (
+    project: FluxoraProject,
+    options: WorkspaceLoadOptions = {}
+  ) => {
+    const profileName = options.profileName ?? selectedProjectProfileName;
+    const loadOptions: WorkspaceLoadOptions = {
+      ...options,
+      profileName
+    };
+
+    await Promise.all([
+      loadModsWorkspace(project, loadOptions),
+      loadPluginsWorkspace(project, loadOptions),
+      loadDownloadsWorkspace(project, loadOptions),
+      loadProfilesWorkspace(project, loadOptions),
+      loadExecutablesWorkspace(project, loadOptions)
+    ]);
+  };
+
   const openProjectByConfig = async (configPath: string) => {
     const operationId = createRendererOperationId('projects_open');
     const pendingProject = projects.find((project) => project.configPath === configPath);
@@ -3996,6 +4637,10 @@ export const App = () => {
       openingBuildCancelRequestsRef.current.add(openingBuildOperationIdRef.current);
     }
     openingBuildOperationIdRef.current = operationId;
+    openingBuildPreviousViewRef.current = {
+      route: activeRoute,
+      selectedProjectId
+    };
 
     setOpeningBuildSplash({
       operationId,
@@ -4004,26 +4649,44 @@ export const App = () => {
     });
     setMessage(null);
 
+    if (pendingProject) {
+      setSelectedProjectId(pendingProject.id);
+      changeRoute('build');
+    }
+
     try {
       const { project: opened } = await openProjectConfig(configPath, operationId);
       if (openingBuildCancelRequestsRef.current.has(operationId)) {
         return;
       }
 
-      setOpeningBuildSplash((current) =>
-        current?.operationId === operationId
-          ? { ...current, buildName: opened.name, progress: 100 }
-          : current
-      );
-
       setProjects((current) => upsertProject(current, opened));
       setSelectedProjectId(opened.id);
-      changeRoute('build');
+      if (!pendingProject) {
+        changeRoute('build');
+      }
+      const openingProfileName = projectDefaultProfileName(opened);
+      dispatchProfilesWorkspace({ type: 'selected', name: openingProfileName });
+      setOpeningBuildProgress(operationId, 42, opened.name);
+      await loadBuildWorkspaceData(opened, {
+        operationId,
+        profileName: openingProfileName,
+        resetScroll: true,
+        showBusy: false,
+        showLoading: true
+      });
+      if (openingBuildCancelRequestsRef.current.has(operationId)) {
+        return;
+      }
+
+      setOpeningBuildProgress(operationId, 100, opened.name);
+      openingBuildPreviousViewRef.current = null;
       setMessage(`Opened ${opened.name}`);
     } catch (error) {
       if (openingBuildCancelRequestsRef.current.has(operationId)) {
         return;
       }
+      restoreOpeningBuildPreviousView();
       setMessage(errorMessage(error));
     } finally {
       openingBuildCancelRequestsRef.current.delete(operationId);
@@ -4063,6 +4726,7 @@ export const App = () => {
       openingBuildOperationIdRef.current = null;
     }
     setOpeningBuildSplash(null);
+    restoreOpeningBuildPreviousView();
     setMessage('Открытие сборки отменено.');
   };
 
@@ -4819,32 +5483,14 @@ export const App = () => {
     openMo2TransferSetup();
   };
 
-  const refreshBuildWorkspace = async (project: FluxoraProject) => {
-    const refreshTasks: Array<Promise<void>> = [loadModsWorkspace(project)];
-
-    if (
-      activeRightPane === 'plugins' &&
-      pluginCapabilities.bridgeAvailable &&
-      pluginCapabilities.projectSupported
-    ) {
-      refreshTasks.push(loadPluginsWorkspace(project));
-    }
-
-    if (activeRightPane === 'downloads' && downloadCapabilities.bridgeAvailable) {
-      refreshTasks.push(loadDownloadsWorkspace(project));
-    }
-
-    if (activeRightPane === 'build') {
-      if (profilesCapabilities.bridgeAvailable) {
-        refreshTasks.push(loadProfilesWorkspace(project));
-      }
-
-      if (executableCapabilities.bridgeAvailable) {
-        refreshTasks.push(loadExecutablesWorkspace(project));
-      }
-    }
-
-    await Promise.all(refreshTasks);
+  const refreshBuildWorkspace = async (project: FluxoraProject, operationId: string) => {
+    await loadBuildWorkspaceData(project, {
+      operationId,
+      profileName: selectedProjectProfileName,
+      resetScroll: false,
+      showBusy: false,
+      showLoading: true
+    });
   };
 
   const refreshCurrentView = async () => {
@@ -4852,9 +5498,14 @@ export const App = () => {
       return;
     }
 
+    const refreshOperationId = createRendererOperationId('renderer_refresh');
     refreshInFlightRef.current = true;
     setProjectMenuId(null);
     setProjectMenuPosition(null);
+    setInterfaceRefreshSplash({
+      operationId: refreshOperationId,
+      buildName: selectedProject?.name ?? 'Fluxora'
+    });
     setMessage(null);
 
     try {
@@ -4863,13 +5514,14 @@ export const App = () => {
           return;
         }
 
-        const operationId = createRendererOperationId('renderer_refresh_status');
-        const nextBridgeStatus = await window.fluxora.bridge.getStatus({ operationId });
+        const nextBridgeStatus = await window.fluxora.bridge.getStatus({
+          operationId: refreshOperationId
+        });
         const nextThemeMode = normalizeThemeMode(nextBridgeStatus.theme);
         setBridgeStatus({
           ...nextBridgeStatus,
           theme: nextThemeMode,
-          operationId
+          operationId: refreshOperationId
         });
         setThemeMode(nextThemeMode);
 
@@ -4904,33 +5556,51 @@ export const App = () => {
 
       if (activeRoute === 'build' || activeRoute === 'workspace') {
         if (selectedProject) {
-          await refreshBuildWorkspace(selectedProject);
+          await refreshBuildWorkspace(selectedProject, refreshOperationId);
         }
         return;
       }
 
       if (activeRoute === 'mods') {
-        await loadModsWorkspace(selectedProject);
+        await loadModsWorkspace(selectedProject, {
+          operationId: refreshOperationId,
+          resetScroll: false,
+          showBusy: false
+        });
         return;
       }
 
       if (activeRoute === 'plugins') {
-        await loadPluginsWorkspace(selectedProject);
+        await loadPluginsWorkspace(selectedProject, {
+          operationId: refreshOperationId,
+          resetScroll: false,
+          showBusy: false
+        });
         return;
       }
 
       if (activeRoute === 'downloads') {
-        await loadDownloadsWorkspace(selectedProject);
+        await loadDownloadsWorkspace(selectedProject, {
+          operationId: refreshOperationId,
+          resetScroll: false,
+          showBusy: false
+        });
         return;
       }
 
       if (activeRoute === 'profiles') {
-        await loadProfilesWorkspace(selectedProject);
+        await loadProfilesWorkspace(selectedProject, {
+          operationId: refreshOperationId,
+          showBusy: false
+        });
         return;
       }
 
       if (activeRoute === 'executables') {
-        await loadExecutablesWorkspace(selectedProject);
+        await loadExecutablesWorkspace(selectedProject, {
+          operationId: refreshOperationId,
+          showBusy: false
+        });
         return;
       }
 
@@ -4940,6 +5610,9 @@ export const App = () => {
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
+      setInterfaceRefreshSplash((current) =>
+        current?.operationId === refreshOperationId ? null : current
+      );
       refreshInFlightRef.current = false;
     }
   };
@@ -5834,16 +6507,59 @@ export const App = () => {
     );
   };
 
+  const skeletonWidth = (index: number, offset = 0) =>
+    loadingSkeletonWidths[(index + offset) % loadingSkeletonWidths.length] ?? '64%';
+
+  const renderModLoadingRows = () => (
+    <div
+      className="mod-list mod-list--table mod-list--loading"
+      role="table"
+      aria-label="Loading mods"
+    >
+      <span className="sr-only" role="status">
+        Loading mods
+      </span>
+      <div className="mod-list__head" role="row">
+        <span className="mod-list__head-name" role="columnheader">
+          Название
+        </span>
+        <span role="columnheader">Версия</span>
+        <span role="columnheader">Latest</span>
+        <span role="columnheader">Статус</span>
+      </div>
+      <div className="mod-list__body mod-list__body--loading" role="rowgroup">
+        {modLoadingSkeletonRows.map((index) => (
+          <div
+            aria-hidden="true"
+            className="mod-list-row mod-list-row--skeleton"
+            key={`mod-skeleton-${index}`}
+            role="row"
+          >
+            <div className="mod-list-row__identity" role="cell">
+              <span className="workspace-skeleton workspace-skeleton--toggle" />
+              <div className="mod-list-row__title">
+                <span
+                  className="workspace-skeleton workspace-skeleton--title"
+                  style={{ width: skeletonWidth(index) }}
+                />
+                <span
+                  className="workspace-skeleton workspace-skeleton--meta"
+                  style={{ width: skeletonWidth(index, 2) }}
+                />
+              </div>
+            </div>
+            <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
+            <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
+            <span className="workspace-skeleton workspace-skeleton--status" role="cell" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   const renderModRows = () => {
-    if (modsWorkspace.loadState === 'loading') {
-      return (
-        <EmptyState
-          icon={<RefreshCw size={18} aria-hidden="true" />}
-          title="Loading mods"
-          description={selectedProject?.projectDirectory ?? 'Selected build'}
-          tone="loading"
-        />
-      );
+    if (modsWorkspace.loadState === 'loading' && modsWorkspace.items.length === 0) {
+      return renderModLoadingRows();
     }
 
     if (modsWorkspace.loadState === 'error') {
@@ -5896,8 +6612,19 @@ export const App = () => {
             const isNested = isModNestedUnderSeparator(modsWorkspace.items, item.orderId);
             const isCollapsed =
               item.isSeparator && modsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
-            const overwrite = modOverwriteView(item);
             const status = modTableStatusView(item);
+            const conflictHighlight = modRowConflictHighlight(
+              modsWorkspace.items,
+              item,
+              selectedModItem
+            );
+            const conflictMarkerStates = item.isSeparator
+              ? modConflictMarkerStatesForHighlight(conflictHighlight)
+              : modConflictMarkerStates(item);
+            const visibleConflictHighlight =
+              item.isSeparator ? (isCollapsed ? conflictHighlight : 'none') : conflictHighlight;
+            const visibleConflictMarkerStates =
+              item.isSeparator ? (isCollapsed ? conflictMarkerStates : []) : conflictMarkerStates;
             const separatorModCount = item.isSeparator
               ? modSeparatorChildCount(modsWorkspace.items, item.orderId)
               : 0;
@@ -5919,13 +6646,15 @@ export const App = () => {
                 data-overwrite={isOverwrite}
                 data-in-separator={isNested}
                 data-collapsed={isCollapsed}
+                data-conflict-highlight={visibleConflictHighlight}
+                data-conflict-status={visibleConflictMarkerStates.join(' ')}
                 data-dragging={isDragging}
                 data-drop-target={isDropTarget}
                 data-drop-placement={isDropTarget ? modDropTarget?.placement : undefined}
                 data-reorder-disabled={!canDragModRow}
                 data-menu-open={isMenuOpen}
                 key={item.orderId}
-                aria-label={`${modItemTitle(item)} ${isOverwrite ? 'overwrite folder' : item.isSeparator ? 'separator' : 'mod'}`}
+                aria-label={`${modItemTitle(item)} ${isOverwrite ? 'overwrite folder' : item.isSeparator ? 'separator' : 'mod'}${visibleConflictMarkerStates.length > 0 ? ` ${modConflictMarkerTitle(visibleConflictMarkerStates)}` : ''}`}
                 aria-expanded={item.isSeparator ? !isCollapsed : undefined}
                 aria-selected={isSelected}
                 onClick={(event) => {
@@ -5943,6 +6672,13 @@ export const App = () => {
                     rowContextMenuPositionFromPointer(event.clientX, event.clientY)
                   );
                   setModMenuOrderId(item.orderId);
+                }}
+                onDoubleClick={(event) => {
+                  if (isInteractiveRowDragTarget(event.target)) {
+                    return;
+                  }
+
+                  void openModDetailsWindow(item);
                 }}
                 onPointerDown={(event) => {
                   if (!beginRowReorderDrag(event, 'mod', item.orderId, canDragModRow)) {
@@ -5974,8 +6710,13 @@ export const App = () => {
                         <strong>{modItemTitle(item)}</strong>
                         <span>{item.id || 'overwrite'}</span>
                       </div>
-                      <span className="mod-status-chip" data-status="local">
-                        overwrite
+                      <span className="mod-overwrite-state-cell" data-status="local">
+                        <StatusDot
+                          label="Overwrite output folder"
+                          size={20}
+                          state="none"
+                          title="Generated files are written here after mods"
+                        />
                       </span>
                     </div>
                     {isMenuOpen ? renderModRowMenu(item) : null}
@@ -6011,6 +6752,12 @@ export const App = () => {
                       </span>
                       <span className="mod-separator-line" aria-hidden="true" />
                     </div>
+                    <span className="mod-list-row__status mod-separator-status" role="cell">
+                      <ModConflictMarkers
+                        className="mod-separator-conflicts"
+                        states={visibleConflictMarkerStates}
+                      />
+                    </span>
                     {isMenuOpen ? renderModRowMenu(item) : null}
                   </>
                 ) : (
@@ -6031,13 +6778,6 @@ export const App = () => {
                         />
                         <span aria-hidden="true" />
                       </label>
-                      <StatusDot
-                        className="mod-conflict-dot"
-                        label={overwrite.title}
-                        size={18}
-                        state={overwrite.state}
-                        title={overwrite.title}
-                      />
                       <div className="mod-list-row__title">
                         <strong>{modItemTitle(item)}</strong>
                         <span>{item.sourceIsNexus ? 'Nexus Mods' : item.isLocal ? 'Local' : 'Managed'}</span>
@@ -6050,8 +6790,18 @@ export const App = () => {
                       {modLatestVersionText(item)}
                     </span>
                     <span className="mod-list-row__status" role="cell">
-                      <span className="mod-status-chip" data-status={status.tone}>
-                        {status.label}
+                      <span
+                        className="mod-overwrite-state-cell"
+                        data-status={status.tone}
+                        title={status.overwrite.title}
+                      >
+                        <StatusDot
+                          className="mod-conflict-dot"
+                          label={status.overwrite.title}
+                          size={20}
+                          state={status.overwrite.state}
+                          title={status.overwrite.title}
+                        />
                       </span>
                     </span>
                     {isMenuOpen ? renderModRowMenu(item) : null}
@@ -6064,6 +6814,22 @@ export const App = () => {
             <div style={{ height: visibleModWindow.bottomSpacer }} aria-hidden="true" />
           ) : null}
         </div>
+        {modConflictScrollbarMarkers.length > 0 ? (
+          <div className="mod-conflict-scrollbar" aria-hidden="true">
+            {modConflictScrollbarMarkers.map((marker) => (
+              <span
+                data-state={marker.state}
+                key={marker.key}
+                style={
+                  {
+                    '--conflict-marker-top': marker.top,
+                    '--conflict-marker-offset': marker.offset
+                  } as ModConflictMarkerStyle
+                }
+              />
+            ))}
+          </div>
+        ) : null}
       </div>
     );
   };
@@ -6100,7 +6866,18 @@ export const App = () => {
               <File size={15} aria-hidden="true" />
             )}
           </button>
-          <span>{entry.name}</span>
+          {entry.isDirectory || !isTextEditorFileName(entry.name) ? (
+            <span>{entry.name}</span>
+          ) : (
+            <button
+              className="file-tree-file-link"
+              type="button"
+              onClick={() => void openTextEditorForFile(entry)}
+              title={`Open ${entry.name}`}
+            >
+              {entry.name}
+            </button>
+          )}
           <strong>{isLoading ? 'Loading' : formatFileSize(entry.size)}</strong>
         </div>
       );
@@ -6182,6 +6959,142 @@ export const App = () => {
       </div>
     </aside>
   );
+
+  const renderModDetailsConflictList = (
+    entries: FluxoraModFileTreeEntry[],
+    emptyText: string
+  ) => {
+    if (entries.length === 0) {
+      return <span className="mod-details-empty">{emptyText}</span>;
+    }
+
+    return (
+      <div className="mod-details-conflict-list">
+        {entries.map((entry) => (
+          <div className="mod-details-conflict-row" key={`${entry.conflictState}:${entry.relativePath}`}>
+            <span title={entry.relativePath}>{entry.relativePath}</span>
+            <small title={entry.conflictOwners.join(' · ')}>
+              {entry.conflictOwners.length > 0 ? entry.conflictOwners.join(' · ') : entry.conflictState}
+            </small>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderModDetailsWindow = () => {
+    const modItem = selectedModItem?.isMod ? selectedModItem : null;
+    const modReady = modItem !== null;
+    const modTitle = modItem ? modItemTitle(modItem) : modDetailsInitialName || 'Mod';
+    const overwrite = modItem ? modOverwriteView(modItem) : null;
+    const fileCount = modItem ? modItem.fileCount : 0;
+    const overwritesCount = modItem ? modItem.overwritingFileCount : 0;
+    const overwrittenCount = modItem ? modItem.overwrittenFileCount : 0;
+
+    return (
+      <section className="mod-details-window" aria-label="Mod details">
+        <header className="mod-details-header">
+          <div className="mod-details-title">
+            <span>{selectedProject?.name ?? 'Build'}</span>
+            <h2>{modTitle}</h2>
+          </div>
+          <dl className="mod-details-facts" aria-label="Mod summary">
+            <div>
+              <dt>Files</dt>
+              <dd>{modReady ? fileCount : '...'}</dd>
+            </div>
+            <div>
+              <dt>Overwrites</dt>
+              <dd>{modReady ? overwritesCount : '...'}</dd>
+            </div>
+            <div>
+              <dt>Overwritten</dt>
+              <dd>{modReady ? overwrittenCount : '...'}</dd>
+            </div>
+            <div>
+              <dt>Status</dt>
+              <dd>{overwrite?.label || modStatusText(selectedModItem)}</dd>
+            </div>
+          </dl>
+        </header>
+
+        <div className="mod-details-tabs" role="tablist" aria-label="Mod details sections">
+          {modDetailsTabs.map((tab) => (
+            <button
+              aria-selected={modDetailsTab === tab.id}
+              data-active={modDetailsTab === tab.id}
+              key={tab.id}
+              onClick={() => setModDetailsTab(tab.id)}
+              role="tab"
+              type="button"
+            >
+              <AssetIcon source={tab.icon} />
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+
+        <section
+          className="mod-details-panel"
+          role="tabpanel"
+          aria-label={modDetailsTab === 'files' ? 'Файлы' : 'Конфликты'}
+        >
+          {modDetailsTab === 'files' ? (
+            <div className="file-tree mod-details-file-tree" role="tree" aria-label="Mod file tree">
+              {!modReady ? (
+                <span className="file-tree-empty">
+                  {modsWorkspace.loadState === 'loading' ? 'Loading mod' : 'Mod unavailable.'}
+                </span>
+              ) : fileTreeState === 'loading' ? (
+                <span className="file-tree-empty">Loading tree</span>
+              ) : fileTreeState === 'error' ? (
+                <span className="file-tree-empty">File tree unavailable.</span>
+              ) : (fileTreeCache[''] ?? []).length === 0 ? (
+                <span className="file-tree-empty">No files indexed yet.</span>
+              ) : (
+                renderFileTreeEntries()
+              )}
+            </div>
+          ) : (
+            <div className="mod-details-conflicts">
+              <section aria-label="Перезаписывает">
+                <header>
+                  <strong>Перезаписывает:</strong>
+                  <span>{overwritesCount}</span>
+                </header>
+                {modDetailsConflictScanState === 'loading' ? (
+                  <span className="mod-details-empty">Scanning files</span>
+                ) : modDetailsConflictScanState === 'error' ? (
+                  <span className="mod-details-empty">Conflicts unavailable.</span>
+                ) : (
+                  renderModDetailsConflictList(
+                    modDetailsConflictEntries.overwrites,
+                    'No overwritten files loaded.'
+                  )
+                )}
+              </section>
+              <section aria-label="Перезаписывается">
+                <header>
+                  <strong>Перезаписывается:</strong>
+                  <span>{overwrittenCount}</span>
+                </header>
+                {modDetailsConflictScanState === 'loading' ? (
+                  <span className="mod-details-empty">Scanning files</span>
+                ) : modDetailsConflictScanState === 'error' ? (
+                  <span className="mod-details-empty">Conflicts unavailable.</span>
+                ) : (
+                  renderModDetailsConflictList(
+                    modDetailsConflictEntries.overwritten,
+                    'No overwriting files loaded.'
+                  )
+                )}
+              </section>
+            </div>
+          )}
+        </section>
+      </section>
+    );
+  };
 
   const renderModsWorkspace = () => {
     if (!selectedProject) {
@@ -6366,16 +7279,64 @@ export const App = () => {
     );
   };
 
+  const renderPluginLoadingRows = () => (
+    <div
+      className="mod-table plugin-table plugin-table--loading"
+      role="table"
+      aria-label="Loading plugins"
+    >
+      <span className="sr-only" role="status">
+        Loading plugins
+      </span>
+      <div className="mod-row plugin-row mod-row--head" role="row">
+        <span role="columnheader">Order</span>
+        <span role="columnheader">Plugin</span>
+        <span role="columnheader">Type</span>
+        <span role="columnheader">Source</span>
+        <span role="columnheader">Статус</span>
+        <span role="columnheader">Actions</span>
+      </div>
+      <div className="mod-table__body mod-table__body--loading">
+        {pluginLoadingSkeletonRows.map((index) => (
+          <div
+            aria-hidden="true"
+            className="mod-row plugin-row plugin-row--skeleton"
+            key={`plugin-skeleton-${index}`}
+            role="row"
+          >
+            <span className="plugin-hex-index" role="cell">
+              <span className="workspace-skeleton workspace-skeleton--hex" />
+            </span>
+            <div className="mod-row__main plugin-row__main" role="cell">
+              <span className="workspace-skeleton workspace-skeleton--toggle" />
+              <div className="plugin-row__title">
+                <span
+                  className="workspace-skeleton workspace-skeleton--title"
+                  style={{ width: skeletonWidth(index, 1) }}
+                />
+                <span
+                  className="workspace-skeleton workspace-skeleton--meta"
+                  style={{ width: skeletonWidth(index, 3) }}
+                />
+              </div>
+            </div>
+            <span className="workspace-skeleton workspace-skeleton--badge" role="cell" />
+            <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
+            <span className="workspace-skeleton workspace-skeleton--status" role="cell" />
+            <div className="row-actions mod-actions" role="cell">
+              <span className="workspace-skeleton workspace-skeleton--action" />
+              <span className="workspace-skeleton workspace-skeleton--action" />
+              <span className="workspace-skeleton workspace-skeleton--action" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   const renderPluginRows = () => {
-    if (pluginsWorkspace.loadState === 'loading') {
-      return (
-        <EmptyState
-          icon={<RefreshCw size={18} aria-hidden="true" />}
-          title="Loading plugins"
-          description={selectedProject?.projectDirectory ?? 'Selected build'}
-          tone="loading"
-        />
-      );
+    if (pluginsWorkspace.loadState === 'loading' && pluginsWorkspace.items.length === 0) {
+      return renderPluginLoadingRows();
     }
 
     if (pluginsWorkspace.loadState === 'error') {
@@ -6410,6 +7371,7 @@ export const App = () => {
           <span role="columnheader">Plugin</span>
           <span role="columnheader">Type</span>
           <span role="columnheader">Source</span>
+          <span role="columnheader">Статус</span>
           <span role="columnheader">Actions</span>
         </div>
         <div
@@ -6425,6 +7387,7 @@ export const App = () => {
             const isNested = isPluginNestedUnderSeparator(pluginsWorkspace.items, item.orderId);
             const isCollapsed =
               item.isSeparator && pluginsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
+            const hidesSeparatorChildren = isCollapsed;
             const separatorPluginCount = item.isSeparator
               ? pluginSeparatorChildCount(pluginsWorkspace.items, item.orderId)
               : 0;
@@ -6435,6 +7398,29 @@ export const App = () => {
               pluginCapabilities.loadOrderSupported &&
               !pluginsBusyLabel &&
               canDragPluginOrderItem(pluginsWorkspace.items, item.orderId);
+            const missingMasterSummary = item.isSeparator
+              ? hidesSeparatorChildren
+                ? pluginSeparatorMissingMasterSummary(
+                    pluginsWorkspace.items,
+                    item.orderId,
+                    pluginMissingMasterStatusLimit,
+                    pluginMissingMasterContext
+                  )
+                : pluginMissingMasterSummary(null, pluginMissingMasterStatusLimit)
+              : pluginMissingMasterSummary(
+                  item,
+                  pluginMissingMasterStatusLimit,
+                  pluginMissingMasterContext
+                );
+            const hasMissingMasters =
+              showPluginMissingMastersStatus && missingMasterSummary.totalCount > 0;
+            const missingMasterLabel = item.isSeparator
+              ? `Отсутствуют мастер-файлы в разделителе ${pluginItemTitle(item)}: ${missingMasterSummary.visibleMasters.join(', ')}${
+                  missingMasterSummary.hiddenCount > 0
+                    ? `, и ещё ${missingMasterSummary.hiddenCount}`
+                    : ''
+                }`
+              : undefined;
 
             return (
               <div
@@ -6449,13 +7435,16 @@ export const App = () => {
                 data-in-separator={isNested}
                 data-collapsed={isCollapsed}
                 data-locked={item.isLocked}
+                data-missing-masters={hasMissingMasters}
                 data-dragging={isDragging}
                 data-drop-target={isDropTarget}
                 data-drop-placement={isDropTarget ? pluginDropTarget?.placement : undefined}
                 data-reorder-disabled={!canDragPluginRow}
                 data-menu-open={isMenuOpen}
                 key={item.orderId}
-                aria-label={`${pluginItemTitle(item)} ${item.isSeparator ? 'separator' : 'plugin'}`}
+                aria-label={`${pluginItemTitle(item)} ${item.isSeparator ? 'separator' : 'plugin'}${
+                  hasMissingMasters ? ' missing masters' : ''
+                }`}
                 aria-expanded={item.isSeparator ? !isCollapsed : undefined}
                 aria-selected={isSelected}
                 onClick={(event) => {
@@ -6569,6 +7558,16 @@ export const App = () => {
                   )}
                 </span>
                 <span role="cell">{item.isSeparator ? '' : item.sourceMod || 'game data'}</span>
+                <span className="plugin-status-cell" role="cell">
+                  {hasMissingMasters ? (
+                    <MissingMastersStatus
+                      enabled={showPluginMissingMastersStatus}
+                      label={missingMasterLabel}
+                      plugin={item}
+                      summary={missingMasterSummary}
+                    />
+                  ) : null}
+                </span>
                 <div className="row-actions mod-actions" role="cell" data-menu-open={isMenuOpen}>
                   <button
                     className="icon-button"
@@ -8367,6 +9366,18 @@ export const App = () => {
     />
   );
 
+  const renderInterfaceRefreshSplash = () => (
+    <LoadingSplash
+      buildName={interfaceRefreshSplash?.buildName}
+      detail="Interface refresh progress"
+      indeterminate
+      messages={interfaceRefreshMessages}
+      open={Boolean(interfaceRefreshSplash)}
+      subtitle={interfaceRefreshSplash?.buildName}
+      title="Обновляем интерфейс"
+    />
+  );
+
   const renderOverwriteClearSplash = () => (
     <LoadingSplash
       aria-label="Очистка override"
@@ -8412,8 +9423,123 @@ export const App = () => {
     />
   );
 
+  const exportAiDataSnapshot = async () => {
+    const defaultPath = `fluxora-ai-snapshot-${new Date().toISOString().slice(0, 10)}.json`;
+    const picked = await window.fluxora.dialogs.saveTextFile(defaultPath, 'Export AI data snapshot');
+    if (picked.canceled || !picked.path) {
+      return;
+    }
+
+    const operationId = createRendererOperationId('ai_data_export');
+    const snapshot = createAiSupportBundleSnapshot([aiChat.session], {
+      includeRawPrompts: false,
+      now: new Date()
+    });
+
+    setSettingsBusyLabel('Exporting AI data');
+    try {
+      await window.fluxora.textFiles.save(picked.path, JSON.stringify(snapshot, null, 2), {
+        operationId
+      });
+      setMessage('AI data snapshot exported.');
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setSettingsBusyLabel(null);
+    }
+  };
+
+  const clearAiLocalData = () => {
+    if (!window.confirm('Clear local AI chat data for this build?')) {
+      return;
+    }
+
+    aiLocalRunRef.current?.dispose();
+    aiLocalRunRef.current = null;
+    window.localStorage.removeItem(aiSessionStorageKey(aiChat.session.scopeKey));
+    window.localStorage.removeItem(aiAutonomousJobQueueStorageKey(aiChat.session.scopeKey));
+    dispatchAiChat({
+      type: 'restore-session',
+      session: createAiSessionForScope(aiSessionScope)
+    });
+    setMessage('Local AI chat data cleared.');
+  };
+
+  const connectAiProvider = async (providerId: string) => {
+    const provider = aiHostStatus?.providers.find((candidate) => candidate.id === providerId);
+    if (!provider || !provider.requiresCredential || provider.connected) {
+      return;
+    }
+
+    const apiKey = window.prompt(`Enter API key for ${provider.displayName}`);
+    const secret = apiKey?.trim();
+    if (!secret) {
+      return;
+    }
+
+    setSettingsBusyLabel(`Connecting ${provider.displayName}`);
+    try {
+      const operationId = createRendererOperationId('ai_provider_connect');
+      const result = await window.fluxora.ai.connectProvider(provider.id, secret, {
+        operationId
+      });
+      if (!result.connected) {
+        setMessage(result.message);
+        return;
+      }
+
+      const refreshed = await window.fluxora.ai.getStatus({
+        operationId: createRendererOperationId('ai_status')
+      });
+      setAiHostStatus(refreshed);
+      setAiChatSettings((current) =>
+        normalizeAiChatSettings(
+          {
+            ...current,
+            modelId: provider.defaultModelId,
+            routingPreset: 'byok'
+          },
+          refreshed
+        )
+      );
+      setMessage(`${provider.displayName} connected.`);
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setSettingsBusyLabel(null);
+    }
+  };
+
+  const disconnectAiProvider = async (providerId: string) => {
+    const provider = aiHostStatus?.providers.find((candidate) => candidate.id === providerId);
+    if (!provider || !provider.requiresCredential) {
+      return;
+    }
+
+    if (!window.confirm(`Disconnect ${provider.displayName}?`)) {
+      return;
+    }
+
+    setSettingsBusyLabel(`Disconnecting ${provider.displayName}`);
+    try {
+      const operationId = createRendererOperationId('ai_provider_disconnect');
+      await window.fluxora.ai.disconnectProvider(provider.id, { operationId });
+      const refreshed = await window.fluxora.ai.getStatus({
+        operationId: createRendererOperationId('ai_status')
+      });
+      setAiHostStatus(refreshed);
+      setMessage(`${provider.displayName} disconnected.`);
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setSettingsBusyLabel(null);
+    }
+  };
+
   const renderSettingsWorkspace = () => (
     <SettingsWorkspace
+      aiHostStatus={aiHostStatus}
+      aiSettings={aiChatSettings}
       bridgeStatus={bridgeStatus}
       isTransferRunning={isTransferRunning}
       languageBusy={languageBusy}
@@ -8422,6 +9548,13 @@ export const App = () => {
       section={settingsSection}
       settingsBusyLabel={settingsBusyLabel}
       settingsCapabilities={settingsCapabilities}
+      onAiSettingsChange={(settings) =>
+        setAiChatSettings(normalizeAiChatSettings(settings, aiHostStatus))
+      }
+      onClearAiLocalData={clearAiLocalData}
+      onConnectAiProvider={(providerId) => void connectAiProvider(providerId)}
+      onDisconnectAiProvider={(providerId) => void disconnectAiProvider(providerId)}
+      onExportAiData={() => void exportAiDataSnapshot()}
       onOpenTransfer={() => void openMo2TransferFromSettings()}
       onSectionChange={setSettingsSection}
       onSetLanguage={(language) => void setLanguage(language)}
@@ -8557,8 +9690,153 @@ export const App = () => {
     </section>
   );
 
+  const logAiRuntimeEntry = (entry: AiRuntimeLogEntry) => {
+    void window.fluxora.ui.log({
+      level: entry.level,
+      category: entry.category,
+      message: `channel=${entry.channel} ${entry.message}`,
+      operationId: entry.operationId
+    });
+  };
+
+  const currentAiBuildOperationHints = (): AiBuildOperationHint[] =>
+    [
+      openingBuildSplash
+        ? {
+            label: 'opening-build',
+            operationId: openingBuildSplash.operationId,
+            state: 'running'
+          }
+        : null,
+      overwriteClearSplash
+        ? {
+            label: 'overwrite-clear',
+            operationId: overwriteClearSplash.operationId,
+            state: overwriteClearSplash.progress >= 100 ? 'completed' : 'running'
+          }
+        : null,
+      transferRunningOperationId
+        ? {
+            label: 'mo2-transfer',
+            operationId: transferRunningOperationId,
+            state: 'running'
+          }
+        : null
+    ].filter((hint): hint is AiBuildOperationHint => Boolean(hint));
+  const aiChatProviderDiagnostic = aiProviderDiagnostic(aiChatSettings, aiHostStatus);
+
+  const sendAiChatMessageAsync = async () => {
+    const prompt = aiChat.draft.trim();
+    if (!prompt || aiChat.isRunning || !aiHostStatus?.ready || aiChatProviderDiagnostic?.level === 'error') {
+      return;
+    }
+
+    aiLocalRunRef.current?.dispose();
+    aiLocalRunRef.current = null;
+    const operationId = createRendererOperationId('ai_chat_run');
+    const run = createAiRunForPrompt(aiChat.session, operationId, prompt);
+    const runCreatedEvent = createAiStreamEvent(run, 'run-created', { status: 'thinking' });
+    dispatchAiChat({
+      type: 'submit-user-message',
+      message: createAiMessage('user', prompt, new Date(), run.id),
+      run,
+      event: runCreatedEvent
+    });
+
+    const providerId = providerForModel(
+      aiChatSettings.modelId,
+      aiHostStatus.models,
+      aiHostStatus.providers
+    )?.id;
+    const modelSupportsBackground =
+      aiHostStatus.models.find((model) => model.id === aiChatSettings.modelId)
+        ?.supportsBackground === true;
+    const buildContextSnapshot = await collectAiBuildContext(
+      window.fluxora,
+      {
+        activeOperationHints: currentAiBuildOperationHints(),
+        bridgeStatus,
+        defaultProfileName: selectedProjectDefaultProfileName,
+        profileName: selectedProjectProfileName,
+        project: selectedProject,
+        selectedModId: selectedModItem?.isMod ? selectedModItem.id : null,
+        selectedModName: selectedModItem?.isMod ? selectedModItem.name : null
+      },
+      operationId
+    );
+
+    aiLocalRunRef.current = startHostAiRun(
+      run,
+      aiChat.session,
+      prompt,
+      window.fluxora.ai,
+      {
+        ...aiChatSettings,
+        buildContextSnapshot,
+        jobStorage: window.localStorage,
+        modelSupportsBackground,
+        providerId
+      },
+      {
+        onEvent: (event) => dispatchAiChat({ type: 'apply-stream-event', event }),
+        onFinish: (message, event, status, ledgerEntry) => {
+          aiLocalRunRef.current = null;
+          if (event.type === 'run-cancelled') {
+            dispatchAiChat({ type: 'cancel-run', message, event });
+            return;
+          }
+
+          dispatchAiChat({
+            type: 'append-assistant-message',
+            message,
+            event,
+            status,
+            ledgerEntry
+          });
+        },
+        onLog: logAiRuntimeEntry
+      }
+    );
+  };
+
+  const sendAiChatMessage = () => {
+    void sendAiChatMessageAsync();
+  };
+
+  const cancelAiChatRun = () => {
+    aiLocalRunRef.current?.cancel();
+  };
+
+  const openAiSource = (url: string) => {
+    const sourceUrl = safeAiSourceUrl(url);
+    if (!sourceUrl) {
+      setMessage('AI source link was blocked by the security policy.');
+      return;
+    }
+
+    if (sourceUrl.startsWith(AI_CONTEXT_SOURCE_URL_PREFIX)) {
+      const encodedSourceId = sourceUrl.slice(AI_CONTEXT_SOURCE_URL_PREFIX.length);
+      const sourceId = (() => {
+        try {
+          return decodeURIComponent(encodedSourceId);
+        } catch {
+          return encodedSourceId;
+        }
+      })();
+      setMessage(`AI context source: ${sourceId}. Trace and fingerprints are attached to the answer.`);
+      return;
+    }
+
+    void window.fluxora.links.openExternal(sourceUrl);
+  };
+
+  const aiChatLayoutStyle = {
+    '--ai-chat-width': `${aiChat.isCollapsed ? AI_CHAT_PANEL_COLLAPSED_WIDTH : aiChat.width}px`
+  } as CSSProperties;
+
   const renderTitlebar = (showSettingsButton: boolean) => (
     <AppTitlebar
+      aiActive={aiChat.isOpen}
       homeActive={activeRoute === 'home' && !isTransferPageOpen}
       mode={isSecondaryWindow ? 'settings' : 'main'}
       settingsActive={isSettingsWindow}
@@ -8569,6 +9847,7 @@ export const App = () => {
       onMinimize={() => void minimizeWindow()}
       onOpenSettings={() => void openSettingsWindow()}
       onRefresh={() => void refreshCurrentView()}
+      onToggleAi={showSettingsButton ? () => dispatchAiChat({ type: 'toggle-open' }) : undefined}
       onToggleMaximize={() => void toggleMaximizeWindow()}
     />
   );
@@ -8604,10 +9883,39 @@ export const App = () => {
     );
   }
 
+  if (isModDetailsWindow) {
+    return (
+      <main className="desktop-shell desktop-shell--settings-window desktop-shell--mod-details-window">
+        {renderTitlebar(false)}
+        {renderModDetailsWindow()}
+      </main>
+    );
+  }
+
+  if (isTextEditorWindow) {
+    return (
+      <main className="desktop-shell desktop-shell--settings-window desktop-shell--text-editor-window">
+        {renderTitlebar(false)}
+        <TextEditorWorkspace
+          project={selectedProject}
+          initialModPath={textEditorModId}
+          initialRelativePath={textEditorInitialPath}
+          initialFileName={textEditorInitialName}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className="desktop-shell">
       {renderTitlebar(true)}
 
+      <section
+        className="workspace-with-ai"
+        data-ai-collapsed={aiChat.isCollapsed ? 'true' : undefined}
+        data-ai-open={aiChat.isOpen ? 'true' : undefined}
+        style={aiChatLayoutStyle}
+      >
         <section className="workspace workspace--full">
           <div className="content-area">
             {isTransferPageOpen ? (
@@ -8648,11 +9956,32 @@ export const App = () => {
                 {renderOperationOverlay()}
                 {renderOverwriteClearSplash()}
                 {renderOpeningBuildSplash()}
+                {renderInterfaceRefreshSplash()}
                 {renderLaunchSplash()}
               </>
             )}
           </div>
         </section>
+
+        {aiChat.isOpen ? (
+          <AiChatPanel
+            hostReady={aiHostStatus?.ready ?? false}
+            providerDiagnostic={aiChatProviderDiagnostic}
+            state={aiChat}
+            onCancel={cancelAiChatRun}
+            onClose={() => dispatchAiChat({ type: 'close' })}
+            onCloseChat={(chatId) => dispatchAiChat({ type: 'close-chat', chatId })}
+            onCreateChat={() => dispatchAiChat({ type: 'create-chat' })}
+            onDraftChange={(value) => dispatchAiChat({ type: 'set-draft', value })}
+            onOpenSubagentChat={(subagent) => dispatchAiChat({ type: 'open-subagent-chat', subagent })}
+            onOpenSource={openAiSource}
+            onResize={(width) => dispatchAiChat({ type: 'set-width', width })}
+            onSend={sendAiChatMessage}
+            onSelectChat={(chatId) => dispatchAiChat({ type: 'select-chat', chatId })}
+            onToggleCollapse={() => dispatchAiChat({ type: 'toggle-collapse' })}
+          />
+        ) : null}
+      </section>
     </main>
   );
 };
