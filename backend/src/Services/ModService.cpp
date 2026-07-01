@@ -218,6 +218,7 @@ namespace fluxora
         }
 
         constexpr std::uintmax_t maxTextEditorFileBytes = 5ULL * 1024ULL * 1024ULL;
+        constexpr std::uintmax_t maxAiTextPreviewBytes = 64ULL * 1024ULL;
 
         void rejectBinaryTextContent(const std::string& content)
         {
@@ -258,6 +259,81 @@ namespace fluxora
             return fromUtf8(content);
         }
 
+        std::uintmax_t boundedTextPreviewBytes(std::uintmax_t maxBytes)
+        {
+            if (maxBytes == 0)
+            {
+                return maxAiTextPreviewBytes;
+            }
+
+            return (std::min)(maxBytes, maxAiTextPreviewBytes);
+        }
+
+        std::wstring decodeUtf8Preview(std::string& content)
+        {
+            rejectBinaryTextContent(content);
+            while (!content.empty())
+            {
+                try
+                {
+                    return fromUtf8(content);
+                }
+                catch (const std::invalid_argument&)
+                {
+                    content.pop_back();
+                }
+            }
+
+            return {};
+        }
+
+        ModTextFilePreview readUtf8TextPreview(
+            const std::filesystem::path& path,
+            std::wstring relativePath,
+            std::uintmax_t maxBytes)
+        {
+            std::error_code statusError;
+            if (!std::filesystem::is_regular_file(path, statusError) || statusError)
+            {
+                throw std::invalid_argument("Text preview can only open regular files.");
+            }
+
+            const std::uintmax_t size = std::filesystem::file_size(path, statusError);
+            if (statusError)
+            {
+                throw std::runtime_error("Failed to inspect text preview file size.");
+            }
+
+            const std::uintmax_t requestedBytes = boundedTextPreviewBytes(maxBytes);
+            const std::uintmax_t bytesToRead = (std::min)(size, requestedBytes);
+            std::ifstream file(path, std::ios::binary);
+            if (!file)
+            {
+                throw std::runtime_error("Failed to open text preview file.");
+            }
+
+            std::string content(static_cast<std::size_t>(bytesToRead), '\0');
+            if (!content.empty())
+            {
+                file.read(content.data(), static_cast<std::streamsize>(content.size()));
+                content.resize(static_cast<std::size_t>(file.gcount()));
+            }
+
+            std::uintmax_t bytesRead = static_cast<std::uintmax_t>(content.size());
+            const std::wstring preview = decodeUtf8Preview(content);
+            bytesRead = static_cast<std::uintmax_t>(content.size());
+
+            return ModTextFilePreview{
+                path,
+                std::move(relativePath),
+                path.filename().wstring(),
+                preview,
+                bytesRead,
+                size,
+                size > bytesRead
+            };
+        }
+
         std::filesystem::path validateRelativeModTextPath(std::wstring_view relativePath)
         {
             std::filesystem::path requested(relativePath);
@@ -280,6 +356,42 @@ namespace fluxora
             }
 
             return requested;
+        }
+
+        void validateRelativeModTextPreviewPath(const std::filesystem::path& relativePath)
+        {
+            const std::wstring extension = toLower(relativePath.extension().wstring());
+            const bool allowedExtension =
+                extension == L".txt" ||
+                extension == L".log" ||
+                extension == L".xml" ||
+                extension == L".ini" ||
+                extension == L".json" ||
+                extension == L".cfg" ||
+                extension == L".toml" ||
+                extension == L".yaml" ||
+                extension == L".yml";
+            if (!allowedExtension)
+            {
+                throw std::invalid_argument("Text preview file extension is not allowlisted.");
+            }
+
+            for (const std::filesystem::path& component : relativePath)
+            {
+                const std::wstring lowered = toLower(component.wstring());
+                if (lowered.find(L"password") != std::wstring::npos ||
+                    lowered.find(L"passwd") != std::wstring::npos ||
+                    lowered.find(L"credential") != std::wstring::npos ||
+                    lowered.find(L"secret") != std::wstring::npos ||
+                    lowered.find(L"token") != std::wstring::npos ||
+                    lowered.find(L"cookie") != std::wstring::npos ||
+                    lowered.find(L"browser") != std::wstring::npos ||
+                    lowered.find(L"keyring") != std::wstring::npos ||
+                    lowered.find(L"wallet") != std::wstring::npos)
+                {
+                    throw std::invalid_argument("Text preview path looks like credential or browser data.");
+                }
+            }
         }
 
         std::filesystem::path resolveModTextFilePath(
@@ -1291,6 +1403,23 @@ namespace fluxora
             content,
             sizeError ? 0 : size
         };
+    }
+
+    ModTextFilePreview ModService::previewModTextFile(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modPath,
+        std::wstring_view relativePath,
+        std::uintmax_t maxBytes) const
+    {
+        const std::wstring normalizedRelative = normalizedRelativeTextPath(relativePath);
+        validateRelativeModTextPreviewPath(std::filesystem::path(normalizedRelative));
+        const std::filesystem::path targetPath = resolveModTextFilePath(
+            projectDirectory,
+            modPath,
+            normalizedRelative,
+            pathSettings_.modsDirectory(projectDirectory));
+
+        return readUtf8TextPreview(targetPath, normalizedRelative, maxBytes);
     }
 
     ModTextFileSaveResult ModService::saveModTextFile(

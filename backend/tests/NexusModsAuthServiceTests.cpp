@@ -5,8 +5,38 @@
 
 #include <gtest/gtest.h>
 
+#ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
+namespace fluxora::test_hooks
+{
+    std::string buildNexusTokenRequestBodyForTest(
+        const std::wstring& clientId,
+        const std::wstring& clientSecret,
+        const std::wstring& redirectUri,
+        const std::string& code,
+        const std::wstring& codeVerifier);
+    std::string buildNexusAuthorizeUrlForTest(
+        const std::wstring& clientId,
+        const std::wstring& clientSecret,
+        const std::wstring& redirectUri,
+        const std::wstring& state,
+        const std::wstring& codeChallenge);
+    std::wstring defaultNexusRedirectUriForTest();
+    std::wstring nexusClientIdNameForTest();
+    std::wstring nexusRedirectUriNameForTest();
+    std::wstring nexusClientSecretNameForTest();
+    std::wstring resolvedNexusClientIdForTest();
+    std::wstring resolvedNexusRedirectUriForTest();
+    std::wstring extractSupabaseCredentialValueForTest(const std::wstring& json);
+    std::wstring resolvedNexusClientSecretForTest();
+}
+#endif
+
 namespace fluxora::tests
 {
+#ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
+    namespace nexus_auth_test_hooks = ::fluxora::test_hooks;
+#endif
+
     TEST(NexusModsAuthServiceTests, OAuthTokenWithoutLegacyApiKeyIsLinked)
     {
         TempDirectory temp;
@@ -37,4 +67,93 @@ namespace fluxora::tests
 
         settings.shutdown();
     }
+
+#ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
+    TEST(NexusModsAuthServiceTests, DefaultRedirectUriUsesRegisteredLoopbackCallback)
+    {
+        EXPECT_EQ(
+            nexus_auth_test_hooks::defaultNexusRedirectUriForTest(),
+            L"http://127.0.0.1:8089/callback");
+    }
+
+    TEST(NexusModsAuthServiceTests, AuthorizeAndTokenRequestsUseRegisteredRedirectUri)
+    {
+        const std::wstring redirectUri = nexus_auth_test_hooks::defaultNexusRedirectUriForTest();
+        const std::string encodedRedirectUri = "redirect_uri=http%3A%2F%2F127.0.0.1%3A8089%2Fcallback";
+        const std::string authorizeUrl = nexus_auth_test_hooks::buildNexusAuthorizeUrlForTest(
+            L"fluxora",
+            L"",
+            redirectUri,
+            L"state",
+            L"challenge");
+        const std::string tokenBody = nexus_auth_test_hooks::buildNexusTokenRequestBodyForTest(
+            L"fluxora",
+            L"",
+            redirectUri,
+            "auth-code",
+            L"verifier");
+
+        EXPECT_NE(authorizeUrl.find(encodedRedirectUri), std::string::npos);
+        EXPECT_NE(tokenBody.find(encodedRedirectUri), std::string::npos);
+        EXPECT_NE(authorizeUrl.find("scope=&"), std::string::npos);
+        EXPECT_NE(authorizeUrl.find("code_challenge_method=S256"), std::string::npos);
+        EXPECT_NE(tokenBody.find("code_verifier=verifier"), std::string::npos);
+        EXPECT_EQ(authorizeUrl.find("PORT"), std::string::npos);
+        EXPECT_EQ(tokenBody.find("PORT"), std::string::npos);
+    }
+
+    TEST(NexusModsAuthServiceTests, PrivateClientRequestIncludesClientSecretWithoutPkce)
+    {
+        const std::string authorizeUrl = nexus_auth_test_hooks::buildNexusAuthorizeUrlForTest(
+            L"fluxora",
+            L"s e+c/ret",
+            L"http://127.0.0.1:49152",
+            L"state",
+            L"challenge");
+        const std::string body = nexus_auth_test_hooks::buildNexusTokenRequestBodyForTest(
+            L"fluxora",
+            L"s e+c/ret",
+            L"http://127.0.0.1:49152",
+            "auth-code",
+            L"verifier");
+
+        EXPECT_NE(authorizeUrl.find("scope=&"), std::string::npos);
+        EXPECT_EQ(authorizeUrl.find("code_challenge"), std::string::npos);
+        EXPECT_NE(body.find("client_id=fluxora"), std::string::npos);
+        EXPECT_NE(body.find("client_secret=s%20e%2Bc%2Fret"), std::string::npos);
+        EXPECT_NE(body.find("code=auth-code"), std::string::npos);
+        EXPECT_EQ(body.find("code_verifier=verifier"), std::string::npos);
+    }
+
+    TEST(NexusModsAuthServiceTests, ClientSecretResolverUsesExpectedNameAndEnvironmentOverride)
+    {
+        ScopedEnvironmentVariable clientSecret(L"FLUXORA_NEXUS_CLIENT_SECRET", L"  env-secret  ");
+
+        EXPECT_EQ(nexus_auth_test_hooks::nexusClientSecretNameForTest(), L"NEXUS_CLIENT_SECRET");
+        EXPECT_EQ(nexus_auth_test_hooks::resolvedNexusClientSecretForTest(), L"env-secret");
+    }
+
+    TEST(NexusModsAuthServiceTests, OAuthConfigCanUseSharedVaultNamesFromEnvironment)
+    {
+        ScopedEnvironmentVariable fluxoraClientId(L"FLUXORA_NEXUS_CLIENT_ID", L"");
+        ScopedEnvironmentVariable fluxoraRedirectUri(L"FLUXORA_NEXUS_REDIRECT_URI", L"");
+        ScopedEnvironmentVariable clientId(L"NEXUS_CLIENT_ID", L"  vault-client  ");
+        ScopedEnvironmentVariable redirectUri(L"NEXUS_REDIRECT_URI", L"  http://127.0.0.1:39011/callback  ");
+
+        EXPECT_EQ(nexus_auth_test_hooks::nexusClientIdNameForTest(), L"NEXUS_CLIENT_ID");
+        EXPECT_EQ(nexus_auth_test_hooks::nexusRedirectUriNameForTest(), L"NEXUS_REDIRECT_URI");
+        EXPECT_EQ(nexus_auth_test_hooks::resolvedNexusClientIdForTest(), L"vault-client");
+        EXPECT_EQ(
+            nexus_auth_test_hooks::resolvedNexusRedirectUriForTest(),
+            L"http://127.0.0.1:39011/callback");
+    }
+
+    TEST(NexusModsAuthServiceTests, SupabaseCredentialExtractorAcceptsRpcApiKeyShape)
+    {
+        EXPECT_EQ(
+            nexus_auth_test_hooks::extractSupabaseCredentialValueForTest(
+                LR"({"available":true,"providerId":"nexus","secretName":"NEXUS_CLIENT_SECRET","apiKey":"vault-secret"})"),
+            L"vault-secret");
+    }
+#endif
 }

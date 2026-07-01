@@ -30,6 +30,7 @@ export const AI_SAFE_ACTION_TOOL_NAMES = [
   'downloads.analyzeFomod',
   'downloads.installFomod',
   'nexus.getAuthStatus',
+  'local.read_text_file',
   'nexus.connect',
   'nexus.disconnect',
   'nxm.captureLinks',
@@ -306,6 +307,8 @@ const templateId = stringProperty('Resolved game template id for plugin behavior
 const modPath = stringProperty('Installed mod path or stable mod id from the current build state.');
 const downloadPath = stringProperty('Download path or stable download id from the current build state.');
 const targetIndex = integerProperty('Zero-based target order index validated by the core.');
+const localReadTextPath = stringProperty('Relative safe AI text path under mods/ or profiles/.');
+const maxBytes = integerProperty('Requested maximum bytes to read, clamped by Fluxora to 64 KB.');
 
 export const AI_SAFE_ACTION_TOOLS: readonly AiSafeActionToolDescriptor[] = [
   createTool({
@@ -648,6 +651,42 @@ export const AI_SAFE_ACTION_TOOLS: readonly AiSafeActionToolDescriptor[] = [
     facadeMethod: 'nexus.getAuthStatus',
     bridgeMethod: 'nexus.getAuthStatus',
     confirmationText: 'Read Nexus authentication status without exposing tokens.'
+  }),
+  createTool({
+    name: 'local.read_text_file',
+    permissionClass: 'read',
+    riskTags: ['bounded-content-preview'],
+    backingSurface: 'AI read-only Analyze tool -> Tauri facade -> bridge/core mod/profile text preview services',
+    facadeMethod: 'ai.readOnly.local.readTextFile',
+    bridgeMethod: 'mods.previewTextFile | profiles.previewTextFile',
+    required: ['path', 'maxBytes'],
+    properties: { path: localReadTextPath, maxBytes },
+    resultFields: [
+      {
+        path: 'content_preview',
+        description: 'UTF-8 text preview capped at 64 KB and treated as untrusted diagnostic data.'
+      },
+      {
+        path: 'truncated',
+        description: 'Whether the source text file was larger than the bytes returned.'
+      },
+      {
+        path: 'bytes_read',
+        description: 'Number of bytes returned in the preview.'
+      }
+    ],
+    preconditions: [
+      'AI is enabled.',
+      'The Analyze skill or an equivalent build/crash/log diagnostic prompt selected this on-demand tool.',
+      'Path resolves inside the selected build profiles or installed-mod folders.',
+      'Path extension and file name match the AI text-read allowlist.'
+    ],
+    postconditions: [
+      'Returned content is capped at 64 KB, marked truncated when partial, and treated as untrusted context.',
+      'No arbitrary Windows, browser-data, credential, or user-document path is accepted.'
+    ],
+    rollbackNote: 'No rollback is required because the tool reads a bounded text preview only.',
+    confirmationText: 'Read a bounded text preview from an allowlisted profile/mod diagnostic file.'
   }),
   createTool({
     name: 'nexus.connect',

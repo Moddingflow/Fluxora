@@ -1124,6 +1124,27 @@ namespace
             });
     }
 
+    std::wstring payloadPreviewProfileTextFile(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring profileName = requiredStringField(params, L"profileName");
+        const std::wstring fileName = requiredStringField(params, L"fileName");
+        const int maxBytes = optionalIntField(params, L"maxBytes", 0);
+        return payloadFromCoreJson(
+            L"core.profileTextFilePreviewFailed",
+            [&projectDirectory, &profileName, &fileName, maxBytes](wchar_t* buffer, int length)
+            {
+                return fluxora_preview_profile_text_file(
+                    projectDirectory.c_str(),
+                    profileName.c_str(),
+                    fileName.c_str(),
+                    maxBytes,
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadCreateProfile(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -1526,6 +1547,27 @@ namespace
                     projectDirectory.c_str(),
                     modPath.c_str(),
                     relativePath.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadPreviewModTextFile(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring modPath = requiredStringField(params, L"modPath");
+        const std::wstring relativePath = requiredStringField(params, L"relativePath");
+        const int maxBytes = optionalIntField(params, L"maxBytes", 0);
+        return payloadFromCoreJson(
+            L"core.modTextFilePreviewFailed",
+            [&projectDirectory, &modPath, &relativePath, maxBytes](wchar_t* buffer, int length)
+            {
+                return fluxora_preview_mod_text_file(
+                    projectDirectory.c_str(),
+                    modPath.c_str(),
+                    relativePath.c_str(),
+                    maxBytes,
                     buffer,
                     length);
             });
@@ -2238,6 +2280,10 @@ namespace
         {
             return payloadListProfiles(request);
         }
+        if (request.method == L"profiles.previewTextFile")
+        {
+            return payloadPreviewProfileTextFile(request);
+        }
         if (request.method == L"profiles.create")
         {
             return payloadCreateProfile(request);
@@ -2325,6 +2371,10 @@ namespace
         if (request.method == L"mods.readTextFile")
         {
             return payloadReadModTextFile(request);
+        }
+        if (request.method == L"mods.previewTextFile")
+        {
+            return payloadPreviewModTextFile(request);
         }
         if (request.method == L"mods.saveTextFile")
         {

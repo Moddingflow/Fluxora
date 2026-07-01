@@ -1,16 +1,16 @@
 # Graph Report - Fluxora  (2026-07-01)
 
 ## Corpus Check
-- 744 files · ~932,665 words
+- 744 files · ~939,946 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 15912 nodes · 33149 edges · 772 communities (746 shown, 26 thin omitted)
-- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 282 edges (avg confidence: 0.8)
+- 16032 nodes · 33490 edges · 819 communities (793 shown, 26 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 284 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `b3b8ffa2`
+- Built from commit: `f2dc7ff8`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -402,6 +402,7 @@
 - [[_COMMUNITY_Community 390|Community 390]]
 - [[_COMMUNITY_Community 391|Community 391]]
 - [[_COMMUNITY_Community 392|Community 392]]
+- [[_COMMUNITY_Community 393|Community 393]]
 - [[_COMMUNITY_Community 394|Community 394]]
 - [[_COMMUNITY_Community 395|Community 395]]
 - [[_COMMUNITY_Community 396|Community 396]]
@@ -462,7 +463,6 @@
 - [[_COMMUNITY_Community 451|Community 451]]
 - [[_COMMUNITY_Community 452|Community 452]]
 - [[_COMMUNITY_Community 453|Community 453]]
-- [[_COMMUNITY_Community 454|Community 454]]
 - [[_COMMUNITY_Community 455|Community 455]]
 - [[_COMMUNITY_Community 456|Community 456]]
 - [[_COMMUNITY_Community 457|Community 457]]
@@ -755,9 +755,39 @@
 - [[_COMMUNITY_Community 757|Community 757]]
 - [[_COMMUNITY_Community 758|Community 758]]
 - [[_COMMUNITY_Community 759|Community 759]]
+- [[_COMMUNITY_Community 762|Community 762]]
 - [[_COMMUNITY_Community 763|Community 763]]
+- [[_COMMUNITY_Community 764|Community 764]]
+- [[_COMMUNITY_Community 765|Community 765]]
+- [[_COMMUNITY_Community 766|Community 766]]
+- [[_COMMUNITY_Community 767|Community 767]]
+- [[_COMMUNITY_Community 768|Community 768]]
+- [[_COMMUNITY_Community 769|Community 769]]
+- [[_COMMUNITY_Community 770|Community 770]]
+- [[_COMMUNITY_Community 771|Community 771]]
+- [[_COMMUNITY_Community 772|Community 772]]
+- [[_COMMUNITY_Community 773|Community 773]]
+- [[_COMMUNITY_Community 774|Community 774]]
+- [[_COMMUNITY_Community 775|Community 775]]
+- [[_COMMUNITY_Community 776|Community 776]]
+- [[_COMMUNITY_Community 777|Community 777]]
 - [[_COMMUNITY_Community 778|Community 778]]
+- [[_COMMUNITY_Community 779|Community 779]]
+- [[_COMMUNITY_Community 780|Community 780]]
+- [[_COMMUNITY_Community 781|Community 781]]
 - [[_COMMUNITY_Community 782|Community 782]]
+- [[_COMMUNITY_Community 783|Community 783]]
+- [[_COMMUNITY_Community 784|Community 784]]
+- [[_COMMUNITY_Community 785|Community 785]]
+- [[_COMMUNITY_Community 786|Community 786]]
+- [[_COMMUNITY_Community 787|Community 787]]
+- [[_COMMUNITY_Community 788|Community 788]]
+- [[_COMMUNITY_Community 789|Community 789]]
+- [[_COMMUNITY_Community 790|Community 790]]
+- [[_COMMUNITY_Community 791|Community 791]]
+- [[_COMMUNITY_Community 792|Community 792]]
+- [[_COMMUNITY_Community 793|Community 793]]
+- [[_COMMUNITY_Community 794|Community 794]]
 - [[_COMMUNITY_Community 795|Community 795]]
 - [[_COMMUNITY_Community 796|Community 796]]
 - [[_COMMUNITY_Community 797|Community 797]]
@@ -765,29 +795,46 @@
 - [[_COMMUNITY_Community 799|Community 799]]
 - [[_COMMUNITY_Community 800|Community 800]]
 - [[_COMMUNITY_Community 801|Community 801]]
+- [[_COMMUNITY_Community 802|Community 802]]
+- [[_COMMUNITY_Community 803|Community 803]]
+- [[_COMMUNITY_Community 804|Community 804]]
+- [[_COMMUNITY_Community 805|Community 805]]
+- [[_COMMUNITY_Community 806|Community 806]]
+- [[_COMMUNITY_Community 807|Community 807]]
+- [[_COMMUNITY_Community 808|Community 808]]
+- [[_COMMUNITY_Community 809|Community 809]]
+- [[_COMMUNITY_Community 810|Community 810]]
+- [[_COMMUNITY_Community 811|Community 811]]
+- [[_COMMUNITY_Community 812|Community 812]]
+- [[_COMMUNITY_Community 813|Community 813]]
+- [[_COMMUNITY_Community 814|Community 814]]
+- [[_COMMUNITY_Community 815|Community 815]]
+- [[_COMMUNITY_Community 816|Community 816]]
+- [[_COMMUNITY_Community 817|Community 817]]
+- [[_COMMUNITY_Community 818|Community 818]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `path` - 124 edges
 2. `wstring` - 114 edges
-3. `wstring` - 99 edges
-4. `String` - 89 edges
-5. `wchar_t` - 87 edges
-6. `mapException()` - 82 edges
-7. `dispatch()` - 79 edges
-8. `path` - 77 edges
-9. `BridgeRequest` - 76 edges
-10. `isBlank()` - 74 edges
+3. `wstring` - 101 edges
+4. `wchar_t` - 89 edges
+5. `String` - 89 edges
+6. `mapException()` - 84 edges
+7. `dispatch()` - 81 edges
+8. `BridgeRequest` - 78 edges
+9. `path` - 77 edges
+10. `isBlank()` - 76 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `Gy()` --calls--> `q()`  [INFERRED]
   frontend-tauri/.vite/renderer/main_window/assets/index-CYOkjNx6.js → .agents/skills/impeccable/scripts/modern-screenshot.umd.js
 - `Xy()` --calls--> `ut()`  [INFERRED]
   frontend-tauri/.vite/renderer/main_window/assets/index-CYOkjNx6.js → .agents/skills/impeccable/scripts/modern-screenshot.umd.js
+- `Hy()` --calls--> `J()`  [INFERRED]
+  frontend-tauri/.vite/renderer/main_window/assets/index-CYOkjNx6.js → .agents/skills/impeccable/scripts/modern-screenshot.umd.js
 - `Gy()` --calls--> `L()`  [INFERRED]
   frontend-tauri/.vite/renderer/main_window/assets/index-CYOkjNx6.js → .agents/skills/impeccable/scripts/modern-screenshot.umd.js
 - `Xy()` --calls--> `L()`  [INFERRED]
-  frontend-tauri/.vite/renderer/main_window/assets/index-CYOkjNx6.js → .agents/skills/impeccable/scripts/modern-screenshot.umd.js
-- `Xy()` --calls--> `pt()`  [INFERRED]
   frontend-tauri/.vite/renderer/main_window/assets/index-CYOkjNx6.js → .agents/skills/impeccable/scripts/modern-screenshot.umd.js
 
 ## Import Cycles
@@ -800,7 +847,7 @@
 - 3-file cycle: `frontend-tauri/src-tauri/src/ai_research.rs -> frontend-tauri/src-tauri/src/bin/fluxora_ai_host.rs -> frontend-tauri/src-tauri/src/lib.rs -> frontend-tauri/src-tauri/src/ai_research.rs`
 - 3-file cycle: `frontend-tauri/src-tauri/src/ai_research.rs -> frontend-tauri/src-tauri/src/lib.rs -> frontend-tauri/src-tauri/src/bin/fluxora_ai_host.rs -> frontend-tauri/src-tauri/src/ai_research.rs`
 
-## Communities (772 total, 26 thin omitted)
+## Communities (819 total, 26 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.06
@@ -823,20 +870,20 @@ Cohesion: 0.06
 Nodes (91): atomic, DWORD, error_code, function, HANDLE, LARGE_INTEGER, Logger, LogLevel (+83 more)
 
 ### Community 5 - "Community 5"
-Cohesion: 0.18
-Nodes (25): GameExecutableDefinition, Object, wstring, wstring_view, childDirectoryByName(), containsIgnoreCase(), containsInvalidFileNameCharacter(), defaultGameExecutableDisplayName() (+17 more)
+Cohesion: 0.15
+Nodes (28): GameExecutableDefinition, ProfileOrderItemRecord, uint64_t, wchar_t, wstring, wstring_view, childDirectoryByName(), containsIgnoreCase() (+20 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.06
-Nodes (79): AppSettingsService, JsonValue, Logger, map, NexusModsAuthStatus, NexusModsStoredAuth, NexusModsAuthService(), size_t (+71 more)
+Cohesion: 0.15
+Nodes (17): string_view, vector, base64UrlDecode(), base64UrlEncode(), buildRedirectUri(), closeClient(), connect(), OAuthCallbackListener (+9 more)
 
 ### Community 7 - "Community 7"
 Cohesion: 0.07
-Nodes (88): AppSettingsService, BuildPathSettingsService, DWORD, initializer_list, InstalledModEntry, InstalledModRecord, JsonValue, Logger (+80 more)
+Nodes (95): AppSettingsService, BuildPathSettingsService, DWORD, initializer_list, InstalledModEntry, InstalledModRecord, JsonValue, Logger (+87 more)
 
 ### Community 8 - "Community 8"
 Cohesion: 0.10
-Nodes (50): BTreeSet, Connection, Option, Result, Self, String, Value, Vec (+42 more)
+Nodes (52): BTreeSet, Connection, Option, Result, Self, String, Value, Vec (+44 more)
 
 ### Community 9 - "Community 9"
 Cohesion: 0.19
@@ -847,8 +894,8 @@ Cohesion: 0.19
 Nodes (13): FluxPackService, vector, BuildPathSettingsService, DownloadService, exportProject, initialize, initialized_, inspectFluxPack (+5 more)
 
 ### Community 11 - "Community 11"
-Cohesion: 0.16
-Nodes (27): ContentLayoutSupportRules, GameExecutableLaunchResult, VfsContentPlacementRoots, wstring, wstring_view, ActiveVfsMod, contentFingerprint, path (+19 more)
+Cohesion: 0.07
+Nodes (83): BuildPathSettingsService, ContentLayoutSupportRules, DWORD, ExecutableService, GameExecutableLaunchResult, GameVfsRules, JsonWriter, Logger (+75 more)
 
 ### Community 13 - "Community 13"
 Cohesion: 0.10
@@ -856,19 +903,19 @@ Nodes (66): CapabilitySet, ExecutableName, GameCapability, GameDefinition, GameE
 
 ### Community 14 - "Community 14"
 Cohesion: 0.04
-Nodes (81): AiBuildContextSnapshot, collectAiBuildContext(), acceptedMutation(), addMissingArgument(), AiBasicBuildArchiveImportRequest, AiBasicBuildDeleteModRequest, AiBasicBuildDiffChange, AiBasicBuildDiffChangeType (+73 more)
+Nodes (86): AiBuildContextSnapshot, AiReadOnlyBuildToolName, acceptedMutation(), addMissingArgument(), AiBasicBuildArchiveImportRequest, AiBasicBuildDeleteModRequest, AiBasicBuildDiffChange, AiBasicBuildDiffChangeType (+78 more)
 
 ### Community 15 - "Community 15"
-Cohesion: 0.07
-Nodes (57): previewTabs, Icon(), IconName, IconProps, STROKE_PATHS, Button(), ButtonProps, ButtonSize (+49 more)
+Cohesion: 0.05
+Nodes (66): previewTabs, PrimitivePreview(), Icon(), IconName, IconProps, STROKE_PATHS, OperationOverlay(), OperationOverlayKind (+58 more)
 
 ### Community 16 - "Community 16"
-Cohesion: 0.03
-Nodes (115): AiLocalRunHandle, AiRuntimeLogEntry, PrimitivePreview(), AssetIconStyle, backgroundReorderLoadOptions, CatalogState, downloadSkeletonRows, interfaceRefreshMessages (+107 more)
+Cohesion: 0.05
+Nodes (54): App(), emptyBuildPathDraft(), emptyProjectDraft(), filterProjects(), filterTemplates(), includesTerm(), isProjectDraftStepComplete(), normalize() (+46 more)
 
 ### Community 17 - "Community 17"
-Cohesion: 0.09
-Nodes (47): createAiRunForPrompt(), normalizePersistedAiSession(), activeAiChatThread(), activeRunForChat(), aiAgentStatusFromSubagentStatus(), AiChatAction, aiChatReducer(), AiFakeRunPlan (+39 more)
+Cohesion: 0.11
+Nodes (22): path, wstring, AbsoluteCanonicalPath, comparisonKey_, path_, containsParentTraversal(), ExecutableName, displayName_ (+14 more)
 
 ### Community 18 - "Community 18"
 Cohesion: 0.13
@@ -876,7 +923,7 @@ Nodes (30): Result, String, encode_query_component(), fluxora_build_settings_pat
 
 ### Community 19 - "Community 19"
 Cohesion: 0.03
-Nodes (111): acceptedDomAlreadyClean(), applyPlaceholderSizingStyles(), averageRgb01(), buildAnnotationsForCapture(), buildInsertPlaceholderSnapshotFromDom(), buildPickedAnchorSnapshot(), buildPinElement(), captureAndEmit() (+103 more)
+Nodes (104): acceptedDomAlreadyClean(), applyGlobalBarLabelState(), applyPlaceholderSizingStyles(), applySvelteComponentVariantStyle(), averageRgb01(), buildAnnotationsForCapture(), buildInsertPlaceholderSnapshotFromDom(), buildPickedAnchorSnapshot() (+96 more)
 
 ### Community 20 - "Community 20"
 Cohesion: 0.24
@@ -891,8 +938,8 @@ Cohesion: 0.13
 Nodes (49): BuildPathSettings, JsonValue, JsonWriter, Logger, optional, path, BuildPathSettingsService(), string (+41 more)
 
 ### Community 23 - "Community 23"
-Cohesion: 0.10
-Nodes (115): exception, ExistingModInstallMode, InstalledMod, LogLevel, NexusModsAuthStatus, PlacementOverride, PluginEntry, PluginRuleContext (+107 more)
+Cohesion: 0.09
+Nodes (120): exception, ExistingModInstallMode, InstalledMod, LogLevel, NexusModsAuthStatus, PlacementOverride, PluginRuleContext, string (+112 more)
 
 ### Community 24 - "Community 24"
 Cohesion: 0.07
@@ -915,12 +962,12 @@ Cohesion: 0.12
 Nodes (16): NormalizedExtension, path, ContentLayoutSupportRules, archiveExtensionKeys, archiveExtensions, dataFolder, gameDataDirectories, gameDataDirectoryKeys (+8 more)
 
 ### Community 29 - "Community 29"
-Cohesion: 0.05
-Nodes (47): ApplyPlanMovesRegularFilesInsideSameVolumeStagingDirectory, ApplyPlanNormalizesDataAndRootTargetsInStagingDirectory, CapabilitySet, ContentLayoutAnalysisRequest, ContentLayoutArchiveEntry, ContentLayoutClassification, ContentLayoutSupportRules, GameSupportLookupResult (+39 more)
+Cohesion: 0.09
+Nodes (23): ApplyPlanMovesRegularFilesInsideSameVolumeStagingDirectory, ApplyPlanNormalizesDataAndRootTargetsInStagingDirectory, DuplicateTargetsAfterDataWrapperAreBlocked, ExplicitRootWrapperPlacesRootContentThroughRootTarget, LayoutCacheInvalidatesWhenDefinitionVersionChanges, LogsPlacementDecisionsAndBlockers, LongLayoutAnalysisCanBeCanceled, ManualOverrideBlocksUnsafeTargetPath (+15 more)
 
 ### Community 30 - "Community 30"
-Cohesion: 0.12
-Nodes (17): ModService, checkInstalledModUpdates, clearOverwriteFolder, createEmptyMod, deleteInstalledMod, initialize, initialized_, isInitialized (+9 more)
+Cohesion: 0.11
+Nodes (18): ModService, checkInstalledModUpdates, clearOverwriteFolder, createEmptyMod, deleteInstalledMod, initialize, initialized_, isInitialized (+10 more)
 
 ### Community 31 - "Community 31"
 Cohesion: 0.12
@@ -940,7 +987,7 @@ Nodes (46): CapabilitySet, ContentLayoutSupportRules, GameId, LaunchTrackingKind
 
 ### Community 35 - "Community 35"
 Cohesion: 0.05
-Nodes (83): addConflictEvidenceFile(), AI_BUILD_CONTEXT_TOOL_SEMANTICS, AiBuildIssueSeverity, AiBuildOperationHint, AiBuildToolIssue, AiBuildToolPermissionClass, AiBuildToolResult, AiReadOnlyBuildToolDescriptor (+75 more)
+Nodes (41): AI_ALL_READ_ONLY_BUILD_TOOLS, AI_BUILD_CONTEXT_TOOL_SEMANTICS, AI_ON_DEMAND_ANALYZE_TOOLS, AiBuildIssueSeverity, AiBuildOperationHint, AiBuildToolIssue, AiBuildToolPermissionClass, AiBuildToolResult (+33 more)
 
 ### Community 36 - "Community 36"
 Cohesion: 0.15
@@ -955,8 +1002,8 @@ Cohesion: 0.06
 Nodes (45): CloseFn, ColumnIntFn, FinalizeFn, HMODULE, InstalledModRecord, ModFileSummaryRecord, Open16Fn, path (+37 more)
 
 ### Community 39 - "Community 39"
-Cohesion: 0.11
-Nodes (22): path, wstring, AbsoluteCanonicalPath, comparisonKey_, path_, containsParentTraversal(), ExecutableName, displayName_ (+14 more)
+Cohesion: 0.32
+Nodes (16): PathSafetyIssueCode, PathSafetyResult, wstring, addIssue(), archiveEntryComparisonKey(), comparisonKey(), hasParentTraversal(), isReservedWindowsName() (+8 more)
 
 ### Community 40 - "Community 40"
 Cohesion: 0.06
@@ -968,7 +1015,7 @@ Nodes (11): Array, Object, size_t, wchar_t, wstring, wstring_view, JsonReader, p
 
 ### Community 42 - "Community 42"
 Cohesion: 0.08
-Nodes (31): map, size_t, RootBuilderLaunchCacheManifestStatus, RootBuilderLaunchCacheApplyStats, copiedFiles, deletedDirectories, deletedFiles, fastPathUsed (+23 more)
+Nodes (40): int64_t, map, size_t, appendUniqueDirectory(), comparablePathText(), isDirectory(), parseSignedJsonNumber(), RootBuilderLaunchCacheDesiredFile (+32 more)
 
 ### Community 43 - "Community 43"
 Cohesion: 0.14
@@ -995,8 +1042,8 @@ Cohesion: 0.07
 Nodes (39): string_view, uintmax_t, DownloadProgressWriteMode, currentUnixSeconds(), DownloadMetadata, bytesReceived, destinationFileName, downloadStartedUnix (+31 more)
 
 ### Community 49 - "Community 49"
-Cohesion: 0.05
-Nodes (84): MissingMastersStatus(), MissingMastersStatusProps, tooltipLabel(), TooltipPlacement, TooltipPosition, modWorkspaceReducer(), selectedModOrderItem(), clampIndex() (+76 more)
+Cohesion: 0.04
+Nodes (127): MissingMastersStatus(), MissingMastersStatusProps, tooltipLabel(), TooltipPlacement, TooltipPosition, appendOverwriteOrderItem(), appendOverwriteStateMarkers(), conflictMarkerStateOrder (+119 more)
 
 ### Community 50 - "Community 50"
 Cohesion: 0.06
@@ -1007,8 +1054,8 @@ Cohesion: 0.15
 Nodes (33): BuildPathSettingsService, DownloadService, Logger, optional, path, ProjectService, FluxPackService(), addUniquePath() (+25 more)
 
 ### Community 52 - "Community 52"
-Cohesion: 0.05
-Nodes (45): AI_READ_ONLY_BUILD_TOOLS, DownloadCapabilityView, downloadDisplayName(), downloadProgressValue(), downloadRawTitle(), downloadStatusText(), downloadTitle(), DownloadWorkspaceAction (+37 more)
+Cohesion: 0.15
+Nodes (24): collectLocalFilesystemSnapshotTool(), createResult(), cursorOffset(), issue(), issuesFromDownloads(), issuesFromMods(), issuesFromPlugins(), localFileConflictSummary() (+16 more)
 
 ### Community 53 - "Community 53"
 Cohesion: 0.18
@@ -1052,7 +1099,7 @@ Nodes (20): CancellationToken, Action, DllImport, Exception, Func, InstallerLogS
 
 ### Community 63 - "Community 63"
 Cohesion: 0.05
-Nodes (41): AnalyzeDownloadContentLayoutAllowsDifferentArchivesToBuildInParallel, AnalyzeDownloadContentLayoutCachesExtractedPayloadForInstall, AnalyzeDownloadContentLayoutCleansStaleBuildingCacheEntry, AnalyzeDownloadContentLayoutReturnsExplainablePlanWithoutInstalling, AnalyzeFomodContentLayoutReturnsSelectedOutputPlanWithoutInstalling, AnalyzeFomodDownloadCachesPackageForInstall, AnalyzeFomodDownloadCopiesPreviewImagesToStableCache, CachedModOrderMarksFullyOverwrittenModsForLaunch (+33 more)
+Nodes (43): AnalyzeDownloadContentLayoutAllowsDifferentArchivesToBuildInParallel, AnalyzeDownloadContentLayoutCachesExtractedPayloadForInstall, AnalyzeDownloadContentLayoutCleansStaleBuildingCacheEntry, AnalyzeDownloadContentLayoutReturnsExplainablePlanWithoutInstalling, AnalyzeFomodContentLayoutReturnsSelectedOutputPlanWithoutInstalling, AnalyzeFomodDownloadCachesPackageForInstall, AnalyzeFomodDownloadCopiesPreviewImagesToStableCache, CachedModOrderMarksFullyOverwrittenModsForLaunch (+35 more)
 
 ### Community 65 - "Community 65"
 Cohesion: 0.08
@@ -1060,31 +1107,31 @@ Nodes (30): DetectionConfidence, GameDefinition, GameSupportRegistry, GameSuppor
 
 ### Community 66 - "Community 66"
 Cohesion: 0.07
-Nodes (54): InstallDialog(), InstallDialogPhase, InstallDialogProps, InstallDialogState, ArchivePlacementRow, buildArchivePlacementRows(), buildPlacementPreviewLines(), buildPlacementSummaryText() (+46 more)
+Nodes (56): InstallDialog(), InstallDialogPhase, InstallDialogProps, InstallDialogState, ArchivePlacementRow, buildArchivePlacementRows(), buildPlacementPreviewLines(), buildPlacementSummaryText() (+48 more)
 
 ### Community 67 - "Community 67"
-Cohesion: 0.25
-Nodes (28): BuildPathSettingsService, Logger, path, ProfileService(), set, string, vector, wstring (+20 more)
+Cohesion: 0.19
+Nodes (37): BuildPathSettingsService, Logger, path, ProfileTextFilePreview, ProfileService(), set, string, uintmax_t (+29 more)
 
 ### Community 68 - "Community 68"
 Cohesion: 0.04
-Nodes (74): AiBasicBuildRollbackHook, AiBasicBuildVerificationCheck, AI_SAFE_ACTION_CATALOG, AI_SAFE_ACTION_CATALOG_CAPABILITY, AI_SAFE_ACTION_TOOL_NAMES, AI_SAFE_ACTION_TOOLS, AiSafeActionApprovalPolicy, AiSafeActionAuditLog (+66 more)
+Nodes (70): AI_SAFE_ACTION_CATALOG, AI_SAFE_ACTION_CATALOG_CAPABILITY, AI_SAFE_ACTION_TOOL_NAMES, AI_SAFE_ACTION_TOOLS, AiSafeActionApprovalPolicy, AiSafeActionAuditLog, AiSafeActionCatalogPolicy, AiSafeActionDryRunSupport (+62 more)
 
 ### Community 69 - "Community 69"
 Cohesion: 0.13
 Nodes (37): atomic, function, mutex, path, time_point, uintmax_t, file_status, ProjectDeleteRequest (+29 more)
 
 ### Community 70 - "Community 70"
-Cohesion: 0.16
-Nodes (34): optional, path, gameRootScriptExtenderLoader(), hasActiveRootBuilderOverlay(), hasExecutableImageSignature(), isReadableExecutableFile(), isRegularFile(), isScriptExtenderLoaderName() (+26 more)
+Cohesion: 0.13
+Nodes (35): atomic_bool, CapabilitySet, ContentArea, ContentLayoutAnalysisRequest, ContentLayoutArchiveEntry, ContentLayoutClassification, GameRelativePath, HealthSeverity (+27 more)
 
 ### Community 71 - "Community 71"
 Cohesion: 0.05
 Nodes (34): AI_EVALUATION_VIRTUAL_TOOL_NAMES, AI_HUMAN_REVIEW_HARD_FAILS, AI_HUMAN_REVIEW_RUBRIC, AiDeterministicProvider, AiDeterministicProviderRequest, AiDeterministicProviderResponse, AiDeterministicProviderStatus, AiEvaluationCostThreshold (+26 more)
 
 ### Community 72 - "Community 72"
-Cohesion: 0.13
-Nodes (17): bool_param(), budget_tier_for(), candidate_skill_ids_for_prompt(), cost_preflight_payload(), f64_param(), margin_telemetry_payload(), prompt_contains_any(), prompt_looks_large() (+9 more)
+Cohesion: 0.11
+Nodes (23): bool_param(), budget_tier_for(), candidate_skill_ids_for_prompt(), cost_preflight_payload(), extract_supabase_credential_value(), f64_param(), margin_telemetry_payload(), model_is_remote() (+15 more)
 
 ### Community 73 - "Community 73"
 Cohesion: 0.06
@@ -1095,8 +1142,8 @@ Cohesion: 0.06
 Nodes (34): 10. DEVICE MOCKUP FRAME RULE, 11. ONBOARDING FLOW RULE, 12. FIRST SCREEN CLEANLINESS RULE, 13. SAFE AREA AND SYSTEM REGION RULE, 14. NAVIGATION RULE, 15. CLEAN LAYOUT RULE, 16. CREATIVE IMAGE DIRECTION RULE, 17. BACKGROUND TEXTURE AND SURFACE RULE (+26 more)
 
 ### Community 75 - "Community 75"
-Cohesion: 0.09
-Nodes (32): buildCollapsible(), buildColorModels(), buildDesignHeader(), buildRadiiModels(), buildTypographyModels(), cssSafe(), escapeHtml(), fetchDesignSystem() (+24 more)
+Cohesion: 0.10
+Nodes (28): buildCollapsible(), buildColorModels(), buildRadiiModels(), buildTypographyModels(), cssSafe(), escapeHtml(), fontStack(), groupByKind() (+20 more)
 
 ### Community 76 - "Community 76"
 Cohesion: 0.13
@@ -1107,8 +1154,8 @@ Cohesion: 0.09
 Nodes (31): AmbiguousDetectionNeverDefaultsToSkyrim, ContentLayoutSupportRules, SkyrimSpecialEditionSupport, PluginSupportRules, GameDefinition, GameDetectionResult, GameSupportRegistry, path (+23 more)
 
 ### Community 78 - "Community 78"
-Cohesion: 0.15
-Nodes (31): BuildPathSettingsService, ExecutableIconService, GameExecutable, JsonValue, JsonWriter, Logger, ExecutableService(), vector (+23 more)
+Cohesion: 0.17
+Nodes (29): BuildPathSettingsService, ExecutableIconService, GameExecutable, JsonValue, JsonWriter, Logger, ExecutableService(), vector (+21 more)
 
 ### Community 79 - "Community 79"
 Cohesion: 0.07
@@ -1123,16 +1170,16 @@ Cohesion: 0.33
 Nodes (16): ProfileOrderItemRecord, ProfilePluginOrderItemRecord, createProfileOrderSeparator(), deleteProfileOrderSeparator(), deleteProfilePluginOrderSeparator(), listCachedProfileOrderItems(), listProfileOrderItems(), listProfilePluginOrderItems() (+8 more)
 
 ### Community 82 - "Community 82"
-Cohesion: 0.12
-Nodes (15): AI_EVALUATION_GOLDEN_TASKS, AI_EVALUATION_SUITE, AiEvaluationCostSample, AiEvaluationGoldenTaskOutcome, AiEvaluationLatencySample, createAiEvaluationGateReport(), createAiEvaluationToolCallTape(), createDeterministicAiProvider() (+7 more)
+Cohesion: 0.15
+Nodes (15): ContentLayoutClassification, GameSupportLookupResult, GameSupportRegistry, path, PlacementPlan, PlacementPlanEntry, string, wstring_view (+7 more)
 
 ### Community 83 - "Community 83"
 Cohesion: 0.07
 Nodes (24): AsyncLocal, DateTimeOffset, IDisposable, bool, Exception, object, string, Action (+16 more)
 
 ### Community 84 - "Community 84"
-Cohesion: 0.17
-Nodes (21): createManualEditRoutes(), sendJson(), summarizePendingManualEditBatch(), countByPage(), getBufferPath(), readBuffer(), readBufferInternal(), readBufferStrict() (+13 more)
+Cohesion: 0.16
+Nodes (22): summarizeManualDiagnostics(), createManualEditRoutes(), sendJson(), summarizePendingManualEditBatch(), countByPage(), getBufferPath(), readBuffer(), readBufferInternal() (+14 more)
 
 ### Community 85 - "Community 85"
 Cohesion: 0.16
@@ -1175,8 +1222,8 @@ Cohesion: 0.08
 Nodes (29): GameDefinition, GameId, HealthSeverity, HealthStatus, IGameSupport, path, vector, wstring (+21 more)
 
 ### Community 95 - "Community 95"
-Cohesion: 0.07
-Nodes (34): CapabilitySet, ContentLayoutSupportRules, ExecutableSupportRules, GameExecutableWorkingDirectoryKind, GameId, LaunchSupportRules, VfsSupportRules, applySupportRules() (+26 more)
+Cohesion: 0.08
+Nodes (58): CapabilitySet, ContentLayoutSupportRules, ExecutableSupportRules, GameExecutableWorkingDirectoryKind, GameId, LaunchSupportRules, optional, path (+50 more)
 
 ### Community 96 - "Community 96"
 Cohesion: 0.13
@@ -1215,12 +1262,12 @@ Cohesion: 0.17
 Nodes (12): Bad, Documenting the Prelude, Example: Database Library Prelude, Example: Web Framework Prelude, Good, Guidelines, Pattern: Feature-Gated Prelude Items, Pattern: Tiered Preludes (+4 more)
 
 ### Community 105 - "Community 105"
-Cohesion: 0.15
-Nodes (37): AI_AUTONOMOUS_JOB_BLOCKED_REASONS, AiAutonomousJobCreateOptions, aiAutonomousJobQueueStorageKey(), appendProgress(), attachAiAutonomousJobPlan(), blockAiAutonomousJob(), cancelAiAutonomousJob(), checkpoint() (+29 more)
+Cohesion: 0.33
+Nodes (16): path, uintmax_t, PathSafetyWriteOptions, absoluteOrLexical(), canonicalize(), hasKnownRoot(), isSameOrInside(), isSystemPath() (+8 more)
 
 ### Community 106 - "Community 106"
-Cohesion: 0.10
-Nodes (19): dependencies, lucide-react, react, react-dom, @tauri-apps/api, description, devDependencies, @playwright/test (+11 more)
+Cohesion: 0.20
+Nodes (9): dependencies, lucide-react, react, react-dom, @tauri-apps/api, description, name, private (+1 more)
 
 ### Community 108 - "Community 108"
 Cohesion: 0.07
@@ -1251,8 +1298,8 @@ Cohesion: 0.09
 Nodes (26): GameExecutable, optional, path, uintmax_t, vector, wstring, ModOrganizerExecutableCopyRoot, destinationDirectory (+18 more)
 
 ### Community 115 - "Community 115"
-Cohesion: 0.05
-Nodes (44): ModService, path, ProfileOrderService, vector, wstring, BuildPathSettingsService, Logger, ProfileModOrderItem (+36 more)
+Cohesion: 0.07
+Nodes (30): path, wstring, ProfileModOrderItem, canCheckUpdates, conflictingFileCount, conflictStatus, contentFingerprint, fileCount (+22 more)
 
 ### Community 116 - "Community 116"
 Cohesion: 0.10
@@ -1263,8 +1310,8 @@ Cohesion: 0.08
 Nodes (25): mutex, path, shared_ptr, logger, bridgeLogger_, bridgeLogPath_, clearOperationId, coreLogger_ (+17 more)
 
 ### Community 118 - "Community 118"
-Cohesion: 0.15
-Nodes (21): ContentLayoutSummary, path, PlacementPlan, PlacementPlanEntry, size_t, applyPlanToDirectory(), copyThenRemoveFile(), countEntry() (+13 more)
+Cohesion: 0.18
+Nodes (24): DWORD, GameExecutableLaunchResult, Object, ResolvedExecutableLaunch, string, configureParallaxGenSettings(), describeWin32Error(), executableRulesSummary() (+16 more)
 
 ### Community 119 - "Community 119"
 Cohesion: 0.09
@@ -1276,7 +1323,7 @@ Nodes (18): MainWindow, Action, bool, EventArgs, InstallerLogService, int, strin
 
 ### Community 121 - "Community 121"
 Cohesion: 0.06
-Nodes (33): detailMetrics(), hasStatValue(), hiddenStatValues, LibraryCatalogState, LibraryHome(), LibraryHomeProps, LibraryProjectRowsProps, projectGameLabel() (+25 more)
+Nodes (32): detailMetrics(), hasStatValue(), hiddenStatValues, LibraryCatalogState, LibraryHome(), LibraryHomeProps, LibraryProjectRowsProps, projectGameLabel() (+24 more)
 
 ### Community 122 - "Community 122"
 Cohesion: 0.06
@@ -1291,12 +1338,12 @@ Cohesion: 0.15
 Nodes (25): BuildPathSettings, JsonWriter, ProfileOrderItemRecord, ProjectOpenResult, vector, FileManifestEntry, embedsText, path (+17 more)
 
 ### Community 125 - "Community 125"
-Cohesion: 0.22
-Nodes (27): GameDetectionRequest, JsonValue, optional, TemplateCapability, TemplateService, vector, ScriptExtender, applyStringArrayField() (+19 more)
+Cohesion: 0.23
+Nodes (26): GameDetectionRequest, JsonValue, optional, TemplateCapability, vector, ScriptExtender, applyStringArrayField(), applyStringField() (+18 more)
 
 ### Community 126 - "Community 126"
 Cohesion: 0.03
-Nodes (126): BuildPathSettings, BuildTemplate, CapabilitySet, ContentArea, ContentLayoutClassification, ContentLayoutSummary, ContentLayoutSupportRules, DownloadEntry (+118 more)
+Nodes (130): BuildPathSettings, BuildTemplate, CapabilitySet, ContentArea, ContentLayoutClassification, ContentLayoutSummary, ContentLayoutSupportRules, DownloadEntry (+122 more)
 
 ### Community 127 - "Community 127"
 Cohesion: 0.10
@@ -1307,12 +1354,12 @@ Cohesion: 0.17
 Nodes (22): FileDialogBuilder, FilePath, Option, R, add_dialog_filters(), apply_save_default_path(), clear_operation_cancel_marker(), dialog_path_result() (+14 more)
 
 ### Community 129 - "Community 129"
-Cohesion: 0.17
-Nodes (30): GameDetectionResult, GameHealthCheckResult, Logger, ProjectFingerprint, ProjectStateValidation, ProjectService(), string, string_view (+22 more)
+Cohesion: 0.27
+Nodes (22): GameDetectionResult, GameHealthCheckResult, Logger, ProjectFingerprint, string, string_view, ProjectCreateRequest, buildMigratedManifest() (+14 more)
 
 ### Community 130 - "Community 130"
-Cohesion: 0.11
-Nodes (29): atomic_bool, CapabilitySet, ContentArea, ContentLayoutAnalysisRequest, ContentLayoutArchiveEntry, ContentLayoutClassification, GameRelativePath, HealthSeverity (+21 more)
+Cohesion: 0.22
+Nodes (26): ContentLayoutSupportRules, path, set, size_t, wstring, wstring_view, classifyDataRelativePath(), equalsIgnoreCase() (+18 more)
 
 ### Community 131 - "Community 131"
 Cohesion: 0.22
@@ -1320,7 +1367,7 @@ Nodes (23): ContentLayoutSupportRules, Logger, NormalizedExtension, path, set, s
 
 ### Community 132 - "Community 132"
 Cohesion: 0.12
-Nodes (14): AppSettingsService, path, ScopedEnvironmentVariable, TempDirectory, ModFileOperationsIntegrationTests, appData_, downloads_, logger_ (+6 more)
+Nodes (15): AppSettingsService, path, ScopedEnvironmentVariable, TempDirectory, ModFileOperationsIntegrationTests, appData_, downloads_, logger_ (+7 more)
 
 ### Community 133 - "Community 133"
 Cohesion: 0.11
@@ -1331,8 +1378,8 @@ Cohesion: 0.10
 Nodes (16): Add-FluxoraInstallerInputPath(), Build-TauriAiHost(), ConvertTo-HexString(), Copy-FluxoraPublishedSymbols(), Get-FileSha256Hex(), Get-FluxoraManifestPropertyValue(), Get-PortableRelativePath(), Get-StringSha256Hex() (+8 more)
 
 ### Community 135 - "Community 135"
-Cohesion: 0.14
-Nodes (29): BuildTemplate, DetectionConfidence, JsonWriter, ProjectDescriptor, ProjectOpenResult, wchar_t, collectConfigTargetsForDelete(), confidenceAllowsLegacyTemplateMigration() (+21 more)
+Cohesion: 0.18
+Nodes (18): ProjectDescriptor, ProjectOpenResult, wchar_t, collectConfigTargetsForDelete(), ensureSafeDeleteTarget(), invalidateProjectSummaryCache(), isDirectory(), isRootDirectory() (+10 more)
 
 ### Community 136 - "Community 136"
 Cohesion: 0.10
@@ -1343,8 +1390,8 @@ Cohesion: 0.10
 Nodes (20): 1. Discover candidate docs, 2. Skip docs that are already in the state file, 3. Read entry points first, 4. Sample and follow cross-references, 5. Decide which content warrants a node, 6. Draft each node body, then persist via `node write`, 7. Refresh INDEX.md and GRAPH.md, 8. Report back (+12 more)
 
 ### Community 138 - "Community 138"
-Cohesion: 0.22
-Nodes (16): path, createDesktopShortcut(), desktopShortcutPath(), installPackageFromReader(), installPackageStream(), InstallResult, applicationPath, createdDesktopShortcut (+8 more)
+Cohesion: 0.10
+Nodes (20): size_t, uint32_t, uint64_t, FluxoraInstallerReadCallback, ifstream, CallbackPackageReader, readCallback_, readUserData_ (+12 more)
 
 ### Community 139 - "Community 139"
 Cohesion: 0.17
@@ -1363,8 +1410,8 @@ Cohesion: 0.27
 Nodes (16): JsonValue, string, uint32_t, vector, VfsConfig, VfsMountConfig, wchar_t, wstring (+8 more)
 
 ### Community 143 - "Community 143"
-Cohesion: 0.32
-Nodes (16): PathSafetyIssueCode, PathSafetyResult, wstring, addIssue(), archiveEntryComparisonKey(), comparisonKey(), hasParentTraversal(), isReservedWindowsName() (+8 more)
+Cohesion: 0.08
+Nodes (26): ExecutableName, GameExecutableDefinition, GameExecutableRoles, GameVfsRules, set, vector, ExecutableSupportRules, executables (+18 more)
 
 ### Community 144 - "Community 144"
 Cohesion: 0.29
@@ -1379,24 +1426,24 @@ Cohesion: 0.10
 Nodes (22): atomic_bool, CapabilitySet, IContentLayoutRulesProvider, path, ContentLayoutInstallMode, ContentLayoutAnalysisRequest, archiveContentHash, archiveFileTree (+14 more)
 
 ### Community 147 - "Community 147"
-Cohesion: 0.20
-Nodes (10): Acceptable Ignoring (Documented), anti-empty-catch, Bad, Clippy Lint, Decision Guide, Good, Pattern: Best-Effort Operations, Pattern: Collect and Report (+2 more)
+Cohesion: 0.17
+Nodes (32): initializer_list, optional, wstring, wstring_view, defaultNexusRedirectUriForTest(), extractSupabaseCredentialValue(), extractSupabaseCredentialValueForTest(), firstTrimmedEnvironmentValue() (+24 more)
 
 ### Community 148 - "Community 148"
 Cohesion: 0.11
 Nodes (17): Backend and bridge method inventory, Build settings inventory, Executable manager and launch inventory, Fluxora WPF UI inventory for Tauri migration, `FomodInstallerWindow`, `InstallArchiveDetailsWindow`, Installer dialogs and flows, `InstallModWindow` (+9 more)
 
 ### Community 149 - "Community 149"
-Cohesion: 0.08
-Nodes (27): additionalProperties, required, type, $defs, capabilities, executableName, extension, nonEmptyStringArray (+19 more)
+Cohesion: 0.10
+Nodes (22): $defs, executable, extension, nonEmptyStringArray, nonEmptyStringArrayRequired, normalizedIdentifier, additionalProperties, required (+14 more)
 
 ### Community 150 - "Community 150"
 Cohesion: 0.10
 Nodes (20): path, BuildPathSettingsService, BuildPathSettings, downloadsDirectory, gameDirectory, modsDirectory, overwriteDirectory, profilesDirectory (+12 more)
 
 ### Community 151 - "Community 151"
-Cohesion: 0.03
-Nodes (60): Bad, Good, lint-cfg-check, Notes, See Also, Why It Matters, Workspace Projects, Full Recommended Lints (+52 more)
+Cohesion: 0.17
+Nodes (15): AppSettingsService, Logger, map, NexusModsAuthService(), size_t, bytesToHex(), generateHexRandom(), generateRandomBytes() (+7 more)
 
 ### Community 152 - "Community 152"
 Cohesion: 0.12
@@ -1411,16 +1458,16 @@ Cohesion: 0.12
 Nodes (23): DirChild, path, size_t, vector, wstring, BuildExcludesRootBuilderTopLevelFolderFromDataMount, BuildMergesRealModsOverwriteByPriorityAndKeepsBaseSiblings, BuildSupportsModsWithNestedDataWrapper (+15 more)
 
 ### Community 155 - "Community 155"
-Cohesion: 0.16
-Nodes (14): optional, ExecutableService, vector, BuildPathSettingsService, ExecutableIconService, initialize, initialized_, isInitialized (+6 more)
+Cohesion: 0.12
+Nodes (15): AI_EVALUATION_GOLDEN_TASKS, AI_EVALUATION_SUITE, AiEvaluationCostSample, AiEvaluationGoldenTaskOutcome, AiEvaluationLatencySample, createAiEvaluationGateReport(), createAiEvaluationToolCallTape(), createDeterministicAiProvider() (+7 more)
 
 ### Community 156 - "Community 156"
 Cohesion: 0.67
 Nodes (3): ProfileFileOwner, active, modId
 
 ### Community 157 - "Community 157"
-Cohesion: 0.22
-Nodes (8): AtomicFileStoreTests, BackupPathUsesCompactSiblingName, CorruptedManifestRestoresPreviousBackup, DiskFullSimulationKeepsPreviousState, RecoveryLogsRestoredBackup, SimulatedCrashDuringManifestWriteRecoversOldManifest, SimulatedCrashDuringPluginListWriteRecoversOldPluginList, TEST()
+Cohesion: 0.26
+Nodes (16): JsonValue, string, buildAuthorizeUrl(), buildNexusAuthorizeUrlForTest(), buildNexusTokenRequestBodyForTest(), buildTokenErrorMessage(), buildTokenRequestBody(), fromUtf8() (+8 more)
 
 ### Community 158 - "Community 158"
 Cohesion: 0.10
@@ -1431,32 +1478,32 @@ Cohesion: 0.08
 Nodes (42): AiHostProcess, BridgeProcess, Entry, Mutex, ai_credential_available(), ai_credential_entry(), ai_provider_state_preserves_host_supabase_connection(), AiHostState (+34 more)
 
 ### Community 160 - "Community 160"
-Cohesion: 0.18
-Nodes (12): Bd(), Gc, Gm, Gy(), o(), Pm(), Ss, up() (+4 more)
+Cohesion: 0.17
+Nodes (13): Bd(), Be, Gc, Gm, Gy(), Hy(), Pm(), Ss (+5 more)
 
 ### Community 161 - "Community 161"
-Cohesion: 0.12
-Nodes (17): properties, supportsArchives, supportsContentLayoutRules, supportsGameSpecificVfs, supportsIniProfiles, supportsLoadOrder, supportsPlugins, supportsSaveProfiles (+9 more)
+Cohesion: 0.10
+Nodes (21): additionalProperties, properties, required, type, capabilities, supportsArchives, supportsContentLayoutRules, supportsGameSpecificVfs (+13 more)
 
 ### Community 162 - "Community 162"
 Cohesion: 0.13
 Nodes (14): anyOf, anyOf, description, definitions, Application, Target, Value, description (+6 more)
 
 ### Community 163 - "Community 163"
-Cohesion: 0.04
-Nodes (58): App(), emptyProjectDraft(), filterProjects(), filterTemplates(), includesTerm(), isProjectDraftStepComplete(), normalize(), projectCapabilitiesLabel() (+50 more)
+Cohesion: 0.12
+Nodes (16): Avoid Redundant Copy, Confirmation Dialogs: Use Sparingly, Consistency: The Terminology Problem, Don't Blame the User, Empty States Are Opportunities, Error Message Templates, Error Messages: The Formula, Form Instructions (+8 more)
 
 ### Community 164 - "Community 164"
 Cohesion: 0.15
 Nodes (13): Benchmarking Profile, Custom Profiles, Default Profile, Dev Dependencies Optimization, LTO Options, Optimization Levels, Optimized Profile, perf-release-profile (+5 more)
 
 ### Community 165 - "Community 165"
-Cohesion: 0.07
-Nodes (26): error_code, path, string, CommitRemovesMarker, LoadDescriptorCapturesManagerProcessIdForSessionLifetime, MissingGroupsReturnsEmptyItems, MissingModlistReturnsEmptyOrder, ModOrganizerPluginGroupServiceTests (+18 more)
+Cohesion: 0.10
+Nodes (20): error_code, path, string, CommitRemovesMarker, LoadDescriptorCapturesManagerProcessIdForSessionLifetime, MissingModlistReturnsEmptyOrder, ModOrganizerProfileOrderServiceTests, ProjectStateTransactionTests (+12 more)
 
 ### Community 166 - "Community 166"
 Cohesion: 0.10
-Nodes (27): BuildActionAvailability, BuildHeaderCapabilityView, BuildPathDraft, buildPathSaveRequest(), buildPrimaryExecutableList(), directoryFromExecutablePath(), draftFromBuildPathSettings(), emptyBuildPathDraft() (+19 more)
+Nodes (26): BuildActionAvailability, BuildHeaderCapabilityView, BuildPathDraft, buildPathSaveRequest(), buildPrimaryExecutableList(), directoryFromExecutablePath(), draftFromBuildPathSettings(), enabledFeatureStates (+18 more)
 
 ### Community 167 - "Community 167"
 Cohesion: 0.40
@@ -1479,8 +1526,8 @@ Cohesion: 0.11
 Nodes (19): int64_t, InstalledModRecord, contentFingerprint, displayName, folderName, gameId, id, installedAt (+11 more)
 
 ### Community 172 - "Community 172"
-Cohesion: 0.15
-Nodes (21): firstExisting(), getDesignSidecarCandidates(), getDesignSidecarPath(), getImpeccableDir(), getLegacyLiveAnnotationsDir(), getLegacyLiveConfigPath(), getLegacyLiveServerPath(), getLiveAnnotationsDir() (+13 more)
+Cohesion: 0.20
+Nodes (13): parseTargetOptions(), parseTargetPath(), TargetArgError, resolveTargetSelection(), __dirname, ensureServerRunning(), resolveFiles(), liveCli() (+5 more)
 
 ### Community 173 - "Community 173"
 Cohesion: 0.11
@@ -1491,8 +1538,8 @@ Cohesion: 0.11
 Nodes (19): FileIdAllExtdBothDirectoryInformationRecord, AllocationSize, ChangeTime, CreationTime, EaSize, EndOfFile, FileAttributes, FileId (+11 more)
 
 ### Community 175 - "Community 175"
-Cohesion: 0.08
-Nodes (19): contentTypes, distRoot, contentTypes, distRoot, scripts, build, build:frontend, dev (+11 more)
+Cohesion: 0.14
+Nodes (14): scripts, build, build:frontend, dev, dev:frontend, package, parity:gate, release:dry-run (+6 more)
 
 ### Community 176 - "Community 176"
 Cohesion: 0.14
@@ -1523,8 +1570,8 @@ Cohesion: 0.17
 Nodes (13): array, NTSTATUS, Sha256HashSize, vector, BCRYPT_ALG_HANDLE, BCRYPT_HASH_HANDLE, copyFileFromPackage(), readSha256() (+5 more)
 
 ### Community 183 - "Community 183"
-Cohesion: 0.10
-Nodes (21): HookService, ProfileService, initialize, initialized_, isInitialized, shutdown, Logger, IService (+13 more)
+Cohesion: 0.09
+Nodes (24): path, ProfileService, uintmax_t, wstring, BuildPathSettingsService, Logger, cloneProfile, createProfile (+16 more)
 
 ### Community 184 - "Community 184"
 Cohesion: 0.17
@@ -1555,8 +1602,8 @@ Cohesion: 0.09
 Nodes (29): BOOL, DWORD, HANDLE, HMODULE, LPVOID, uint32_t, wstring, T (+21 more)
 
 ### Community 191 - "Community 191"
-Cohesion: 0.09
-Nodes (27): sanitizeAiChatText(), formatAiCost(), AiChatState, aiStatusLabels, aiStatusOrder, AiSubagentChatMetadata, AiSubagentChatStatus, AiChatPanel() (+19 more)
+Cohesion: 0.04
+Nodes (75): AI_CHAT_MARKDOWN_POLICY, isAiContextSourceUrl(), safeAiExternalUrl(), safeAiSourceUrl(), sanitizeAiChatText(), AiProviderDiagnostic, aiRoutingPresetOptions, connectedRemoteDefaultModelId() (+67 more)
 
 ### Community 192 - "Community 192"
 Cohesion: 0.12
@@ -1575,8 +1622,8 @@ Cohesion: 0.08
 Nodes (24): InstalledModEntry, canCheckUpdates, conflictingFileCount, conflictStatus, fileCount, hasUpdate, id, installedAt (+16 more)
 
 ### Community 196 - "Community 196"
-Cohesion: 0.13
-Nodes (26): BuildPathSettingsService, ExecutableService, function, GrassCacheLaunchSpec, Logger, ModService, optional, ProfileOrderService (+18 more)
+Cohesion: 0.23
+Nodes (16): function, GrassCacheLaunchSpec, optional, string, uint32_t, vector, wstring, pair (+8 more)
 
 ### Community 197 - "Community 197"
 Cohesion: 0.20
@@ -1611,8 +1658,8 @@ Cohesion: 0.18
 Nodes (11): Bridge method list for full UI parity, Downloads and install, Executables and launch, FluxPack, MO2 transfer, Mods and profiles, Nexus and NXM, Operations (+3 more)
 
 ### Community 205 - "Community 205"
-Cohesion: 0.05
-Nodes (82): AiBuildToolRuntimeContext, AiBasicBuildExecutionContext, comparePath(), createMo2TransferImportRequest(), normalizeMo2TransferAnalysis(), normalizeMo2TransferDestinationRoot(), normalizeMo2TransferTargetProjectDirectory(), pathLeaf() (+74 more)
+Cohesion: 0.02
+Nodes (148): AiBuildToolRuntimeContext, AiChatSettings, AiBasicBuildExecutionContext, AssetIconStyle, backgroundReorderLoadOptions, CatalogState, downloadSkeletonRows, interfaceRefreshMessages (+140 more)
 
 ### Community 206 - "Community 206"
 Cohesion: 0.12
@@ -1647,36 +1694,36 @@ Cohesion: 0.20
 Nodes (9): Agent Rules, Architecture Boundary, Backend And Bridge Validation, Current Phase, Fluxora Tauri Migration, How To Run Tauri, Release Notes For Migration Period, Tauri Security Baseline (+1 more)
 
 ### Community 214 - "Community 214"
-Cohesion: 0.21
-Nodes (29): ContentLayoutSupportRules, Logger, set, string, wstring, wstring_view, classificationDisplayName(), classifyDataRelativePath() (+21 more)
+Cohesion: 0.25
+Nodes (17): wstring, wstring_view, buildManifestPath(), buildProjectDirectory(), buildUpdatedManifest(), equalsIgnoreCase(), fromUtf8(), hasExecutableExtension() (+9 more)
 
 ### Community 215 - "Community 215"
 Cohesion: 0.12
-Nodes (16): executable, minLength, type, additionalProperties, properties, required, type, minLength (+8 more)
+Nodes (16): minLength, type, properties, minLength, $ref, type, minLength, $ref (+8 more)
 
 ### Community 216 - "Community 216"
 Cohesion: 0.12
 Nodes (16): $ref, $ref, excludedLaunchCacheDirectories, profileIniFileNames, rootBuilderDirectoryName, saveDirectoryNames, supportsRootBuilder, userSettingsDirectoryName (+8 more)
 
 ### Community 217 - "Community 217"
-Cohesion: 0.10
-Nodes (20): items, type, type, maximum, minimum, type, enum, $ref (+12 more)
+Cohesion: 0.12
+Nodes (16): items, type, type, maximum, minimum, type, enum, $ref (+8 more)
 
 ### Community 218 - "Community 218"
 Cohesion: 0.13
 Nodes (15): DetectionConfidence, GameDefinition, GameDetectionCandidate, canonicalInstallPath, confidence, definition, displayName, gameId (+7 more)
 
 ### Community 219 - "Community 219"
-Cohesion: 0.15
-Nodes (14): mutex, path, ExecutableIconService, cacheDirectory_, cacheMutex_, gdiplusToken_, initialize, initialized_ (+6 more)
+Cohesion: 0.09
+Nodes (23): mutex, path, ExecutableIconService, HookService, cacheDirectory_, cacheMutex_, gdiplusToken_, initialize (+15 more)
 
 ### Community 220 - "Community 220"
 Cohesion: 0.25
 Nodes (7): Approved artifacts, Artifact verification, Fluxora Tauri release pipeline, Legal and privacy checklist, Open release gates, Tauri smoke builds, Windows release build
 
 ### Community 221 - "Community 221"
-Cohesion: 0.10
-Nodes (20): size_t, uint32_t, uint64_t, FluxoraInstallerReadCallback, ifstream, CallbackPackageReader, readCallback_, readUserData_ (+12 more)
+Cohesion: 0.22
+Nodes (16): path, createDesktopShortcut(), desktopShortcutPath(), installPackageFromReader(), installPackageStream(), InstallResult, applicationPath, createdDesktopShortcut (+8 more)
 
 ### Community 222 - "Community 222"
 Cohesion: 0.13
@@ -1763,8 +1810,8 @@ Cohesion: 0.20
 Nodes (13): NormalizedExtension, path, vector, wstring_view, EmbeddedDefinitionsRegisterBundledSupportModulesWithNarrowProviders, EmbeddedRegistryFindsSkyrimByIdExecutableAndDomainHint, GameSupportRegistryTests, InstallPathLookupReturnsConfidenceMetadata (+5 more)
 
 ### Community 243 - "Community 243"
-Cohesion: 0.14
-Nodes (23): BuildPathSettingsService, DownloadService, function, Logger, ModService, ofstream, ProfileOrderService, string (+15 more)
+Cohesion: 0.17
+Nodes (21): BuildPathSettingsService, DownloadService, Logger, ModService, ofstream, ProfileOrderService, string, uint16_t (+13 more)
 
 ### Community 244 - "Community 244"
 Cohesion: 0.13
@@ -1796,7 +1843,7 @@ Nodes (65): addBrowserFindings(), addVisualContrastFindings(), addVisualContrast
 
 ### Community 251 - "Community 251"
 Cohesion: 0.06
-Nodes (65): buildMissingTargetDirective(), buildResolvedContextDirective(), buildTargetSelectionDirective(), buildUpdateDirective(), cli(), compareSemver(), computeUpdateDirective(), contextSourcePath() (+57 more)
+Nodes (64): buildMissingTargetDirective(), buildResolvedContextDirective(), buildTargetSelectionDirective(), buildUpdateDirective(), cli(), compareSemver(), computeUpdateDirective(), contextSourcePath() (+56 more)
 
 ### Community 252 - "Community 252"
 Cohesion: 0.18
@@ -1832,7 +1879,7 @@ Nodes (12): GameDefinition, string, vector, GameDefinitionLoader, loadDefinition
 
 ### Community 260 - "Community 260"
 Cohesion: 0.11
-Nodes (56): Be, Hy(), m(), qy(), _(), ae(), be(), bt() (+48 more)
+Nodes (55): m(), o(), qy(), _(), ae(), be(), bt(), Ce() (+47 more)
 
 ### Community 261 - "Community 261"
 Cohesion: 0.21
@@ -1867,8 +1914,8 @@ Cohesion: 0.14
 Nodes (15): ArchiveComparisonKeyDocumentsPlatformCaseRules, ArchiveEntryRejectsTraversalAndRootedPaths, PathSafetyIssueCode, PathSafetyResult, ContainedWritePathAllowsNonAsciiDirectoriesInsideRoot, DirectoryWriteRootBlocksWindowsSystemFolders, LongPathValidationAllowsLongValidPathsAndRejectsOversizedComponents, PathSafetyService (+7 more)
 
 ### Community 269 - "Community 269"
-Cohesion: 0.12
-Nodes (27): getLegacyLiveSessionsDir(), isLiveServerPidReachable(), readLiveServerInfo(), applyEvent(), baseSnapshot(), COMPLETED_PHASES, createLiveSessionStore(), getJournalPath() (+19 more)
+Cohesion: 0.08
+Nodes (44): firstExisting(), getDesignSidecarCandidates(), getDesignSidecarPath(), getImpeccableDir(), getLegacyLiveAnnotationsDir(), getLegacyLiveConfigPath(), getLegacyLiveServerPath(), getLegacyLiveSessionsDir() (+36 more)
 
 ### Community 270 - "Community 270"
 Cohesion: 0.17
@@ -1879,8 +1926,8 @@ Cohesion: 0.09
 Nodes (48): addColorObject(), addDesignColor(), addRoundedScale(), addRoundedToken(), addSidecarColors(), addSidecarRadii(), addTypographyFonts(), canonicalDesignFindingKey() (+40 more)
 
 ### Community 272 - "Community 272"
-Cohesion: 0.14
-Nodes (29): activeElementDeep(), applyGlobalBarLabelState(), armPageChatForTyping(), collapsePageChat(), expandPageChat(), focusConfigureInput(), focusPageChatInput(), focusSteerChat() (+21 more)
+Cohesion: 0.08
+Nodes (48): activeElementDeep(), armPageChatForTyping(), attachSteerFocusDebug(), clearSteerAwaitTimer(), collapsePageChat(), configureVoiceContext(), expandPageChat(), finishVoiceSession() (+40 more)
 
 ### Community 273 - "Community 273"
 Cohesion: 0.10
@@ -1948,7 +1995,7 @@ Nodes (10): type, webviews, windows, items, description, items, type, descriptio
 
 ### Community 294 - "Community 294"
 Cohesion: 0.22
-Nodes (9): PathSafetyService, archiveEntryComparisonKey, canonicalize, isSameOrInside, validateArchiveEntryPath, validateContainedPath, validateDirectoryWriteRoot, validateRelativePath (+1 more)
+Nodes (15): addProfileTextFileCandidates(), collectLocalFilesystemScan(), collectLocalReadTextFileCandidates(), collectModTextFileCandidatesDirectory(), displayPathSegment(), errorMessage(), extensionForRelativePath(), localReadTextFilePathAllowed() (+7 more)
 
 ### Community 295 - "Community 295"
 Cohesion: 0.08
@@ -2044,19 +2091,19 @@ Nodes (10): LaunchTrackingKind, uint32_t, GameScriptExtenderRules, expectedChild
 
 ### Community 318 - "Community 318"
 Cohesion: 0.02
-Nodes (132): AiBasicBuildExecutionRequest, ExecutablesWorkspaceState, AiSafeActionCatalog, FluxoraSkillCatalog, CreateFluxoraProjectRequest, DialogPickResult, DialogSaveResult, FluxoraAiAutonomousJob (+124 more)
+Nodes (126): AiBasicBuildExecutionRequest, AiSafeActionCatalog, FluxoraSkillCatalog, CreateFluxoraProjectRequest, DialogPickResult, DialogSaveResult, FluxoraAiAutonomousJob, FluxoraAiAutonomousJobBackgroundMode (+118 more)
 
 ### Community 319 - "Community 319"
 Cohesion: 0.18
-Nodes (26): JsonWriter, path, uint32_t, vector, wchar_t, appendGameProfileSettingsMounts(), appendProfileSavesMount(), appendProfileSettingsMount() (+18 more)
+Nodes (14): vector, applyPlanToDirectory(), containsTarget(), copyThenRemoveFile(), isPlainRegularFile(), isRegularFile(), PlannedFileTransfer, canRename (+6 more)
 
 ### Community 320 - "Community 320"
 Cohesion: 0.20
 Nodes (10): path, FomodInstallContext, destinationDirectory, gameDataFolders, gameDirectory, identity, modsDirectory, packageDirectory (+2 more)
 
 ### Community 321 - "Community 321"
-Cohesion: 0.30
-Nodes (15): wstring, wstring_view, buildManifestPath(), buildProjectDirectory(), buildUpdatedManifest(), equalsIgnoreCase(), hasExecutableExtension(), hasExtensionIgnoreCase() (+7 more)
+Cohesion: 0.16
+Nodes (14): optional, ExecutableService, vector, BuildPathSettingsService, ExecutableIconService, initialize, initialized_, isInitialized (+6 more)
 
 ### Community 322 - "Community 322"
 Cohesion: 0.16
@@ -2151,36 +2198,36 @@ Cohesion: 0.32
 Nodes (7): path, size_t, BulkCopyStopsDuringActiveCancellableFileCopy, ModOrganizerImportStopsWhenOperationMarkerExists, OperationCancellationTests, TEST(), writeBinaryFile()
 
 ### Community 347 - "Community 347"
-Cohesion: 0.16
-Nodes (21): BuildPathSettingsService, DWORD, ExecutableService, GameVfsRules, Logger, PathSafetyResult, ProfileOrderService, VirtualFileSystemService() (+13 more)
+Cohesion: 0.29
+Nodes (7): Bad, Good, Key Points, Migration from 2021, See Also, unsafe-extern-block, Why It Matters
 
 ### Community 348 - "Community 348"
 Cohesion: 0.12
 Nodes (16): Assumptions, Attack Surface, Mitigations, and Attacker Stories, Attacker-Controlled Inputs, Billing, Budget, And Resource Abuse, Credential And Secret Leakage, External Network, SSRF, And Web Content, Fluxora AI Threat Model, Overview (+8 more)
 
 ### Community 349 - "Community 349"
-Cohesion: 0.02
-Nodes (77): Bad, doc-all-public, Enforcement, Good, See Also, What to Document, Why It Matters, Bad (+69 more)
+Cohesion: 0.17
+Nodes (12): wstring, FluxPackInstallProgress, currentItem, currentStep, failedSourceCount, installedSourceCount, overallPercent, pendingSourceCount (+4 more)
 
 ### Community 350 - "Community 350"
-Cohesion: 0.09
-Nodes (23): int64_t, ProfileOrderItemRecord, uint64_t, uintmax_t, wchar_t, appendUniqueDirectory(), comparablePathText(), isOutputModRecord() (+15 more)
+Cohesion: 0.17
+Nodes (12): FluxPackInstallResult, appliedConfigCount, appliedProfileOrderItemCount, buildName, configPath, failedSourceCount, hasWarnings, installedSourceCount (+4 more)
 
 ### Community 351 - "Community 351"
-Cohesion: 0.13
-Nodes (46): DWORD, error_code, GameExecutableLaunchResult, PathSafetyResult, ResolvedExecutableLaunch, string, addRootBuilderLaunchCacheDesiredFile(), collectRootBuilderLaunchCacheDesiredState() (+38 more)
+Cohesion: 0.12
+Nodes (33): error_code, PathSafetyResult, addRootBuilderLaunchCacheDesiredFile(), collectRootBuilderLaunchCacheDesiredState(), collectRootBuilderLaunchCacheDirectoryOverlay(), copyRootBuilderLaunchCacheFile(), filesystemErrorForLog(), pathSafetyErrorForLog() (+25 more)
 
 ### Community 352 - "Community 352"
-Cohesion: 0.02
-Nodes (92): api-non-exhaustive, Bad, Good, How It Works, Non-Exhaustive Variants, See Also, Struct Usage, When to Use (+84 more)
+Cohesion: 0.17
+Nodes (12): Bad, Comparison: Module Structure vs Public API, Glob Re-exports, Good, Pattern: Feature-Gated Re-exports, Pattern: Prelude Module, Pattern: Rename on Re-export, Pattern: Selective Re-export (+4 more)
 
 ### Community 353 - "Community 353"
 Cohesion: 0.33
 Nodes (5): Capture the node, Inline drafting + `node write` (default and fallback), kk-add, Probe + optional sub-agent delegation (context isolation), Resolve the active harness
 
 ### Community 354 - "Community 354"
-Cohesion: 0.19
-Nodes (12): GameRelativePath, optional, PlacementTarget, Logger, ManualOverrideOption, reason, safeTargets, sourcePath (+4 more)
+Cohesion: 0.08
+Nodes (38): applyOriginalAttrsToSvelteAnchor(), applyParamDefaults(), applyParamValue(), closedClipPath(), commitAcceptedSvelteComponentToDom(), elementMatchesOriginalMarkup(), ensureInsertPlaceholder(), findInsertAnchorInDom() (+30 more)
 
 ### Community 355 - "Community 355"
 Cohesion: 0.22
@@ -2208,19 +2255,19 @@ Nodes (8): GameExecutableRole, GameExecutableWorkingDirectoryKind, GameExecutabl
 
 ### Community 361 - "Community 361"
 Cohesion: 0.07
-Nodes (36): assembleLiveBrowserScript(), assertLiveBrowserScriptParts(), LIVE_BROWSER_SCRIPT_PARTS, readLiveBrowserScriptParts(), resolveLiveBrowserScriptParts(), summarizeManualApplyFailures(), removeAllSvelteComponentSessions(), acknowledgePendingEvent() (+28 more)
+Nodes (37): assembleLiveBrowserScript(), assertLiveBrowserScriptParts(), LIVE_BROWSER_SCRIPT_PARTS, readLiveBrowserScriptParts(), resolveLiveBrowserScriptParts(), summarizeManualApplyFailures(), removeAllSvelteComponentSessions(), acknowledgePendingEvent() (+29 more)
 
 ### Community 362 - "Community 362"
-Cohesion: 0.08
-Nodes (44): AiAutonomousJobStorage, serializeAiBuildContextSnapshot(), AiHostRunSettings, AiLocalRunCallbacks, AiPromptFingerprint, aiResponseDiagnosticMessages(), AiRuntimeLogChannel, aiSessionBuildLabel() (+36 more)
+Cohesion: 0.04
+Nodes (132): AI_AUTONOMOUS_JOB_BLOCKED_REASONS, AiAutonomousJobCreateOptions, aiAutonomousJobQueueStorageKey(), AiAutonomousJobStorage, appendProgress(), attachAiAutonomousJobPlan(), blockAiAutonomousJob(), cancelAiAutonomousJob() (+124 more)
 
 ### Community 363 - "Community 363"
 Cohesion: 0.25
 Nodes (8): file_time_type, ProjectConfigCatalogEntry, lastWriteTime, path, ProjectConfigFileStamp, fileSize, lastWriteTime, readProjectConfigFileStamp()
 
 ### Community 364 - "Community 364"
-Cohesion: 0.33
-Nodes (16): path, uintmax_t, PathSafetyWriteOptions, absoluteOrLexical(), canonicalize(), hasKnownRoot(), isSameOrInside(), isSystemPath() (+8 more)
+Cohesion: 0.16
+Nodes (14): ModService, ProfileOrderService, vector, BuildPathSettingsService, Logger, createModSeparator, deleteModSeparator, initialize (+6 more)
 
 ### Community 365 - "Community 365"
 Cohesion: 0.07
@@ -2251,8 +2298,8 @@ Cohesion: 0.29
 Nodes (7): LaunchTrackingKind, uint32_t, LaunchTrackingMetadata, expectedChildProcessNames, handoffDisplayName, handoffTimeoutMs, kind
 
 ### Community 372 - "Community 372"
-Cohesion: 0.33
-Nodes (5): string, string_view, wstring_view, throwIfUnsafe(), toNarrow()
+Cohesion: 0.15
+Nodes (7): AppTitlebar(), AppTitlebarMode, AppTitlebarProps, windowsCaptionGlyphs, __dirname, __filename, repoRoot
 
 ### Community 373 - "Community 373"
 Cohesion: 0.05
@@ -2263,16 +2310,16 @@ Cohesion: 0.15
 Nodes (12): Chat Rendering And Markdown, Dependency Audit And License Audit, Fluxora AI Security Hardening, Hardening Checklist, Owner/Legal Review Gate, Prompt Injection Red-Team Suite, Provider Terms/Data-Retention Matrix, Renderer Secrets And Storage (+4 more)
 
 ### Community 375 - "Community 375"
-Cohesion: 0.15
-Nodes (22): AiChatSettings, AiProviderDiagnostic, AiRoutingPresetOption, aiRoutingPresetOptions, connectedRemoteDefaultModelId(), defaultAiChatSettings, hostStatusErrorDetail(), isLocalDryRunProvider() (+14 more)
+Cohesion: 0.17
+Nodes (12): Bad, Build Time Trade-offs, Full Release Profile, Good, How It Works, Measuring Impact, opt-codegen-units, Per-Profile Configuration (+4 more)
 
 ### Community 376 - "Community 376"
 Cohesion: 0.05
 Nodes (41): 0) Safety, boundaries, and anti-abuse constraints (MUST FOLLOW), 1.1 Generation mode (default), 1.2 Passive review mode (always on while editing), 1.3 Active audit mode (explicit scan request), 1) Operating modes, 2.1 Untrusted input (treat as attacker-controlled unless proven otherwise), 2.2 State-changing request, 2.3 Required audit finding format (+33 more)
 
 ### Community 377 - "Community 377"
-Cohesion: 0.19
-Nodes (20): agentFromStep(), assumptionsForKind(), buildPreparationReadSteps(), classifyTask(), compatibilityReadSteps(), createFluxoraAiTaskPlanningBundle(), createMutation(), createStep() (+12 more)
+Cohesion: 0.15
+Nodes (7): FocusNavigationDocument, focusNavigationListenerOptions, installTabFocusNavigation(), __dirname, __filename, repoRoot, TestDocument
 
 ### Community 378 - "Community 378"
 Cohesion: 0.25
@@ -2283,12 +2330,12 @@ Cohesion: 0.25
 Nodes (8): 8. ANTI-AI-SLOP RULES, Carousel / marquee slop (layout), Content slop, Data / KPI slop, Density slop, Layout slop, Typography slop, Visual slop
 
 ### Community 380 - "Community 380"
-Cohesion: 0.18
-Nodes (8): OperationOverlay(), OperationOverlayKind, OperationOverlayProps, OperationOverlayState, OperationOverlayTone, __dirname, __filename, repoRoot
+Cohesion: 0.05
+Nodes (45): AI_READ_ONLY_BUILD_TOOLS, DownloadCapabilityView, downloadDisplayName(), downloadProgressValue(), downloadRawTitle(), downloadStatusText(), downloadTitle(), DownloadWorkspaceAction (+37 more)
 
 ### Community 381 - "Community 381"
-Cohesion: 0.20
-Nodes (10): NgioGenerationClearsPreviousGeneratedModGrassBeforeLaunching, NgioGenerationClearsStaleOverwriteGrassBeforeLaunching, NgioGenerationMovesOverwriteGrassIntoGeneratedMod, NgioGenerationRecreatesMissingPrecacheMarkerWhenOutputIsMissing, NgioGenerationRestartsWhilePrecacheMarkerStillExistsAndOutputIsMissing, NgioGenerationStopsWhenOperationCancelMarkerExists, NgioGenerationStopsWhenOutputExistsAndPrecacheMarkerRemains, NgioGenerationStopsWhenServiceShutsDownAfterLaunch (+2 more)
+Cohesion: 0.14
+Nodes (14): InstalledModRecord, vector, wstring_view, NgioGenerationClearsPreviousGeneratedModGrassBeforeLaunching, NgioGenerationClearsStaleOverwriteGrassBeforeLaunching, NgioGenerationMovesOverwriteGrassIntoGeneratedMod, NgioGenerationRecreatesMissingPrecacheMarkerWhenOutputIsMissing, NgioGenerationRestartsWhilePrecacheMarkerStillExistsAndOutputIsMissing (+6 more)
 
 ### Community 382 - "Community 382"
 Cohesion: 0.25
@@ -2334,9 +2381,13 @@ Nodes (7): 3.A Stack, 3.B State, 3.C Icons, 3.D Emoji Policy, 3. DEFAULT ARCHITE
 Cohesion: 0.29
 Nodes (7): 6.A Hardware Acceleration, 6.B Reduced Motion (mandatory), 6.C Dark Mode (mandatory for any consumer-facing page), 6.D Core Web Vitals Targets, 6.E DOM Cost, 6.F Z-Index Restraint, 6. PERFORMANCE & ACCESSIBILITY GUARDRAILS
 
+### Community 393 - "Community 393"
+Cohesion: 0.02
+Nodes (109): anti-format-hot-path, Bad, Clippy Lint, Comparison, Good, Pattern: Display Implementation, Pattern: Formatter Buffer Pool, See Also (+101 more)
+
 ### Community 394 - "Community 394"
 Cohesion: 0.10
-Nodes (43): appendCssToSvelteStyle(), appendSanitizedCssRule(), applyDeferredSvelteComponentAccepts(), bakeParamValuesInCss(), buildInsertVariantStub(), buildPropContract(), buildPropsScript(), buildVariantStub() (+35 more)
+Nodes (42): appendCssToSvelteStyle(), appendSanitizedCssRule(), applyDeferredSvelteComponentAccepts(), bakeParamValuesInCss(), buildInsertVariantStub(), buildPropContract(), buildPropsScript(), buildVariantStub() (+34 more)
 
 ### Community 395 - "Community 395"
 Cohesion: 0.29
@@ -2355,8 +2406,8 @@ Cohesion: 0.18
 Nodes (33): AppHandle, BufReader, Child, ChildStdin, ChildStdout, Value, ai_connection_result(), ai_host_state() (+25 more)
 
 ### Community 399 - "Community 399"
-Cohesion: 0.08
-Nodes (26): ExecutableName, GameExecutableDefinition, GameExecutableRoles, GameVfsRules, set, vector, ExecutableSupportRules, executables (+18 more)
+Cohesion: 0.06
+Nodes (35): CapabilitySet, GameId, GameLaunchRules, UiTemplateId, wstring, CompiledGameRules, capabilities, contentLayout (+27 more)
 
 ### Community 400 - "Community 400"
 Cohesion: 0.05
@@ -2375,8 +2426,8 @@ Cohesion: 0.21
 Nodes (19): Path, Vec, PathBuf, ai_host_cargo_binary_name(), ai_host_executable_name(), candidate_ai_host_paths(), candidate_host_paths(), executable_log_dir() (+11 more)
 
 ### Community 404 - "Community 404"
-Cohesion: 0.05
-Nodes (36): api-extension-trait, Bad, Convention: Ext Suffix, Ecosystem Examples, Generic Extensions with Bounds, Good, Scoped Extensions, See Also (+28 more)
+Cohesion: 0.17
+Nodes (12): FluxPackSummary, buildName, customConfigCount, customPatchCount, formatVersion, generatedAssetCount, generatedAssetsIncluded, installPlanAvailable (+4 more)
 
 ### Community 405 - "Community 405"
 Cohesion: 0.29
@@ -2411,8 +2462,8 @@ Cohesion: 0.47
 Nodes (3): GameCapability, uint32_t, CapabilitySet
 
 ### Community 413 - "Community 413"
-Cohesion: 0.29
-Nodes (7): Bad, Common RAII Patterns, Good, scopeguard Crate, See Also, test-fixture-raii, Why It Matters
+Cohesion: 0.16
+Nodes (18): BuildTemplate, DetectionConfidence, JsonWriter, ProjectStateValidation, ProjectService(), TemplateService, confidenceAllowsLegacyTemplateMigration(), defaultGameExecutablePath() (+10 more)
 
 ### Community 414 - "Community 414"
 Cohesion: 0.06
@@ -2427,16 +2478,16 @@ Cohesion: 0.06
 Nodes (31): 0) Safety, boundaries, and anti-abuse constraints (MUST FOLLOW), 1.1 Generation mode (default), 1.2 Passive review mode (always on while editing), 1.3 Active audit mode (explicit scan request), 1) Operating modes, 2.1 Untrusted input (treat as attacker-controlled unless proven otherwise), 2.2 High-risk “sinks” in jQuery contexts, 2.3 Required audit finding format (+23 more)
 
 ### Community 418 - "Community 418"
-Cohesion: 0.09
-Nodes (19): Bad, coll-map-choice, Good, See Also, Which to Use, Why It Matters, Bad, coll-set-membership (+11 more)
+Cohesion: 0.18
+Nodes (11): uintmax_t, FluxPackProviderProgress, completedCount, currentItem, displayName, failedCount, pendingCount, progressPercent (+3 more)
 
 ### Community 419 - "Community 419"
 Cohesion: 0.17
 Nodes (11): allowedTools, description, displayName, examplePrompts, id, origin, requiredProviderCapabilities, schema (+3 more)
 
 ### Community 420 - "Community 420"
-Cohesion: 0.12
-Nodes (16): Avoid Redundant Copy, Confirmation Dialogs: Use Sparingly, Consistency: The Terminology Problem, Don't Blame the User, Empty States Are Opportunities, Error Message Templates, Error Messages: The Formula, Form Instructions (+8 more)
+Cohesion: 0.13
+Nodes (15): Alpha Is A Design Smell, Building Functional Palettes, Color & Contrast, Color Spaces: Use OKLCH, Contrast & Accessibility, Dangerous Color Combinations, Dark Mode Is Not Inverted Light Mode, Palette Structure (+7 more)
 
 ### Community 421 - "Community 421"
 Cohesion: 0.07
@@ -2459,8 +2510,8 @@ Cohesion: 0.33
 Nodes (5): FomodInstallerService, analyze, hasXmlInstaller, install, rememberSelection
 
 ### Community 426 - "Community 426"
-Cohesion: 0.05
-Nodes (35): Bad, Build Time Trade-offs, Full Release Profile, Good, How It Works, Measuring Impact, opt-codegen-units, Per-Profile Configuration (+27 more)
+Cohesion: 0.18
+Nodes (11): Bad, Combining with Cow, Common Pattern: Cow for Static Strings, Good, mem-zero-copy, memchr for Fast Searching, See Also, Using bytes::Bytes (+3 more)
 
 ### Community 427 - "Community 427"
 Cohesion: 0.17
@@ -2479,20 +2530,20 @@ Cohesion: 0.40
 Nodes (5): 8.A Token Strategy (pick one, stick to it), 8.B Do Not Prescribe Specific Colors Here, 8.C Default Mode, 8.D Test in Both Modes Before Finishing, 8. DARK MODE PROTOCOL
 
 ### Community 431 - "Community 431"
-Cohesion: 0.13
-Nodes (15): Alpha Is A Design Smell, Building Functional Palettes, Color & Contrast, Color Spaces: Use OKLCH, Contrast & Accessibility, Dangerous Color Combinations, Dark Mode Is Not Inverted Light Mode, Palette Structure (+7 more)
+Cohesion: 0.19
+Nodes (12): GameRelativePath, optional, PlacementTarget, Logger, ManualOverrideOption, reason, safeTargets, sourcePath (+4 more)
 
 ### Community 432 - "Community 432"
-Cohesion: 0.10
-Nodes (25): applyPlaceholderDimensions(), beginEditPin(), buildPlaceholderResizeHandles(), cancelEditingPin(), clampPlaceholderSize(), cursorForPlaceholderEdge(), ensureInsertPlaceholder(), finalizeEditingPin() (+17 more)
+Cohesion: 0.21
+Nodes (15): AiResearchBundle, byok_candidates_include_main_and_orchestration_gemini_models(), candidate_models(), cost_payload(), cost_payload_includes_orchestration_subagent_cost(), CostComputation, explicit_remote_model_upgrades_free_demo_to_byok_candidates(), fetch_url_calls_for() (+7 more)
 
 ### Community 433 - "Community 433"
 Cohesion: 0.11
 Nodes (19): NexusModsAuthService, wstring, AppSettingsService, Logger, connect, disconnect, initialize, initialized_ (+11 more)
 
 ### Community 434 - "Community 434"
-Cohesion: 0.18
-Nodes (11): anti-premature-optimize, Bad, Common Premature Optimizations, Document Optimizations, Good, Optimization Principles, Profile Tools, Profiling Workflow (+3 more)
+Cohesion: 0.05
+Nodes (34): Bad, Generic Functions, Good, Inline Variants, Measuring Inline Impact, opt-inline-always-rare, See Also, When #[inline(always)] Helps (+26 more)
 
 ### Community 435 - "Community 435"
 Cohesion: 0.17
@@ -2519,12 +2570,12 @@ Cohesion: 0.40
 Nodes (4): JsonSupportTests, ReaderRejectsMalformedJson, TEST(), WriterOutputRoundTripsThroughReader
 
 ### Community 441 - "Community 441"
-Cohesion: 0.17
-Nodes (12): wstring, FluxPackInstallProgress, currentItem, currentStep, failedSourceCount, installedSourceCount, overallPercent, pendingSourceCount (+4 more)
+Cohesion: 0.18
+Nodes (11): Benchmark-Driven Hints, Boolean Likely Wrapper (Nightly), Loop Optimization, Match Arm Ordering, Nightly: std::hint, opt-likely-hint, See Also, Stable: likely-stable Crate (+3 more)
 
 ### Community 442 - "Community 442"
-Cohesion: 0.06
-Nodes (35): CapabilitySet, GameId, GameLaunchRules, UiTemplateId, wstring, CompiledGameRules, capabilities, contentLayout (+27 more)
+Cohesion: 0.13
+Nodes (13): Bad, conc-atomic-ordering, Good, Ordering Quick Reference, See Also, Verification with loom, Why It Matters, Bad (+5 more)
 
 ### Community 443 - "Community 443"
 Cohesion: 0.40
@@ -2552,23 +2603,19 @@ Nodes (39): hasGeneratedHeader(), HEADER_MARKERS, isGeneratedFile(), isGitIgnore
 
 ### Community 450 - "Community 450"
 Cohesion: 0.18
-Nodes (11): Bad, Built-in Const Assertions, Cargo.toml, Documenting Size Constraints, Good, mem-assert-type-size, See Also, static_assertions Crate (+3 more)
+Nodes (11): anti-premature-optimize, Bad, Common Premature Optimizations, Document Optimizations, Good, Optimization Principles, Profile Tools, Profiling Workflow (+3 more)
 
 ### Community 451 - "Community 451"
 Cohesion: 0.13
 Nodes (15): Bad, Common Findings, criterion (Micro-benchmarks), DHAT (Heap Profiling), Evidence: Rust Performance Book, Flamegraphs (Recommended Start), Good, Instruments (macOS) (+7 more)
 
 ### Community 452 - "Community 452"
-Cohesion: 0.20
-Nodes (10): uintmax_t, ProjectDeleteProgress, currentItem, currentStep, deletedBytes, deletedEntries, overallPercent, phase (+2 more)
+Cohesion: 0.18
+Nodes (11): async-select-racing, Bad, Biased Selection, Cancellation Behavior, Common Patterns, Good, Loop with select!, Racing Multiple of Same Type (+3 more)
 
 ### Community 453 - "Community 453"
 Cohesion: 0.14
 Nodes (14): CI Configuration, Common Options, Configuration, GitHub Actions, GitLab CI, IDE Integration, Ignoring Files, lint-rustfmt-check (+6 more)
-
-### Community 454 - "Community 454"
-Cohesion: 0.18
-Nodes (11): Alternative: Explicit Opt-in, Bad, Full Configuration, Good, lint-pedantic-selective, Module-Level Overrides, Often Disabled, Recommended Pedantic Lints (+3 more)
 
 ### Community 455 - "Community 455"
 Cohesion: 0.50
@@ -2639,8 +2686,8 @@ Cohesion: 0.17
 Nodes (11): Additional patterns, Checklist, Example Reference, Isolate ticking state, Optimization Patterns, Overview, Prefer derived data outside render, Profiling Validation Steps (+3 more)
 
 ### Community 474 - "Community 474"
-Cohesion: 0.20
-Nodes (10): api-common-traits, Bad, Common Trait Bundles, Good, Manual Implementations, Minimum Recommended, See Also, Serde Traits (+2 more)
+Cohesion: 0.17
+Nodes (12): Allow for Specific Items, Combining with doc Attributes, Configuration, Good, Gradual Adoption, lint-missing-docs, Private Items, See Also (+4 more)
 
 ### Community 475 - "Community 475"
 Cohesion: 0.17
@@ -2652,7 +2699,7 @@ Nodes (12): Complete Cargo.toml, Configuration, Dependency Issues, Feature Issue
 
 ### Community 477 - "Community 477"
 Cohesion: 0.08
-Nodes (36): addOpToManualApplyChunk(), APPLY_EVENT_HARD_TIMEOUT_MS, APPLY_EVENT_SOFT_DEADLINE_MS, buildManualApplyAgentAction(), clearManualApplyTransaction(), collectManualApplyFiles(), compactManualApplyBatch(), compactManualApplyCandidates() (+28 more)
+Nodes (35): addOpToManualApplyChunk(), APPLY_EVENT_HARD_TIMEOUT_MS, APPLY_EVENT_SOFT_DEADLINE_MS, buildManualApplyAgentAction(), clearManualApplyTransaction(), collectManualApplyFiles(), compactManualApplyBatch(), compactManualApplyCandidates() (+27 more)
 
 ### Community 478 - "Community 478"
 Cohesion: 0.17
@@ -2663,24 +2710,24 @@ Cohesion: 0.17
 Nodes (12): Configuration, Example Catches, lint-warn-suspicious, Notable Lints in This Group, See Also, Suspicious Arithmetic, Suspicious Casts, Suspicious Comparisons (+4 more)
 
 ### Community 480 - "Community 480"
-Cohesion: 0.17
-Nodes (12): Bad, Benefits, Commands, Good, Member Crate Cargo.toml, Pattern: Crate Interdependencies, Pattern: Virtual Workspace, proj-workspace-large (+4 more)
+Cohesion: 0.27
+Nodes (11): cleanIgnoreValueDisplay(), extractFindingIgnoreValue(), extractFindingIgnoreValueRaw(), extractMotionIgnoreValue(), filterFindings(), formatFindingIgnoreCommand(), formatFindingLine(), isIgnoredFindingValue() (+3 more)
 
 ### Community 481 - "Community 481"
-Cohesion: 0.12
-Nodes (31): assumptions_for_kind(), build_preparation_steps(), chat_messages(), chat_response_payload(), compatibility_steps(), cost_pipeline_payload(), general_steps(), host_capabilities() (+23 more)
+Cohesion: 0.11
+Nodes (32): assumptions_for_kind(), build_preparation_steps(), chat_messages(), chat_response_payload(), compatibility_steps(), cost_pipeline_payload(), general_steps(), host_capabilities() (+24 more)
 
 ### Community 482 - "Community 482"
-Cohesion: 0.06
-Nodes (31): Assertions and Invariants, Bad, Combining with #[inline(never)], Common Cold Patterns, Good, Measuring Impact, opt-cold-unlikely, See Also (+23 more)
+Cohesion: 0.18
+Nodes (12): callbackPath(), CallbackResult, code, error, errorDescription, state, normalizeRequestTarget(), parseCallbackRequest() (+4 more)
 
 ### Community 485 - "Community 485"
-Cohesion: 0.17
-Nodes (12): FluxPackInstallResult, appliedConfigCount, appliedProfileOrderItemCount, buildName, configPath, failedSourceCount, hasWarnings, installedSourceCount (+4 more)
+Cohesion: 0.20
+Nodes (10): function, path, FluxPackExportRequest, configPath, includeGeneratedAssets, outputPath, FluxPackInstallRequest, fluxPackPath (+2 more)
 
 ### Community 486 - "Community 486"
-Cohesion: 0.17
-Nodes (12): FluxPackSummary, buildName, customConfigCount, customPatchCount, formatVersion, generatedAssetCount, generatedAssetsIncluded, installPlanAvailable (+4 more)
+Cohesion: 0.18
+Nodes (12): compactMod(), CompactModOrderItem, CompactOverwriteState, conflictCandidateFromMod(), conflictEvidenceCandidates(), localFilesystemCandidatePriority(), localFilesystemScanCandidates(), modFlags() (+4 more)
 
 ### Community 487 - "Community 487"
 Cohesion: 0.17
@@ -2695,8 +2742,8 @@ Cohesion: 0.17
 Nodes (11): allowedTools, description, displayName, examplePrompts, id, origin, requiredProviderCapabilities, schema (+3 more)
 
 ### Community 490 - "Community 490"
-Cohesion: 0.17
-Nodes (12): Allow for Specific Items, Combining with doc Attributes, Configuration, Good, Gradual Adoption, lint-missing-docs, Private Items, See Also (+4 more)
+Cohesion: 0.20
+Nodes (9): Bad, doc-examples-section, Good, Hide Setup Code, Multiple Examples, Running Doc Tests, See Also, Show Error Cases (+1 more)
 
 ### Community 491 - "Community 491"
 Cohesion: 0.18
@@ -2707,72 +2754,72 @@ Cohesion: 0.18
 Nodes (11): Configuration, Examples, lint-warn-style, Naming Issues, Non-Idiomatic Patterns, Notable Lints in This Group, Redundant Code, See Also (+3 more)
 
 ### Community 493 - "Community 493"
-Cohesion: 0.04
-Nodes (47): anti-expect-lazy, Bad, Decision Guide, Good, See Also, When expect() Is Appropriate, Why It Matters, anti-unwrap-abuse (+39 more)
+Cohesion: 0.18
+Nodes (11): anti-vec-for-slice, Bad, Clippy Detection, Deref Coercion, Good, Mutable Slices, Pattern: Accepting Multiple Types, See Also (+3 more)
 
 ### Community 496 - "Community 496"
-Cohesion: 0.20
-Nodes (10): Bad, Context Addition Pattern, Display vs Debug, err-lowercase-msg, Formatting Guidelines, Good, Rust Standard Library Convention, See Also (+2 more)
+Cohesion: 0.18
+Nodes (11): Alternative: Explicit Opt-in, Bad, Full Configuration, Good, lint-pedantic-selective, Module-Level Overrides, Often Disabled, Recommended Pedantic Lints (+3 more)
 
 ### Community 497 - "Community 497"
-Cohesion: 0.25
-Nodes (8): AI_CHAT_MARKDOWN_POLICY, isAiContextSourceUrl(), safeAiExternalUrl(), safeAiSourceUrl(), __dirname, __filename, repoRoot, tauriRoot
+Cohesion: 0.20
+Nodes (10): api-impl-into, AsRef vs Into, Bad, Builder Pattern with Into, Common Conversions, Good, Implement From, Not Into, See Also (+2 more)
 
 ### Community 498 - "Community 498"
-Cohesion: 0.20
-Nodes (10): anti-string-for-str, Bad, Clippy Detection, Deref Coercion, Good, Pattern: Flexible APIs, See Also, Similar Anti-patterns (+2 more)
+Cohesion: 0.18
+Nodes (11): Bad, Built-in Const Assertions, Cargo.toml, Documenting Size Constraints, Good, mem-assert-type-size, See Also, static_assertions Crate (+3 more)
 
 ### Community 499 - "Community 499"
-Cohesion: 0.25
-Nodes (8): Bad, Crate Root Example, doc-module-inner, Good, Key Sections for Module Docs, See Also, Where to Use Inner Docs, Why It Matters
+Cohesion: 0.20
+Nodes (10): ContentArea, PlacementPlanEntry, classification, contentArea, explanation, manualOverrideAllowed, safeManualTargets, sourcePath (+2 more)
 
 ### Community 500 - "Community 500"
 Cohesion: 0.20
-Nodes (10): api-impl-asref, AsRef vs Into vs Borrow, Bad, Common AsRef Implementations, Good, Implement AsRef for Custom Types, Pattern: Optional AsRef Bound, See Also (+2 more)
+Nodes (10): Bad, #[cold] for Unlikely Branches, Error Construction Functions, Good, likely/unlikely Hints, opt-inline-never-cold, Panic Paths, Pattern: Extract Cold Code (+2 more)
 
 ### Community 507 - "Community 507"
-Cohesion: 0.02
-Nodes (114): anti-stringly-typed, Bad, Error Messages, Good, Parsing Strings to Types, See Also, Why It Matters, With Serde (+106 more)
+Cohesion: 0.20
+Nodes (10): API Compatibility, Bad, Cargo.toml, Good, mem-thinvec, Memory Layout, See Also, ThinVec vs Vec (+2 more)
 
 ### Community 508 - "Community 508"
 Cohesion: 0.20
 Nodes (10): string, vector, AppSettingsService, BuildPathSettingsService, Logger, ModDescriptor, enabled, id (+2 more)
 
 ### Community 509 - "Community 509"
-Cohesion: 0.06
-Nodes (31): async-join-parallel, Bad, futures::join_all for Dynamic Collections, Good, join! vs try_join!, Limiting Concurrency, See Also, When NOT to Use join! (+23 more)
+Cohesion: 0.18
+Nodes (11): BOLT Post-Link Optimization, Build Script, Cargo Configuration, CI/CD Integration, opt-pgo-profile, Representative Workloads, See Also, Step-by-Step (+3 more)
 
 ### Community 510 - "Community 510"
-Cohesion: 0.20
-Nodes (10): Bad, Check Enum Sizes, Clippy Lint, Good, mem-box-large-variant, Pattern Matching with Boxed Variants, Recursive Types Require Boxing, See Also (+2 more)
+Cohesion: 0.04
+Nodes (52): Bad, Binary Naming, Explicit Configuration, Good, Pattern: Binary with Multiple Files, Pattern: Default Binary, Pattern: Shared Library Code, proj-bin-dir (+44 more)
 
 ### Community 511 - "Community 511"
 Cohesion: 0.18
 Nodes (11): Adjacent File Benefits, Consistency Rule, Example: Complex Module, mod.rs Benefits, proj-mod-rs-dir, See Also, Style 1: mod.rs (Recommended for larger modules), Style 2: Adjacent file (Recommended for smaller modules) (+3 more)
 
 ### Community 512 - "Community 512"
-Cohesion: 0.20
-Nodes (10): api-impl-into, AsRef vs Into, Bad, Builder Pattern with Into, Common Conversions, Good, Implement From, Not Into, See Also (+2 more)
+Cohesion: 0.17
+Nodes (12): Bad, Cargo Configuration, Checking Enabled Features, Common Target CPUs, Feature Detection at Runtime, Good, Multi-Architecture Builds, opt-target-cpu (+4 more)
 
 ### Community 513 - "Community 513"
 Cohesion: 0.18
 Nodes (10): A note on TLS, Avoid Using Incrementing IDs for Public IDs of Resources, Fixes, General Security Advice, Overrides, Overview, Report Format, Security Best Practices (+2 more)
 
 ### Community 514 - "Community 514"
-Cohesion: 0.29
-Nodes (14): cost_payload(), CostComputation, extract_supabase_credential_value(), fetch_url_calls_for(), normalize_supabase_credential(), safe_supabase_identifier(), skill_summary(), supabase_anon_key() (+6 more)
+Cohesion: 0.20
+Nodes (11): addConflictEvidenceFile(), collectConflictEvidence(), compactFileEntry(), conflictLooksRelevant(), conflictPairId(), entryHasConflictEvidence(), fileKindForPath(), localFileSample() (+3 more)
 
 ### Community 515 - "Community 515"
-Cohesion: 0.07
-Nodes (24): anti-collect-intermediate, Bad, Comparison, Good, Iterator Methods That Avoid Collection, Pattern: Deferred Collection, See Also, When Collection Is Needed (+16 more)
+Cohesion: 0.20
+Nodes (10): Bad, Check Enum Sizes, Clippy Lint, Good, mem-box-large-variant, Pattern Matching with Boxed Variants, Recursive Types Require Boxing, See Also (+2 more)
 
 ### Community 516 - "Community 516"
-Cohesion: 0.04
-Nodes (51): anti-over-abstraction, Bad, Good, Prefer Concrete Types in Private Code, Rule of Three, See Also, Signs of Over-Abstraction, When to Generalize (+43 more)
+Cohesion: 0.07
+Nodes (27): anti-type-erasure, Bad, Comparison, Good, impl Trait Positions, Pattern: Enum Instead of dyn, See Also, When to Use Box<dyn Trait> (+19 more)
 
 ### Community 517 - "Community 517"
-Cohesion: 0.15
-Nodes (21): AiResearchBundle, AiResearchCache, byok_candidates_include_main_and_orchestration_gemini_models(), candidate_models(), chat_response(), cost_payload_includes_orchestration_subagent_cost(), error_response(), explicit_remote_model_upgrades_free_demo_to_byok_candidates() (+13 more)
+Cohesion: 0.24
+Nodes (13): AiResearchCache, chat_response(), error_response(), handle_request(), health_payload(), main(), observe_prompt_cache(), prompt_cache_key() (+5 more)
 
 ### Community 518 - "Community 518"
 Cohesion: 0.20
@@ -2787,36 +2834,36 @@ Cohesion: 0.09
 Nodes (36): applySvelteKitLiveAdapter(), buildSvelteLiveRootComponent(), defaultSvelteLayout(), detectSvelteKitProject(), ensureSvelteLiveRootComponent(), escapeRegExp(), fileIncludes(), findSvelteKitAppHtml() (+28 more)
 
 ### Community 521 - "Community 521"
-Cohesion: 0.16
-Nodes (26): call_gemini(), endpoint_for_provider(), last_user_prompt(), local_provider_credential(), local_reply(), OrchestratedChatReply, provider_chat(), provider_credential() (+18 more)
+Cohesion: 0.15
+Nodes (27): call_gemini(), endpoint_for_provider(), last_user_prompt(), local_provider_credential(), local_reply(), OrchestratedChatReply, provider_chat(), provider_credential() (+19 more)
 
 ### Community 522 - "Community 522"
 Cohesion: 0.20
-Nodes (10): Bad, Entry API Methods, Good, Pattern: Complex Entry Logic, Pattern: Count Occurrences, Pattern: Group By, perf-entry-api, Performance (+2 more)
+Nodes (10): Assertions and Invariants, Bad, Combining with #[inline(never)], Common Cold Patterns, Good, Measuring Impact, opt-cold-unlikely, See Also (+2 more)
 
 ### Community 523 - "Community 523"
-Cohesion: 0.20
-Nodes (10): Avoid Pointer Chasing, Bad, Good, Hot/Cold Splitting, Measuring Cache Performance, Memory Layout Attributes, opt-cache-friendly, Prefetching (+2 more)
+Cohesion: 0.17
+Nodes (12): Async Mocking, Basic Usage, Design for Testability, Expectations, Mocking External Traits, Predicates, Return Values, See Also (+4 more)
 
 ### Community 524 - "Community 524"
-Cohesion: 0.18
-Nodes (11): Bad, get_unchecked for Proven Safety, Good, Iterator Patterns, opt-bounds-check, See Also, Slice Patterns, Split for Parallel Access (+3 more)
+Cohesion: 0.24
+Nodes (10): BuildPathSettingsService, ExecutableService, Logger, ModService, ProfileOrderService, ProjectService, IGrassCacheProcessRunner, GrassCacheService() (+2 more)
 
 ### Community 525 - "Community 525"
-Cohesion: 0.18
-Nodes (11): Bad, Combining with Cow, Common Pattern: Cow for Static Strings, Good, mem-zero-copy, memchr for Fast Searching, See Also, Using bytes::Bytes (+3 more)
+Cohesion: 0.20
+Nodes (10): anti-string-for-str, Bad, Clippy Detection, Deref Coercion, Good, Pattern: Flexible APIs, See Also, Similar Anti-patterns (+2 more)
 
 ### Community 526 - "Community 526"
 Cohesion: 0.22
 Nodes (5): __dirname, __filename, oldFrontendPath, repoRoot, tauriRoot
 
 ### Community 527 - "Community 527"
-Cohesion: 0.18
-Nodes (11): uintmax_t, FluxPackProviderProgress, completedCount, currentItem, displayName, failedCount, pendingCount, progressPercent (+3 more)
+Cohesion: 0.20
+Nodes (10): Alternative: References, Bad, Good, own-move-large, Pattern: Builder Returns Boxed, Profile First, See Also, Stack vs Heap Tradeoffs (+2 more)
 
 ### Community 528 - "Community 528"
-Cohesion: 0.27
-Nodes (11): cleanIgnoreValueDisplay(), extractFindingIgnoreValue(), extractFindingIgnoreValueRaw(), extractMotionIgnoreValue(), filterFindings(), formatFindingIgnoreCommand(), formatFindingLine(), isIgnoredFindingValue() (+3 more)
+Cohesion: 0.20
+Nodes (10): uintmax_t, ProjectDeleteProgress, currentItem, currentStep, deletedBytes, deletedEntries, overallPercent, phase (+2 more)
 
 ### Community 529 - "Community 529"
 Cohesion: 0.20
@@ -2827,12 +2874,12 @@ Cohesion: 0.13
 Nodes (39): ACTIONS, addIgnoreFile(), addIgnoreRule(), addIgnoreValue(), DETECTOR_CONFIG_KEYS, detectorSection(), fileHasImpeccableHookMarker(), HOOK_MANIFEST_TARGETS (+31 more)
 
 ### Community 531 - "Community 531"
-Cohesion: 0.20
-Nodes (10): async-clone-before-await, Bad, Good, Minimizing Clones, MutexGuard Across Await, Scope-Based Approach, See Also, Spawn Pattern (+2 more)
+Cohesion: 0.28
+Nodes (9): NexusModsAuthStatus, NexusModsStoredAuth, buildStatus(), disconnect(), OAuthConfig, clientId, clientSecret, redirectUri (+1 more)
 
 ### Community 532 - "Community 532"
-Cohesion: 0.18
-Nodes (11): Anti-Patterns Verdict, Design Health Score, Generate Combined Critique Report, Minor Observations, Overall Impression, Persona Red Flags, Priority Issues, Questions to Consider (+3 more)
+Cohesion: 0.20
+Nodes (10): async-clone-before-await, Bad, Good, Minimizing Clones, MutexGuard Across Await, Scope-Based Approach, See Also, Spawn Pattern (+2 more)
 
 ### Community 533 - "Community 533"
 Cohesion: 0.18
@@ -2847,20 +2894,20 @@ Cohesion: 0.08
 Nodes (23): FORBIDDEN_MANUAL_EDIT_TEXT_CHARS, INSERT_POSITIONS, isValidId(), isValidVariantId(), validateAnnotationFields(), validateEvent(), validateInsertGenerate(), validateManualEditEvent() (+15 more)
 
 ### Community 536 - "Community 536"
-Cohesion: 0.14
-Nodes (18): detectCsp(), INLINE_HEADER_SIGNALS, LAYOUT_EXTS, MONOREPO_HELPER_SIGNALS, NUXT_ROUTE_RULES_SIGNALS, NUXT_SECURITY_SIGNALS, SCAN_EXTS, SKIP_DIRS (+10 more)
+Cohesion: 0.20
+Nodes (10): detectCsp(), INLINE_HEADER_SIGNALS, LAYOUT_EXTS, MONOREPO_HELPER_SIGNALS, NUXT_ROUTE_RULES_SIGNALS, NUXT_SECURITY_SIGNALS, SCAN_EXTS, SKIP_DIRS (+2 more)
 
 ### Community 537 - "Community 537"
-Cohesion: 0.03
-Nodes (69): Bad, Building Context Chains, Displaying Error Chains, err-context-chain, Good, See Also, Why It Matters, With thiserror (+61 more)
+Cohesion: 0.22
+Nodes (8): anti-unwrap-abuse, Bad, Clippy Lint, expect() Is Slightly Better, Good, See Also, When unwrap() Is Acceptable, Why It Matters
 
 ### Community 538 - "Community 538"
-Cohesion: 0.18
-Nodes (11): Bad, Cautions, Evidence from ripgrep, Generic Functions, Good, Inline Attributes, opt-inline-small, See Also (+3 more)
+Cohesion: 0.20
+Nodes (10): async-broadcast-pubsub, Bad, Broadcast Semantics, Broadcast vs Watch, Clone Requirement, Event Bus Pattern, Good, Handling Lagging Receivers (+2 more)
 
 ### Community 539 - "Community 539"
 Cohesion: 0.20
-Nodes (10): Bad, Box<str> for Immutable Strings, Conversion Patterns, Good, mem-boxed-slice, Memory Layout, Real-World Example, See Also (+2 more)
+Nodes (9): CapabilitySet, ContentLayoutAnalysisRequest, ContentLayoutArchiveEntry, ContentLayoutSupportRules, vector, IContentLayoutRulesProvider, requestForRules(), TestContentLayoutRulesProvider (+1 more)
 
 ### Community 540 - "Community 540"
 Cohesion: 0.12
@@ -2871,68 +2918,68 @@ Cohesion: 0.33
 Nodes (10): cleaned_process_names(), fluxora_wait_for_launch_ready(), fluxora_wait_for_process_exit(), is_process_running(), launch_process_display_name(), LaunchProcessWatchRequest, process_watch_poll_interval(), process_watch_request() (+2 more)
 
 ### Community 542 - "Community 542"
-Cohesion: 0.22
-Nodes (9): api-parse-dont-validate, Bad, Combining with Display, Evidence from sqlx, Good, More Examples, Parsing at Boundaries, See Also (+1 more)
+Cohesion: 0.09
+Nodes (20): async-oneshot-response, Bad, Closed Detection, Error Handling, Good, Request-Response Pattern, Response Type Wrapper, See Also (+12 more)
 
 ### Community 543 - "Community 543"
 Cohesion: 0.20
 Nodes (10): Bad, Common Uses, Expressing Borrowing, Expressing Ownership, Good, See Also, Type-Level State Machine, type-phantom-marker (+2 more)
 
 ### Community 544 - "Community 544"
-Cohesion: 0.18
-Nodes (11): BOLT Post-Link Optimization, Build Script, Cargo Configuration, CI/CD Integration, opt-pgo-profile, Representative Workloads, See Also, Step-by-Step (+3 more)
+Cohesion: 0.09
+Nodes (20): Abort on Drop, async-joinset-structured, Bad, Dynamic Task Addition, Error Handling Pattern, Good, JoinSet vs join_all, See Also (+12 more)
 
 ### Community 545 - "Community 545"
-Cohesion: 0.05
-Nodes (40): async-broadcast-pubsub, Bad, Broadcast Semantics, Broadcast vs Watch, Clone Requirement, Event Bus Pattern, Good, Handling Lagging Receivers (+32 more)
+Cohesion: 0.18
+Nodes (11): Anti-Patterns Verdict, Design Health Score, Generate Combined Critique Report, Minor Observations, Overall Impression, Persona Red Flags, Priority Issues, Questions to Consider (+3 more)
 
 ### Community 546 - "Community 546"
-Cohesion: 0.09
-Nodes (31): applyOriginalAttrsToSvelteAnchor(), applyParamDefaults(), applyParamValue(), applySvelteComponentVariantStyle(), closedClipPath(), commitAcceptedSvelteComponentToDom(), extractSvelteComponentStyle(), getMountedSvelteComponentAnchor() (+23 more)
+Cohesion: 0.12
+Nodes (21): applyPlaceholderDimensions(), beginEditPin(), buildPlaceholderResizeHandles(), cancelEditingPin(), clampPlaceholderSize(), cursorForPlaceholderEdge(), finalizeEditingPin(), localCoords() (+13 more)
 
 ### Community 547 - "Community 547"
 Cohesion: 0.20
-Nodes (10): Bad, Bitflags for Boolean Sets, Conversion Safety, Good, Integer Size Reference, mem-smaller-integers, NonZero Types for Option Optimization, See Also (+2 more)
+Nodes (10): Bad, Broken Link Detection, Common Patterns, doc-link-types, Good, Link Syntax, Linking to Trait Items, Module-Level Documentation (+2 more)
 
 ### Community 548 - "Community 548"
 Cohesion: 0.15
 Nodes (33): buildColor(), CANONICAL_SECTIONS, collectBullets(), collectColorValues(), collectParagraphs(), detectFormat(), extractColors(), extractComponents() (+25 more)
 
 ### Community 549 - "Community 549"
-Cohesion: 0.06
-Nodes (32): Bad, Good, Key Points, See Also, unsafe-maybeuninit, Why It Matters, Bad, Good (+24 more)
+Cohesion: 0.29
+Nodes (7): Bad, Good, Key Points, See Also, unsafe-minimize-scope, When a Larger Block Is Acceptable, Why It Matters
 
 ### Community 550 - "Community 550"
-Cohesion: 0.18
-Nodes (11): anti-vec-for-slice, Bad, Clippy Detection, Deref Coercion, Good, Mutable Slices, Pattern: Accepting Multiple Types, See Also (+3 more)
+Cohesion: 0.20
+Nodes (10): api-impl-asref, AsRef vs Into vs Borrow, Bad, Common AsRef Implementations, Good, Implement AsRef for Custom Types, Pattern: Optional AsRef Bound, See Also (+2 more)
 
 ### Community 551 - "Community 551"
-Cohesion: 0.16
-Nodes (7): AppTitlebar(), AppTitlebarMode, AppTitlebarProps, windowsCaptionGlyphs, __dirname, __filename, repoRoot
+Cohesion: 0.20
+Nodes (10): Bad, Decision Guide, Good, name-no-get-prefix, Pattern: Builder Methods, Pattern: Getter/Setter Pairs, See Also, Standard Library Examples (+2 more)
 
 ### Community 552 - "Community 552"
 Cohesion: 0.18
-Nodes (11): Bad, Common Mistakes, Criterion's black_box, Good, Pattern: Benchmark Multiple Inputs, Pattern: Benchmark with Setup, perf-black-box-bench, See Also (+3 more)
+Nodes (11): Bad, Complete Optimized Profile, Evidence from Production, Good, LTO Options Explained, Measuring Impact, opt-lto-release, See Also (+3 more)
 
 ### Community 553 - "Community 553"
-Cohesion: 0.24
-Nodes (9): ContentLayoutSupportRules, DetectsDataWrapperRootSignalsAndRootBuilder, DetectsGrassCacheOnlyModAsDataRootContent, DetectsRootBuilderDataWithoutMountingDataOnlyRoot, IgnoresUnknownDeepContentDuringBoundedLaunchScan, skyrimLikeRules(), TEST(), VfsContentPlacementAnalyzer (+1 more)
+Cohesion: 0.03
+Nodes (73): anti-collect-intermediate, Bad, Comparison, Good, Iterator Methods That Avoid Collection, Pattern: Deferred Collection, See Also, When Collection Is Needed (+65 more)
 
 ### Community 554 - "Community 554"
 Cohesion: 0.18
-Nodes (11): Basic Benchmark, black_box is Critical, Comparing Implementations, Evidence from tokio, Parameterized Benchmarks, Running Benchmarks, See Also, Setup (+3 more)
+Nodes (11): Bad, Cautions, Evidence from ripgrep, Generic Functions, Good, Inline Attributes, opt-inline-small, See Also (+3 more)
 
 ### Community 555 - "Community 555"
-Cohesion: 0.22
-Nodes (9): api-builder-must-use, Apply to Entire Type, Bad, Clippy Lint, Good, Message Guidelines, See Also, Standard Library Examples (+1 more)
+Cohesion: 0.20
+Nodes (10): Bad, Coercion to Any Type, Diverging Closures, Good, In Match Expressions, See Also, Stability Notes, Standard Library Examples (+2 more)
 
 ### Community 556 - "Community 556"
 Cohesion: 0.20
-Nodes (10): ContentArea, PlacementPlanEntry, classification, contentArea, explanation, manualOverrideAllowed, safeManualTargets, sourcePath (+2 more)
+Nodes (10): api-from-not-into, Bad, Blanket Implementation, Clippy Lint, Good, Multiple From Implementations, See Also, TryFrom for Fallible Conversions (+2 more)
 
 ### Community 557 - "Community 557"
 Cohesion: 0.09
-Nodes (35): attachSteerFocusDebug(), attachSteerFocusGuard(), barPaletteForTheme(), brandMarkSvg(), buildParamsPanel(), buildSteerProcessingDots(), connectSSE(), cursorForInsertAxis() (+27 more)
+Nodes (37): attachSteerFocusGuard(), barPaletteForTheme(), brandMarkSvg(), buildDesignHeader(), buildParamsPanel(), buildSteerProcessingDots(), connectSSE(), cursorForInsertAxis() (+29 more)
 
 ### Community 559 - "Community 559"
 Cohesion: 0.53
@@ -2947,28 +2994,28 @@ Cohesion: 0.22
 Nodes (9): Bad, Boolean Fields, Common Prefixes, Good, name-is-has-bool, Negation, See Also, Standard Library Examples (+1 more)
 
 ### Community 562 - "Community 562"
-Cohesion: 0.20
-Nodes (10): API Compatibility, Bad, Cargo.toml, Good, mem-thinvec, Memory Layout, See Also, ThinVec vs Vec (+2 more)
+Cohesion: 0.22
+Nodes (9): api-parse-dont-validate, Bad, Combining with Display, Evidence from sqlx, Good, More Examples, Parsing at Boundaries, See Also (+1 more)
 
 ### Community 563 - "Community 563"
-Cohesion: 0.20
-Nodes (10): Bad, Benchmark Difference, Good, mem-write-over-format, Reusable Formatting Buffer, See Also, When format! Is Fine, Why It Matters (+2 more)
+Cohesion: 0.22
+Nodes (9): Bad, Common Panic Conditions, doc-panics-section, Good, Pattern: Debug-Only Panics, Pattern: Panic vs Return Error, Provide Non-Panicking Alternatives, See Also (+1 more)
 
 ### Community 564 - "Community 564"
-Cohesion: 0.20
-Nodes (10): function, path, FluxPackExportRequest, configPath, includeGeneratedAssets, outputPath, FluxPackInstallRequest, fluxPackPath (+2 more)
+Cohesion: 0.22
+Nodes (9): Bad, Good, In snake_case, Mixed Cases, name-acronym-word, See Also, Standard Library Examples, Two-Letter Acronyms (+1 more)
 
 ### Community 565 - "Community 565"
 Cohesion: 0.06
 Nodes (27): Commands, Hooks, Pin / Unpin, Routing rules, Setup, Assess Current State, Plan Amplification, Register (+19 more)
 
 ### Community 566 - "Community 566"
-Cohesion: 0.22
-Nodes (9): Async File I/O, async-tokio-fs, Bad, Good, Performance Considerations, See Also, tokio::fs API, When std::fs is Acceptable (+1 more)
+Cohesion: 0.18
+Nodes (11): Basic Benchmark, black_box is Critical, Comparing Implementations, Evidence from tokio, Parameterized Benchmarks, Running Benchmarks, See Also, Setup (+3 more)
 
 ### Community 567 - "Community 567"
-Cohesion: 0.20
-Nodes (10): api-from-not-into, Bad, Blanket Implementation, Clippy Lint, Good, Multiple From Implementations, See Also, TryFrom for Fallible Conversions (+2 more)
+Cohesion: 0.25
+Nodes (7): anti-expect-lazy, Bad, Decision Guide, Good, See Also, When expect() Is Appropriate, Why It Matters
 
 ### Community 568 - "Community 568"
 Cohesion: 0.20
@@ -2976,7 +3023,7 @@ Nodes (10): api-serde-optional, Bad, Feature Documentation, Good, Macro Pattern,
 
 ### Community 569 - "Community 569"
 Cohesion: 0.20
-Nodes (10): Bad, Bumpalo Collections, Evidence from ROC Compiler, Good, mem-arena-allocator, Performance Impact, See Also, Thread-Local Scratch Arena Pattern (+2 more)
+Nodes (5): contentTypes, distRoot, contentTypes, distRoot, test
 
 ### Community 570 - "Community 570"
 Cohesion: 0.14
@@ -2984,67 +3031,67 @@ Nodes (28): acceptCli(), argVal(), buildCarbonizeReplacement(), decodeHtmlAttr()
 
 ### Community 571 - "Community 571"
 Cohesion: 0.20
-Nodes (10): Bad, Benchmarking the Difference, Custom Implementations, Good, How clone_from Works, mem-clone-from, See Also, Types That Benefit (+2 more)
+Nodes (10): devDependencies, @playwright/test, @tauri-apps/cli, @types/node, @types/react, @types/react-dom, typescript, vite (+2 more)
 
 ### Community 572 - "Community 572"
-Cohesion: 0.20
-Nodes (10): anti-format-hot-path, Bad, Clippy Lint, Comparison, Good, Pattern: Display Implementation, Pattern: Formatter Buffer Pool, See Also (+2 more)
+Cohesion: 0.02
+Nodes (101): anti-lock-across-await, Bad, Detection, Good, Pattern: Clone Before Await, Pattern: Restructure to Avoid Lock, See Also, What Can Cross Await (+93 more)
 
 ### Community 573 - "Community 573"
 Cohesion: 0.20
-Nodes (10): Bad, Comparison, Good (Stable: extend), Nightly: collect_into, Pattern: Transform and Reuse, perf-collect-into, See Also, Stable Alternative: extend (+2 more)
+Nodes (9): Bad, Combining with Context, err-question-mark, Error Type Conversion, Good, How ? Works, See Also, Why It Matters (+1 more)
 
 ### Community 574 - "Community 574"
 Cohesion: 0.13
 Nodes (33): confirm(), clearStoredManualApplyState(), copyToClipboard(), dismissToast(), fetchPendingCount(), handleManualEditActivity(), hidePendingApplyDock(), manualApplyLoadingText() (+25 more)
 
 ### Community 575 - "Community 575"
-Cohesion: 0.20
-Nodes (10): Bad, Drain Methods, drain vs clear vs take, Good, Pattern: Batch Processing, Pattern: HashMap Drain, Pattern: Transfer Between Collections, perf-drain-reuse (+2 more)
+Cohesion: 0.22
+Nodes (9): async-spawn-blocking, Bad, Good, Practical Examples, Rayon for Parallel CPU Work, See Also, spawn_blocking vs spawn, What Counts as Blocking (+1 more)
 
 ### Community 576 - "Community 576"
-Cohesion: 0.11
-Nodes (18): AppSettingsServiceTests, path, BuildPathSettingsServiceTests, InvalidAuthJsonReturnsEmptyAuth, KeepsThemeModeOnSupportedDarkTheme, LoadForConfigRejectsMissingConfig, LoadForProjectDirectoryAppliesLocalPathOverrides, LoadForProjectDirectoryUsesDefaultsAndLocalGameFolder (+10 more)
+Cohesion: 0.24
+Nodes (9): path, BuildPathSettingsServiceTests, LoadForConfigRejectsMissingConfig, LoadForProjectDirectoryAppliesLocalPathOverrides, LoadForProjectDirectoryUsesDefaultsAndLocalGameFolder, SaveForConfigPersistsPathsAndCreatesMissingDirectories, SaveForConfigRejectsSystemFolderOverrides, expectSamePath() (+1 more)
 
 ### Community 577 - "Community 577"
 Cohesion: 0.22
-Nodes (9): Bad, Comparison, Good, Pattern: Collect with Capacity, Pattern: Deferred Collection, perf-collect-once, See Also, When Intermediate Collection Is Needed (+1 more)
+Nodes (9): Additional Iterator Methods, Bad, Implementation, name-iter-convention, See Also, Standard Library Examples, The Three Iterator Methods, Usage (+1 more)
 
 ### Community 578 - "Community 578"
-Cohesion: 0.22
-Nodes (9): Bad, Controlling Drop Order for Locals, Good, Key Points, `ManuallyDrop` for Full Control, mem-drop-order, See Also, The Rules (+1 more)
+Cohesion: 0.20
+Nodes (10): Bad, Drain Methods, drain vs clear vs take, Good, Pattern: Batch Processing, Pattern: HashMap Drain, Pattern: Transfer Between Collections, perf-drain-reuse (+2 more)
 
 ### Community 579 - "Community 579"
-Cohesion: 0.22
-Nodes (9): Bad, Conversion Prefix Summary, Good, into_iter() Pattern, IntoIterator Trait, name-into-ownership, See Also, Standard Library Examples (+1 more)
+Cohesion: 0.20
+Nodes (10): async-mpsc-queue, Bad, Good, Graceful Shutdown, Message Handler Pattern, Permit Pattern, See Also, Sender Cloning (+2 more)
 
 ### Community 580 - "Community 580"
-Cohesion: 0.18
-Nodes (11): Bad, Binary Naming, Explicit Configuration, Good, Pattern: Binary with Multiple Files, Pattern: Default Binary, Pattern: Shared Library Code, proj-bin-dir (+3 more)
+Cohesion: 0.20
+Nodes (10): Bad, compile_fail, Good, Hiding Setup Code, no_run and ignore, Running Doctests, See Also, Showing Error Handling (+2 more)
 
 ### Community 581 - "Community 581"
-Cohesion: 0.18
-Nodes (11): Basic Usage, Common Strategies, Configuration, Custom Strategies, Example: Parser Roundtrip, Properties to Test, See Also, Setup (+3 more)
+Cohesion: 0.20
+Nodes (10): Bad, Context Addition Pattern, Display vs Debug, err-lowercase-msg, Formatting Guidelines, Good, Rust Standard Library Convention, See Also (+2 more)
 
 ### Community 582 - "Community 582"
-Cohesion: 0.22
-Nodes (8): Logger, VfsContentPlacementAnalyzer, analyze, VfsContentPlacementRoots, dataAtModRoot, dataWrapper, rootBuilderData, rootBuilderRoot
+Cohesion: 0.24
+Nodes (9): cloneDefaultConfig(), detectorSection(), hookSection(), readCache(), readConfig(), safeReadJson(), writeAuditLog(), main() (+1 more)
 
 ### Community 583 - "Community 583"
 Cohesion: 0.22
-Nodes (9): Additional Iterator Methods, Bad, Implementation, name-iter-convention, See Also, Standard Library Examples, The Three Iterator Methods, Usage (+1 more)
+Nodes (8): AtomicFileStoreTests, BackupPathUsesCompactSiblingName, CorruptedManifestRestoresPreviousBackup, DiskFullSimulationKeepsPreviousState, RecoveryLogsRestoredBackup, SimulatedCrashDuringManifestWriteRecoversOldManifest, SimulatedCrashDuringPluginListWriteRecoversOldPluginList, TEST()
 
 ### Community 584 - "Community 584"
 Cohesion: 0.22
-Nodes (9): Bad, Generic Functions, Good, Inline Variants, Measuring Inline Impact, opt-inline-always-rare, See Also, When #[inline(always)] Helps (+1 more)
+Nodes (8): Logger, VfsContentPlacementAnalyzer, analyze, VfsContentPlacementRoots, dataAtModRoot, dataWrapper, rootBuilderData, rootBuilderRoot
 
 ### Community 585 - "Community 585"
 Cohesion: 0.39
 Nodes (5): optional, wstring, ScopedEnvironmentVariable, name_, previous_
 
 ### Community 586 - "Community 586"
-Cohesion: 0.20
-Nodes (10): Bad, Decision Guide, Good, name-no-get-prefix, Pattern: Builder Methods, Pattern: Getter/Setter Pairs, See Also, Standard Library Examples (+2 more)
+Cohesion: 0.22
+Nodes (9): api-default-impl, Bad, Builder with Default, Default with Required Fields, Derive vs Manual, Generic Default, Good, See Also (+1 more)
 
 ### Community 587 - "Community 587"
 Cohesion: 0.20
@@ -3056,23 +3103,23 @@ Nodes (10): Bad, FFI Pattern, Good, NonZero Wrappers, See Also, type-repr-transp
 
 ### Community 589 - "Community 589"
 Cohesion: 0.20
-Nodes (9): Bad, Combining with Context, err-question-mark, Error Type Conversion, Good, How ? Works, See Also, Why It Matters (+1 more)
+Nodes (10): Bad, Complete Workspace Example, Dev and Build Dependencies, Good, Internal Crate Dependencies, Optional Dependencies, Override Features, proj-workspace-deps (+2 more)
 
 ### Community 590 - "Community 590"
-Cohesion: 0.22
-Nodes (9): async-tokio-runtime, Bad, Good, Multiple Runtimes, Runtime in Tests, Runtime Types, See Also, Why It Matters (+1 more)
+Cohesion: 0.20
+Nodes (10): Acceptable Ignoring (Documented), anti-empty-catch, Bad, Clippy Lint, Decision Guide, Good, Pattern: Best-Effort Operations, Pattern: Collect and Report (+2 more)
 
 ### Community 591 - "Community 591"
 Cohesion: 0.20
-Nodes (10): Bad, Extend Methods, Extend with Capacity, Good, HashMap/HashSet Extend, Pattern: Building Strings, perf-extend-batch, Performance (+2 more)
+Nodes (10): Bad, Bitflags for Boolean Sets, Conversion Safety, Good, Integer Size Reference, mem-smaller-integers, NonZero Types for Option Optimization, See Also (+2 more)
 
 ### Community 592 - "Community 592"
-Cohesion: 0.20
-Nodes (10): API Patterns, ArrayString for Stack Strings, ArrayVec vs SmallVec vs Vec, Bad, Cargo.toml, Good, mem-arrayvec, See Also (+2 more)
+Cohesion: 0.22
+Nodes (9): api-builder-must-use, Apply to Entire Type, Bad, Clippy Lint, Good, Message Guidelines, See Also, Standard Library Examples (+1 more)
 
 ### Community 593 - "Community 593"
-Cohesion: 0.22
-Nodes (9): Bad, Clippy Lint, err-doc-errors, Error Section Format Options, Good, Linking to Error Variants, Panic vs Error Documentation, See Also (+1 more)
+Cohesion: 0.10
+Nodes (16): async-bounded-channel, Bad, Channel Types, Choosing Buffer Size, Good, Handling Full Channel, See Also, Why It Matters (+8 more)
 
 ### Community 594 - "Community 594"
 Cohesion: 0.40
@@ -3083,52 +3130,52 @@ Cohesion: 0.13
 Nodes (30): applyMockWrites(), buildCopyEditBatchPrompt(), checkFrameworkSourceSyntax(), chooseCopyEditAgent(), COMMAND_AUTH_CACHE, commandAuthed(), commandExists(), compactBatchForPrompt() (+22 more)
 
 ### Community 596 - "Community 596"
-Cohesion: 0.22
-Nodes (9): Bad, clone_from Optimization, Custom Clone Implementation, Derive vs Manual Clone, Good, own-clone-explicit, See Also, When to Avoid Clone (+1 more)
+Cohesion: 0.20
+Nodes (10): Bad, Benchmarking the Difference, Custom Implementations, Good, How clone_from Works, mem-clone-from, See Also, Types That Benefit (+2 more)
 
 ### Community 597 - "Community 597"
-Cohesion: 0.22
-Nodes (9): Alternatives to Clone, anti-clone-excessive, Bad, Detecting Excessive Clones, Good, Pattern: Clone on Write, See Also, When to Clone (+1 more)
+Cohesion: 0.20
+Nodes (10): Bad, Benefits, Good, Hybrid Approach, Module Structure, proj-mod-by-feature, See Also, Shared Code (+2 more)
 
 ### Community 598 - "Community 598"
-Cohesion: 0.22
-Nodes (9): async-bounded-channel, Bad, Channel Types, Choosing Buffer Size, Good, Handling Full Channel, See Also, Why It Matters (+1 more)
+Cohesion: 0.25
+Nodes (8): Bad, Good, Mixing Patterns and Boolean Guards, pat-if-let-chains, Prerequisite, See Also, When to Prefer `let ... else`, Why It Matters
 
 ### Community 599 - "Community 599"
-Cohesion: 0.22
-Nodes (9): async-try-join, Bad, Cancellation Behavior, Error Handling Patterns, Good, See Also, try_join! vs FuturesUnordered, Why It Matters (+1 more)
+Cohesion: 0.25
+Nodes (8): Bad, Defining Error Types, Good, Result Combinators, See Also, The ? Operator, type-result-fallible, Why It Matters
 
 ### Community 600 - "Community 600"
-Cohesion: 0.13
-Nodes (30): analyzeVisualContrast(), analyzeVisualContrastCandidate(), checkColors(), checkElementAIPaletteDOM(), checkElementColors(), checkElementColorsDOM(), checkElementGlow(), checkElementGlowDOM() (+22 more)
+Cohesion: 0.12
+Nodes (32): analyzeVisualContrast(), analyzeVisualContrastCandidate(), checkColors(), checkElementAIPaletteDOM(), checkElementColors(), checkElementColorsDOM(), checkElementGlow(), checkElementGlowDOM() (+24 more)
 
 ### Community 601 - "Community 601"
-Cohesion: 0.36
-Nodes (8): bindEditBadgeProxy(), editBadgeProxyTargets(), initEditBadgeHitProxies(), positionEditBadge(), setImportantStyle(), styleEditBadgeProxy(), syncEditBadgeHitProxies(), usesShadowChromeRoot()
+Cohesion: 0.25
+Nodes (8): ModTextFilePreview, bytesRead, contentPreview, fileName, path, relativePath, size, truncated
 
 ### Community 602 - "Community 602"
-Cohesion: 0.22
-Nodes (9): Bad, CompactString for Small Strings, Good, mem-avoid-format, Pre-allocate for Multiple Appends, See Also, Use write!() for Output, When format!() Is Fine (+1 more)
+Cohesion: 0.25
+Nodes (8): Bad, Custom Iterator Methods, Implementation, name-iter-type-match, Naming Convention, See Also, Standard Library Pattern, Why It Matters
 
 ### Community 603 - "Community 603"
-Cohesion: 0.22
-Nodes (9): Anonymous Lifetime `'_`, Bad, Common Patterns, Good, own-lifetime-elision, See Also, The Three Elision Rules, When Explicit Lifetimes ARE Required (+1 more)
+Cohesion: 0.20
+Nodes (10): Avoid Pointer Chasing, Bad, Good, Hot/Cold Splitting, Measuring Cache Performance, Memory Layout Attributes, opt-cache-friendly, Prefetching (+2 more)
 
 ### Community 604 - "Community 604"
 Cohesion: 0.22
 Nodes (9): Bad, Common Option Patterns, Good, Option References, Option vs Result, See Also, Struct Fields, type-option-nullable (+1 more)
 
 ### Community 605 - "Community 605"
-Cohesion: 0.17
-Nodes (12): Async Mocking, Basic Usage, Design for Testability, Expectations, Mocking External Traits, Predicates, Return Values, See Also (+4 more)
+Cohesion: 0.20
+Nodes (10): Bad, Comparison, Good (Stable: extend), Nightly: collect_into, Pattern: Transform and Reuse, perf-collect-into, See Also, Stable Alternative: extend (+2 more)
 
 ### Community 606 - "Community 606"
 Cohesion: 0.22
-Nodes (9): Bad, Collection Capacity Methods, Estimating Capacity, Evidence from Production Code, Good, mem-with-capacity, See Also, When to Skip (+1 more)
+Nodes (9): Bad, Common Safety Requirements, doc-safety-section, Good, Key Elements of Safety Documentation, Pattern: Unsafe Blocks in Safe Functions, Pattern: Unsafe Trait Implementations, See Also (+1 more)
 
 ### Community 607 - "Community 607"
 Cohesion: 0.22
-Nodes (9): Arc vs Rc Decision Tree, Arc with Mutex for Mutable Shared State, Bad, Common Patterns, Good, own-arc-shared, Performance Considerations, See Also (+1 more)
+Nodes (8): Bad, Building Context Chains, Displaying Error Chains, err-context-chain, Good, See Also, Why It Matters, With thiserror
 
 ### Community 608 - "Community 608"
 Cohesion: 0.12
@@ -3136,7 +3183,7 @@ Nodes (22): applyStaticDeclaration(), buildBorderOverrideMap(), compareStaticPri
 
 ### Community 609 - "Community 609"
 Cohesion: 0.20
-Nodes (10): Bad, Comparison, Good, Pattern: Layered Visibility, Pattern: Test Helpers, proj-pub-super-parent, See Also, Visibility Hierarchy (+2 more)
+Nodes (10): Bad, Extend Methods, Extend with Capacity, Good, HashMap/HashSet Extend, Pattern: Building Strings, perf-extend-batch, Performance (+2 more)
 
 ### Community 610 - "Community 610"
 Cohesion: 0.12
@@ -3148,23 +3195,23 @@ Nodes (32): addManualContextText(), applyEditing(), buildLocatorForLeaf(), canRe
 
 ### Community 612 - "Community 612"
 Cohesion: 0.22
-Nodes (9): Bad, Good, own-rwlock-readers, parking_lot::RwLock, Real-World Pattern: Cached Computation, See Also, When RwLock Hurts, Why It Matters (+1 more)
+Nodes (9): api-sealed-trait, Bad, Benefits of Sealing, Full Pattern, Good, Partially Sealed, See Also, When to Seal (+1 more)
 
 ### Community 613 - "Community 613"
 Cohesion: 0.22
-Nodes (9): Bad, Consuming Methods, Good, Lazy Iterator Methods, Pattern: Process Without Collecting, perf-iter-lazy, See Also, Short-Circuit Benefits (+1 more)
+Nodes (9): Bad, Clippy Lint, err-doc-errors, Error Section Format Options, Good, Linking to Error Variants, Panic vs Error Documentation, See Also (+1 more)
 
 ### Community 614 - "Community 614"
 Cohesion: 0.17
 Nodes (24): completionAckForAcceptResult(), completionTypeForAcceptResult(), augmentEventWithAcceptHandling(), buildAcceptScriptArgs(), buildPollReplyPayload(), EVENT_TYPES_NEEDING_AGENT_REPLY, fetchNextEvent(), fetchServerStatus() (+16 more)
 
 ### Community 615 - "Community 615"
-Cohesion: 0.24
-Nodes (9): cloneDefaultConfig(), detectorSection(), hookSection(), readCache(), readConfig(), safeReadJson(), writeAuditLog(), main() (+1 more)
+Cohesion: 0.22
+Nodes (9): Bad, CI Integration, Good, Lint Categories, lint-workspace-lints, Per-Crate Overrides, Recommended Lint Configuration, See Also (+1 more)
 
 ### Community 616 - "Community 616"
 Cohesion: 0.22
-Nodes (9): Async Tests, Bad, Complex Arrange, Good, Helper Functions, See Also, test-arrange-act-assert, Why It Matters (+1 more)
+Nodes (8): AppSettingsServiceTests, InvalidAuthJsonReturnsEmptyAuth, KeepsThemeModeOnSupportedDarkTheme, MigratesLegacyLanguagesKey, MigratesLegacyLightThemeToDark, SavesAndLoadsNormalizedLanguageCode, SavesLoadsAndClearsNexusModsAuth, TEST()
 
 ### Community 617 - "Community 617"
 Cohesion: 0.29
@@ -3192,35 +3239,35 @@ Nodes (25): Assess Adaptation Challenge, Breakpoints: Content-Driven, Content Ad
 
 ### Community 623 - "Community 623"
 Cohesion: 0.22
-Nodes (9): Bad, Cargo.toml, Dynamic Dispatch Alternative, Good, mockall Crate, See Also, test-mock-traits, Testing Error Paths (+1 more)
+Nodes (9): uintmax_t, RootBuilderLaunchCacheManifestStatus, parseUnsignedJsonNumber(), readRootBuilderLaunchCacheManifest(), RootBuilderLaunchCacheManifestReadResult, manifest, reason, status (+1 more)
 
 ### Community 624 - "Community 624"
 Cohesion: 0.22
-Nodes (9): async-spawn-blocking, Bad, Good, Practical Examples, Rayon for Parallel CPU Work, See Also, spawn_blocking vs spawn, What Counts as Blocking (+1 more)
+Nodes (9): Bad, Combining with Result, Good, See Also, test-should-panic, Testing Invariants, When NOT to Use should_panic, Why It Matters (+1 more)
 
 ### Community 625 - "Community 625"
 Cohesion: 0.22
-Nodes (9): Bad, Good, Runtime Configuration, See Also, test-tokio-async, Testing Channels, Testing Timeouts, Testing with Mocks (+1 more)
+Nodes (9): Alternatives to Clone, anti-clone-excessive, Bad, Detecting Excessive Clones, Good, Pattern: Clone on Write, See Also, When to Clone (+1 more)
 
 ### Community 626 - "Community 626"
-Cohesion: 0.22
-Nodes (9): async-no-lock-await, Bad, Good, Patterns for Extraction, See Also, std::sync::Mutex vs tokio::sync::Mutex, The Problem Visualized, Using RwLock (+1 more)
+Cohesion: 0.13
+Nodes (14): Bad, Fragment Specifier Reference, Good, macro-fragment-specifiers, See Also, Trailing-Comma Pattern, Why It Matters, Bad (+6 more)
 
 ### Community 627 - "Community 627"
-Cohesion: 0.25
-Nodes (8): 1. Impatient Power User: "Alex", 2. Confused First-Timer: "Jordan", 3. Accessibility-Dependent User: "Sam", 4. Deliberate Stress Tester: "Riley", 5. Distracted Mobile User: "Casey", Persona-Based Design Testing, Project-Specific Personas, Selecting Personas
+Cohesion: 0.22
+Nodes (9): anti-over-abstraction, Bad, Good, Prefer Concrete Types in Private Code, Rule of Three, See Also, Signs of Over-Abstraction, When to Generalize (+1 more)
 
 ### Community 628 - "Community 628"
-Cohesion: 0.22
-Nodes (9): Bad, Good, In snake_case, Mixed Cases, name-acronym-word, See Also, Standard Library Examples, Two-Letter Acronyms (+1 more)
+Cohesion: 0.04
+Nodes (47): api-non-exhaustive, Bad, Good, How It Works, Non-Exhaustive Variants, See Also, Struct Usage, When to Use (+39 more)
 
 ### Community 629 - "Community 629"
 Cohesion: 0.08
 Nodes (22): After This File, Codex: Visual Direction & Asset Production, Four stop points before code, Step A: Explore Directions with the User, Step B: Generate the Brand Palette First, Step C: Generate 1-3 Visual Mocks Against the Palette, Step D: Approval Loop, Step E: Mock Fidelity Inventory (+14 more)
 
 ### Community 630 - "Community 630"
-Cohesion: 0.22
-Nodes (9): anyhow Context, Bad, err-source-chain, #[from] vs #[source], Good, Manual source() Implementation, See Also, Walking the Error Chain (+1 more)
+Cohesion: 0.25
+Nodes (8): ContentLayoutClassification, HealthSeverity, ValidationFinding, blocksInstall, classification, message, path, severity
 
 ### Community 631 - "Community 631"
 Cohesion: 0.08
@@ -3243,20 +3290,20 @@ Cohesion: 0.31
 Nodes (8): path, string, LoggerTests, readFile(), TEST(), UsesConfiguredLogDirectory, WritesOperationDiagnosticsToOperationsLog, WritesOperationIdToCoreLog
 
 ### Community 636 - "Community 636"
-Cohesion: 0.22
-Nodes (9): Bad, BufWriter Pattern, Clear vs Drain vs New, Good, HashMap Reuse, mem-reuse-collections, See Also, When to Create Fresh (+1 more)
+Cohesion: 0.25
+Nodes (8): Bad, Crate Root Example, doc-module-inner, Good, Key Sections for Module Docs, See Also, Where to Use Inner Docs, Why It Matters
 
 ### Community 637 - "Community 637"
 Cohesion: 0.25
 Nodes (6): AsRef, Drop, OsStr, OsString, Self, EnvVarGuard
 
 ### Community 638 - "Community 638"
-Cohesion: 0.25
-Nodes (8): Bad, Examples, Good, name-as-free, See Also, Standard Library Examples, The Convention, Why It Matters
+Cohesion: 0.22
+Nodes (9): Bad, doc-hidden-setup, Good, Pattern: Hiding Multi-Line Setup, Pattern: `ignore` and `no_run`, Pattern: Showing Setup When Relevant, See Also, What to Hide (+1 more)
 
 ### Community 639 - "Community 639"
 Cohesion: 0.25
-Nodes (8): Bad, Consuming a Field in `Drop`, Good, Key Points, mem-take-replace, See Also, State-Machine Transition with `mem::replace`, Why It Matters
+Nodes (8): Bad, err-custom-type, Error Type Design Guidelines, Good, See Also, Struct-Based Errors, When to Use What, Why It Matters
 
 ### Community 640 - "Community 640"
 Cohesion: 0.09
@@ -3267,16 +3314,16 @@ Cohesion: 0.22
 Nodes (9): DirEnumState, built, entries, index, matchAll, mountIndex, pattern, patternInitialized (+1 more)
 
 ### Community 642 - "Community 642"
-Cohesion: 0.20
-Nodes (10): Alternative: References, Bad, Good, own-move-large, Pattern: Builder Returns Boxed, Profile First, See Also, Stack vs Heap Tradeoffs (+2 more)
+Cohesion: 0.29
+Nodes (7): Bad, Caveats, Good, Key Points, See Also, serde-flatten, Why It Matters
 
 ### Community 643 - "Community 643"
-Cohesion: 0.22
-Nodes (7): EnvVarGuard, provider_endpoint_override_is_https_and_host_allowlisted(), AsRef, Drop, OsStr, OsString, Self
+Cohesion: 0.25
+Nodes (6): EnvVarGuard, AsRef, Drop, OsStr, OsString, Self
 
 ### Community 644 - "Community 644"
 Cohesion: 0.22
-Nodes (9): anti-lock-across-await, Bad, Detection, Good, Pattern: Clone Before Await, Pattern: Restructure to Avoid Lock, See Also, What Can Cross Await (+1 more)
+Nodes (9): api-extension-trait, Bad, Convention: Ext Suffix, Ecosystem Examples, Generic Extensions with Bounds, Good, Scoped Extensions, See Also (+1 more)
 
 ### Community 645 - "Community 645"
 Cohesion: 0.25
@@ -3288,7 +3335,7 @@ Nodes (9): DoesNotTreatSteamArgumentAsBootstrapExecutable, DoesNotWaitOnCurrentP
 
 ### Community 647 - "Community 647"
 Cohesion: 0.25
-Nodes (8): Associated Constants, Bad, Environment and Config, Good, Lazy Static / OnceLock, name-consts-screaming, See Also, Why It Matters
+Nodes (8): Alternatives When expect() Is Wrong, Bad, err-expect-bugs-only, expect() Message Guidelines, Good, Pattern: Validate Once, expect() After, See Also, Why It Matters
 
 ### Community 648 - "Community 648"
 Cohesion: 0.40
@@ -3296,7 +3343,7 @@ Nodes (4): Adding or editing a rule, Before opening a PR, Contributing, Style
 
 ### Community 649 - "Community 649"
 Cohesion: 0.25
-Nodes (8): Bad, Common Lifetime Conventions, Elision Preferred, Good, name-lifetime-short, See Also, Serde Convention, Why It Matters
+Nodes (7): Bad, Clippy Lints, err-no-unwrap-prod, `expect()` vs `unwrap()`, Good, See Also, Why It Matters
 
 ### Community 657 - "Community 657"
 Cohesion: 0.14
@@ -3319,8 +3366,8 @@ Cohesion: 0.13
 Nodes (22): browserHasDirectText(), browserPrimaryFont(), browserRadiusTokens(), browserSampleText(), checkElementDesignSystemDOM(), checkElementQuality(), checkElementQualityDOM(), checkQuality() (+14 more)
 
 ### Community 662 - "Community 662"
-Cohesion: 0.05
-Nodes (34): Bad, Good, Key Points, macro-export-crate-path, Placing Macros in Modules, See Also, Why It Matters, Bad (+26 more)
+Cohesion: 0.22
+Nodes (9): Bad, Conversion Prefix Summary, Good, into_iter() Pattern, IntoIterator Trait, name-into-ownership, See Also, Standard Library Examples (+1 more)
 
 ### Community 663 - "Community 663"
 Cohesion: 0.10
@@ -3331,8 +3378,8 @@ Cohesion: 0.10
 Nodes (19): Clean Up, Code Quality, Color & Contrast, Content & Copy, Design System Discovery, Edge Cases & Error States, Final Verification, Forms & Inputs (+11 more)
 
 ### Community 665 - "Community 665"
-Cohesion: 0.25
-Nodes (8): ContentLayoutClassification, HealthSeverity, ValidationFinding, blocksInstall, classification, message, path, severity
+Cohesion: 0.33
+Nodes (6): api-impl-fromiterator, Bad, Good, Notes, See Also, Why It Matters
 
 ### Community 666 - "Community 666"
 Cohesion: 0.11
@@ -3351,28 +3398,28 @@ Cohesion: 0.05
 Nodes (38): Bad, Good, Key Points, obs-instrument-spans, See Also, Why It Matters, Bad, Good (+30 more)
 
 ### Community 670 - "Community 670"
-Cohesion: 0.04
-Nodes (41): api-impl-fromiterator, Bad, Good, Notes, See Also, Why It Matters, api-operator-overload, Bad (+33 more)
+Cohesion: 0.20
+Nodes (10): api-common-traits, Bad, Common Trait Bundles, Good, Manual Implementations, Minimum Recommended, See Also, Serde Traits (+2 more)
 
 ### Community 671 - "Community 671"
-Cohesion: 0.17
-Nodes (17): blendRgba(), clampByte(), contrastRatio(), firstCssUrl(), getLayerValue(), loadVisualContrastImage(), parseObjectPosition(), parsePositionPair() (+9 more)
+Cohesion: 0.20
+Nodes (15): blendRgba(), clampByte(), firstCssUrl(), getLayerValue(), loadVisualContrastImage(), parseObjectPosition(), parsePositionPair(), parsePositionToken() (+7 more)
 
 ### Community 672 - "Community 672"
 Cohesion: 0.12
 Nodes (17): CSS Anchor Positioning, Destructive Actions: Undo > Confirm, Dropdown & Overlay Positioning, Fixed Positioning Fallback, Focus Rings: Do Them Right, Form Design: The Non-Obvious, Gesture Discoverability, Interaction Design (+9 more)
 
 ### Community 673 - "Community 673"
-Cohesion: 0.25
-Nodes (8): Bad, Good, Multiple Type Parameters, name-type-param-single, See Also, Standard Type Parameter Names, Trait Bounds, Why It Matters
+Cohesion: 0.29
+Nodes (7): Bad, Caveats, Good, Key Points, See Also, serde-deny-unknown-fields, Why It Matters
 
 ### Community 674 - "Community 674"
-Cohesion: 0.25
-Nodes (8): Bad, Breaking Cycles with Weak, Decision Guide, Good, Key Points, own-rc-single-thread, See Also, Why It Matters
+Cohesion: 0.33
+Nodes (6): Bad, closure-disjoint-capture, Good, Key Points, See Also, Why It Matters
 
 ### Community 675 - "Community 675"
-Cohesion: 0.25
-Nodes (8): Autovectorization (Stable), Choosing an Approach, opt-simd-portable, Platform-Specific (When Needed), Portable SIMD (Nightly), See Also, Why It Matters, wide Crate (Stable)
+Cohesion: 0.22
+Nodes (9): Async File I/O, async-tokio-fs, Bad, Good, Performance Considerations, See Also, tokio::fs API, When std::fs is Acceptable (+1 more)
 
 ### Community 676 - "Community 676"
 Cohesion: 0.12
@@ -3404,7 +3451,7 @@ Nodes (14): Accessibility & Inclusion, Brand & Personality, Init Flow, Interview
 
 ### Community 683 - "Community 683"
 Cohesion: 0.25
-Nodes (8): Bad, Common Copy Types, Copy Requirements, Good, own-copy-small, See Also, Size Guidelines, Why It Matters
+Nodes (8): Bad, err-result-over-panic, Good, Library vs Application, Panic vs Result Decision Guide, See Also, When Panic IS Appropriate, Why It Matters
 
 ### Community 684 - "Community 684"
 Cohesion: 0.14
@@ -3423,16 +3470,16 @@ Cohesion: 0.17
 Nodes (11): Accessibility Resilience, Assess Hardening Needs, Edge Cases & Boundary Conditions, Error Handling, Hardening Dimensions, Input Validation & Sanitization, Internationalization (i18n), Performance Resilience (+3 more)
 
 ### Community 688 - "Community 688"
-Cohesion: 0.33
-Nodes (6): time_point, InstallerProgressState, hasReport, lastPercent, lastPhase, lastReport
+Cohesion: 0.25
+Nodes (8): Bad, err-thiserror-lib, Error Chaining, Good, Key Attributes, Library vs Application, See Also, Why It Matters
 
 ### Community 689 - "Community 689"
 Cohesion: 0.18
 Nodes (11): Absolute bans, Color, Color & Theme, Design guidance, General rules, Interaction, Layout, Motion (+3 more)
 
 ### Community 690 - "Community 690"
-Cohesion: 0.24
-Nodes (13): buildSvelteExpressionTextMap(), buildSveltePropValuesFromLiveElement(), collectTextNodes(), elementMatchesOriginalMarkup(), escapeRegExp(), expressionTextMatcher(), findLiveElementForOriginalMarkup(), findLiveElementFromAnchorSnapshot() (+5 more)
+Cohesion: 0.25
+Nodes (8): Full Recommended Lints, Important Correctness Lints, lint-deny-correctness, Running Clippy, See Also, Setup, What It Catches, Why It Matters
 
 ### Community 691 - "Community 691"
 Cohesion: 0.18
@@ -3440,19 +3487,19 @@ Nodes (11): 10. Help and Documentation, 1. Visibility of System Status, 2. Match
 
 ### Community 692 - "Community 692"
 Cohesion: 0.22
-Nodes (9): Bad, Clone-on-Write Pattern, Cow with Collections, Good, own-cow-conditional, Real-World Example from ripgrep, See Also, When to Use Cow (+1 more)
+Nodes (9): Async Tests, Bad, Complex Arrange, Good, Helper Functions, See Also, test-arrange-act-assert, Why It Matters (+1 more)
 
 ### Community 693 - "Community 693"
 Cohesion: 0.18
 Nodes (10): Assess Current State, Color Refinement, Composition Refinement, Motion Reduction, Plan Refinement, Refine the Design, Register, Simplification (+2 more)
 
 ### Community 694 - "Community 694"
-Cohesion: 0.25
-Nodes (8): fingerprintAiEvaluationArtifact(), isKnownEvaluationToolName(), isRecord(), isSafeActionToolName(), replayAiEvaluationToolCallTape(), replayPolicyErrors(), stableJson(), validateReplayToolCall()
+Cohesion: 0.39
+Nodes (6): handleRendererRefreshShortcut(), installRendererRefreshShortcut(), isRendererRefreshShortcut(), RendererRefreshHandler, RendererRefreshKeyEvent, RendererRefreshShortcutTarget
 
 ### Community 695 - "Community 695"
 Cohesion: 0.25
-Nodes (8): Bad, Good, Mutex Poisoning, own-mutex-interior, Prefer parking_lot::Mutex, See Also, When to Use What, Why It Matters
+Nodes (8): Bad, Cargo.toml Files, Crate Layout, Good, macro-proc-two-crate, Re-export from the Facade, See Also, Why It Matters
 
 ### Community 696 - "Community 696"
 Cohesion: 0.24
@@ -3463,12 +3510,12 @@ Cohesion: 0.25
 Nodes (9): __dirname, findHarnessDirs(), generatePinnedSkill(), HARNESS_DIRS, loadCommandMetadata(), pin(), root, unpin() (+1 more)
 
 ### Community 698 - "Community 698"
-Cohesion: 0.33
-Nodes (7): Function, optional, vector, wchar_t, environmentVariable(), knownFolder(), systemDirectories()
+Cohesion: 0.05
+Nodes (33): Bad, Good, lint-cfg-check, Notes, See Also, Why It Matters, Workspace Projects, Bad (+25 more)
 
 ### Community 699 - "Community 699"
-Cohesion: 0.25
-Nodes (8): Bad, Cell for Copy Types, Common Pattern: Rc<RefCell<T>>, Good, own-refcell-interior, Runtime Panics, See Also, Why It Matters
+Cohesion: 0.02
+Nodes (78): Bad, Good, Module Structure, Multiple Test Modules, See Also, test-cfg-test-module, Test Helpers, Why It Matters (+70 more)
 
 ### Community 700 - "Community 700"
 Cohesion: 0.20
@@ -3479,32 +3526,32 @@ Cohesion: 0.20
 Nodes (9): Color, Components, Layout, Motion, Product bans (on top of the shared absolute bans), Product permissions, Product register, The product slop test (+1 more)
 
 ### Community 702 - "Community 702"
-Cohesion: 0.25
-Nodes (8): Bad, Good, own-slice-over-vec, Path Types Too, See Also, The Deref Coercion Chain, When to Accept Owned Types, Why It Matters
+Cohesion: 0.22
+Nodes (9): Bad, Bound Placement, Conditional Trait Implementation, Good, Implied Bounds, See Also, type-generic-bounds, Where Clause Benefits (+1 more)
 
 ### Community 703 - "Community 703"
-Cohesion: 0.25
-Nodes (8): Bad, Good, Iterator Advantages, perf-iter-over-index, Performance Comparison, See Also, When Indexing Is Needed, Why It Matters
+Cohesion: 0.22
+Nodes (9): api-newtype-safety, Bad, Constructor Patterns, Derive Common Traits, Good, See Also, When Newtypes Help Most, Why It Matters (+1 more)
 
 ### Community 704 - "Community 704"
-Cohesion: 0.25
-Nodes (8): Bad, Good, Parsing at Boundaries, See Also, type-no-stringly, Validated Newtypes, Why It Matters, With Serde
+Cohesion: 0.22
+Nodes (9): async-join-parallel, Bad, futures::join_all for Dynamic Collections, Good, join! vs try_join!, Limiting Concurrency, See Also, When NOT to Use join! (+1 more)
 
 ### Community 705 - "Community 705"
-Cohesion: 0.29
-Nodes (7): Cognitive Load Assessment, Cognitive Load Checklist, Extraneous Load: Bad Design, Germane Load: Learning Effort, Intrinsic Load: The Task Itself, The Working Memory Rule, Three Types of Cognitive Load
+Cohesion: 0.25
+Nodes (8): fingerprintAiEvaluationArtifact(), isKnownEvaluationToolName(), isRecord(), isSafeActionToolName(), replayAiEvaluationToolCallTape(), replayPolicyErrors(), stableJson(), validateReplayToolCall()
 
 ### Community 706 - "Community 706"
 Cohesion: 0.36
 Nodes (9): addRules(), applyInlineIgnores(), getSet(), hasDirectives(), isInlineIgnored(), normalizeRule(), parseInlineIgnores(), parseRuleList() (+1 more)
 
 ### Community 707 - "Community 707"
-Cohesion: 0.29
-Nodes (7): async-async-fn-bounds, Bad, Good, Key Points, See Also, The Three Variants, Why It Matters
+Cohesion: 0.22
+Nodes (9): async-tokio-runtime, Bad, Good, Multiple Runtimes, Runtime in Tests, Runtime Types, See Also, Why It Matters (+1 more)
 
 ### Community 708 - "Community 708"
 Cohesion: 0.22
-Nodes (9): Bad, Conversion Method Prefixes, Custom Types, Good, name-to-expensive, See Also, Standard Library Examples, to_owned() Pattern (+1 more)
+Nodes (9): anyhow Context, Bad, err-source-chain, #[from] vs #[source], Good, Manual source() Implementation, See Also, Walking the Error Chain (+1 more)
 
 ### Community 709 - "Community 709"
 Cohesion: 0.40
@@ -3523,24 +3570,24 @@ Cohesion: 0.22
 Nodes (9): 1. The Wall of Options, 2. The Memory Bridge, 3. The Hidden Navigation, 4. The Jargon Barrier, 5. The Visual Noise Floor, 6. The Inconsistent Pattern, 7. The Multi-Task Demand, 8. The Context Switch (+1 more)
 
 ### Community 713 - "Community 713"
-Cohesion: 0.29
-Nodes (7): async-cancel-safety, Bad, Good, Patterns for Non-Cancel-Safe Operations, See Also, What Is and Is Not Cancel-Safe, Why It Matters
+Cohesion: 0.20
+Nodes (9): AuthorizeAndTokenRequestsUseRegisteredRedirectUri, ClientSecretResolverUsesExpectedNameAndEnvironmentOverride, DefaultRedirectUriUsesRegisteredLoopbackCallback, NexusModsAuthServiceTests, OAuthConfigCanUseSharedVaultNamesFromEnvironment, OAuthTokenWithoutLegacyApiKeyIsLinked, PrivateClientRequestIncludesClientSecretWithoutPkce, SupabaseCredentialExtractorAcceptsRpcApiKeyShape (+1 more)
 
 ### Community 714 - "Community 714"
 Cohesion: 0.29
-Nodes (7): async-fn-in-trait, Bad, Caveats, Good, See Also, When to Use Each Approach, Why It Matters
+Nodes (7): Bad, doc-all-public, Enforcement, Good, See Also, What to Document, Why It Matters
 
 ### Community 716 - "Community 716"
-Cohesion: 0.29
-Nodes (7): Bad, conc-atomic-ordering, Good, Ordering Quick Reference, See Also, Verification with loom, Why It Matters
+Cohesion: 0.22
+Nodes (9): Bad, Collection Capacity Methods, Estimating Capacity, Evidence from Production Code, Good, mem-with-capacity, See Also, When to Skip (+1 more)
 
 ### Community 717 - "Community 717"
 Cohesion: 0.29
-Nodes (7): Bad, conc-rayon-par-iter, Good, Key Points, See Also, When to Use, Why It Matters
+Nodes (7): Bad, Good, Key Points, macro-export-crate-path, Placing Macros in Modules, See Also, Why It Matters
 
 ### Community 718 - "Community 718"
-Cohesion: 0.04
-Nodes (40): api-builder-pattern, Bad, Builder Variations, Evidence from reqwest, Good, Key Attributes, See Also, Why It Matters (+32 more)
+Cohesion: 0.20
+Nodes (10): api-must-use, Apply to Types, Bad, Clippy Lints, Custom Messages, Good, See Also, Standard Library Examples (+2 more)
 
 ### Community 719 - "Community 719"
 Cohesion: 0.16
@@ -3548,7 +3595,7 @@ Nodes (28): ContentArea, GameExecutableWorkingDirectoryKind, HealthSeverity, Hea
 
 ### Community 720 - "Community 720"
 Cohesion: 0.29
-Nodes (7): Bad, conc-scoped-threads, Good, Key Points, See Also, When to Use, Why It Matters
+Nodes (7): Bad, Good, Key Points, macro-private-helpers, See Also, Why It Matters, With a Derive Macro
 
 ### Community 721 - "Community 721"
 Cohesion: 0.29
@@ -3560,35 +3607,35 @@ Nodes (9): Asserting a Match in Tests, Bad, Combining Multiple Variants, Good, G
 
 ### Community 723 - "Community 723"
 Cohesion: 0.29
-Nodes (7): Bad, conc-thread-local, Good, Key Points, See Also, When to Use, Why It Matters
+Nodes (7): Bad, Good, macro-proc-syn-quote, See Also, Unit Testing with `proc-macro2`, Using `quote_spanned!` for Better Diagnostics, Why It Matters
 
 ### Community 724 - "Community 724"
 Cohesion: 0.25
 Nodes (7): Core stance, Crash log procedure, Evidence order, Internet compatibility research, Mandatory stability checks, Output shape, Skyrim Stability
 
 ### Community 725 - "Community 725"
-Cohesion: 0.29
-Nodes (7): Acronyms in snake_case, Bad, Good, Local Variables, name-funcs-snake, See Also, Why It Matters
+Cohesion: 0.22
+Nodes (9): Bad, Conversion Method Prefixes, Custom Types, Good, name-to-expensive, See Also, Standard Library Examples, to_owned() Pattern (+1 more)
 
 ### Community 726 - "Community 726"
-Cohesion: 0.29
-Nodes (7): Acronyms, Bad, Good, name-types-camel, See Also, Type Aliases, Why It Matters
+Cohesion: 0.22
+Nodes (9): Bad, clone_from Optimization, Custom Clone Implementation, Derive vs Manual Clone, Good, own-clone-explicit, See Also, When to Avoid Clone (+1 more)
 
 ### Community 727 - "Community 727"
 Cohesion: 0.29
-Nodes (7): Bad, Evidence, Good, own-borrow-over-clone, See Also, When Clone Is Acceptable, Why It Matters
+Nodes (7): Bad, Good, Notes, pat-let-else, See Also, Using with `anyhow` / `bail!`, Why It Matters
 
 ### Community 728 - "Community 728"
-Cohesion: 0.29
-Nodes (7): checkLayout(), checkPageLayout(), isCardLike(), isCardLikeDOM(), isCardLikeFromProps(), parseRadiusToPx(), resolveBorderRadiusPx()
+Cohesion: 0.22
+Nodes (9): Bad, Clone-on-Write Pattern, Cow with Collections, Good, own-cow-conditional, Real-World Example from ripgrep, See Also, When to Use Cow (+1 more)
 
 ### Community 729 - "Community 729"
-Cohesion: 0.25
-Nodes (8): anti-panic-expected, Anti-pattern: panic! for Control Flow, Bad, Decision Guide, Good, See Also, When to Panic, Why It Matters
+Cohesion: 0.22
+Nodes (9): Anonymous Lifetime `'_`, Bad, Common Patterns, Good, own-lifetime-elision, See Also, The Three Elision Rules, When Explicit Lifetimes ARE Required (+1 more)
 
 ### Community 730 - "Community 730"
-Cohesion: 0.29
-Nodes (6): Bad, Good, Key Points, perf-io-buffering, See Also, Why It Matters
+Cohesion: 0.40
+Nodes (5): TokenResponse, accessToken, expiresInSeconds, refreshToken, tokenType
 
 ### Community 731 - "Community 731"
 Cohesion: 0.38
@@ -3599,76 +3646,76 @@ Cohesion: 0.29
 Nodes (7): Amplify the Design, Color Intensification, Composition Boldness, Motion & Animation, Spatial Drama, Typography Amplification, Visual Effects
 
 ### Community 733 - "Community 733"
-Cohesion: 0.29
-Nodes (7): Bad, Good, See Also, test-snapshot-testing, When to Use Snapshots vs assert_eq!, Why It Matters, Workflow
+Cohesion: 0.22
+Nodes (9): Bad, Good, own-rwlock-readers, parking_lot::RwLock, Real-World Pattern: Cached Computation, See Also, When RwLock Hurts, Why It Matters (+1 more)
 
 ### Community 734 - "Community 734"
-Cohesion: 0.29
-Nodes (7): Bad, Good, Key Points, Migration from 2021, See Also, unsafe-extern-block, Why It Matters
+Cohesion: 0.67
+Nodes (3): HttpsUrlParts, host, pathAndQuery
 
 ### Community 735 - "Community 735"
-Cohesion: 0.33
-Nodes (6): Establish Hierarchy, Fix Readability, Font Selection, Improve Typography Systematically, Refine Details, Weight Consistency
+Cohesion: 0.22
+Nodes (9): PathSafetyService, archiveEntryComparisonKey, canonicalize, isSameOrInside, validateArchiveEntryPath, validateContainedPath, validateDirectoryWriteRoot, validateRelativePath (+1 more)
 
 ### Community 736 - "Community 736"
-Cohesion: 0.33
-Nodes (6): Bad, closure-disjoint-capture, Good, Key Points, See Also, Why It Matters
+Cohesion: 0.67
+Nodes (3): JwtUser, userId, username
 
 ### Community 737 - "Community 737"
 Cohesion: 0.33
-Nodes (6): Bad, closure-fn-trait-bounds, Good, Key Points, See Also, Why It Matters
+Nodes (6): Bad, doc-crate-readme, Good, Handling Non-Rust Code Blocks in README, See Also, Why It Matters
 
 ### Community 738 - "Community 738"
 Cohesion: 0.33
-Nodes (6): deterministicCallsForTask(), listDownloadsPayload(), listInstalledModsPayload(), listPluginsPayload(), safeActionCall(), virtualCall()
+Nodes (6): Bad, Good, Key Points, macro-proc-error-spans, See Also, Why It Matters
 
 ### Community 739 - "Community 739"
-Cohesion: 0.33
-Nodes (6): Bad, closure-move-capture, Good, Key Points, See Also, Why It Matters
+Cohesion: 0.25
+Nodes (8): 1. Impatient Power User: "Alex", 2. Confused First-Timer: "Jordan", 3. Accessibility-Dependent User: "Sam", 4. Deliberate Stress Tester: "Riley", 5. Distracted Mobile User: "Casey", Persona-Based Design Testing, Project-Specific Personas, Selecting Personas
 
 ### Community 740 - "Community 740"
-Cohesion: 0.50
-Nodes (4): InstalledModRecord, vector, wstring_view, findInstalledMod()
+Cohesion: 0.36
+Nodes (8): bindEditBadgeProxy(), editBadgeProxyTargets(), initEditBadgeHitProxies(), positionEditBadge(), setImportantStyle(), styleEditBadgeProxy(), syncEditBadgeHitProxies(), usesShadowChromeRoot()
 
 ### Community 741 - "Community 741"
-Cohesion: 0.33
-Nodes (6): Bad, Good, lint-clippy-nursery-selected, See Also, Suggested Starter Set, Why It Matters
+Cohesion: 0.25
+Nodes (8): anti-panic-expected, Anti-pattern: panic! for Control Flow, Bad, Decision Guide, Good, See Also, When to Panic, Why It Matters
 
 ### Community 742 - "Community 742"
-Cohesion: 0.06
-Nodes (28): api-default-impl, Bad, Builder with Default, Default with Required Fields, Derive vs Manual, Generic Default, Good, See Also (+20 more)
+Cohesion: 0.10
+Nodes (19): Bad, Caveats, Good, Key Points, See Also, serde-default-compat, Why It Matters, Bad (+11 more)
 
 ### Community 743 - "Community 743"
 Cohesion: 0.33
-Nodes (6): Bad, coll-seq-choice, Good, See Also, Which to Use, Why It Matters
+Nodes (6): Bad, Choosing and Maintaining MSRV, Good, proj-msrv-declare, See Also, Why It Matters
 
 ### Community 744 - "Community 744"
-Cohesion: 0.33
-Nodes (6): Bad, const-block, Good, Notes, See Also, Why It Matters
+Cohesion: 0.25
+Nodes (8): anti-stringly-typed, Bad, Error Messages, Good, Parsing Strings to Types, See Also, Why It Matters, With Serde
 
 ### Community 745 - "Community 745"
-Cohesion: 0.33
-Nodes (6): Bad, const-fn, Good, Notes, See Also, Why It Matters
+Cohesion: 0.25
+Nodes (8): api-builder-pattern, Bad, Builder Variations, Evidence from reqwest, Good, Key Attributes, See Also, Why It Matters
 
 ### Community 748 - "Community 748"
-Cohesion: 0.33
-Nodes (6): Bad, const-generics, Good, Notes, See Also, Why It Matters
+Cohesion: 0.40
+Nodes (5): executableName, minLength, not, type, pattern
 
 ### Community 751 - "Community 751"
-Cohesion: 0.33
-Nodes (6): Bad, const-vs-static, Good, See Also, When to Prefer Which, Why It Matters
+Cohesion: 0.25
+Nodes (8): Bad, Comparison, doc-question-mark, Doctest Wrapper Pattern, Good, See Also, When to Use `.unwrap()`, Why It Matters
 
 ### Community 752 - "Community 752"
-Cohesion: 0.33
-Nodes (6): Bad, conv-asmut-mutable, Good, See Also, When Not to Use, Why It Matters
+Cohesion: 0.25
+Nodes (8): Bad, Blanket From Implementations, err-from-impl, From with Context, Good, See Also, Use thiserror for Automatic From, Why It Matters
 
 ### Community 753 - "Community 753"
-Cohesion: 0.29
-Nodes (7): Bad, Caveats, Good, Key Points, See Also, serde-deny-unknown-fields, Why It Matters
+Cohesion: 0.25
+Nodes (8): Bad, Consuming a Field in `Drop`, Good, Key Points, mem-take-replace, See Also, State-Machine Transition with `mem::replace`, Why It Matters
 
 ### Community 754 - "Community 754"
-Cohesion: 0.33
-Nodes (6): Bad, Good, Key Points, See Also, test-loom-concurrency, Why It Matters
+Cohesion: 0.50
+Nodes (4): ContentLayoutService, analyze, analyzeDirectory, applyPlanToDirectory
 
 ### Community 755 - "Community 755"
 Cohesion: 0.67
@@ -3679,41 +3726,229 @@ Cohesion: 0.40
 Nodes (5): checkElementHeroEyebrow(), checkElementHeroEyebrowDOM(), checkHeroEyebrow(), isAccentColor(), resolveVarRefs()
 
 ### Community 757 - "Community 757"
-Cohesion: 0.50
-Nodes (4): Heuristics Scoring Guide, Issue Severity (P0–P3), Reference Material, Score Summary
+Cohesion: 0.25
+Nodes (8): Bad, Examples, Good, name-as-free, See Also, Standard Library Examples, The Convention, Why It Matters
 
 ### Community 758 - "Community 758"
-Cohesion: 0.50
-Nodes (4): ContentLayoutService, analyze, analyzeDirectory, applyPlanToDirectory
+Cohesion: 0.25
+Nodes (8): Associated Constants, Bad, Environment and Config, Good, Lazy Static / OnceLock, name-consts-screaming, See Also, Why It Matters
 
 ### Community 759 - "Community 759"
 Cohesion: 0.50
 Nodes (3): candidates, detectorPath, __dirname
 
+### Community 762 - "Community 762"
+Cohesion: 0.25
+Nodes (8): Additional Iterator Methods, Bad, For Loop Integration, Good, Iterator Convention Summary, name-iter-method, See Also, Why It Matters
+
 ### Community 763 - "Community 763"
 Cohesion: 0.25
-Nodes (8): Bad, Good, Mixing Patterns and Boolean Guards, pat-if-let-chains, Prerequisite, See Also, When to Prefer `let ... else`, Why It Matters
+Nodes (8): Bad, Common Lifetime Conventions, Elision Preferred, Good, name-lifetime-short, See Also, Serde Convention, Why It Matters
+
+### Community 764 - "Community 764"
+Cohesion: 0.25
+Nodes (8): Bad, Good, Multiple Type Parameters, name-type-param-single, See Also, Standard Type Parameter Names, Trait Bounds, Why It Matters
+
+### Community 765 - "Community 765"
+Cohesion: 0.25
+Nodes (8): Bad, Common Copy Types, Copy Requirements, Good, own-copy-small, See Also, Size Guidelines, Why It Matters
+
+### Community 766 - "Community 766"
+Cohesion: 0.25
+Nodes (8): Bad, Good, own-slice-over-vec, Path Types Too, See Also, The Deref Coercion Chain, When to Accept Owned Types, Why It Matters
+
+### Community 767 - "Community 767"
+Cohesion: 0.25
+Nodes (8): Bad, Common Validated Types, Compile-Time Validation, Good, See Also, type-newtype-validated, Why It Matters, With Serde
+
+### Community 768 - "Community 768"
+Cohesion: 0.25
+Nodes (8): Bad, Good, Parsing at Boundaries, See Also, type-no-stringly, Validated Newtypes, Why It Matters, With Serde
+
+### Community 769 - "Community 769"
+Cohesion: 0.29
+Nodes (7): collectAiBuildContext(), collectLocalReadTextFileTool(), compactTextPreview(), normalizeLocalReadTextMaxBytes(), settledValue(), shouldCollectAnalyzeTextFiles(), collectSnapshot()
+
+### Community 770 - "Community 770"
+Cohesion: 0.33
+Nodes (7): Function, optional, vector, wchar_t, environmentVariable(), knownFolder(), systemDirectories()
+
+### Community 771 - "Community 771"
+Cohesion: 0.29
+Nodes (7): checkLayout(), checkPageLayout(), isCardLike(), isCardLikeDOM(), isCardLikeFromProps(), parseRadiusToPx(), resolveBorderRadiusPx()
+
+### Community 772 - "Community 772"
+Cohesion: 0.29
+Nodes (7): Cognitive Load Assessment, Cognitive Load Checklist, Extraneous Load: Bad Design, Germane Load: Learning Effort, Intrinsic Load: The Task Itself, The Working Memory Rule, Three Types of Cognitive Load
+
+### Community 773 - "Community 773"
+Cohesion: 0.29
+Nodes (7): api-operator-overload, Bad, Decision Guide, Good, Notes, See Also, Why It Matters
+
+### Community 774 - "Community 774"
+Cohesion: 0.29
+Nodes (7): api-typestate, Bad, Builder Typestate, Good, See Also, Transaction Example, Why It Matters
+
+### Community 775 - "Community 775"
+Cohesion: 0.29
+Nodes (7): Acronyms in snake_case, Bad, Good, Local Variables, name-funcs-snake, See Also, Why It Matters
+
+### Community 776 - "Community 776"
+Cohesion: 0.29
+Nodes (7): Acronyms, Bad, Good, name-types-camel, See Also, Type Aliases, Why It Matters
+
+### Community 777 - "Community 777"
+Cohesion: 0.29
+Nodes (7): Bad, Evidence, Good, own-borrow-over-clone, See Also, When Clone Is Acceptable, Why It Matters
+
+### Community 778 - "Community 778"
+Cohesion: 0.40
+Nodes (3): ProfileService, Core(), shutdown()
+
+### Community 779 - "Community 779"
+Cohesion: 0.29
+Nodes (7): Bad, Caveats, Good, Key Points, See Also, serde-custom-with, Why It Matters
+
+### Community 780 - "Community 780"
+Cohesion: 0.29
+Nodes (7): Bad, Caveats, Good, Key Points, See Also, serde-try-from-validate, Why It Matters
+
+### Community 781 - "Community 781"
+Cohesion: 0.29
+Nodes (7): Bad, Good, Key Points, See Also, unsafe-miri-ci, When It's Acceptable to Skip, Why It Matters
 
 ### Community 782 - "Community 782"
 Cohesion: 0.40
 Nodes (3): __dirname, __filename, repoRoot
 
+### Community 783 - "Community 783"
+Cohesion: 0.29
+Nodes (7): Bad, Good, Key Points, Migration, See Also, unsafe-no-mangle-unsafe, Why It Matters
+
+### Community 784 - "Community 784"
+Cohesion: 0.33
+Nodes (6): time_point, InstallerProgressState, hasReport, lastPercent, lastPhase, lastReport
+
+### Community 785 - "Community 785"
+Cohesion: 0.33
+Nodes (5): string, string_view, wstring_view, throwIfUnsafe(), toNarrow()
+
+### Community 786 - "Community 786"
+Cohesion: 0.33
+Nodes (6): Establish Hierarchy, Fix Readability, Font Selection, Improve Typography Systematically, Refine Details, Weight Consistency
+
+### Community 787 - "Community 787"
+Cohesion: 0.33
+Nodes (6): Bad, closure-fn-trait-bounds, Good, Key Points, See Also, Why It Matters
+
+### Community 788 - "Community 788"
+Cohesion: 0.33
+Nodes (6): Bad, Good, Guidelines, See Also, type-display-vs-debug, Why It Matters
+
+### Community 789 - "Community 789"
+Cohesion: 0.33
+Nodes (6): Bad, Good, Notes, See Also, type-numeric-fmt, Why It Matters
+
+### Community 790 - "Community 790"
+Cohesion: 0.33
+Nodes (6): Bad, closure-impl-fn-return, Good, Key Points, See Also, Why It Matters
+
+### Community 791 - "Community 791"
+Cohesion: 0.33
+Nodes (6): Bad, closure-move-capture, Good, Key Points, See Also, Why It Matters
+
+### Community 792 - "Community 792"
+Cohesion: 0.33
+Nodes (6): Bad, conv-asmut-mutable, Good, See Also, When Not to Use, Why It Matters
+
+### Community 793 - "Community 793"
+Cohesion: 0.33
+Nodes (6): Bad, conv-fromstr-parsing, Good, Notes, See Also, Why It Matters
+
+### Community 794 - "Community 794"
+Cohesion: 0.33
+Nodes (6): Bad, conv-tryfrom-fallible, Good, Notes, See Also, Why It Matters
+
+### Community 802 - "Community 802"
+Cohesion: 0.33
+Nodes (6): Bad, Good, macro-prefer-functions, See Also, When to Reach for a Macro, Why It Matters
+
+### Community 803 - "Community 803"
+Cohesion: 0.33
+Nodes (6): Bad, Good, Key Points, num-nonzero, See Also, Why It Matters
+
+### Community 804 - "Community 804"
+Cohesion: 0.33
+Nodes (6): Bad, Good, Key Points, obs-error-chain, See Also, Why It Matters
+
+### Community 805 - "Community 805"
+Cohesion: 0.33
+Nodes (6): Bad, Good, Key Points, See Also, trait-associated-type-vs-generic, Why It Matters
+
+### Community 806 - "Community 806"
+Cohesion: 0.33
+Nodes (6): Bad, Good, Key Points, See Also, trait-blanket-impl, Why It Matters
+
+### Community 807 - "Community 807"
+Cohesion: 0.33
+Nodes (6): Bad, Good, Key Points, See Also, trait-coherence-newtype, Why It Matters
+
+### Community 808 - "Community 808"
+Cohesion: 0.33
+Nodes (6): Bad, Good, Key Points, See Also, trait-default-methods, Why It Matters
+
+### Community 809 - "Community 809"
+Cohesion: 0.33
+Nodes (6): Bad, Good, Legitimate Uses, See Also, type-deref-coercion, Why It Matters
+
+### Community 810 - "Community 810"
+Cohesion: 0.33
+Nodes (6): Bad, Good, Key Points, See Also, unsafe-maybeuninit, Why It Matters
+
+### Community 811 - "Community 811"
+Cohesion: 0.33
+Nodes (6): Bad, Good, Key Points, See Also, unsafe-safety-comment, Why It Matters
+
+### Community 812 - "Community 812"
+Cohesion: 0.33
+Nodes (6): Bad, Good, Key Points, See Also, unsafe-send-sync-manual, Why It Matters
+
+### Community 813 - "Community 813"
+Cohesion: 0.33
+Nodes (6): deterministicCallsForTask(), listDownloadsPayload(), listInstalledModsPayload(), listPluginsPayload(), safeActionCall(), virtualCall()
+
+### Community 814 - "Community 814"
+Cohesion: 0.40
+Nodes (4): MissingGroupsReturnsEmptyItems, ModOrganizerPluginGroupServiceTests, ReadsGroupsInResolvedPluginOrder, TEST()
+
+### Community 815 - "Community 815"
+Cohesion: 0.50
+Nodes (4): ContentLayoutSummary, PlacementPlanEntry, countEntry(), placementPath()
+
+### Community 816 - "Community 816"
+Cohesion: 0.50
+Nodes (4): Heuristics Scoring Guide, Issue Severity (P0–P3), Reference Material, Score Summary
+
+### Community 818 - "Community 818"
+Cohesion: 0.67
+Nodes (3): RootBuilderLaunchCache, executablePath, rootDirectory
+
 ## Knowledge Gaps
-- **7209 isolated node(s):** `COMMON_DEV_PORTS`, `SCANNABLE_EXT`, `SOURCE_DIRS`, `PRODUCT_NAMES`, `DESIGN_NAMES` (+7204 more)
+- **7256 isolated node(s):** `COMMON_DEV_PORTS`, `SCANNABLE_EXT`, `SOURCE_DIRS`, `PRODUCT_NAMES`, `DESIGN_NAMES` (+7251 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **26 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `PathSafetyService` connect `Community 268` to `Community 0`, `Community 96`, `Community 4`, `Community 7`, `Community 135`, `Community 364`, `Community 78`, `Community 143`, `Community 51`, `Community 23`, `Community 214`, `Community 22`, `Community 87`, `Community 58`, `Community 347`?**
-  _High betweenness centrality (0.058) - this node is a cross-community bridge._
-- **Why does `ContentLayoutService` connect `Community 110` to `Community 29`, `Community 214`, `Community 87`?**
-  _High betweenness centrality (0.029) - this node is a cross-community bridge._
-- **Why does `IService` connect `Community 183` to `Community 32`, `Community 40`, `Community 10`, `Community 155`, `Community 109`, `Community 110`, `Community 433`, `Community 179`, `Community 115`, `Community 117`, `Community 150`, `Community 21`, `Community 436`, `Community 57`, `Community 219`, `Community 508`, `Community 30`?**
+- **Why does `PathSafetyService` connect `Community 268` to `Community 0`, `Community 96`, `Community 67`, `Community 4`, `Community 70`, `Community 7`, `Community 39`, `Community 105`, `Community 11`, `Community 78`, `Community 51`, `Community 23`, `Community 22`, `Community 87`, `Community 58`, `Community 413`?**
+  _High betweenness centrality (0.055) - this node is a cross-community bridge._
+- **Why does `ContentLayoutService` connect `Community 110` to `Community 82`, `Community 70`, `Community 87`?**
   _High betweenness centrality (0.023) - this node is a cross-community bridge._
+- **Why does `IService` connect `Community 219` to `Community 32`, `Community 321`, `Community 40`, `Community 10`, `Community 364`, `Community 109`, `Community 110`, `Community 433`, `Community 179`, `Community 436`, `Community 117`, `Community 150`, `Community 183`, `Community 21`, `Community 57`, `Community 508`, `Community 30`?**
+  _High betweenness centrality (0.022) - this node is a cross-community bridge._
 - **What connects `COMMON_DEV_PORTS`, `SCANNABLE_EXT`, `SOURCE_DIRS` to the rest of the system?**
-  _7216 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _7263 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.05867620751341682 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**

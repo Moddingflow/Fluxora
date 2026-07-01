@@ -9758,6 +9758,7 @@ export const App = () => {
         bridgeStatus,
         defaultProfileName: selectedProjectDefaultProfileName,
         profileName: selectedProjectProfileName,
+        prompt,
         project: selectedProject,
         selectedModId: selectedModItem?.isMod ? selectedModItem.id : null,
         selectedModName: selectedModItem?.isMod ? selectedModItem.name : null

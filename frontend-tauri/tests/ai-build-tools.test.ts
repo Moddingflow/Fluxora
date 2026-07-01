@@ -4,7 +4,8 @@ import {
   AI_READ_ONLY_BUILD_TOOLS,
   collectAiBuildContext,
   runAiBuildTool,
-  serializeAiBuildContextSnapshot
+  serializeAiBuildContextSnapshot,
+  shouldCollectAnalyzeTextFiles
 } from '../src/renderer/features/ai/ai-build-tools';
 import type {
   FluxoraApi,
@@ -245,6 +246,29 @@ const createApi = (fixtures: ApiFixtures = {}) => {
           capture(request);
           return fixtureFileTree;
         }
+      ),
+      previewTextFile: vi.fn(
+        async (
+          _projectDirectory: string,
+          modPath: string,
+          relativePath: string,
+          maxBytes: number,
+          request?: OperationRequest
+        ) => {
+          capture(request);
+          const content = 'RaceMenu requires SKSE and Address Library.\nUse the matching runtime.\n';
+          const preview = content.slice(0, Math.min(content.length, maxBytes));
+          return {
+            path: `${modPath}\\${relativePath}`,
+            fileName: relativePath.split(/[\\/]/).pop() ?? 'README.txt',
+            contentPreview: preview,
+            bytesRead: preview.length,
+            size: content.length + maxBytes,
+            truncated: true,
+            relativePath,
+            operationId: request?.operationId ?? 'op_ai_preview'
+          };
+        }
       )
     },
     plugins: {
@@ -264,7 +288,30 @@ const createApi = (fixtures: ApiFixtures = {}) => {
       list: vi.fn(async (_projectDirectory: string, _defaultProfile?: string, request?: OperationRequest) => {
         capture(request);
         return fixtureProfiles;
-      })
+      }),
+      previewTextFile: vi.fn(
+        async (
+          _projectDirectory: string,
+          profileName: string,
+          fileName: string,
+          maxBytes: number,
+          request?: OperationRequest
+        ) => {
+          capture(request);
+          const content = '*Skyrim.esm\n*RaceMenu.esp\n';
+          const preview = content.slice(0, Math.min(content.length, maxBytes));
+          return {
+            path: `C:\\Fluxora Projects\\Skyrim Main\\profiles\\${profileName}\\${fileName}`,
+            fileName,
+            contentPreview: preview,
+            bytesRead: preview.length,
+            size: content.length,
+            truncated: false,
+            relativePath: `${profileName}/${fileName}`,
+            operationId: request?.operationId ?? 'op_ai_profile_preview'
+          };
+        }
+      )
     },
     downloads: {
       list: vi.fn(async (_projectDirectory: string, request?: OperationRequest) => {
@@ -354,6 +401,12 @@ describe('AI read-only build tools', () => {
         missingMasterDetails?: Array<{ missingMasters: string[]; pluginName: string; sourceMod: string }>;
       };
     };
+    const pluginCheckTool = snapshot.tools.find((tool) => tool.toolName === 'local.check_plugins')?.output as {
+      missing_masters?: Array<{ missing: string[]; plugin: string; source_mod: string }>;
+      plugin_count?: { esm: number; esp: number; esl: number };
+      profile_id?: string | null;
+      schema?: string;
+    };
     expect(buildSummary.plugins?.fullPluginSlots).toMatchObject({ active: 1, limit: 254 });
     expect(buildSummary.plugins?.lightPluginSlots).toMatchObject({ active: 0, limit: 4096 });
     expect(buildSummary.plugins?.missingMasterDetails?.[0]).toMatchObject({
@@ -365,10 +418,24 @@ describe('AI read-only build tools', () => {
       pluginName: 'VisualPack.esp',
       sourceMod: 'Visual Pack'
     });
+    expect(pluginCheckTool).toMatchObject({
+      missing_masters: [
+        expect.objectContaining({
+          missing: ['BaseGame.esm'],
+          plugin: 'VisualPack.esp',
+          source_mod: 'Visual Pack'
+        })
+      ],
+      plugin_count: { esm: 0, esp: 1, esl: 0 },
+      profile_id: 'Testing',
+      schema: 'fluxora.ai.local-check-plugins.v1'
+    });
 
     const serialized = serializeAiBuildContextSnapshot(snapshot);
     expect(serialized).toContain('fluxora.ai.build-context.v1');
     expect(serialized).toContain('No write, destructive, credential, shell, raw filesystem, or external-network tools');
+    expect(serialized).toContain('local.check_plugins');
+    expect(serialized).toContain('fluxora.ai.local-check-plugins.v1');
     expect(serialized).toContain('local.filesystemSnapshot');
     expect(serialized).toContain('local.detect_skse_plugins');
     expect(serialized).toContain('"schema": "fluxora.ai.local-filesystem-snapshot.v1"');
@@ -387,6 +454,93 @@ describe('AI read-only build tools', () => {
     expect(serialized).toContain('"updateCheckStatus"');
     expect(serialized).toContain('"inventoryRole": "download-archive-queue"');
     expect(serialized).toContain('Treat page items as a sample, not the complete build.');
+  });
+
+  it('returns a compact local.check_plugins report from plugin metadata for the requested profile', async () => {
+    const { api } = createApi({
+      plugins: [
+        {
+          ...createPluginFixture(0),
+          extension: '.esm',
+          hasLightFlag: false,
+          isEnabled: true,
+          isLight: false,
+          isMaster: true,
+          missingMasters: [],
+          name: 'Skyrim.esm',
+          sourceMod: 'Base Game'
+        },
+        {
+          ...createPluginFixture(1),
+          extension: '.esp',
+          hasLightFlag: false,
+          isEnabled: true,
+          isLight: false,
+          isMaster: false,
+          missingMasters: ['Lux.esp'],
+          name: 'Lux - Patch.esp',
+          sourceMod: 'Lux Patch'
+        },
+        {
+          ...createPluginFixture(2),
+          extension: '.esp',
+          hasLightFlag: true,
+          isEnabled: true,
+          isLight: true,
+          isMaster: false,
+          missingMasters: [],
+          name: 'LightFlaggedPatch.esp',
+          sourceMod: 'Light Patch'
+        }
+      ]
+    });
+
+    const result = await runAiBuildTool(
+      api,
+      'local.check_plugins',
+      {
+        defaultProfileName: 'Default',
+        profileName: 'Profile A',
+        project
+      },
+      'op_ai_check_plugins'
+    );
+    const output = result.output as {
+      missing_masters?: Array<{ enabled?: boolean; missing?: string[]; plugin?: string; source_mod?: string }>;
+      plugin_count?: { esm: number; esp: number; esl: number };
+      plugins_with_errors?: unknown[];
+      profile_id?: string | null;
+      schema?: string;
+    };
+
+    expect(api.plugins.list).toHaveBeenCalledWith(
+      project.projectDirectory,
+      project.templateId,
+      'Profile A',
+      expect.objectContaining({ operationId: 'op_ai_check_plugins' })
+    );
+    expect(output).toMatchObject({
+      missing_masters: [
+        {
+          enabled: true,
+          missing: ['Lux.esp'],
+          plugin: 'Lux - Patch.esp',
+          source_mod: 'Lux Patch'
+        }
+      ],
+      plugin_count: {
+        esm: 1,
+        esp: 1,
+        esl: 1
+      },
+      plugins_with_errors: [],
+      profile_id: 'Profile A',
+      schema: 'fluxora.ai.local-check-plugins.v1'
+    });
+    expect(result.issues[0]).toMatchObject({
+      code: 'plugins.missing-masters',
+      sourceTool: 'local.check_plugins'
+    });
   });
 
   it('detects SKSE DLL metadata through the bounded local filesystem snapshot', async () => {
@@ -478,6 +632,106 @@ describe('AI read-only build tools', () => {
     expect(output.scan?.byKind?.['native-plugin']).toBe(1);
     expect(output.scan?.scannedFileCount).toBe(2);
     expect(result.issues.map((item) => item.code)).toContain('local.crash-log-parser-not-exposed');
+  });
+
+  it('uses local.read_text_file only for Analyze diagnostic prompts', async () => {
+    const raceMenu: FluxoraInstalledMod = {
+      ...installedMods[0],
+      id: 'C:\\Fluxora Projects\\Skyrim Main\\mods\\RaceMenu',
+      name: 'RaceMenu',
+      version: '0.4.19.16'
+    };
+    const { api } = createApi({
+      fileTree: [
+        {
+          name: 'README.txt',
+          relativePath: 'README.txt',
+          isDirectory: false,
+          hasChildren: false,
+          size: 78000,
+          conflictState: 'none',
+          conflictOwners: []
+        },
+        {
+          name: 'ModuleConfig.xml',
+          relativePath: 'fomod/ModuleConfig.xml',
+          isDirectory: false,
+          hasChildren: false,
+          size: 4096,
+          conflictState: 'none',
+          conflictOwners: []
+        }
+      ],
+      installedMods: [raceMenu],
+      modOrder: createModOrderItems([raceMenu]),
+      plugins: []
+    });
+
+    expect(shouldCollectAnalyzeTextFiles('hello')).toBe(false);
+    const ordinary = await collectAiBuildContext(
+      api,
+      {
+        defaultProfileName: 'Default',
+        profileName: 'Testing',
+        project
+      },
+      'op_ai_no_analyze'
+    );
+    expect(ordinary.tools.map((tool) => tool.toolName)).not.toContain('local.read_text_file');
+    expect(api.mods.previewTextFile).not.toHaveBeenCalled();
+
+    const diagnostic = await collectAiBuildContext(
+      api,
+      {
+        defaultProfileName: 'Default',
+        profileName: 'Testing',
+        project,
+        prompt: 'Проанализируй сборку, она крашит. Проверь README.txt и loadorder.txt.'
+      },
+      'op_ai_analyze'
+    );
+    const readTextTool = diagnostic.tools.find((tool) => tool.toolName === 'local.read_text_file');
+    const output = readTextTool?.output as {
+      accessPolicy?: { arbitraryOsPaths?: boolean; contentReads?: string; maxBytes?: number; pathScope?: string[] };
+      files?: Array<{ bytes_read?: number; content_preview?: string; path?: string; truncated?: boolean }>;
+      schema?: string;
+    };
+
+    expect(readTextTool).toBeTruthy();
+    expect(output.schema).toBe('fluxora.ai.local-read-text-file.v1');
+    expect(output.accessPolicy).toMatchObject({
+      arbitraryOsPaths: false,
+      contentReads: 'bounded-on-demand',
+      maxBytes: 64 * 1024,
+      pathScope: ['mods', 'profiles']
+    });
+    expect(output.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          content_preview: expect.stringContaining('RaceMenu requires SKSE'),
+          path: 'mods/RaceMenu/README.txt',
+          truncated: true
+        }),
+        expect.objectContaining({
+          path: 'profiles/Testing/loadorder.txt'
+        })
+      ])
+    );
+    expect(output.files?.every((file) => (file.bytes_read ?? 0) <= 64 * 1024)).toBe(true);
+    expect(api.mods.previewTextFile).toHaveBeenCalledWith(
+      project.projectDirectory,
+      raceMenu.id,
+      'README.txt',
+      64 * 1024,
+      expect.objectContaining({ operationId: 'op_ai_analyze' })
+    );
+    expect(api.profiles.previewTextFile).toHaveBeenCalledWith(
+      project.projectDirectory,
+      'Testing',
+      'loadorder.txt',
+      64 * 1024,
+      expect.objectContaining({ operationId: 'op_ai_analyze' })
+    );
   });
 
   it('adds concrete file-owner conflict evidence for high-signal overwrite mods', async () => {

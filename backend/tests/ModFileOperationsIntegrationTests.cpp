@@ -3,6 +3,7 @@
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/ModService.hpp"
+#include "FluxoraCore/Services/ProfileService.hpp"
 #include "FluxoraCore/Services/ProfileOrderService.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 #include "TestFilesystem.hpp"
@@ -309,6 +310,7 @@ namespace fluxora::tests
               pathSettings_(logger_),
               downloads_(logger_, settings_, pathSettings_),
               mods_(logger_, settings_, pathSettings_),
+              profiles_(logger_, pathSettings_),
               profileOrder_(logger_, mods_, pathSettings_)
         {
         }
@@ -399,6 +401,7 @@ namespace fluxora::tests
         BuildPathSettingsService pathSettings_;
         DownloadService downloads_;
         ModService mods_;
+        ProfileService profiles_;
         ProfileOrderService profileOrder_;
     };
 
@@ -533,6 +536,64 @@ namespace fluxora::tests
         EXPECT_EQ(saved.fileName, L"settings.json");
         EXPECT_EQ(saved.relativePath, L"config/settings.json");
         EXPECT_EQ(readTextFile(modPath / L"config" / L"settings.json"), "{\"enabled\":false}\n");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ModTextFilePreviewReadsBoundedContainedUtf8Files)
+    {
+        const InstalledModEntry created = mods_.createEmptyMod(project_, L"RaceMenu");
+        const std::filesystem::path modPath = created.id;
+        writeTextFile(
+            modPath / L"README.txt",
+            "RaceMenu requires SKSE and Address Library.\nSecond line.\n");
+        writeTextFile(modPath / L"fomod" / L"ModuleConfig.xml", "<config><moduleName>RaceMenu</moduleName></config>\n");
+        writeTextFile(modPath / L"SKSE" / L"Plugins" / L"RaceMenu.dll", "not text");
+        writeTextFile(modPath / L"password.txt", "password=hidden\n");
+
+        const ModTextFilePreview preview =
+            mods_.previewModTextFile(project_, modPath, L"README.txt", 24);
+
+        EXPECT_EQ(preview.fileName, L"README.txt");
+        EXPECT_EQ(preview.relativePath, L"README.txt");
+        EXPECT_LE(preview.bytesRead, 24U);
+        EXPECT_TRUE(preview.truncated);
+        EXPECT_NE(preview.contentPreview.find(L"RaceMenu requires SKSE"), std::wstring::npos);
+
+        const ModTextFilePreview fomodPreview =
+            mods_.previewModTextFile(project_, modPath, L"fomod/ModuleConfig.xml", 64 * 1024);
+        EXPECT_EQ(fomodPreview.fileName, L"ModuleConfig.xml");
+        EXPECT_NE(fomodPreview.contentPreview.find(L"RaceMenu"), std::wstring::npos);
+
+        EXPECT_THROW(
+            (void)mods_.previewModTextFile(project_, modPath, L"SKSE/Plugins/RaceMenu.dll", 64 * 1024),
+            std::invalid_argument);
+        EXPECT_THROW(
+            (void)mods_.previewModTextFile(project_, modPath, L"password.txt", 64 * 1024),
+            std::invalid_argument);
+        EXPECT_THROW(
+            (void)mods_.previewModTextFile(project_, modPath, L"../Other Mod/README.txt", 64 * 1024),
+            std::invalid_argument);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ProfileTextFilePreviewReadsOnlyAllowedProfileFiles)
+    {
+        const std::filesystem::path profile = pathSettings_.profilesDirectory(project_) / L"Default";
+        writeTextFile(profile / L"plugins.txt", "*Skyrim.esm\n*RaceMenu.esp\n");
+        writeTextFile(profile / L"secret.txt", "password=hidden\n");
+
+        const ProfileTextFilePreview preview =
+            profiles_.previewProfileTextFile(project_, L"Default", L"plugins.txt", 64 * 1024);
+
+        EXPECT_EQ(preview.fileName, L"plugins.txt");
+        EXPECT_EQ(preview.relativePath, L"Default/plugins.txt");
+        EXPECT_FALSE(preview.truncated);
+        EXPECT_NE(preview.contentPreview.find(L"RaceMenu.esp"), std::wstring::npos);
+
+        EXPECT_THROW(
+            (void)profiles_.previewProfileTextFile(project_, L"Default", L"secret.txt", 64 * 1024),
+            std::invalid_argument);
+        EXPECT_THROW(
+            (void)profiles_.previewProfileTextFile(project_, L"..", L"plugins.txt", 64 * 1024),
+            std::invalid_argument);
     }
 
     TEST_F(ModFileOperationsIntegrationTests, ModTextFileEditorRejectsTraversalOutsideMod)

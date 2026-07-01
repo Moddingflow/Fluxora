@@ -54,6 +54,7 @@ export const FluxoraIpcChannels = {
   modsGetOrder: 'fluxora:mods:get-order',
   modsListInstalled: 'fluxora:mods:list-installed',
   modsMoveOrderItem: 'fluxora:mods:move-order-item',
+  modsPreviewTextFile: 'fluxora:mods:preview-text-file',
   modsReadTextFile: 'fluxora:mods:read-text-file',
   modsSaveTextFile: 'fluxora:mods:save-text-file',
   modsSetAllEnabled: 'fluxora:mods:set-all-enabled',
@@ -68,6 +69,7 @@ export const FluxoraIpcChannels = {
   profilesCreate: 'fluxora:profiles:create',
   profilesDelete: 'fluxora:profiles:delete',
   profilesList: 'fluxora:profiles:list',
+  profilesPreviewTextFile: 'fluxora:profiles:preview-text-file',
   profilesRename: 'fluxora:profiles:rename',
   nxmCaptureLinks: 'fluxora:nxm:capture-links',
   nxmImportInboundDownloads: 'fluxora:nxm:import-inbound-downloads',
@@ -1192,6 +1194,17 @@ export interface FluxoraTextFileDocument {
   operationId: string;
 }
 
+export interface FluxoraTextFilePreview {
+  path: string;
+  fileName: string;
+  contentPreview: string;
+  bytesRead: number;
+  size: number;
+  truncated: boolean;
+  relativePath?: string;
+  operationId: string;
+}
+
 export interface FluxoraTextFileSaveResult {
   path: string;
   fileName: string;
@@ -1713,6 +1726,13 @@ export interface FluxoraApi {
       relativePath: string,
       request?: OperationRequest
     ) => Promise<FluxoraTextFileDocument>;
+    previewTextFile: (
+      projectDirectory: string,
+      modPath: string,
+      relativePath: string,
+      maxBytes: number,
+      request?: OperationRequest
+    ) => Promise<FluxoraTextFilePreview>;
     saveTextFile: (
       projectDirectory: string,
       modPath: string,
@@ -1773,6 +1793,13 @@ export interface FluxoraApi {
       defaultProfileName?: string,
       request?: OperationRequest
     ) => Promise<string[]>;
+    previewTextFile: (
+      projectDirectory: string,
+      profileName: string,
+      fileName: string,
+      maxBytes: number,
+      request?: OperationRequest
+    ) => Promise<FluxoraTextFilePreview>;
     create: (
       projectDirectory: string,
       profileName: string,

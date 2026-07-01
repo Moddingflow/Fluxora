@@ -66,6 +66,17 @@ namespace fluxora
         std::uintmax_t size{0};
     };
 
+    struct ModTextFilePreview
+    {
+        std::filesystem::path path;
+        std::wstring relativePath;
+        std::wstring fileName;
+        std::wstring contentPreview;
+        std::uintmax_t bytesRead{0};
+        std::uintmax_t size{0};
+        bool truncated{false};
+    };
+
     class ModService final : public IService
     {
     public:
@@ -92,6 +103,11 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modPath,
             std::wstring_view relativePath) const;
+        [[nodiscard]] ModTextFilePreview previewModTextFile(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modPath,
+            std::wstring_view relativePath,
+            std::uintmax_t maxBytes) const;
         [[nodiscard]] ModTextFileSaveResult saveModTextFile(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modPath,

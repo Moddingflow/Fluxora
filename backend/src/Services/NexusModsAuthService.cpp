@@ -7,8 +7,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cwctype>
 #include <iomanip>
+#include <initializer_list>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -33,18 +36,37 @@ namespace fluxora
 {
     namespace
     {
-        constexpr std::wstring_view defaultClientId = L"";
-        constexpr std::wstring_view defaultRedirectUri = L"http://127.0.0.1:PORT";
+        constexpr std::wstring_view defaultClientId = L"fluxora";
+        constexpr std::wstring_view defaultRedirectUri = L"http://127.0.0.1:8089/callback";
+        constexpr std::wstring_view defaultSupabaseUrl = L"https://tpciohumwahlctpeuduv.supabase.co";
+        constexpr std::wstring_view defaultSupabaseAnonKey =
+            L"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRwY2lvaHVtd2FobGN0cGV1ZHV2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYyNjkzMDMsImV4cCI6MjA5MTg0NTMwM30.ToKVEyWJAns-kxL_5p5K4C9lO-qJTo3PwXop03pE5gU";
+        constexpr std::wstring_view supabaseCredentialRpc = L"fluxora_ai_provider_credential";
+        constexpr std::wstring_view nexusClientIdName = L"NEXUS_CLIENT_ID";
+        constexpr std::wstring_view nexusOAuthClientIdName = L"NEXUS_OAUTH_CLIENT_ID";
+        constexpr std::wstring_view nexusClientSecretName = L"NEXUS_CLIENT_SECRET";
+        constexpr std::wstring_view nexusOAuthClientSecretName = L"NEXUS_OAUTH_CLIENT_SECRET";
+        constexpr std::wstring_view nexusRedirectUriName = L"NEXUS_REDIRECT_URI";
+        constexpr std::wstring_view nexusOAuthRedirectUriName = L"NEXUS_OAUTH_REDIRECT_URI";
+        constexpr std::wstring_view nexusCredentialProviderId = L"nexus";
         constexpr std::wstring_view authorizeEndpoint = L"https://users.nexusmods.com/oauth/authorize";
         constexpr std::wstring_view tokenHost = L"users.nexusmods.com";
         constexpr std::wstring_view tokenPath = L"/oauth/token";
         constexpr int callbackTimeoutSeconds = 120;
         constexpr int callbackClientReadTimeoutMilliseconds = 3000;
+        constexpr int supabaseCredentialTimeoutMilliseconds = 4000;
 
         struct OAuthConfig
         {
             std::wstring clientId;
+            std::wstring clientSecret;
             std::wstring redirectUri;
+        };
+
+        struct HttpsUrlParts
+        {
+            std::wstring host;
+            std::wstring pathAndQuery;
         };
 
         struct RedirectUriParts
@@ -122,19 +144,55 @@ namespace fluxora
 #endif
         }
 
-        OAuthConfig loadConfig()
+        std::wstring trimWhitespace(std::wstring value)
         {
-            OAuthConfig config;
-            config.clientId = readEnvironment(L"FLUXORA_NEXUS_CLIENT_ID");
-            if (config.clientId.empty())
+            const auto first = std::find_if(value.begin(), value.end(), [](wchar_t character) {
+                return !std::iswspace(character);
+            });
+            const auto last = std::find_if(value.rbegin(), value.rend(), [](wchar_t character) {
+                return !std::iswspace(character);
+            }).base();
+            if (first >= last)
             {
-                config.clientId = std::wstring(defaultClientId);
+                return {};
             }
 
-            config.redirectUri = readEnvironment(L"FLUXORA_NEXUS_REDIRECT_URI");
-            if (config.redirectUri.empty())
+            return std::wstring(first, last);
+        }
+
+        std::wstring readTrimmedEnvironment(std::wstring_view name)
+        {
+            return trimWhitespace(readEnvironment(name));
+        }
+
+        std::wstring firstTrimmedEnvironmentValue(std::initializer_list<std::wstring_view> names)
+        {
+            for (std::wstring_view name : names)
             {
-                config.redirectUri = std::wstring(defaultRedirectUri);
+                std::wstring value = readTrimmedEnvironment(name);
+                if (!value.empty())
+                {
+                    return value;
+                }
+            }
+
+            return {};
+        }
+
+        std::wstring resolveNexusClientId(bool includeExternalConfig);
+        std::wstring resolveNexusRedirectUri(bool includeExternalConfig);
+        std::wstring resolveNexusClientSecret();
+        std::wstring readJsonString(const JsonValue& object, std::wstring_view field);
+
+        OAuthConfig loadConfig(bool includeExternalConfig = false)
+        {
+            OAuthConfig config;
+            config.clientId = resolveNexusClientId(includeExternalConfig);
+            config.redirectUri = resolveNexusRedirectUri(includeExternalConfig);
+
+            if (includeExternalConfig)
+            {
+                config.clientSecret = resolveNexusClientSecret();
             }
 
             return config;
@@ -233,6 +291,244 @@ namespace fluxora
             }
 
             return encoded;
+        }
+
+        std::optional<HttpsUrlParts> parseHttpsUrl(std::wstring_view value)
+        {
+            constexpr std::wstring_view scheme = L"https://";
+            if (!value.starts_with(scheme))
+            {
+                return std::nullopt;
+            }
+
+            const std::size_t hostStart = scheme.size();
+            const std::size_t pathStart = value.find(L'/', hostStart);
+            std::wstring host(pathStart == std::wstring_view::npos
+                ? value.substr(hostStart)
+                : value.substr(hostStart, pathStart - hostStart));
+            std::wstring path(pathStart == std::wstring_view::npos
+                ? L"/"
+                : std::wstring(value.substr(pathStart)));
+            if (host.empty() || host.find(L'@') != std::wstring::npos || host.find(L'\\') != std::wstring::npos)
+            {
+                return std::nullopt;
+            }
+
+            if (host.ends_with(L":443"))
+            {
+                host.resize(host.size() - 4);
+            }
+            else if (host.find(L':') != std::wstring::npos)
+            {
+                return std::nullopt;
+            }
+
+            if (path.empty())
+            {
+                path = L"/";
+            }
+
+            return HttpsUrlParts{host, path};
+        }
+
+        bool hostIsAllowedSupabase(std::wstring host)
+        {
+            if (host.empty())
+            {
+                return false;
+            }
+
+            if (host.ends_with(L"."))
+            {
+                host.pop_back();
+            }
+            host = toLower(std::move(host));
+            if (host == L"tpciohumwahlctpeuduv.supabase.co")
+            {
+                return true;
+            }
+
+            constexpr std::wstring_view suffix = L".supabase.co";
+            return host.size() > suffix.size() &&
+                host.compare(host.size() - suffix.size(), suffix.size(), suffix) == 0;
+        }
+
+        std::wstring supabaseBaseUrl()
+        {
+            std::wstring raw = readTrimmedEnvironment(L"FLUXORA_NEXUS_SUPABASE_URL");
+            if (raw.empty())
+            {
+                raw = readTrimmedEnvironment(L"FLUXORA_AI_SUPABASE_URL");
+            }
+            if (raw.empty())
+            {
+                raw = std::wstring(defaultSupabaseUrl);
+            }
+
+            while (!raw.empty() && raw.back() == L'/')
+            {
+                raw.pop_back();
+            }
+
+            const std::optional<HttpsUrlParts> parsed = parseHttpsUrl(raw);
+            if (!parsed.has_value() || parsed->pathAndQuery != L"/" || !hostIsAllowedSupabase(parsed->host))
+            {
+                return {};
+            }
+
+            return raw;
+        }
+
+        std::wstring supabaseAnonKey()
+        {
+            std::wstring key = readTrimmedEnvironment(L"FLUXORA_NEXUS_SUPABASE_ANON_KEY");
+            if (key.empty())
+            {
+                key = readTrimmedEnvironment(L"FLUXORA_AI_SUPABASE_ANON_KEY");
+            }
+            if (key.empty())
+            {
+                key = std::wstring(defaultSupabaseAnonKey);
+            }
+
+            return trimWhitespace(std::move(key));
+        }
+
+        std::optional<std::wstring> safeSupabaseIdentifier(const std::wstring& value)
+        {
+            const std::wstring trimmed = trimWhitespace(value);
+            if (trimmed.empty() || trimmed.size() > 80)
+            {
+                return std::nullopt;
+            }
+
+            const bool safe = std::all_of(trimmed.begin(), trimmed.end(), [](wchar_t character) {
+                return (character >= L'A' && character <= L'Z') ||
+                    (character >= L'a' && character <= L'z') ||
+                    (character >= L'0' && character <= L'9') ||
+                    character == L'_';
+            });
+            return safe ? std::optional<std::wstring>(trimmed) : std::nullopt;
+        }
+
+        std::optional<std::string> sendSupabaseRequest(
+            const std::wstring& method,
+            const std::wstring& endpoint,
+            const std::wstring& extraHeaders,
+            const std::string& body)
+        {
+#ifdef _WIN32
+            const std::optional<HttpsUrlParts> parsed = parseHttpsUrl(endpoint);
+            if (!parsed.has_value() || !hostIsAllowedSupabase(parsed->host))
+            {
+                return std::nullopt;
+            }
+
+            HINTERNET session = WinHttpOpen(
+                L"Fluxora/0.1",
+                WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                WINHTTP_NO_PROXY_NAME,
+                WINHTTP_NO_PROXY_BYPASS,
+                0);
+            if (session == nullptr)
+            {
+                return std::nullopt;
+            }
+
+            WinHttpSetTimeouts(
+                session,
+                supabaseCredentialTimeoutMilliseconds,
+                supabaseCredentialTimeoutMilliseconds,
+                supabaseCredentialTimeoutMilliseconds,
+                supabaseCredentialTimeoutMilliseconds);
+
+            HINTERNET connection = WinHttpConnect(
+                session,
+                parsed->host.c_str(),
+                INTERNET_DEFAULT_HTTPS_PORT,
+                0);
+            if (connection == nullptr)
+            {
+                WinHttpCloseHandle(session);
+                return std::nullopt;
+            }
+
+            HINTERNET request = WinHttpOpenRequest(
+                connection,
+                method.c_str(),
+                parsed->pathAndQuery.c_str(),
+                nullptr,
+                WINHTTP_NO_REFERER,
+                WINHTTP_DEFAULT_ACCEPT_TYPES,
+                WINHTTP_FLAG_SECURE);
+            if (request == nullptr)
+            {
+                WinHttpCloseHandle(connection);
+                WinHttpCloseHandle(session);
+                return std::nullopt;
+            }
+
+            LPVOID requestBody = body.empty()
+                ? WINHTTP_NO_REQUEST_DATA
+                : static_cast<LPVOID>(const_cast<char*>(body.data()));
+            const BOOL sent = WinHttpSendRequest(
+                request,
+                extraHeaders.c_str(),
+                static_cast<DWORD>(extraHeaders.size()),
+                requestBody,
+                static_cast<DWORD>(body.size()),
+                static_cast<DWORD>(body.size()),
+                0);
+            if (!sent || !WinHttpReceiveResponse(request, nullptr))
+            {
+                WinHttpCloseHandle(request);
+                WinHttpCloseHandle(connection);
+                WinHttpCloseHandle(session);
+                return std::nullopt;
+            }
+
+            DWORD statusCode = 0;
+            DWORD statusCodeSize = sizeof(statusCode);
+            WinHttpQueryHeaders(
+                request,
+                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                WINHTTP_HEADER_NAME_BY_INDEX,
+                &statusCode,
+                &statusCodeSize,
+                WINHTTP_NO_HEADER_INDEX);
+            if (statusCode < 200 || statusCode >= 300)
+            {
+                WinHttpCloseHandle(request);
+                WinHttpCloseHandle(connection);
+                WinHttpCloseHandle(session);
+                return std::nullopt;
+            }
+
+            std::string responseBody;
+            DWORD available = 0;
+            while (WinHttpQueryDataAvailable(request, &available) && available > 0)
+            {
+                std::vector<char> chunk(available);
+                DWORD read = 0;
+                if (!WinHttpReadData(request, chunk.data(), available, &read))
+                {
+                    break;
+                }
+
+                responseBody.append(chunk.data(), chunk.data() + read);
+            }
+
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            WinHttpCloseHandle(session);
+            return responseBody;
+#else
+            (void)method;
+            (void)endpoint;
+            (void)extraHeaders;
+            (void)body;
+            return std::nullopt;
+#endif
         }
 
         std::string urlDecodeToUtf8(std::string_view value)
@@ -563,11 +859,14 @@ namespace fluxora
             std::wstring url(authorizeEndpoint);
             url += L"?client_id=" + urlEncode(config.clientId);
             url += L"&response_type=code";
-            url += L"&scope=" + urlEncode(L"openid profile email");
+            url += L"&scope=";
             url += L"&redirect_uri=" + urlEncode(redirectUri);
             url += L"&state=" + urlEncode(state);
-            url += L"&code_challenge_method=S256";
-            url += L"&code_challenge=" + urlEncode(codeChallenge);
+            if (config.clientSecret.empty())
+            {
+                url += L"&code_challenge_method=S256";
+                url += L"&code_challenge=" + urlEncode(codeChallenge);
+            }
             return url;
         }
 
@@ -883,8 +1182,15 @@ namespace fluxora
             body += L"grant_type=authorization_code";
             body += L"&redirect_uri=" + urlEncode(redirectUri);
             body += L"&client_id=" + urlEncode(config.clientId);
+            if (!config.clientSecret.empty())
+            {
+                body += L"&client_secret=" + urlEncode(config.clientSecret);
+            }
             body += L"&code=" + urlEncode(fromUtf8(code));
-            body += L"&code_verifier=" + urlEncode(codeVerifier);
+            if (config.clientSecret.empty())
+            {
+                body += L"&code_verifier=" + urlEncode(codeVerifier);
+            }
             return toUtf8(body);
         }
 
@@ -1103,6 +1409,263 @@ namespace fluxora
             return tokens;
         }
 
+        std::wstring extractSupabaseCredentialValue(const JsonValue& value)
+        {
+            if (value.isString())
+            {
+                return trimWhitespace(value.asString());
+            }
+
+            if (value.isArray())
+            {
+                for (const JsonValue& item : value.asArray())
+                {
+                    std::wstring credential = extractSupabaseCredentialValue(item);
+                    if (!credential.empty())
+                    {
+                        return credential;
+                    }
+                }
+
+                return {};
+            }
+
+            if (!value.isObject())
+            {
+                return {};
+            }
+
+            for (std::wstring_view field : {
+                     L"clientSecret",
+                     L"client_secret",
+                     L"decrypted_secret",
+                     L"credential",
+                     L"secret",
+                     L"value",
+                     L"apiKey",
+                     L"key",
+                 })
+            {
+                const JsonValue* nested = value.find(field);
+                if (nested == nullptr)
+                {
+                    continue;
+                }
+
+                std::wstring credential = extractSupabaseCredentialValue(*nested);
+                if (!credential.empty())
+                {
+                    return credential;
+                }
+            }
+
+            return {};
+        }
+
+        std::wstring supabaseCredentialRequestHeaders()
+        {
+            const std::wstring anonKey = supabaseAnonKey();
+            if (anonKey.empty())
+            {
+                return {};
+            }
+
+            return L"apikey: " + anonKey + L"\r\n"
+                L"Authorization: Bearer " + anonKey + L"\r\n"
+                L"User-Agent: Fluxora/0.1\r\n"
+                L"Accept: application/json\r\n";
+        }
+
+        std::wstring supabaseCredentialFromRpc(std::wstring_view secretName)
+        {
+            const std::wstring baseUrl = supabaseBaseUrl();
+            std::wstring headers = supabaseCredentialRequestHeaders();
+            if (baseUrl.empty() || headers.empty())
+            {
+                return {};
+            }
+
+            std::wstring rpcName = readTrimmedEnvironment(L"FLUXORA_NEXUS_SUPABASE_CREDENTIAL_RPC");
+            if (rpcName.empty())
+            {
+                rpcName = readTrimmedEnvironment(L"FLUXORA_AI_SUPABASE_CREDENTIAL_RPC");
+            }
+            std::optional<std::wstring> safeRpcName = safeSupabaseIdentifier(
+                rpcName.empty() ? std::wstring(supabaseCredentialRpc) : rpcName);
+            if (!safeRpcName.has_value())
+            {
+                return {};
+            }
+
+            headers += L"Content-Type: application/json; charset=UTF-8\r\n";
+            const std::wstring endpoint = baseUrl + L"/rest/v1/rpc/" + safeRpcName.value();
+            const std::string body =
+                "{\"provider_id\":\"" + toUtf8(std::wstring(nexusCredentialProviderId)) +
+                "\",\"secret_name\":\"" + toUtf8(std::wstring(secretName)) + "\"}";
+            const std::optional<std::string> response = sendSupabaseRequest(L"POST", endpoint, headers, body);
+            if (!response.has_value())
+            {
+                return {};
+            }
+
+            try
+            {
+                return extractSupabaseCredentialValue(JsonReader::parse(fromUtf8(response.value())));
+            }
+            catch (const std::exception&)
+            {
+                return {};
+            }
+        }
+
+        std::wstring supabaseCredentialFromTable(std::wstring_view secretName)
+        {
+            const std::wstring baseUrl = supabaseBaseUrl();
+            const std::wstring headers = supabaseCredentialRequestHeaders();
+            if (baseUrl.empty() || headers.empty())
+            {
+                return {};
+            }
+
+            std::optional<std::wstring> tableName =
+                safeSupabaseIdentifier(readTrimmedEnvironment(L"FLUXORA_NEXUS_SUPABASE_CREDENTIAL_TABLE"));
+            if (!tableName.has_value())
+            {
+                tableName = safeSupabaseIdentifier(readTrimmedEnvironment(L"FLUXORA_AI_SUPABASE_CREDENTIAL_TABLE"));
+            }
+            if (!tableName.has_value())
+            {
+                return {};
+            }
+
+            std::optional<std::wstring> nameColumn =
+                safeSupabaseIdentifier(readTrimmedEnvironment(L"FLUXORA_NEXUS_SUPABASE_CREDENTIAL_NAME_COLUMN"));
+            if (!nameColumn.has_value())
+            {
+                nameColumn =
+                    safeSupabaseIdentifier(readTrimmedEnvironment(L"FLUXORA_AI_SUPABASE_CREDENTIAL_NAME_COLUMN"));
+            }
+            if (!nameColumn.has_value())
+            {
+                nameColumn = std::wstring(L"name");
+            }
+
+            std::optional<std::wstring> valueColumn =
+                safeSupabaseIdentifier(readTrimmedEnvironment(L"FLUXORA_NEXUS_SUPABASE_CREDENTIAL_VALUE_COLUMN"));
+            if (!valueColumn.has_value())
+            {
+                valueColumn =
+                    safeSupabaseIdentifier(readTrimmedEnvironment(L"FLUXORA_AI_SUPABASE_CREDENTIAL_VALUE_COLUMN"));
+            }
+            if (!valueColumn.has_value())
+            {
+                valueColumn = std::wstring(L"value");
+            }
+
+            const std::wstring endpoint = baseUrl +
+                L"/rest/v1/" + tableName.value() +
+                L"?select=" + nameColumn.value() + L"," + valueColumn.value() +
+                L"&" + nameColumn.value() + L"=eq." + urlEncode(std::wstring(secretName)) +
+                L"&limit=1";
+            const std::optional<std::string> response = sendSupabaseRequest(L"GET", endpoint, headers, {});
+            if (!response.has_value())
+            {
+                return {};
+            }
+
+            try
+            {
+                return extractSupabaseCredentialValue(JsonReader::parse(fromUtf8(response.value())));
+            }
+            catch (const std::exception&)
+            {
+                return {};
+            }
+        }
+
+        std::wstring supabaseCredential(std::initializer_list<std::wstring_view> secretNames)
+        {
+            for (std::wstring_view secretName : secretNames)
+            {
+                std::wstring credential = supabaseCredentialFromRpc(secretName);
+                if (!credential.empty())
+                {
+                    return credential;
+                }
+
+                credential = supabaseCredentialFromTable(secretName);
+                if (!credential.empty())
+                {
+                    return credential;
+                }
+            }
+
+            return {};
+        }
+
+        std::wstring resolveNexusClientId(bool includeExternalConfig)
+        {
+            std::wstring clientId = firstTrimmedEnvironmentValue({
+                L"FLUXORA_NEXUS_CLIENT_ID",
+                L"NEXUS_CLIENT_ID",
+                L"NEXUS_OAUTH_CLIENT_ID",
+            });
+            if (!clientId.empty())
+            {
+                return clientId;
+            }
+
+            if (includeExternalConfig)
+            {
+                clientId = supabaseCredential({nexusClientIdName, nexusOAuthClientIdName});
+                if (!clientId.empty())
+                {
+                    return clientId;
+                }
+            }
+
+            return std::wstring(defaultClientId);
+        }
+
+        std::wstring resolveNexusRedirectUri(bool includeExternalConfig)
+        {
+            std::wstring redirectUri = firstTrimmedEnvironmentValue({
+                L"FLUXORA_NEXUS_REDIRECT_URI",
+                L"NEXUS_REDIRECT_URI",
+                L"NEXUS_OAUTH_REDIRECT_URI",
+            });
+            if (!redirectUri.empty())
+            {
+                return redirectUri;
+            }
+
+            if (includeExternalConfig)
+            {
+                redirectUri = supabaseCredential({nexusRedirectUriName, nexusOAuthRedirectUriName});
+                if (!redirectUri.empty())
+                {
+                    return redirectUri;
+                }
+            }
+
+            return std::wstring(defaultRedirectUri);
+        }
+
+        std::wstring resolveNexusClientSecret()
+        {
+            std::wstring secret = firstTrimmedEnvironmentValue({
+                L"FLUXORA_NEXUS_CLIENT_SECRET",
+                L"NEXUS_CLIENT_SECRET",
+                L"NEXUS_OAUTH_CLIENT_SECRET",
+            });
+            if (!secret.empty())
+            {
+                return secret;
+            }
+
+            return supabaseCredential({nexusClientSecretName, nexusOAuthClientSecretName});
+        }
+
         JwtUser parseJwtUser(const std::wstring& accessToken)
         {
             JwtUser user;
@@ -1198,6 +1761,77 @@ namespace fluxora
         }
     }
 
+#ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
+    namespace test_hooks
+    {
+        std::string buildNexusTokenRequestBodyForTest(
+            const std::wstring& clientId,
+            const std::wstring& clientSecret,
+            const std::wstring& redirectUri,
+            const std::string& code,
+            const std::wstring& codeVerifier)
+        {
+            OAuthConfig config;
+            config.clientId = clientId;
+            config.clientSecret = clientSecret;
+            return buildTokenRequestBody(config, redirectUri, code, codeVerifier);
+        }
+
+        std::string buildNexusAuthorizeUrlForTest(
+            const std::wstring& clientId,
+            const std::wstring& clientSecret,
+            const std::wstring& redirectUri,
+            const std::wstring& state,
+            const std::wstring& codeChallenge)
+        {
+            OAuthConfig config;
+            config.clientId = clientId;
+            config.clientSecret = clientSecret;
+            return toUtf8(buildAuthorizeUrl(config, redirectUri, state, codeChallenge));
+        }
+
+        std::wstring defaultNexusRedirectUriForTest()
+        {
+            return std::wstring(defaultRedirectUri);
+        }
+
+        std::wstring nexusClientIdNameForTest()
+        {
+            return std::wstring(nexusClientIdName);
+        }
+
+        std::wstring nexusRedirectUriNameForTest()
+        {
+            return std::wstring(nexusRedirectUriName);
+        }
+
+        std::wstring nexusClientSecretNameForTest()
+        {
+            return std::wstring(nexusClientSecretName);
+        }
+
+        std::wstring resolvedNexusClientIdForTest()
+        {
+            return resolveNexusClientId(false);
+        }
+
+        std::wstring resolvedNexusRedirectUriForTest()
+        {
+            return resolveNexusRedirectUri(false);
+        }
+
+        std::wstring extractSupabaseCredentialValueForTest(const std::wstring& json)
+        {
+            return extractSupabaseCredentialValue(JsonReader::parse(json));
+        }
+
+        std::wstring resolvedNexusClientSecretForTest()
+        {
+            return resolveNexusClientSecret();
+        }
+    }
+#endif
+
     NexusModsAuthService::NexusModsAuthService(Logger& logger, AppSettingsService& settings) noexcept
         : logger_(logger),
           settings_(settings)
@@ -1233,7 +1867,7 @@ namespace fluxora
 
     NexusModsAuthStatus NexusModsAuthService::connect()
     {
-        const OAuthConfig config = loadConfig();
+        const OAuthConfig config = loadConfig(true);
         if (config.clientId.empty())
         {
             throw std::invalid_argument("NexusMods OAuth client_id is missing. Set FLUXORA_NEXUS_CLIENT_ID.");
@@ -1246,6 +1880,11 @@ namespace fluxora
         const std::wstring codeChallenge = base64UrlEncode(sha256(toUtf8(codeVerifier)));
         const std::wstring authorizeUrl = buildAuthorizeUrl(config, redirectUri, state, codeChallenge);
 
+        logger_.write(
+            LogLevel::Info,
+            "NexusMods OAuth configuration: client_id=" + toUtf8(config.clientId) +
+                ", redirect_uri=" + toUtf8(redirectUri) +
+                ", mode=" + (config.clientSecret.empty() ? "public-pkce" : "confidential") + ".");
         logger_.write(LogLevel::Info, "Opening NexusMods OAuth authorization URL.");
         openSystemBrowser(authorizeUrl);
 

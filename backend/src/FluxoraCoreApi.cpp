@@ -2102,6 +2102,30 @@ namespace
         return writer.str();
     }
 
+    std::wstring serializeTextFilePreview(
+        const std::filesystem::path& path,
+        std::wstring_view contentPreview,
+        std::uintmax_t bytesRead,
+        std::uintmax_t size,
+        bool truncated,
+        std::wstring_view relativePath = {})
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"path", path.wstring());
+        writer.field(L"fileName", path.filename().wstring());
+        if (!relativePath.empty())
+        {
+            writer.field(L"relativePath", relativePath);
+        }
+        writer.field(L"contentPreview", contentPreview);
+        writer.field(L"bytesRead", bytesRead);
+        writer.field(L"size", size);
+        writer.field(L"truncated", truncated);
+        writer.endObject();
+        return writer.str();
+    }
+
     std::wstring serializeModTextFileDocument(const fluxora::ModTextFileDocument& document)
     {
         return serializeTextFileDocument(
@@ -2114,6 +2138,28 @@ namespace
     std::wstring serializeModTextFileSaveResult(const fluxora::ModTextFileSaveResult& result)
     {
         return serializeTextFileSaveResult(result.path, result.size, result.relativePath);
+    }
+
+    std::wstring serializeModTextFilePreview(const fluxora::ModTextFilePreview& preview)
+    {
+        return serializeTextFilePreview(
+            preview.path,
+            preview.contentPreview,
+            preview.bytesRead,
+            preview.size,
+            preview.truncated,
+            preview.relativePath);
+    }
+
+    std::wstring serializeProfileTextFilePreview(const fluxora::ProfileTextFilePreview& preview)
+    {
+        return serializeTextFilePreview(
+            preview.path,
+            preview.contentPreview,
+            preview.bytesRead,
+            preview.size,
+            preview.truncated,
+            preview.relativePath);
     }
 
     void logApiException(fluxora::LogLevel level, const std::exception& exception) noexcept
@@ -3249,6 +3295,36 @@ extern "C"
         }
     }
 
+    int fluxora_preview_profile_text_file(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* fileName,
+        int maxBytes,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(profileName) || isBlank(fileName))
+            {
+                lastError = L"Project directory, profile name and profile text file name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeProfileTextFilePreview(
+                core().profiles().previewProfileTextFile(
+                    std::filesystem::path(projectDirectory),
+                    profileName,
+                    fileName,
+                    maxBytes > 0 ? static_cast<std::uintmax_t>(maxBytes) : 0));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
     int fluxora_create_profile(
         const wchar_t* projectDirectory,
         const wchar_t* profileName,
@@ -3770,6 +3846,36 @@ extern "C"
                     std::filesystem::path(projectDirectory),
                     std::filesystem::path(modPath),
                     std::wstring_view(relativePath)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_preview_mod_text_file(
+        const wchar_t* projectDirectory,
+        const wchar_t* modPath,
+        const wchar_t* relativePath,
+        int maxBytes,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(modPath) || isBlank(relativePath))
+            {
+                lastError = L"Project directory, mod path and text file path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeModTextFilePreview(
+                core().mods().previewModTextFile(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(modPath),
+                    std::wstring_view(relativePath),
+                    maxBytes > 0 ? static_cast<std::uintmax_t>(maxBytes) : 0));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)

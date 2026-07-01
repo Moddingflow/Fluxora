@@ -38,6 +38,7 @@ const phase9Tools: readonly AiSafeActionToolName[] = [
   'downloads.analyzeFomod',
   'downloads.installFomod',
   'nexus.getAuthStatus',
+  'local.read_text_file',
   'nexus.connect',
   'nexus.disconnect',
   'nxm.captureLinks',
@@ -76,6 +77,7 @@ const uiSurfaceMethods = new Set([
   'downloads.analyzeFomod',
   'downloads.installFomod',
   'nexus.getAuthStatus',
+  'ai.readOnly.local.readTextFile',
   'nexus.connect',
   'nexus.disconnect',
   'nxm.captureLinks',
@@ -148,7 +150,11 @@ describe('AI safe action catalog', () => {
   it('maps only to existing UI facade/core-backed surfaces', () => {
     for (const tool of AI_SAFE_ACTION_CATALOG.tools) {
       expect(uiSurfaceMethods.has(tool.facadeMethod)).toBe(true);
-      expect(tool.bridgeMethod).toBe(tool.name);
+      if (tool.name === 'local.read_text_file') {
+        expect(tool.bridgeMethod).toBe('mods.previewTextFile | profiles.previewTextFile');
+      } else {
+        expect(tool.bridgeMethod).toBe(tool.name);
+      }
       expect(tool.facadeMethod).not.toMatch(/^(dialogs|shell|textFiles|links|processes)\./);
       expect(tool.bridgeMethod).not.toMatch(/^(dialogs|shell|textFiles|links|processes)\./);
     }

@@ -247,6 +247,14 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_preview_profile_text_file(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* fileName,
+        int maxBytes,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_create_profile(
         const wchar_t* projectDirectory,
         const wchar_t* profileName,
@@ -353,6 +361,14 @@ extern "C"
         const wchar_t* projectDirectory,
         const wchar_t* modPath,
         const wchar_t* relativePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_preview_mod_text_file(
+        const wchar_t* projectDirectory,
+        const wchar_t* modPath,
+        const wchar_t* relativePath,
+        int maxBytes,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 

@@ -71,6 +71,7 @@ import type {
   ShellOpenPathResult,
   ShellShowItemInFolderResult,
   FluxoraTextFileDocument,
+  FluxoraTextFilePreview,
   FluxoraTextFileSaveResult,
   UiLogEntry
 } from '../shared/fluxora-api';
@@ -404,6 +405,22 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         relativePath,
         request
       ),
+    previewTextFile: (
+      projectDirectory: string,
+      modPath: string,
+      relativePath: string,
+      maxBytes: number,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraTextFilePreview>(
+        ipc,
+        FluxoraIpcChannels.modsPreviewTextFile,
+        projectDirectory,
+        modPath,
+        relativePath,
+        maxBytes,
+        request
+      ),
     saveTextFile: (
       projectDirectory: string,
       modPath: string,
@@ -534,6 +551,22 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         FluxoraIpcChannels.profilesList,
         projectDirectory,
         defaultProfileName,
+        request
+      ),
+    previewTextFile: (
+      projectDirectory: string,
+      profileName: string,
+      fileName: string,
+      maxBytes: number,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraTextFilePreview>(
+        ipc,
+        FluxoraIpcChannels.profilesPreviewTextFile,
+        projectDirectory,
+        profileName,
+        fileName,
+        maxBytes,
         request
       ),
     create: (
@@ -1559,6 +1592,30 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.dialogSaveTextFile:
         return { canceled: true } satisfies DialogPickResult;
 
+      case FluxoraIpcChannels.modsPreviewTextFile:
+      case FluxoraIpcChannels.profilesPreviewTextFile: {
+        const request = requestWithOperationId(
+          channel === FluxoraIpcChannels.modsPreviewTextFile ? args[4] : args[4],
+          'text_file_preview'
+        );
+        const relativePath =
+          channel === FluxoraIpcChannels.modsPreviewTextFile
+            ? optionalString(args[2])
+            : `${optionalString(args[1])}/${optionalString(args[2])}`;
+        return {
+          path: relativePath,
+          fileName: optionalString(
+            channel === FluxoraIpcChannels.modsPreviewTextFile ? args[2] : args[2]
+          ).split(/[\\/]/).pop() ?? 'preview.txt',
+          contentPreview: '',
+          bytesRead: 0,
+          size: 0,
+          truncated: false,
+          relativePath,
+          operationId: operationIdOf(request, 'text_file_preview')
+        } satisfies FluxoraTextFilePreview;
+      }
+
       case FluxoraIpcChannels.modsReadTextFile:
       case FluxoraIpcChannels.textFilesRead: {
         const request = requestWithOperationId(
@@ -2197,6 +2254,16 @@ const createTauriInvoker = (): IpcInvoker => ({
         return withOperationId(data, request, 'mods_read_text_file');
       }
 
+      case FluxoraIpcChannels.modsPreviewTextFile: {
+        const request = requestWithOperationId(args[4], 'mods_preview_text_file');
+        const data = await bridgeRequest<Record<string, unknown>>(
+          'mods.previewTextFile',
+          { projectDirectory: args[0], modPath: args[1], relativePath: args[2], maxBytes: args[3] },
+          request
+        );
+        return withOperationId(data, request, 'mods_preview_text_file');
+      }
+
       case FluxoraIpcChannels.modsSaveTextFile: {
         const request = requestWithOperationId(args[4], 'mods_save_text_file');
         const data = await bridgeRequest<Record<string, unknown>>(
@@ -2260,6 +2327,15 @@ const createTauriInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.profilesList:
         return bridgeRequest('profiles.list', { projectDirectory: args[0], defaultProfileName: optionalString(args[1]) }, requestWithOperationId(args[2], 'profiles_list'));
+      case FluxoraIpcChannels.profilesPreviewTextFile: {
+        const request = requestWithOperationId(args[4], 'profiles_preview_text_file');
+        const data = await bridgeRequest<Record<string, unknown>>(
+          'profiles.previewTextFile',
+          { projectDirectory: args[0], profileName: args[1], fileName: args[2], maxBytes: args[3] },
+          request
+        );
+        return withOperationId(data, request, 'profiles_preview_text_file');
+      }
       case FluxoraIpcChannels.profilesCreate:
         return bridgeRequest('profiles.create', { projectDirectory: args[0], profileName: args[1], defaultProfileName: optionalString(args[2]), profileFilesJson: JSON.stringify(args[3] ?? []) }, requestWithOperationId(args[4], 'profiles_create'));
       case FluxoraIpcChannels.profilesClone:

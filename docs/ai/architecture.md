@@ -117,6 +117,12 @@ tools, or external-network tools. The read-only tool set may include
 core-backed Fluxora APIs. It returns relative paths, file kinds, sizes, conflict
 owners, profile/plugin summaries, SKSE DLL signals and recent Fluxora
 operation-log snippets, but never arbitrary OS paths or file contents.
+`local.read_text_file(path,max_bytes)` is separate and on-demand: it is added to
+the build context only when the GENERAL `Analyze` skill or an explicit
+build/crash/log diagnostic prompt triggers it. It returns at most 64 KB previews
+from allowlisted text/config/log/XML files inside the selected build's
+`mods/` or `profiles/` folders, and it blocks arbitrary Windows paths, browser
+data, credentials, user documents, and whole-disk reads.
 Mod file overwrite state is exposed as structured `overwrite.state/counts`
 data; update-check text such as `Не проверялся` is only Nexus/update status and
 must not be interpreted as a file overwrite or conflict signal.
@@ -204,9 +210,10 @@ is:
 | Chat-only assistant | `plan` | AI host | No Fluxora tools. No build mutation. |
 | Read build state | `read` | C++ core via bridge | Current/open project, template/capability summary, build paths summary where already exposed. |
 | Read installed mods | `read` | C++ core via bridge | Uses existing installed-mod DTOs. No file moves or enable/disable. |
-| Read plugins | `read` | C++ core via bridge | Uses existing plugin/load-order DTOs. No load-order mutation. |
+| Read plugins | `read` | C++ core via bridge | Uses existing plugin/load-order DTOs. `local.check_plugins(profile_id)` returns compact missing-master and enabled ESM/full ESP/ESL-light counts. No load-order mutation. |
 | Read selected mod file tree | `read` | C++ core via bridge | Uses existing mod file-tree DTOs for the explicitly selected mod only. No file content reads. |
 | Read bounded local file metadata | `read` | C++ core via bridge | `local.filesystemSnapshot` summarizes Fluxora-owned build folders with relative paths, file kinds, sizes, SKSE DLL signals, missing masters and file-conflict samples. No raw file contents or arbitrary OS paths. |
+| Read bounded diagnostic text preview | `read` | C++ core via bridge | `local.read_text_file(path,max_bytes)` is Analyze-only/on-demand, scoped to allowlisted files under selected build `mods/` and `profiles/`, capped at 64 KB, and treats contents as untrusted diagnostic data. |
 | Read profiles | `read` | C++ core via bridge | Uses existing profile list DTOs. No create/clone/rename/delete. |
 | Read downloads | `read` | C++ core via bridge | Uses existing download DTOs. No import, delete, resume, cancel, or install. |
 | Read operation status/logs | `read` | Tauri shell and bridge events | Uses cached progress events and safe app-log tailing. No arbitrary file access. |
@@ -241,7 +248,9 @@ confirmation text when needed, and a clear owner.
 | `build.state.read` | `read` | bridge/core | Sanitized build/project capability snapshot. |
 | `mods.listInstalled` | `read` | bridge/core | Existing installed-mod state, no file tree expansion by default. |
 | `mods.getFileTree` | `read` | bridge/core | Explicitly selected mod tree only, paged and compact. |
+| `local.check_plugins` | `read` | bridge/core via renderer context tool | Compact profile plugin health check. Returns `missing_masters`, `plugins_with_errors`, and `plugin_count` from existing plugin metadata. |
 | `local.filesystemSnapshot` | `read` | bridge/core via renderer context tool | Bounded metadata snapshot for `local.get_profile_snapshot`, `local.detect_skse_plugins`, `local.scan_recently_installed_mods`, `local.parse_crash_logs`, `local.check_missing_masters`, and `local.check_file_conflicts`. Metadata only; no content reads. |
+| `local.read_text_file` | `read` | bridge/core via renderer Analyze tool | On-demand bounded text preview for `README.txt`, `requirements.txt`, `fomod/info.xml`, `fomod/ModuleConfig.xml`, `*.log`, `plugins.txt`, `loadorder.txt`, and `modlist.txt` under selected build `mods/`/`profiles/`. Capped at 64 KB and blocked for arbitrary OS, browser, credential, document, or disk-wide reads. |
 | `plugins.list` | `read` | bridge/core | Existing plugin/load-order state. |
 | `profiles.list` | `read` | bridge/core | Existing profile names only. |
 | `downloads.list` | `read` | bridge/core | Existing download state, no install/delete/resume/cancel. |
@@ -256,6 +265,10 @@ mod is selected, profiles, downloads, operation status, recent operation logs,
 Nexus auth status, and a bounded `local.filesystemSnapshot` result. File trees,
 local filesystem metadata, downloads, profiles, and logs stay compact; the
 inventory lists are complete snapshots rather than 80-item samples.
+When an Analyze diagnostic prompt triggers `local.read_text_file`, the snapshot
+may also include a small `fluxora.ai.local-read-text-file.v1` bundle with
+`content_preview`, `bytes_read`, `truncated`, and `path` fields for allowlisted
+profile/mod text files only.
 `build.summary.conflictEvidence` additionally performs a bounded read-only
 `mods.getFileTree` pass over the highest-signal overwrite candidates and stores
 concrete file-owner pairs plus file samples. Models may name exact mod pairs
@@ -411,7 +424,8 @@ The Phase 10 runner covers the first build scenarios:
 - install an already downloaded archive through `downloads.install`;
 - delete an installed mod only with step-by-step approval through
   `mods.deleteInstalled`;
-- check basic plugin state and missing masters through `plugins.list`;
+- check basic plugin state and missing masters through `plugins.list` and
+  `local.check_plugins(profile_id)`;
 - return a final execution report after verification.
 
 Approval state is passed as UI-owned data, not AI text. `approveAllSafeActions`
@@ -510,6 +524,7 @@ selected skill is visible in the chat message and in the task plan through
 The first built-in skills are:
 
 - GENERAL concise response style;
+- GENERAL Analyze for build/crash/log diagnostics with gated bounded text previews;
 - SkyrimSE/AE default safety and load-order rules;
 - SkyrimSE/AE build optimization;
 - Skyrim basic build setup;
@@ -718,8 +733,13 @@ in-app disclosure must answer these questions for German/EU expectations:
   build folders such as relative paths, file kinds, sizes, SKSE DLL/config
   signals and conflict owners, profile names, download summaries, Nexus
   linked/configured status, operation progress snapshots, and recent operation
-  log lines. Raw provider keys, Nexus tokens, arbitrary OS paths, arbitrary file
-  contents, shell output, and full log files are not included by this phase.
+  log lines. When an Analyze diagnostic prompt is used, Phase 5 may also include
+  up to 64 KB `content_preview` snippets from allowlisted profile/mod text files
+  such as `README.txt`, `requirements.txt`, FOMOD XML, crash/SKSE logs inside
+  build folders, `plugins.txt`, `loadorder.txt`, and `modlist.txt`. Raw provider
+  keys, Nexus tokens, arbitrary OS paths, arbitrary file contents outside that
+  scoped preview, shell output, browser data, user documents, and full log files
+  are not included by this phase.
 - Phase 7 research prompts may include Nexus URLs/NXM links provided in chat,
   allowlisted public Nexus page summaries, official Nexus API metadata/file
   summaries when a credential is available to the host, Gemini Google Search

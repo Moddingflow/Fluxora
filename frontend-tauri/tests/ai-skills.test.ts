@@ -14,7 +14,7 @@ import { createFluxoraApi, type IpcInvoker } from '../src/tauri/fluxora-api';
 describe('Fluxora AI skills catalog', () => {
   it('defines the Phase 14 FluxoraSkill format and all built-in skills', () => {
     expect(FLUXORA_SKILL_CATALOG.schema).toBe(FLUXORA_SKILL_CATALOG_SCHEMA);
-    expect(FLUXORA_SKILL_CATALOG.builtInSkillCount).toBe(11);
+    expect(FLUXORA_SKILL_CATALOG.builtInSkillCount).toBe(12);
     expect(FLUXORA_SKILL_CATALOG.skills.map((skill) => skill.id)).toEqual(
       FLUXORA_BUILT_IN_SKILL_IDS
     );
@@ -83,6 +83,11 @@ describe('Fluxora AI skills catalog', () => {
       'op_skill_stability',
       new Date('2026-06-30T09:02:15Z')
     );
+    const analyze = selectFluxoraSkillForPrompt(
+      'Проанализируй сборку, она крашит. Нужно посмотреть README.txt и loadorder.txt',
+      'op_skill_analyze',
+      new Date('2026-06-30T09:02:20Z')
+    );
     const missingMasters = selectFluxoraSkillForPrompt(
       'В сборке Skyrim один недостающий мастер-файл, найди какой плагин его требует',
       'op_skill_missing_masters',
@@ -108,6 +113,10 @@ describe('Fluxora AI skills catalog', () => {
     expect(optimization.candidateSkillIds).toContain('general-concise-response');
     expect(stability.selectedSkillId).toBe('skyrimse-stability-diagnosis');
     expect(stability.candidateSkillIds).toContain('skyrimse-default-rules');
+    expect(analyze.selectedSkillId).toBe('general-analyze');
+    expect(analyze.selectedSkill?.displayName).toBe('Analyze');
+    expect(analyze.selectedSkill?.allowedTools).toContain('local.read_text_file');
+    expect(analyze.candidateSkillIds).toContain('general-concise-response');
     expect(missingMasters.selectedSkillId).toBe('missing-masters-diagnosis');
     expect(missingMasters.candidateSkillIds).toEqual(
       expect.arrayContaining(['general-concise-response', 'skyrimse-default-rules'])

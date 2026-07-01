@@ -12,6 +12,17 @@ namespace fluxora
     class BuildPathSettingsService;
     class Logger;
 
+    struct ProfileTextFilePreview
+    {
+        std::filesystem::path path;
+        std::wstring relativePath;
+        std::wstring fileName;
+        std::wstring contentPreview;
+        std::uintmax_t bytesRead{0};
+        std::uintmax_t size{0};
+        bool truncated{false};
+    };
+
     class ProfileService final : public IService
     {
     public:
@@ -25,6 +36,12 @@ namespace fluxora
         [[nodiscard]] std::vector<std::wstring> listProfiles(
             const std::filesystem::path& projectDirectory,
             std::wstring_view defaultProfileName) const;
+
+        [[nodiscard]] ProfileTextFilePreview previewProfileTextFile(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName,
+            std::wstring_view fileName,
+            std::uintmax_t maxBytes) const;
 
         [[nodiscard]] std::vector<std::wstring> createProfile(
             const std::filesystem::path& projectDirectory,

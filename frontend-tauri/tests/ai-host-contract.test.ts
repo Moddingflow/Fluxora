@@ -130,7 +130,7 @@ describe('FluxoraAIHost MVP contract', () => {
     await expect(api.ai.getStatus({ operationId: 'op_ai_status' })).resolves.toBe(aiStatus);
     await expect(api.ai.listSafeActions()).resolves.toMatchObject({
       schema: 'fluxora.ai.safe-action-catalog.v1',
-      toolCount: 35,
+      toolCount: 36,
       policy: {
         operationIdRequired: true,
         coreValidationRequired: true
@@ -138,7 +138,7 @@ describe('FluxoraAIHost MVP contract', () => {
     });
     await expect(api.ai.listSkills()).resolves.toMatchObject({
       schema: 'fluxora.ai.skills.v1',
-      builtInSkillCount: 11,
+      builtInSkillCount: 12,
       userSkillPolicy: {
         localOnlyByDefault: true,
         executableScriptsAllowed: false,
@@ -248,16 +248,25 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(aiHost).toContain('"readOnlyBuildTools"');
     expect(aiHost).toContain('"state": "available"');
     expect(aiHost).toContain('"local.filesystemSnapshot"');
+    expect(aiHost).toContain('"local.read_text_file"');
+    expect(aiHost).toContain('"schema": "fluxora.ai.local-read-text-file.v1"');
+    expect(aiHost).toContain('"callSignature": "local.read_text_file(path,max_bytes)"');
+    expect(aiHost).toContain('"contentReads": "bounded-on-demand"');
+    expect(aiHost).toContain('"maxBytes": 65536');
+    expect(aiHost).toContain('"local.check_plugins"');
+    expect(aiHost).toContain('"schema": "fluxora.ai.local-check-plugins.v1"');
+    expect(aiHost).toContain('"callSignature": "local.check_plugins(profile_id)"');
     expect(aiHost).toContain('"schema": "fluxora.ai.local-filesystem-snapshot.v1"');
     expect(aiHost).toContain('"local.detect_skse_plugins"');
     expect(aiHost).toContain('"rawFilesystem": false');
-    expect(aiHost).toContain('"contentReads": false');
+    expect(aiHost).toContain('"arbitrary Windows paths"');
     expect(aiHost).toContain('"safeActionCatalog"');
     expect(aiHost).toContain('"schema": "fluxora.ai.safe-action-catalog.v1"');
     expect(aiHost).toContain('"toolExecution": "catalog-ready-execution-gated"');
     expect(aiHost).toContain('"skillCatalog"');
     expect(aiHost).toContain('"schema": "fluxora.ai.skills.v1"');
     expect(aiHost).toContain('BUILT_IN_SKILL_IDS');
+    expect(aiHost).toContain('"general-analyze"');
     expect(aiHost).toContain('"skillCanGrantNewTools": false');
     expect(aiHost).toContain('"executableScriptsAllowed": false');
     expect(aiHost).toContain('"retrieval": {');
@@ -271,6 +280,7 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(aiHost).toContain('"mods.deleteInstalled"');
     expect(aiHost).toContain('"downloads.delete"');
     expect(aiHost).toContain('"contextGraph"');
+    expect(aiHost).toContain('"critical-diagnostics"');
     expect(aiHost).toContain('"webResearch"');
     expect(aiHost).toContain('"nexusResearch"');
     expect(aiHost).toContain('"geminiGoogleSearch"');
@@ -320,7 +330,14 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(app).toContain('window.fluxora.ai');
     expect(buildTools).toContain('AI_READ_ONLY_BUILD_TOOLS');
     expect(buildTools).toContain("permissionClass: 'read'");
+    expect(buildTools).toContain("'local.check_plugins'");
+    expect(buildTools).toContain('missing_masters');
+    expect(buildTools).toContain('plugin_count');
     expect(buildTools).toContain("'local.filesystemSnapshot'");
+    expect(buildTools).toContain("'local.read_text_file'");
+    expect(buildTools).toContain('shouldCollectAnalyzeTextFiles');
+    expect(buildTools).toContain('fluxora.ai.local-read-text-file.v1');
+    expect(buildTools).toContain('content_preview');
     expect(buildTools).toContain('local.detect_skse_plugins');
     expect(buildTools).toContain('No write, destructive, credential, shell, raw filesystem');
     expect(buildTools).not.toContain('setEnabled(');
@@ -329,6 +346,7 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(contextGraph).toContain('USING fts5');
     expect(contextGraph).toContain('context_embeddings');
     expect(contextGraph).toContain('FluxoraContextGraph selected exact, SQLite FTS5');
+    expect(contextGraph).toContain('critical-diagnostics');
     expect(contextGraph).toContain('active full-slot plugins');
   });
 

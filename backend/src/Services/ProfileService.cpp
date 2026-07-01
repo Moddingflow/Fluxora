@@ -2,6 +2,7 @@
 
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
+#include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
 #include <algorithm>
@@ -20,6 +21,7 @@ namespace fluxora
     namespace
     {
         constexpr std::wstring_view fallbackProfileName = L"Default";
+        constexpr std::uintmax_t maxAiTextPreviewBytes = 64ULL * 1024ULL;
 
         std::string toUtf8(const std::wstring& value)
         {
@@ -43,6 +45,40 @@ namespace fluxora
         std::string pathForLog(const std::filesystem::path& path)
         {
             return toUtf8(path.wstring());
+        }
+
+        std::wstring fromUtf8(const std::string& value)
+        {
+#ifdef _WIN32
+            if (value.empty())
+            {
+                return {};
+            }
+
+            const int size = MultiByteToWideChar(
+                CP_UTF8,
+                MB_ERR_INVALID_CHARS,
+                value.data(),
+                static_cast<int>(value.size()),
+                nullptr,
+                0);
+            if (size <= 0)
+            {
+                throw std::invalid_argument("Text is not valid UTF-8.");
+            }
+
+            std::wstring out(static_cast<std::size_t>(size), L'\0');
+            MultiByteToWideChar(
+                CP_UTF8,
+                MB_ERR_INVALID_CHARS,
+                value.data(),
+                static_cast<int>(value.size()),
+                out.data(),
+                size);
+            return out;
+#else
+            return std::wstring(value.begin(), value.end());
+#endif
         }
 
         std::wstring trim(std::wstring value)
@@ -123,6 +159,110 @@ namespace fluxora
             }
 
             return true;
+        }
+
+        std::wstring normalizePreviewProfileFileName(std::wstring_view fileName)
+        {
+            std::wstring normalized = trim(std::wstring(fileName));
+            if (normalized.empty())
+            {
+                throw std::invalid_argument("Profile text file name is required.");
+            }
+            if (normalized.find(L'/') != std::wstring::npos || normalized.find(L'\\') != std::wstring::npos)
+            {
+                throw std::invalid_argument("Profile text file name must not contain path separators.");
+            }
+
+            const std::wstring lowered = toLower(normalized);
+            if (lowered != L"plugins.txt" && lowered != L"loadorder.txt" && lowered != L"modlist.txt")
+            {
+                throw std::invalid_argument("Profile text preview is limited to plugins.txt, loadorder.txt, or modlist.txt.");
+            }
+
+            return lowered;
+        }
+
+        std::uintmax_t boundedTextPreviewBytes(std::uintmax_t maxBytes)
+        {
+            if (maxBytes == 0)
+            {
+                return maxAiTextPreviewBytes;
+            }
+
+            return (std::min)(maxBytes, maxAiTextPreviewBytes);
+        }
+
+        void rejectBinaryTextContent(const std::string& content)
+        {
+            if (content.find('\0') != std::string::npos)
+            {
+                throw std::invalid_argument("File is not a text document.");
+            }
+        }
+
+        std::wstring decodeUtf8Preview(std::string& content)
+        {
+            rejectBinaryTextContent(content);
+            while (!content.empty())
+            {
+                try
+                {
+                    return fromUtf8(content);
+                }
+                catch (const std::invalid_argument&)
+                {
+                    content.pop_back();
+                }
+            }
+
+            return {};
+        }
+
+        ProfileTextFilePreview readUtf8ProfileTextPreview(
+            const std::filesystem::path& path,
+            std::wstring relativePath,
+            std::uintmax_t maxBytes)
+        {
+            std::error_code statusError;
+            if (!std::filesystem::is_regular_file(path, statusError) || statusError)
+            {
+                throw std::invalid_argument("Profile text preview can only open regular files.");
+            }
+
+            const std::uintmax_t size = std::filesystem::file_size(path, statusError);
+            if (statusError)
+            {
+                throw std::runtime_error("Failed to inspect profile text preview file size.");
+            }
+
+            const std::uintmax_t requestedBytes = boundedTextPreviewBytes(maxBytes);
+            const std::uintmax_t bytesToRead = (std::min)(size, requestedBytes);
+            std::ifstream file(path, std::ios::binary);
+            if (!file)
+            {
+                throw std::runtime_error("Failed to open profile text preview file.");
+            }
+
+            std::string content(static_cast<std::size_t>(bytesToRead), '\0');
+            if (!content.empty())
+            {
+                file.read(content.data(), static_cast<std::streamsize>(content.size()));
+                content.resize(static_cast<std::size_t>(file.gcount()));
+            }
+
+            std::uintmax_t bytesRead = static_cast<std::uintmax_t>(content.size());
+            const std::wstring preview = decodeUtf8Preview(content);
+            bytesRead = static_cast<std::uintmax_t>(content.size());
+
+            return ProfileTextFilePreview{
+                path,
+                std::move(relativePath),
+                path.filename().wstring(),
+                preview,
+                bytesRead,
+                size,
+                size > bytesRead
+            };
         }
 
         void seedProfileFiles(
@@ -287,6 +427,36 @@ namespace fluxora
 
         sortProfileNames(profiles, defaultProfileName);
         return profiles;
+    }
+
+    ProfileTextFilePreview ProfileService::previewProfileTextFile(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName,
+        std::wstring_view fileName,
+        std::uintmax_t maxBytes) const
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const std::wstring normalizedProfileName = normalizeProfileName(profileName);
+        const std::wstring normalizedFileName = normalizePreviewProfileFileName(fileName);
+        const std::filesystem::path profilesDirectory = pathSettings_.profilesDirectory(projectDirectory);
+        const std::filesystem::path profileDirectory =
+            profilesDirectory / std::filesystem::path(normalizedProfileName);
+        const std::filesystem::path targetPath =
+            profileDirectory / std::filesystem::path(normalizedFileName);
+        const PathSafetyService safety;
+        safety.validateContainedPath(profilesDirectory, profileDirectory)
+            .throwIfUnsafe("Profile folder");
+        safety.validateContainedPath(profileDirectory, targetPath)
+            .throwIfUnsafe("Profile text file");
+
+        return readUtf8ProfileTextPreview(
+            targetPath,
+            normalizedProfileName + L"/" + normalizedFileName,
+            maxBytes);
     }
 
     std::vector<std::wstring> ProfileService::createProfile(
