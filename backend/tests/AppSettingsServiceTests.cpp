@@ -111,6 +111,28 @@ namespace fluxora::tests
         EXPECT_TRUE(cleared.protectedApiKey.empty());
     }
 
+    TEST(AppSettingsServiceTests, ApiKeyOnlyNexusModsAuthStaysLinked)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        Logger logger;
+        AppSettingsService service(logger);
+        service.initialize();
+
+        NexusModsStoredAuth saved;
+        saved.linked = true;
+        saved.username = L"modder";
+        saved.protectedApiKey = L"api-key";
+
+        service.saveNexusModsAuth(saved);
+        const NexusModsStoredAuth loaded = service.loadNexusModsAuth();
+
+        EXPECT_TRUE(loaded.linked);
+        EXPECT_EQ(loaded.username, saved.username);
+        EXPECT_EQ(loaded.protectedApiKey, saved.protectedApiKey);
+        EXPECT_TRUE(loaded.protectedAccessToken.empty());
+    }
+
     TEST(AppSettingsServiceTests, InvalidAuthJsonReturnsEmptyAuth)
     {
         TempDirectory temp;

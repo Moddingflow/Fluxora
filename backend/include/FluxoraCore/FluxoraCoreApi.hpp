@@ -197,7 +197,7 @@ extern "C"
         int iconPathBufferLength);
 
     // Returns:
-    //   { "isConfigured", "isLinked", "displayName", "userId", "message",
+    //   { "isConfigured", "isLinked", "hasApiKey", "displayName", "userId", "message",
     //     "clientId", "redirectUri" }
     FLUXORA_CORE_API int fluxora_get_nexusmods_auth_status(
         wchar_t* jsonBuffer,
@@ -208,6 +208,11 @@ extern "C"
     // for the registered localhost callback, exchanges the code for tokens, and
     // stores the protected binding in app settings.
     FLUXORA_CORE_API int fluxora_connect_nexusmods(
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_connect_nexusmods_with_api_key(
+        const wchar_t* apiKey,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 

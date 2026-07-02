@@ -15,8 +15,8 @@ export interface DownloadWorkspaceState {
 }
 
 export type DownloadWorkspaceAction =
-  | { type: 'load-started' }
-  | { type: 'load-failed'; message: string }
+  | { type: 'load-started'; silent?: boolean }
+  | { type: 'load-failed'; message: string; silent?: boolean }
   | { type: 'items-loaded'; items: FluxoraDownloadEntry[] }
   | { type: 'search-changed'; searchText: string }
   | { type: 'selected'; id: string | null };
@@ -25,6 +25,13 @@ export interface DownloadCapabilityView {
   bridgeAvailable: boolean;
   nxmRegistrationState: string;
   reason: string;
+}
+
+export interface DownloadStatusView {
+  text: string;
+  tone: 'downloading' | 'ready' | 'paused' | 'error' | 'waiting';
+  progressValue: number;
+  showProgress: boolean;
 }
 
 export const emptyDownloadWorkspaceState = (): DownloadWorkspaceState => ({
@@ -97,6 +104,9 @@ export const selectedDownloadEntry = (
   items[0] ??
   null;
 
+export const hasActiveDownload = (items: FluxoraDownloadEntry[]): boolean =>
+  items.some((entry) => entry.isDownloading);
+
 export const filterDownloadEntries = (
   items: FluxoraDownloadEntry[],
   searchText: string
@@ -144,7 +154,9 @@ export const downloadStatusText = (entry: FluxoraDownloadEntry | null): string =
   }
 
   if (entry.canResume) {
-    return 'Paused';
+    return entry.status && entry.status !== 'Ожидает загрузки'
+      ? entry.status
+      : 'Ready to download';
   }
 
   return entry.status || 'Waiting';
@@ -156,6 +168,38 @@ export const downloadProgressValue = (entry: FluxoraDownloadEntry): number => {
   }
 
   return Math.max(0, Math.min(100, Math.round(entry.progressPercent)));
+};
+
+export const downloadStatusView = (entry: FluxoraDownloadEntry): DownloadStatusView => {
+  const progressValue = downloadProgressValue(entry);
+  if (entry.isDownloading) {
+    const progressText = entry.progressText || (entry.hasKnownProgress ? `${progressValue}%` : 'Downloading');
+    const text = entry.downloadSpeedText ? `${progressText} · ${entry.downloadSpeedText}` : progressText;
+    return {
+      text,
+      tone: 'downloading',
+      progressValue,
+      showProgress: true
+    };
+  }
+
+  const text = downloadStatusText(entry);
+  const lowerStatus = `${entry.status ?? ''} ${text}`.toLocaleLowerCase();
+  const tone: DownloadStatusView['tone'] =
+    entry.canInstall
+      ? 'ready'
+      : entry.canResume
+        ? 'paused'
+        : /error|failed|ошиб|не удалось|недоступ/.test(lowerStatus)
+          ? 'error'
+          : 'waiting';
+
+  return {
+    text,
+    tone,
+    progressValue,
+    showProgress: false
+  };
 };
 
 export const downloadCapabilityView = (
@@ -208,13 +252,13 @@ export const downloadWorkspaceReducer = (
     case 'load-started':
       return {
         ...state,
-        loadState: 'loading',
+        loadState: action.silent ? state.loadState : 'loading',
         errorMessage: null
       };
     case 'load-failed':
       return {
         ...state,
-        loadState: 'error',
+        loadState: action.silent ? state.loadState : 'error',
         errorMessage: action.message
       };
     case 'items-loaded': {

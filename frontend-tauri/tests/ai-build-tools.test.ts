@@ -7,6 +7,10 @@ import {
   serializeAiBuildContextSnapshot,
   shouldCollectAnalyzeTextFiles
 } from '../src/renderer/features/ai/ai-build-tools';
+import {
+  buildAiLocalInspectionFromContext,
+  validateAiModResearchPipelineDto
+} from '../src/shared/ai-mod-research-pipeline';
 import type {
   FluxoraApi,
   FluxoraDownloadEntry,
@@ -191,6 +195,7 @@ const fileTree: FluxoraModFileTreeEntry[] = [
 const nexusStatus: FluxoraNexusModsAuthStatus = {
   isConfigured: true,
   isLinked: false,
+  hasApiKey: false,
   displayName: '',
   userId: '',
   message: 'Not linked',
@@ -454,6 +459,186 @@ describe('AI read-only build tools', () => {
     expect(serialized).toContain('"updateCheckStatus"');
     expect(serialized).toContain('"inventoryRole": "download-archive-queue"');
     expect(serialized).toContain('Treat page items as a sample, not the complete build.');
+  });
+
+  it('builds deterministic local inspection findings for missing masters with source ids', async () => {
+    const { api } = createApi();
+    const snapshot = await collectAiBuildContext(
+      api,
+      {
+        defaultProfileName: 'Default',
+        profileName: 'Testing',
+        project
+      },
+      'op_ai_missing_master_inspection'
+    );
+
+    const inspection = buildAiLocalInspectionFromContext({
+      buildSnapshot: snapshot,
+      generatedAt: '2026-07-02T10:00:00.000Z',
+      operationId: 'op_ai_missing_master_inspection'
+    });
+    const missingMasterFinding = inspection.deterministicFindings.find((finding) =>
+      finding.claim.includes('missing masters')
+    );
+
+    expect(validateAiModResearchPipelineDto(inspection)).toEqual({ ok: true, errors: [] });
+    expect(missingMasterFinding).toMatchObject({
+      deterministic: true,
+      relevantMods: ['Visual Pack']
+    });
+    expect(missingMasterFinding?.claim).toContain('VisualPack.esp');
+    expect(missingMasterFinding?.claim).toContain('Visual Pack');
+    expect(missingMasterFinding?.claim).toContain('BaseGame.esm');
+    expect(missingMasterFinding?.evidenceIds).toEqual(
+      expect.arrayContaining(['source:plugins-loadorder:op-ai-missing-master-inspection'])
+    );
+    expect(inspection.suspect_mods.length).toBeGreaterThan(0);
+    expect(inspection.suspect_mods.length).toBeLessThanOrEqual(12);
+  });
+
+  it('keeps aggregate overwrite counts out of exact pairwise conflict findings without file-owner evidence', async () => {
+    const aggregateOnlyMod: FluxoraInstalledMod = {
+      ...installedMods[0],
+      conflictingFileCount: 4,
+      conflictStatus: 'needs review',
+      id: 'mod-overwrite-aggregate',
+      name: 'Aggregate Only Visual Pack',
+      overwrittenFileCount: 2,
+      overwritingFileCount: 1
+    };
+    const { api } = createApi({
+      downloads: [],
+      fileTree: [
+        {
+          name: 'texture.dds',
+          relativePath: 'textures/texture.dds',
+          isDirectory: false,
+          hasChildren: false,
+          size: 4096,
+          conflictState: 'none',
+          conflictOwners: []
+        }
+      ],
+      installedMods: [aggregateOnlyMod],
+      modOrder: createModOrderItems([aggregateOnlyMod]),
+      plugins: []
+    });
+    const snapshot = await collectAiBuildContext(
+      api,
+      {
+        defaultProfileName: 'Default',
+        profileName: 'Testing',
+        project
+      },
+      'op_ai_aggregate_overwrite'
+    );
+
+    const inspection = buildAiLocalInspectionFromContext({
+      buildSnapshot: snapshot,
+      generatedAt: '2026-07-02T10:00:00.000Z',
+      operationId: 'op_ai_aggregate_overwrite'
+    });
+
+    expect(inspection.deterministicFindings.some((finding) =>
+      finding.claim.includes('Concrete file-owner conflict evidence')
+    )).toBe(false);
+    expect(inspection.hypotheses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relevantMods: ['Aggregate Only Visual Pack']
+        })
+      ])
+    );
+    expect(inspection.hypotheses[0]?.falsifiableBy).toContain('conflictEvidence');
+  });
+
+  it('turns failed downloads or install operations into local deterministic findings without web', async () => {
+    const { api } = createApi({
+      plugins: []
+    });
+    const snapshot = await collectAiBuildContext(
+      api,
+      {
+        defaultProfileName: 'Default',
+        profileName: 'Testing',
+        project
+      },
+      'op_ai_failed_download_inspection'
+    );
+
+    const inspection = buildAiLocalInspectionFromContext({
+      buildSnapshot: snapshot,
+      generatedAt: '2026-07-02T10:00:00.000Z',
+      operationId: 'op_ai_failed_download_inspection'
+    });
+    const failedFinding = inspection.deterministicFindings.find((finding) =>
+      finding.claim.includes('failed locally')
+    );
+
+    expect(failedFinding?.claim).toContain('Visual Pack Archive');
+    expect(failedFinding?.evidenceIds).toEqual(
+      expect.arrayContaining(['source:downloads-list:op-ai-failed-download-inspection'])
+    );
+    expect(inspection.evidenceCards.every((card) => card.sourceType !== 'public-web')).toBe(true);
+    expect(inspection.evidenceCards.every((card) => card.instructionsAllowed === false)).toBe(true);
+  });
+
+  it('treats local.read_text_file content as untrusted diagnostic data and never policy', async () => {
+    const raceMenu: FluxoraInstalledMod = {
+      ...installedMods[0],
+      id: 'C:\\Fluxora Projects\\Skyrim Main\\mods\\RaceMenu',
+      name: 'RaceMenu',
+      version: '0.4.19.16'
+    };
+    const { api } = createApi({
+      downloads: [],
+      fileTree: [
+        {
+          name: 'README.txt',
+          relativePath: 'README.txt',
+          isDirectory: false,
+          hasChildren: false,
+          size: 78000,
+          conflictState: 'none',
+          conflictOwners: []
+        }
+      ],
+      installedMods: [raceMenu],
+      modOrder: createModOrderItems([raceMenu]),
+      plugins: []
+    });
+
+    const snapshot = await collectAiBuildContext(
+      api,
+      {
+        defaultProfileName: 'Default',
+        profileName: 'Testing',
+        project,
+        prompt: 'Проанализируй сборку, она крашит. Проверь README.txt.'
+      },
+      'op_ai_untrusted_text_inspection'
+    );
+    const inspection = buildAiLocalInspectionFromContext({
+      buildSnapshot: snapshot,
+      generatedAt: '2026-07-02T10:00:00.000Z',
+      operationId: 'op_ai_untrusted_text_inspection'
+    });
+
+    expect(inspection.deterministicFindings.some((finding) =>
+      finding.evidenceIds.some((sourceId) => sourceId.includes('local-read-text-file'))
+    )).toBe(false);
+    expect(inspection.deterministicFindings.map((finding) => finding.claim).join('\n')).not.toContain(
+      'RaceMenu requires SKSE'
+    );
+    expect(inspection.hypotheses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          claim: expect.stringContaining('untrusted diagnostic data')
+        })
+      ])
+    );
+    expect(inspection.evidenceCards.every((card) => card.instructionsAllowed === false)).toBe(true);
   });
 
   it('returns a compact local.check_plugins report from plugin metadata for the requested profile', async () => {

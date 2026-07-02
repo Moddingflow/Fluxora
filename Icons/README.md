@@ -22,6 +22,8 @@ The following SVG assets are original Lucide icons downloaded from
 - `folder-open.svg`
 - `folder-tree.svg`
 - `git-compare-arrows.svg`
+- `package-plus.svg`
+- `play.svg`
 - `toggle-left.svg`
 - `toggle-right.svg`
 - `triangle-alert.svg`

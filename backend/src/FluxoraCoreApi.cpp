@@ -906,6 +906,7 @@ namespace
         writer.beginObject();
         writer.field(L"isConfigured", status.isConfigured);
         writer.field(L"isLinked", status.isLinked);
+        writer.field(L"hasApiKey", status.hasApiKey);
         writer.field(L"displayName", status.displayName);
         writer.field(L"userId", status.userId);
         writer.field(L"message", status.message);
@@ -3125,6 +3126,29 @@ extern "C"
         try
         {
             const std::wstring json = serializeNexusModsAuthStatus(core().nexusModsAuth().connect());
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_connect_nexusmods_with_api_key(
+        const wchar_t* apiKey,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(apiKey))
+            {
+                lastError = L"NexusMods API key is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeNexusModsAuthStatus(
+                core().nexusModsAuth().connectWithApiKey(apiKey));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)

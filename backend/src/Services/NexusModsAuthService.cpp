@@ -52,6 +52,8 @@ namespace fluxora
         constexpr std::wstring_view authorizeEndpoint = L"https://users.nexusmods.com/oauth/authorize";
         constexpr std::wstring_view tokenHost = L"users.nexusmods.com";
         constexpr std::wstring_view tokenPath = L"/oauth/token";
+        constexpr std::wstring_view publicApiHost = L"api.nexusmods.com";
+        constexpr std::wstring_view validateApiKeyPath = L"/v1/users/validate.json";
         constexpr int callbackTimeoutSeconds = 120;
         constexpr int callbackClientReadTimeoutMilliseconds = 3000;
         constexpr int supabaseCredentialTimeoutMilliseconds = 4000;
@@ -118,6 +120,12 @@ namespace fluxora
         };
 
         struct JwtUser
+        {
+            std::wstring username;
+            std::wstring userId;
+        };
+
+        struct ApiKeyUser
         {
             std::wstring username;
             std::wstring userId;
@@ -1387,6 +1395,196 @@ namespace fluxora
             return 0;
         }
 
+        std::wstring readFirstJsonString(
+            const JsonValue& object,
+            std::initializer_list<std::wstring_view> fields)
+        {
+            for (std::wstring_view field : fields)
+            {
+                std::wstring value = trimWhitespace(readJsonString(object, field));
+                if (!value.empty())
+                {
+                    return value;
+                }
+            }
+
+            return {};
+        }
+
+        std::string buildNexusApiValidationError(unsigned long statusCode, const std::string& body)
+        {
+            std::string message = "NexusMods API key validation failed";
+            if (statusCode != 0)
+            {
+                message += " (HTTP " + std::to_string(statusCode) + ")";
+            }
+
+            try
+            {
+                const JsonValue root = JsonReader::parse(fromUtf8(body));
+                if (root.isObject())
+                {
+                    const std::wstring error = readFirstJsonString(root, {L"error", L"name", L"code"});
+                    const std::wstring description = readFirstJsonString(root, {L"message", L"description"});
+                    if (!error.empty())
+                    {
+                        message += ": " + toUtf8(error);
+                    }
+                    if (!description.empty())
+                    {
+                        message += ". " + toUtf8(description);
+                    }
+
+                    return message;
+                }
+            }
+            catch (const std::exception&)
+            {
+            }
+
+            if (!body.empty())
+            {
+                message += ": " + limitForError(body);
+            }
+
+            return message;
+        }
+
+        std::string getNexusPublicApi(std::wstring_view pathAndQuery, std::wstring_view apiKey)
+        {
+#ifdef _WIN32
+            HINTERNET session = WinHttpOpen(
+                L"Fluxora/0.1",
+                WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                WINHTTP_NO_PROXY_NAME,
+                WINHTTP_NO_PROXY_BYPASS,
+                0);
+            if (session == nullptr)
+            {
+                throw std::runtime_error("Failed to initialize NexusMods API request.");
+            }
+
+            WinHttpSetTimeouts(session, 15000, 15000, 15000, 30000);
+
+            HINTERNET connection = WinHttpConnect(
+                session,
+                std::wstring(publicApiHost).c_str(),
+                INTERNET_DEFAULT_HTTPS_PORT,
+                0);
+            if (connection == nullptr)
+            {
+                WinHttpCloseHandle(session);
+                throw std::runtime_error("Failed to connect to NexusMods API.");
+            }
+
+            HINTERNET request = WinHttpOpenRequest(
+                connection,
+                L"GET",
+                std::wstring(pathAndQuery).c_str(),
+                nullptr,
+                WINHTTP_NO_REFERER,
+                WINHTTP_DEFAULT_ACCEPT_TYPES,
+                WINHTTP_FLAG_SECURE);
+            if (request == nullptr)
+            {
+                WinHttpCloseHandle(connection);
+                WinHttpCloseHandle(session);
+                throw std::runtime_error("Failed to open NexusMods API request.");
+            }
+
+            std::wstring headers =
+                L"Accept: application/json\r\n"
+                L"Application-Name: Fluxora\r\n"
+                L"Application-Version: 0.1.0\r\n"
+                L"apikey: " + std::wstring(apiKey) + L"\r\n";
+
+            const BOOL sent = WinHttpSendRequest(
+                request,
+                headers.c_str(),
+                static_cast<DWORD>(headers.size()),
+                WINHTTP_NO_REQUEST_DATA,
+                0,
+                0,
+                0);
+            if (!sent || !WinHttpReceiveResponse(request, nullptr))
+            {
+                WinHttpCloseHandle(request);
+                WinHttpCloseHandle(connection);
+                WinHttpCloseHandle(session);
+                throw std::runtime_error("NexusMods API request failed.");
+            }
+
+            DWORD statusCode = 0;
+            DWORD statusCodeSize = sizeof(statusCode);
+            WinHttpQueryHeaders(
+                request,
+                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                WINHTTP_HEADER_NAME_BY_INDEX,
+                &statusCode,
+                &statusCodeSize,
+                WINHTTP_NO_HEADER_INDEX);
+
+            std::string responseBody;
+            DWORD available = 0;
+            while (WinHttpQueryDataAvailable(request, &available) && available > 0)
+            {
+                std::vector<char> chunk(available);
+                DWORD read = 0;
+                if (!WinHttpReadData(request, chunk.data(), available, &read))
+                {
+                    break;
+                }
+
+                responseBody.append(chunk.data(), chunk.data() + read);
+            }
+
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            WinHttpCloseHandle(session);
+
+            if (statusCode < 200 || statusCode >= 300)
+            {
+                throw std::runtime_error(buildNexusApiValidationError(statusCode, responseBody));
+            }
+
+            return responseBody;
+#else
+            (void)pathAndQuery;
+            (void)apiKey;
+            throw std::runtime_error("NexusMods API key validation is currently implemented for Windows builds.");
+#endif
+        }
+
+        ApiKeyUser validateNexusApiKey(std::wstring apiKey)
+        {
+            apiKey = trimWhitespace(std::move(apiKey));
+            if (apiKey.empty())
+            {
+                throw std::invalid_argument("NexusMods API key is required.");
+            }
+
+            const std::string body = getNexusPublicApi(validateApiKeyPath, apiKey);
+            const JsonValue root = JsonReader::parse(fromUtf8(body));
+            if (!root.isObject())
+            {
+                throw std::runtime_error("NexusMods API key validation response was not a JSON object.");
+            }
+
+            ApiKeyUser user;
+            user.username = readFirstJsonString(root, {L"name", L"username", L"display_name"});
+            user.userId = readFirstJsonString(root, {L"user_id", L"userId", L"id"});
+            if (user.userId.empty())
+            {
+                const long long numericUserId = readJsonInteger(root, L"user_id");
+                if (numericUserId > 0)
+                {
+                    user.userId = std::to_wstring(numericUserId);
+                }
+            }
+
+            return user;
+        }
+
         TokenResponse parseTokenResponse(const std::string& body)
         {
             const JsonValue root = JsonReader::parse(fromUtf8(body));
@@ -1736,21 +1934,23 @@ namespace fluxora
         {
             NexusModsAuthStatus status;
             status.isConfigured = !config.clientId.empty();
-            status.isLinked = auth.linked && !auth.protectedAccessToken.empty();
+            status.hasApiKey = auth.linked && !auth.protectedApiKey.empty();
+            const bool hasOAuthToken = auth.linked && !auth.protectedAccessToken.empty();
+            status.isLinked = status.hasApiKey || hasOAuthToken;
             status.displayName = status.isLinked ? auth.username : L"";
             status.userId = status.isLinked ? auth.userId : L"";
             status.clientId = config.clientId;
             status.redirectUri = config.redirectUri;
 
-            if (!status.isConfigured)
-            {
-                status.message = L"Нужен зарегистрированный NexusMods OAuth client_id: задайте FLUXORA_NEXUS_CLIENT_ID.";
-            }
-            else if (status.isLinked)
+            if (status.isLinked)
             {
                 status.message = status.displayName.empty()
                     ? L"NexusMods привязан."
                     : L"NexusMods привязан: " + status.displayName;
+            }
+            else if (!status.isConfigured)
+            {
+                status.message = L"Нужен зарегистрированный NexusMods OAuth client_id: задайте FLUXORA_NEXUS_CLIENT_ID.";
             }
             else
             {
@@ -1936,6 +2136,28 @@ namespace fluxora
             callbackListener.respondFailure("Fluxora could not finish the NexusMods OAuth login. Return to Fluxora for details.");
             throw;
         }
+    }
+
+    NexusModsAuthStatus NexusModsAuthService::connectWithApiKey(std::wstring_view apiKey)
+    {
+        const std::wstring trimmedApiKey = trimWhitespace(std::wstring(apiKey));
+        const ApiKeyUser user = validateNexusApiKey(trimmedApiKey);
+
+        NexusModsStoredAuth stored = settings_.loadNexusModsAuth();
+        stored.linked = true;
+        if (!user.username.empty())
+        {
+            stored.username = user.username;
+        }
+        if (!user.userId.empty())
+        {
+            stored.userId = user.userId;
+        }
+        stored.protectedApiKey = protectSecret(trimmedApiKey);
+        settings_.saveNexusModsAuth(stored);
+
+        logger_.write(LogLevel::Info, "NexusMods API key linked.");
+        return buildStatus(loadConfig(), stored);
     }
 
     NexusModsAuthStatus NexusModsAuthService::disconnect()

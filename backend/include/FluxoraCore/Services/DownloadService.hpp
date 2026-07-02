@@ -4,9 +4,13 @@
 #include "FluxoraCore/Services/FomodInstallerService.hpp"
 #include "FluxoraCore/Services/IService.hpp"
 
+#include <condition_variable>
+#include <deque>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace fluxora
@@ -58,6 +62,7 @@ namespace fluxora
             Logger& logger,
             AppSettingsService& settings,
             const BuildPathSettingsService& pathSettings) noexcept;
+        ~DownloadService() override;
 
         void initialize() override;
         void shutdown() override;
@@ -142,11 +147,29 @@ namespace fluxora
         [[nodiscard]] bool isInitialized() const noexcept;
 
     private:
+        struct NxmDownloadJob
+        {
+            std::filesystem::path directory;
+            std::filesystem::path pendingPath;
+            std::wstring link;
+            std::wstring nexusModName;
+        };
+
         [[nodiscard]] std::filesystem::path inboundDirectory() const;
+        void processQueuedNxmDownload(const NxmDownloadJob& job) const;
+        void runNxmDownloadWorker() const;
+        void stopNxmDownloadWorker() noexcept;
 
         Logger& logger_;
         AppSettingsService& settings_;
         const BuildPathSettingsService& pathSettings_;
+        mutable std::mutex nxmQueueMutex_;
+        mutable std::condition_variable nxmQueueCv_;
+        mutable std::deque<NxmDownloadJob> nxmQueue_;
+        mutable std::thread nxmWorker_;
+        mutable std::filesystem::path currentNxmDownloadPath_;
+        mutable bool nxmWorkerStopping_{false};
+        mutable bool nxmWorkerStarted_{false};
         bool initialized_{false};
     };
 }

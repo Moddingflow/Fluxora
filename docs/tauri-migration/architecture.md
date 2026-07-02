@@ -70,7 +70,8 @@ Phase 8 extends `fluxora.bridge.v1` to downloads and simple archive install:
 
 - Native host routes `downloads.list`, `downloads.importFile`, `downloads.delete`, `downloads.cancel`, `downloads.resume`, `downloads.install`, `archives.install`, `nxm.registerProtocol`, `nxm.captureLinks` and `nxm.importInboundDownloads` to existing C++ C ABI functions backed by `DownloadService`.
 - Tauri Rust shell/facade expose typed `window.fluxora.downloads.*`, `window.fluxora.archives.install` and `window.fluxora.nxm.*` calls only; renderer still has no Node.js, filesystem, shell or raw command access.
-- Tauri Rust shell owns `nxm://` app activation handling through startup argv, Windows/Linux `second-instance` and macOS `open-url`, then forwards links to the bridge inbound queue.
+- Tauri Rust shell owns `nxm://` app activation handling through startup argv and Windows/Linux/macOS `second-instance`, forwards links to the bridge inbound queue, then emits `fluxora:nxm:inbound-links-captured` so the renderer can import the queued links into the active build.
+- Renderer auto-registers the Windows `nxm://` handler once per session when a Nexus account is linked, while the Downloads workspace still exposes the manual `Register NXM` fallback.
 - Renderer owns local download search, selection, row context menus, double-click install trigger, selected-download details and platform capability messaging only.
 - C++ core remains the owner of NXM capture/import, local archive import, download transfer state, cancel/resume/delete and archive/download install behavior.
 - Phase 8 intentionally keeps install UX to the simple path: ready archive/download plus mod name and fail-if-existing mode. Replace/merge, editable placement overrides and FOMOD wizard are the Phase 9 scope.
@@ -99,10 +100,11 @@ Phase 10 extends `fluxora.bridge.v1` to WPF-parity profile management and execut
 
 Phase 11 extends `fluxora.bridge.v1` to WPF-parity settings and MO2 transfer:
 
-- Native host routes `settings.getTheme`, `settings.setTheme`, `nexus.getAuthStatus`, `nexus.connect`, `nexus.disconnect`, `transfer.analyzeMo2` and `transfer.importMo2` to existing C++ C ABI functions backed by `AppSettingsService`, `NexusModsAuthService` and `ModOrganizerImportService`; the Tauri shell handles `operations.cancel` for MO2 transfer by writing an operation cancel marker outside the bridge request mutex. The theme contract currently normalizes every value to the single supported dark theme.
+- Native host routes `settings.getTheme`, `settings.setTheme`, `nexus.getAuthStatus`, `nexus.connect`, `nexus.connectWithApiKey`, `nexus.disconnect`, `transfer.analyzeMo2` and `transfer.importMo2` to existing C++ C ABI functions backed by `AppSettingsService`, `NexusModsAuthService` and `ModOrganizerImportService`; the Tauri shell handles `operations.cancel` for MO2 transfer by writing an operation cancel marker outside the bridge request mutex. The theme contract currently normalizes every value to the single supported dark theme.
 - `NexusModsAuthService` uses the public OAuth client id `fluxora` by default, but trusted runs may override the OAuth client id through `FLUXORA_NEXUS_CLIENT_ID`, `NEXUS_CLIENT_ID`, `NEXUS_OAUTH_CLIENT_ID` or the Fluxora Supabase credential RPC/table using secret names `NEXUS_CLIENT_ID` / `NEXUS_OAUTH_CLIENT_ID`.
 - When Nexus requires a confidential `client_secret` during token exchange, the C++ service resolves it from `FLUXORA_NEXUS_CLIENT_SECRET`, `NEXUS_CLIENT_SECRET`, `NEXUS_OAUTH_CLIENT_SECRET` or the Fluxora Supabase credential RPC/table using secret names `NEXUS_CLIENT_SECRET` / `NEXUS_OAUTH_CLIENT_SECRET`; the secret is never exposed through the Tauri renderer facade or bridge DTOs.
 - Nexus OAuth uses the registered loopback callback `http://127.0.0.1:8089/callback` by default. `FLUXORA_NEXUS_REDIRECT_URI`, `NEXUS_REDIRECT_URI`, `NEXUS_OAUTH_REDIRECT_URI` or matching Fluxora Supabase credential entries may override it for a different registered client, but the authorize and token exchange requests must use the exact same redirect URI.
+- Nexus downloads use the linked account automatically after OAuth login. C++ protects OAuth tokens locally and can still accept a legacy `apikey` credential through `nexus.connectWithApiKey` for compatibility, but the renderer must not require users to paste a Personal API Key during the normal connection flow.
 - Native host emits `operations.progress` JSON-RPC events during MO2 import. Tauri main subscribes through the bridge client and broadcasts them on the allowlisted `fluxora:operations:progress` channel.
 - Tauri Rust shell/facade expose typed `window.fluxora.settings.*`, `window.fluxora.nexus.*`, `window.fluxora.transfer.*` and `window.fluxora.operations.*` calls only; renderer still has no Node.js, filesystem, shell, native module or raw command access.
 - Renderer owns settings section state, language controls, single-theme mirroring into CSS, Nexus status display, MO2 source/destination form state, analysis display, transfer progress display and route/close guard while transfer is running. Theme customization controls are deferred until more supported themes are added.
@@ -187,6 +189,7 @@ Implemented MVP methods:
 - `executables.launch`
 - `nexus.getAuthStatus`
 - `nexus.connect`
+- `nexus.connectWithApiKey`
 - `nexus.disconnect`
 - `transfer.analyzeMo2`
 - `transfer.importMo2`
@@ -670,6 +673,7 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 
 - `nexus.getAuthStatus`
 - `nexus.connect`
+- `nexus.connectWithApiKey`
 - `nexus.disconnect`
 - `nxm.registerProtocol`
 - `nxm.captureLinks`
@@ -758,7 +762,7 @@ The native host initially maps bridge methods to the existing exported functions
 - Buffer handling: `fluxora_get_last_required_buffer_length`, `fluxora_copy_last_output`.
 - Templates/projects/build paths: `fluxora_get_game_templates`, `fluxora_resolve_template`, `fluxora_preview_project_directory`, `fluxora_create_project`, `fluxora_open_project_config`, `fluxora_list_project_configs`, `fluxora_rename_project`, `fluxora_delete_project`, `fluxora_delete_project_with_progress`, `fluxora_get_build_path_settings`, `fluxora_save_build_path_settings`.
 - FluxPack and transfer: `fluxora_export_fluxpack`, `fluxora_inspect_fluxpack`, `fluxora_install_fluxpack`, `fluxora_analyze_mod_organizer_instance`, `fluxora_import_mod_organizer_instance`.
-- Settings/executables/Nexus/NXM: `fluxora_get_app_language`, `fluxora_set_app_language`, `fluxora_get_app_theme`, `fluxora_set_app_theme`, `fluxora_get_game_executables`, `fluxora_save_game_executables`, `fluxora_launch_game_executable`, `fluxora_get_executable_icon`, `fluxora_get_nexusmods_auth_status`, `fluxora_connect_nexusmods`, `fluxora_disconnect_nexusmods`, `fluxora_register_nxm_protocol`.
+- Settings/executables/Nexus/NXM: `fluxora_get_app_language`, `fluxora_set_app_language`, `fluxora_get_app_theme`, `fluxora_set_app_theme`, `fluxora_get_game_executables`, `fluxora_save_game_executables`, `fluxora_launch_game_executable`, `fluxora_get_executable_icon`, `fluxora_get_nexusmods_auth_status`, `fluxora_connect_nexusmods`, `fluxora_connect_nexusmods_with_api_key`, `fluxora_disconnect_nexusmods`, `fluxora_register_nxm_protocol`.
 - Mods/profiles/plugins/downloads/install: every exported `fluxora_get_*`, `fluxora_create_*`, `fluxora_delete_*`, `fluxora_move_*`, `fluxora_set_*`, `fluxora_capture_nxm_links`, `fluxora_import_*`, `fluxora_install_*`, `fluxora_analyze_*` function listed in `FluxoraCoreApi.hpp`, plus `fluxora_generate_ngio_grass_cache` for Skyrim NGIO cache generation.
 
 The host may wrap several low-level C ABI functions into one bridge method when that produces a cleaner UI contract. It must not move business rules into TypeScript.

@@ -8,8 +8,9 @@ legal/privacy checklist for provider chat with compact build context,
 source-traced local context retrieval, constrained external research, visible
 task plans, approval-gated subagent scheduling, persistent job state,
 checkpointing, heartbeat/watchdog recovery, pause/cancel state, skills
-retrieval, final reports after verification or clear terminal state, and the
-AI release gate used to catch prompt/model regressions.
+retrieval, final reports after verification or clear terminal state, the
+AI release gate used to catch prompt/model regressions, and the target staged
+mod research pipeline in `docs/ai/mod-research-pipeline.md`.
 
 ## Decision Summary
 
@@ -143,15 +144,22 @@ raw filesystem, bypass the typed facade, or mutate builds.
 
 Phase 7 adds `fluxora.ai.research.v1` bundles. The AI host can recognize Nexus
 URLs and NXM links in the prompt, build an official Nexus API-first source plan
-for metadata, files, and file details/dependency-like metadata, and then fetch
-the allowlisted public Nexus page when policy permits and the API data is
-missing or insufficient. Public fetches are HTTPS-only, redirect-blocked,
-domain-allowlisted, size-limited, timeout-bounded, and protected against
-loopback, link-local, private network, `file://`, and other unsupported schemes.
-Nexus API responses carry `X-RL-*` and `Retry-After` rate-limit metadata when
-available. Browser-sandbox fallback and user-authenticated pages fail closed
-unless a future explicit approval flow enables them. Deep research remains
-disabled by default and requires expensive-run approval or BYOK.
+for metadata, files, and file details/direct dependency metadata. Public Nexus
+page fetch is disabled by default and is not a fallback for missing API
+credentials, quota exhaustion, `429`, `Retry-After`, or API transport failures.
+Non-Nexus public fetches, when separately allowed by policy, are HTTPS-only,
+redirect-blocked, domain-allowlisted, size-limited, timeout-bounded, and
+protected against loopback, link-local, private network, `file://`, and other
+unsupported schemes. Nexus API responses carry `X-RL-*` and `Retry-After`
+rate-limit metadata when available. Browser-sandbox fallback and
+user-authenticated pages fail closed unless a future explicit approval flow
+enables them. Deep research remains disabled by default and requires
+expensive-run approval or BYOK. The target staged mod research pipeline is
+stricter: Nexus official API/cache data is primary, and missing credentials,
+quota exhaustion, `429`, or per-run/API limits create blocked/quota evidence
+instead of silently falling back to public Nexus page scraping. Public Nexus
+pages may be considered only through a separate explicit public-source policy
+after owner/legal review.
 
 Phase 8 adds `fluxora.ai.task-plan.v1` and
 `fluxora.ai.subagent-schedule.v1` DTOs to the normal chat response. The plan
@@ -218,7 +226,7 @@ is:
 | Read downloads | `read` | C++ core via bridge | Uses existing download DTOs. No import, delete, resume, cancel, or install. |
 | Read operation status/logs | `read` | Tauri shell and bridge events | Uses cached progress events and safe app-log tailing. No arbitrary file access. |
 | Read Nexus status | `read` | C++ core via bridge | Status only. No token disclosure. No connect/disconnect in the first slice. |
-| Nexus/web research | `external-network` | AI host over allowlisted fetch/provider grounding | Nexus API-first, public fetch second, Gemini Google Search grounding when enabled, source snapshots and citations only. No write tools. |
+| Nexus/web research | `external-network` | AI host over allowlisted fetch/provider grounding | Nexus API/cache-first, public Nexus page fallback disabled, Gemini Google Search grounding when enabled, source snapshots and citations only. No write tools. |
 
 Write/destructive execution, credential setup UI, voice, public billing enforcement, and
 approved action execution are future phases. They are
@@ -552,10 +560,14 @@ model filesystem, shell, raw invoke, or direct host access.
 Fluxora tools. The bundle contains:
 
 - `permissionClass: external-network`;
+- the preceding `fluxora.ai.mod-research-route.v1` route decision from
+  `FluxoraAIHost`, derived from prompt, local build/context bundle, and the
+  requested research policy before Nexus/web fetches run;
 - the active policy: allowlisted domains, denied schemes, SSRF protection,
   public-fetch limits, Gemini Google Search state, browser-sandbox state,
   authenticated-page approval state, deep-research state, and backoff mode;
-- Nexus targets extracted from user-provided Nexus/NXM links;
+- `fluxora.ai.nexus-investigation.v1` with Nexus targets extracted from
+  user-provided Nexus/NXM links, safe explicit ids, and local suspect metadata;
 - source snapshots with `captured` or `blocked` status, summaries, rate-limit
   headers, prompt-injection filtering metadata, and `instructionsAllowed: false`;
 - clickable citations exposed through the normal AI `sources` array.
@@ -563,6 +575,23 @@ Fluxora tools. The bundle contains:
 The renderer does not fetch the web, store web pages, receive Nexus tokens, or
 gain a generic browser/shell/filesystem tool. Web/Nexus content cannot approve
 actions, alter system policy, request secrets, or call Fluxora tools.
+When local context already contains deterministic high-signal evidence such as
+missing masters, failed operations, bridge/path setup failures, failed
+downloads/installs, or concrete file-conflict samples, the route is
+`no-web/local-only` and no `searchBudget` is emitted. `searchBudget` is present
+only when local inspection is insufficient and external Nexus/search
+verification is allowed by policy.
+
+For the target staged mod research flow, `docs/ai/mod-research-pipeline.md` is
+the governing pre-code specification. It requires a single `FluxoraAIHost`
+manager with staged prompts and strict schemas for local ingest, routing, local
+inspection, Nexus investigation, non-Nexus query planning, external web
+investigation, diagnosis judging, final response rendering, and state
+compression. It also fixes local-first routing, evidence cards instead of raw
+page bodies, source ids plus citations, corroboration counts, visible conflict
+records, source tiers A/B/C/D, confidence and contradiction-risk metadata,
+discard reasons, a maximum of 3 search queries, 8 fetched/read pages, and 6
+final hypotheses per case.
 
 ## Prompt Injection And Untrusted Content
 
@@ -741,12 +770,15 @@ in-app disclosure must answer these questions for German/EU expectations:
   scoped preview, shell output, browser data, user documents, and full log files
   are not included by this phase.
 - Phase 7 research prompts may include Nexus URLs/NXM links provided in chat,
-  allowlisted public Nexus page summaries, official Nexus API metadata/file
-  summaries when a credential is available to the host, Gemini Google Search
-  grounding citations, source ids, snapshot summaries, rate-limit/backoff
-  metadata, and blocked-source reasons. Raw page bodies, provider keys, Nexus
-  tokens, authenticated private pages, arbitrary file contents, and browser
-  cookies are not included by default.
+  official Nexus API metadata/file summaries when a credential is available to
+  the host, Gemini Google Search grounding citations, source ids, snapshot
+  summaries, rate-limit/backoff metadata, and blocked-source reasons. The target
+  staged mod research pipeline must not include public Nexus page summaries as
+  a fallback for missing API credentials, exhausted quota, `429`, or configured
+  API limits. Public Nexus pages require a separate explicit public-source
+  policy after owner/legal review. Raw page bodies, provider keys, Nexus tokens,
+  authenticated private pages, arbitrary file contents, and browser cookies are
+  not included by default.
 - Purpose and legal basis: why Fluxora processes AI data, which parts are
   necessary for the requested AI function, and which optional processing needs
   consent or opt-in.
@@ -780,6 +812,11 @@ in-app disclosure must answer these questions for German/EU expectations:
   renderer, TypeScript, JavaScript, Rust shell, or C#.
 - No provider key is available to renderer code.
 - No web/Nexus/FOMOD/log/user content can approve actions or change permissions.
+- Staged mod research follows `docs/ai/mod-research-pipeline.md`: local
+  deterministic evidence wins before web, Nexus uses official API/cache first
+  without silent public-page fallback on credential/quota/rate-limit failure,
+  external content is untrusted data, and evidence cards are the only
+  cross-stage research artifact.
 - Every write/destructive action has an `operationId`, audit trail, visible plan,
   user approval, and verification result.
 - Direct AI access to renderer internals, raw filesystem, shell, raw Tauri

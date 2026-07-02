@@ -339,7 +339,8 @@ namespace fluxora
             auth.protectedAccessToken = readStringOrDefault(*nexusMods, L"protectedAccessToken");
             auth.protectedRefreshToken = readStringOrDefault(*nexusMods, L"protectedRefreshToken");
             auth.protectedApiKey = readStringOrDefault(*nexusMods, L"protectedApiKey");
-            auth.linked = auth.linked && !auth.protectedAccessToken.empty();
+            auth.linked = auth.linked &&
+                (!auth.protectedAccessToken.empty() || !auth.protectedApiKey.empty());
             return auth;
         }
         catch (const std::exception&)

@@ -1,6 +1,23 @@
 import type { AiSafeActionCatalog, AiSafeActionToolName } from './ai-safe-action-catalog';
+import type {
+  FluxoraAiCaseState,
+  FluxoraAiDiagnosisJudge,
+  FluxoraAiExternalInvestigation,
+  FluxoraAiLocalInspection,
+  FluxoraAiModResearchNexusApiStatus,
+  FluxoraAiModResearchNexusQuotaState,
+  FluxoraAiNexusInvestigation,
+  FluxoraAiWebQueryPlan
+} from './ai-mod-research-pipeline';
 import type { FluxoraSkillCatalog, FluxoraSkillSelection } from './ai-skills';
 
+export type {
+  FluxoraAiCaseState,
+  FluxoraAiDiagnosisJudge,
+  FluxoraAiExternalInvestigation,
+  FluxoraAiLocalInspection,
+  FluxoraAiWebQueryPlan
+} from './ai-mod-research-pipeline';
 export type { FluxoraSkillCatalog, FluxoraSkillSelection } from './ai-skills';
 
 export const FluxoraIpcChannels = {
@@ -37,6 +54,9 @@ export const FluxoraIpcChannels = {
   downloadsInstall: 'fluxora:downloads:install',
   downloadsList: 'fluxora:downloads:list',
   downloadsResume: 'fluxora:downloads:resume',
+  downloadsWatchFolder: 'fluxora:downloads:watch-folder',
+  downloadsUnwatchFolder: 'fluxora:downloads:unwatch-folder',
+  downloadsFolderChanged: 'fluxora:downloads:folder-changed',
   executablesGetIcon: 'fluxora:executables:get-icon',
   executablesLaunch: 'fluxora:executables:launch',
   executablesList: 'fluxora:executables:list',
@@ -72,9 +92,11 @@ export const FluxoraIpcChannels = {
   profilesPreviewTextFile: 'fluxora:profiles:preview-text-file',
   profilesRename: 'fluxora:profiles:rename',
   nxmCaptureLinks: 'fluxora:nxm:capture-links',
+  nxmInboundLinksCaptured: 'fluxora:nxm:inbound-links-captured',
   nxmImportInboundDownloads: 'fluxora:nxm:import-inbound-downloads',
   nxmRegisterProtocol: 'fluxora:nxm:register-protocol',
   nexusConnect: 'fluxora:nexus:connect',
+  nexusConnectWithApiKey: 'fluxora:nexus:connect-with-api-key',
   nexusDisconnect: 'fluxora:nexus:disconnect',
   nexusGetAuthStatus: 'fluxora:nexus:get-auth-status',
   operationsCancel: 'fluxora:operations:cancel',
@@ -299,6 +321,37 @@ export interface FluxoraAiResearchRequest {
   allowGeminiGoogleSearch: boolean;
   allowPublicWebFetch: boolean;
   deepResearchApproved: false;
+}
+
+export type FluxoraAiModResearchRouteKind =
+  | 'no-web/local-only'
+  | 'missing-local-fields'
+  | 'nexus-api'
+  | 'nexus-api-with-search';
+
+export interface FluxoraAiModResearchSearchBudget {
+  maxExternalSources: number;
+  maxSearchQueries: number;
+  nexusApiRequests: number;
+  publicWebFetches: number;
+  geminiGoogleSearch: boolean;
+  reason: string;
+}
+
+export interface FluxoraAiModResearchRoute {
+  schema: 'fluxora.ai.mod-research-route.v1';
+  generatedAt: string;
+  operationId: string;
+  route: FluxoraAiModResearchRouteKind;
+  localFirst: true;
+  externalResearchAllowed: boolean;
+  nexusAllowed: boolean;
+  publicWebAllowed: boolean;
+  geminiGoogleSearchAllowed: boolean;
+  highSignalIssues: string[];
+  missingFields: string[];
+  reasons: string[];
+  searchBudget?: FluxoraAiModResearchSearchBudget;
 }
 
 export interface FluxoraAiChatRequest extends OperationRequest {
@@ -587,6 +640,9 @@ export interface FluxoraAiResearchSnapshot {
   reason?: string;
   httpStatus?: number;
   rateLimit?: Record<string, string | null>;
+  credentialSource?: string;
+  cache?: Record<string, unknown>;
+  relatedTargets?: Array<Record<string, unknown>>;
   trust: 'untrusted-external-content';
   instructionsAllowed: false;
   promptInjectionFilter?: Record<string, unknown>;
@@ -600,6 +656,11 @@ export interface FluxoraAiResearchReport {
   mode: 'nexus-api-first';
   policy: Record<string, unknown>;
   targets: Array<Record<string, unknown>>;
+  apiAvailability?: FluxoraAiModResearchNexusApiStatus;
+  apiQuotaState?: FluxoraAiModResearchNexusQuotaState;
+  nexusInvestigation?: FluxoraAiNexusInvestigation;
+  webQueryPlan?: FluxoraAiWebQueryPlan;
+  nextBestNonNexusQueries?: string[];
   snapshots: FluxoraAiResearchSnapshot[];
   sources: FluxoraAiCitation[];
   issues: Array<Record<string, unknown>>;
@@ -831,6 +892,12 @@ export interface FluxoraAiChatResponse {
   ledgerEntry: FluxoraAiCostLedgerEntry;
   marginTelemetry: FluxoraAiMarginTelemetry;
   routingDecision: FluxoraAiRoutingDecision;
+  modResearchRoute?: FluxoraAiModResearchRoute | null;
+  localInspection?: FluxoraAiLocalInspection | null;
+  nexusInvestigation?: FluxoraAiNexusInvestigation | null;
+  externalInvestigation?: FluxoraAiExternalInvestigation | null;
+  diagnosisJudge?: FluxoraAiDiagnosisJudge | null;
+  caseState?: FluxoraAiCaseState | null;
   orchestration?: FluxoraAiMultiModelOrchestration | null;
   contextBundle?: FluxoraAiContextBundle | null;
   researchReport?: FluxoraAiResearchReport | null;
@@ -1261,6 +1328,26 @@ export interface FluxoraDownloadEntry {
   canDelete: boolean;
 }
 
+export interface FluxoraDownloadsFolderWatchResult {
+  accepted: boolean;
+  operationId: string;
+}
+
+export interface FluxoraDownloadsFolderChange {
+  path: string;
+  fileName: string;
+  kind: string;
+}
+
+export interface FluxoraDownloadsFolderChangedEvent {
+  projectDirectory: string;
+  downloadsDirectory: string;
+  eventId: string;
+  sequence: number;
+  reason: string;
+  changes: FluxoraDownloadsFolderChange[];
+}
+
 export type FluxoraExistingModInstallMode = 0 | 1 | 2;
 
 export interface FluxoraContentLayoutPreviewSummary {
@@ -1438,9 +1525,16 @@ export interface FluxoraNxmProtocolResult {
   operationId: string;
 }
 
+export interface FluxoraNxmInboundLinksCaptured {
+  count: number;
+  operationId: string;
+  source: string;
+}
+
 export interface FluxoraNexusModsAuthStatus {
   isConfigured: boolean;
   isLinked: boolean;
+  hasApiKey: boolean;
   displayName: string;
   userId: string;
   message: string;
@@ -1586,6 +1680,30 @@ export interface UiLogEntry {
   category?: string;
 }
 
+export type FluxoraFileDropPosition = {
+  x: number;
+  y: number;
+};
+
+export type FluxoraFileDropEvent =
+  | {
+      type: 'enter';
+      paths: string[];
+      position: FluxoraFileDropPosition;
+    }
+  | {
+      type: 'over';
+      position: FluxoraFileDropPosition;
+    }
+  | {
+      type: 'drop';
+      paths: string[];
+      position: FluxoraFileDropPosition;
+    }
+  | {
+      type: 'leave';
+    };
+
 export interface FluxoraApi {
   app: {
     getInfo: () => Promise<FluxoraAppInfo>;
@@ -1651,6 +1769,9 @@ export interface FluxoraApi {
       defaultPath?: string,
       title?: string
     ) => Promise<DialogSaveResult>;
+  };
+  fileDrop: {
+    onDragDrop: (callback: (event: FluxoraFileDropEvent) => void) => Promise<() => void>;
   };
   links: {
     openExternal: (url: string) => Promise<OpenExternalResult>;
@@ -1884,6 +2005,17 @@ export interface FluxoraApi {
       downloadPath: string,
       request?: OperationRequest
     ) => Promise<FluxoraDownloadEntry>;
+    watchFolder: (
+      projectDirectory: string,
+      downloadsDirectory: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraDownloadsFolderWatchResult>;
+    unwatchFolder: (
+      request?: OperationRequest
+    ) => Promise<FluxoraDownloadsFolderWatchResult>;
+    onFolderChanged: (
+      callback: (event: FluxoraDownloadsFolderChangedEvent) => void
+    ) => () => void;
     analyzeContentLayout: (
       request: FluxoraAnalyzeContentLayoutRequest,
       operation?: OperationRequest
@@ -1927,10 +2059,17 @@ export interface FluxoraApi {
       projectDirectory: string,
       request?: OperationRequest
     ) => Promise<FluxoraDownloadEntry[]>;
+    onInboundLinksCaptured: (
+      callback: (event: FluxoraNxmInboundLinksCaptured) => void
+    ) => () => void;
   };
   nexus: {
     getAuthStatus: (request?: OperationRequest) => Promise<FluxoraNexusModsAuthStatus>;
     connect: (request?: OperationRequest) => Promise<FluxoraNexusModsAuthStatus>;
+    connectWithApiKey: (
+      apiKey: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraNexusModsAuthStatus>;
     disconnect: (request?: OperationRequest) => Promise<FluxoraNexusModsAuthStatus>;
   };
   transfer: {

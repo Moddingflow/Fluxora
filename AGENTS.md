@@ -33,6 +33,7 @@ Tauri product rules:
 Validation rules:
 
 - For any code change, use the relevant test skill. If no dedicated test skill is available, define the validation plan before editing and run the smallest relevant test or build afterward.
+- When adding any new feature, automatically add or update the matching test coverage in the same change before calling the feature done. Cover every applicable layer: Unit Tests, Component Tests, Integration Tests, API Tests and UI Tests. If one of these test types is not applicable to the feature, state why in the handoff instead of silently skipping it.
 - After making any changes, immediately build the full project through [Build.ps1](Build.ps1) from the repository root. Skip this only when the chat was launched by Codex automation.
 - C++ unit tests live in `backend/tests/` and use Google Test. When adding or changing backend functionality, add or update focused Google Test coverage for that behavior and run the relevant `ctest` target afterward.
 - Tauri unit tests live in `frontend-tauri/tests/` and use Vitest. Tauri smoke/e2e tests live in `frontend-tauri/e2e/` and use Playwright.

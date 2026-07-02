@@ -32,6 +32,7 @@ import { useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } fr
 import { createPortal } from 'react-dom';
 import type {
   CSSProperties,
+  DragEvent as ReactDragEvent,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
@@ -43,6 +44,8 @@ import menuChevronUpIcon from '../../../Icons/chevron-up.svg';
 import menuCircleCheckIcon from '../../../Icons/circle-check.svg';
 import menuCircleXIcon from '../../../Icons/circle-x.svg';
 import menuFolderOpenIcon from '../../../Icons/folder-open.svg';
+import menuPackagePlusIcon from '../../../Icons/package-plus.svg';
+import menuPlayIcon from '../../../Icons/play.svg';
 import modDetailsFilesIcon from '../../../Icons/folder-tree.svg';
 import modDetailsConflictsIcon from '../../../Icons/git-compare-arrows.svg';
 import menuToggleLeftIcon from '../../../Icons/toggle-left.svg';
@@ -184,13 +187,13 @@ import {
 } from './plugin-workspace-state';
 import {
   downloadCapabilityView,
-  downloadProgressValue,
   downloadRawTitle,
-  downloadStatusText,
+  downloadStatusView,
   downloadTitle,
   downloadWorkspaceReducer,
   emptyDownloadWorkspaceState,
   filterDownloadEntries,
+  hasActiveDownload,
   selectedDownloadEntry
 } from './download-workspace-state';
 import {
@@ -262,6 +265,8 @@ import type {
   FluxoraExecutable,
   FluxoraExecutableLaunchResult,
   FluxoraExistingModInstallMode,
+  FluxoraFileDropEvent,
+  FluxoraFomodInstaller,
   FluxoraFluxPackInstallResult,
   FluxoraFluxPackSummary,
   FluxoraGameTemplate,
@@ -273,6 +278,8 @@ import type {
   FluxoraModFileTreeEntry,
   FluxoraModOrderItem,
   FluxoraNexusModsAuthStatus,
+  FluxoraNxmInboundLinksCaptured,
+  FluxoraNxmProtocolResult,
   FluxoraPluginOrderItem,
   FluxoraProject,
   FluxoraSecurityState,
@@ -317,6 +324,18 @@ interface StartMo2TransferOptions {
   skipMainHandoff?: boolean;
 }
 
+type InstallAnalysisResult =
+  | {
+      kind: 'fomod';
+      fallbackName: string;
+      fomodInstaller: FluxoraFomodInstaller;
+    }
+  | {
+      kind: 'layout';
+      fallbackName: string;
+      layoutPreview: FluxoraContentLayoutPreview;
+    };
+
 interface LaunchSplashState {
   appName: string;
   buildName: string;
@@ -345,6 +364,7 @@ interface OverwriteClearSplashState {
 }
 
 type RightPaneId = 'plugins' | 'data' | 'downloads' | 'build';
+type DownloadDropCue = 'idle' | 'hover' | 'importing';
 type RowReorderKind = 'mod' | 'plugin';
 type RowDropPlacement = 'before' | 'after';
 type ModDetailsTabId = 'files' | 'conflicts';
@@ -513,13 +533,13 @@ const loadingSkeletonWidths = ['72%', '58%', '66%', '48%', '62%'] as const;
 const downloadRowHeight = 48;
 const downloadVisibleRows = 28;
 const downloadOverscanRows = 8;
+const DOWNLOAD_PROGRESS_REFRESH_INTERVAL_MS = 500;
 const downloadSkeletonRows = [
   {
     id: 'skyui',
     titleWidth: 68,
     progressWidth: 46,
     barWidth: 78,
-    stateWidth: 50,
     sizeWidth: 42,
     sourceWidth: 62
   },
@@ -528,7 +548,6 @@ const downloadSkeletonRows = [
     titleWidth: 84,
     progressWidth: 38,
     barWidth: 100,
-    stateWidth: 68,
     sizeWidth: 56,
     sourceWidth: 74
   },
@@ -537,7 +556,6 @@ const downloadSkeletonRows = [
     titleWidth: 74,
     progressWidth: 54,
     barWidth: 64,
-    stateWidth: 44,
     sizeWidth: 48,
     sourceWidth: 58
   },
@@ -546,7 +564,6 @@ const downloadSkeletonRows = [
     titleWidth: 58,
     progressWidth: 42,
     barWidth: 86,
-    stateWidth: 60,
     sizeWidth: 52,
     sourceWidth: 70
   },
@@ -555,7 +572,6 @@ const downloadSkeletonRows = [
     titleWidth: 77,
     progressWidth: 50,
     barWidth: 72,
-    stateWidth: 54,
     sizeWidth: 46,
     sourceWidth: 64
   },
@@ -564,7 +580,6 @@ const downloadSkeletonRows = [
     titleWidth: 63,
     progressWidth: 36,
     barWidth: 94,
-    stateWidth: 66,
     sizeWidth: 58,
     sourceWidth: 78
   },
@@ -573,7 +588,6 @@ const downloadSkeletonRows = [
     titleWidth: 88,
     progressWidth: 48,
     barWidth: 58,
-    stateWidth: 48,
     sizeWidth: 44,
     sourceWidth: 60
   },
@@ -582,7 +596,6 @@ const downloadSkeletonRows = [
     titleWidth: 70,
     progressWidth: 44,
     barWidth: 82,
-    stateWidth: 58,
     sizeWidth: 54,
     sourceWidth: 68
   },
@@ -591,7 +604,6 @@ const downloadSkeletonRows = [
     titleWidth: 80,
     progressWidth: 40,
     barWidth: 76,
-    stateWidth: 52,
     sizeWidth: 50,
     sourceWidth: 66
   },
@@ -600,7 +612,6 @@ const downloadSkeletonRows = [
     titleWidth: 61,
     progressWidth: 52,
     barWidth: 90,
-    stateWidth: 64,
     sizeWidth: 40,
     sourceWidth: 72
   },
@@ -609,7 +620,6 @@ const downloadSkeletonRows = [
     titleWidth: 73,
     progressWidth: 34,
     barWidth: 68,
-    stateWidth: 46,
     sizeWidth: 62,
     sourceWidth: 56
   },
@@ -618,7 +628,6 @@ const downloadSkeletonRows = [
     titleWidth: 66,
     progressWidth: 56,
     barWidth: 96,
-    stateWidth: 62,
     sizeWidth: 46,
     sourceWidth: 76
   }
@@ -628,6 +637,8 @@ const projectMenuEstimatedHeight = 116;
 const projectMenuViewportPadding = 8;
 const rowContextMenuWidth = 224;
 const rowContextMenuEstimatedHeight = 268;
+const rowContextMenuItemHeight = 30;
+const rowContextMenuPaddingY = 12;
 const rowContextMenuViewportPadding = 8;
 const rowReorderDragThreshold = 5;
 const rowReorderAutoScrollEdge = 36;
@@ -637,6 +648,61 @@ const backgroundReorderLoadOptions: WorkspaceLoadOptions = {
   resetScroll: false,
   showBusy: false,
   showLoading: false
+};
+
+const fileUriToPath = (value: string): string => {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'file:') {
+      return value;
+    }
+
+    const pathName = decodeURIComponent(url.pathname);
+    const windowsPath = pathName.match(/^\/[a-zA-Z]:/) ? pathName.slice(1) : pathName;
+    return windowsPath.replace(/\//g, '\\');
+  } catch {
+    return value;
+  }
+};
+
+const normalizeDownloadDropPaths = (paths: readonly string[]): string[] =>
+  Array.from(
+    new Set(
+      paths
+        .map((path) => fileUriToPath(path.trim()))
+        .filter((path) => path.length > 0 && !path.startsWith('#'))
+    )
+  );
+
+const dataTransferText = (dataTransfer: DataTransfer, type: string): string => {
+  try {
+    return dataTransfer.getData(type);
+  } catch {
+    return '';
+  }
+};
+
+const downloadDropPathsFromDataTransfer = (dataTransfer: DataTransfer): string[] =>
+  normalizeDownloadDropPaths(
+    [
+      dataTransferText(dataTransfer, 'text/uri-list'),
+      dataTransferText(dataTransfer, 'text/plain')
+    ].flatMap((value) => value.split(/\r?\n/))
+  );
+
+const isPointInsideRect = (x: number, y: number, rect: DOMRect): boolean =>
+  x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+
+const isFileDropPositionInsideRect = (
+  position: { x: number; y: number },
+  rect: DOMRect
+): boolean => {
+  if (isPointInsideRect(position.x, position.y, rect)) {
+    return true;
+  }
+
+  const scale = window.devicePixelRatio || 1;
+  return scale !== 1 && isPointInsideRect(position.x / scale, position.y / scale, rect);
 };
 
 const pluginWorkspaceContextKey = (project: FluxoraProject, profileName: string): string =>
@@ -666,7 +732,8 @@ const projectMenuPositionFromAnchor = (anchor: DOMRect): ProjectMenuPosition => 
 
 const rowContextMenuPositionFromPreferredPoint = (
   preferredLeft: number,
-  preferredTop: number
+  preferredTop: number,
+  estimatedHeight = rowContextMenuEstimatedHeight
 ): RowContextMenuPosition => {
   const maxLeft = Math.max(
     rowContextMenuViewportPadding,
@@ -674,7 +741,7 @@ const rowContextMenuPositionFromPreferredPoint = (
   );
   const maxTop = Math.max(
     rowContextMenuViewportPadding,
-    window.innerHeight - rowContextMenuEstimatedHeight - rowContextMenuViewportPadding
+    window.innerHeight - estimatedHeight - rowContextMenuViewportPadding
   );
   const left = Math.max(rowContextMenuViewportPadding, Math.min(preferredLeft, maxLeft));
   const top = Math.max(rowContextMenuViewportPadding, Math.min(preferredTop, maxTop));
@@ -684,18 +751,31 @@ const rowContextMenuPositionFromPreferredPoint = (
     top,
     maxHeight: Math.max(
       64,
-      Math.min(rowContextMenuEstimatedHeight, window.innerHeight - top - rowContextMenuViewportPadding)
+      Math.min(estimatedHeight, window.innerHeight - top - rowContextMenuViewportPadding)
     )
   };
 };
 
 const rowContextMenuPositionFromPointer = (
   clientX: number,
-  clientY: number
-): RowContextMenuPosition => rowContextMenuPositionFromPreferredPoint(clientX, clientY);
+  clientY: number,
+  estimatedHeight?: number
+): RowContextMenuPosition => rowContextMenuPositionFromPreferredPoint(clientX, clientY, estimatedHeight);
 
-const rowContextMenuPositionFromAnchor = (anchor: DOMRect): RowContextMenuPosition =>
-  rowContextMenuPositionFromPreferredPoint(anchor.right - rowContextMenuWidth, anchor.top + 8);
+const rowContextMenuPositionFromAnchor = (
+  anchor: DOMRect,
+  estimatedHeight?: number
+): RowContextMenuPosition =>
+  rowContextMenuPositionFromPreferredPoint(
+    anchor.right - rowContextMenuWidth,
+    anchor.top + 8,
+    estimatedHeight
+  );
+
+const downloadRowMenuEstimatedHeight = (entry: FluxoraDownloadEntry): number => {
+  const itemCount = 3 + (entry.isDownloading ? 1 : 0) + (entry.canResume ? 1 : 0);
+  return rowContextMenuPaddingY + itemCount * rowContextMenuItemHeight;
+};
 
 const isInteractiveRowDragTarget = (target: EventTarget | null): boolean => {
   if (!(target instanceof Element)) {
@@ -782,6 +862,8 @@ export const App = () => {
   const [settingsBusyLabel, setSettingsBusyLabel] = useState<string | null>(null);
   const [nexusStatus, setNexusStatus] = useState<FluxoraNexusModsAuthStatus | null>(null);
   const [nexusBusy, setNexusBusy] = useState(false);
+  const nxmAutoRegistrationAttemptedRef = useRef(false);
+  const pendingInboundNxmEventRef = useRef<FluxoraNxmInboundLinksCaptured | null>(null);
   const [transferSourceDirectory, setTransferSourceDirectory] = useState('');
   const [transferDestinationRootDirectory, setTransferDestinationRootDirectory] = useState('');
   const [transferStep, setTransferStep] = useState<TransferStepId>('source');
@@ -849,6 +931,11 @@ export const App = () => {
   const [downloadMenuPosition, setDownloadMenuPosition] =
     useState<RowContextMenuPosition | null>(null);
   const [downloadListScrollTop, setDownloadListScrollTop] = useState(0);
+  const [downloadDropCue, setDownloadDropCueState] = useState<DownloadDropCue>('idle');
+  const downloadDropCueRef = useRef<DownloadDropCue>('idle');
+  const downloadDropSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const downloadDropResetRef = useRef<number | null>(null);
+  const downloadProgressRefreshInFlightRef = useRef(false);
   const [activeRightPane, setActiveRightPane] = useState<RightPaneId>('plugins');
   const [archiveTreeScrollTop, setArchiveTreeScrollTop] = useState(0);
   const [profilesWorkspace, dispatchProfilesWorkspace] = useReducer(
@@ -871,6 +958,7 @@ export const App = () => {
   const [launchSplash, setLaunchSplash] = useState<LaunchSplashState | null>(null);
   const [executableDeleteArmedId, setExecutableDeleteArmedId] = useState<string | null>(null);
   const [installDialog, setInstallDialog] = useState<InstallDialogState | null>(null);
+  const installAnalysisPromiseRef = useRef<Promise<InstallAnalysisResult> | null>(null);
   const [isBuildPathsOpen, setIsBuildPathsOpen] = useState(false);
   const [buildPathDraft, setBuildPathDraft] = useState<BuildPathDraft>(
     emptyBuildPathDraft(null)
@@ -1187,14 +1275,6 @@ export const App = () => {
 
     return selectedProjectProfileName ? [selectedProjectProfileName] : [];
   }, [profilesWorkspace.items, selectedProjectProfileName]);
-
-  const installPlacementOverrides = useMemo(
-    () =>
-      installDialog?.layoutPreview
-        ? createPlacementOverrides(installDialog.layoutPreview, installDialog.placementOverrides)
-        : [],
-    [installDialog?.layoutPreview, installDialog?.placementOverrides]
-  );
 
   const installFomodEvaluation = useMemo(
     () =>
@@ -3345,23 +3425,124 @@ export const App = () => {
     }
   };
 
+  const resolveExistingModNameForInstall = async (
+    project: FluxoraProject,
+    operationId: string,
+    modName: string
+  ): Promise<string | null> => {
+    try {
+      const mods = await window.fluxora.mods.listInstalled(project.projectDirectory, {
+        operationId
+      });
+      setInstalledMods(mods);
+      return findExistingInstalledModName(
+        mods.map((mod) => mod.name).filter((name): name is string => Boolean(name)),
+        modName
+      );
+    } catch {
+      return findExistingInstalledModName(installedModNames, modName);
+    }
+  };
+
   const setInstallDialogPatch = (patch: Partial<InstallDialogState>) => {
     setInstallDialog((current) => (current ? { ...current, ...patch } : current));
+  };
+
+  const setInstallDialogPatchForOperation = (
+    operationId: string,
+    patch: Partial<InstallDialogState>
+  ) => {
+    setInstallDialog((current) =>
+      current?.operationId === operationId ? { ...current, ...patch } : current
+    );
+  };
+
+  const applyInstallAnalysisResult = (
+    operationId: string,
+    result: InstallAnalysisResult
+  ) => {
+    setInstallDialog((current) => {
+      if (!current || current.operationId !== operationId) {
+        return current;
+      }
+
+      if (result.kind === 'fomod') {
+        const currentName = normalizeInstallModName(current.modName);
+        const fallbackName = normalizeInstallModName(result.fallbackName);
+        const fomodName = result.fomodInstaller.moduleName.trim();
+        const shouldUseFomodName = fomodName && (!currentName || currentName === fallbackName);
+        return {
+          ...current,
+          phase: 'fomod',
+          isFomod: true,
+          fomodInstaller: result.fomodInstaller,
+          selectedFomodOptionIds: initialFomodSelection(result.fomodInstaller),
+          fomodStepIndex: 0,
+          activeFomodOptionId: null,
+          layoutPreview: null,
+          modName: shouldUseFomodName ? fomodName : current.modName,
+          validationMessage: null,
+          errorMessage: null
+        };
+      }
+
+      const phase =
+        current.phase === 'details' ||
+        current.phase === 'installing' ||
+        current.phase === 'conflict' ||
+        current.phase === 'error'
+          ? current.phase
+          : 'options';
+      return {
+        ...current,
+        phase,
+        layoutPreview: result.layoutPreview,
+        errorMessage: null
+      };
+    });
+  };
+
+  const watchInstallAnalysis = (
+    operationId: string,
+    promise: Promise<InstallAnalysisResult>
+  ): Promise<InstallAnalysisResult> => {
+    installAnalysisPromiseRef.current = promise;
+    void promise
+      .then((result) => {
+        if (installAnalysisPromiseRef.current === promise) {
+          applyInstallAnalysisResult(operationId, result);
+        }
+      })
+      .catch((error) => {
+        if (installAnalysisPromiseRef.current !== promise) {
+          return;
+        }
+
+        const message = errorMessage(error);
+        setInstallDialogPatchForOperation(operationId, {
+          phase: 'error',
+          errorMessage: message
+        });
+        setMessage(message);
+      });
+
+    return promise;
   };
 
   const analyzeInstallLayout = async (
     source: InstallSource,
     operationId: string,
-    selectedFomodOptionIds: string[] = []
+    selectedFomodOptionIds: string[] = [],
+    project: FluxoraProject | null = selectedProject
   ): Promise<FluxoraContentLayoutPreview> => {
-    if (!selectedProject) {
+    if (!project) {
       throw new Error('Open a build before installing mods.');
     }
 
     if (selectedFomodOptionIds.length > 0) {
       return window.fluxora.downloads.analyzeFomodContentLayout(
         {
-          projectDirectory: selectedProject.projectDirectory,
+          projectDirectory: project.projectDirectory,
           downloadPath: source.sourcePath,
           existingModMode: 0,
           selectedOptionIds: selectedFomodOptionIds
@@ -3372,7 +3553,7 @@ export const App = () => {
 
     return window.fluxora.downloads.analyzeContentLayout(
       {
-        projectDirectory: selectedProject.projectDirectory,
+        projectDirectory: project.projectDirectory,
         downloadPath: source.sourcePath,
         existingModMode: 0
       },
@@ -3381,17 +3562,17 @@ export const App = () => {
   };
 
   const startInstallFlow = async (source: InstallSource) => {
-    if (!selectedProject || !downloadCapabilities.bridgeAvailable) {
+    const project = selectedProject;
+    if (!project || !downloadCapabilities.bridgeAvailable) {
       return;
     }
 
     const operationId = createRendererOperationId('install_flow');
     const fallbackName = defaultInstallModName(source.sourcePath, source.displayName);
     setDownloadMenuId(null);
-    setDownloadsBusyLabel('Analyzing archive');
     setMessage(null);
     setInstallDialog({
-      phase: 'analyzing',
+      phase: 'options',
       source,
       operationId,
       isFomod: false,
@@ -3401,49 +3582,37 @@ export const App = () => {
       activeFomodOptionId: null,
       layoutPreview: null,
       modName: fallbackName,
-      existingModMode: 1,
+      existingModMode: 0,
       placementOverrides: {},
       draggedSourcePath: null,
       validationMessage: null,
       errorMessage: null
     });
 
-    try {
-      await refreshInstalledModNamesForInstall(selectedProject, operationId);
+    const analysisPromise = (async (): Promise<InstallAnalysisResult> => {
+      await refreshInstalledModNamesForInstall(project, operationId);
       const fomodInstaller = await window.fluxora.downloads.analyzeFomod(
-        selectedProject.projectDirectory,
+        project.projectDirectory,
         source.sourcePath,
         { operationId }
       );
 
       if (fomodInstaller.isFomod) {
-        setInstallDialogPatch({
-          phase: 'fomod',
-          isFomod: true,
-          fomodInstaller,
-          selectedFomodOptionIds: initialFomodSelection(fomodInstaller),
-          fomodStepIndex: 0,
-          activeFomodOptionId: null,
-          modName: fomodInstaller.moduleName.trim() || fallbackName
-        });
-        return;
+        return {
+          kind: 'fomod',
+          fallbackName,
+          fomodInstaller
+        };
       }
 
-      const layoutPreview = await analyzeInstallLayout(source, operationId);
-      setInstallDialogPatch({
-        phase: 'options',
-        layoutPreview,
-        modName: fallbackName
-      });
-    } catch (error) {
-      setInstallDialogPatch({
-        phase: 'error',
-        errorMessage: errorMessage(error)
-      });
-      setMessage(errorMessage(error));
-    } finally {
-      setDownloadsBusyLabel(null);
-    }
+      const layoutPreview = await analyzeInstallLayout(source, operationId, [], project);
+      return {
+        kind: 'layout',
+        fallbackName,
+        layoutPreview
+      };
+    })();
+    watchInstallAnalysis(operationId, analysisPromise);
   };
 
   const loadDownloadsWorkspace = async (
@@ -3456,19 +3625,17 @@ export const App = () => {
     }
 
     const showBusy = options.showBusy ?? true;
-    const showLoading = options.showLoading ?? true;
+    const hasCurrentRows = downloadsWorkspace.items.length > 0;
+    const showLoading = options.showLoading ?? !hasCurrentRows;
     const resetScroll = options.resetScroll ?? true;
     const operationId = options.operationId ?? createRendererOperationId('downloads_load');
-    if (showLoading) {
-      dispatchDownloadsWorkspace({ type: 'load-started' });
-    }
+    dispatchDownloadsWorkspace({ type: 'load-started', silent: !showLoading });
     if (showBusy) {
       setDownloadsBusyLabel('Loading downloads');
       setMessage(null);
     }
 
     try {
-      await window.fluxora.nxm.importInboundDownloads(project.projectDirectory, { operationId });
       const nextDownloads = await window.fluxora.downloads.list(project.projectDirectory, {
         operationId
       });
@@ -3477,8 +3644,9 @@ export const App = () => {
         setDownloadListScrollTop(0);
       }
     } catch (error) {
-      dispatchDownloadsWorkspace({ type: 'load-failed', message: errorMessage(error) });
-      setMessage(errorMessage(error));
+      const message = errorMessage(error);
+      dispatchDownloadsWorkspace({ type: 'load-failed', message, silent: !showLoading });
+      setMessage(message);
     } finally {
       if (showBusy) {
         setDownloadsBusyLabel(null);
@@ -3501,7 +3669,11 @@ export const App = () => {
 
     try {
       await action(operationId);
-      await loadDownloadsWorkspace(selectedProject);
+      await loadDownloadsWorkspace(selectedProject, {
+        operationId,
+        showBusy: false,
+        showLoading: false
+      });
       if (reloadMods) {
         await loadModsWorkspace(selectedProject);
       }
@@ -3510,6 +3682,139 @@ export const App = () => {
     } finally {
       setDownloadsBusyLabel(null);
     }
+  };
+
+  const clearDownloadDropReset = () => {
+    if (downloadDropResetRef.current !== null) {
+      window.clearTimeout(downloadDropResetRef.current);
+      downloadDropResetRef.current = null;
+    }
+  };
+
+  const showDownloadDropCue = (cue: DownloadDropCue) => {
+    clearDownloadDropReset();
+    downloadDropCueRef.current = cue;
+    setDownloadDropCueState(cue);
+  };
+
+  const scheduleDownloadDropIdle = (delayMs = 140) => {
+    clearDownloadDropReset();
+    downloadDropResetRef.current = window.setTimeout(() => {
+      downloadDropCueRef.current = 'idle';
+      setDownloadDropCueState('idle');
+      downloadDropResetRef.current = null;
+    }, delayMs);
+  };
+
+  const isDownloadsDropPosition = (event: Exclude<FluxoraFileDropEvent, { type: 'leave' }>) => {
+    const surface = downloadDropSurfaceRef.current;
+    if (!surface || !selectedProject || !downloadCapabilities.bridgeAvailable) {
+      return false;
+    }
+
+    return isFileDropPositionInsideRect(event.position, surface.getBoundingClientRect());
+  };
+
+  const importDroppedDownloadArchives = async (sourcePaths: readonly string[]) => {
+    const project = selectedProject;
+    const paths = normalizeDownloadDropPaths(sourcePaths);
+    if (
+      !project ||
+      paths.length === 0 ||
+      !downloadCapabilities.bridgeAvailable ||
+      downloadsBusyLabel ||
+      downloadDropCueRef.current === 'importing'
+    ) {
+      scheduleDownloadDropIdle();
+      return;
+    }
+
+    showDownloadDropCue('importing');
+    await runDownloadMutation(
+      paths.length === 1 ? 'Importing dropped archive' : `Importing ${paths.length} dropped archives`,
+      async (operationId) => {
+        let lastImported: FluxoraDownloadEntry | null = null;
+        for (const sourcePath of paths) {
+          lastImported = await window.fluxora.downloads.importFile(
+            project.projectDirectory,
+            sourcePath,
+            { operationId }
+          );
+        }
+
+        if (lastImported) {
+          dispatchDownloadsWorkspace({ type: 'selected', id: lastImported.id });
+          setMessage(
+            paths.length === 1
+              ? `Imported ${downloadTitle(lastImported)}`
+              : `Imported ${paths.length} archives`
+          );
+        }
+      }
+    );
+    scheduleDownloadDropIdle(320);
+  };
+
+  const handleFluxoraFileDrop = (event: FluxoraFileDropEvent) => {
+    if (!selectedProject || !downloadCapabilities.bridgeAvailable) {
+      return;
+    }
+
+    if (event.type === 'leave') {
+      scheduleDownloadDropIdle();
+      return;
+    }
+
+    const isInsideDownloads = isDownloadsDropPosition(event);
+    if (event.type === 'enter' || event.type === 'over') {
+      if (isInsideDownloads) {
+        showDownloadDropCue('hover');
+      } else {
+        scheduleDownloadDropIdle();
+      }
+      return;
+    }
+
+    if (isInsideDownloads || downloadDropCueRef.current === 'hover') {
+      void importDroppedDownloadArchives(event.paths);
+      return;
+    }
+
+    scheduleDownloadDropIdle();
+  };
+
+  const handleDownloadsDragEnter = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!selectedProject || !downloadCapabilities.bridgeAvailable) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    showDownloadDropCue('hover');
+  };
+
+  const handleDownloadsDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!selectedProject || !downloadCapabilities.bridgeAvailable) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    showDownloadDropCue('hover');
+  };
+
+  const handleDownloadsDragLeave = (event: ReactDragEvent<HTMLDivElement>) => {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+
+    scheduleDownloadDropIdle();
+  };
+
+  const handleDownloadsDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    void importDroppedDownloadArchives(downloadDropPathsFromDataTransfer(event.dataTransfer));
   };
 
   const importDownloadArchive = async () => {
@@ -3563,12 +3868,13 @@ export const App = () => {
       return;
     }
 
-    await startInstallFlow({
+    const source: InstallSource = {
       kind: 'download',
       sourcePath: downloadPath(entry),
       displayName: downloadTitle(entry),
       fileName: entry.fileName || fileNameFromPath(downloadPath(entry))
-    });
+    };
+    await startInstallFlow(source);
   };
 
   const deleteDownload = async (entry: FluxoraDownloadEntry) => {
@@ -3651,20 +3957,77 @@ export const App = () => {
     }
   };
 
-  const registerNxmProtocol = async () => {
-    const operationId = createRendererOperationId('nxm_register');
-    setDownloadsBusyLabel('Registering NXM');
-    setMessage(null);
+  const registerNxmProtocol = async (
+    options: {
+      operationId?: string;
+      showBusy?: boolean;
+      showMessage?: boolean;
+    } = {}
+  ): Promise<FluxoraNxmProtocolResult | null> => {
+    const operationId = options.operationId ?? createRendererOperationId('nxm_register');
+    const showBusy = options.showBusy ?? true;
+    const showMessage = options.showMessage ?? true;
+    if (showBusy) {
+      setDownloadsBusyLabel('Registering NXM');
+    }
+    if (showMessage) {
+      setMessage(null);
+    }
 
     try {
       const result = await window.fluxora.nxm.registerProtocol({ operationId });
-      setMessage(result.message);
       const nextStatus = await window.fluxora.bridge.getStatus({ operationId });
       setBridgeStatus(nextStatus);
+      if (showMessage) {
+        setMessage(result.message);
+      }
+      return result;
+    } catch (error) {
+      if (showMessage) {
+        setMessage(errorMessage(error));
+      }
+      return null;
+    } finally {
+      if (showBusy) {
+        setDownloadsBusyLabel(null);
+      }
+    }
+  };
+
+  const importInboundDownloadsForProject = async (
+    project: FluxoraProject,
+    event: Pick<FluxoraNxmInboundLinksCaptured, 'count' | 'operationId'>,
+    options: {
+      showBusy?: boolean;
+    } = {}
+  ) => {
+    const operationId = event.operationId || createRendererOperationId('nxm_inbound_event');
+    const showBusy = options.showBusy ?? false;
+    if (showBusy) {
+      setDownloadsBusyLabel('Importing NXM');
+    }
+    setMessage(null);
+
+    try {
+      const imported = await window.fluxora.nxm.importInboundDownloads(
+        project.projectDirectory,
+        { operationId }
+      );
+      const nextDownloads = await window.fluxora.downloads.list(project.projectDirectory, {
+        operationId
+      });
+      dispatchDownloadsWorkspace({ type: 'items-loaded', items: nextDownloads });
+      setMessage(
+        imported.length === 0
+          ? 'No inbound NXM links found.'
+          : `Imported ${imported.length} NXM link(s).`
+      );
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
-      setDownloadsBusyLabel(null);
+      if (showBusy) {
+        setDownloadsBusyLabel(null);
+      }
     }
   };
 
@@ -3724,36 +4087,71 @@ export const App = () => {
     }
 
     const operationId = installDialog.operationId;
-    setInstallDialogPatch({ phase: 'analyzing', validationMessage: null });
-    setDownloadsBusyLabel('Analyzing FOMOD layout');
+    const selectedOptionIds = installFomodEvaluation.selectedOptionIds;
+    const fallbackName =
+      installDialog.fomodInstaller.moduleName.trim() ||
+      defaultInstallModName(installDialog.source.sourcePath, installDialog.source.displayName);
+    setInstallDialogPatch({
+      phase: 'options',
+      layoutPreview: null,
+      selectedFomodOptionIds: selectedOptionIds,
+      modName: installDialog.modName.trim() || fallbackName,
+      validationMessage: null
+    });
+
+    const analysisPromise = analyzeInstallLayout(
+      installDialog.source,
+      operationId,
+      selectedOptionIds,
+      selectedProject
+    ).then((layoutPreview): InstallAnalysisResult => ({
+      kind: 'layout',
+      fallbackName,
+      layoutPreview
+    }));
+    watchInstallAnalysis(operationId, analysisPromise);
+  };
+
+  const waitForInstallLayoutPreview = async (
+    currentDialog: InstallDialogState
+  ): Promise<FluxoraContentLayoutPreview | null> => {
+    if (currentDialog.layoutPreview) {
+      return currentDialog.layoutPreview;
+    }
+
+    const analysisPromise = installAnalysisPromiseRef.current;
+    if (!analysisPromise) {
+      setInstallDialogPatch({
+        validationMessage: 'Archive details are not ready yet.'
+      });
+      return null;
+    }
 
     try {
-      const layoutPreview = await analyzeInstallLayout(
-        installDialog.source,
-        operationId,
-        installFomodEvaluation.selectedOptionIds
-      );
-      setInstallDialogPatch({
-        phase: 'options',
-        layoutPreview,
-        selectedFomodOptionIds: installFomodEvaluation.selectedOptionIds,
-        modName:
-          installDialog.fomodInstaller.moduleName.trim() ||
-          defaultInstallModName(installDialog.source.sourcePath, installDialog.source.displayName)
-      });
+      const result = await analysisPromise;
+      if (result.kind === 'fomod') {
+        applyInstallAnalysisResult(currentDialog.operationId, result);
+        return null;
+      }
+
+      applyInstallAnalysisResult(currentDialog.operationId, result);
+      return result.layoutPreview;
     } catch (error) {
       setInstallDialogPatch({
         phase: 'error',
         errorMessage: errorMessage(error)
       });
-    } finally {
-      setDownloadsBusyLabel(null);
+      return null;
     }
   };
 
-  const submitInstallOptions = async () => {
-    if (!selectedProject || !installDialog || !installDialog.layoutPreview) {
+  const submitInstallOptions = async (selectedExistingModMode?: 1 | 2) => {
+    if (!selectedProject || !installDialog) {
       return;
+    }
+
+    if (selectedExistingModMode) {
+      setInstallDialogPatch({ existingModMode: selectedExistingModMode });
     }
 
     const modName = normalizeInstallModName(installDialog.modName);
@@ -3763,31 +4161,59 @@ export const App = () => {
       return;
     }
 
-    if (!installDialog.layoutPreview.canInstall && installPlacementOverrides.length === 0) {
+    const layoutPreview = await waitForInstallLayoutPreview(installDialog);
+    if (!layoutPreview) {
+      return;
+    }
+
+    const placementOverrides = createPlacementOverrides(
+      layoutPreview,
+      installDialog.placementOverrides
+    );
+    if (!layoutPreview.canInstall && placementOverrides.length === 0) {
       setInstallDialogPatch({
         validationMessage: 'The archive is blocked by placement rules. Open Details and move files before installing.'
       });
       return;
     }
 
-    if (installExistingModName && installDialog.existingModMode === 0) {
+    if (!selectedExistingModMode) {
+      const existingModNameForPrompt = await resolveExistingModNameForInstall(
+        selectedProject,
+        installDialog.operationId,
+        modName
+      );
+      if (existingModNameForPrompt) {
+        setInstallDialogPatch({
+          phase: 'conflict',
+          existingModMode: 0,
+          validationMessage: null
+        });
+        return;
+      }
+    }
+
+    const existingModNameForInstall = selectedExistingModMode
+      ? installExistingModName ?? findExistingInstalledModName(installedModNames, modName) ?? modName
+      : null;
+    const existingModMode: FluxoraExistingModInstallMode = selectedExistingModMode ?? 0;
+
+    if (existingModNameForInstall && existingModMode === 0) {
       setInstallDialogPatch({
-        validationMessage: `Choose Replace or Merge for existing mod "${installExistingModName}".`
+        phase: 'conflict',
+        validationMessage: null
       });
       return;
     }
 
-    const existingModMode: FluxoraExistingModInstallMode = installExistingModName
-      ? installDialog.existingModMode
-      : 0;
     const placementOverridesJson =
-      installPlacementOverrides.length > 0 ? JSON.stringify(installPlacementOverrides) : undefined;
+      placementOverrides.length > 0 ? JSON.stringify(placementOverrides) : undefined;
 
     setInstallDialogPatch({
       phase: 'installing',
       validationMessage: null
     });
-    setDownloadsBusyLabel(installExistingModName ? 'Updating mod' : 'Installing mod');
+    setDownloadsBusyLabel(existingModNameForInstall ? 'Updating mod' : 'Installing mod');
 
     try {
       let installed: FluxoraInstalledModSummary;
@@ -3849,7 +4275,11 @@ export const App = () => {
             : `Installed ${installed.name}`
       );
       setInstallDialog(null);
-      await loadDownloadsWorkspace(selectedProject);
+      await loadDownloadsWorkspace(selectedProject, {
+        operationId: installDialog.operationId,
+        showBusy: false,
+        showLoading: false
+      });
       await loadModsWorkspace(selectedProject);
       if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
         await loadPluginsWorkspace(selectedProject);
@@ -3892,6 +4322,14 @@ export const App = () => {
         setThemeMode(normalizeThemeMode(nextBridgeStatus.theme));
 
         if (nextBridgeStatus.ready) {
+          try {
+            const nextNexusStatus = await window.fluxora.nexus.getAuthStatus({ operationId });
+            if (isMounted) {
+              setNexusStatus(nextNexusStatus);
+            }
+          } catch {
+            // Settings can still surface the exact Nexus auth error when opened.
+          }
           await loadCatalog();
           return;
         }
@@ -3912,6 +4350,41 @@ export const App = () => {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      isSecondaryWindow ||
+      !bridgeStatus?.ready ||
+      !nexusStatus?.isLinked ||
+      nxmAutoRegistrationAttemptedRef.current
+    ) {
+      return;
+    }
+
+    const platform = appInfo?.platform ?? bridgeStatus.capabilities?.platform;
+    if (platform !== 'win32') {
+      return;
+    }
+
+    nxmAutoRegistrationAttemptedRef.current = true;
+    const operationId = createRendererOperationId('nxm_auto_register');
+    void (async () => {
+      const result = await registerNxmProtocol({
+        operationId,
+        showBusy: false,
+        showMessage: false
+      });
+      if (result && !result.registered) {
+        setMessage(result.message);
+      }
+    })();
+  }, [
+    appInfo?.platform,
+    bridgeStatus?.capabilities?.platform,
+    bridgeStatus?.ready,
+    isSecondaryWindow,
+    nexusStatus?.isLinked
+  ]);
 
   useEffect(() => {
     if (isBuildSettingsWindow && buildSettingsProjectId) {
@@ -4277,6 +4750,200 @@ export const App = () => {
     bridgeStatus?.ready,
     downloadCapabilities.bridgeAvailable,
     selectedProject?.projectDirectory
+  ]);
+
+  useEffect(() => {
+    const downloadsDirectory = selectedProject?.paths?.downloadsDirectory;
+    if (
+      isSecondaryWindow ||
+      !selectedProject ||
+      !bridgeStatus?.ready ||
+      !downloadCapabilities.bridgeAvailable ||
+      !downloadsDirectory
+    ) {
+      return undefined;
+    }
+
+    const operationId = createRendererOperationId('downloads_watch_folder');
+    void window.fluxora.downloads
+      .watchFolder(selectedProject.projectDirectory, downloadsDirectory, { operationId })
+      .catch(() => undefined);
+
+    return () => {
+      void window.fluxora.downloads
+        .unwatchFolder({ operationId: createRendererOperationId('downloads_unwatch_folder') })
+        .catch(() => undefined);
+    };
+  }, [
+    bridgeStatus?.ready,
+    downloadCapabilities.bridgeAvailable,
+    isSecondaryWindow,
+    selectedProject?.paths?.downloadsDirectory,
+    selectedProject?.projectDirectory
+  ]);
+
+  useEffect(() => {
+    if (isSecondaryWindow) {
+      return undefined;
+    }
+
+    return window.fluxora.downloads.onFolderChanged((event) => {
+      if (!selectedProject || event.projectDirectory !== selectedProject.projectDirectory) {
+        return;
+      }
+
+      const operationId = createRendererOperationId('downloads_folder_changed');
+      void loadDownloadsWorkspace(selectedProject, {
+        operationId,
+        resetScroll: false,
+        showBusy: false,
+        showLoading: false
+      });
+    });
+  }, [
+    isSecondaryWindow,
+    selectedProject?.projectDirectory
+  ]);
+
+  useEffect(() => {
+    const downloadsVisible =
+      activeRoute === 'downloads' || (activeRoute === 'build' && activeRightPane === 'downloads');
+    if (
+      isSecondaryWindow ||
+      !downloadsVisible ||
+      !selectedProject ||
+      !downloadCapabilities.bridgeAvailable
+    ) {
+      if (downloadDropCueRef.current !== 'idle') {
+        showDownloadDropCue('idle');
+      }
+      return undefined;
+    }
+
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    void window.fluxora.fileDrop
+      .onDragDrop((event) => handleFluxoraFileDrop(event))
+      .then((dispose) => {
+        if (disposed) {
+          dispose();
+          return;
+        }
+
+        unlisten = dispose;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+      clearDownloadDropReset();
+      downloadDropCueRef.current = 'idle';
+    };
+  }, [
+    activeRightPane,
+    activeRoute,
+    downloadCapabilities.bridgeAvailable,
+    isSecondaryWindow,
+    selectedProject?.projectDirectory
+  ]);
+
+  useEffect(() => {
+    const downloadsVisible =
+      activeRoute === 'downloads' || (activeRoute === 'build' && activeRightPane === 'downloads');
+    if (
+      isSecondaryWindow ||
+      !downloadsVisible ||
+      !selectedProject ||
+      !bridgeStatus?.ready ||
+      !downloadCapabilities.bridgeAvailable ||
+      !hasActiveDownload(downloadsWorkspace.items)
+    ) {
+      return undefined;
+    }
+
+    const refreshDownloadProgress = () => {
+      if (downloadProgressRefreshInFlightRef.current) {
+        return;
+      }
+
+      downloadProgressRefreshInFlightRef.current = true;
+      void loadDownloadsWorkspace(selectedProject, {
+        operationId: createRendererOperationId('downloads_progress_refresh'),
+        resetScroll: false,
+        showBusy: false,
+        showLoading: false
+      }).finally(() => {
+        downloadProgressRefreshInFlightRef.current = false;
+      });
+    };
+
+    const timer = window.setInterval(
+      refreshDownloadProgress,
+      DOWNLOAD_PROGRESS_REFRESH_INTERVAL_MS
+    );
+    return () => window.clearInterval(timer);
+  }, [
+    activeRightPane,
+    activeRoute,
+    bridgeStatus?.ready,
+    downloadCapabilities.bridgeAvailable,
+    downloadsWorkspace.items,
+    isSecondaryWindow,
+    selectedProject
+  ]);
+
+  useEffect(() => {
+    if (
+      isSecondaryWindow ||
+      !selectedProject ||
+      !bridgeStatus?.ready ||
+      !downloadCapabilities.bridgeAvailable
+    ) {
+      return;
+    }
+
+    const pendingEvent = pendingInboundNxmEventRef.current;
+    if (!pendingEvent) {
+      return;
+    }
+
+    pendingInboundNxmEventRef.current = null;
+    void importInboundDownloadsForProject(selectedProject, pendingEvent);
+  }, [
+    bridgeStatus?.ready,
+    downloadCapabilities.bridgeAvailable,
+    isSecondaryWindow,
+    selectedProject?.projectDirectory
+  ]);
+
+  useEffect(() => {
+    if (isSecondaryWindow) {
+      return undefined;
+    }
+
+    return window.fluxora.nxm.onInboundLinksCaptured((event) => {
+      const queuedText =
+        event.count === 1
+          ? 'NXM link captured. Open a build to import it.'
+          : `${event.count} NXM links captured. Open a build to import them.`;
+      if (!selectedProject || !bridgeStatus?.ready || !downloadCapabilities.bridgeAvailable) {
+        pendingInboundNxmEventRef.current = event;
+        setMessage(queuedText);
+        return;
+      }
+
+      pendingInboundNxmEventRef.current = null;
+      void importInboundDownloadsForProject(selectedProject, event, {
+        showBusy: activeRoute === 'build' || activeRoute === 'downloads'
+      });
+    });
+  }, [
+    activeRoute,
+    bridgeStatus?.ready,
+    downloadCapabilities.bridgeAvailable,
+    isSecondaryWindow,
+    selectedProject
   ]);
 
   useEffect(() => {
@@ -5583,7 +6250,8 @@ export const App = () => {
         await loadDownloadsWorkspace(selectedProject, {
           operationId: refreshOperationId,
           resetScroll: false,
-          showBusy: false
+          showBusy: false,
+          showLoading: false
         });
         return;
       }
@@ -7760,6 +8428,7 @@ export const App = () => {
             void installDownload(entry);
           }}
         >
+          <MenuIcon source={menuPackagePlusIcon} />
           Install
         </button>
         {entry.isDownloading ? (
@@ -7772,6 +8441,7 @@ export const App = () => {
               void cancelDownload(entry);
             }}
           >
+            <MenuIcon source={menuCircleXIcon} />
             Cancel
           </button>
         ) : null}
@@ -7785,6 +8455,7 @@ export const App = () => {
               void resumeDownload(entry);
             }}
           >
+            <MenuIcon source={menuPlayIcon} />
             Resume
           </button>
         ) : null}
@@ -7796,6 +8467,7 @@ export const App = () => {
             void openDownloadInShell(entry);
           }}
         >
+          <MenuIcon source={menuFolderOpenIcon} />
           Show in folder
         </button>
         <button
@@ -7808,6 +8480,7 @@ export const App = () => {
             void deleteDownload(entry);
           }}
         >
+          <MenuIcon source={menuTrashIcon} />
           Delete
         </button>
       </div>,
@@ -7824,8 +8497,7 @@ export const App = () => {
     >
       <div className="mod-row download-row mod-row--head" role="row">
         <span role="columnheader">File</span>
-        <span role="columnheader">Progress</span>
-        <span role="columnheader">State</span>
+        <span role="columnheader">Status</span>
         <span role="columnheader">Size</span>
         <span role="columnheader">Source</span>
       </div>
@@ -7852,12 +8524,6 @@ export const App = () => {
             </div>
             <span role="cell">
               <span
-                className="download-skeleton download-skeleton--state"
-                style={{ width: `${row.stateWidth}%` }}
-              />
-            </span>
-            <span role="cell">
-              <span
                 className="download-skeleton download-skeleton--size"
                 style={{ width: `${row.sizeWidth}%` }}
               />
@@ -7873,6 +8539,41 @@ export const App = () => {
       </div>
     </div>
   );
+
+  const renderDownloadDropSurface = (content: ReactElement) => {
+    const statusText =
+      downloadDropCue === 'importing'
+        ? 'Adding archive to Downloads'
+        : downloadDropCue === 'hover'
+          ? 'Drop archive to add it to Downloads'
+          : '';
+
+    return (
+      <div
+        className="download-drop-surface"
+        data-drop-state={downloadDropCue}
+        ref={downloadDropSurfaceRef}
+        onDragEnter={handleDownloadsDragEnter}
+        onDragLeave={handleDownloadsDragLeave}
+        onDragOver={handleDownloadsDragOver}
+        onDrop={handleDownloadsDrop}
+      >
+        {content}
+        <div className="download-drop-cue" aria-hidden="true">
+          <div className="download-drop-cue__content">
+            <UploadCloud size={22} aria-hidden="true" />
+            <div>
+              <strong>{downloadDropCue === 'importing' ? 'Adding archive' : 'Drop archive'}</strong>
+              <span>Downloads</span>
+            </div>
+          </div>
+        </div>
+        <span className="sr-only" role="status" aria-live="polite">
+          {statusText}
+        </span>
+      </div>
+    );
+  };
 
   const renderDownloadRows = () => {
     if (downloadsWorkspace.loadState === 'loading') {
@@ -7908,8 +8609,7 @@ export const App = () => {
       <div className="mod-table download-table" role="table" aria-label="Downloads">
         <div className="mod-row download-row mod-row--head" role="row">
           <span role="columnheader">File</span>
-          <span role="columnheader">Progress</span>
-          <span role="columnheader">State</span>
+          <span role="columnheader">Status</span>
           <span role="columnheader">Size</span>
           <span role="columnheader">Source</span>
         </div>
@@ -7923,7 +8623,7 @@ export const App = () => {
           {visibleDownloadWindow.items.map((entry) => {
             const isSelected = entry.id === downloadsWorkspace.selectedId;
             const isMenuOpen = entry.id === downloadMenuId;
-            const progressValue = downloadProgressValue(entry);
+            const status = downloadStatusView(entry);
 
             return (
               <div
@@ -7948,7 +8648,11 @@ export const App = () => {
                   event.preventDefault();
                   dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
                   setDownloadMenuPosition(
-                    rowContextMenuPositionFromPointer(event.clientX, event.clientY)
+                    rowContextMenuPositionFromPointer(
+                      event.clientX,
+                      event.clientY,
+                      downloadRowMenuEstimatedHeight(entry)
+                    )
                   );
                   setDownloadMenuId(entry.id);
                 }}
@@ -7967,7 +8671,10 @@ export const App = () => {
                     event.preventDefault();
                     dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
                     setDownloadMenuPosition(
-                      rowContextMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
+                      rowContextMenuPositionFromAnchor(
+                        event.currentTarget.getBoundingClientRect(),
+                        downloadRowMenuEstimatedHeight(entry)
+                      )
                     );
                     setDownloadMenuId(entry.id);
                   }
@@ -7976,15 +8683,14 @@ export const App = () => {
                 <div className="mod-row__main" role="cell">
                   <strong title={downloadRawTitle(entry)}>{downloadTitle(entry)}</strong>
                 </div>
-                <div className="download-progress" role="cell">
-                  <div className="download-progress__bar" aria-hidden="true">
-                    <span style={{ width: `${entry.hasKnownProgress ? progressValue : 0}%` }} />
-                  </div>
-                  <small>{entry.progressText || (entry.hasKnownProgress ? `${progressValue}%` : 'unknown')}</small>
+                <div className="download-progress" role="cell" data-status={status.tone}>
+                  {status.showProgress ? (
+                    <div className="download-progress__bar" aria-hidden="true">
+                      <span style={{ width: `${entry.hasKnownProgress ? status.progressValue : 0}%` }} />
+                    </div>
+                  ) : null}
+                  <small>{status.text}</small>
                 </div>
-                <span role="cell" data-status={entry.canInstall ? 'ready' : entry.canResume ? 'checking' : entry.isDownloading ? 'planned' : 'error'}>
-                  {downloadStatusText(entry)}
-                </span>
                 <span role="cell">{entry.sizeText || '-'}</span>
                 <span role="cell">{entry.source || 'local'}</span>
                 {isMenuOpen ? renderDownloadRowMenu(entry) : null}
@@ -8392,7 +9098,11 @@ export const App = () => {
           type="button"
           title="Refresh downloads"
           disabled={Boolean(downloadsBusyLabel)}
-          onClick={() => void loadDownloadsWorkspace(selectedProject)}
+          onClick={() =>
+            void loadDownloadsWorkspace(selectedProject, {
+              showLoading: false
+            })
+          }
         >
           <RefreshCw size={16} aria-hidden="true" />
         </button>
@@ -8453,7 +9163,7 @@ export const App = () => {
           <span>{downloadCapabilities.reason}</span>
         </div>
       ) : (
-        renderDownloadRows()
+        renderDownloadDropSurface(renderDownloadRows())
       )}
     </div>
   );
@@ -8480,13 +9190,12 @@ export const App = () => {
       evaluation={installFomodEvaluation}
       existingModName={installExistingModName}
       installDialog={installDialog}
-      modsDirectory={selectedProject?.paths?.modsDirectory}
-      overrideCount={installPlacementOverrides.length}
       onArchiveTreeScrollTopChange={setArchiveTreeScrollTop}
       onClose={() => setInstallDialog(null)}
       onContinueFromFomod={() => void continueFromFomod()}
       onMoveFomodStep={(direction) => void moveInstallFomodStep(direction)}
       onPatch={setInstallDialogPatch}
+      onResolveExistingMod={(mode) => void submitInstallOptions(mode)}
       onSubmitInstallOptions={() => void submitInstallOptions()}
     />
   );
@@ -8527,7 +9236,11 @@ export const App = () => {
                 type="button"
                 title="Refresh downloads"
                 disabled={Boolean(downloadsBusyLabel)}
-                onClick={() => void loadDownloadsWorkspace(selectedProject)}
+                onClick={() =>
+                  void loadDownloadsWorkspace(selectedProject, {
+                    showLoading: false
+                  })
+                }
               >
                 <RefreshCw size={16} aria-hidden="true" />
               </button>
@@ -8575,7 +9288,7 @@ export const App = () => {
               <span>{downloadsBusyLabel}</span>
             </div>
           ) : null}
-          {renderDownloadRows()}
+          {renderDownloadDropSurface(renderDownloadRows())}
         </section>
       </section>
     );

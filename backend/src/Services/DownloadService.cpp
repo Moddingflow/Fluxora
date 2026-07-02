@@ -109,7 +109,7 @@ namespace fluxora
         };
 
         std::mutex activeDownloadsMutex;
-        std::set<std::wstring> activeDownloads;
+        std::map<std::wstring, std::size_t> activeDownloads;
         std::mutex installStagingCacheMutex;
         std::map<std::wstring, std::weak_ptr<std::mutex>> installStagingCacheKeyMutexes;
         std::map<std::filesystem::path, std::size_t> installStagingCacheActiveEntries;
@@ -1974,7 +1974,32 @@ namespace fluxora
         bool isActiveDownload(const std::filesystem::path& path)
         {
             std::lock_guard lock(activeDownloadsMutex);
-            return activeDownloads.contains(normalizedPathText(path));
+            const auto match = activeDownloads.find(normalizedPathText(path));
+            return match != activeDownloads.end() && match->second > 0;
+        }
+
+        void markActiveDownload(const std::filesystem::path& path)
+        {
+            std::lock_guard lock(activeDownloadsMutex);
+            ++activeDownloads[normalizedPathText(path)];
+        }
+
+        void unmarkActiveDownload(const std::filesystem::path& path)
+        {
+            std::lock_guard lock(activeDownloadsMutex);
+            const auto match = activeDownloads.find(normalizedPathText(path));
+            if (match == activeDownloads.end())
+            {
+                return;
+            }
+
+            if (match->second <= 1)
+            {
+                activeDownloads.erase(match);
+                return;
+            }
+
+            --match->second;
         }
 
         class ActiveDownloadRegistration final
@@ -1983,14 +2008,25 @@ namespace fluxora
             explicit ActiveDownloadRegistration(const std::filesystem::path& path)
                 : key_(normalizedPathText(path))
             {
-                std::lock_guard lock(activeDownloadsMutex);
-                activeDownloads.insert(key_);
+                markActiveDownload(path);
             }
 
             ~ActiveDownloadRegistration()
             {
                 std::lock_guard lock(activeDownloadsMutex);
-                activeDownloads.erase(key_);
+                const auto match = activeDownloads.find(key_);
+                if (match == activeDownloads.end())
+                {
+                    return;
+                }
+
+                if (match->second <= 1)
+                {
+                    activeDownloads.erase(match);
+                    return;
+                }
+
+                --match->second;
             }
 
             ActiveDownloadRegistration(const ActiveDownloadRegistration&) = delete;
@@ -2449,9 +2485,9 @@ namespace fluxora
                 sizeText,
                 formatFileTime(std::filesystem::last_write_time(path)),
                 progressPercent,
-                formatProgressText(metadata),
-                formatEta(metadata),
-                formatDownloadSpeed(metadata),
+                shouldShowProgress ? formatProgressText(metadata) : std::wstring(),
+                shouldShowProgress ? formatEta(metadata) : std::wstring(),
+                shouldShowProgress ? formatDownloadSpeed(metadata) : std::wstring(),
                 metadata.isDownloading,
                 hasKnownProgress,
                 canResume,
@@ -3396,6 +3432,14 @@ namespace fluxora
             std::set<std::wstring>& seenEntryKeys)
         {
             std::replace(entryPath.begin(), entryPath.end(), L'\\', L'/');
+            if (isDirectory)
+            {
+                while (!entryPath.empty() && entryPath.back() == L'/')
+                {
+                    entryPath.pop_back();
+                }
+            }
+
             const std::filesystem::path path(entryPath);
             const PathSafetyService safety;
             const PathSafetyResult validation = safety.validateArchiveEntryPath(path, isDirectory);
@@ -5128,6 +5172,14 @@ namespace fluxora
             return path;
         }
 
+        void removePendingNxmFile(const std::filesystem::path& path)
+        {
+            std::filesystem::remove(path);
+            std::filesystem::remove(metadataPath(path));
+            removeDownloadProgressSidecar(path);
+            std::filesystem::remove(cancelMarkerPath(path));
+        }
+
         void removePendingNxmForLink(const std::filesystem::path& directory, std::wstring_view link)
         {
             if (!std::filesystem::exists(directory))
@@ -5148,10 +5200,10 @@ namespace fluxora
                     continue;
                 }
 
-                std::filesystem::remove(entry.path());
-                std::filesystem::remove(metadataPath(entry.path()));
-                removeDownloadProgressSidecar(entry.path());
-                std::filesystem::remove(cancelMarkerPath(entry.path()));
+                if (!isActiveDownload(entry.path()))
+                {
+                    removePendingNxmFile(entry.path());
+                }
             }
         }
 
@@ -5218,7 +5270,7 @@ namespace fluxora
             std::lock_guard lock(activeDownloadsMutex);
             if (active)
             {
-                activeDownloads.insert(normalizedPathText(path));
+                activeDownloads[normalizedPathText(path)] = 1;
             }
             else
             {
@@ -5273,6 +5325,190 @@ namespace fluxora
     {
     }
 
+    DownloadService::~DownloadService()
+    {
+        stopNxmDownloadWorker();
+    }
+
+    void DownloadService::processQueuedNxmDownload(const NxmDownloadJob& job) const
+    {
+        try
+        {
+            if (job.pendingPath.empty() ||
+                !std::filesystem::exists(job.pendingPath) ||
+                !std::filesystem::is_regular_file(job.pendingPath))
+            {
+                return;
+            }
+
+            std::wstring link = trim(job.link);
+            if (link.empty())
+            {
+                link = trim(fromUtf8(readTextFile(job.pendingPath)));
+            }
+            if (link.empty())
+            {
+                throw std::invalid_argument("Download source is missing.");
+            }
+
+            const NxmDownloadRequest request = parseNxmLink(link);
+            DownloadMetadata progressMetadata = readMetadata(job.pendingPath);
+            progressMetadata.source = link;
+            progressMetadata.status = L"Ожидает загрузки";
+            progressMetadata.gameDomain = request.gameDomain;
+            progressMetadata.modId = request.modId;
+            progressMetadata.fileId = request.fileId;
+            if (!job.nexusModName.empty())
+            {
+                progressMetadata.nexusModName = job.nexusModName;
+            }
+            progressMetadata.isDownloading = true;
+            writeMetadata(job.pendingPath, progressMetadata);
+
+            NexusDownloadedFile downloadedFile = downloadNxm(
+                job.directory,
+                request,
+                settings_,
+                job.pendingPath,
+                progressMetadata);
+            if (!downloadedFile.path.empty())
+            {
+                removePendingNxmFile(job.pendingPath);
+                DownloadMetadata completedMetadata = metadataForRequest(link, L"", request, downloadedFile.nexusModName);
+                completedMetadata.version = downloadedFile.version;
+                completedMetadata.latestVersion = downloadedFile.latestVersion;
+                writeMetadata(downloadedFile.path, completedMetadata);
+                logger_.write(LogLevel::Info, "Downloads", "Completed queued Nexus download: " + toUtf8(downloadedFile.path.filename().wstring()));
+                return;
+            }
+        }
+        catch (const DownloadCanceledException&)
+        {
+            DownloadMetadata canceledMetadata = readMetadata(job.pendingPath);
+            updateBytesFromPartial(job.directory, canceledMetadata);
+            canceledMetadata.status = L"Отменено";
+            canceledMetadata.isDownloading = false;
+            writeMetadata(job.pendingPath, canceledMetadata);
+            removeDownloadProgressSidecar(job.pendingPath);
+            std::filesystem::remove(cancelMarkerPath(job.pendingPath));
+            logger_.write(LogLevel::Info, "Downloads", "Canceled queued Nexus download: " + toUtf8(job.pendingPath.filename().wstring()));
+            return;
+        }
+        catch (const std::exception& exception)
+        {
+            DownloadMetadata failedMetadata = readMetadata(job.pendingPath);
+            updateBytesFromPartial(job.directory, failedMetadata);
+            failedMetadata.status = L"Ожидает загрузки: " +
+                std::wstring(exception.what(), exception.what() + std::strlen(exception.what()));
+            failedMetadata.isDownloading = false;
+            writeMetadata(job.pendingPath, failedMetadata);
+            removeDownloadProgressSidecar(job.pendingPath);
+            logger_.write(LogLevel::Warning, "Downloads", "Queued Nexus download failed: " + std::string(exception.what()));
+            return;
+        }
+
+        DownloadMetadata pendingMetadata = readMetadata(job.pendingPath);
+        updateBytesFromPartial(job.directory, pendingMetadata);
+        pendingMetadata.status = L"Ожидает загрузки";
+        pendingMetadata.isDownloading = false;
+        writeMetadata(job.pendingPath, pendingMetadata);
+        removeDownloadProgressSidecar(job.pendingPath);
+    }
+
+    void DownloadService::runNxmDownloadWorker() const
+    {
+        while (true)
+        {
+            NxmDownloadJob job;
+            {
+                std::unique_lock lock(nxmQueueMutex_);
+                nxmQueueCv_.wait(lock, [this]()
+                {
+                    return nxmWorkerStopping_ || !nxmQueue_.empty();
+                });
+
+                if (nxmWorkerStopping_ && nxmQueue_.empty())
+                {
+                    break;
+                }
+
+                job = std::move(nxmQueue_.front());
+                nxmQueue_.pop_front();
+                currentNxmDownloadPath_ = job.pendingPath;
+            }
+
+            processQueuedNxmDownload(job);
+            unmarkActiveDownload(job.pendingPath);
+
+            {
+                std::lock_guard lock(nxmQueueMutex_);
+                if (currentNxmDownloadPath_ == job.pendingPath)
+                {
+                    currentNxmDownloadPath_.clear();
+                }
+            }
+        }
+    }
+
+    void DownloadService::stopNxmDownloadWorker() noexcept
+    {
+        std::deque<NxmDownloadJob> abandonedJobs;
+        std::filesystem::path currentDownloadPath;
+        {
+            std::lock_guard lock(nxmQueueMutex_);
+            if (!nxmWorkerStarted_ && !nxmWorker_.joinable())
+            {
+                return;
+            }
+
+            nxmWorkerStopping_ = true;
+            abandonedJobs.swap(nxmQueue_);
+            currentDownloadPath = currentNxmDownloadPath_;
+        }
+
+        for (const NxmDownloadJob& job : abandonedJobs)
+        {
+            try
+            {
+                DownloadMetadata metadata = readMetadata(job.pendingPath);
+                updateBytesFromPartial(job.directory, metadata);
+                metadata.status = L"Отменено";
+                metadata.isDownloading = false;
+                writeMetadata(job.pendingPath, metadata);
+                removeDownloadProgressSidecar(job.pendingPath);
+                std::filesystem::remove(cancelMarkerPath(job.pendingPath));
+            }
+            catch (const std::exception&)
+            {
+            }
+            unmarkActiveDownload(job.pendingPath);
+        }
+
+        if (!currentDownloadPath.empty())
+        {
+            try
+            {
+                requestDownloadCancellation(currentDownloadPath);
+            }
+            catch (const std::exception&)
+            {
+            }
+        }
+
+        nxmQueueCv_.notify_all();
+        if (nxmWorker_.joinable())
+        {
+            nxmWorker_.join();
+        }
+
+        {
+            std::lock_guard lock(nxmQueueMutex_);
+            nxmWorkerStopping_ = false;
+            nxmWorkerStarted_ = false;
+            currentNxmDownloadPath_.clear();
+        }
+    }
+
     void DownloadService::initialize()
     {
         if (initialized_)
@@ -5289,9 +5525,11 @@ namespace fluxora
     {
         if (!initialized_)
         {
+            stopNxmDownloadWorker();
             return;
         }
 
+        stopNxmDownloadWorker();
         initialized_ = false;
         logger_.write(LogLevel::Info, "Download service shut down.");
     }
@@ -5358,6 +5596,12 @@ namespace fluxora
                 continue;
             }
 
+            if (entry.path().extension().wstring() != pendingNxmExtension &&
+                !hasSupportedDownloadFileExtension(entry.path().filename().wstring()))
+            {
+                continue;
+            }
+
             std::error_code timeError;
             const std::filesystem::file_time_type lastWriteTime = entry.last_write_time(timeError);
             files.push_back(DownloadFileCatalogEntry{
@@ -5405,41 +5649,40 @@ namespace fluxora
             removePendingNxmForLink(directory, link);
             const std::filesystem::path pendingPath = savePendingNxm(directory, request, link);
             DownloadMetadata progressMetadata = metadataForRequest(link, L"Ожидает загрузки", request);
+            progressMetadata.isDownloading = true;
             writeMetadata(pendingPath, progressMetadata);
 
             try
             {
-                NexusDownloadedFile downloadedFile = downloadNxm(
-                    directory,
-                    request,
-                    settings_,
-                    pendingPath,
-                    progressMetadata);
-                if (!downloadedFile.path.empty())
+                markActiveDownload(pendingPath);
+                DownloadEntry queuedEntry;
                 {
-                    removePendingNxmForLink(directory, link);
-                    DownloadMetadata completedMetadata = metadataForRequest(link, L"", request, downloadedFile.nexusModName);
-                    completedMetadata.version = downloadedFile.version;
-                    completedMetadata.latestVersion = downloadedFile.latestVersion;
-                    writeMetadata(downloadedFile.path, completedMetadata);
-                    entries.push_back(buildEntry(downloadedFile.path));
-                    continue;
+                    std::unique_lock lock(nxmQueueMutex_);
+                    if (!nxmWorkerStarted_)
+                    {
+                        nxmWorkerStopping_ = false;
+                        nxmWorker_ = std::thread([this]()
+                        {
+                            runNxmDownloadWorker();
+                        });
+                        nxmWorkerStarted_ = true;
+                    }
+                    nxmQueue_.push_back(NxmDownloadJob{
+                        directory,
+                        pendingPath,
+                        link,
+                        {}
+                    });
+                    queuedEntry = buildEntry(pendingPath);
                 }
-            }
-            catch (const DownloadCanceledException&)
-            {
-                DownloadMetadata canceledMetadata = readMetadata(pendingPath);
-                updateBytesFromPartial(directory, canceledMetadata);
-                canceledMetadata.status = L"Отменено";
-                canceledMetadata.isDownloading = false;
-                writeMetadata(pendingPath, canceledMetadata);
-                removeDownloadProgressSidecar(pendingPath);
-                std::filesystem::remove(cancelMarkerPath(pendingPath));
-                entries.push_back(buildEntry(pendingPath));
+
+                nxmQueueCv_.notify_one();
+                entries.push_back(std::move(queuedEntry));
                 continue;
             }
             catch (const std::exception& exception)
             {
+                unmarkActiveDownload(pendingPath);
                 DownloadMetadata failedMetadata = readMetadata(pendingPath);
                 updateBytesFromPartial(directory, failedMetadata);
                 failedMetadata.status = L"Ожидает загрузки: " +
@@ -5450,13 +5693,6 @@ namespace fluxora
                 entries.push_back(buildEntry(pendingPath));
                 continue;
             }
-
-            DownloadMetadata pendingMetadata = readMetadata(pendingPath);
-            pendingMetadata.status = L"Ожидает загрузки";
-            pendingMetadata.isDownloading = false;
-            writeMetadata(pendingPath, pendingMetadata);
-            removeDownloadProgressSidecar(pendingPath);
-            entries.push_back(buildEntry(pendingPath));
         }
 
         return entries;
@@ -5669,39 +5905,39 @@ namespace fluxora
         progressMetadata.partialPath = metadata.partialPath;
         progressMetadata.bytesReceived = metadata.bytesReceived;
         progressMetadata.totalBytes = metadata.totalBytes;
+        progressMetadata.isDownloading = true;
         writeMetadata(downloadPath, progressMetadata);
 
         try
         {
-            NexusDownloadedFile downloadedFile = downloadNxm(
-                directory,
-                request,
-                settings_,
-                downloadPath,
-                progressMetadata);
-            if (!downloadedFile.path.empty())
+            markActiveDownload(downloadPath);
+            DownloadEntry queuedEntry;
             {
-                removePendingNxmForLink(directory, link);
-                DownloadMetadata completedMetadata = metadataForRequest(link, L"", request, downloadedFile.nexusModName);
-                completedMetadata.version = downloadedFile.version;
-                completedMetadata.latestVersion = downloadedFile.latestVersion;
-                writeMetadata(downloadedFile.path, completedMetadata);
-                return buildEntry(downloadedFile.path);
+                std::unique_lock lock(nxmQueueMutex_);
+                if (!nxmWorkerStarted_)
+                {
+                    nxmWorkerStopping_ = false;
+                    nxmWorker_ = std::thread([this]()
+                    {
+                        runNxmDownloadWorker();
+                    });
+                    nxmWorkerStarted_ = true;
+                }
+                nxmQueue_.push_back(NxmDownloadJob{
+                    directory,
+                    downloadPath,
+                    link,
+                    metadata.nexusModName
+                });
+                queuedEntry = buildEntry(downloadPath);
             }
-        }
-        catch (const DownloadCanceledException&)
-        {
-            DownloadMetadata canceledMetadata = readMetadata(downloadPath);
-            updateBytesFromPartial(directory, canceledMetadata);
-            canceledMetadata.status = L"Отменено";
-            canceledMetadata.isDownloading = false;
-            writeMetadata(downloadPath, canceledMetadata);
-            removeDownloadProgressSidecar(downloadPath);
-            std::filesystem::remove(cancelMarkerPath(downloadPath));
-            return buildEntry(downloadPath);
+
+            nxmQueueCv_.notify_one();
+            return queuedEntry;
         }
         catch (const std::exception& exception)
         {
+            unmarkActiveDownload(downloadPath);
             DownloadMetadata failedMetadata = readMetadata(downloadPath);
             updateBytesFromPartial(directory, failedMetadata);
             failedMetadata.status = L"Ожидает загрузки: " +
@@ -5711,14 +5947,6 @@ namespace fluxora
             removeDownloadProgressSidecar(downloadPath);
             return buildEntry(downloadPath);
         }
-
-        DownloadMetadata pendingMetadata = readMetadata(downloadPath);
-        updateBytesFromPartial(directory, pendingMetadata);
-        pendingMetadata.status = L"Ожидает загрузки";
-        pendingMetadata.isDownloading = false;
-        writeMetadata(downloadPath, pendingMetadata);
-        removeDownloadProgressSidecar(downloadPath);
-        return buildEntry(downloadPath);
     }
 
     InstalledMod DownloadService::installDownload(

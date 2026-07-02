@@ -62,7 +62,7 @@ namespace fluxora::tests
     }
 #endif
 
-    TEST(DownloadServiceTests, CaptureNxmLinkWithoutDownloadKeyUsesAuthenticatedDownloadPath)
+    TEST(DownloadServiceTests, CaptureNxmLinkWithoutDownloadKeyQueuesAuthenticatedDownload)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Nexus downloads are implemented for Windows builds.";
@@ -87,7 +87,9 @@ namespace fluxora::tests
         ASSERT_EQ(entries.size(), 1U);
         EXPECT_FALSE(entries.front().canInstall);
         EXPECT_TRUE(entries.front().localPath.extension() == L".nxm");
-        EXPECT_NE(entries.front().status.find(L"NexusMods account is not linked"), std::wstring::npos);
+        EXPECT_TRUE(entries.front().isDownloading);
+        EXPECT_FALSE(entries.front().hasKnownProgress);
+        EXPECT_EQ(entries.front().progressPercent, 0);
 
         downloads.shutdown();
         pathSettings.shutdown();
@@ -96,7 +98,7 @@ namespace fluxora::tests
 #endif
     }
 
-    TEST(DownloadServiceTests, CaptureNxmLinkWithOAuthAuthWithoutApiKeyUsesOAuthTokenPath)
+    TEST(DownloadServiceTests, CaptureNxmLinkWithOAuthAuthWithoutApiKeyQueuesOAuthDownload)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Nexus downloads are implemented for Windows builds.";
@@ -130,7 +132,9 @@ namespace fluxora::tests
         ASSERT_EQ(entries.size(), 1U);
         EXPECT_FALSE(entries.front().canInstall);
         EXPECT_TRUE(entries.front().localPath.extension() == L".nxm");
-        EXPECT_NE(entries.front().status.find(L"Invalid protected NexusMods OAuth token"), std::wstring::npos);
+        EXPECT_TRUE(entries.front().isDownloading);
+        EXPECT_FALSE(entries.front().hasKnownProgress);
+        EXPECT_EQ(entries.front().progressPercent, 0);
 
         downloads.shutdown();
         pathSettings.shutdown();
@@ -199,6 +203,43 @@ namespace fluxora::tests
         ASSERT_EQ(entries.size(), 2U);
         EXPECT_EQ(entries[0].fileName, L"Newer.zip");
         EXPECT_EQ(entries[1].fileName, L"Older.zip");
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+    }
+
+    TEST(DownloadServiceTests, ListDownloadsSkipsUnsupportedFilesAndLeavesCompletedProgressEmpty)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadService downloads(logger, settings, pathSettings);
+        downloads.initialize();
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        const std::filesystem::path downloadsDirectory = projectDirectory / L"downloads";
+        const std::filesystem::path archivePath = downloadsDirectory / L"Ready.zip";
+        writeTextFile(archivePath, "archive");
+        writeTextFile(downloadsDirectory / L"notes.txt", "not a supported download");
+        writeTextFile(
+            archivePath.wstring() + L".fluxora.json",
+            R"({"installedModName":"Sky Mod","bytesReceived":100,"totalBytes":100,"isDownloading":false})");
+
+        const std::vector<DownloadEntry> entries = downloads.listDownloads(projectDirectory);
+
+        ASSERT_EQ(entries.size(), 1U);
+        EXPECT_EQ(entries.front().fileName, L"Ready.zip");
+        EXPECT_FALSE(entries.front().hasKnownProgress);
+        EXPECT_EQ(entries.front().progressPercent, 0);
+        EXPECT_TRUE(entries.front().progressText.empty());
 
         downloads.shutdown();
         pathSettings.shutdown();

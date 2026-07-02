@@ -1,4 +1,12 @@
 use keyring::Entry;
+use notify_debouncer_full::{
+    new_debouncer,
+    notify::{
+        event::{CreateKind, ModifyKind, RemoveKind, RenameMode},
+        EventKind, RecommendedWatcher, RecursiveMode,
+    },
+    DebounceEventResult, DebouncedEvent, Debouncer, RecommendedCache,
+};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -6,6 +14,10 @@ use std::collections::HashSet;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, FilePath};
@@ -30,6 +42,8 @@ const TEXT_EDITOR_WINDOW_LABEL_PREFIX: &str = "text-editor";
 const BUILD_SETTINGS_PATHS_SAVED_EVENT: &str = "fluxora:build-settings:paths-saved";
 const TRANSFER_MO2_HANDOFF_EVENT: &str = "fluxora:transfer:mo2-handoff";
 const TRANSFER_MO2_OPEN_EVENT: &str = "fluxora:transfer:mo2-open";
+const NXM_INBOUND_LINKS_CAPTURED_EVENT: &str = "fluxora:nxm:inbound-links-captured";
+const DOWNLOADS_FOLDER_CHANGED_EVENT: &str = "fluxora:downloads:folder-changed";
 const OPERATION_CANCEL_DIR_NAME: &str = "operation-cancel";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -40,6 +54,7 @@ const PROCESS_WATCH_DEFAULT_HANDOFF_MS: u64 = 30_000;
 const OPERATION_PROGRESS_CACHE_LIMIT: usize = 100;
 const RECENT_OPERATION_LOG_MAX_LIMIT: usize = 80;
 const RECENT_OPERATION_LOG_TAIL_BYTES: u64 = 512 * 1024;
+const DOWNLOADS_FOLDER_WATCH_DEBOUNCE_MS: u64 = 650;
 
 fn encode_query_component(value: &str) -> String {
     let mut encoded = String::new();
@@ -299,6 +314,30 @@ struct OperationStatusState {
     progress: Mutex<Vec<Value>>,
 }
 
+struct DownloadsFolderWatchState {
+    active: Mutex<Option<DownloadsFolderWatcher>>,
+    generation: Arc<AtomicU64>,
+    sequence: Arc<AtomicU64>,
+}
+
+impl Default for DownloadsFolderWatchState {
+    fn default() -> Self {
+        Self {
+            active: Mutex::new(None),
+            generation: Arc::new(AtomicU64::new(0)),
+            sequence: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+struct DownloadsFolderWatcher {
+    debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
+    project_directory: String,
+    downloads_directory: PathBuf,
+    operation_id: String,
+    generation: u64,
+}
+
 #[derive(Default)]
 struct BridgeProcess {
     child: Option<Child>,
@@ -326,6 +365,32 @@ struct AiHostProcess {
 struct OperationRequest {
     #[serde(rename = "operationId")]
     operation_id: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadsFolderWatchResult {
+    accepted: bool,
+    operation_id: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadsFolderChangedPayload {
+    project_directory: String,
+    downloads_directory: String,
+    event_id: String,
+    sequence: u64,
+    reason: String,
+    changes: Vec<DownloadsFolderChange>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadsFolderChange {
+    path: String,
+    file_name: String,
+    kind: String,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -602,6 +667,253 @@ fn operation_id(request: Option<&OperationRequest>, scope: &str) -> String {
         .and_then(|request| request.operation_id.clone())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("op_{}_{}", now_millis(), scope))
+}
+
+fn downloads_watch_request(request: Option<OperationRequest>, scope: &str) -> OperationRequest {
+    request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, scope)),
+    })
+}
+
+fn is_transient_downloads_watch_path(path: &Path) -> bool {
+    let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+        return true;
+    };
+    let file_name = file_name.trim();
+    if file_name.is_empty() {
+        return true;
+    }
+
+    let lower = file_name.to_ascii_lowercase();
+    if matches!(lower.as_str(), ".ds_store" | "thumbs.db" | "desktop.ini") {
+        return true;
+    }
+    if lower.starts_with("~$") || lower.starts_with(".~") {
+        return true;
+    }
+
+    [
+        ".tmp",
+        ".temp",
+        ".crdownload",
+        ".download",
+        ".partial",
+        ".part",
+        ".swp",
+        ".swx",
+        ".lock",
+    ]
+    .iter()
+    .any(|suffix| lower.ends_with(suffix))
+}
+
+fn downloads_folder_event_kind(kind: &EventKind) -> &'static str {
+    match kind {
+        EventKind::Create(CreateKind::File | CreateKind::Folder | CreateKind::Any) => "created",
+        EventKind::Modify(ModifyKind::Name(
+            RenameMode::Any | RenameMode::Both | RenameMode::From | RenameMode::To,
+        )) => "renamed",
+        EventKind::Modify(_) => "modified",
+        EventKind::Remove(RemoveKind::File | RemoveKind::Folder | RemoveKind::Any) => "removed",
+        _ => "changed",
+    }
+}
+
+fn downloads_folder_changes(events: Vec<DebouncedEvent>) -> Vec<DownloadsFolderChange> {
+    let mut seen = HashSet::new();
+    let mut changes = Vec::new();
+
+    for event in events {
+        let kind = downloads_folder_event_kind(&event.kind).to_string();
+        for path in &event.paths {
+            if is_transient_downloads_watch_path(&path) {
+                continue;
+            }
+
+            let path_string = path.to_string_lossy().to_string();
+            let key = format!("{kind}\0{path_string}");
+            if !seen.insert(key) {
+                continue;
+            }
+
+            changes.push(DownloadsFolderChange {
+                file_name: path
+                    .file_name()
+                    .map(|value| value.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                path: path_string,
+                kind: kind.clone(),
+            });
+        }
+    }
+
+    changes
+}
+
+fn downloads_folder_batch_reason(changes: &[DownloadsFolderChange]) -> String {
+    let Some(first) = changes.first() else {
+        return "changed".to_string();
+    };
+    if changes.iter().all(|change| change.kind == first.kind) {
+        return first.kind.clone();
+    }
+    "batch".to_string()
+}
+
+fn emit_downloads_folder_watch_result(
+    app: &AppHandle,
+    project_directory: &str,
+    downloads_directory: &str,
+    sequence: &AtomicU64,
+    result: DebounceEventResult,
+) {
+    match result {
+        Ok(events) => {
+            let changes = downloads_folder_changes(events);
+            if changes.is_empty() {
+                return;
+            }
+
+            let sequence = sequence.fetch_add(1, Ordering::SeqCst) + 1;
+            let reason = downloads_folder_batch_reason(&changes);
+            let payload = DownloadsFolderChangedPayload {
+                project_directory: project_directory.to_string(),
+                downloads_directory: downloads_directory.to_string(),
+                event_id: format!("evt_{}_downloads_folder_{sequence}", now_millis()),
+                sequence,
+                reason,
+                changes,
+            };
+            let _ = app.emit_to(MAIN_WINDOW_LABEL, DOWNLOADS_FOLDER_CHANGED_EVENT, payload);
+        }
+        Err(errors) => {
+            let message = errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ");
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = write_log(
+                    &app,
+                    "main",
+                    "warning",
+                    "DownloadsFolderWatcher",
+                    &format!("Downloads folder watcher reported an error. reason={message}"),
+                    None,
+                )
+                .await;
+            });
+        }
+    }
+}
+
+fn is_nxm_activation_arg(value: &str) -> bool {
+    value
+        .get(..6)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("nxm://"))
+}
+
+fn extract_nxm_links_from_args<I, S>(args: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut seen = HashSet::new();
+    let mut links = Vec::new();
+    for arg in args {
+        let value = arg.as_ref().trim().trim_matches(['"', '\'']);
+        if value.is_empty() || !is_nxm_activation_arg(value) {
+            continue;
+        }
+
+        let key = value.to_ascii_lowercase();
+        let value = value.to_string();
+        if seen.insert(key) {
+            links.push(value);
+        }
+    }
+    links
+}
+
+fn handle_nxm_activation_args(app: AppHandle, args: Vec<String>, source: &'static str) {
+    let links = extract_nxm_links_from_args(args);
+    if links.is_empty() {
+        return;
+    }
+
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+
+    tauri::async_runtime::spawn(async move {
+        queue_inbound_nxm_links(app, links, source).await;
+    });
+}
+
+async fn queue_inbound_nxm_links(app: AppHandle, links: Vec<String>, source: &'static str) {
+    let count = links.len();
+    if count == 0 {
+        return;
+    }
+
+    let operation_id = operation_id(None, "nxm_activation_capture");
+    let request = OperationRequest {
+        operation_id: Some(operation_id.clone()),
+    };
+    let params = json!({
+        "projectDirectory": "",
+        "links": links
+    });
+
+    let result = {
+        let state = bridge_state(&app);
+        let mut bridge = state.process.lock().await;
+        bridge
+            .request(&app, "nxm.captureLinks", params, request, BRIDGE_TIMEOUT_MS)
+            .await
+    };
+
+    match result {
+        Ok(_) => {
+            let _ = write_log(
+                &app,
+                "main",
+                "info",
+                "NxmActivation",
+                &format!(
+                    "Queued inbound NXM links. source={} count={}",
+                    source, count
+                ),
+                Some(&operation_id),
+            )
+            .await;
+            let _ = app.emit_to(
+                MAIN_WINDOW_LABEL,
+                NXM_INBOUND_LINKS_CAPTURED_EVENT,
+                json!({
+                    "count": count,
+                    "operationId": operation_id,
+                    "source": source
+                }),
+            );
+        }
+        Err(error) => {
+            let _ = write_log(
+                &app,
+                "main",
+                "error",
+                "NxmActivation",
+                &format!(
+                    "Failed to queue inbound NXM links. source={} count={} reason={}",
+                    source, count, error
+                ),
+                Some(&operation_id),
+            )
+            .await;
+        }
+    }
 }
 
 fn host_executable_name() -> &'static str {
@@ -3299,15 +3611,171 @@ async fn fluxora_build_settings_paths_saved(app: AppHandle, project: Value) -> R
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+async fn fluxora_downloads_watch_folder(
+    app: AppHandle,
+    project_directory: String,
+    downloads_directory: String,
+    request: Option<OperationRequest>,
+) -> Result<DownloadsFolderWatchResult, String> {
+    let request = downloads_watch_request(request, "downloads_watch_folder");
+    let operation_id = operation_id(Some(&request), "downloads_watch_folder");
+    let project_directory = project_directory.trim().to_string();
+    let downloads_directory = downloads_directory.trim().to_string();
+
+    if project_directory.is_empty() {
+        return Err("projectDirectory is required".to_string());
+    }
+    if downloads_directory.is_empty() {
+        return Err("downloadsDirectory is required".to_string());
+    }
+
+    let downloads_path = PathBuf::from(&downloads_directory);
+    if !downloads_path.is_dir() {
+        return Err("downloadsDirectory must point to an existing folder".to_string());
+    }
+
+    let state = app.state::<DownloadsFolderWatchState>();
+    let watcher_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let active_generation = state.generation.clone();
+    let sequence = state.sequence.clone();
+    let app_for_events = app.clone();
+    let project_for_events = project_directory.clone();
+    let downloads_for_events = downloads_path.to_string_lossy().to_string();
+
+    let mut debouncer = new_debouncer(
+        Duration::from_millis(DOWNLOADS_FOLDER_WATCH_DEBOUNCE_MS),
+        None,
+        move |result: DebounceEventResult| {
+            if active_generation.load(Ordering::SeqCst) != watcher_generation {
+                return;
+            }
+            emit_downloads_folder_watch_result(
+                &app_for_events,
+                &project_for_events,
+                &downloads_for_events,
+                &sequence,
+                result,
+            );
+        },
+    )
+    .map_err(|error| error.to_string())?;
+
+    debouncer
+        .watch(&downloads_path, RecursiveMode::NonRecursive)
+        .map_err(|error| error.to_string())?;
+
+    let mut active = state.active.lock().await;
+    let previous = active.take();
+    *active = Some(DownloadsFolderWatcher {
+        debouncer,
+        project_directory: project_directory.clone(),
+        downloads_directory: downloads_path.clone(),
+        operation_id: operation_id.clone(),
+        generation: watcher_generation,
+    });
+    drop(active);
+
+    if let Some(previous) = previous {
+        previous.debouncer.stop_nonblocking();
+    }
+
+    let _ = write_log(
+        &app,
+        "main",
+        "info",
+        "DownloadsFolderWatcher",
+        &format!(
+            "Watching downloads folder. projectDirectory={} downloadsDirectory={}",
+            project_directory,
+            downloads_path.to_string_lossy()
+        ),
+        Some(&operation_id),
+    )
+    .await;
+
+    Ok(DownloadsFolderWatchResult {
+        accepted: true,
+        operation_id,
+    })
+}
+
+#[tauri::command]
+async fn fluxora_downloads_unwatch_folder(
+    app: AppHandle,
+    request: Option<OperationRequest>,
+) -> Result<DownloadsFolderWatchResult, String> {
+    let request = downloads_watch_request(request, "downloads_unwatch_folder");
+    let operation_id = operation_id(Some(&request), "downloads_unwatch_folder");
+    let state = app.state::<DownloadsFolderWatchState>();
+    state.generation.fetch_add(1, Ordering::SeqCst);
+
+    let mut active = state.active.lock().await;
+    let previous = active.take();
+    drop(active);
+
+    let had_active_watcher = previous.is_some();
+    if let Some(previous) = previous {
+        let previous_project_directory = previous.project_directory;
+        let previous_downloads_directory = previous.downloads_directory;
+        let previous_operation_id = previous.operation_id;
+        let previous_generation = previous.generation;
+        previous.debouncer.stop_nonblocking();
+        let _ = write_log(
+            &app,
+            "main",
+            "info",
+            "DownloadsFolderWatcher",
+            &format!(
+                "Stopped downloads folder watcher. projectDirectory={} downloadsDirectory={} previousOperationId={} generation={}",
+                previous_project_directory,
+                previous_downloads_directory.to_string_lossy(),
+                previous_operation_id,
+                previous_generation
+            ),
+            Some(&operation_id),
+        )
+        .await;
+    }
+
+    if !had_active_watcher {
+        let _ = write_log(
+            &app,
+            "main",
+            "info",
+            "DownloadsFolderWatcher",
+            "Downloads folder watcher stop requested with no active watcher.",
+            Some(&operation_id),
+        )
+        .await;
+    }
+
+    Ok(DownloadsFolderWatchResult {
+        accepted: true,
+        operation_id,
+    })
+}
+
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            handle_nxm_activation_args(app.clone(), argv, "second-instance");
+        }));
+    }
+
+    builder
         .manage(BridgeState::default())
         .manage(AiHostState::default())
         .manage(OperationStatusState::default())
+        .manage(DownloadsFolderWatchState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app = app.handle().clone();
+            handle_nxm_activation_args(app.clone(), std::env::args().collect(), "startup");
             tauri::async_runtime::spawn(async move {
                 let log_directory = logs_dir(&app);
                 let _ = write_log(
@@ -3363,7 +3831,9 @@ pub fn run() {
             fluxora_open_build_settings_window,
             fluxora_open_mod_details_window,
             fluxora_open_text_editor_window,
-            fluxora_build_settings_paths_saved
+            fluxora_build_settings_paths_saved,
+            fluxora_downloads_watch_folder,
+            fluxora_downloads_unwatch_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fluxora");
@@ -3416,6 +3886,62 @@ mod tests {
         assert!(message.contains("Bearer [redacted-secret]"));
         assert!(message.contains("api_key=[redacted-secret]"));
         assert!(message.contains("token=[redacted-secret]"));
+    }
+
+    #[test]
+    fn extract_nxm_links_from_args_preserves_query_and_deduplicates() {
+        let links = extract_nxm_links_from_args([
+            "Fluxora.exe",
+            "\"nxm://skyrimspecialedition/mods/3863/files/123?key=abc&expires=999\"",
+            "https://www.nexusmods.com/skyrimspecialedition/mods/3863",
+            "NXM://skyrimspecialedition/mods/3863/files/123?key=abc&expires=999",
+            "nxm://fallout4/mods/10/files/20?key=def&expires=1000",
+        ]);
+
+        assert_eq!(
+            links,
+            vec![
+                "nxm://skyrimspecialedition/mods/3863/files/123?key=abc&expires=999",
+                "nxm://fallout4/mods/10/files/20?key=def&expires=1000"
+            ]
+        );
+    }
+
+    #[test]
+    fn downloads_folder_watch_suppresses_only_transient_sidecars() {
+        assert!(is_transient_downloads_watch_path(Path::new(
+            "C:/Downloads/mod.7z.crdownload"
+        )));
+        assert!(is_transient_downloads_watch_path(Path::new(
+            "C:/Downloads/~$lock.tmp"
+        )));
+        assert!(!is_transient_downloads_watch_path(Path::new(
+            "C:/Downloads/mod.7z"
+        )));
+        assert!(!is_transient_downloads_watch_path(Path::new(
+            "C:/Downloads/mod.zip"
+        )));
+        assert!(!is_transient_downloads_watch_path(Path::new(
+            "C:/Downloads/mod.rar"
+        )));
+    }
+
+    #[test]
+    fn downloads_folder_batch_reason_uses_batch_for_mixed_changes() {
+        let changes = vec![
+            DownloadsFolderChange {
+                path: "C:/Downloads/a.7z".to_string(),
+                file_name: "a.7z".to_string(),
+                kind: "created".to_string(),
+            },
+            DownloadsFolderChange {
+                path: "C:/Downloads/b.7z".to_string(),
+                file_name: "b.7z".to_string(),
+                kind: "modified".to_string(),
+            },
+        ];
+
+        assert_eq!(downloads_folder_batch_reason(&changes), "batch");
     }
 
     #[test]

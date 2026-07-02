@@ -49,6 +49,7 @@ These rules are project-specific and apply to all Codex/agent work in this repos
 
 ## Validation Expectations
 
+- New feature work must include test coverage as part of the same change, not as a deferred follow-up. Add or update every applicable category: Unit Tests, Component Tests, Integration Tests, API Tests and UI Tests. If a category genuinely does not apply, document the reason in the handoff and keep the remaining coverage focused on the changed behavior.
 - Backend changes should be validated with the relevant CMake build and targeted Google Test/CTest run when available.
 - C++ unit tests are built with Google Test in `backend/tests/`. Keep extending that suite as backend behavior grows: every new or changed core function should get focused Google Test coverage unless there is a clear reason it cannot be tested directly.
 - Tauri changes should be validated from `frontend-tauri/` with the smallest relevant command:

@@ -1,11 +1,12 @@
 # Fluxora AI Security Hardening
 
-Date: 2026-06-30
+Date: 2026-07-02
 
-Phase 16 goal: make the open-source AI surface safe-by-default. AI output,
-provider responses, Nexus pages, FOMOD metadata, logs, skills, markdown-like
-text, and user text are untrusted until they pass schema validation, policy
-checks, audit logging, and approval gates.
+Phase 16 goal plus staged web-surfing release gate: make the open-source AI
+surface safe-by-default. AI output, provider responses, Nexus API/page data,
+non-Nexus web/forum content, FOMOD metadata, logs, skills, markdown-like text,
+and user text are untrusted until they pass schema validation, policy checks,
+audit logging, evidence-card compaction, and approval gates.
 
 ## Threat model review
 
@@ -33,6 +34,10 @@ state only, Rust shell owns safe OS affordances and provider credential broker,
 | Tool-call schema fuzzing | Done | `validateAiSafeActionPayload()` rejects unknown tools, missing `operationId`, wrong types, hidden approval fields, and shell-like extra fields. |
 | Web fetch SSRF tests | Done | Rust tests in `ai_research.rs` block `file://`, loopback, private IP and non-HTTPS fetches; Phase 16 test asserts the policy document remains wired. |
 | URL allowlist tests | Done | `ai_research.rs` enforces Nexus/public allowlist; `ai-chat-security.ts` blocks unsafe chat source URLs before renderer callbacks. |
+| Staged web-surfing deterministic gate | Done | `frontend-tauri/src/shared/ai-evaluation-suite.ts` and `frontend-tauri/tests/ai-evaluation-suite.test.ts` cover local-only no-web, Nexus quota no-scrape, missing credential non-Nexus-only, maintainer corroboration, weak forum anecdotes, contradictions, source prompt injection, and LOOT availability. |
+| Source tiers and evidence cards | Done | `docs/ai/mod-research-pipeline.md`, `docs/ai/threat-model.md`, and the AI gate require source tiers A/B/C/D, evidence ids, confidence, contradiction risk, and `rawContentRetained=false`. |
+| Nexus quota/backoff no-scrape policy | Done | Missing credentials, quota exhaustion, `429`, `Retry-After`, or API limits record blocked/quota evidence and must not trigger public Nexus page scraping fallback. |
+| Support bundle staged-web redaction | Done | Support/audit artifacts keep source ids, tiers, fingerprints, blocked/quota state and compact summaries; raw web bodies, cookies, authenticated pages, provider keys, Nexus tokens, raw prompts and full logs stay excluded by default. |
 | No secrets in renderer/localStorage/logs/crash dumps | Done | Chat settings store only `modelId` and routing preset; support bundles redact raw prompts by default; runtime logs redact keys/tokens. |
 | OS or Supabase credential broker only | Done | Provider credentials are read by `FluxoraAIHost` from the OS credential store first, then from a Fluxora-managed Supabase credential endpoint/RPC keyed by `GEMINI_API_KEY`; renderer code still receives only connected/disconnected state. |
 | CSP stays strict | Done | Tauri config has `withGlobalTauri: false`, one capability, no `unsafe-eval`, `object-src 'none'`, `base-uri 'none'`, and `form-action 'none'`. |
@@ -87,8 +92,19 @@ executor queue.
   documentation and unspecified addresses;
 - redirects disabled;
 - public fetch size capped;
-- Nexus API/cache used before public page fetch;
+- Nexus API/cache used before any public-source policy is considered;
+- missing Nexus credentials, quota exhaustion, `429`, `Retry-After`, or
+  configured API limits block Nexus retrieval and do not silently fall back to
+  public Nexus page scraping;
 - authenticated pages and browser sandbox stay approval-gated or disabled.
+
+Allowed non-Nexus source expansion is separate from Nexus fallback. It can use
+official or maintainer documentation, maintainer-controlled GitHub release or
+issue metadata, script extender documentation, LOOT/libloot documentation or
+metadata, and curated modding knowledge bases/forums where access is allowed.
+Every admitted source must be compacted into an evidence card with source tier,
+source/evidence id, citation, confidence, contradiction risk,
+`instructionsAllowed=false`, and `rawContentRetained=false`.
 
 Renderer AI source buttons add a second gate: only `https://`, `mailto:`, or
 `fluxora://ai/context-source/<id>` can reach the open callback.
@@ -135,12 +151,13 @@ default, validate link schemes, and keep `target=_blank` anchors on
 
 ## Provider Terms/Data-Retention Matrix
 
-| Provider | Mode | Default status | Data sent | Retention / terms review |
+| Provider/source | Mode | Default status | Data sent | Retention / terms review |
 | --- | --- | --- | --- | --- |
 | Local dry run | local/offline | Enabled | No external provider data | Local only; no provider retention. |
 | Google Gemini | BYOK/economy/planner/web | OS credential or Fluxora-managed Supabase key required | Prompt plus compact approved context; optional grounded search metadata. Gemini 3.1 Flash-Lite is the main chat model; Gemini 2.5 Flash-Lite is reserved for web/orchestration work. | User/provider terms apply; verify retention, grounding and transfer terms before public release. |
 | Perplexity / paid deep research | future optional | Disabled by default | None until expensive-run/BYOK approval exists | Terms, retention, citation and cost behavior must be reviewed before enabling. |
-| Nexus API/public pages | research source | API/cache first, allowlisted | Nexus URLs/NXM links, metadata summaries, rate-limit headers | Nexus terms/rate limits apply; do not send secrets to page content. |
+| Nexus API/cache | research source | API/cache first; public Nexus page fallback disabled for quota/credential failures | Nexus URLs/NXM links, official API/cache metadata summaries, rate-limit/backoff headers and blocked/quota state | Nexus terms/rate limits apply; do not send secrets to page content. Public Nexus page policy requires separate owner/legal review before enabling. |
+| Allowed non-Nexus sources | staged research source | Disabled unless policy and budget allow the staged path | Source URLs, source ids, citations, source-tier labels, compact summaries, contradiction/discard reasons | Terms, robots/access expectations, recipients and transfer behavior require owner/legal review before public release. |
 
 ## User Data Export/Delete Controls
 
@@ -162,8 +179,14 @@ Current controls and release requirements:
   a release privacy hardening item outside this active-build control.
 - Logs/crash/support bundles: raw prompts and secrets excluded by default;
   user opt-in is required before sending support data outside the device.
+- Staged web research support data: source ids, source tiers, fingerprints,
+  confidence, contradiction risk, blocked/quota state, and compact summaries
+  may be exported; raw page bodies, raw HTML, provider-search transcripts,
+  cookies, authenticated pages, provider keys, Nexus tokens, raw prompts,
+  arbitrary local files and full logs remain excluded by default.
 - GDPR/DSGVO: public AI must expose clear disable, export and delete controls
-  for local AI data and document provider-side deletion limits.
+  for local AI data, staged evidence cards and compressed run state, and
+  document provider-side deletion limits.
 
 ## Dependency Audit And License Audit
 
@@ -204,4 +227,7 @@ the release dependency bill of materials.
 This document is an engineering hardening record, not legal advice. Before any
 public AI release, owner/legal review must approve privacy policy, terms, third
 party notices, provider terms/data-retention disclosures, opt-in flows, support
-bundle export wording, and deletion/export controls for German/EU expectations.
+bundle export wording, source-tier/evidence-card data categories, expanded
+non-Nexus source recipients, quota/backoff records, and deletion/export controls
+for German/EU expectations. See `docs/ai/legal-review-todo.md` for the current
+engineering TODO; it is not final legal wording.

@@ -19,6 +19,7 @@ import { useRef } from 'react';
 import closeTabIcon from '../../../../../Icons/circle-x.svg';
 import geminiIcon from '../../../../../Icons/gemini.svg';
 import type {
+  FluxoraAiCitation,
   FluxoraAiModelAgentResult,
   FluxoraAiSubagentDescriptor,
   FluxoraAiTaskPlanStep,
@@ -216,6 +217,290 @@ export const aiSubagentLinksForMessage = (
     ),
     scheduleDescriptorToSubagent(message.subagentSchedule.planReviewAgent, message, parentChatId)
   ]);
+};
+
+type AiResearchStageId = 'local' | 'nexus' | 'web' | 'judge';
+type AiResearchStageStatus = 'done' | 'limited' | 'queued' | 'skipped' | 'blocked';
+type AiCaseMilestone = NonNullable<AiMessage['caseState']>['caseState'];
+
+interface AiResearchStageSummary {
+  id: AiResearchStageId;
+  label: string;
+  status: AiResearchStageStatus;
+}
+
+interface AiResearchSummary {
+  stages: AiResearchStageSummary[];
+  sourceCount: number;
+  evidenceCount: number;
+  quotaLabel?: string;
+  limitation?: string;
+}
+
+const aiResearchStageLabels: Record<AiResearchStageId, string> = {
+  local: 'Local',
+  nexus: 'Nexus',
+  web: 'Web',
+  judge: 'Judge'
+};
+
+const aiResearchStageStatusLabels: Record<AiResearchStageStatus, string> = {
+  done: 'Done',
+  limited: 'Limited',
+  queued: 'Queued',
+  skipped: 'Skipped',
+  blocked: 'Blocked'
+};
+
+const aiCaseMilestoneRank: Record<AiCaseMilestone, number> = {
+  'local-inspection-complete': 1,
+  'nexus-pass-complete': 2,
+  'external-pass-complete': 3,
+  'diagnosis-complete': 4,
+  'final-answer-complete': 5
+};
+
+const uniqueAiDisplayStrings = (values: Array<string | null | undefined>): string[] => {
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    items.push(trimmed);
+  }
+  return items;
+};
+
+const caseStageAtLeast = (message: AiMessage, milestone: AiCaseMilestone): boolean => {
+  const current = message.caseState?.caseState;
+  return current ? aiCaseMilestoneRank[current] >= aiCaseMilestoneRank[milestone] : false;
+};
+
+const evidenceCardsForMessage = (message: AiMessage) =>
+  message.researchReport?.nexusInvestigation?.evidenceCards ?? [];
+
+const evidenceIdsForMessage = (message: AiMessage): string[] =>
+  uniqueAiDisplayStrings([
+    ...(message.caseState?.sourceIds ?? []),
+    ...evidenceCardsForMessage(message).flatMap((card) => [card.sourceId, ...card.sourceIds]),
+    ...(message.diagnosisJudge?.deterministicFindings ?? []).flatMap((finding) => finding.evidenceIds),
+    ...(message.diagnosisJudge?.hypotheses ?? []).flatMap((hypothesis) => hypothesis.evidenceIds),
+    ...(message.diagnosisJudge?.rankedCauses ?? []).flatMap((cause) => [
+      ...cause.supportingEvidenceIds,
+      ...cause.opposingEvidenceIds
+    ])
+  ]);
+
+const citationToAiSource = (
+  citation: ReturnType<typeof evidenceCardsForMessage>[number]['citations'][number],
+  index: number
+): FluxoraAiCitation => ({
+  id: citation.sourceId || `evidence-citation-${index}`,
+  title: citation.title,
+  url: citation.url ?? '',
+  kind: 'evidence-citation',
+  provider: 'fluxora-evidence-card',
+  trust: 'untrusted-external-content'
+});
+
+const aiSourcesForMessage = (message: AiMessage): FluxoraAiCitation[] => {
+  const sources = [
+    ...(message.sources ?? []),
+    ...(message.researchReport?.sources ?? []),
+    ...evidenceCardsForMessage(message).flatMap((card) => card.citations.map(citationToAiSource))
+  ];
+  const seen = new Set<string>();
+
+  return sources.filter((source) => {
+    const key = [source.id, source.url, source.title].join('|').toLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+};
+
+const nexusApiStateForMessage = (message: AiMessage) =>
+  message.caseState?.quotaState.nexusApiState ??
+  message.researchReport?.nexusInvestigation?.api.state ??
+  message.researchReport?.apiAvailability?.state ??
+  null;
+
+const nexusQuotaForMessage = (message: AiMessage) =>
+  message.caseState?.quotaState.quota ??
+  message.researchReport?.nexusInvestigation?.quota ??
+  message.researchReport?.apiQuotaState ??
+  null;
+
+const nexusLimitationForMessage = (message: AiMessage): string | null => {
+  const quotaState = message.caseState?.quotaState;
+  if (quotaState?.limitation) {
+    return sanitizeAiChatText(quotaState.limitation);
+  }
+
+  const apiState = nexusApiStateForMessage(message);
+  const unavailableReason =
+    quotaState?.unavailableReason ??
+    message.researchReport?.nexusInvestigation?.api.unavailableReason ??
+    message.researchReport?.apiAvailability?.unavailableReason ??
+    null;
+
+  if (apiState === 'quota-exhausted') {
+    return 'Nexus API quota is exhausted or rate-limited; Nexus evidence may be incomplete.';
+  }
+  if (apiState === 'unauthenticated' || unavailableReason === 'missing-credential') {
+    return 'Nexus API credentials are unavailable; Nexus evidence may be incomplete.';
+  }
+  if (apiState === 'unavailable') {
+    return 'Nexus API is unavailable; Nexus evidence may be incomplete.';
+  }
+  if (apiState === 'disabled') {
+    return 'Nexus API is disabled for this research pass.';
+  }
+
+  return null;
+};
+
+const nexusQuotaLabelForMessage = (message: AiMessage): string | undefined => {
+  const quota = nexusQuotaForMessage(message);
+  if (!quota) {
+    return undefined;
+  }
+
+  const parts = [
+    quota.hourlyRemaining === null ? null : `${quota.hourlyRemaining.toLocaleString()} hourly`,
+    quota.dailyRemaining === null ? null : `${quota.dailyRemaining.toLocaleString()} daily`
+  ].filter(Boolean);
+
+  return parts.length > 0 ? `Nexus quota ${parts.join(' / ')}` : undefined;
+};
+
+const routeValueForMessage = (message: AiMessage): string =>
+  String(message.modResearchRoute?.route ?? '');
+
+const localStageStatusForMessage = (message: AiMessage, evidenceCount: number): AiResearchStageStatus =>
+  message.caseState || message.modResearchRoute || message.researchReport || evidenceCount > 0
+    ? 'done'
+    : 'skipped';
+
+const nexusStageStatusForMessage = (message: AiMessage): AiResearchStageStatus => {
+  const apiState = nexusApiStateForMessage(message);
+  if (
+    apiState === 'quota-exhausted' ||
+    apiState === 'unavailable' ||
+    apiState === 'unauthenticated' ||
+    apiState === 'disabled'
+  ) {
+    return 'limited';
+  }
+  if (caseStageAtLeast(message, 'nexus-pass-complete') || message.researchReport?.nexusInvestigation || apiState === 'available') {
+    return 'done';
+  }
+
+  const route = routeValueForMessage(message);
+  if (apiState === 'not-requested' || route === 'no-web/local-only' || route === 'local-only') {
+    return 'skipped';
+  }
+
+  return 'queued';
+};
+
+const webStageStatusForMessage = (message: AiMessage): AiResearchStageStatus => {
+  if (caseStageAtLeast(message, 'external-pass-complete')) {
+    return 'done';
+  }
+
+  const route = routeValueForMessage(message);
+  if (
+    message.researchReport?.webQueryPlan?.queries.length ||
+    message.researchReport?.nextBestNonNexusQueries?.length ||
+    route === 'nexus-api-with-search' ||
+    route === 'non-nexus-web'
+  ) {
+    return 'queued';
+  }
+  if (route === 'no-web/local-only' || route === 'local-only') {
+    return 'skipped';
+  }
+
+  return message.researchReport || message.caseState ? 'skipped' : 'queued';
+};
+
+const judgeStageStatusForMessage = (message: AiMessage): AiResearchStageStatus => {
+  if (message.diagnosisJudge?.status === 'insufficient') {
+    return 'blocked';
+  }
+  if (message.diagnosisJudge || caseStageAtLeast(message, 'diagnosis-complete')) {
+    return 'done';
+  }
+  if (message.caseState?.nextRecommendedStage === 'run-diagnosis' || caseStageAtLeast(message, 'external-pass-complete')) {
+    return 'queued';
+  }
+
+  return message.researchReport || message.caseState ? 'skipped' : 'queued';
+};
+
+const aiResearchSummaryForMessage = (
+  message: AiMessage,
+  sources: FluxoraAiCitation[]
+): AiResearchSummary | null => {
+  if (message.role !== 'assistant') {
+    return null;
+  }
+
+  const evidenceCount = Math.max(evidenceCardsForMessage(message).length, evidenceIdsForMessage(message).length);
+  const quotaLabel = nexusQuotaLabelForMessage(message);
+  const limitation = nexusLimitationForMessage(message) ?? undefined;
+  const hasResearchDto =
+    Boolean(message.researchReport) ||
+    Boolean(message.caseState) ||
+    Boolean(message.diagnosisJudge) ||
+    Boolean(message.modResearchRoute);
+  const hasUserVisibleResearchArtifact =
+    hasResearchDto &&
+    (evidenceCount > 0 ||
+      sources.length > 0 ||
+      Boolean(quotaLabel) ||
+      Boolean(limitation) ||
+      Boolean(message.caseState) ||
+      Boolean(message.diagnosisJudge));
+
+  if (!hasUserVisibleResearchArtifact) {
+    return null;
+  }
+
+  return {
+    stages: [
+      {
+        id: 'local',
+        label: aiResearchStageLabels.local,
+        status: localStageStatusForMessage(message, evidenceCount)
+      },
+      {
+        id: 'nexus',
+        label: aiResearchStageLabels.nexus,
+        status: nexusStageStatusForMessage(message)
+      },
+      {
+        id: 'web',
+        label: aiResearchStageLabels.web,
+        status: webStageStatusForMessage(message)
+      },
+      {
+        id: 'judge',
+        label: aiResearchStageLabels.judge,
+        status: judgeStageStatusForMessage(message)
+      }
+    ],
+    sourceCount: sources.length,
+    evidenceCount,
+    quotaLabel,
+    limitation
+  };
 };
 
 type AiMessageTextBlock =
@@ -638,6 +923,8 @@ export function AiChatPanel({
             const completedSubagentCount = messageSubagents.filter(
               (subagent) => subagent.status === 'done'
             ).length;
+            const messageSources = aiSourcesForMessage(message);
+            const researchSummary = aiResearchSummaryForMessage(message, messageSources);
 
             return (
               <article className="ai-chat-message" data-role={message.role} key={message.id}>
@@ -698,6 +985,39 @@ export function AiChatPanel({
                     </div>
                   </section>
                 ) : null}
+                {researchSummary ? (
+                  <section className="ai-chat-research" aria-label="AI research stages">
+                    <div className="ai-chat-research__stages">
+                      {researchSummary.stages.map((stage) => (
+                        <span
+                          className="ai-chat-research__stage"
+                          data-status={stage.status}
+                          key={stage.id}
+                          title={`${stage.label}: ${aiResearchStageStatusLabels[stage.status]}`}
+                        >
+                          <strong>{stage.label}</strong>
+                          <small>{aiResearchStageStatusLabels[stage.status]}</small>
+                        </span>
+                      ))}
+                    </div>
+                    {researchSummary.sourceCount > 0 ||
+                    researchSummary.evidenceCount > 0 ||
+                    researchSummary.quotaLabel ? (
+                      <div className="ai-chat-research__counts" aria-label="AI research source counts">
+                        {researchSummary.sourceCount > 0 ? (
+                          <span>Sources {researchSummary.sourceCount}</span>
+                        ) : null}
+                        {researchSummary.evidenceCount > 0 ? (
+                          <span>Evidence {researchSummary.evidenceCount}</span>
+                        ) : null}
+                        {researchSummary.quotaLabel ? <span>{researchSummary.quotaLabel}</span> : null}
+                      </div>
+                    ) : null}
+                    {researchSummary.limitation ? (
+                      <p className="ai-chat-research__limitation">{researchSummary.limitation}</p>
+                    ) : null}
+                  </section>
+                ) : null}
                 {message.taskPlan && message.subagentSchedule ? (
                   <section className="ai-chat-plan" aria-label="AI task plan">
                     <div className="ai-chat-plan__header">
@@ -733,11 +1053,11 @@ export function AiChatPanel({
                     ))}
                   </div>
                 ) : null}
-                {message.sources?.length ? (
+                {messageSources.length ? (
                   <div className="ai-chat-message__sources" aria-label="AI sources">
-                    {message.sources.map((source) => {
+                    {messageSources.map((source) => {
                       const sourceUrl = safeAiSourceUrl(source.url);
-                      const sourceLabel = sanitizeAiChatText(source.title || source.url);
+                      const sourceLabel = sanitizeAiChatText(source.title || (sourceUrl ? source.url : source.id));
                       return (
                         <button
                           key={source.id}

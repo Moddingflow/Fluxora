@@ -15,13 +15,17 @@ import {
   type AiStreamEvent
 } from './ai-chat-state';
 import type {
+  FluxoraAiCaseState,
   FluxoraAiChatResponse,
+  FluxoraAiCitation,
   FluxoraAiCostLedgerEntry,
+  FluxoraAiDiagnosisJudge,
   FluxoraAiResearchRequest,
   FluxoraAiRoutingPreset,
   FluxoraApi
 } from '../../../shared/fluxora-api';
 import { createFluxoraAiTaskPlanningBundle } from '../../../shared/ai-task-planner';
+import { compressAiCaseState } from '../../../shared/ai-mod-research-pipeline';
 import { LOCAL_DRY_RUN_MODEL_ID, LOCAL_DRY_RUN_PROVIDER_ID } from './ai-chat-settings';
 import {
   serializeAiBuildContextSnapshot,
@@ -427,7 +431,7 @@ export const createAiResearchRequestForPrompt = (
     allowAuthenticatedPages: false,
     allowBrowserSandbox: false,
     allowGeminiGoogleSearch: true,
-    allowPublicWebFetch: true,
+    allowPublicWebFetch: false,
     deepResearchApproved: false
   };
 };
@@ -546,7 +550,7 @@ export const aiResponseDiagnosticMessages = (response: FluxoraAiChatResponse): s
   }
 
   if (response.error?.message) {
-    diagnostics.push(`Provider error: ${redactAiTextForLog(response.error.message)}`);
+    diagnostics.push('AI provider response was unavailable. Check Settings > AI or retry later.');
   }
 
   return [...new Set(diagnostics)];
@@ -569,6 +573,238 @@ const streamChunksFromResponse = (response: FluxoraAiChatResponse): string[] => 
     .filter(Boolean);
 
   return chunks.length > 0 ? chunks : [response.text];
+};
+
+const uniqueAiRuntimeStrings = (values: Array<string | null | undefined>): string[] =>
+  values.reduce<string[]>((items, value) => {
+    const trimmed = value?.trim();
+    if (trimmed && !items.some((item) => item.toLowerCase() === trimmed.toLowerCase())) {
+      items.push(trimmed);
+    }
+    return items;
+  }, []);
+
+const userPrefersRussian = (prompt: string): boolean => /[А-Яа-яЁё]/.test(prompt);
+
+const confidenceLabel = (confidence: number, russian: boolean): string => {
+  if (confidence >= 0.82) {
+    return russian ? 'высокая' : 'high';
+  }
+  if (confidence >= 0.62) {
+    return russian ? 'средняя' : 'medium';
+  }
+  if (confidence > 0) {
+    return russian ? 'низкая' : 'low';
+  }
+  return russian ? 'недостаточно данных' : 'insufficient evidence';
+};
+
+const localizedQuotaLimitation = (caseState: FluxoraAiCaseState, russian: boolean): string | null => {
+  const quota = caseState.quotaState;
+  if (!quota.limitation) {
+    return null;
+  }
+  if (!russian) {
+    return quota.limitation;
+  }
+  if (quota.nexusApiState === 'quota-exhausted') {
+    return 'Лимит Nexus API исчерпан или сработал rate limit; это ограничение исследования, а не обычная ошибка.';
+  }
+  if (quota.nexusApiState === 'unauthenticated' || quota.unavailableReason === 'missing-credential') {
+    return 'У Fluxora нет доступных учетных данных Nexus API, поэтому Nexus-доказательства могут быть неполными.';
+  }
+  if (quota.nexusApiState === 'unavailable') {
+    return 'Nexus API сейчас недоступен, поэтому Nexus-доказательства могут быть неполными.';
+  }
+  return 'Nexus API был ограничен для этого прохода; учитывай это как ограничение исследования.';
+};
+
+const evidenceIdsForStructuredFinal = (
+  diagnosis: FluxoraAiDiagnosisJudge,
+  caseState: FluxoraAiCaseState
+): string[] => {
+  const topCause = diagnosis.rankedCauses[0];
+  return uniqueAiRuntimeStrings([
+    ...(topCause?.supportingEvidenceIds ?? []),
+    ...(topCause?.opposingEvidenceIds ?? []),
+    ...caseState.sourceIds
+  ]).slice(0, 12);
+};
+
+const evidenceReferenceText = (evidenceIds: readonly string[], russian: boolean): string =>
+  evidenceIds.length > 0
+    ? `${russian ? 'Доказательства' : 'Evidence'}: ${evidenceIds.map((id) => `[${id}]`).join(', ')}.`
+    : '';
+
+const stripFactPrefix = (fact: string): string =>
+  fact.replace(/^Confirmed:\s*/i, '').replace(/^Probable but unconfirmed:\s*/i, '').trim();
+
+const structuredNextStepLabel = (
+  nextStage: FluxoraAiCaseState['nextRecommendedStage'],
+  russian: boolean
+): string => {
+  const labels: Record<FluxoraAiCaseState['nextRecommendedStage'], string> = russian
+    ? {
+        'run-nexus-pass': 'сначала завершить Nexus-проверку',
+        'run-external-pass': 'собрать разрешенные внешние источники',
+        'run-diagnosis': 'запустить structured diagnosis',
+        'write-final-answer': 'сформировать финальный ответ по ranked diagnosis',
+        complete: 'дело уже доведено до финального ответа',
+        blocked: 'нужно больше подтвержденных данных'
+      }
+    : {
+        'run-nexus-pass': 'finish the Nexus pass first',
+        'run-external-pass': 'collect allowed external sources',
+        'run-diagnosis': 'run structured diagnosis',
+        'write-final-answer': 'write the final answer from ranked diagnosis',
+        complete: 'the final answer stage is complete',
+        blocked: 'more confirmed evidence is needed'
+      };
+  return labels[nextStage];
+};
+
+export const structuredFinalAnswerFromResponse = (
+  response: FluxoraAiChatResponse,
+  prompt: string
+): string | null => {
+  const diagnosis = response.diagnosisJudge;
+  const caseState = response.caseState;
+  if (!diagnosis || !caseState) {
+    return null;
+  }
+
+  const russian = userPrefersRussian(prompt);
+  const topCause = diagnosis.rankedCauses[0];
+  const evidenceIds = evidenceIdsForStructuredFinal(diagnosis, caseState);
+  const evidenceText = evidenceReferenceText(evidenceIds, russian);
+  const facts = caseState.resolvedFacts.map(stripFactPrefix).slice(0, 3);
+  const limitation = localizedQuotaLimitation(caseState, russian);
+  const openQuestion = caseState.openQuestions.find((question) => question !== caseState.quotaState.limitation);
+
+  if (!topCause) {
+    return russian
+      ? [
+          `1. Наиболее вероятная причина: пока не подтверждена structured diagnosis.`,
+          facts.length > 0 ? `Подтверждено: ${facts.join(' ')}` : undefined,
+          evidenceText,
+          `2. Что сделать сейчас: ${structuredNextStepLabel(caseState.nextRecommendedStage, true)}.`,
+          openQuestion ? `3. Если это не поможет: закрыть открытый вопрос: ${openQuestion}` : `3. Если это не поможет: собрать более сильное локальное или maintainer-доказательство.`,
+          `4. Уверенность: 0% (${confidenceLabel(0, true)}).${limitation ? ` Ограничение: ${limitation}` : ''}`
+        ]
+          .filter(Boolean)
+          .join('\n')
+      : [
+          `1. Most likely cause: not confirmed by structured diagnosis yet.`,
+          facts.length > 0 ? `Confirmed: ${facts.join(' ')}` : undefined,
+          evidenceText,
+          `2. What to do now: ${structuredNextStepLabel(caseState.nextRecommendedStage, false)}.`,
+          openQuestion ? `3. If that does not fix it: close the open question: ${openQuestion}` : `3. If that does not fix it: collect stronger local or maintainer evidence.`,
+          `4. Confidence: 0% (${confidenceLabel(0, false)}).${limitation ? ` Limitation: ${limitation}` : ''}`
+        ]
+          .filter(Boolean)
+          .join('\n');
+  }
+
+  const confidencePercent = Math.round(topCause.confidence * 100);
+  const fixOrder = topCause.fixOrder.slice(1).join(russian ? ' Затем ' : ' Then ');
+  return russian
+    ? [
+        `1. Наиболее вероятная причина: вероятно, ${topCause.cause} ${evidenceText}`,
+        facts.length > 0 ? `Подтверждено: ${facts.join(' ')}` : undefined,
+        `2. Что сделать сейчас: ${topCause.recommendedFix} Затем проверь: ${topCause.fastestValidationTest}`,
+        `3. Если это не поможет: ${fixOrder || openQuestion || 'собери более сильное локальное или maintainer-доказательство и повтори diagnosis.'}`,
+        `4. Уверенность: ${confidencePercent}% (${confidenceLabel(topCause.confidence, true)}).${limitation ? ` Ограничение: ${limitation}` : ''}`
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : [
+        `1. Most likely cause: probably ${topCause.cause} ${evidenceText}`,
+        facts.length > 0 ? `Confirmed: ${facts.join(' ')}` : undefined,
+        `2. What to do now: ${topCause.recommendedFix} Then verify: ${topCause.fastestValidationTest}`,
+        `3. If that does not fix it: ${fixOrder || openQuestion || 'collect stronger local or maintainer evidence and run diagnosis again.'}`,
+        `4. Confidence: ${confidencePercent}% (${confidenceLabel(topCause.confidence, false)}).${limitation ? ` Limitation: ${limitation}` : ''}`
+      ]
+        .filter(Boolean)
+        .join('\n');
+};
+
+export const sourcesForStructuredFinalAnswer = (
+  response: FluxoraAiChatResponse
+): FluxoraAiCitation[] => {
+  if (!response.diagnosisJudge || !response.caseState) {
+    return response.sources;
+  }
+  const sources = [...response.sources];
+  const sourceIds = new Set(sources.map((source) => source.id));
+  for (const evidenceId of evidenceIdsForStructuredFinal(response.diagnosisJudge, response.caseState)) {
+    if (!sourceIds.has(evidenceId)) {
+      sourceIds.add(evidenceId);
+      sources.push({
+        id: evidenceId,
+        title: evidenceId,
+        url: '',
+        kind: 'structured-evidence-id',
+        provider: 'fluxora-case-state',
+        trust: 'local-context'
+      });
+    }
+  }
+  return sources;
+};
+
+const streamChunksForFinalText = (
+  response: FluxoraAiChatResponse,
+  finalText: string
+): string[] => (finalText === response.text ? streamChunksFromResponse(response) : [finalText]);
+
+const compactCaseStateFromResponse = (
+  response: FluxoraAiChatResponse
+): FluxoraAiCaseState | null => {
+  if (response.caseState) {
+    return response.caseState;
+  }
+  const nexusInvestigation = response.nexusInvestigation ?? response.researchReport?.nexusInvestigation ?? null;
+  const externalInvestigation = response.externalInvestigation ?? null;
+  const caseState = response.diagnosisJudge
+    ? 'diagnosis-complete'
+    : externalInvestigation
+      ? 'external-pass-complete'
+      : nexusInvestigation
+        ? 'nexus-pass-complete'
+        : response.localInspection
+          ? 'local-inspection-complete'
+          : null;
+  if (!caseState) {
+    return null;
+  }
+  return compressAiCaseState({
+    operationId: response.operationId,
+    caseState,
+    localInspection: response.localInspection ?? null,
+    nexusInvestigation,
+    externalInvestigation,
+    diagnosis: response.diagnosisJudge ?? null
+  });
+};
+
+const finalCaseStateFromResponse = (
+  response: FluxoraAiChatResponse,
+  compactCaseState: FluxoraAiCaseState | null,
+  finalText: string
+): FluxoraAiCaseState | null => {
+  if (!response.diagnosisJudge || !compactCaseState) {
+    return compactCaseState;
+  }
+  return compressAiCaseState({
+    operationId: response.operationId,
+    caseState: 'final-answer-complete',
+    previousCaseState: compactCaseState,
+    localInspection: response.localInspection ?? null,
+    nexusInvestigation: response.nexusInvestigation ?? response.researchReport?.nexusInvestigation ?? null,
+    externalInvestigation: response.externalInvestigation ?? null,
+    diagnosis: response.diagnosisJudge,
+    finalAnswer: finalText
+  });
 };
 
 export const startHostAiRun = (
@@ -689,7 +925,13 @@ export const startHostAiRun = (
         }
 
         const status = responseStatusToAgentStatus(response);
-        const chunks = streamChunksFromResponse(response);
+        const compactCaseState = compactCaseStateFromResponse(response);
+        const structuredResponse = compactCaseState ? { ...response, caseState: compactCaseState } : response;
+        const finalText = structuredFinalAnswerFromResponse(structuredResponse, prompt) ?? response.text;
+        const finalCaseState = finalCaseStateFromResponse(response, compactCaseState, finalText);
+        const finalResponse = finalCaseState ? { ...response, caseState: finalCaseState } : response;
+        const finalSources = sourcesForStructuredFinalAnswer(finalResponse);
+        const chunks = streamChunksForFinalText(response, finalText);
         if (autonomousJob) {
           const responseAt = new Date();
           const withResponse = checkpointAiAutonomousJob(
@@ -754,16 +996,19 @@ export const startHostAiRun = (
             finished = true;
             const event = createAiStreamEvent(run, 'run-finished', { status });
             const providerDiagnostics = aiResponseDiagnosticMessages(response);
-            const message = createAiMessage('assistant', response.text, new Date(), run.id, {
+            const message = createAiMessage('assistant', finalText, new Date(), run.id, {
               agentStatus: status,
               costEstimate: response.costEstimate,
               modelId: response.modelId,
               providerId: response.providerId,
               providerDiagnostics: providerDiagnostics.length > 0 ? providerDiagnostics : undefined,
               routingPreset: response.routingPreset,
-              sources: response.sources,
+              sources: finalSources,
               contextBundle: response.contextBundle ?? null,
               researchReport: response.researchReport ?? null,
+              modResearchRoute: response.modResearchRoute ?? null,
+              diagnosisJudge: response.diagnosisJudge ?? null,
+              caseState: finalCaseState,
               taskPlan: response.taskPlan ?? null,
               subagentSchedule: response.subagentSchedule ?? null,
               orchestration: response.orchestration ?? null,
@@ -799,7 +1044,7 @@ export const startHostAiRun = (
                         'The AI host reported a blocked terminal state.',
                         finishedAt
                       )
-                    : completeAiAutonomousJob(verified, response.text, finishedAt);
+                    : completeAiAutonomousJob(verified, finalText, finishedAt);
               persistAutonomousJob(terminal, finishedAt);
             }
             emitLog(status === 'blocked' ? 'run-blocked' : 'run-finished', status === 'blocked' ? 'warning' : 'info');

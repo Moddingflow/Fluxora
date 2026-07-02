@@ -1913,6 +1913,29 @@ namespace fluxora::tests
         EXPECT_EQ(record->displayName, L"Броня Äther Mod");
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, InstallAcceptsZipDirectoryEntriesBeforeFiles)
+    {
+        std::string error;
+        const std::optional<InstalledMod> installed = tryInstallArchive(
+            L"Directory Entries.zip",
+            {
+                {L"Data/", ""},
+                {L"Data/textures/", ""},
+                {L"Data/textures/safe.dds", "safe"}
+            },
+            L"Directory Entries Mod",
+            error);
+
+        if (!installed.has_value() && isMissingExtractorError(error))
+        {
+            GTEST_SKIP() << "No supported archive extractor was available: " << error;
+        }
+
+        ASSERT_TRUE(installed.has_value()) << error;
+        const std::filesystem::path modPath = modsDirectory() / L"Directory Entries Mod";
+        EXPECT_TRUE(std::filesystem::is_regular_file(modPath / L"textures" / L"safe.dds"));
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, InstallRejectsArchivePathTraversalBeforeFilesEscape)
     {
         const DownloadEntry download = importArchive(

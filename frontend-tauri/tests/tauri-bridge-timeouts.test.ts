@@ -9,6 +9,7 @@ import { createTauriFluxoraApi } from '../src/tauri/fluxora-api';
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const listenMock = vi.hoisted(() => vi.fn());
+const onDragDropEventMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock
@@ -16,6 +17,12 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: listenMock
+}));
+
+vi.mock('@tauri-apps/api/webview', () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: onDragDropEventMock
+  })
 }));
 
 type TauriTestWindow = Window & {
@@ -45,6 +52,7 @@ beforeEach(() => {
   });
   invokeMock.mockReset();
   listenMock.mockReset();
+  onDragDropEventMock.mockReset();
 });
 
 afterEach(() => {
@@ -219,5 +227,184 @@ describe('Tauri bridge request timeouts', () => {
       request,
       timeoutMs: undefined
     });
+  });
+
+  it('keeps NXM captures and inbound imports on a long-running download timeout', async () => {
+    const captureRequest: OperationRequest = { operationId: 'op_nxm_capture' };
+    const importRequest: OperationRequest = { operationId: 'op_nxm_import' };
+    invokeMock.mockResolvedValue([]);
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.nxm.captureLinks(project().projectDirectory, [
+        'nxm://skyrimspecialedition/mods/3863/files/123?key=abc'
+      ], captureRequest)
+    ).resolves.toEqual([]);
+    await expect(api.nxm.importInboundDownloads(project().projectDirectory, importRequest)).resolves.toEqual([]);
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'fluxora_bridge_request', {
+      method: 'nxm.captureLinks',
+      params: {
+        projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+        links: ['nxm://skyrimspecialedition/mods/3863/files/123?key=abc']
+      },
+      request: captureRequest,
+      timeoutMs: 21_600_000
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'fluxora_bridge_request', {
+      method: 'nxm.importInboundDownloads',
+      params: { projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition' },
+      request: importRequest,
+      timeoutMs: 21_600_000
+    });
+  });
+
+  it('routes Nexus API key linking through the typed native bridge', async () => {
+    const request: OperationRequest = { operationId: 'op_nexus_api_key' };
+    invokeMock.mockResolvedValue({
+      isConfigured: true,
+      isLinked: true,
+      hasApiKey: true,
+      displayName: 'Playwright user',
+      userId: '42',
+      message: 'NexusMods API key linked.',
+      clientId: 'test-client',
+      redirectUri: 'http://127.0.0.1/callback'
+    });
+
+    const api = createTauriFluxoraApi();
+    await expect(api.nexus.connectWithApiKey('personal-key', request)).resolves.toMatchObject({
+      hasApiKey: true,
+      operationId: 'op_nexus_api_key'
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'nexus.connectWithApiKey',
+      params: { apiKey: 'personal-key' },
+      request,
+      timeoutMs: undefined
+    });
+  });
+
+  it('subscribes to inbound NXM activation events through the typed Tauri event bridge', async () => {
+    const dispose = vi.fn();
+    const callback = vi.fn();
+    listenMock.mockResolvedValue(dispose);
+
+    const api = createTauriFluxoraApi();
+    const unsubscribe = api.nxm.onInboundLinksCaptured(callback);
+
+    expect(listenMock).toHaveBeenCalledWith(
+      'fluxora:nxm:inbound-links-captured',
+      expect.any(Function)
+    );
+
+    const listener = listenMock.mock.calls[0][1] as (event: { payload: unknown }) => void;
+    const event = {
+      count: 1,
+      operationId: 'op_nxm_activation',
+      source: 'second-instance'
+    };
+    listener({ payload: event });
+    expect(callback).toHaveBeenCalledWith(event);
+
+    unsubscribe();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(dispose).toHaveBeenCalled();
+  });
+
+  it('routes downloads folder watch commands through the typed Rust shell facade', async () => {
+    const watchRequest: OperationRequest = { operationId: 'op_downloads_watch' };
+    const unwatchRequest: OperationRequest = { operationId: 'op_downloads_unwatch' };
+    invokeMock
+      .mockResolvedValueOnce({ accepted: true, operationId: watchRequest.operationId })
+      .mockResolvedValueOnce({ accepted: true, operationId: unwatchRequest.operationId });
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.downloads.watchFolder(
+        'C:\\Fluxora\\Builds\\Foundation',
+        'C:\\Fluxora\\Builds\\Foundation\\downloads',
+        watchRequest
+      )
+    ).resolves.toEqual({ accepted: true, operationId: watchRequest.operationId });
+    await expect(api.downloads.unwatchFolder(unwatchRequest)).resolves.toEqual({
+      accepted: true,
+      operationId: unwatchRequest.operationId
+    });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'fluxora_downloads_watch_folder', {
+      projectDirectory: 'C:\\Fluxora\\Builds\\Foundation',
+      downloadsDirectory: 'C:\\Fluxora\\Builds\\Foundation\\downloads',
+      request: watchRequest
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'fluxora_downloads_unwatch_folder', {
+      request: unwatchRequest
+    });
+  });
+
+  it('subscribes to downloads folder changes through the typed Tauri event bridge', async () => {
+    const dispose = vi.fn();
+    const callback = vi.fn();
+    listenMock.mockResolvedValue(dispose);
+
+    const api = createTauriFluxoraApi();
+    const unsubscribe = api.downloads.onFolderChanged(callback);
+
+    expect(listenMock).toHaveBeenCalledWith(
+      'fluxora:downloads:folder-changed',
+      expect.any(Function)
+    );
+
+    const listener = listenMock.mock.calls[0][1] as (event: { payload: unknown }) => void;
+    const event = {
+      projectDirectory: 'C:\\Fluxora\\Builds\\Foundation',
+      downloadsDirectory: 'C:\\Fluxora\\Builds\\Foundation\\downloads',
+      eventId: 'evt_1_downloads_folder_1',
+      sequence: 1,
+      reason: 'created',
+      changes: [
+        {
+          path: 'C:\\Fluxora\\Builds\\Foundation\\downloads\\mod.7z',
+          fileName: 'mod.7z',
+          kind: 'created'
+        }
+      ]
+    };
+    listener({ payload: event });
+    expect(callback).toHaveBeenCalledWith(event);
+
+    unsubscribe();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(dispose).toHaveBeenCalled();
+  });
+
+  it('exposes Tauri file drop events through the typed Fluxora facade', async () => {
+    const dispose = vi.fn();
+    const callback = vi.fn();
+    onDragDropEventMock.mockResolvedValue(dispose);
+
+    const api = createTauriFluxoraApi();
+    const unsubscribe = await api.fileDrop.onDragDrop(callback);
+
+    expect(onDragDropEventMock).toHaveBeenCalledWith(expect.any(Function));
+
+    const listener = onDragDropEventMock.mock.calls[0][0] as (event: { payload: unknown }) => void;
+    const event = {
+      type: 'drop',
+      paths: ['C:\\Mods\\SkyUI.7z'],
+      position: {
+        x: 240,
+        y: 320
+      }
+    };
+    listener({ payload: event });
+
+    expect(callback).toHaveBeenCalledWith(event);
+
+    unsubscribe();
+    expect(dispose).toHaveBeenCalled();
   });
 });

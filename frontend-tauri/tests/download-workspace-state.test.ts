@@ -5,10 +5,12 @@ import {
   downloadDisplayName,
   downloadProgressValue,
   downloadStatusText,
+  downloadStatusView,
   downloadTitle,
   downloadWorkspaceReducer,
   emptyDownloadWorkspaceState,
   filterDownloadEntries,
+  hasActiveDownload,
   selectedDownloadEntry
 } from '../src/renderer/download-workspace-state';
 import type {
@@ -117,12 +119,73 @@ describe('download workspace state', () => {
     expect(selectedDownloadEntry(items, 'missing')?.id).toBe('skyui');
   });
 
+  it('detects active download rows for live progress refreshes', () => {
+    expect(hasActiveDownload(items)).toBe(true);
+    expect(hasActiveDownload(items.filter((entry) => !entry.isDownloading))).toBe(false);
+  });
+
+  it('keeps rows visible during silent refreshes', () => {
+    const emptyRefreshing = downloadWorkspaceReducer(emptyDownloadWorkspaceState(), {
+      type: 'load-started',
+      silent: true
+    });
+    const ready = downloadWorkspaceReducer(emptyDownloadWorkspaceState(), {
+      type: 'items-loaded',
+      items
+    });
+    const refreshing = downloadWorkspaceReducer(ready, {
+      type: 'load-started',
+      silent: true
+    });
+    const failedRefresh = downloadWorkspaceReducer(refreshing, {
+      type: 'load-failed',
+      message: 'Bridge timed out',
+      silent: true
+    });
+
+    expect(emptyRefreshing.loadState).toBe('idle');
+    expect(refreshing.items).toEqual(items);
+    expect(refreshing.loadState).toBe('ready');
+    expect(failedRefresh.items).toEqual(items);
+    expect(failedRefresh.loadState).toBe('ready');
+    expect(failedRefresh.errorMessage).toBe('Bridge timed out');
+  });
+
   it('formats dense-row status and progress', () => {
     expect(downloadTitle(items[0])).toBe('SkyUI');
     expect(downloadStatusText(items[0])).toBe('Ready to install');
     expect(downloadStatusText(items[1])).toBe('Paused');
     expect(downloadStatusText(items[2])).toBe('1.2 MB/s');
     expect(downloadProgressValue(items[2])).toBe(12);
+    expect(downloadStatusView(items[0])).toMatchObject({
+      text: 'Ready to install',
+      tone: 'ready',
+      showProgress: false
+    });
+    expect(downloadStatusView(items[2])).toMatchObject({
+      text: '12% · 1.2 MB/s',
+      tone: 'downloading',
+      progressValue: 12,
+      showProgress: true
+    });
+  });
+
+  it('keeps pending Nexus retries actionable without calling them paused', () => {
+    const pending = downloadEntry('nxm', 'skyrimspecialedition-3863-123.nxm', {
+      status: 'Ожидает загрузки',
+      progressPercent: 0,
+      progressText: '',
+      hasKnownProgress: false,
+      canInstall: false,
+      canResume: true
+    });
+    const failed = {
+      ...pending,
+      status: 'Ожидает загрузки: NexusMods authentication token is not available. Reconnect NexusMods in settings.'
+    };
+
+    expect(downloadStatusText(pending)).toBe('Ready to download');
+    expect(downloadStatusText(failed)).toContain('Reconnect NexusMods');
   });
 
   it('trims Nexus archive id tails while preserving meaningful numbers', () => {

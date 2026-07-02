@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWebview, type DragDropEvent as TauriDragDropEvent } from '@tauri-apps/api/webview';
 
 import type {
   FluxoraApi,
@@ -15,6 +16,7 @@ import type {
   FluxoraExecutable,
   FluxoraExecutableIconResult,
   FluxoraExecutableLaunchResult,
+  FluxoraFileDropEvent,
   FluxoraLaunchProcessWatchRequest,
   FluxoraIpcChannel,
   FluxoraGameTemplate,
@@ -29,6 +31,8 @@ import type {
   FluxoraAiProviderTestResult,
   FluxoraContentLayoutPreview,
   FluxoraFomodInstaller,
+  FluxoraDownloadsFolderChangedEvent,
+  FluxoraDownloadsFolderWatchResult,
   FluxoraFluxPackExportRequest,
   FluxoraGrassCacheGenerationRequest,
   FluxoraGrassCacheGenerationResult,
@@ -48,6 +52,7 @@ import type {
   FluxoraModFileTreeEntry,
   FluxoraModMutationResult,
   FluxoraModOrderItem,
+  FluxoraNxmInboundLinksCaptured,
   FluxoraNxmProtocolResult,
   FluxoraNexusModsAuthStatus,
   FluxoraOperationCancelResult,
@@ -254,6 +259,9 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         defaultPath,
         title
       )
+  },
+  fileDrop: {
+    onDragDrop: (callback: (event: FluxoraFileDropEvent) => void) => listenToFileDrop(callback)
   },
   links: {
     openExternal: (url: string) =>
@@ -733,6 +741,30 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         downloadPath,
         request
       ),
+    watchFolder: (
+      projectDirectory: string,
+      downloadsDirectory: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraDownloadsFolderWatchResult>(
+        ipc,
+        FluxoraIpcChannels.downloadsWatchFolder,
+        projectDirectory,
+        downloadsDirectory,
+        request
+      ),
+    unwatchFolder: (request?: OperationRequest) =>
+      invokeTyped<FluxoraDownloadsFolderWatchResult>(
+        ipc,
+        FluxoraIpcChannels.downloadsUnwatchFolder,
+        request
+      ),
+    onFolderChanged: (callback: (event: FluxoraDownloadsFolderChangedEvent) => void) =>
+      listenTyped<FluxoraDownloadsFolderChangedEvent>(
+        ipc,
+        FluxoraIpcChannels.downloadsFolderChanged,
+        callback
+      ),
     analyzeContentLayout: (
       request: FluxoraAnalyzeContentLayoutRequest,
       operation?: OperationRequest
@@ -821,6 +853,12 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         FluxoraIpcChannels.nxmImportInboundDownloads,
         projectDirectory,
         request
+      ),
+    onInboundLinksCaptured: (callback: (event: FluxoraNxmInboundLinksCaptured) => void) =>
+      listenTyped<FluxoraNxmInboundLinksCaptured>(
+        ipc,
+        FluxoraIpcChannels.nxmInboundLinksCaptured,
+        callback
       )
   },
   nexus: {
@@ -834,6 +872,13 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
       invokeTyped<FluxoraNexusModsAuthStatus>(
         ipc,
         FluxoraIpcChannels.nexusConnect,
+        request
+      ),
+    connectWithApiKey: (apiKey: string, request?: OperationRequest) =>
+      invokeTyped<FluxoraNexusModsAuthStatus>(
+        ipc,
+        FluxoraIpcChannels.nexusConnectWithApiKey,
+        apiKey,
         request
       ),
     disconnect: (request?: OperationRequest) =>
@@ -1129,6 +1174,7 @@ const executablesListTimeoutMs = 30_000;
 const executablesLaunchTimeoutMs = 2 * 60 * 1000;
 const transferImportTimeoutMs = 2 * 60 * 60 * 1000;
 const grassCacheGenerationTimeoutMs = 6 * 60 * 60 * 1000;
+const nexusDownloadTimeoutMs = 6 * 60 * 60 * 1000;
 
 const createOperationId = (scope: string): string =>
   `op_${new Date().toISOString().replace(/[-:.TZ]/g, '')}_${scope}_${crypto.randomUUID().slice(0, 8)}`;
@@ -1268,7 +1314,16 @@ const browserPreviewAiStatus = (rawRequest: unknown): FluxoraAiHostStatus => {
         hiddenDestructiveActions: false
       },
       safeActionCatalog: AI_SAFE_ACTION_CATALOG_CAPABILITY,
-      skillCatalog: FLUXORA_SKILL_CATALOG_CAPABILITY
+      skillCatalog: FLUXORA_SKILL_CATALOG_CAPABILITY,
+      modResearchRouter: {
+        state: 'available',
+        schema: 'fluxora.ai.mod-research-route.v1',
+        owner: 'FluxoraAIHost',
+        localFirst: true,
+        blocksWebWhenLocalHighSignalIssueExists: true,
+        searchBudgetOnlyWhenExternalVerificationNeeded: true,
+        rendererPolicyDecisions: false
+      }
     }
   };
 };
@@ -1454,6 +1509,42 @@ const browserPreviewAiChatResponse = (rawRequest: unknown): FluxoraAiChatRespons
 
 const isTauriRuntime = (): boolean =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+const toFluxoraFileDropEvent = (event: TauriDragDropEvent): FluxoraFileDropEvent => {
+  if (event.type === 'leave') {
+    return { type: 'leave' };
+  }
+
+  const position = {
+    x: event.position.x,
+    y: event.position.y
+  };
+
+  if (event.type === 'over') {
+    return {
+      type: 'over',
+      position
+    };
+  }
+
+  return {
+    type: event.type,
+    paths: event.paths,
+    position
+  };
+};
+
+const listenToFileDrop = async (
+  callback: (event: FluxoraFileDropEvent) => void
+): Promise<() => void> => {
+  if (!isTauriRuntime()) {
+    return () => undefined;
+  }
+
+  return getCurrentWebview().onDragDropEvent((event) => {
+    callback(toFluxoraFileDropEvent(event.payload));
+  });
+};
 
 const createBrowserPreviewInvoker = (): IpcInvoker => ({
   invoke: async (channel: FluxoraIpcChannel, ...args: unknown[]): Promise<unknown> => {
@@ -2070,6 +2161,16 @@ const createTauriInvoker = (): IpcInvoker => ({
         return channel === FluxoraIpcChannels.templatesList ? data : withOperationId(data, request, scope);
       }
 
+      case FluxoraIpcChannels.nexusConnectWithApiKey: {
+        const request = requestWithOperationId(args[1], 'nexus_connect_api_key');
+        const data = await bridgeRequest<Record<string, unknown>>(
+          'nexus.connectWithApiKey',
+          { apiKey: optionalString(args[0]) },
+          request
+        );
+        return withOperationId(data, request, 'nexus_connect_api_key');
+      }
+
       case FluxoraIpcChannels.bridgeSetLanguage: {
         const request = requestWithOperationId(args[1], 'bridge_language_set');
         const data = await bridgeRequest<Record<string, unknown>>(
@@ -2436,9 +2537,30 @@ const createTauriInvoker = (): IpcInvoker => ({
         } satisfies FluxoraNxmProtocolResult;
       }
       case FluxoraIpcChannels.nxmCaptureLinks:
-        return bridgeRequest('nxm.captureLinks', { projectDirectory: optionalString(args[0]), links: args[1] }, requestWithOperationId(args[2], 'nxm_capture_links'));
+        return bridgeRequest(
+          'nxm.captureLinks',
+          { projectDirectory: optionalString(args[0]), links: args[1] },
+          requestWithOperationId(args[2], 'nxm_capture_links'),
+          nexusDownloadTimeoutMs
+        );
       case FluxoraIpcChannels.nxmImportInboundDownloads:
-        return bridgeRequest('nxm.importInboundDownloads', { projectDirectory: args[0] }, requestWithOperationId(args[1], 'nxm_import_inbound'));
+        return bridgeRequest(
+          'nxm.importInboundDownloads',
+          { projectDirectory: args[0] },
+          requestWithOperationId(args[1], 'nxm_import_inbound'),
+          nexusDownloadTimeoutMs
+        );
+
+      case FluxoraIpcChannels.downloadsWatchFolder:
+        return invoke<FluxoraDownloadsFolderWatchResult>('fluxora_downloads_watch_folder', {
+          projectDirectory: optionalString(args[0]),
+          downloadsDirectory: optionalString(args[1]),
+          request: requestWithOperationId(args[2], 'downloads_watch_folder')
+        });
+      case FluxoraIpcChannels.downloadsUnwatchFolder:
+        return invoke<FluxoraDownloadsFolderWatchResult>('fluxora_downloads_unwatch_folder', {
+          request: requestWithOperationId(args[0], 'downloads_unwatch_folder')
+        });
 
       case FluxoraIpcChannels.downloadsList:
         return bridgeRequest('downloads.list', { projectDirectory: args[0] }, requestWithOperationId(args[1], 'downloads_list'));

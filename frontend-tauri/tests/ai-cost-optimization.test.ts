@@ -97,6 +97,12 @@ describe('AI cost optimization and unit economics contract', () => {
     expect(research).toContain('NEXUS_METADATA_CACHE_TTL_MS');
     expect(research).toContain('cached_nexus_api_snapshot');
     expect(research).toContain('"storesRateLimitHeaders": true');
+    expect(research).toContain('fluxora.ai.nexus-investigation.v1');
+    expect(research).toContain('apiQuotaState');
+    expect(research).toContain('"publicPageFallback": "disabled"');
+    expect(research).toContain('webQueryPlan');
+    expect(research).toContain('MAX_NON_NEXUS_WEB_QUERIES');
+    expect(research).toContain('nextBestNonNexusQueries');
 
     expect(app).not.toContain('FREE_DEMO_WALLET_CREDITS');
     expect(app).not.toContain('PAID_MONTHLY_WALLET_CREDITS');

@@ -166,6 +166,7 @@ const importedDownload: FluxoraDownloadEntry = {
 const nexusStatus: FluxoraNexusModsAuthStatus = {
   isConfigured: true,
   isLinked: true,
+  hasApiKey: true,
   displayName: 'Valerii',
   userId: '1',
   message: 'Linked',

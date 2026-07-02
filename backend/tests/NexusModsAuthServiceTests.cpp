@@ -61,7 +61,35 @@ namespace fluxora::tests
 
         EXPECT_TRUE(status.isConfigured);
         EXPECT_TRUE(status.isLinked);
+        EXPECT_FALSE(status.hasApiKey);
         EXPECT_EQ(status.clientId, L"fluxora-test-client");
+        EXPECT_EQ(status.displayName, L"modder");
+        EXPECT_EQ(status.message, L"NexusMods привязан: modder");
+
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, ApiKeyOnlyAuthIsLinkedForDownloads)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.username = L"modder";
+        auth.userId = L"42";
+        auth.protectedApiKey = L"protected-api-key";
+        settings.saveNexusModsAuth(auth);
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsAuthStatus status = service.status();
+
+        EXPECT_TRUE(status.isLinked);
+        EXPECT_TRUE(status.hasApiKey);
         EXPECT_EQ(status.displayName, L"modder");
         EXPECT_EQ(status.message, L"NexusMods привязан: modder");
 

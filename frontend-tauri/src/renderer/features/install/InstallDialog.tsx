@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Download,
   File,
   FolderOpen,
   FolderTree,
@@ -11,17 +10,13 @@ import {
   RefreshCw,
   X
 } from 'lucide-react';
+import type { CSSProperties } from 'react';
 
-import { fluxoraLogo } from '../../design-system/assets';
+import installModIcon from '../../../../../Icons/package-plus.svg';
 import {
   buildArchivePlacementRows,
-  buildPlacementPreviewLines,
-  buildPlacementSummaryText,
   createPlacementOverrideForDrop,
   fomodGroupTypeLabel,
-  installCategoryLabel,
-  installDestinationPreview,
-  installSourceLabel,
   normalizeInstallModName,
   previousFomodSelection,
   toggleFomodOption,
@@ -38,7 +33,13 @@ import type {
   FluxoraFomodInstaller
 } from '../../../shared/fluxora-api';
 
-export type InstallDialogPhase = 'analyzing' | 'fomod' | 'options' | 'details' | 'installing' | 'error';
+export type InstallDialogPhase =
+  | 'fomod'
+  | 'options'
+  | 'conflict'
+  | 'details'
+  | 'installing'
+  | 'error';
 
 export interface InstallDialogState {
   phase: InstallDialogPhase;
@@ -63,32 +64,31 @@ interface InstallDialogProps {
   evaluation: EvaluatedFomodWizard | null;
   existingModName: string | null;
   installDialog: InstallDialogState | null;
-  modsDirectory: string | undefined;
-  overrideCount: number;
   onArchiveTreeScrollTopChange: (scrollTop: number) => void;
   onClose: () => void;
   onContinueFromFomod: () => void;
   onMoveFomodStep: (direction: 1 | -1) => void;
   onPatch: (patch: Partial<InstallDialogState>) => void;
+  onResolveExistingMod: (mode: 1 | 2) => void;
   onSubmitInstallOptions: () => void;
 }
 
 const archiveTreeRowHeight = 32;
 const archiveTreeVisibleRows = 32;
 const archiveTreeOverscanRows = 10;
+type InstallIconStyle = CSSProperties & { '--install-icon': string };
 
 export function InstallDialog({
   archiveTreeScrollTop,
   evaluation,
   existingModName,
   installDialog,
-  modsDirectory,
-  overrideCount,
   onArchiveTreeScrollTopChange,
   onClose,
   onContinueFromFomod,
   onMoveFomodStep,
   onPatch,
+  onResolveExistingMod,
   onSubmitInstallOptions
 }: InstallDialogProps) {
   if (!installDialog) {
@@ -302,17 +302,7 @@ export function InstallDialog({
   };
 
   const renderInstallOptions = () => {
-    if (!installDialog.layoutPreview) {
-      return null;
-    }
-
-    const preview = installDialog.layoutPreview;
-    const previewLines = buildPlacementPreviewLines(preview, overrideCount);
     const validation = installDialog.validationMessage ?? validateInstallModName(installDialog.modName);
-    const destination = installDestinationPreview(
-      modsDirectory,
-      installDialog.modName
-    );
     const installTitle =
       normalizeInstallModName(installDialog.modName) ||
       installDialog.source.displayName ||
@@ -320,28 +310,10 @@ export function InstallDialog({
 
     return (
       <div className="install-simple">
-        <section className="install-simple-identity">
-          <div className="install-mod-thumb" aria-hidden="true">
-            <Download size={24} />
-          </div>
-          <div>
-            <h3>{installTitle}</h3>
-            <p>{installDialog.source.displayName}</p>
-            <div className="install-badges" aria-label="Install summary">
-              <span>{installDialog.isFomod ? 'FOMOD' : 'Archive'}</span>
-              <span>{preview.summary.totalEntries} files</span>
-              <span>{overrideCount} overrides</span>
-            </div>
-          </div>
-        </section>
-
-        <p className="install-simple-blurb">
-          {buildPlacementSummaryText(preview, overrideCount)}
-        </p>
-
         <label className="field install-name-field">
           <span>Mod name</span>
           <input
+            aria-label={`Mod name for ${installTitle}`}
             value={installDialog.modName}
             onChange={(event) =>
               onPatch({
@@ -351,54 +323,6 @@ export function InstallDialog({
             }
           />
         </label>
-
-        <dl className="install-meta-list">
-          <div>
-            <dt>Source</dt>
-            <dd>{installSourceLabel(installDialog.source)}</dd>
-          </div>
-          <div>
-            <dt>Category</dt>
-            <dd>{installCategoryLabel(preview, installDialog.isFomod)}</dd>
-          </div>
-          <div>
-            <dt>Install path</dt>
-            <dd className="mono">{destination}</dd>
-          </div>
-        </dl>
-
-        {existingModName ? (
-          <section className="install-conflict" aria-label="Existing mod conflict">
-            <div>
-              <strong>Existing mod detected</strong>
-              <span>{existingModName}</span>
-            </div>
-            <div className="segmented-control">
-              <button
-                type="button"
-                data-active={installDialog.existingModMode === 1}
-                onClick={() => onPatch({ existingModMode: 1 })}
-              >
-                Replace
-              </button>
-              <button
-                type="button"
-                data-active={installDialog.existingModMode === 2}
-                onClick={() => onPatch({ existingModMode: 2 })}
-              >
-                Merge
-              </button>
-            </div>
-          </section>
-        ) : null}
-
-        {previewLines.length > 0 ? (
-          <section className="install-preview-lines" aria-label="Install placement preview">
-            {previewLines.slice(0, 4).map((line) => (
-              <span key={line}>{line}</span>
-            ))}
-          </section>
-        ) : null}
 
         {validation ? (
           <div className="install-validation" role="alert">
@@ -410,17 +334,43 @@ export function InstallDialog({
     );
   };
 
-  const renderInstallDetails = () => {
-    if (!installDialog.layoutPreview) {
-      return null;
-    }
+  const renderExistingModConflict = () => {
+    const conflictName =
+      existingModName ||
+      normalizeInstallModName(installDialog.modName) ||
+      installDialog.source.displayName ||
+      installDialog.source.fileName;
 
-    const rows = buildArchivePlacementRows(
-      installDialog.layoutPreview,
-      installDialog.placementOverrides
+    return (
+      <div className="install-existing-mod">
+        <section className="install-existing-mod__message" role="alert">
+          <AlertTriangle size={18} aria-hidden="true" />
+          <div>
+            <strong>Уже есть мод с таким же названием</strong>
+            <span>{conflictName}</span>
+          </div>
+        </section>
+        <div className="install-existing-mod__choices" aria-label="Existing mod install mode">
+          <button type="button" onClick={() => onResolveExistingMod(1)}>
+            <strong>Заменить</strong>
+            <span>Полностью заменяет мод.</span>
+          </button>
+          <button type="button" onClick={() => onResolveExistingMod(2)}>
+            <strong>Объединить</strong>
+            <span>Перезаписывает только файлы с одинаковыми названиями.</span>
+          </button>
+        </div>
+      </div>
     );
+  };
+
+  const renderInstallDetails = () => {
+    const preview = installDialog.layoutPreview;
+    const rows = preview
+      ? buildArchivePlacementRows(preview, installDialog.placementOverrides)
+      : [];
     const draggedEntry = installDialog.draggedSourcePath
-      ? installDialog.layoutPreview.entries.find(
+      ? preview?.entries.find(
           (entry) => entry.sourcePath === installDialog.draggedSourcePath
         )
       : null;
@@ -460,9 +410,9 @@ export function InstallDialog({
             </button>
           </div>
         </header>
-        {installDialog.layoutPreview.validationFindings.length > 0 ? (
+        {preview && preview.validationFindings.length > 0 ? (
           <div className="install-findings">
-            {installDialog.layoutPreview.validationFindings.map((finding) => (
+            {preview.validationFindings.map((finding) => (
               <span key={`${finding.path}:${finding.message}`} data-blocker={finding.blocksInstall}>
                 {finding.path || finding.classification}: {finding.message}
               </span>
@@ -470,111 +420,122 @@ export function InstallDialog({
           </div>
         ) : null}
         <div
-          className="archive-tree"
+          className={`archive-tree${preview ? '' : ' archive-tree--pending'}`}
           role="tree"
           aria-label="Archive placement tree"
           onScroll={(event) => onArchiveTreeScrollTopChange(event.currentTarget.scrollTop)}
         >
-          {visibleArchiveWindow.topSpacer > 0 ? (
-            <div style={{ height: visibleArchiveWindow.topSpacer }} aria-hidden="true" />
-          ) : null}
-          {visibleArchiveWindow.items.map((row) => {
-            const canDrop =
-              draggedEntry !== undefined &&
-              draggedEntry !== null &&
-              createPlacementOverrideForDrop(draggedEntry, row) !== null;
-            const hasOverride =
-              row.entry !== null && installDialog.placementOverrides[row.entry.sourcePath] !== undefined;
-            return (
-              <div
-                key={row.key}
-                className="archive-tree-row"
-                role="treeitem"
-                tabIndex={0}
-                aria-level={row.depth + 1}
-                draggable={row.entry?.manualOverrideAllowed === true}
-                data-directory={row.isDirectory}
-                data-drop={canDrop}
-                data-override={hasOverride}
-                onDragStart={(event) => {
-                  if (!row.entry?.manualOverrideAllowed) {
-                    event.preventDefault();
-                    return;
-                  }
-
-                  event.dataTransfer.setData('text/plain', row.entry.sourcePath);
-                  onPatch({ draggedSourcePath: row.entry.sourcePath });
-                }}
-                onDragEnd={() => onPatch({ draggedSourcePath: null })}
-                onDragOver={(event) => {
-                  if (canDrop) {
-                    event.preventDefault();
-                  }
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  const sourcePath =
-                    event.dataTransfer.getData('text/plain') || installDialog.draggedSourcePath || '';
-                  const sourceEntry = installDialog.layoutPreview?.entries.find(
-                    (entry) => entry.sourcePath === sourcePath
-                  );
-                  if (!sourceEntry) {
-                    onPatch({ draggedSourcePath: null });
-                    return;
-                  }
-
-                  const override = createPlacementOverrideForDrop(sourceEntry, row);
-                  if (!override) {
-                    onPatch({ draggedSourcePath: null });
-                    return;
-                  }
-
-                  onPatch({
-                    draggedSourcePath: null,
-                    placementOverrides: {
-                      ...installDialog.placementOverrides,
-                      [override.sourcePath]: {
-                        target: override.target,
-                        targetRelativePath: override.targetRelativePath
+          {preview ? (
+            <>
+              {visibleArchiveWindow.topSpacer > 0 ? (
+                <div style={{ height: visibleArchiveWindow.topSpacer }} aria-hidden="true" />
+              ) : null}
+              {visibleArchiveWindow.items.map((row) => {
+                const canDrop =
+                  draggedEntry !== undefined &&
+                  draggedEntry !== null &&
+                  createPlacementOverrideForDrop(draggedEntry, row) !== null;
+                const hasOverride =
+                  row.entry !== null && installDialog.placementOverrides[row.entry.sourcePath] !== undefined;
+                return (
+                  <div
+                    key={row.key}
+                    className="archive-tree-row"
+                    role="treeitem"
+                    tabIndex={0}
+                    aria-level={row.depth + 1}
+                    draggable={row.entry?.manualOverrideAllowed === true}
+                    data-directory={row.isDirectory}
+                    data-drop={canDrop}
+                    data-override={hasOverride}
+                    onDragStart={(event) => {
+                      if (!row.entry?.manualOverrideAllowed) {
+                        event.preventDefault();
+                        return;
                       }
-                    },
-                    validationMessage: null
-                  });
-                }}
-                style={{ paddingLeft: `${12 + row.depth * 18}px` }}
-              >
-                {row.isDirectory ? (
-                  <FolderOpen size={15} aria-hidden="true" />
-                ) : (
-                  <File size={15} aria-hidden="true" />
-                )}
-                <span>{row.name}</span>
-                <small>{row.isDirectory ? row.target || 'folder' : row.entry?.classification}</small>
-              </div>
-            );
-          })}
-          {visibleArchiveWindow.bottomSpacer > 0 ? (
-            <div style={{ height: visibleArchiveWindow.bottomSpacer }} aria-hidden="true" />
-          ) : null}
+
+                      event.dataTransfer.setData('text/plain', row.entry.sourcePath);
+                      onPatch({ draggedSourcePath: row.entry.sourcePath });
+                    }}
+                    onDragEnd={() => onPatch({ draggedSourcePath: null })}
+                    onDragOver={(event) => {
+                      if (canDrop) {
+                        event.preventDefault();
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const sourcePath =
+                        event.dataTransfer.getData('text/plain') || installDialog.draggedSourcePath || '';
+                      const sourceEntry = preview.entries.find(
+                        (entry) => entry.sourcePath === sourcePath
+                      );
+                      if (!sourceEntry) {
+                        onPatch({ draggedSourcePath: null });
+                        return;
+                      }
+
+                      const override = createPlacementOverrideForDrop(sourceEntry, row);
+                      if (!override) {
+                        onPatch({ draggedSourcePath: null });
+                        return;
+                      }
+
+                      onPatch({
+                        draggedSourcePath: null,
+                        placementOverrides: {
+                          ...installDialog.placementOverrides,
+                          [override.sourcePath]: {
+                            target: override.target,
+                            targetRelativePath: override.targetRelativePath
+                          }
+                        },
+                        validationMessage: null
+                      });
+                    }}
+                    style={{ paddingLeft: `${12 + row.depth * 18}px` }}
+                  >
+                    {row.isDirectory ? (
+                      <FolderOpen size={15} aria-hidden="true" />
+                    ) : (
+                      <File size={15} aria-hidden="true" />
+                    )}
+                    <span>{row.name}</span>
+                    <small>{row.isDirectory ? row.target || 'folder' : row.entry?.classification}</small>
+                  </div>
+                );
+              })}
+              {visibleArchiveWindow.bottomSpacer > 0 ? (
+                <div style={{ height: visibleArchiveWindow.bottomSpacer }} aria-hidden="true" />
+              ) : null}
+            </>
+          ) : (
+            <div
+              className="archive-tree-row"
+              role="treeitem"
+              tabIndex={0}
+              aria-level={1}
+              data-directory={false}
+            >
+              <File size={15} aria-hidden="true" />
+              <span>{installDialog.source.fileName || installDialog.source.displayName}</span>
+              <small>archive</small>
+            </div>
+          )}
         </div>
       </div>
     );
   };
 
   const dialogTitle =
-    installDialog.phase === 'fomod'
-      ? 'FOMOD installer'
-      : installDialog.phase === 'details'
-        ? 'Archive details'
-        : 'Install mod';
-  const dialogSubtitle =
-    installDialog.phase === 'fomod'
-      ? installDialog.fomodInstaller?.moduleVersion
-        ? `v${installDialog.fomodInstaller.moduleVersion}`
-        : installDialog.source.displayName
-      : installDialog.source.kind === 'download'
-        ? 'Download install'
-        : 'Archive install';
+    normalizeInstallModName(installDialog.modName) ||
+    installDialog.source.displayName ||
+    installDialog.source.fileName ||
+    'Installing mod';
+  const dialogAriaLabel =
+    installDialog.phase === 'installing'
+      ? `Installing ${dialogTitle}`
+      : `Install ${dialogTitle}`;
 
   return (
     <div className="install-modal-backdrop" role="presentation">
@@ -583,20 +544,21 @@ export function InstallDialog({
         data-phase={installDialog.phase}
         role="dialog"
         aria-modal="true"
-        aria-label="Install mod"
+        aria-label={dialogAriaLabel}
       >
         <header className="install-dialog-header">
-          <div className="install-dialog-caption">
-            <img src={fluxoraLogo} alt="" />
-            <div>
-              <strong>{dialogTitle}</strong>
-              <span>{dialogSubtitle}</span>
-            </div>
+          <div className="install-dialog-title">
+            <span
+              className="install-dialog-title-icon"
+              aria-hidden="true"
+              style={{ '--install-icon': `url("${installModIcon}")` } as InstallIconStyle}
+            />
+            <strong>{dialogTitle}</strong>
           </div>
           <button
             className="icon-button"
             type="button"
-            title="Close install dialog"
+            title="Закрыть окно установки"
             disabled={installDialog.phase === 'installing'}
             onClick={onClose}
           >
@@ -605,17 +567,16 @@ export function InstallDialog({
         </header>
 
         <div className="install-dialog-body">
-          {installDialog.phase === 'analyzing' || installDialog.phase === 'installing' ? (
+          {installDialog.phase === 'installing' ? (
             <div className="install-progress" role="status">
               <RefreshCw size={18} aria-hidden="true" />
-              <strong>
-                {installDialog.phase === 'installing' ? 'Installing mod' : 'Analyzing archive'}
-              </strong>
+              <strong>Installing mod</strong>
               <span>{shortPath(installDialog.source.sourcePath)}</span>
             </div>
           ) : null}
           {installDialog.phase === 'fomod' ? renderInstallFomodStep() : null}
           {installDialog.phase === 'options' ? renderInstallOptions() : null}
+          {installDialog.phase === 'conflict' ? renderExistingModConflict() : null}
           {installDialog.phase === 'details' ? renderInstallDetails() : null}
           {installDialog.phase === 'error' ? (
             <div className="install-error" role="alert">
@@ -638,19 +599,21 @@ export function InstallDialog({
                 }}
               >
                 <FolderTree size={15} aria-hidden="true" />
-                Details
+                Подробнее
               </button>
             ) : (
               <span />
             )}
             <div className="install-dialog-action-group">
-              <button
-                className="tool-button"
-                type="button"
-                onClick={onClose}
-              >
-                Close
-              </button>
+              {installDialog.phase === 'error' ? (
+                <button
+                  className="tool-button"
+                  type="button"
+                  onClick={onClose}
+                >
+                  Close
+                </button>
+              ) : null}
               {installDialog.phase === 'options' ? (
                 <button
                   className="primary-button"
@@ -659,7 +622,7 @@ export function InstallDialog({
                   onClick={onSubmitInstallOptions}
                 >
                   <Play size={16} aria-hidden="true" />
-                  Install
+                  Установить
                 </button>
               ) : null}
             </div>

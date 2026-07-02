@@ -13,6 +13,7 @@ namespace fluxora
     {
         bool isConfigured{false};
         bool isLinked{false};
+        bool hasApiKey{false};
         std::wstring displayName;
         std::wstring userId;
         std::wstring message;
@@ -30,6 +31,7 @@ namespace fluxora
 
         [[nodiscard]] NexusModsAuthStatus status() const;
         NexusModsAuthStatus connect();
+        NexusModsAuthStatus connectWithApiKey(std::wstring_view apiKey);
         NexusModsAuthStatus disconnect();
 
         [[nodiscard]] bool isInitialized() const noexcept;

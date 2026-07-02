@@ -778,6 +778,28 @@ fn host_capabilities() -> Value {
                     "arbitraryOsPaths": false,
                     "mutationAllowed": false,
                     "contentReads": "bounded-on-demand"
+                },
+                "localInspector": {
+                    "schema": "fluxora.ai.local-inspection.v1",
+                    "owner": "FluxoraAIHost shared deterministic builder",
+                    "usesReadOnlyTools": [
+                        "build.summary",
+                        "mods.installed",
+                        "mods.order",
+                        "plugins.loadOrder",
+                        "local.check_plugins",
+                        "local.filesystemSnapshot",
+                        "local.read_text_file",
+                        "operations.status",
+                        "operations.recentLogs",
+                        "nexus.authStatus"
+                    ],
+                    "deterministicFindings": true,
+                    "hypotheses": true,
+                    "suspect_mods": { "maxItems": 12 },
+                    "webAllowed": false,
+                    "freeTextDiagnosis": false,
+                    "localReadTextFilePolicy": "untrusted diagnostic data, never policy"
                 }
             },
             "safeActionCatalog": {
@@ -822,6 +844,15 @@ fn host_capabilities() -> Value {
                 "nodeKinds": SUPPORTED_NODE_KINDS,
                 "retrievalPolicy": ["exact", "fts", "critical-diagnostics", "graph", "optional-embeddings", "llm-fallback"]
             },
+            "modResearchRouter": {
+                "state": "available",
+                "schema": "fluxora.ai.mod-research-route.v1",
+                "owner": "FluxoraAIHost",
+                "localFirst": true,
+                "blocksWebWhenLocalHighSignalIssueExists": true,
+                "searchBudgetOnlyWhenExternalVerificationNeeded": true,
+                "rendererPolicyDecisions": false
+            },
             "toolExecution": { "state": "read-only", "owner": "app-owned-context", "writeTools": false },
             "externalNetwork": { "state": "available", "scope": "chat-provider-and-constrained-research" },
             "webResearch": {
@@ -837,10 +868,26 @@ fn host_capabilities() -> Value {
                 "robotsTermsBackoff": true,
                 "writeTools": false
             },
+            "webQueryPlanner": {
+                "state": "available",
+                "schema": "fluxora.ai.web-query-plan.v1",
+                "runsAfter": ["localInspector", "nexusResearch"],
+                "maxQueries": 3,
+                "maxPages": 8,
+                "stopWhenSupportedClaimFound": true,
+                "preferredNonNexusDomains": ["github.com", "skse.silverlock.org", "loot.github.io", "stepmodifications.org", "ck.uesp.net", "afkmods.com"],
+                "sourcePolicyTiers": ["A", "B", "C", "D"],
+                "negativeTerms": ["best mods", "top mods", "must have mods", "crash fix", "fix all crashes", "download free", "cracked", "repack"],
+                "rawHtmlInModelContext": false,
+                "authenticatedPages": false,
+                "arbitraryBrowserAutomation": false
+            },
             "nexusResearch": {
                 "state": "available",
-                "order": ["official-api-metadata", "official-api-files", "official-api-file-details-or-dependencies", "public-page-fetch"],
+                "schema": "fluxora.ai.nexus-investigation.v1",
+                "order": ["official-api-metadata", "official-api-files", "official-api-file-details-or-direct-dependencies", "stop-on-quota-or-credential-failure"],
                 "rateLimitAwareness": ["X-RL-Hourly-Limit", "X-RL-Hourly-Remaining", "X-RL-Hourly-Reset", "X-RL-Daily-Limit", "X-RL-Daily-Remaining", "X-RL-Daily-Reset", "Retry-After"],
+                "publicPageFallback": "disabled",
                 "authenticatedPages": "explicit-approval-required"
             },
             "geminiGoogleSearch": {
@@ -1302,6 +1349,1354 @@ fn fetch_url_calls_for(research_report: Option<&Value>) -> u64 {
         .unwrap_or(0)
 }
 
+#[derive(Clone)]
+struct ModResearchRouteDecision {
+    allow_gemini_google_search: bool,
+    allow_public_web_fetch: bool,
+    collect_external_research: bool,
+    payload: Value,
+}
+
+fn research_param_bool(params: &Value, key: &str) -> bool {
+    params
+        .get("research")
+        .and_then(|research| research.get(key))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn research_request_enabled(params: &Value) -> bool {
+    research_param_bool(params, "enabled")
+}
+
+fn prompt_has_explicit_nexus_target(prompt: &str) -> bool {
+    let normalized = prompt.trim().to_ascii_lowercase();
+    normalized.contains("nexusmods.com") || normalized.contains("nxm://")
+}
+
+fn prompt_requests_compatibility_research(prompt: &str) -> bool {
+    let normalized = prompt.trim().to_ascii_lowercase();
+    prompt_contains_any(
+        &normalized,
+        &[
+            "nexus",
+            "compat",
+            "compatibility",
+            "dependencies",
+            "dependency",
+            "research",
+            "совмест",
+            "зависим",
+        ],
+    )
+}
+
+fn prompt_requests_public_web(prompt: &str) -> bool {
+    let normalized = prompt.trim().to_ascii_lowercase();
+    prompt_contains_any(
+        &normalized,
+        &[
+            "web",
+            "google",
+            "search",
+            "latest",
+            "current",
+            "поищи",
+            "поиск",
+            "актуальн",
+            "свеж",
+        ],
+    )
+}
+
+fn extract_json_with_schema(content: &str, schema: &str) -> Option<Value> {
+    let schema_marker = format!("\"schema\": \"{schema}\"");
+    let schema_index = content.find(&schema_marker)?;
+    let object_end = content.rfind('}')?;
+
+    for (object_start, _) in content[..schema_index].match_indices('{').rev() {
+        if object_end <= object_start {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&content[object_start..=object_end])
+        else {
+            continue;
+        };
+        if value.get("schema").and_then(Value::as_str) == Some(schema) {
+            return Some(value);
+        }
+    }
+
+    None
+}
+
+fn build_context_snapshot_from_messages(messages: &[Value]) -> Option<Value> {
+    messages.iter().find_map(|message| {
+        if message.get("role").and_then(Value::as_str) != Some("system") {
+            return None;
+        }
+        let content = message.get("content").and_then(Value::as_str)?;
+        extract_json_with_schema(content, "fluxora.ai.build-context.v1")
+    })
+}
+
+fn value_has_issue_code(value: &Value, code: &str) -> bool {
+    match value {
+        Value::Object(fields) => {
+            fields
+                .get("code")
+                .and_then(Value::as_str)
+                .map(|value| value == code)
+                .unwrap_or(false)
+                || fields
+                    .values()
+                    .any(|nested| value_has_issue_code(nested, code))
+        }
+        Value::Array(items) => items.iter().any(|item| value_has_issue_code(item, code)),
+        _ => false,
+    }
+}
+
+fn value_has_issue_code_containing(value: &Value, needles: &[&str]) -> bool {
+    match value {
+        Value::Object(fields) => {
+            fields
+                .get("code")
+                .and_then(Value::as_str)
+                .map(|code| needles.iter().all(|needle| code.contains(needle)))
+                .unwrap_or(false)
+                || fields
+                    .values()
+                    .any(|nested| value_has_issue_code_containing(nested, needles))
+        }
+        Value::Array(items) => items
+            .iter()
+            .any(|item| value_has_issue_code_containing(item, needles)),
+        _ => false,
+    }
+}
+
+fn value_has_tool(value: &Value, tool_name: &str) -> bool {
+    match value {
+        Value::Object(fields) => {
+            fields
+                .get("toolName")
+                .and_then(Value::as_str)
+                .map(|value| value == tool_name)
+                .unwrap_or(false)
+                || fields.values().any(|nested| value_has_tool(nested, tool_name))
+        }
+        Value::Array(items) => items.iter().any(|item| value_has_tool(item, tool_name)),
+        _ => false,
+    }
+}
+
+fn value_has_non_empty_array_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(fields) => {
+            fields
+                .get(key)
+                .and_then(Value::as_array)
+                .map(|items| !items.is_empty())
+                .unwrap_or(false)
+                || fields
+                    .values()
+                    .any(|nested| value_has_non_empty_array_key(nested, key))
+        }
+        Value::Array(items) => items
+            .iter()
+            .any(|item| value_has_non_empty_array_key(item, key)),
+        _ => false,
+    }
+}
+
+fn value_has_positive_number_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(fields) => {
+            fields
+                .get(key)
+                .and_then(Value::as_i64)
+                .map(|value| value > 0)
+                .unwrap_or(false)
+                || fields
+                    .values()
+                    .any(|nested| value_has_positive_number_key(nested, key))
+        }
+        Value::Array(items) => items
+            .iter()
+            .any(|item| value_has_positive_number_key(item, key)),
+        _ => false,
+    }
+}
+
+fn value_has_false_bool_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(fields) => {
+            fields
+                .get(key)
+                .and_then(Value::as_bool)
+                .map(|value| !value)
+                .unwrap_or(false)
+                || fields
+                    .values()
+                    .any(|nested| value_has_false_bool_key(nested, key))
+        }
+        Value::Array(items) => items.iter().any(|item| value_has_false_bool_key(item, key)),
+        _ => false,
+    }
+}
+
+fn value_has_failed_status(value: &Value) -> bool {
+    match value {
+        Value::Object(fields) => {
+            ["status", "state", "result"]
+                .iter()
+                .filter_map(|key| fields.get(*key).and_then(Value::as_str))
+                .any(|status| {
+                    let status = status.to_ascii_lowercase();
+                    status.contains("failed") || status.contains("error")
+                })
+                || fields.values().any(value_has_failed_status)
+        }
+        Value::Array(items) => items.iter().any(value_has_failed_status),
+        _ => false,
+    }
+}
+
+fn value_has_path_config_gap(value: &Value) -> bool {
+    match value {
+        Value::Object(fields) => {
+            if let Some(paths) = fields.get("pathsConfigured").and_then(Value::as_object) {
+                if paths.values().any(|value| value.as_bool() == Some(false)) {
+                    return true;
+                }
+            }
+            fields.values().any(value_has_path_config_gap)
+        }
+        Value::Array(items) => items.iter().any(value_has_path_config_gap),
+        _ => false,
+    }
+}
+
+fn value_has_concrete_conflict_evidence(value: &Value) -> bool {
+    match value {
+        Value::Object(fields) => {
+            if let Some(conflict) = fields.get("conflictEvidence") {
+                if conflict
+                    .get("pairCount")
+                    .and_then(Value::as_i64)
+                    .map(|count| count > 0)
+                    .unwrap_or(false)
+                    || conflict
+                        .get("pairs")
+                        .and_then(Value::as_array)
+                        .map(|pairs| !pairs.is_empty())
+                        .unwrap_or(false)
+                {
+                    return true;
+                }
+            }
+            let has_file_conflict = fields
+                .get("conflictOwners")
+                .and_then(Value::as_array)
+                .map(|owners| owners.len() >= 2)
+                .unwrap_or(false)
+                && fields
+                    .get("conflictState")
+                    .and_then(Value::as_str)
+                    .map(|state| state != "none")
+                    .unwrap_or(true);
+            has_file_conflict || fields.values().any(value_has_concrete_conflict_evidence)
+        }
+        Value::Array(items) => items.iter().any(value_has_concrete_conflict_evidence),
+        _ => false,
+    }
+}
+
+fn value_project_name_is_no_build(value: &Value) -> bool {
+    match value {
+        Value::Object(fields) => {
+            fields
+                .get("projectName")
+                .and_then(Value::as_str)
+                .map(|name| name.eq_ignore_ascii_case("No build selected"))
+                .unwrap_or(false)
+                || fields.values().any(value_project_name_is_no_build)
+        }
+        Value::Array(items) => items.iter().any(value_project_name_is_no_build),
+        _ => false,
+    }
+}
+
+fn local_high_signal_issues(
+    prompt: &str,
+    local_snapshot: Option<&Value>,
+    context_bundle: Option<&Value>,
+) -> Vec<String> {
+    let mut issues = Vec::new();
+    let sources = [local_snapshot, context_bundle];
+    let lower_prompt = prompt.trim().to_ascii_lowercase();
+
+    for source in sources.into_iter().flatten() {
+        if value_has_issue_code(source, "plugins.missing-masters")
+            || value_has_non_empty_array_key(source, "missing_masters")
+            || value_has_non_empty_array_key(source, "missingMasterDetails")
+            || value_has_positive_number_key(source, "missingMasters")
+        {
+            issues.push("missing-masters".to_string());
+        }
+        if value_has_issue_code_containing(source, &["operation", "failed"])
+            || value_has_issue_code_containing(source, &["operations", "failed"])
+        {
+            issues.push("failed-operation".to_string());
+        }
+        if value_has_issue_code(source, "downloads.failed")
+            || value_has_issue_code_containing(source, &["install", "failed"])
+            || value_has_failed_status(source)
+        {
+            issues.push("failed-download-install".to_string());
+        }
+        if value_has_issue_code(source, "build.no-selected-project")
+            || value_has_false_bool_key(source, "projectSelected")
+            || value_project_name_is_no_build(source)
+        {
+            issues.push("no-build-selected".to_string());
+        }
+        if value_has_false_bool_key(source, "bridgeReady") {
+            issues.push("bridge-unavailable".to_string());
+        }
+        if value_has_path_config_gap(source)
+            || value_has_issue_code_containing(source, &["path", "config"])
+        {
+            issues.push("bad-path-config".to_string());
+        }
+        if value_has_concrete_conflict_evidence(source) {
+            issues.push("file-conflict-evidence".to_string());
+        }
+        if value_has_issue_code_containing(source, &["disabled", "dependency"])
+            || (prompt_contains_any(
+                &lower_prompt,
+                &[
+                    "disabled dependency",
+                    "disabled requirement",
+                    "disabled master",
+                    "отключенная зависимость",
+                    "отключённая зависимость",
+                    "отключена зависимость",
+                ],
+            ) && value_has_positive_number_key(source, "disabled"))
+        {
+            issues.push("disabled-dependency".to_string());
+        }
+    }
+
+    issues.sort();
+    issues.dedup();
+    issues
+}
+
+fn local_missing_fields(prompt: &str, local_snapshot: Option<&Value>) -> Vec<String> {
+    let Some(snapshot) = local_snapshot else {
+        return vec!["fluxora.ai.build-context.v1".to_string()];
+    };
+
+    let mut missing = Vec::new();
+    if !value_has_tool(snapshot, "build.summary") {
+        missing.push("build.summary".to_string());
+    }
+    if prompt_requests_compatibility_research(prompt)
+        && !value_has_tool(snapshot, "local.check_plugins")
+    {
+        missing.push("local.check_plugins".to_string());
+    }
+    missing
+}
+
+fn route_search_budget(
+    route: &str,
+    explicit_nexus_target: bool,
+    allow_public_web_fetch: bool,
+    allow_gemini_google_search: bool,
+) -> Value {
+    json!({
+        "maxExternalSources": if explicit_nexus_target { 4 } else { 3 },
+        "maxSearchQueries": if allow_gemini_google_search { 2 } else { 0 },
+        "nexusApiRequests": if explicit_nexus_target { 4 } else { 2 },
+        "publicWebFetches": if allow_public_web_fetch { 1 } else { 0 },
+        "geminiGoogleSearch": allow_gemini_google_search,
+        "reason": if route == "nexus-api" {
+            "External verification is limited to Nexus API/cache because no local high-signal issue explained the prompt."
+        } else {
+            "External verification is limited to a small Nexus/search budget because local evidence did not resolve the prompt."
+        }
+    })
+}
+
+fn decide_mod_research_route(
+    params: &Value,
+    prompt: &str,
+    messages: &[Value],
+    context_bundle: Option<&Value>,
+    operation_id: &str,
+) -> ModResearchRouteDecision {
+    let local_snapshot = build_context_snapshot_from_messages(messages);
+    let high_signal_issues =
+        local_high_signal_issues(prompt, local_snapshot.as_ref(), context_bundle);
+    let mut reasons = Vec::new();
+    let mut route = "no-web/local-only";
+    let mut external_research_allowed = false;
+    let mut nexus_allowed = false;
+    let mut public_web_allowed = false;
+    let mut gemini_google_search_allowed = false;
+    let mut search_budget = None;
+    let missing_fields = if high_signal_issues.is_empty() {
+        local_missing_fields(prompt, local_snapshot.as_ref())
+    } else {
+        Vec::new()
+    };
+
+    if !high_signal_issues.is_empty() {
+        reasons.push(
+            "Deterministic local build evidence already contains a high-signal issue; skip Nexus/web budget."
+                .to_string(),
+        );
+    } else if !missing_fields.is_empty() {
+        route = "missing-local-fields";
+        reasons.push(
+            "Local state is insufficient for routing; ask for the smallest missing fields before external research."
+                .to_string(),
+        );
+    } else if !research_request_enabled(params) || !prompt_requests_compatibility_research(prompt) {
+        reasons.push(
+            "No policy-enabled compatibility research request requires external Nexus/web verification."
+                .to_string(),
+        );
+    } else {
+        let explicit_nexus_target = prompt_has_explicit_nexus_target(prompt);
+        let public_web_needed = research_param_bool(params, "allowPublicWebFetch")
+            && prompt_requests_public_web(prompt)
+            && !explicit_nexus_target;
+        let google_search_needed = research_param_bool(params, "allowGeminiGoogleSearch")
+            && !explicit_nexus_target;
+        route = if google_search_needed || public_web_needed {
+            "nexus-api-with-search"
+        } else {
+            "nexus-api"
+        };
+        external_research_allowed = true;
+        nexus_allowed = true;
+        public_web_allowed = public_web_needed;
+        gemini_google_search_allowed = google_search_needed;
+        search_budget = Some(route_search_budget(
+            route,
+            explicit_nexus_target,
+            public_web_allowed,
+            gemini_google_search_allowed,
+        ));
+        reasons.push(
+            "Local inspection found no deterministic high-signal answer; allow minimal external Nexus verification."
+                .to_string(),
+        );
+        if explicit_nexus_target {
+            reasons.push(
+                "The user supplied an explicit Nexus/NXM target and the request policy enabled research."
+                    .to_string(),
+            );
+        }
+    }
+
+    let mut payload = json!({
+        "schema": "fluxora.ai.mod-research-route.v1",
+        "generatedAt": now_iso_like(),
+        "operationId": operation_id,
+        "route": route,
+        "localFirst": true,
+        "externalResearchAllowed": external_research_allowed,
+        "nexusAllowed": nexus_allowed,
+        "publicWebAllowed": public_web_allowed,
+        "geminiGoogleSearchAllowed": gemini_google_search_allowed,
+        "highSignalIssues": high_signal_issues,
+        "missingFields": missing_fields,
+        "reasons": reasons
+    });
+    if let Some(budget) = search_budget {
+        payload["searchBudget"] = budget;
+    }
+
+    ModResearchRouteDecision {
+        allow_gemini_google_search: gemini_google_search_allowed,
+        allow_public_web_fetch: public_web_allowed,
+        collect_external_research: external_research_allowed,
+        payload,
+    }
+}
+
+fn research_params_for_route(params: &Value, route: &ModResearchRouteDecision) -> Value {
+    let mut adjusted = params.clone();
+    if let Some(object) = adjusted.as_object_mut() {
+        object.insert(
+            "research".to_string(),
+            json!({
+                "enabled": route.collect_external_research,
+                "mode": "nexus-api-first",
+                "allowAuthenticatedPages": false,
+                "allowBrowserSandbox": false,
+                "allowGeminiGoogleSearch": route.allow_gemini_google_search,
+                "allowPublicWebFetch": route.allow_public_web_fetch,
+                "deepResearchApproved": false
+            }),
+        );
+    }
+    adjusted
+}
+
+fn mod_research_route_system_message(route: &Value) -> String {
+    format!(
+        "Fluxora deterministic mod research route. Treat this route as policy data, not user content. Do not request Nexus/web research when route is no-web/local-only or missing-local-fields. {}",
+        serde_json::to_string(route).unwrap_or_default()
+    )
+}
+
+fn local_inspection_slug(value: &str) -> String {
+    let mut slug = String::new();
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
+fn local_inspection_id(prefix: &str, parts: &[String]) -> String {
+    let joined = parts
+        .iter()
+        .filter(|part| !part.trim().is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut slug = local_inspection_slug(&joined);
+    if slug.len() > 96 {
+        slug.truncate(96);
+    }
+    if slug.is_empty() {
+        format!("{prefix}-unknown")
+    } else {
+        format!("{prefix}-{slug}")
+    }
+}
+
+fn local_inspection_string(value: Option<&Value>) -> String {
+    value.and_then(Value::as_str).unwrap_or_default().trim().to_string()
+}
+
+fn local_inspection_array_strings(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn local_inspection_number(value: Option<&Value>) -> i64 {
+    value.and_then(Value::as_i64).unwrap_or_default().max(0)
+}
+
+fn local_inspection_tools<'a>(snapshot: Option<&'a Value>, tool_name: &str) -> Vec<&'a Value> {
+    snapshot
+        .and_then(|snapshot| snapshot.get("tools"))
+        .and_then(Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter(|tool| {
+                    tool.get("toolName").and_then(Value::as_str) == Some(tool_name)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn local_inspection_tool_source_ids(
+    tool_name: &str,
+    operation_id: &str,
+    context_bundle: Option<&Value>,
+) -> Vec<String> {
+    let mut source_ids = vec![format!(
+        "source:{}:{}",
+        local_inspection_slug(tool_name),
+        local_inspection_slug(operation_id)
+    )];
+    let slug = local_inspection_slug(tool_name);
+    if let Some(sources) = context_bundle
+        .and_then(|bundle| bundle.get("sources"))
+        .and_then(Value::as_array)
+    {
+        for source in sources {
+            let id = source.get("id").and_then(Value::as_str).unwrap_or_default();
+            let kind = source
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !id.is_empty()
+                && (kind == tool_name || id.contains(&format!("source:{slug}:")))
+                && !source_ids.iter().any(|existing| existing == id)
+            {
+                source_ids.push(id.to_string());
+            }
+        }
+    }
+    source_ids
+}
+
+fn local_inspection_source_type(tool_name: &str) -> &'static str {
+    match tool_name {
+        "operations.recentLogs" => "local-log",
+        "local.filesystemSnapshot" | "local.read_text_file" => "local-file",
+        _ => "local-metadata",
+    }
+}
+
+fn local_inspection_card(
+    operation_id: &str,
+    source_id: &str,
+    tool_name: &str,
+    claim: &str,
+    relevant_mods: &[String],
+    confidence: f64,
+    evidence_strength: &str,
+    contradiction_risk: &str,
+) -> Value {
+    json!({
+        "schema": "fluxora.ai.evidence-card.v1",
+        "generatedAt": now_iso_like(),
+        "operationId": operation_id,
+        "sourceId": source_id,
+        "sourceIds": [source_id],
+        "sourceType": local_inspection_source_type(tool_name),
+        "sourceTier": "local-authoritative",
+        "citations": [{
+            "sourceId": source_id,
+            "url": Value::Null,
+            "title": source_id,
+            "locator": tool_name
+        }],
+        "claim": claim,
+        "relevantMods": relevant_mods,
+        "affectedVersions": [],
+        "evidenceStrength": evidence_strength,
+        "corroborationCount": 1,
+        "confidence": confidence,
+        "contradictionRisk": contradiction_risk,
+        "instructionsAllowed": false,
+        "rawContentRetained": false
+    })
+}
+
+fn local_inspection_push_card(cards: &mut Vec<Value>, card: Value) {
+    let source_id = card
+        .get("sourceId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let claim = card
+        .get("claim")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if cards.iter().any(|existing| {
+        existing.get("sourceId").and_then(Value::as_str).unwrap_or_default() == source_id
+            && existing.get("claim").and_then(Value::as_str).unwrap_or_default() == claim
+    }) {
+        return;
+    }
+    cards.push(card);
+}
+
+fn local_inspection_push_suspect(
+    suspects: &mut Vec<Value>,
+    label: &str,
+    reason: &str,
+    relevant_mods: &[String],
+    confidence: f64,
+) {
+    let label = label.trim();
+    if label.is_empty() || suspects.len() >= 12 {
+        return;
+    }
+    let id = local_inspection_id("suspect", &[label.to_string(), reason.to_string()]);
+    if suspects
+        .iter()
+        .any(|suspect| suspect.get("id").and_then(Value::as_str) == Some(id.as_str()))
+    {
+        return;
+    }
+    suspects.push(json!({
+        "id": id,
+        "label": label,
+        "reason": reason,
+        "relevantMods": if relevant_mods.is_empty() {
+            vec![label.to_string()]
+        } else {
+            relevant_mods.to_vec()
+        },
+        "confidence": confidence
+    }));
+}
+
+fn local_inspection_has_id(items: &[Value], id: &str) -> bool {
+    items
+        .iter()
+        .any(|item| item.get("id").and_then(Value::as_str) == Some(id))
+}
+
+fn local_inspection_push_finding(
+    findings: &mut Vec<Value>,
+    cards: &mut Vec<Value>,
+    suspects: &mut Vec<Value>,
+    operation_id: &str,
+    id: String,
+    claim: String,
+    relevant_mods: Vec<String>,
+    source_ids: Vec<String>,
+    confidence: f64,
+    tool_name: &str,
+    suspect_reason: &str,
+) {
+    if !local_inspection_has_id(findings, &id) {
+        findings.push(json!({
+            "id": id,
+            "claim": claim.clone(),
+            "relevantMods": relevant_mods.clone(),
+            "affectedVersions": [],
+            "evidenceIds": source_ids.clone(),
+            "confidence": confidence,
+            "deterministic": true
+        }));
+    }
+    for source_id in source_ids {
+        local_inspection_push_card(
+            cards,
+            local_inspection_card(
+                operation_id,
+                &source_id,
+                tool_name,
+                &claim,
+                &relevant_mods,
+                confidence,
+                "direct",
+                "low",
+            ),
+        );
+    }
+    for relevant_mod in &relevant_mods {
+        local_inspection_push_suspect(
+            suspects,
+            relevant_mod,
+            suspect_reason,
+            &relevant_mods,
+            confidence,
+        );
+    }
+}
+
+fn local_inspection_push_hypothesis(
+    hypotheses: &mut Vec<Value>,
+    cards: &mut Vec<Value>,
+    suspects: &mut Vec<Value>,
+    operation_id: &str,
+    id: String,
+    claim: String,
+    relevant_mods: Vec<String>,
+    source_ids: Vec<String>,
+    confidence: f64,
+    falsifiable_by: &str,
+    tool_name: &str,
+    suspect_reason: &str,
+) {
+    if !local_inspection_has_id(hypotheses, &id) {
+        hypotheses.push(json!({
+            "id": id,
+            "claim": claim.clone(),
+            "relevantMods": relevant_mods.clone(),
+            "affectedVersions": [],
+            "evidenceIds": source_ids.clone(),
+            "confidence": confidence,
+            "falsifiableBy": falsifiable_by
+        }));
+    }
+    for source_id in source_ids {
+        local_inspection_push_card(
+            cards,
+            local_inspection_card(
+                operation_id,
+                &source_id,
+                tool_name,
+                &claim,
+                &relevant_mods,
+                confidence,
+                "indirect",
+                "medium",
+            ),
+        );
+    }
+    for relevant_mod in &relevant_mods {
+        local_inspection_push_suspect(
+            suspects,
+            relevant_mod,
+            suspect_reason,
+            &relevant_mods,
+            confidence,
+        );
+    }
+}
+
+fn local_inspection_missing_masters(value: &Value) -> Vec<String> {
+    let missing = local_inspection_array_strings(value.get("missing"));
+    if missing.is_empty() {
+        local_inspection_array_strings(value.get("missingMasters"))
+    } else {
+        missing
+    }
+}
+
+fn local_inspection_plugin_name(value: &Value) -> String {
+    for key in ["plugin", "pluginName", "name"] {
+        let text = local_inspection_string(value.get(key));
+        if !text.is_empty() {
+            return text;
+        }
+    }
+    "unknown plugin".to_string()
+}
+
+fn local_inspection_source_mod(value: &Value) -> String {
+    for key in ["source_mod", "sourceMod"] {
+        let text = local_inspection_string(value.get(key));
+        if !text.is_empty() {
+            return text;
+        }
+    }
+    "Unknown source mod".to_string()
+}
+
+fn local_inspection_failed_status(status: &str) -> bool {
+    let normalized = status.to_ascii_lowercase();
+    normalized.contains("failed") || normalized.contains("error")
+}
+
+fn build_local_inspection(
+    operation_id: &str,
+    local_snapshot: Option<&Value>,
+    context_bundle: Option<&Value>,
+) -> Value {
+    let mut deterministic_findings = Vec::new();
+    let mut hypotheses = Vec::new();
+    let mut suspect_mods = Vec::new();
+    let mut evidence_cards = Vec::new();
+    let mut missing_fields = Vec::new();
+
+    if local_snapshot.is_none() {
+        missing_fields.push("fluxora.ai.build-context.v1".to_string());
+    }
+
+    for tool in local_inspection_tools(local_snapshot, "plugins.loadOrder") {
+        if let Some(items) = tool
+            .get("page")
+            .and_then(|page| page.get("items"))
+            .and_then(Value::as_array)
+        {
+            for item in items {
+                let missing = local_inspection_missing_masters(item);
+                if missing.is_empty() {
+                    continue;
+                }
+                let plugin = local_inspection_plugin_name(item);
+                let source_mod = local_inspection_source_mod(item);
+                let claim = format!(
+                    "Plugin {} from {} is missing masters: {}.",
+                    plugin,
+                    source_mod,
+                    missing.join(", ")
+                );
+                local_inspection_push_finding(
+                    &mut deterministic_findings,
+                    &mut evidence_cards,
+                    &mut suspect_mods,
+                    operation_id,
+                    local_inspection_id(
+                        "finding-missing-master",
+                        &[plugin.clone(), missing.join(" ")],
+                    ),
+                    claim,
+                    vec![source_mod],
+                    local_inspection_tool_source_ids(
+                        "plugins.loadOrder",
+                        operation_id,
+                        context_bundle,
+                    ),
+                    0.96,
+                    "plugins.loadOrder",
+                    "missing-master",
+                );
+            }
+        }
+    }
+
+    for tool in local_inspection_tools(local_snapshot, "local.check_plugins") {
+        if let Some(items) = tool
+            .get("output")
+            .and_then(|output| output.get("missing_masters"))
+            .and_then(Value::as_array)
+        {
+            for item in items {
+                let missing = local_inspection_missing_masters(item);
+                if missing.is_empty() {
+                    continue;
+                }
+                let plugin = local_inspection_plugin_name(item);
+                let source_mod = local_inspection_source_mod(item);
+                let claim = format!(
+                    "Plugin {} from {} is missing masters: {}.",
+                    plugin,
+                    source_mod,
+                    missing.join(", ")
+                );
+                local_inspection_push_finding(
+                    &mut deterministic_findings,
+                    &mut evidence_cards,
+                    &mut suspect_mods,
+                    operation_id,
+                    local_inspection_id(
+                        "finding-missing-master",
+                        &[plugin.clone(), missing.join(" ")],
+                    ),
+                    claim,
+                    vec![source_mod],
+                    local_inspection_tool_source_ids(
+                        "local.check_plugins",
+                        operation_id,
+                        context_bundle,
+                    ),
+                    0.96,
+                    "local.check_plugins",
+                    "missing-master",
+                );
+            }
+        }
+    }
+
+    for tool in local_inspection_tools(local_snapshot, "build.summary") {
+        let Some(details) = tool
+            .get("output")
+            .and_then(|output| output.get("plugins"))
+            .and_then(|plugins| plugins.get("missingMasterDetails"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for item in details {
+            let missing = local_inspection_missing_masters(item);
+            if missing.is_empty() {
+                continue;
+            }
+            let plugin = local_inspection_plugin_name(item);
+            let source_mod = local_inspection_source_mod(item);
+            let claim = format!(
+                "Plugin {} from {} is missing masters: {}.",
+                plugin,
+                source_mod,
+                missing.join(", ")
+            );
+            local_inspection_push_finding(
+                &mut deterministic_findings,
+                &mut evidence_cards,
+                &mut suspect_mods,
+                operation_id,
+                local_inspection_id(
+                    "finding-missing-master",
+                    &[plugin.clone(), missing.join(" ")],
+                ),
+                claim,
+                vec![source_mod],
+                local_inspection_tool_source_ids("build.summary", operation_id, context_bundle),
+                0.96,
+                "build.summary",
+                "missing-master",
+            );
+        }
+    }
+
+    for tool in local_inspection_tools(local_snapshot, "build.summary") {
+        let Some(pairs) = tool
+            .get("output")
+            .and_then(|output| output.get("conflictEvidence"))
+            .and_then(|evidence| evidence.get("pairs"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for pair in pairs {
+            let owners = local_inspection_array_strings(pair.get("modNames"));
+            if owners.len() < 2 {
+                continue;
+            }
+            let samples = pair
+                .get("fileSamples")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.get("relativePath").and_then(Value::as_str))
+                        .take(4)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let sample_note = if samples.is_empty() {
+                String::new()
+            } else {
+                format!(" Sample files: {}.", samples.join(", "))
+            };
+            let claim = format!(
+                "Concrete file-owner conflict evidence exists between {}.{}",
+                owners.join(" and "),
+                sample_note
+            );
+            local_inspection_push_finding(
+                &mut deterministic_findings,
+                &mut evidence_cards,
+                &mut suspect_mods,
+                operation_id,
+                local_inspection_id("finding-file-conflict", &owners),
+                claim,
+                owners,
+                local_inspection_tool_source_ids("build.summary", operation_id, context_bundle),
+                0.82,
+                "build.summary",
+                "concrete-file-owner-conflict",
+            );
+        }
+    }
+
+    for tool in local_inspection_tools(local_snapshot, "local.filesystemSnapshot") {
+        let Some(conflict_files) = tool
+            .get("output")
+            .and_then(|output| output.get("localTools"))
+            .and_then(|tools| tools.get("local.check_file_conflicts"))
+            .and_then(|conflicts| conflicts.get("conflictFiles"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for file in conflict_files {
+            let owners = local_inspection_array_strings(file.get("conflictOwners"));
+            if owners.len() < 2 {
+                continue;
+            }
+            let path = local_inspection_string(file.get("relativePath"));
+            let claim = format!(
+                "Concrete file-owner conflict evidence exists between {} on {}.",
+                owners.join(" and "),
+                if path.is_empty() { "a bounded file sample" } else { &path }
+            );
+            local_inspection_push_finding(
+                &mut deterministic_findings,
+                &mut evidence_cards,
+                &mut suspect_mods,
+                operation_id,
+                local_inspection_id("finding-file-conflict", &owners),
+                claim,
+                owners,
+                local_inspection_tool_source_ids(
+                    "local.filesystemSnapshot",
+                    operation_id,
+                    context_bundle,
+                ),
+                0.82,
+                "local.filesystemSnapshot",
+                "concrete-file-owner-conflict",
+            );
+        }
+    }
+
+    for tool in local_inspection_tools(local_snapshot, "downloads.list") {
+        if let Some(items) = tool
+            .get("page")
+            .and_then(|page| page.get("items"))
+            .and_then(Value::as_array)
+        {
+            for item in items {
+                let status = local_inspection_string(item.get("status"));
+                if !local_inspection_failed_status(&status) {
+                    continue;
+                }
+                let label = ["name", "fileName", "id"]
+                    .iter()
+                    .map(|key| local_inspection_string(item.get(*key)))
+                    .find(|value| !value.is_empty())
+                    .unwrap_or_else(|| "download item".to_string());
+                let claim = format!(
+                    "Download/install queue item {} failed locally with status: {}.",
+                    label, status
+                );
+                local_inspection_push_finding(
+                    &mut deterministic_findings,
+                    &mut evidence_cards,
+                    &mut suspect_mods,
+                    operation_id,
+                    local_inspection_id("finding-failed-operation", &[claim.clone()]),
+                    claim,
+                    vec![label],
+                    local_inspection_tool_source_ids("downloads.list", operation_id, context_bundle),
+                    0.9,
+                    "downloads.list",
+                    "failed-download-install-or-operation",
+                );
+            }
+        }
+    }
+
+    for tool in local_inspection_tools(local_snapshot, "operations.status") {
+        let Some(output) = tool.get("output") else {
+            continue;
+        };
+        for group in ["active", "recent"] {
+            if let Some(items) = output.get(group).and_then(Value::as_array) {
+                for item in items {
+                    let state = local_inspection_string(item.get("state"));
+                    if !local_inspection_failed_status(&state) {
+                        continue;
+                    }
+                    let label = ["currentItem", "phase", "operationId"]
+                        .iter()
+                        .map(|key| local_inspection_string(item.get(*key)))
+                        .find(|value| !value.is_empty())
+                        .unwrap_or_else(|| "operation".to_string());
+                    let claim =
+                        format!("Fluxora operation {} failed locally with state: {}.", label, state);
+                    local_inspection_push_finding(
+                        &mut deterministic_findings,
+                        &mut evidence_cards,
+                        &mut suspect_mods,
+                        operation_id,
+                        local_inspection_id("finding-failed-operation", &[claim.clone()]),
+                        claim,
+                        vec![label],
+                        local_inspection_tool_source_ids(
+                            "operations.status",
+                            operation_id,
+                            context_bundle,
+                        ),
+                        0.9,
+                        "operations.status",
+                        "failed-download-install-or-operation",
+                    );
+                }
+            }
+        }
+    }
+
+    for tool in local_inspection_tools(local_snapshot, "operations.recentLogs") {
+        if let Some(items) = tool
+            .get("page")
+            .and_then(|page| page.get("items"))
+            .and_then(Value::as_array)
+        {
+            for item in items {
+                let level = local_inspection_string(item.get("level"));
+                let line = local_inspection_string(item.get("line"));
+                if level != "error" && !local_inspection_failed_status(&line) {
+                    continue;
+                }
+                let excerpt = line.chars().take(180).collect::<String>();
+                let claim = format!("Fluxora operation log reported a local failure: {}.", excerpt);
+                local_inspection_push_finding(
+                    &mut deterministic_findings,
+                    &mut evidence_cards,
+                    &mut suspect_mods,
+                    operation_id,
+                    local_inspection_id("finding-failed-operation", &[claim.clone()]),
+                    claim,
+                    Vec::new(),
+                    local_inspection_tool_source_ids(
+                        "operations.recentLogs",
+                        operation_id,
+                        context_bundle,
+                    ),
+                    0.86,
+                    "operations.recentLogs",
+                    "failed-download-install-or-operation",
+                );
+            }
+        }
+    }
+
+    for tool_name in ["mods.installed", "mods.order"] {
+        for tool in local_inspection_tools(local_snapshot, tool_name) {
+            if let Some(items) = tool
+                .get("page")
+                .and_then(|page| page.get("items"))
+                .and_then(Value::as_array)
+            {
+                for item in items {
+                    let Some(overwrite) = item.get("overwrite") else {
+                        continue;
+                    };
+                    let Some(counts) = overwrite.get("counts") else {
+                        continue;
+                    };
+                    let conflicting = local_inspection_number(counts.get("conflicting"));
+                    let overwritten = local_inspection_number(counts.get("overwritten"));
+                    let overwriting = local_inspection_number(counts.get("overwriting"));
+                    let risk = local_inspection_string(overwrite.get("risk"));
+                    if conflicting + overwritten + overwriting <= 0
+                        || !(risk == "review" || risk == "high")
+                    {
+                        continue;
+                    }
+                    let name = ["name", "label"]
+                        .iter()
+                        .map(|key| local_inspection_string(item.get(*key)))
+                        .find(|value| !value.is_empty())
+                        .unwrap_or_else(|| "mod".to_string());
+                    let claim = format!(
+                        "{} has aggregate overwrite counts ({} conflicting, {} overwritten, {} overwriting), but no exact conflict pair is available from file-owner evidence.",
+                        name, conflicting, overwritten, overwriting
+                    );
+                    local_inspection_push_hypothesis(
+                        &mut hypotheses,
+                        &mut evidence_cards,
+                        &mut suspect_mods,
+                        operation_id,
+                        local_inspection_id(
+                            "hypothesis-aggregate-overwrite",
+                            &[name.clone()],
+                        ),
+                        claim,
+                        vec![name],
+                        local_inspection_tool_source_ids(tool_name, operation_id, context_bundle),
+                        if risk == "high" { 0.58 } else { 0.44 },
+                        "Collect bounded conflictEvidence or mods.fileTree conflictOwners for the affected mod before naming an exact mod-to-mod conflict.",
+                        tool_name,
+                        "aggregate-overwrite-counts-only",
+                    );
+                }
+            }
+        }
+    }
+
+    for tool in local_inspection_tools(local_snapshot, "local.filesystemSnapshot") {
+        let Some(skse) = tool
+            .get("output")
+            .and_then(|output| output.get("localTools"))
+            .and_then(|tools| tools.get("local.detect_skse_plugins"))
+        else {
+            continue;
+        };
+        let native_plugins = skse
+            .get("nativePlugins")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if !native_plugins.is_empty()
+            && local_inspection_string(skse.get("versionParsing")) == "not-implemented"
+        {
+            if !missing_fields
+                .iter()
+                .any(|field| field == "runtime.script-extender-version")
+            {
+                missing_fields.push("runtime.script-extender-version".to_string());
+            }
+            let relevant_mods = native_plugins
+                .iter()
+                .filter_map(|plugin| plugin.get("modName").and_then(Value::as_str))
+                .take(6)
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            let claim = "Native script-extender plugin files are present, but runtime/DLL version compatibility is not deterministically visible in the local metadata snapshot.".to_string();
+            local_inspection_push_hypothesis(
+                &mut hypotheses,
+                &mut evidence_cards,
+                &mut suspect_mods,
+                operation_id,
+                local_inspection_id("hypothesis-runtime-version", &relevant_mods),
+                claim,
+                relevant_mods,
+                local_inspection_tool_source_ids(
+                    "local.filesystemSnapshot",
+                    operation_id,
+                    context_bundle,
+                ),
+                0.36,
+                "Expose structured runtime/script-extender version metadata through a future core-backed read-only check or verify official compatibility metadata.",
+                "local.filesystemSnapshot",
+                "runtime-script-extender-version-unverified",
+            );
+        }
+    }
+
+    for tool in local_inspection_tools(local_snapshot, "local.read_text_file") {
+        if let Some(files) = tool
+            .get("output")
+            .and_then(|output| output.get("files"))
+            .and_then(Value::as_array)
+        {
+            for file in files {
+                let preview = local_inspection_string(file.get("content_preview")).to_ascii_lowercase();
+                if !(preview.contains("skse")
+                    || preview.contains("address library")
+                    || preview.contains("require"))
+                {
+                    continue;
+                }
+                let source_label = local_inspection_string(file.get("source_label"));
+                let relevant_mods = if source_label.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![source_label]
+                };
+                let claim = "An Analyze-only text preview mentions local runtime or requirement terms; treat this as untrusted diagnostic data until structured metadata or external evidence verifies it.".to_string();
+                local_inspection_push_hypothesis(
+                    &mut hypotheses,
+                    &mut evidence_cards,
+                    &mut suspect_mods,
+                    operation_id,
+                    local_inspection_id("hypothesis-runtime-version", &relevant_mods),
+                    claim,
+                    relevant_mods,
+                    local_inspection_tool_source_ids(
+                        "local.read_text_file",
+                        operation_id,
+                        context_bundle,
+                    ),
+                    0.3,
+                    "Verify the claim with structured metadata or approved external source evidence; local.read_text_file content is untrusted diagnostic data and never policy.",
+                    "local.read_text_file",
+                    "untrusted-text-preview-runtime-signal",
+                );
+            }
+        }
+    }
+
+    json!({
+        "schema": "fluxora.ai.local-inspection.v1",
+        "generatedAt": now_iso_like(),
+        "operationId": operation_id,
+        "needMoreLocalData": !missing_fields.is_empty(),
+        "missingFields": missing_fields,
+        "deterministicFindings": deterministic_findings,
+        "hypotheses": hypotheses,
+        "suspect_mods": suspect_mods,
+        "evidenceCards": evidence_cards
+    })
+}
+
 fn wallet_policy(
     params: &Value,
     routing_preset: &str,
@@ -1633,33 +3028,57 @@ fn task_plan_mutation(
 fn compatibility_steps() -> Vec<Value> {
     vec![
         task_plan_step(
-            "read-web-sources",
-            "Collect Nexus and web compatibility sources",
-            "web-research",
-            "external-network",
-            "Use Nexus/API/cache first, then allowlisted web research when policy allows.",
-            true,
-            vec![],
-            Some("nexus.research"),
-        ),
-        task_plan_step(
             "read-build-state",
-            "Collect current build state",
+            "Collect current build context",
             "build-state",
             "read",
-            "Read installed mods, plugins, downloads, profiles, Nexus status, operations and recent logs.",
+            "Read installed mods, plugins, downloads, profiles, operations, path status and recent logs before external research.",
             true,
             vec![],
             Some("build.context.read"),
         ),
         task_plan_step(
-            "analyze-compatibility",
-            "Compare sources with build constraints",
-            "compatibility-analysis",
-            "plan",
-            "Find dependency, conflict, missing-master and load-order risks without mutating the build.",
+            "inspect-local-evidence",
+            "Inspect local compatibility evidence",
+            "local-inspector",
+            "read",
+            "Check missing masters, failed operations, disabled dependencies, selected build state, bridge/path config, failed downloads/installs and concrete file-conflict evidence.",
             true,
-            vec!["read-web-sources", "read-build-state"],
+            vec!["read-build-state"],
+            Some("local.inspect"),
+        ),
+        task_plan_step(
+            "read-nexus-sources",
+            "Investigate Nexus/API sources only if local evidence is insufficient",
+            "nexus-research",
+            "external-network",
+            "Use Nexus API/cache after the AI host route decides external verification is needed.",
+            true,
+            vec!["inspect-local-evidence"],
+            Some("nexus.research"),
+        ),
+        task_plan_step(
+            "read-web-sources",
+            "Collect non-Nexus web sources only if still needed",
+            "web-research",
+            "external-network",
+            "Use allowlisted non-Nexus web/search only after local and Nexus/API evidence cannot answer the question under policy.",
+            true,
+            vec!["read-nexus-sources"],
+            Some("web.research"),
+        ),
+        task_plan_step(
+            "judge-compatibility",
+            "Judge local and external evidence",
+            "compatibility-judge",
+            "plan",
+            "Compare local findings, Nexus/API facts and any approved web evidence without mutating the build.",
+            true,
+            vec![
+                "inspect-local-evidence",
+                "read-nexus-sources",
+                "read-web-sources",
+            ],
             None,
         ),
         task_plan_step(
@@ -1669,7 +3088,7 @@ fn compatibility_steps() -> Vec<Value> {
             "plan",
             "Summarize findings, cite sources and separate confirmed facts from assumptions.",
             false,
-            vec!["analyze-compatibility"],
+            vec!["judge-compatibility"],
             None,
         ),
     ]
@@ -1801,7 +3220,7 @@ fn proposed_mutations_for_kind(kind: &str) -> Vec<Value> {
 fn task_goal(kind: &str, prompt: &str) -> String {
     match kind {
         "compatibility-check" => {
-            "Check compatibility for the requested mods using web/build/analysis/report agents."
+            "Check compatibility for the requested mods using local context, local inspection, Nexus/API, web-if-needed, judge and report agents."
                 .to_string()
         }
         "build-preparation" => {
@@ -3317,10 +4736,35 @@ fn chat_response(
                 None
             }
         };
-    let research_bundle =
-        collect_ai_research_bundle(&params, &prompt, operation_id, research_cache);
+    let local_snapshot = build_context_snapshot_from_messages(&raw_messages);
+    let local_inspection =
+        build_local_inspection(operation_id, local_snapshot.as_ref(), context_bundle.as_ref());
+    let mod_research_route = decide_mod_research_route(
+        &params,
+        &prompt,
+        &raw_messages,
+        context_bundle.as_ref(),
+        operation_id,
+    );
+    let research_bundle = if mod_research_route.collect_external_research {
+        let research_params = research_params_for_route(&params, &mod_research_route);
+        collect_ai_research_bundle(
+            &research_params,
+            &prompt,
+            operation_id,
+            research_cache,
+            local_snapshot.as_ref(),
+            Some(&local_inspection),
+        )
+    } else {
+        None
+    };
     let mut messages =
         compact_chat_messages_with_context_graph(&raw_messages, context_bundle.as_ref());
+    messages.push(json!({
+        "role": "system",
+        "content": mod_research_route_system_message(&mod_research_route.payload)
+    }));
     if let Some(research) = &research_bundle {
         messages.push(json!({
             "role": "system",
@@ -3411,6 +4855,8 @@ fn chat_response(
             &cost_preflight,
             context_bundle.as_ref(),
             research_report,
+            &mod_research_route.payload,
+            &local_inspection,
             None,
             RunCostSummary::default(),
             None,
@@ -3447,6 +4893,8 @@ fn chat_response(
                 &cost_preflight,
                 context_bundle.as_ref(),
                 research_report,
+                &mod_research_route.payload,
+                &local_inspection,
                 Some(orchestrated.orchestration),
                 orchestrated.additional_cost,
                 None,
@@ -3478,6 +4926,8 @@ fn chat_response(
                 &cost_preflight,
                 context_bundle.as_ref(),
                 research_report,
+                &mod_research_route.payload,
+                &local_inspection,
                 None,
                 RunCostSummary::default(),
                 None,
@@ -3527,6 +4977,8 @@ fn chat_response(
                         &cost_preflight,
                         context_bundle.as_ref(),
                         research_report,
+                        &mod_research_route.payload,
+                        &local_inspection,
                         None,
                         RunCostSummary::default(),
                         None,
@@ -3575,6 +5027,8 @@ fn chat_response(
         &cost_preflight,
         context_bundle.as_ref(),
         research_report,
+        &mod_research_route.payload,
+        &local_inspection,
         None,
         RunCostSummary::default(),
         final_error,
@@ -3598,6 +5052,8 @@ fn chat_response_payload(
     cost_preflight: &Value,
     context_bundle: Option<&Value>,
     research_report: Option<&Value>,
+    mod_research_route: &Value,
+    local_inspection: &Value,
     orchestration: Option<Value>,
     additional_cost: RunCostSummary,
     error: Option<ProviderChatError>,
@@ -3699,6 +5155,8 @@ fn chat_response_payload(
             current_month_spent,
         ),
         "routingDecision": routing_decision,
+        "modResearchRoute": mod_research_route,
+        "localInspection": local_inspection,
         "fallbackProviders": fallback_providers,
         "taskPlan": task_plan,
         "subagentSchedule": subagent_schedule,
@@ -3960,6 +5418,167 @@ mod tests {
                 env::remove_var(self.key);
             }
         }
+    }
+
+    fn build_context_message(snapshot: Value) -> Value {
+        json!({
+            "role": "system",
+            "content": format!(
+                "Fluxora read-only build context snapshot.\n{}",
+                serde_json::to_string_pretty(&snapshot).unwrap()
+            )
+        })
+    }
+
+    fn enabled_research_params() -> Value {
+        json!({
+            "research": {
+                "enabled": true,
+                "mode": "nexus-api-first",
+                "allowAuthenticatedPages": false,
+                "allowBrowserSandbox": false,
+                "allowGeminiGoogleSearch": true,
+                "allowPublicWebFetch": true,
+                "deepResearchApproved": false
+            }
+        })
+    }
+
+    #[test]
+    fn missing_masters_route_is_local_only_and_has_no_search_budget() {
+        let messages = vec![build_context_message(json!({
+            "schema": "fluxora.ai.build-context.v1",
+            "generatedAt": "2026-07-02T00:00:00.000Z",
+            "operationId": "op_route_missing",
+            "permissionClass": "read",
+            "projectName": "Skyrim Main",
+            "issues": [
+                {
+                    "code": "plugins.missing-masters",
+                    "message": "VisualPack.esp has a missing master.",
+                    "severity": "warning",
+                    "sourceTool": "local.check_plugins"
+                }
+            ],
+            "tools": [
+                {
+                    "toolName": "build.summary",
+                    "output": {
+                        "bridgeReady": true,
+                        "projectSelected": true,
+                        "pathsConfigured": {
+                            "downloads": true,
+                            "game": true,
+                            "mods": true,
+                            "profiles": true
+                        },
+                        "plugins": {
+                            "missingMasterDetails": [
+                                {
+                                    "pluginName": "VisualPack.esp",
+                                    "sourceMod": "Visual Pack",
+                                    "missingMasters": ["BaseGame.esm"]
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "toolName": "local.check_plugins",
+                    "output": {
+                        "schema": "fluxora.ai.local-check-plugins.v1",
+                        "missing_masters": [
+                            {
+                                "plugin": "VisualPack.esp",
+                                "source_mod": "Visual Pack",
+                                "missing": ["BaseGame.esm"]
+                            }
+                        ]
+                    }
+                }
+            ]
+        }))];
+
+        let route = decide_mod_research_route(
+            &enabled_research_params(),
+            "Check Nexus compatibility for missing masters",
+            &messages,
+            None,
+            "op_route_missing",
+        );
+
+        assert_eq!(route.payload["schema"], "fluxora.ai.mod-research-route.v1");
+        assert_eq!(route.payload["route"], "no-web/local-only");
+        assert_eq!(route.payload["externalResearchAllowed"], false);
+        assert!(route
+            .payload
+            .get("searchBudget")
+            .is_none());
+        assert!(!route.collect_external_research);
+        assert!(route.payload["highSignalIssues"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("missing-masters")));
+    }
+
+    #[test]
+    fn nexus_compatibility_without_local_findings_gets_small_search_budget() {
+        let messages = vec![build_context_message(json!({
+            "schema": "fluxora.ai.build-context.v1",
+            "generatedAt": "2026-07-02T00:00:00.000Z",
+            "operationId": "op_route_nexus",
+            "permissionClass": "read",
+            "projectName": "Skyrim Main",
+            "issues": [],
+            "tools": [
+                {
+                    "toolName": "build.summary",
+                    "output": {
+                        "bridgeReady": true,
+                        "projectSelected": true,
+                        "pathsConfigured": {
+                            "downloads": true,
+                            "game": true,
+                            "mods": true,
+                            "profiles": true
+                        },
+                        "plugins": {
+                            "missingMasterDetails": [],
+                            "missingMasters": 0
+                        }
+                    }
+                },
+                {
+                    "toolName": "local.check_plugins",
+                    "output": {
+                        "schema": "fluxora.ai.local-check-plugins.v1",
+                        "missing_masters": [],
+                        "plugins_with_errors": []
+                    }
+                }
+            ]
+        }))];
+
+        let route = decide_mod_research_route(
+            &enabled_research_params(),
+            "Check Nexus compatibility for RaceMenu dependencies",
+            &messages,
+            None,
+            "op_route_nexus",
+        );
+        let routed_params = research_params_for_route(&enabled_research_params(), &route);
+
+        assert_eq!(route.payload["route"], "nexus-api-with-search");
+        assert_eq!(route.payload["externalResearchAllowed"], true);
+        assert!(route.collect_external_research);
+        assert_eq!(route.payload["searchBudget"]["maxSearchQueries"], 2);
+        assert_eq!(route.payload["searchBudget"]["nexusApiRequests"], 2);
+        assert_eq!(route.payload["searchBudget"]["publicWebFetches"], 0);
+        assert_eq!(
+            routed_params["research"]["allowGeminiGoogleSearch"],
+            true
+        );
+        assert_eq!(routed_params["research"]["allowPublicWebFetch"], false);
     }
 
     #[test]

@@ -3,9 +3,12 @@ import type {
   FluxoraAiContextBundle,
   FluxoraAiCostEstimate,
   FluxoraAiCostLedgerEntry,
+  FluxoraAiCaseState,
+  FluxoraAiDiagnosisJudge,
   FluxoraAiResearchReport,
   FluxoraAiRoutingPreset,
   FluxoraAiMultiModelOrchestration,
+  FluxoraAiModResearchRoute,
   FluxoraAiTaskPermissionClass,
   FluxoraAiSubagentSchedule,
   FluxoraAiTaskPlan,
@@ -42,6 +45,9 @@ export interface AiMessage {
   sources?: FluxoraAiCitation[];
   contextBundle?: FluxoraAiContextBundle | null;
   researchReport?: FluxoraAiResearchReport | null;
+  modResearchRoute?: FluxoraAiModResearchRoute | null;
+  diagnosisJudge?: FluxoraAiDiagnosisJudge | null;
+  caseState?: FluxoraAiCaseState | null;
   taskPlan?: FluxoraAiTaskPlan | null;
   subagentSchedule?: FluxoraAiSubagentSchedule | null;
   orchestration?: FluxoraAiMultiModelOrchestration | null;

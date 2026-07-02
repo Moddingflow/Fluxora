@@ -461,6 +461,7 @@ test.beforeEach(async ({ page }) => {
     const nexusStatus = () => ({
       clientId: 'test-client',
       displayName: nexusLinked ? 'Playwright user' : '',
+      hasApiKey: nexusLinked,
       isConfigured: true,
       isLinked: nexusLinked,
       message: nexusLinked ? 'Linked' : 'Not linked',
@@ -553,6 +554,9 @@ test.beforeEach(async ({ page }) => {
         pickFolder: async () => ({ canceled: true }),
         saveFluxPack: async () => ({ canceled: false, path: 'D:\\Fluxora\\Exports\\skyrim.fluxpack' })
       },
+      fileDrop: {
+        onDragDrop: async () => () => undefined
+      },
       downloads: {
         analyzeContentLayout: async (request: any, operation: any) => {
           calls.push({ method: 'downloads.analyzeContentLayout', payload: { operation, request } });
@@ -586,6 +590,18 @@ test.beforeEach(async ({ page }) => {
           await waitForDownloadsList();
           return downloadRows;
         },
+        watchFolder: async (projectDirectory: any, downloadsDirectory: any, operation: any) => {
+          calls.push({
+            method: 'downloads.watchFolder',
+            payload: { downloadsDirectory, operation, projectDirectory }
+          });
+          return { accepted: true, operationId: operation?.operationId ?? 'op_downloads_watch' };
+        },
+        unwatchFolder: async (operation: any) => {
+          calls.push({ method: 'downloads.unwatchFolder', payload: { operation } });
+          return { accepted: true, operationId: operation?.operationId ?? 'op_downloads_unwatch' };
+        },
+        onFolderChanged: () => () => undefined,
         resume: async () => ({})
       },
       executables: {
@@ -686,6 +702,11 @@ test.beforeEach(async ({ page }) => {
           nexusLinked = true;
           return nexusStatus();
         },
+        connectWithApiKey: async (_apiKey: any, operation: any) => {
+          calls.push({ method: 'nexus.connectWithApiKey', payload: { operation } });
+          nexusLinked = true;
+          return nexusStatus();
+        },
         disconnect: async (operation: any) => {
           calls.push({ method: 'nexus.disconnect', payload: { operation } });
           nexusLinked = false;
@@ -702,6 +723,7 @@ test.beforeEach(async ({ page }) => {
           calls.push({ method: 'nxm.importInboundDownloads', payload: { operation, projectDirectory } });
           return [];
         },
+        onInboundLinksCaptured: () => () => undefined,
         registerProtocol: async () => ({ operationId: 'op_nxm', registered: true })
       },
       operations: {
@@ -1147,11 +1169,7 @@ test('drags mod order rows with pointer placement feedback', async ({ page }) =>
     });
 });
 
-test('renders downloads right pane as skeleton rows while the list loads', async ({ page }) => {
-  await page.addInitScript(() => {
-    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
-      900;
-  });
+test('keeps downloads rows visible during delayed refresh', async ({ page }) => {
   await page.goto(baseUrl);
 
   await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
@@ -1159,10 +1177,15 @@ test('renders downloads right pane as skeleton rows while the list loads', async
 
   const rightPane = page.getByLabel('Right pane');
   await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
 
+  await page.evaluate(() => {
+    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
+      900;
+  });
+  await rightPane.getByRole('button', { name: 'Refresh downloads' }).click();
   const skeletonTable = rightPane.locator('.download-table--skeleton');
-  await expect(skeletonTable).toBeVisible();
-  await expect(skeletonTable.locator('.download-row--skeleton')).toHaveCount(12);
+  await expect(skeletonTable).toHaveCount(0);
   await expect(rightPane.getByText('Loading downloads', { exact: true })).toHaveCount(0);
   await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
 });
@@ -1286,15 +1309,36 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
   const skyuiRow = rightPane.getByRole('row', { name: /SkyUI/ });
   await skyuiRow.dblclick();
 
-  const simpleDialog = page.getByRole('dialog', { name: 'Install mod' });
-  await expect(simpleDialog).toBeVisible();
-  await expect(simpleDialog.getByText('Source')).toBeVisible();
-  await expect(simpleDialog.getByText('Category')).toBeVisible();
-  await expect(simpleDialog.getByText('Install path')).toBeVisible();
-  await simpleDialog.getByRole('button', { name: 'Details' }).click();
-  await expect(page.getByRole('tree', { name: 'Archive placement tree' })).toBeVisible();
-  await page.getByRole('button', { name: 'Apply' }).click();
-  await simpleDialog.getByRole('button', { name: 'Install', exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.map((call) => call.method)
+      )
+    )
+    .toContain('downloads.analyzeContentLayout');
+  const preflightCalls = await page.evaluate(() =>
+    (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+      ?.map((call) => call.method) ?? []
+  );
+  expect(preflightCalls).toContain('downloads.analyzeFomod');
+  expect(preflightCalls).not.toContain('downloads.install');
+
+  const skyuiDialog = page.getByRole('dialog', { name: /SkyUI/ });
+  await expect(skyuiDialog.getByText('SkyUI', { exact: true }).first()).toBeVisible();
+  await expect(skyuiDialog.getByRole('button', { name: 'Подробнее' })).toBeVisible();
+  await expect(skyuiDialog.getByRole('button', { name: 'Установить', exact: true })).toBeVisible();
+  await skyuiDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await expect(skyuiDialog.getByText('Уже есть мод с таким же названием')).toBeVisible();
+  await expect(skyuiDialog.getByRole('button', { name: /Заменить/ })).toBeVisible();
+  await expect(skyuiDialog.getByRole('button', { name: /Объединить/ })).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+        ?.map((call) => call.method) ?? []
+    )
+  ).not.toContain('downloads.install');
+  await skyuiDialog.getByRole('button', { name: /Объединить/ }).click();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -1303,17 +1347,31 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
       )
     )
     .toContain('downloads.install');
+  const downloadInstallCall = await page.evaluate(() =>
+    (window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: { request?: { existingModMode?: number } } }>;
+    }).__fluxoraCalls?.find((call) => call.method === 'downloads.install')
+  );
+  expect(downloadInstallCall?.payload?.request?.existingModMode).toBe(2);
 
   await rightPane.getByRole('button', { name: 'Archive' }).click();
-  const fomodDialog = page.getByRole('dialog', { name: 'Install mod' });
-  await expect(fomodDialog.getByText('FOMOD installer')).toBeVisible();
+  const fomodDialog = page.getByRole('dialog', { name: /Natural Vision Of Tamriel/ });
+  await expect(fomodDialog.getByText('Natural Vision Of Tamriel').first()).toBeVisible();
   await expect(fomodDialog.getByRole('button', { name: /Preset/ })).toBeVisible();
   await expect(fomodDialog.getByText('Full install').first()).toBeVisible();
   await fomodDialog.getByRole('button', { name: 'Next' }).click();
   await expect(fomodDialog.getByRole('button', { name: /Patches/ })).toBeVisible();
   await fomodDialog.getByRole('button', { name: 'Review install' }).click();
-  await expect(page.getByRole('heading', { name: 'Natural Vision Of Tamriel' })).toBeVisible();
-  await page.getByRole('dialog', { name: 'Install mod' }).getByRole('button', { name: 'Install', exact: true }).click();
+  await expect(
+    page
+      .getByRole('dialog', { name: /Natural Vision Of Tamriel/ })
+      .getByText('Natural Vision Of Tamriel', { exact: true })
+      .first()
+  ).toBeVisible();
+  await page
+    .getByRole('dialog', { name: /Natural Vision Of Tamriel/ })
+    .getByRole('button', { name: 'Установить', exact: true })
+    .click();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -1481,15 +1539,16 @@ test('captures phase 13 visual acceptance surfaces across desktop sizes', async 
 
     await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
     await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
-    const simpleDialog = page.getByRole('dialog', { name: 'Install mod' });
+    const simpleDialog = page.getByRole('dialog', { name: /SkyUI/ });
     await expect(simpleDialog).toBeVisible();
-    await expect(simpleDialog.getByText('Install path')).toBeVisible();
+    await expect(simpleDialog.getByRole('button', { name: 'Подробнее' })).toBeVisible();
+    await expect(simpleDialog.getByRole('button', { name: 'Установить', exact: true })).toBeVisible();
     await capturePhase13Screenshot(page, testInfo, 'install-dialog', size);
 
-    await simpleDialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await simpleDialog.getByRole('button', { name: 'Закрыть окно установки' }).click();
     await rightPane.getByRole('button', { name: 'Archive' }).click();
-    const fomodDialog = page.getByRole('dialog', { name: 'Install mod' });
-    await expect(fomodDialog.getByText('FOMOD installer')).toBeVisible();
+    const fomodDialog = page.getByRole('dialog', { name: /Natural Vision Of Tamriel/ });
+    await expect(fomodDialog.getByText('Natural Vision Of Tamriel').first()).toBeVisible();
     await expect(fomodDialog.getByRole('button', { name: /Preset/ })).toBeVisible();
     await capturePhase13Screenshot(page, testInfo, 'fomod-wizard', size);
 

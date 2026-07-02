@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createFluxoraAiTaskPlanningBundle } from '../src/shared/ai-task-planner';
 
 describe('AI task planner and subagent scheduler', () => {
-  it('splits a 20-mod compatibility check into web, build, analysis and report agents', () => {
+  it('splits a 20-mod compatibility check into local-first research, judge and report agents', () => {
     const { subagentSchedule, taskPlan } = createFluxoraAiTaskPlanningBundle(
       'Проверь совместимость этих 20 модов с Nexus dependencies',
       'op_ai_plan_compat',
@@ -11,25 +11,43 @@ describe('AI task planner and subagent scheduler', () => {
     );
 
     expect(taskPlan.schema).toBe('fluxora.ai.task-plan.v1');
-    expect(taskPlan.goal).toContain('web/build/analysis/report agents');
+    expect(taskPlan.goal).toContain('local context, local inspection, Nexus/API, web-if-needed');
     expect(taskPlan.selectedSkill?.selectedSkillId).toBe('nexus-compatibility-check');
     expect(taskPlan.selectedSkill?.selectedSkill?.displayName).toBe('Nexus compatibility check');
     expect(taskPlan.proposedMutations).toEqual([]);
     expect(taskPlan.readSteps.map((step) => step.agentId)).toEqual([
-      'web-research',
       'build-state',
-      'compatibility-analysis',
+      'local-inspector',
+      'nexus-research',
+      'web-research',
+      'compatibility-judge',
       'report'
     ]);
+    expect(taskPlan.readSteps[0]).toMatchObject({
+      id: 'read-build-state',
+      permissionClass: 'read',
+      toolName: 'build.context.read'
+    });
+    expect(taskPlan.readSteps.findIndex((step) => step.agentId === 'web-research')).toBeGreaterThan(
+      taskPlan.readSteps.findIndex((step) => step.agentId === 'nexus-research')
+    );
+    expect(taskPlan.readSteps.find((step) => step.id === 'read-nexus-sources')).toMatchObject({
+      dependsOn: ['inspect-local-evidence']
+    });
+    expect(taskPlan.readSteps.find((step) => step.id === 'read-web-sources')).toMatchObject({
+      dependsOn: ['read-nexus-sources']
+    });
     expect(subagentSchedule.schema).toBe('fluxora.ai.subagent-schedule.v1');
     expect(subagentSchedule.defaultSubagentLimit).toBe(3);
     expect(subagentSchedule.maxSubagentsForLargeTasks).toBe(10);
-    expect(subagentSchedule.requestedSubagentCount).toBe(6);
+    expect(subagentSchedule.requestedSubagentCount).toBe(8);
     expect(subagentSchedule.scheduledSubagents.map((agent) => agent.id)).toEqual(
       expect.arrayContaining([
-        'web-research',
         'build-state',
-        'compatibility-analysis',
+        'local-inspector',
+        'nexus-research',
+        'web-research',
+        'compatibility-judge',
         'report'
       ])
     );

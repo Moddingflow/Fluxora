@@ -113,28 +113,44 @@ const createMutation = (
 
 const compatibilityReadSteps = (): FluxoraAiTaskPlanStep[] => [
   createStep(
-    'read-web-sources',
-    'Collect Nexus and web compatibility sources',
-    'web-research',
-    'external-network',
-    'Use Nexus/API/cache first, then allowlisted web research when policy allows.',
-    { toolName: 'nexus.research' }
-  ),
-  createStep(
     'read-build-state',
-    'Collect current build state',
+    'Collect current build context',
     'build-state',
     'read',
-    'Read installed mods, plugins, downloads, profiles, Nexus status, operations and recent logs.',
+    'Read installed mods, plugins, downloads, profiles, operations, path status and recent logs before external research.',
     { toolName: 'build.context.read' }
   ),
   createStep(
-    'analyze-compatibility',
-    'Compare sources with build constraints',
-    'compatibility-analysis',
+    'inspect-local-evidence',
+    'Inspect local compatibility evidence',
+    'local-inspector',
+    'read',
+    'Check missing masters, failed operations, disabled dependencies, selected build state, bridge/path config, failed downloads/installs and concrete file-conflict evidence.',
+    { dependsOn: ['read-build-state'], toolName: 'local.inspect' }
+  ),
+  createStep(
+    'read-nexus-sources',
+    'Investigate Nexus/API sources only if local evidence is insufficient',
+    'nexus-research',
+    'external-network',
+    'Use Nexus API/cache after the AI host route decides external verification is needed.',
+    { dependsOn: ['inspect-local-evidence'], toolName: 'nexus.research' }
+  ),
+  createStep(
+    'read-web-sources',
+    'Collect non-Nexus web sources only if still needed',
+    'web-research',
+    'external-network',
+    'Use allowlisted non-Nexus web/search only after local and Nexus/API evidence cannot answer the question under policy.',
+    { dependsOn: ['read-nexus-sources'], toolName: 'web.research' }
+  ),
+  createStep(
+    'judge-compatibility',
+    'Judge local and external evidence',
+    'compatibility-judge',
     'plan',
-    'Find dependency, conflict, missing-master and load-order risks without mutating the build.',
-    { dependsOn: ['read-web-sources', 'read-build-state'] }
+    'Compare local findings, Nexus/API facts and any approved web evidence without mutating the build.',
+    { dependsOn: ['inspect-local-evidence', 'read-nexus-sources', 'read-web-sources'] }
   ),
   createStep(
     'prepare-report',
@@ -142,7 +158,7 @@ const compatibilityReadSteps = (): FluxoraAiTaskPlanStep[] => [
     'report',
     'plan',
     'Summarize findings, cite sources and separate confirmed facts from assumptions.',
-    { dependsOn: ['analyze-compatibility'], canRunInParallel: false }
+    { dependsOn: ['judge-compatibility'], canRunInParallel: false }
   )
 ];
 
@@ -224,7 +240,7 @@ const validationSteps = (hasMutations: boolean): FluxoraAiTaskPlanStep[] => [
 const taskGoal = (kind: TaskKind, prompt: string): string => {
   switch (kind) {
     case 'compatibility-check':
-      return 'Check compatibility for the requested mods using web/build/analysis/report agents.';
+      return 'Check compatibility for the requested mods using local context, local inspection, Nexus/API, web-if-needed, judge and report agents.';
     case 'build-preparation':
       return 'Prepare a basic build plan and ask for approval before any mutation.';
     case 'destructive-change':

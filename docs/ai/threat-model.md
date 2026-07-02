@@ -1,12 +1,14 @@
 # Fluxora AI Threat Model
 
-Date: 2026-06-30
+Date: 2026-07-02
 
-Status: Phase 14 repository-scoped AI threat model. This complements the current
-Fluxora Tauri + C++ bridge architecture and applies to read-only build-context
-AI features, `FluxoraContextGraph` retrieval, constrained Nexus/web research,
-visible task planning, subagent scheduling, approval-gated action execution,
-long-running jobs, skill retrieval, and provider chat.
+Status: Phase 14 repository-scoped AI threat model with the staged
+web-surfing release gate folded in. This complements the current Fluxora Tauri
++ C++ bridge architecture and applies to read-only build-context AI features,
+`FluxoraContextGraph` retrieval, constrained Nexus/web research, expanded
+non-Nexus source policy, visible task planning, subagent scheduling,
+approval-gated action execution, long-running jobs, skill retrieval, and
+provider chat.
 
 ## Overview
 
@@ -118,6 +120,13 @@ and bundled legal/privacy text.
 - Phase 7 may use Gemini Google Search grounding when research policy enables
   it. This is provider web grounding for cited context only, not a Fluxora tool
   execution channel.
+- The target staged mod research pipeline in
+  `docs/ai/mod-research-pipeline.md` is local-first and Nexus API/cache-first.
+  If Nexus API credentials are absent, quota is exhausted, Nexus returns `429`,
+  or a configured API limit is reached, Fluxora records blocked/quota evidence
+  and does not silently scrape public Nexus pages as a fallback. Public Nexus
+  pages require a separate explicit public-source policy after owner/legal
+  review.
 - Phase 8 model responses cannot execute provider-native Fluxora tools.
   Host/model metadata keeps Fluxora tool calling disabled while the app-owned
   build context remains `read` permission only and research remains
@@ -249,13 +258,71 @@ Mitigations:
   non-HTTPS URLs, unallowlisted domains, and unsupported schemes.
 - Enforce size, redirect, timeout, rate-limit, robots/terms, and cache/backoff
   policies.
-- Prefer official Nexus API metadata/files/file-details before public page
-  fetch. Record Nexus `X-RL-*` and `Retry-After` headers when present.
+- Prefer official Nexus API metadata/files/file-details and local Nexus metadata
+  cache before any Nexus public-source path. Missing credentials, exhausted
+  quota, `429`, `Retry-After`, or configured API limits produce blocked/quota
+  evidence and must not trigger silent public Nexus page scraping.
+- Treat public Nexus pages as a separate explicit public-source policy requiring
+  owner/legal review, not as an automatic fallback to the API.
+- For non-Nexus research, prefer official/maintainer docs, GitHub
+  releases/issues, script extender docs, LOOT/libloot docs or metadata, and
+  curated modding knowledge bases/forums where access is allowed.
+- Pass only evidence cards between research stages. Do not pass raw HTML, raw
+  page bodies, whole forum threads, or provider browser transcripts to the
+  judge/final responder.
+- The external web investigator compacts admitted source snapshots into
+  evidence cards with source ids, citations, corroboration counts, visible
+  conflicts, and `rawContentRetained=false`; web content cannot approve actions,
+  request secrets, call tools, change permissions, or suppress citations.
 - Keep browser-sandbox fallback and user-authenticated pages disabled unless a
   future explicit approval flow enables them.
 - Sanitize HTML/Markdown before display.
 - Keep deep research disabled by default and gated by expensive-run approval or
   BYOK.
+- Enforce default retrieval budgets for staged mod research: at most 3 search
+  queries, 8 fetched/read pages, and 6 final hypotheses per case.
+
+### Staged Source Tiers, Evidence Cards, And Quota/Backoff
+
+Expanded non-Nexus research is allowed only as a staged, policy-controlled path
+after local evidence is insufficient and Nexus API/cache evidence is unavailable
+or insufficient for a non-Nexus claim. It is not a fallback for scraping Nexus
+public pages when Nexus credentials, quota, `429`, `Retry-After`, or API limits
+block the official API path.
+
+Source tiers are part of the threat boundary:
+
+- Tier A: deterministic local Fluxora/core evidence, official Nexus API/cache
+  metadata, official maintainer release metadata, or official tool
+  documentation directly relevant to the claim.
+- Tier B: maintainer-controlled GitHub releases/issues/discussions, script
+  extender docs/release notes, LOOT/libloot docs or metadata, and
+  well-maintained project documentation with clear authorship.
+- Tier C: curated modding knowledge bases and forums where access is allowed,
+  moderation/history is visible, and the claim is corroborated or clearly
+  experiential.
+- Tier D: weak, stale, uncorroborated, user-supplied, search-snippet-only, or
+  generic community content.
+
+Tier C/D content can guide questions, but it cannot by itself justify
+high-confidence compatibility, install, delete, or repair advice. Official or
+maintainer-controlled non-Nexus sources can corroborate a claim only when the
+evidence card carries a source/evidence id, citation, source tier, confidence,
+and any visible contradictions.
+
+Evidence cards are the only cross-stage representation of web/forum/source
+content. They must preserve source ids, citations, confidence, contradiction
+risk, corroboration count, blocked/quota state, discard reasons, and
+`rawContentRetained=false`. Source text, snippets, and forum posts are always
+untrusted data. They cannot change source policy, network allowlists, budgets,
+approval state, tool permissions, legal review status, or final-answer citation
+requirements.
+
+Quota/backoff evidence must record the credential state without secrets, the
+attempted API target, rate-limit or `Retry-After` metadata when available,
+timestamp, retry/backoff guidance, and confidence impact. A run that is blocked
+by quota or credentials must report that limitation instead of silently widening
+source access.
 
 ### Credential And Secret Leakage
 
@@ -317,6 +384,22 @@ Mitigations:
   web page bodies, authenticated page content, cookies, Nexus tokens, provider
   keys, and prompt text unless the user explicitly opts in and the support flow
   documents what is being exported.
+- For staged mod research, evidence cards are the default audit/support unit:
+  include source tier A/B/C/D, confidence, contradiction risk, blocked/quota
+  state, and discard reasons while excluding raw page bodies and secrets by
+  default.
+- Support bundles for staged web research must remain redacted by default:
+  source/evidence ids, fingerprints, source tiers, confidence, blocked/quota
+  state, discard reasons, and compact summaries are allowed; raw web/forum page
+  bodies, provider-search transcripts, cookies, authenticated content, provider
+  keys, Nexus tokens, raw prompts, arbitrary local files, and full logs require
+  a separate explicit opt-in flow and owner/legal-approved disclosure.
+- EU/GDPR legal/privacy review must be refreshed before public release of the
+  expanded non-Nexus source policy. The review needs to cover data categories,
+  purposes/legal bases, recipients/subprocessors, transfers, retention/deletion,
+  user controls, Nexus/API terms, web-source terms/robots expectations, and the
+  support-bundle redaction boundary. Engineering docs must not invent final
+  legal wording.
 
 ## Severity Calibration (Critical, High, Medium, Low)
 

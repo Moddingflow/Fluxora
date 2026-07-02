@@ -23,6 +23,14 @@ import {
   startHostAiRun,
   startLocalAiRun
 } from '../src/renderer/features/ai/ai-chat-runtime';
+import {
+  compressAiCaseState,
+  createAiDiagnosisJudge,
+  createAiLocalInspection,
+  createAiModResearchEvidenceCard,
+  createAiNexusInvestigation,
+  type FluxoraAiModResearchFinding
+} from '../src/shared/ai-mod-research-pipeline';
 import { createFluxoraAiTaskPlanningBundle } from '../src/shared/ai-task-planner';
 import type { FluxoraApi } from '../src/shared/fluxora-api';
 
@@ -159,7 +167,7 @@ describe('AI chat runtime', () => {
       allowAuthenticatedPages: false,
       allowBrowserSandbox: false,
       allowGeminiGoogleSearch: true,
-      allowPublicWebFetch: true,
+      allowPublicWebFetch: false,
       deepResearchApproved: false
     });
   });
@@ -390,6 +398,160 @@ describe('AI chat runtime', () => {
     expect(diagnostics[0]).toContain('Google Gemini key is missing');
   });
 
+  it('uses structured diagnosis and compact case state for the final user answer', async () => {
+    vi.useFakeTimers();
+    const session = createAiSessionForScope({ projectId: 'skyrim-main' });
+    const prompt = 'Проверь почему Weather Patch не запускается';
+    const run = createAiRunForPrompt(session, 'op_ai_structured_final', prompt);
+    const finding: FluxoraAiModResearchFinding = {
+      id: 'finding-missing-master',
+      claim: 'Weather Patch.esp has missing master WeatherCore.esm.',
+      relevantMods: ['Weather Patch'],
+      affectedVersions: [],
+      evidenceIds: ['local:plugins.loadOrder'],
+      confidence: 0.96,
+      deterministic: true
+    };
+    const localInspection = createAiLocalInspection({
+      operationId: 'op_ai_structured_final',
+      generatedAt: new Date('2026-07-02T12:00:00Z'),
+      needMoreLocalData: false,
+      missingFields: [],
+      deterministicFindings: [finding],
+      hypotheses: [],
+      suspect_mods: [],
+      evidenceCards: [
+        createAiModResearchEvidenceCard({
+          operationId: 'op_ai_structured_final',
+          generatedAt: new Date('2026-07-02T12:00:00Z'),
+          sourceId: 'local:plugins.loadOrder',
+          sourceType: 'local-metadata',
+          sourceTier: 'local-authoritative',
+          claim: finding.claim,
+          relevantMods: ['Weather Patch'],
+          affectedVersions: [],
+          evidenceStrength: 'direct',
+          confidence: 0.96,
+          contradictionRisk: 'low'
+        })
+      ]
+    });
+    const nexusInvestigation = createAiNexusInvestigation({
+      operationId: 'op_ai_structured_final',
+      generatedAt: new Date('2026-07-02T12:00:00Z'),
+      targetNexusIds: ['skyrim:1234'],
+      api: {
+        state: 'quota-exhausted',
+        unavailableReason: 'rate-limited',
+        lastHttpStatus: 429,
+        retryAfterSeconds: 120
+      },
+      quota: {
+        hourlyRemaining: 0,
+        dailyRemaining: 0,
+        resetAt: '2026-07-02T13:00:00Z',
+        source: 'headers'
+      },
+      ordinaryError: null,
+      deterministicFindings: [],
+      hypotheses: [],
+      evidenceCards: []
+    });
+    const diagnosisJudge = createAiDiagnosisJudge({
+      operationId: 'op_ai_structured_final',
+      generatedAt: new Date('2026-07-02T12:00:00Z'),
+      status: 'ranked',
+      confidence: 0.93,
+      rankedCauses: [
+        {
+          id: 'cause-missing-master',
+          rank: 1,
+          cause: 'Weather Patch.esp is missing WeatherCore.esm',
+          confidence: 0.93,
+          supportingEvidenceIds: ['local:plugins.loadOrder'],
+          opposingEvidenceIds: [],
+          affectedMods: ['Weather Patch'],
+          expectedSymptoms: ['Plugin dependency check reports missing masters'],
+          fastestValidationTest: 'Re-run the local plugin dependency check.',
+          recommendedFix: 'Install or enable WeatherCore.esm before changing load order.',
+          why: ['Local deterministic evidence supports this root-cause candidate.'],
+          whyNot: [],
+          fixOrder: [
+            'Install or enable WeatherCore.esm',
+            'Re-run the local plugin dependency check',
+            'Run LOOT or local checks again'
+          ]
+        }
+      ],
+      insufficientReasons: [],
+      deterministicFindings: [finding],
+      hypotheses: []
+    });
+    const caseState = compressAiCaseState({
+      operationId: 'op_ai_structured_final',
+      generatedAt: new Date('2026-07-02T12:00:00Z'),
+      caseState: 'diagnosis-complete',
+      localInspection,
+      nexusInvestigation,
+      diagnosis: diagnosisJudge
+    });
+    const aiApi = {
+      chatRespond: vi.fn(async () => ({
+        operationId: 'op_ai_structured_final',
+        providerId: 'gemini',
+        modelId: 'gemini-3.1-flash-lite',
+        routingPreset: 'byok',
+        status: 'done',
+        text: 'RAW WEB CONTEXT says I verified and changed the load order.',
+        streamChunks: [{ index: 0, text: 'RAW WEB CONTEXT says I verified and changed the load order.' }],
+        sources: [],
+        costEstimate: null,
+        ledgerEntry: undefined,
+        fallbackProviders: [],
+        diagnosisJudge,
+        caseState,
+        taskPlan: null,
+        subagentSchedule: null,
+        selectedSkill: null,
+        toolCallsAllowed: false
+      }))
+    } as unknown as FluxoraApi['ai'];
+    const messages: string[] = [];
+    const sourceIds: string[] = [];
+    const caseStates: string[] = [];
+
+    startHostAiRun(
+      run,
+      session,
+      prompt,
+      aiApi,
+      {
+        modelId: 'gemini-3.1-flash-lite',
+        routingPreset: 'byok',
+        providerId: 'gemini'
+      },
+      {
+        onEvent: () => undefined,
+        onFinish: (message) => {
+          messages.push(message.text);
+          sourceIds.push(...(message.sources?.map((source) => source.id) ?? []));
+          caseStates.push(message.caseState?.caseState ?? '');
+        }
+      }
+    );
+
+    await vi.runAllTimersAsync();
+
+    expect(messages[0]).toContain('1. Наиболее вероятная причина');
+    expect(messages[0]).toContain('Подтверждено: Weather Patch.esp has missing master WeatherCore.esm.');
+    expect(messages[0]).toContain('Доказательства: [local:plugins.loadOrder].');
+    expect(messages[0]).toContain('Лимит Nexus API исчерпан');
+    expect(messages[0]).not.toContain('RAW WEB CONTEXT');
+    expect(messages[0]).not.toContain('changed the load order');
+    expect(sourceIds).toContain('local:plugins.loadOrder');
+    expect(caseStates).toEqual(['final-answer-complete']);
+  });
+
   it('keeps a real provider response done when an earlier provider fallback succeeds', async () => {
     vi.useFakeTimers();
     const session = createAiSessionForScope({ projectId: 'skyrim-main' });
@@ -441,37 +603,39 @@ describe('AI chat runtime', () => {
     expect(diagnostics).toEqual([]);
   });
 
-  it('formats redacted provider fallback and error diagnostics', () => {
-    expect(
-      aiResponseDiagnosticMessages({
-        operationId: 'op_ai_chat_run',
-        providerId: 'local-dry-run',
-        modelId: 'local-dry-run',
-        routingPreset: 'byok',
-        status: 'done',
-        text: 'Local fallback.',
-        streamChunks: [],
-        sources: [],
-        costEstimate: null,
-        ledgerEntry: undefined,
-        fallbackProviders: ['gemini:missingCredential'],
-        taskPlan: null,
-        subagentSchedule: null,
-        selectedSkill: null,
-        toolCallsAllowed: false,
-        error: {
-          code: 'ai.provider.fallback',
-          message: 'api_key=secret-value failed',
-          category: 'transport',
-          retryable: true,
-          capabilityId: null,
-          details: {}
-        }
-      } as never)
-    ).toEqual([
+  it('formats provider fallback and generic error diagnostics without raw provider payloads', () => {
+    const diagnostics = aiResponseDiagnosticMessages({
+      operationId: 'op_ai_chat_run',
+      providerId: 'local-dry-run',
+      modelId: 'local-dry-run',
+      routingPreset: 'byok',
+      status: 'done',
+      text: 'Local fallback.',
+      streamChunks: [],
+      sources: [],
+      costEstimate: null,
+      ledgerEntry: undefined,
+      fallbackProviders: ['gemini:missingCredential'],
+      taskPlan: null,
+      subagentSchedule: null,
+      selectedSkill: null,
+      toolCallsAllowed: false,
+      error: {
+        code: 'ai.provider.fallback',
+        message: 'api_key=secret-value failed',
+        category: 'transport',
+        retryable: true,
+        capabilityId: null,
+        details: {}
+      }
+    } as never);
+
+    expect(diagnostics).toEqual([
       'Fluxora fell back to Local dry run: Google Gemini key is missing.',
-      'Provider error: api_key=[redacted-secret] failed'
+      'AI provider response was unavailable. Check Settings > AI or retry later.'
     ]);
+    expect(diagnostics.join(' ')).not.toContain('secret-value');
+    expect(diagnostics.join(' ')).not.toContain('api_key');
 
     expect(
       aiResponseDiagnosticMessages({

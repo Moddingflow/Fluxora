@@ -154,6 +154,7 @@ const transferDrives: FluxoraTransferDriveOption[] = [
 const nexusStatus: FluxoraNexusModsAuthStatus = {
   isConfigured: true,
   isLinked: true,
+  hasApiKey: true,
   displayName: 'Valerii',
   userId: '123',
   message: 'Linked',
@@ -253,6 +254,9 @@ describe('settings workspace state', () => {
     expect(nexusActionLabel(nexusStatus)).toBe('Disconnect Nexus Mods');
     expect(nexusCanToggle(nexusStatus, true)).toBe(true);
     expect(nexusCanToggle({ ...nexusStatus, isConfigured: false, isLinked: false }, true)).toBe(false);
+    expect(nexusConnectionSummary({ ...nexusStatus, hasApiKey: false })).toBe(
+      'Linked - Valerii'
+    );
   });
 
   it('summarizes platform support from bridge capabilities', () => {

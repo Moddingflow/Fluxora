@@ -1773,6 +1773,18 @@ namespace
             });
     }
 
+    std::wstring payloadConnectNexusWithApiKey(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring apiKey = requiredStringField(params, L"apiKey");
+        return payloadFromCoreJson(
+            L"core.nexusConnectApiKeyFailed",
+            [&apiKey](wchar_t* buffer, int length)
+            {
+                return fluxora_connect_nexusmods_with_api_key(apiKey.c_str(), buffer, length);
+            });
+    }
+
     std::wstring payloadDisconnectNexus()
     {
         return payloadFromCoreJson(
@@ -2419,6 +2431,10 @@ namespace
         if (request.method == L"nexus.connect")
         {
             return payloadConnectNexus();
+        }
+        if (request.method == L"nexus.connectWithApiKey")
+        {
+            return payloadConnectNexusWithApiKey(request);
         }
         if (request.method == L"nexus.disconnect")
         {
