@@ -22,6 +22,7 @@ export type { FluxoraSkillCatalog, FluxoraSkillSelection } from './ai-skills';
 
 export const FluxoraIpcChannels = {
   aiChatRespond: 'fluxora:ai:chat-respond',
+  aiEstimateContext: 'fluxora:ai:estimate-context',
   aiConnectProvider: 'fluxora:ai:connect-provider',
   aiDisconnectProvider: 'fluxora:ai:disconnect-provider',
   aiGetStatus: 'fluxora:ai:get-status',
@@ -369,6 +370,42 @@ export interface FluxoraAiChatRequest extends OperationRequest {
   research?: FluxoraAiResearchRequest;
   routingPreset?: FluxoraAiRoutingPreset;
   stream?: boolean;
+}
+
+export type FluxoraAiContextUsagePrecision = 'exact' | 'estimated';
+
+export type FluxoraAiContextUsageLevel =
+  | 'normal'
+  | 'moderate'
+  | 'warning'
+  | 'critical'
+  | 'almost-full';
+
+export type FluxoraAiContextUsageMode = 'full' | 'smart' | 'compressed' | 'strict';
+
+export interface FluxoraAiContextUsage {
+  schema: 'fluxora.ai.context-usage.v1';
+  operationId: string;
+  providerId: string;
+  modelId: string;
+  contextWindowTokens: number;
+  currentContextTokens: number;
+  currentContextPercent: number;
+  precision: FluxoraAiContextUsagePrecision;
+  level: FluxoraAiContextUsageLevel;
+  mode: FluxoraAiContextUsageMode;
+  includedSections: string[];
+  autoCompressionApplied: boolean;
+  actionRequired: boolean;
+  countedAt: string;
+}
+
+export interface FluxoraAiTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  contextTokensBeforeRequest: number;
+  source: 'gemini-count-tokens' | 'gemini-usage-metadata' | 'chars-per-token-estimate';
 }
 
 export interface FluxoraAiCitation {
@@ -895,6 +932,8 @@ export interface FluxoraAiChatResponse {
   ledgerEntry: FluxoraAiCostLedgerEntry;
   marginTelemetry: FluxoraAiMarginTelemetry;
   routingDecision: FluxoraAiRoutingDecision;
+  contextUsage?: FluxoraAiContextUsage | null;
+  tokenUsage?: FluxoraAiTokenUsage | null;
   modResearchRoute?: FluxoraAiModResearchRoute | null;
   localInspection?: FluxoraAiLocalInspection | null;
   nexusInvestigation?: FluxoraAiNexusInvestigation | null;
@@ -1323,6 +1362,7 @@ export interface FluxoraPluginOrderItem {
   separatorTitle: string;
   extension: string;
   sourceMod: string;
+  path?: string;
   isEnabled: boolean;
   isMaster: boolean;
   isLight: boolean;
@@ -1735,6 +1775,7 @@ export interface FluxoraApi {
   };
   ai: {
     chatRespond: (request: FluxoraAiChatRequest) => Promise<FluxoraAiChatResponse>;
+    estimateContext: (request: FluxoraAiChatRequest) => Promise<FluxoraAiContextUsage>;
     getStatus: (request?: OperationRequest) => Promise<FluxoraAiHostStatus>;
     restartHost: (request?: OperationRequest) => Promise<FluxoraAiHostStatus>;
     listSafeActions: () => Promise<AiSafeActionCatalog>;

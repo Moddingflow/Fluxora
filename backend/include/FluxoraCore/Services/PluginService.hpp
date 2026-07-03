@@ -23,6 +23,7 @@ namespace fluxora
         std::wstring name;
         std::wstring extension;
         std::wstring sourceMod;
+        std::filesystem::path path;
         bool isEnabled{true};
         bool isMaster{false};
         bool isLight{false};

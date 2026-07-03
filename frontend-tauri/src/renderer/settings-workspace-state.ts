@@ -11,7 +11,7 @@ import type {
   NativeBridgeStatus
 } from '../shared/fluxora-api';
 
-export type SettingsSectionId = 'connections' | 'ai' | 'language' | 'transfer';
+export type SettingsSectionId = 'connections' | 'language' | 'transfer' | 'developers';
 
 export interface SettingsSection {
   id: SettingsSectionId;
@@ -26,11 +26,6 @@ export const settingsSections: SettingsSection[] = [
     hint: ''
   },
   {
-    id: 'ai',
-    label: 'AI',
-    hint: 'Model'
-  },
-  {
     id: 'language',
     label: 'Languages',
     hint: 'EN / RU / DE'
@@ -39,8 +34,63 @@ export const settingsSections: SettingsSection[] = [
     id: 'transfer',
     label: 'Transfer',
     hint: 'MO2 import'
+  },
+  {
+    id: 'developers',
+    label: 'Для разработчиков',
+    hint: 'Debug'
   }
 ];
+
+export const developerModeStorageKey = 'fluxora.settings.developerMode';
+
+export const fluxoraOriginalRepositoryUrl = 'https://github.com/WhistleSkyrim/Fluxora';
+
+export const loadDeveloperModeSetting = (
+  storage: Pick<Storage, 'getItem'> | null | undefined
+): boolean => {
+  try {
+    return storage?.getItem(developerModeStorageKey) === 'true';
+  } catch {
+    return false;
+  }
+};
+
+export const saveDeveloperModeSetting = (
+  storage: Pick<Storage, 'setItem'> | null | undefined,
+  enabled: boolean
+): void => {
+  try {
+    storage?.setItem(developerModeStorageKey, enabled ? 'true' : 'false');
+  } catch {
+    // Local storage can be unavailable in restricted preview contexts.
+  }
+};
+
+const formatUtcPart = (value: number): string => value.toString().padStart(2, '0');
+
+export const formatLastBuildDate = (value: string | null | undefined): string => {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return 'pending';
+  }
+
+  const date = new Date(trimmed);
+  if (Number.isNaN(date.getTime())) {
+    return trimmed;
+  }
+
+  const datePart = [
+    date.getUTCFullYear(),
+    formatUtcPart(date.getUTCMonth() + 1),
+    formatUtcPart(date.getUTCDate())
+  ].join('-');
+  const timePart = [
+    formatUtcPart(date.getUTCHours()),
+    formatUtcPart(date.getUTCMinutes())
+  ].join(':');
+  return `${datePart} ${timePart} UTC`;
+};
 
 export interface LanguageOption {
   code: string;

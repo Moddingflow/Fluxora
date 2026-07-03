@@ -2022,6 +2022,79 @@ fn ai_connection_result(
     })
 }
 
+fn ai_context_usage_level(percent: f64) -> &'static str {
+    if percent >= 97.0 {
+        "almost-full"
+    } else if percent >= 92.0 {
+        "critical"
+    } else if percent >= 80.0 {
+        "warning"
+    } else if percent >= 60.0 {
+        "moderate"
+    } else {
+        "normal"
+    }
+}
+
+fn ai_context_usage_mode(percent: f64) -> &'static str {
+    if percent >= 95.0 {
+        "strict"
+    } else if percent >= 85.0 {
+        "compressed"
+    } else if percent >= 70.0 {
+        "smart"
+    } else {
+        "full"
+    }
+}
+
+fn ai_request_context_window_tokens(request: &Value) -> u64 {
+    match request.get("modelId").and_then(Value::as_str) {
+        Some("local-dry-run") | None => 8_192,
+        _ => 1_000_000,
+    }
+}
+
+fn ai_request_estimated_context_tokens(request: &Value) -> u64 {
+    let chars = request
+        .get("messages")
+        .and_then(Value::as_array)
+        .map(|messages| {
+            messages
+                .iter()
+                .filter_map(|message| message.get("text").and_then(Value::as_str))
+                .map(|text| text.chars().count() as u64)
+                .sum::<u64>()
+        })
+        .unwrap_or_default();
+
+    std::cmp::max(1, (chars + 3) / 4)
+}
+
+fn ai_context_usage_fallback(request: &Value, operation_id: &str) -> Value {
+    let context_window_tokens = ai_request_context_window_tokens(request);
+    let current_context_tokens = ai_request_estimated_context_tokens(request);
+    let percent =
+        ((current_context_tokens as f64 / context_window_tokens as f64) * 100.0).min(100.0);
+
+    json!({
+        "schema": "fluxora.ai.context-usage.v1",
+        "operationId": operation_id,
+        "providerId": request.get("providerId").and_then(Value::as_str).unwrap_or("local-dry-run"),
+        "modelId": request.get("modelId").and_then(Value::as_str).unwrap_or("local-dry-run"),
+        "contextWindowTokens": context_window_tokens,
+        "currentContextTokens": current_context_tokens,
+        "currentContextPercent": percent,
+        "precision": "estimated",
+        "level": ai_context_usage_level(percent),
+        "mode": ai_context_usage_mode(percent),
+        "includedSections": ["messages", "tauri-shell-fallback"],
+        "autoCompressionApplied": false,
+        "actionRequired": percent >= 97.0,
+        "countedAt": now_millis().to_string()
+    })
+}
+
 async fn ai_status_payload(app: &AppHandle, request: OperationRequest) -> Value {
     let operation_id = operation_id(Some(&request), "ai_status");
     let state = ai_host_state(app);
@@ -2463,6 +2536,64 @@ async fn fluxora_ai_test_provider(
                 "checkedAt": now_millis(),
                 "modelIds": []
             }))
+        }
+    }
+}
+
+#[tauri::command]
+async fn fluxora_ai_estimate_context(app: AppHandle, request: Value) -> Result<Value, String> {
+    let operation_id = request
+        .get("operationId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| operation_id(None, "ai_context_estimate"));
+    let operation_request = OperationRequest {
+        operation_id: Some(operation_id.clone()),
+    };
+    let state = ai_host_state(&app);
+    let mut host = state.process.lock().await;
+    let result = host
+        .request(
+            &app,
+            "chat.estimateContext",
+            request.clone(),
+            operation_request,
+            AI_HOST_TIMEOUT_MS,
+        )
+        .await;
+
+    match result {
+        Ok(mut data) => {
+            if let Value::Object(fields) = &mut data {
+                fields.insert("operationId".to_string(), json!(operation_id.clone()));
+            }
+            let _ = write_log(
+                &app,
+                "ai-host",
+                "info",
+                "AiContextEstimate",
+                "AI context estimate completed.",
+                Some(&operation_id),
+            )
+            .await;
+            Ok(data)
+        }
+        Err(error) => {
+            let safe_error = sanitize_log(&error);
+            let _ = write_log(
+                &app,
+                "ai-host",
+                "warning",
+                "AiContextEstimate",
+                &format!(
+                    "AI context estimate used local fallback. reason={}",
+                    safe_error
+                ),
+                Some(&operation_id),
+            )
+            .await;
+            Ok(ai_context_usage_fallback(&request, &operation_id))
         }
     }
 }
@@ -3881,6 +4012,7 @@ pub fn run() {
             fluxora_ai_connect_provider,
             fluxora_ai_disconnect_provider,
             fluxora_ai_test_provider,
+            fluxora_ai_estimate_context,
             fluxora_ai_chat_respond,
             fluxora_bridge_request,
             fluxora_bridge_status,

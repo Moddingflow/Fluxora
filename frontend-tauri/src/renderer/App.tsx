@@ -1,7 +1,5 @@
 import {
   AlertTriangle,
-  ArrowDown,
-  ArrowUp,
   Box,
   CheckCircle2,
   ChevronDown,
@@ -72,6 +70,7 @@ import {
 } from './features/ai/ai-chat-state';
 import {
   aiSessionStorageKey,
+  createAiHostChatRequest,
   createAiSupportBundleSnapshot,
   createAiSessionForScope,
   createAiRunForPrompt,
@@ -216,6 +215,9 @@ import {
 import {
   normalizeThemeMode,
   selectPreferredTransferDrive,
+  fluxoraOriginalRepositoryUrl,
+  loadDeveloperModeSetting,
+  saveDeveloperModeSetting,
   settingsCapabilityView,
   type SettingsSectionId
 } from './settings-workspace-state';
@@ -517,6 +519,11 @@ const overwriteClearMessages = [
   'Обновляем список модов',
   'Почти готово'
 ] as const;
+
+const rendererBuildDate =
+  typeof import.meta.env.VITE_FLUXORA_BUILD_DATE === 'string'
+    ? import.meta.env.VITE_FLUXORA_BUILD_DATE
+    : '';
 
 const projectMatchesSelection = (project: FluxoraProject, selection: string): boolean =>
   project.id === selection ||
@@ -876,6 +883,9 @@ export const App = () => {
   const [languageBusy, setLanguageBusy] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<FluxoraThemeMode>('dark');
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('connections');
+  const [developerModeEnabled, setDeveloperModeEnabled] = useState(() =>
+    loadDeveloperModeSetting(window.localStorage)
+  );
   const [settingsBusyLabel, setSettingsBusyLabel] = useState<string | null>(null);
   const [nexusStatus, setNexusStatus] = useState<FluxoraNexusModsAuthStatus | null>(null);
   const [nexusBusy, setNexusBusy] = useState(false);
@@ -2044,6 +2054,24 @@ export const App = () => {
     }
   };
 
+  const openPluginInExplorer = async (item: FluxoraPluginOrderItem) => {
+    if (!item.isPlugin) {
+      return;
+    }
+
+    const path = item.path?.trim();
+
+    if (!path) {
+      setMessage(`Plugin location is not reported for ${pluginItemTitle(item)}.`);
+      return;
+    }
+
+    const result = await window.fluxora.shell.showItemInFolder(path);
+    if (!result.ok) {
+      setMessage(result.message ?? 'Plugin location could not be opened.');
+    }
+  };
+
   const openModDetailsWindow = async (item: FluxoraModOrderItem) => {
     if (!selectedProject || !item.isMod) {
       return;
@@ -2808,7 +2836,9 @@ export const App = () => {
 
     if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
       event.preventDefault();
-      dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
+      if (!modsWorkspace.selectedOrderIds.has(item.orderId)) {
+        dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
+      }
       setModMenuPosition(
         rowContextMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
       );
@@ -2842,7 +2872,9 @@ export const App = () => {
 
     if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
       event.preventDefault();
-      dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
+      if (!pluginsWorkspace.selectedOrderIds.has(item.orderId)) {
+        dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
+      }
       setPluginMenuPosition(
         rowContextMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
       );
@@ -4507,8 +4539,7 @@ export const App = () => {
   }, [aiHostStatus]);
 
   useEffect(() => {
-    const shouldLoadAiStatus = aiChat.isOpen || activeRoute === 'settings' || isSettingsWindow;
-    if (!shouldLoadAiStatus || (isSecondaryWindow && !isSettingsWindow)) {
+    if (!aiChat.isOpen || isSecondaryWindow) {
       return;
     }
 
@@ -4547,7 +4578,7 @@ export const App = () => {
     return () => {
       isCurrent = false;
     };
-  }, [activeRoute, aiChat.isOpen, isSecondaryWindow, isSettingsWindow]);
+  }, [aiChat.isOpen, isSecondaryWindow]);
 
   useEffect(
     () => () => {
@@ -7052,6 +7083,8 @@ export const App = () => {
       return null;
     }
 
+    const hasMultipleSelectedModRows = modsWorkspace.selectedOrderIds.size > 1;
+
     if (isModOverwriteItem(item)) {
       return createPortal(
         <div
@@ -7078,17 +7111,19 @@ export const App = () => {
             <MenuIcon source={menuTrashIcon} />
             <span>Очистить папку перезаписи</span>
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setModMenuOrderId(null);
-              void openOverwriteFolder();
-            }}
-          >
-            <MenuIcon source={menuFolderOpenIcon} />
-            <span>Открыть в проводнике</span>
-          </button>
+          {!hasMultipleSelectedModRows ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setModMenuOrderId(null);
+                void openOverwriteFolder();
+              }}
+            >
+              <MenuIcon source={menuFolderOpenIcon} />
+              <span>Открыть в проводнике</span>
+            </button>
+          ) : null}
         </div>,
         document.body
       );
@@ -7200,7 +7235,7 @@ export const App = () => {
             </button>
           </>
         ) : null}
-        {item.isMod ? (
+        {item.isMod && !hasMultipleSelectedModRows ? (
           <button
             type="button"
             role="menuitem"
@@ -7405,7 +7440,9 @@ export const App = () => {
                 }}
                 onContextMenu={(event) => {
                   event.preventDefault();
-                  dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
+                  if (!modsWorkspace.selectedOrderIds.has(item.orderId)) {
+                    dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
+                  }
                   setModMenuPosition(
                     rowContextMenuPositionFromPointer(event.clientX, event.clientY)
                   );
@@ -7885,9 +7922,7 @@ export const App = () => {
       return null;
     }
 
-    const canMoveItem =
-      pluginCapabilities.loadOrderSupported &&
-      canDragPluginOrderItem(pluginsWorkspace.items, item.orderId);
+    const hasMultipleSelectedPluginRows = pluginsWorkspace.selectedOrderIds.size > 1;
     const isCollapsed =
       item.isSeparator && pluginsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
     const pluginSeparatorOrderIds = item.isSeparator
@@ -7915,6 +7950,19 @@ export const App = () => {
       >
         {item.isPlugin ? (
           <>
+            {!hasMultipleSelectedPluginRows ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setPluginMenuOrderId(null);
+                  void openPluginInExplorer(item);
+                }}
+              >
+                <MenuIcon source={menuFolderOpenIcon} />
+                <span>Открыть в проводнике</span>
+              </button>
+            ) : null}
             <button
               type="button"
               role="menuitem"
@@ -7983,32 +8031,6 @@ export const App = () => {
             </button>
           </>
         ) : null}
-        {item.isPlugin ? (
-          <>
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!canMoveItem}
-              onClick={() => {
-                setPluginMenuOrderId(null);
-                void movePluginOrderItem(item, -1);
-              }}
-            >
-              Move up
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!canMoveItem}
-              onClick={() => {
-                setPluginMenuOrderId(null);
-                void movePluginOrderItem(item, 1);
-              }}
-            >
-              Move down
-            </button>
-          </>
-        ) : null}
         {item.isSeparator ? (
           <button
             className="mod-row-menu__danger"
@@ -8043,7 +8065,6 @@ export const App = () => {
         <span role="columnheader">Type</span>
         <span role="columnheader">Source</span>
         <span role="columnheader">Статус</span>
-        <span role="columnheader">Actions</span>
       </div>
       <div className="mod-table__body mod-table__body--loading">
         {pluginLoadingSkeletonRows.map((index) => (
@@ -8072,11 +8093,6 @@ export const App = () => {
             <span className="workspace-skeleton workspace-skeleton--badge" role="cell" />
             <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
             <span className="workspace-skeleton workspace-skeleton--status" role="cell" />
-            <div className="row-actions mod-actions" role="cell">
-              <span className="workspace-skeleton workspace-skeleton--action" />
-              <span className="workspace-skeleton workspace-skeleton--action" />
-              <span className="workspace-skeleton workspace-skeleton--action" />
-            </div>
           </div>
         ))}
       </div>
@@ -8121,7 +8137,6 @@ export const App = () => {
           <span role="columnheader">Type</span>
           <span role="columnheader">Source</span>
           <span role="columnheader">Статус</span>
-          <span role="columnheader">Actions</span>
         </div>
         <div
           className="mod-table__body"
@@ -8206,7 +8221,9 @@ export const App = () => {
                 }}
                 onContextMenu={(event) => {
                   event.preventDefault();
-                  dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
+                  if (!pluginsWorkspace.selectedOrderIds.has(item.orderId)) {
+                    dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
+                  }
                   setPluginMenuPosition(
                     rowContextMenuPositionFromPointer(event.clientX, event.clientY)
                   );
@@ -8317,56 +8334,7 @@ export const App = () => {
                     />
                   ) : null}
                 </span>
-                <div className="row-actions mod-actions" role="cell" data-menu-open={isMenuOpen}>
-                  <button
-                    className="icon-button"
-                    type="button"
-                    title="Move up"
-                    disabled={!canDragPluginRow}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void movePluginOrderItem(item, -1);
-                    }}
-                  >
-                    <ArrowUp size={16} aria-hidden="true" />
-                  </button>
-                  <button
-                    className="icon-button"
-                    type="button"
-                    title="Move down"
-                    disabled={!canDragPluginRow}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void movePluginOrderItem(item, 1);
-                    }}
-                  >
-                    <ArrowDown size={16} aria-hidden="true" />
-                  </button>
-                  <button
-                    className="icon-button"
-                    type="button"
-                    title="Actions"
-                    data-row-context-menu-trigger="true"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
-                      const nextPosition = rowContextMenuPositionFromAnchor(
-                        event.currentTarget.getBoundingClientRect()
-                      );
-                      setPluginMenuOrderId((current) => {
-                        if (current === item.orderId) {
-                          return null;
-                        }
-
-                        setPluginMenuPosition(nextPosition);
-                        return item.orderId;
-                      });
-                    }}
-                  >
-                    <MoreHorizontal size={16} aria-hidden="true" />
-                  </button>
-                  {isMenuOpen ? renderPluginRowMenu(item) : null}
-                </div>
+                {isMenuOpen ? renderPluginRowMenu(item) : null}
               </div>
             );
           })}
@@ -10332,25 +10300,30 @@ export const App = () => {
     }
   };
 
+  const setDeveloperMode = (enabled: boolean) => {
+    setDeveloperModeEnabled(enabled);
+    saveDeveloperModeSetting(window.localStorage, enabled);
+  };
+
+  const openOriginalRepository = () => {
+    void window.fluxora.links.openExternal(fluxoraOriginalRepositoryUrl);
+  };
+
   const renderSettingsWorkspace = () => (
     <SettingsWorkspace
-      aiHostStatus={aiHostStatus}
-      aiSettings={aiChatSettings}
+      appInfo={appInfo}
       bridgeStatus={bridgeStatus}
+      developerModeEnabled={developerModeEnabled}
       isTransferRunning={isTransferRunning}
       languageBusy={languageBusy}
+      lastBuildDate={rendererBuildDate}
       nexusBusy={nexusBusy}
       nexusStatus={nexusStatus}
+      onDeveloperModeChange={setDeveloperMode}
+      onOpenRepository={openOriginalRepository}
       section={settingsSection}
       settingsBusyLabel={settingsBusyLabel}
       settingsCapabilities={settingsCapabilities}
-      onAiSettingsChange={(settings) =>
-        setAiChatSettings(normalizeAiChatSettings(settings, aiHostStatus))
-      }
-      onClearAiLocalData={clearAiLocalData}
-      onConnectAiProvider={(providerId) => void connectAiProvider(providerId)}
-      onDisconnectAiProvider={(providerId) => void disconnectAiProvider(providerId)}
-      onExportAiData={() => void exportAiDataSnapshot()}
       onOpenTransfer={() => void openMo2TransferFromSettings()}
       onSectionChange={setSettingsSection}
       onSetLanguage={(language) => void setLanguage(language)}
@@ -10530,13 +10503,19 @@ export const App = () => {
     aiLocalRunRef.current?.dispose();
     aiLocalRunRef.current = null;
     const operationId = createRendererOperationId('ai_chat_run');
-    const run = createAiRunForPrompt(aiChat.session, operationId, prompt);
+    const requestSession = aiChat.session;
+    const run = createAiRunForPrompt(requestSession, operationId, prompt);
     const runCreatedEvent = createAiStreamEvent(run, 'run-created', { status: 'thinking' });
     dispatchAiChat({
       type: 'submit-user-message',
       message: createAiMessage('user', prompt, new Date(), run.id),
       run,
       event: runCreatedEvent
+    });
+    dispatchAiChat({
+      type: 'set-context-estimate',
+      runId: run.id,
+      estimateState: 'counting'
     });
 
     const providerId = providerForModel(
@@ -10561,18 +10540,49 @@ export const App = () => {
       },
       operationId
     );
+    const runSettings = {
+      ...aiChatSettings,
+      buildContextSnapshot,
+      jobStorage: window.localStorage,
+      modelSupportsBackground,
+      providerId
+    };
+    const chatRequest = createAiHostChatRequest(run, requestSession, prompt, runSettings);
+    try {
+      const contextUsage = await window.fluxora.ai.estimateContext(chatRequest);
+      dispatchAiChat({
+        type: 'set-context-estimate',
+        runId: run.id,
+        estimateState: 'ready',
+        contextUsage
+      });
+    } catch (error) {
+      dispatchAiChat({
+        type: 'set-context-estimate',
+        runId: run.id,
+        estimateState: 'error',
+        contextUsage: null
+      });
+      logAiRuntimeEntry({
+        category: 'ai-chat',
+        channel: 'tauri-bridge',
+        level: 'warning',
+        message:
+          error instanceof Error && error.message
+            ? `Context estimate failed: ${error.message}`
+            : 'Context estimate failed.',
+        operationId
+      });
+    }
 
     aiLocalRunRef.current = startHostAiRun(
       run,
-      aiChat.session,
+      requestSession,
       prompt,
       window.fluxora.ai,
       {
-        ...aiChatSettings,
-        buildContextSnapshot,
-        jobStorage: window.localStorage,
-        modelSupportsBackground,
-        providerId
+        ...runSettings,
+        preparedRequest: chatRequest
       },
       {
         onEvent: (event) => dispatchAiChat({ type: 'apply-stream-event', event }),
@@ -10786,7 +10796,6 @@ export const App = () => {
             onCloseChat={(chatId) => dispatchAiChat({ type: 'close-chat', chatId })}
             onCreateChat={() => dispatchAiChat({ type: 'create-chat' })}
             onDraftChange={(value) => dispatchAiChat({ type: 'set-draft', value })}
-            onOpenSubagentChat={(subagent) => dispatchAiChat({ type: 'open-subagent-chat', subagent })}
             onOpenSource={openAiSource}
             onResize={(width) => dispatchAiChat({ type: 'set-width', width })}
             onSend={sendAiChatMessage}

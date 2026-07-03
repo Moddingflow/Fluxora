@@ -1,6 +1,7 @@
 import type {
   FluxoraAiCitation,
   FluxoraAiContextBundle,
+  FluxoraAiContextUsage,
   FluxoraAiCostEstimate,
   FluxoraAiCostLedgerEntry,
   FluxoraAiCaseState,
@@ -10,6 +11,7 @@ import type {
   FluxoraAiMultiModelOrchestration,
   FluxoraAiModResearchRoute,
   FluxoraAiTaskPermissionClass,
+  FluxoraAiTokenUsage,
   FluxoraAiSubagentSchedule,
   FluxoraAiTaskPlan,
   FluxoraSkillSelection
@@ -21,6 +23,7 @@ export type AiSubagentChatStatus = 'queued' | 'thinking' | 'needs-approval' | 'd
 export type AiMessageRole = 'user' | 'assistant';
 
 export type AiRunState = 'queued' | 'streaming' | 'completed' | 'cancelled' | 'recovered';
+export type AiContextEstimateState = 'idle' | 'counting' | 'ready' | 'error';
 
 export type AiStreamEventType =
   | 'run-created'
@@ -44,6 +47,8 @@ export interface AiMessage {
   routingPreset?: FluxoraAiRoutingPreset;
   sources?: FluxoraAiCitation[];
   contextBundle?: FluxoraAiContextBundle | null;
+  contextUsage?: FluxoraAiContextUsage | null;
+  tokenUsage?: FluxoraAiTokenUsage | null;
   researchReport?: FluxoraAiResearchReport | null;
   modResearchRoute?: FluxoraAiModResearchRoute | null;
   diagnosisJudge?: FluxoraAiDiagnosisJudge | null;
@@ -111,6 +116,8 @@ export interface AiChatThread {
   createdAt: string;
   updatedAt: string;
   subagent?: AiSubagentChatMetadata | null;
+  contextEstimateState: AiContextEstimateState;
+  contextUsage?: FluxoraAiContextUsage | null;
   costLedger: FluxoraAiCostLedgerEntry[];
   messages: AiMessage[];
   runs: AiRun[];
@@ -161,6 +168,12 @@ export type AiChatAction =
   | { type: 'open-subagent-chat'; subagent: AiSubagentChatMetadata; now?: Date }
   | { type: 'restore-session'; session: AiSession }
   | { type: 'submit-user-message'; message: AiMessage; run: AiRun; event: AiStreamEvent }
+  | {
+      type: 'set-context-estimate';
+      runId: string;
+      estimateState: AiContextEstimateState;
+      contextUsage?: FluxoraAiContextUsage | null;
+    }
   | { type: 'apply-stream-event'; event: AiStreamEvent }
   | {
       type: 'append-assistant-message';
@@ -195,6 +208,83 @@ export const aiStatusOrder: AiAgentStatus[] = [
   'blocked'
 ];
 
+export const aiContextUsageLevelForPercent = (
+  percent: number
+): FluxoraAiContextUsage['level'] => {
+  if (percent >= 97) {
+    return 'almost-full';
+  }
+  if (percent >= 92) {
+    return 'critical';
+  }
+  if (percent >= 80) {
+    return 'warning';
+  }
+  if (percent >= 60) {
+    return 'moderate';
+  }
+  return 'normal';
+};
+
+export const aiContextUsageModeForPercent = (
+  percent: number
+): FluxoraAiContextUsage['mode'] => {
+  if (percent >= 95) {
+    return 'strict';
+  }
+  if (percent >= 85) {
+    return 'compressed';
+  }
+  if (percent >= 70) {
+    return 'smart';
+  }
+  return 'full';
+};
+
+const clampAiContextPercent = (tokens: number, contextWindowTokens: number): number => {
+  if (contextWindowTokens <= 0) {
+    return 0;
+  }
+  return Math.min(100, Math.max(0, (tokens / contextWindowTokens) * 100));
+};
+
+export const approximateAiContextUsageForDraft = (
+  contextUsage: FluxoraAiContextUsage | null | undefined,
+  draft: string
+): FluxoraAiContextUsage | null => {
+  if (!contextUsage) {
+    return null;
+  }
+
+  const draftTokens = Math.ceil(Math.max(0, draft.length) / 4);
+  if (draftTokens <= 0) {
+    return contextUsage;
+  }
+
+  const currentContextTokens = Math.min(
+    contextUsage.contextWindowTokens,
+    Math.max(0, contextUsage.currentContextTokens + draftTokens)
+  );
+  const currentContextPercent = clampAiContextPercent(
+    currentContextTokens,
+    contextUsage.contextWindowTokens
+  );
+  const includedSections = contextUsage.includedSections.includes('draft-approximation')
+    ? contextUsage.includedSections
+    : [...contextUsage.includedSections, 'draft-approximation'];
+
+  return {
+    ...contextUsage,
+    currentContextTokens,
+    currentContextPercent,
+    precision: 'estimated',
+    level: aiContextUsageLevelForPercent(currentContextPercent),
+    mode: aiContextUsageModeForPercent(currentContextPercent),
+    includedSections,
+    actionRequired: currentContextPercent >= 97
+  };
+};
+
 const compactAiChatTimestamp = (now: Date) => now.toISOString().replace(/[-:.TZ]/g, '');
 
 const createAiChatId = (scopeKey: string, now: Date): string =>
@@ -219,6 +309,18 @@ export function createAiChatTitleFromPrompt(prompt: string): string {
 const isDefaultAiChatTitle = (title: string): boolean =>
   title.trim().length === 0 || title === DEFAULT_AI_CHAT_TITLE;
 
+const latestContextUsageForMessages = (
+  messages: AiMessage[]
+): FluxoraAiContextUsage | null => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const contextUsage = messages[index]?.contextUsage;
+    if (contextUsage) {
+      return contextUsage;
+    }
+  }
+  return null;
+};
+
 export function createAiChatThread(
   scopeKey = 'global',
   now = new Date(),
@@ -231,6 +333,8 @@ export function createAiChatThread(
     title,
     createdAt,
     updatedAt: createdAt,
+    contextEstimateState: 'idle',
+    contextUsage: null,
     costLedger: [],
     messages: [],
     runs: [],
@@ -292,6 +396,8 @@ const createAiSubagentChatThread = (
     createdAt,
     updatedAt: createdAt,
     subagent,
+    contextEstimateState: 'idle',
+    contextUsage: message.contextUsage ?? null,
     costLedger: [],
     messages: [message],
     runs: [],
@@ -307,6 +413,8 @@ const createLegacyAiChatThread = (session: AiSession): AiChatThread => {
     title: firstUserMessage ? createAiChatTitleFromPrompt(firstUserMessage.text) : DEFAULT_AI_CHAT_TITLE,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    contextEstimateState: 'idle',
+    contextUsage: latestContextUsageForMessages(session.messages ?? []),
     costLedger: session.costLedger ?? [],
     messages: session.messages ?? [],
     runs: session.runs ?? [],
@@ -579,42 +687,6 @@ const applySessionToState = (state: AiChatState, session: AiSession): AiChatStat
   };
 };
 
-const streamingAssistantMessageId = (runId: string) => `assistant-stream-${runId}`;
-
-const applyAssistantDelta = (messages: AiMessage[], event: AiStreamEvent): AiMessage[] => {
-  const delta = event.textDelta ?? '';
-  if (!delta) {
-    return messages;
-  }
-
-  const existingIndex = messages.findIndex(
-    (message) => message.runId === event.runId && message.role === 'assistant' && message.isStreaming
-  );
-  if (existingIndex >= 0) {
-    return messages.map((message, index) =>
-      index === existingIndex
-        ? {
-            ...message,
-            text: `${message.text}${delta}`,
-            createdAt: event.createdAt
-          }
-        : message
-    );
-  }
-
-  return [
-    ...messages,
-    {
-      id: streamingAssistantMessageId(event.runId),
-      role: 'assistant',
-      text: delta,
-      createdAt: event.createdAt,
-      runId: event.runId,
-      isStreaming: true
-    }
-  ];
-};
-
 const finalizeAssistantMessage = (messages: AiMessage[], message: AiMessage): AiMessage[] => {
   const existingIndex = messages.findIndex(
     (candidate) =>
@@ -864,6 +936,7 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
           isDefaultAiChatTitle(chat.title) && chat.messages.length === 0
             ? createAiChatTitleFromPrompt(action.message.text)
             : chat.title,
+        contextEstimateState: 'idle',
         messages: [...chat.messages, action.message],
         runs: [...chat.runs, { ...action.run, eventIds: [action.event.id] }],
         streamEvents: [...chat.streamEvents, action.event]
@@ -879,15 +952,19 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
         session
       );
     }
+    case 'set-context-estimate': {
+      const session = updateSessionChatByRun(state.session, action.runId, (chat) => ({
+        ...chat,
+        contextEstimateState: action.estimateState,
+        contextUsage:
+          action.contextUsage === undefined ? chat.contextUsage ?? null : action.contextUsage
+      }));
+
+      return applySessionToState(state, session);
+    }
     case 'apply-stream-event': {
       const session = updateSessionChatByRun(state.session, action.event.runId, (chat) => {
-        const chatWithEvent = appendChatEvent(chat, action.event);
-        const messages =
-          action.event.type === 'assistant-delta'
-            ? applyAssistantDelta(chatWithEvent.messages, action.event)
-            : chatWithEvent.messages;
-
-        return messages === chatWithEvent.messages ? chatWithEvent : { ...chatWithEvent, messages };
+        return appendChatEvent(chat, action.event);
       });
 
       return applySessionToState(state, session);
@@ -899,6 +976,8 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
 
         return {
           ...touchChat(chatWithEvent, action.message.createdAt),
+          contextEstimateState: action.message.contextUsage ? 'ready' : chatWithEvent.contextEstimateState,
+          contextUsage: action.message.contextUsage ?? chatWithEvent.contextUsage ?? null,
           costLedger: action.ledgerEntry
             ? [...(chatWithEvent.costLedger ?? []), action.ledgerEntry]
             : chatWithEvent.costLedger ?? [],
@@ -917,6 +996,7 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
 
         return {
           ...touchChat(chatWithEvent, action.message.createdAt),
+          contextEstimateState: 'idle',
           messages: [...chatWithEvent.messages, action.message]
         };
       });

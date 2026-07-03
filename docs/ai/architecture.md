@@ -142,6 +142,17 @@ timestamps, stale markers, retrieval steps, and a trace that the UI can expose
 as "why this answer used these sources." The AI host still does not read the
 raw filesystem, bypass the typed facade, or mutate builds.
 
+Context-usage preflight uses the same host-owned prompt preparation path as
+`chat.respond`. The renderer calls `window.fluxora.ai.estimateContext()`, the
+Rust shell forwards `chat.estimateContext`, and the AI host prepares the same
+system instructions, compacted history, build snapshot, context graph, research
+route/bundle, and Gemini tool declarations before estimating the next request.
+When Gemini credentials are available, the host calls `models.countTokens` with
+a `generateContentRequest`; otherwise it returns the existing `chars / 4`
+estimate. The renderer may display `FluxoraAiContextUsage` and lightweight
+draft approximation only. It must not store raw prompt packages or decide
+provider routing, compaction, blocking, cost policy, or token ledger values.
+
 Phase 7 adds `fluxora.ai.research.v1` bundles. The AI host can recognize Nexus
 URLs and NXM links in the prompt, build an official Nexus API-first source plan
 for metadata, files, and file details/direct dependency metadata. Public Nexus
@@ -252,6 +263,7 @@ confirmation text when needed, and a clear owner.
 | Tool ID | Class | Backing surface | Phase 0 decision |
 | --- | --- | --- | --- |
 | `ai.chat.respond` | `plan` | `FluxoraAIHost` | Chat-only response, no tools. |
+| `ai.estimateContext` | `plan` | `FluxoraAIHost` | Next-request context preflight using the same prompt package as `ai.chat.respond`; no tools or mutation. |
 | `ai.plan.summarizeBuild` | `plan` | AI host over read-only snapshots | Returns explanation only. |
 | `build.state.read` | `read` | bridge/core | Sanitized build/project capability snapshot. |
 | `mods.listInstalled` | `read` | bridge/core | Existing installed-mod state, no file tree expansion by default. |
@@ -684,6 +696,12 @@ The host returns these artifacts for every chat run:
   hard cost, display cost, risk buffer, prompt-cache status, usage breakdown,
   orchestration/subagent token cost, credit debit, and whether the run charges
   Fluxora provider budget.
+- `contextUsage` and `tokenUsage`: next-request context pressure and provider
+  token usage. `contextUsage` reports provider/model context window, current
+  input tokens, percentage, precision, mode, level, included sections,
+  compaction/blocking hints and timestamp. `tokenUsage` records input, output,
+  total and pre-request context tokens from Gemini usage metadata or fallback
+  estimation.
 - `marginTelemetry`: the local estimate for
   `gross_margin_after_ai_cost`, including gross revenue, VAT/payment/
   infrastructure reserve, AI provider cost, web/search cost, margin after AI

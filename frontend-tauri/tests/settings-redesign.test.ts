@@ -5,7 +5,9 @@ import React, { type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
+import { SettingsWorkspace } from '../src/renderer/features/settings/SettingsWorkspace';
 import { TransferSettingsPanel } from '../src/renderer/TransferSettingsPanel';
+import type { FluxoraAppInfo } from '../src/shared/fluxora-api';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +17,7 @@ const readText = (...segments: string[]): string =>
   fs.readFileSync(path.join(repoRoot, ...segments), 'utf8');
 
 type TransferSettingsPanelProps = ComponentProps<typeof TransferSettingsPanel>;
+type SettingsWorkspaceProps = ComponentProps<typeof SettingsWorkspace>;
 
 const baseTransferProps: TransferSettingsPanelProps = {
   bridgeReady: true,
@@ -30,6 +33,49 @@ const renderTransferSettings = (
   renderToStaticMarkup(
     React.createElement(TransferSettingsPanel, {
       ...baseTransferProps,
+      ...overrides
+    })
+  );
+
+const appInfo: FluxoraAppInfo = {
+  appName: 'Fluxora',
+  version: '0.0.0-test',
+  platform: 'win32',
+  arch: 'x64',
+  isPackaged: false
+};
+
+const baseSettingsWorkspaceProps: SettingsWorkspaceProps = {
+  appInfo,
+  bridgeStatus: null,
+  developerModeEnabled: false,
+  isTransferRunning: false,
+  languageBusy: null,
+  lastBuildDate: '2026-07-03T10:15:00.000Z',
+  nexusBusy: false,
+  nexusStatus: null,
+  section: 'developers',
+  settingsBusyLabel: null,
+  settingsCapabilities: {
+    settingsAvailable: false,
+    nexusAvailable: false,
+    transferAvailable: false,
+    transferCancellationAvailable: false
+  },
+  onDeveloperModeChange: () => undefined,
+  onOpenRepository: () => undefined,
+  onOpenTransfer: () => undefined,
+  onSectionChange: () => undefined,
+  onSetLanguage: () => undefined,
+  onToggleNexusConnection: () => undefined
+};
+
+const renderSettingsWorkspace = (
+  overrides: Partial<SettingsWorkspaceProps> = {}
+): string =>
+  renderToStaticMarkup(
+    React.createElement(SettingsWorkspace, {
+      ...baseSettingsWorkspaceProps,
       ...overrides
     })
   );
@@ -68,7 +114,7 @@ describe('settings redesign', () => {
     expect(settingsWorkspace).toContain('className="settings-connections-list"');
     expect(settingsWorkspace).toContain('settings-service-row--connection');
     expect(settingsWorkspace).toContain('<LanguageSelect');
-    expect(settingsWorkspace).toContain('<AiSettingsPanel');
+    expect(settingsWorkspace).not.toContain('<AiSettingsPanel');
     expect(languageSelect).toContain('settings-language-row');
     expect(languageSelect).toContain('../../../../../Icons/flag-united-kingdom.svg');
     expect(languageSelect).toContain('languageMenuViewportHeight = 330');
@@ -101,6 +147,9 @@ describe('settings redesign', () => {
     expect(settingsWorkspace).not.toContain('settings.json - language=');
     expect(settingsWorkspace).not.toContain('Choose the renderer language.');
     expect(settingsWorkspace).toContain('<TransferSettingsPanel');
+    expect(settingsWorkspace).toContain('settings-panel--developer');
+    expect(settingsWorkspace).toContain('Режим разработчика');
+    expect(settingsWorkspace).toContain('onDeveloperModeChange(!developerModeEnabled)');
     expect(titlebar).toContain('titlebar__mark titlebar__mark--settings');
     expect(titlebar).toContain("title ?? (isSettingsWindow ? 'Settings' : 'Fluxora')");
     expect(settingsWorkspace).not.toContain('Account bridge');
@@ -117,6 +166,7 @@ describe('settings redesign', () => {
     expect(app).not.toContain('@tauri-apps/api');
     expect(settingsWorkspace).not.toContain('window.fluxora.');
     expect(settingsWorkspace).not.toContain('@tauri-apps/api');
+    expect(app).toContain('window.fluxora.links.openExternal(fluxoraOriginalRepositoryUrl)');
   });
 
   it('keeps Settings styling aligned with the compact UI-kit source', () => {
@@ -141,10 +191,10 @@ describe('settings redesign', () => {
     expect(styles).toContain('box-shadow: inset 0 0 0 1px rgba(var(--flx-accent-rgb), 0.12);');
     expect(styles).not.toContain('linear-gradient(180deg, rgba(var(--flx-accent-rgb), 0.18), rgba(var(--flx-accent-rgb), 0.1))');
     expect(styles).toContain('.settings-panel--transfer');
-    expect(styles).toContain('.settings-panel--ai');
-    expect(styles).toContain('.settings-ai-presets');
-    expect(styles).toContain('.settings-ai-diagnostic');
-    expect(styles).toContain('.settings-ai-provider-list');
+    expect(styles).toContain('.settings-panel--developer');
+    expect(styles).toContain('.settings-repository-button');
+    expect(styles).not.toContain('.settings-panel--ai');
+    expect(styles).not.toContain('.settings-ai-');
     expect(styles).toContain('.ai-chat-diagnostic');
     expect(styles).toContain('.ai-chat-message__diagnostics');
     expect(styles).toContain('.settings-service-row--transfer');
@@ -168,5 +218,22 @@ describe('settings redesign', () => {
     expect(html).not.toContain('Target');
     expect(html).not.toContain('Cancel and clean');
     expect(html).not.toContain('status-pill');
+  });
+
+  it('renders developer settings as the final settings section with build and stack facts', () => {
+    const html = renderSettingsWorkspace();
+
+    expect(html).toContain('Для разработчиков');
+    expect(html).toContain('Режим разработчика');
+    expect(html).toContain('role="switch"');
+    expect(html).toContain('aria-checked="false"');
+    expect(html).toContain('Дата последней сборки');
+    expect(html).toContain('2026-07-03 10:15 UTC');
+    expect(html).toContain('Tauri 2 / React / TypeScript');
+    expect(html).toContain('Rust shell / C++ core');
+    expect(html).toContain('0.0.0-test');
+    expect(html).toContain('win32/x64');
+    expect(html).toContain('GitHub');
+    expect(html).not.toContain('settings-card');
   });
 });

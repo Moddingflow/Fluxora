@@ -1,14 +1,11 @@
 import {
   ChevronLeft,
   ChevronRight,
-  CircleStop,
-  MessageSquare,
-  Mic,
   Plus,
-  Send,
   X
 } from 'lucide-react';
 import type {
+  CSSProperties,
   FormEvent,
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
@@ -16,28 +13,25 @@ import type {
 } from 'react';
 import { useRef } from 'react';
 
+import aiArrowUpIcon from '../../../../../Icons/ai-arrow-up.svg';
+import aiCircleStopIcon from '../../../../../Icons/ai-circle-stop.svg';
+import aiMicIcon from '../../../../../Icons/ai-mic.svg';
+import aiPlusIcon from '../../../../../Icons/ai-plus.svg';
 import closeTabIcon from '../../../../../Icons/circle-x.svg';
 import geminiIcon from '../../../../../Icons/gemini.svg';
-import type {
-  FluxoraAiCitation,
-  FluxoraAiModelAgentResult,
-  FluxoraAiSubagentDescriptor,
-  FluxoraAiTaskPlanStep,
-  FluxoraAiTaskStepStatus
-} from '../../../shared/fluxora-api';
+import type { FluxoraAiCitation, FluxoraAiContextUsage } from '../../../shared/fluxora-api';
 import {
   AI_CHAT_PANEL_COLLAPSED_WIDTH,
   AI_CHAT_PANEL_MAX_WIDTH,
   AI_CHAT_PANEL_MIN_WIDTH,
+  approximateAiContextUsageForDraft,
   aiStatusLabels,
-  aiStatusOrder,
   type AiChatState,
-  type AiMessage,
-  type AiSubagentChatMetadata,
-  type AiSubagentChatStatus
+  type AiContextEstimateState,
+  type AiMessage
 } from './ai-chat-state';
-import { formatAiCost, type AiProviderDiagnostic } from './ai-chat-settings';
-import { safeAiSourceUrl, sanitizeAiChatText } from './ai-chat-security';
+import { type AiProviderDiagnostic } from './ai-chat-settings';
+import { AI_CONTEXT_SOURCE_URL_PREFIX, safeAiSourceUrl, sanitizeAiChatText } from './ai-chat-security';
 
 export interface AiChatPanelProps {
   hostReady?: boolean;
@@ -48,12 +42,81 @@ export interface AiChatPanelProps {
   onCloseChat: (chatId: string) => void;
   onCreateChat: () => void;
   onDraftChange: (value: string) => void;
-  onOpenSubagentChat: (subagent: AiSubagentChatMetadata) => void;
   onOpenSource?: (url: string) => void;
   onResize: (width: number) => void;
   onSend: () => void;
   onSelectChat: (chatId: string) => void;
   onToggleCollapse: () => void;
+}
+
+type AiChatInputIconStyle = CSSProperties & { '--ai-chat-input-icon': string };
+
+function AiChatInputIcon({ source }: { source: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="ai-chat-input__icon"
+      style={{ '--ai-chat-input-icon': `url("${source}")` } as AiChatInputIconStyle}
+    />
+  );
+}
+
+type AiContextRingStyle = CSSProperties & { '--ai-context-percent': string };
+
+const contextNumberFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+const contextPercentFormat = new Intl.NumberFormat(undefined, {
+  maximumFractionDigits: 1,
+  minimumFractionDigits: 0
+});
+
+function AiContextUsageRing({
+  estimateState,
+  usage
+}: {
+  estimateState: AiContextEstimateState;
+  usage: FluxoraAiContextUsage | null;
+}) {
+  const percent = usage ? Math.min(100, Math.max(0, usage.currentContextPercent)) : 0;
+  const tooltipLines = usage
+    ? [
+        'Current request',
+        `${contextNumberFormat.format(usage.currentContextTokens)} / ${contextNumberFormat.format(
+          usage.contextWindowTokens
+        )} tokens`,
+        `≈ ${contextPercentFormat.format(percent)}% used`,
+        `${usage.mode} · ${usage.precision}`
+      ]
+    : [
+        'Current request',
+        estimateState === 'error' ? 'Context estimate unavailable' : 'Counting context...'
+      ];
+  const tooltipText = tooltipLines.join('\n');
+
+  return (
+    <span
+      aria-label={`Контекст ИИ. ${tooltipLines.join('. ')}`}
+      className="ai-context-ring"
+      data-level={usage?.level ?? undefined}
+      data-mode={usage?.mode ?? undefined}
+      data-percent={usage ? percent.toFixed(1) : undefined}
+      data-precision={usage?.precision ?? undefined}
+      data-state={estimateState}
+      role="img"
+      style={{ '--ai-context-percent': `${percent}%` } as AiContextRingStyle}
+      tabIndex={0}
+      title={tooltipText}
+    >
+      <span className="ai-context-ring__track" aria-hidden="true" />
+      <span className="ai-context-ring__dot" aria-hidden="true" />
+      <span className="ai-context-ring__tooltip" role="tooltip">
+        {tooltipLines.map((line, index) => (
+          <span key={line} data-secondary={index >= 3 ? 'true' : undefined}>
+            {line}
+          </span>
+        ))}
+      </span>
+    </span>
+  );
 }
 
 const messageTime = (createdAt: string) =>
@@ -62,237 +125,8 @@ const messageTime = (createdAt: string) =>
     minute: '2-digit'
   }).format(new Date(createdAt));
 
-const compactPlanSteps = (steps: FluxoraAiTaskPlanStep[]): FluxoraAiTaskPlanStep[] =>
-  steps.slice(0, 5);
-
-const aiCostLabel = (cost: NonNullable<AiChatState['messages'][number]['costEstimate']>) => {
-  const actualCost = cost.actualInternalCost ?? cost.actualCost;
-  const value = actualCost ?? cost.displayCost ?? cost.internalCost;
-  const prefix = actualCost === null || actualCost === undefined ? 'Est' : 'Actual';
-
-  return `${prefix} ${formatAiCost(value, cost.currency)}`;
-};
-
-const aiSubagentStatusLabels: Record<AiSubagentChatStatus, string> = {
-  queued: 'Queued',
-  thinking: 'Thinking',
-  'needs-approval': 'Needs approval',
-  done: 'Done',
-  blocked: 'Blocked'
-};
-
-const compactSubagentSummary = (value: string): string => {
-  const normalized = sanitizeAiChatText(value).replace(/\s+/g, ' ').trim();
-  return normalized.length > 120 ? `${normalized.slice(0, 117).trimEnd()}...` : normalized;
-};
-
-const taskStepStatusToSubagentStatus = (
-  status: FluxoraAiTaskStepStatus,
-  message: AiMessage,
-  agentId: string
-): AiSubagentChatStatus => {
-  if (status === 'completed') {
-    return 'done';
-  }
-  if (status === 'running') {
-    return 'thinking';
-  }
-  if (status === 'needs-approval') {
-    return 'needs-approval';
-  }
-  if (status === 'blocked') {
-    return 'blocked';
-  }
-  if (message.isStreaming || message.agentStatus === 'thinking' || message.agentStatus === 'running') {
-    return 'thinking';
-  }
-  if (agentId === 'plan-review' && message.agentStatus === 'needs-approval') {
-    return 'needs-approval';
-  }
-  if (message.agentStatus === 'blocked') {
-    return 'blocked';
-  }
-
-  return message.text.trim().length > 0 ? 'done' : 'queued';
-};
-
-const orchestrationStatusToSubagentStatus = (status: string): AiSubagentChatStatus => {
-  if (status === 'completed' || status === 'final-completed') {
-    return 'done';
-  }
-  if (status === 'blocked') {
-    return 'blocked';
-  }
-  return 'thinking';
-};
-
-const scheduleDescriptorToSubagent = (
-  descriptor: FluxoraAiSubagentDescriptor,
-  message: AiMessage,
-  parentChatId: string
-): AiSubagentChatMetadata => ({
-  id: `${message.runId ?? message.id}:${descriptor.id}`,
-  operationId: message.taskPlan?.operationId ?? message.subagentSchedule?.operationId ?? message.id,
-  parentChatId,
-  parentRunId: message.runId,
-  agentId: descriptor.id,
-  label: descriptor.label,
-  role: descriptor.role,
-  status: taskStepStatusToSubagentStatus(descriptor.status, message, descriptor.id),
-  summary: descriptor.summary,
-  detailText: descriptor.summary,
-  permissionClass: descriptor.permissionClass
-});
-
-const modelAgentResultToSubagent = (
-  agent: FluxoraAiModelAgentResult,
-  message: AiMessage,
-  parentChatId: string,
-  operationId: string
-): AiSubagentChatMetadata => ({
-  id: `${operationId}:${agent.agentId}`,
-  operationId,
-  parentChatId,
-  parentRunId: message.runId,
-  agentId: agent.agentId,
-  label: agent.label,
-  role: 'model-subagent',
-  status: orchestrationStatusToSubagentStatus(agent.status),
-  summary: agent.error?.message ? sanitizeAiChatText(agent.error.message) : compactSubagentSummary(agent.text),
-  detailText: agent.error?.message ? sanitizeAiChatText(agent.error.message) : agent.text,
-  providerId: agent.providerId,
-  modelId: agent.modelId
-});
-
-const uniqueSubagents = (subagents: AiSubagentChatMetadata[]): AiSubagentChatMetadata[] => {
-  const seen = new Set<string>();
-  return subagents.filter((subagent) => {
-    if (seen.has(subagent.id)) {
-      return false;
-    }
-    seen.add(subagent.id);
-    return true;
-  });
-};
-
-export const aiSubagentLinksForMessage = (
-  message: AiMessage,
-  parentChatId: string
-): AiSubagentChatMetadata[] => {
-  if (message.role !== 'assistant') {
-    return [];
-  }
-
-  if (message.orchestration) {
-    const operationId = message.orchestration.operationId;
-    return uniqueSubagents([
-      {
-        id: `${operationId}:${message.orchestration.chef.agentId}`,
-        operationId,
-        parentChatId,
-        parentRunId: message.runId,
-        agentId: message.orchestration.chef.agentId,
-        label: message.orchestration.chef.label,
-        role: 'chef',
-        status: orchestrationStatusToSubagentStatus(message.orchestration.chef.status),
-        summary: message.orchestration.strategy,
-        detailText: message.orchestration.chef.dispatchPlan,
-        permissionClass: 'plan',
-        providerId: message.orchestration.chef.providerId,
-        modelId: message.orchestration.chef.modelId
-      },
-      ...message.orchestration.subagents.map((agent) =>
-        modelAgentResultToSubagent(agent, message, parentChatId, operationId)
-      )
-    ]);
-  }
-
-  if (!message.subagentSchedule?.scheduledSubagents?.length) {
-    return [];
-  }
-
-  return uniqueSubagents([
-    ...message.subagentSchedule.scheduledSubagents.map((descriptor) =>
-      scheduleDescriptorToSubagent(descriptor, message, parentChatId)
-    ),
-    scheduleDescriptorToSubagent(message.subagentSchedule.planReviewAgent, message, parentChatId)
-  ]);
-};
-
-type AiResearchStageId = 'local' | 'nexus' | 'web' | 'judge';
-type AiResearchStageStatus = 'done' | 'limited' | 'queued' | 'skipped' | 'blocked';
-type AiCaseMilestone = NonNullable<AiMessage['caseState']>['caseState'];
-
-interface AiResearchStageSummary {
-  id: AiResearchStageId;
-  label: string;
-  status: AiResearchStageStatus;
-}
-
-interface AiResearchSummary {
-  stages: AiResearchStageSummary[];
-  sourceCount: number;
-  evidenceCount: number;
-  quotaLabel?: string;
-  limitation?: string;
-}
-
-const aiResearchStageLabels: Record<AiResearchStageId, string> = {
-  local: 'Local',
-  nexus: 'Nexus',
-  web: 'Web',
-  judge: 'Judge'
-};
-
-const aiResearchStageStatusLabels: Record<AiResearchStageStatus, string> = {
-  done: 'Done',
-  limited: 'Limited',
-  queued: 'Queued',
-  skipped: 'Skipped',
-  blocked: 'Blocked'
-};
-
-const aiCaseMilestoneRank: Record<AiCaseMilestone, number> = {
-  'local-inspection-complete': 1,
-  'nexus-pass-complete': 2,
-  'external-pass-complete': 3,
-  'diagnosis-complete': 4,
-  'final-answer-complete': 5
-};
-
-const uniqueAiDisplayStrings = (values: Array<string | null | undefined>): string[] => {
-  const seen = new Set<string>();
-  const items: string[] = [];
-  for (const value of values) {
-    const trimmed = value?.trim();
-    if (!trimmed || seen.has(trimmed)) {
-      continue;
-    }
-    seen.add(trimmed);
-    items.push(trimmed);
-  }
-  return items;
-};
-
-const caseStageAtLeast = (message: AiMessage, milestone: AiCaseMilestone): boolean => {
-  const current = message.caseState?.caseState;
-  return current ? aiCaseMilestoneRank[current] >= aiCaseMilestoneRank[milestone] : false;
-};
-
 const evidenceCardsForMessage = (message: AiMessage) =>
   message.researchReport?.nexusInvestigation?.evidenceCards ?? [];
-
-const evidenceIdsForMessage = (message: AiMessage): string[] =>
-  uniqueAiDisplayStrings([
-    ...(message.caseState?.sourceIds ?? []),
-    ...evidenceCardsForMessage(message).flatMap((card) => [card.sourceId, ...card.sourceIds]),
-    ...(message.diagnosisJudge?.deterministicFindings ?? []).flatMap((finding) => finding.evidenceIds),
-    ...(message.diagnosisJudge?.hypotheses ?? []).flatMap((hypothesis) => hypothesis.evidenceIds),
-    ...(message.diagnosisJudge?.rankedCauses ?? []).flatMap((cause) => [
-      ...cause.supportingEvidenceIds,
-      ...cause.opposingEvidenceIds
-    ])
-  ]);
 
 const citationToAiSource = (
   citation: ReturnType<typeof evidenceCardsForMessage>[number]['citations'][number],
@@ -306,6 +140,11 @@ const citationToAiSource = (
   trust: 'untrusted-external-content'
 });
 
+const isInternalAiContextSource = (source: FluxoraAiCitation) =>
+  source.trust === 'local-context' ||
+  source.kind === 'structured-evidence-id' ||
+  source.url.trim().startsWith(AI_CONTEXT_SOURCE_URL_PREFIX);
+
 const aiSourcesForMessage = (message: AiMessage): FluxoraAiCitation[] => {
   const sources = [
     ...(message.sources ?? []),
@@ -315,6 +154,9 @@ const aiSourcesForMessage = (message: AiMessage): FluxoraAiCitation[] => {
   const seen = new Set<string>();
 
   return sources.filter((source) => {
+    if (isInternalAiContextSource(source)) {
+      return false;
+    }
     const key = [source.id, source.url, source.title].join('|').toLowerCase();
     if (seen.has(key)) {
       return false;
@@ -322,185 +164,6 @@ const aiSourcesForMessage = (message: AiMessage): FluxoraAiCitation[] => {
     seen.add(key);
     return true;
   });
-};
-
-const nexusApiStateForMessage = (message: AiMessage) =>
-  message.caseState?.quotaState.nexusApiState ??
-  message.researchReport?.nexusInvestigation?.api.state ??
-  message.researchReport?.apiAvailability?.state ??
-  null;
-
-const nexusQuotaForMessage = (message: AiMessage) =>
-  message.caseState?.quotaState.quota ??
-  message.researchReport?.nexusInvestigation?.quota ??
-  message.researchReport?.apiQuotaState ??
-  null;
-
-const nexusLimitationForMessage = (message: AiMessage): string | null => {
-  const quotaState = message.caseState?.quotaState;
-  if (quotaState?.limitation) {
-    return sanitizeAiChatText(quotaState.limitation);
-  }
-
-  const apiState = nexusApiStateForMessage(message);
-  const unavailableReason =
-    quotaState?.unavailableReason ??
-    message.researchReport?.nexusInvestigation?.api.unavailableReason ??
-    message.researchReport?.apiAvailability?.unavailableReason ??
-    null;
-
-  if (apiState === 'quota-exhausted') {
-    return 'Nexus API quota is exhausted or rate-limited; Nexus evidence may be incomplete.';
-  }
-  if (apiState === 'unauthenticated' || unavailableReason === 'missing-credential') {
-    return 'Nexus API credentials are unavailable; Nexus evidence may be incomplete.';
-  }
-  if (apiState === 'unavailable') {
-    return 'Nexus API is unavailable; Nexus evidence may be incomplete.';
-  }
-  if (apiState === 'disabled') {
-    return 'Nexus API is disabled for this research pass.';
-  }
-
-  return null;
-};
-
-const nexusQuotaLabelForMessage = (message: AiMessage): string | undefined => {
-  const quota = nexusQuotaForMessage(message);
-  if (!quota) {
-    return undefined;
-  }
-
-  const parts = [
-    quota.hourlyRemaining === null ? null : `${quota.hourlyRemaining.toLocaleString()} hourly`,
-    quota.dailyRemaining === null ? null : `${quota.dailyRemaining.toLocaleString()} daily`
-  ].filter(Boolean);
-
-  return parts.length > 0 ? `Nexus quota ${parts.join(' / ')}` : undefined;
-};
-
-const routeValueForMessage = (message: AiMessage): string =>
-  String(message.modResearchRoute?.route ?? '');
-
-const localStageStatusForMessage = (message: AiMessage, evidenceCount: number): AiResearchStageStatus =>
-  message.caseState || message.modResearchRoute || message.researchReport || evidenceCount > 0
-    ? 'done'
-    : 'skipped';
-
-const nexusStageStatusForMessage = (message: AiMessage): AiResearchStageStatus => {
-  const apiState = nexusApiStateForMessage(message);
-  if (
-    apiState === 'quota-exhausted' ||
-    apiState === 'unavailable' ||
-    apiState === 'unauthenticated' ||
-    apiState === 'disabled'
-  ) {
-    return 'limited';
-  }
-  if (caseStageAtLeast(message, 'nexus-pass-complete') || message.researchReport?.nexusInvestigation || apiState === 'available') {
-    return 'done';
-  }
-
-  const route = routeValueForMessage(message);
-  if (apiState === 'not-requested' || route === 'no-web/local-only' || route === 'local-only') {
-    return 'skipped';
-  }
-
-  return 'queued';
-};
-
-const webStageStatusForMessage = (message: AiMessage): AiResearchStageStatus => {
-  if (caseStageAtLeast(message, 'external-pass-complete')) {
-    return 'done';
-  }
-
-  const route = routeValueForMessage(message);
-  if (
-    message.researchReport?.webQueryPlan?.queries.length ||
-    message.researchReport?.nextBestNonNexusQueries?.length ||
-    route === 'nexus-api-with-search' ||
-    route === 'non-nexus-web'
-  ) {
-    return 'queued';
-  }
-  if (route === 'no-web/local-only' || route === 'local-only') {
-    return 'skipped';
-  }
-
-  return message.researchReport || message.caseState ? 'skipped' : 'queued';
-};
-
-const judgeStageStatusForMessage = (message: AiMessage): AiResearchStageStatus => {
-  if (message.diagnosisJudge?.status === 'insufficient') {
-    return 'blocked';
-  }
-  if (message.diagnosisJudge || caseStageAtLeast(message, 'diagnosis-complete')) {
-    return 'done';
-  }
-  if (message.caseState?.nextRecommendedStage === 'run-diagnosis' || caseStageAtLeast(message, 'external-pass-complete')) {
-    return 'queued';
-  }
-
-  return message.researchReport || message.caseState ? 'skipped' : 'queued';
-};
-
-const aiResearchSummaryForMessage = (
-  message: AiMessage,
-  sources: FluxoraAiCitation[]
-): AiResearchSummary | null => {
-  if (message.role !== 'assistant') {
-    return null;
-  }
-
-  const evidenceCount = Math.max(evidenceCardsForMessage(message).length, evidenceIdsForMessage(message).length);
-  const quotaLabel = nexusQuotaLabelForMessage(message);
-  const limitation = nexusLimitationForMessage(message) ?? undefined;
-  const hasResearchDto =
-    Boolean(message.researchReport) ||
-    Boolean(message.caseState) ||
-    Boolean(message.diagnosisJudge) ||
-    Boolean(message.modResearchRoute);
-  const hasUserVisibleResearchArtifact =
-    hasResearchDto &&
-    (evidenceCount > 0 ||
-      sources.length > 0 ||
-      Boolean(quotaLabel) ||
-      Boolean(limitation) ||
-      Boolean(message.caseState) ||
-      Boolean(message.diagnosisJudge));
-
-  if (!hasUserVisibleResearchArtifact) {
-    return null;
-  }
-
-  return {
-    stages: [
-      {
-        id: 'local',
-        label: aiResearchStageLabels.local,
-        status: localStageStatusForMessage(message, evidenceCount)
-      },
-      {
-        id: 'nexus',
-        label: aiResearchStageLabels.nexus,
-        status: nexusStageStatusForMessage(message)
-      },
-      {
-        id: 'web',
-        label: aiResearchStageLabels.web,
-        status: webStageStatusForMessage(message)
-      },
-      {
-        id: 'judge',
-        label: aiResearchStageLabels.judge,
-        status: judgeStageStatusForMessage(message)
-      }
-    ],
-    sourceCount: sources.length,
-    evidenceCount,
-    quotaLabel,
-    limitation
-  };
 };
 
 type AiMessageTextBlock =
@@ -684,7 +347,6 @@ export function AiChatPanel({
   onCloseChat,
   onCreateChat,
   onDraftChange,
-  onOpenSubagentChat,
   onOpenSource,
   onResize,
   onSend,
@@ -693,9 +355,23 @@ export function AiChatPanel({
 }: AiChatPanelProps) {
   const resizeStartRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
   const inputDisabled = !hostReady || providerDiagnostic?.level === 'error';
+  const inputPlaceholder =
+    providerDiagnostic?.level === 'error'
+      ? providerDiagnostic.title
+      : hostReady
+        ? 'Message'
+        : 'AI unavailable';
   const canSend = !inputDisabled && state.draft.trim().length > 0 && !state.isRunning;
   const activeStatusLabel = aiStatusLabels[state.status];
   const activeChat = state.chats.find((chat) => chat.id === state.activeChatId) ?? state.chats[0];
+  const visibleMessages = state.messages.filter((message) => !message.isStreaming);
+  const contextEstimateState = activeChat?.contextEstimateState ?? 'idle';
+  const activeContextUsage = approximateAiContextUsageForDraft(activeChat?.contextUsage ?? null, state.draft);
+  const showContextRing = Boolean(
+    activeChat &&
+      (activeContextUsage || contextEstimateState === 'counting' || contextEstimateState === 'error') &&
+      (activeChat.messages.length > 0 || state.activeRunId || contextEstimateState === 'counting')
+  );
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -783,10 +459,7 @@ export function AiChatPanel({
       <header className="ai-chat-panel__header">
         <div className="ai-chat-panel__identity">
           <img className="ai-chat-panel__icon" src={geminiIcon} alt="" />
-          <div>
-            <strong>AI</strong>
-            <span>{providerDiagnostic?.level === 'error' ? 'Blocked' : hostReady ? activeStatusLabel : 'Unavailable'}</span>
-          </div>
+          <strong>AI</strong>
         </div>
         <div className="ai-chat-panel__controls">
           <button
@@ -820,7 +493,6 @@ export function AiChatPanel({
                   className="ai-chat-tab-shell"
                   data-active={isActive ? 'true' : undefined}
                   data-disabled={state.isRunning && !isActive ? 'true' : undefined}
-                  data-kind={chat.subagent ? 'subagent' : 'main'}
                   key={chat.id}
                 >
                   <button
@@ -875,18 +547,14 @@ export function AiChatPanel({
           </button>
         </div>
 
-        <div className="ai-chat-status-stack">
-          <div className="ai-chat-status-list" aria-label="AI statuses">
-            {aiStatusOrder.map((status) => (
-              <span
-                className="ai-chat-status-list__item"
-                data-active={state.status === status ? 'true' : undefined}
-                key={status}
-              >
-                {aiStatusLabels[status]}
-              </span>
-            ))}
-          </div>
+        <div
+          aria-label="AI messages"
+          aria-labelledby={activeChat ? `ai-chat-tab-${activeChat.id}` : undefined}
+          aria-live="polite"
+          className="ai-chat-messages"
+          id="ai-chat-messages"
+          role="tabpanel"
+        >
           {providerDiagnostic ? (
             <div
               className="ai-chat-diagnostic"
@@ -898,154 +566,26 @@ export function AiChatPanel({
               {providerDiagnostic.detail ? <small>{providerDiagnostic.detail}</small> : null}
             </div>
           ) : null}
-        </div>
 
-        <div
-          aria-label="AI messages"
-          aria-labelledby={activeChat ? `ai-chat-tab-${activeChat.id}` : undefined}
-          aria-live="polite"
-          className="ai-chat-messages"
-          id="ai-chat-messages"
-          role="tabpanel"
-        >
-          {state.messages.length === 0 && !state.isRunning ? (
+          {visibleMessages.length === 0 && !state.isRunning ? (
             <div className="ai-chat-empty">
               <img src={geminiIcon} alt="" />
               <strong>No messages</strong>
             </div>
           ) : null}
 
-          {state.messages.map((message) => {
-            const messageSubagents = aiSubagentLinksForMessage(
-              message,
-              activeChat?.id ?? state.activeChatId
-            );
-            const completedSubagentCount = messageSubagents.filter(
-              (subagent) => subagent.status === 'done'
-            ).length;
+          {visibleMessages.map((message) => {
             const messageSources = aiSourcesForMessage(message);
-            const researchSummary = aiResearchSummaryForMessage(message, messageSources);
 
             return (
               <article className="ai-chat-message" data-role={message.role} key={message.id}>
                 <div className="ai-chat-message__meta">
                   <span>
-                    {message.role === 'assistant'
-                      ? ['AI', message.providerId, message.modelId].filter(Boolean).join(' · ')
-                      : 'You'}
+                    {message.role === 'assistant' ? 'AI' : 'You'}
                   </span>
                   <time dateTime={message.createdAt}>{messageTime(message.createdAt)}</time>
                 </div>
                 {renderAiChatMessageContent(message.text)}
-                {message.selectedSkill?.selectedSkill ? (
-                  <div className="ai-chat-skill" aria-label="AI skill used">
-                    <span>Skill</span>
-                    <strong>{message.selectedSkill.selectedSkill.displayName}</strong>
-                  </div>
-                ) : null}
-                {messageSubagents.length > 0 ? (
-                  <section className="ai-chat-subagents" aria-label="AI subagents used">
-                    <div className="ai-chat-subagents__header">
-                      <strong>Subagents</strong>
-                      <span>
-                        {completedSubagentCount}/{messageSubagents.length}
-                      </span>
-                    </div>
-                    <div className="ai-chat-subagents__list">
-                      {messageSubagents.map((subagent) => (
-                        <button
-                          aria-label={`Open ${subagent.label} subagent chat`}
-                          className="ai-chat-subagent"
-                          data-status={subagent.status}
-                          key={subagent.id}
-                          title={`Open ${subagent.label}`}
-                          type="button"
-                          onClick={() => onOpenSubagentChat(subagent)}
-                        >
-                          <span className="ai-chat-subagent__dot" aria-hidden="true" />
-                          <span className="ai-chat-subagent__body">
-                            <strong>{subagent.label}</strong>
-                            <small>
-                              {[
-                                subagent.providerId && subagent.modelId
-                                  ? `${subagent.providerId}/${subagent.modelId}`
-                                  : subagent.role,
-                                subagent.permissionClass
-                              ]
-                                .filter(Boolean)
-                                .join(' · ')}
-                            </small>
-                          </span>
-                          <span className="ai-chat-subagent__state">
-                            {aiSubagentStatusLabels[subagent.status]}
-                          </span>
-                          <MessageSquare size={13} aria-hidden="true" />
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                ) : null}
-                {researchSummary ? (
-                  <section className="ai-chat-research" aria-label="AI research stages">
-                    <div className="ai-chat-research__stages">
-                      {researchSummary.stages.map((stage) => (
-                        <span
-                          className="ai-chat-research__stage"
-                          data-status={stage.status}
-                          key={stage.id}
-                          title={`${stage.label}: ${aiResearchStageStatusLabels[stage.status]}`}
-                        >
-                          <strong>{stage.label}</strong>
-                          <small>{aiResearchStageStatusLabels[stage.status]}</small>
-                        </span>
-                      ))}
-                    </div>
-                    {researchSummary.sourceCount > 0 ||
-                    researchSummary.evidenceCount > 0 ||
-                    researchSummary.quotaLabel ? (
-                      <div className="ai-chat-research__counts" aria-label="AI research source counts">
-                        {researchSummary.sourceCount > 0 ? (
-                          <span>Sources {researchSummary.sourceCount}</span>
-                        ) : null}
-                        {researchSummary.evidenceCount > 0 ? (
-                          <span>Evidence {researchSummary.evidenceCount}</span>
-                        ) : null}
-                        {researchSummary.quotaLabel ? <span>{researchSummary.quotaLabel}</span> : null}
-                      </div>
-                    ) : null}
-                    {researchSummary.limitation ? (
-                      <p className="ai-chat-research__limitation">{researchSummary.limitation}</p>
-                    ) : null}
-                  </section>
-                ) : null}
-                {message.taskPlan && message.subagentSchedule ? (
-                  <section className="ai-chat-plan" aria-label="AI task plan">
-                    <div className="ai-chat-plan__header">
-                      <strong>{message.taskPlan.goal}</strong>
-                      <span>
-                        {message.subagentSchedule.requestedSubagentCount}/
-                        {message.subagentSchedule.maxSubagentsForLargeTasks}
-                      </span>
-                    </div>
-                    <ol className="ai-chat-plan__steps">
-                      {compactPlanSteps([
-                        ...message.taskPlan.readSteps,
-                        ...message.taskPlan.validationSteps
-                      ]).map((step) => (
-                        <li key={step.id}>
-                          <span>{step.title}</span>
-                          <small>{step.permissionClass}</small>
-                        </li>
-                      ))}
-                    </ol>
-                    <div className="ai-chat-plan__footer">
-                      <span>
-                        Queue {message.subagentSchedule.executorQueue.maxConcurrentMutations}
-                      </span>
-                      <span>{message.taskPlan.review.status}</span>
-                    </div>
-                  </section>
-                ) : null}
                 {message.providerDiagnostics?.length ? (
                   <div className="ai-chat-message__diagnostics" aria-label="AI provider diagnostics" role="note">
                     {message.providerDiagnostics.map((diagnostic) => (
@@ -1077,71 +617,91 @@ export function AiChatPanel({
                     })}
                   </div>
                 ) : null}
-                {message.costEstimate ? (
-                  <span className="ai-chat-message__cost">
-                    {aiCostLabel(message.costEstimate)}
-                  </span>
-                ) : null}
               </article>
             );
           })}
 
           {state.isRunning ? (
-            <div className="ai-chat-progress" role="status" aria-label={`AI ${activeStatusLabel}`}>
-              <div className="ai-chat-progress__avatar" />
-              <div className="ai-chat-progress__lines">
+            <div className="ai-chat-progress" role="status" aria-label={`AI ${activeStatusLabel}. Думаю`}>
+              <span className="ai-chat-progress__label">Думаю</span>
+              <span className="ai-chat-progress__dots" aria-hidden="true">
                 <span />
                 <span />
                 <span />
-              </div>
+              </span>
             </div>
           ) : null}
         </div>
 
         <form className="ai-chat-input" onSubmit={handleSubmit}>
-          <label className="sr-only" htmlFor="ai-chat-message">
-            Message Fluxora AI
-          </label>
-          <textarea
-            id="ai-chat-message"
-            aria-label="Message Fluxora AI"
-            disabled={inputDisabled}
-            placeholder={providerDiagnostic?.level === 'error' ? providerDiagnostic.title : 'Message'}
-            rows={3}
-            value={state.draft}
-            onChange={(event) => onDraftChange(event.target.value)}
-            onKeyDown={handleInputKeyDown}
-          />
-          <div className="ai-chat-input__actions">
-            {state.isRunning ? (
-              <button
-                aria-label="Cancel AI run"
-                className="ai-chat-panel__icon-button"
-                title="Cancel AI run"
-                type="button"
-                onClick={onCancel}
-              >
-                <CircleStop size={15} aria-hidden="true" />
-              </button>
-            ) : null}
-            <button
-              aria-label="Voice input placeholder"
-              className="ai-chat-panel__icon-button"
-              disabled
-              title="Voice input placeholder"
-              type="button"
-            >
-              <Mic size={15} aria-hidden="true" />
-            </button>
-            <button
-              aria-label="Send message"
-              className="ai-chat-send-button"
-              disabled={!canSend}
-              type="submit"
-            >
-              <Send size={15} aria-hidden="true" />
-              <span>Send</span>
-            </button>
+          <div
+            className="ai-chat-input__surface"
+            data-disabled={inputDisabled ? 'true' : undefined}
+            data-running={state.isRunning ? 'true' : undefined}
+          >
+            <label className="sr-only" htmlFor="ai-chat-message">
+              Message Fluxora AI
+            </label>
+            <textarea
+              id="ai-chat-message"
+              aria-label="Message Fluxora AI"
+              disabled={inputDisabled}
+              placeholder={inputPlaceholder}
+              rows={3}
+              value={state.draft}
+              onChange={(event) => onDraftChange(event.target.value)}
+              onKeyDown={handleInputKeyDown}
+            />
+            <div className="ai-chat-input__toolbar">
+              <div className="ai-chat-input__leading-actions">
+                <button
+                  aria-label="Attach context unavailable"
+                  className="ai-chat-input__tool-button"
+                  disabled
+                  title="Attach context unavailable"
+                  type="button"
+                >
+                  <AiChatInputIcon source={aiPlusIcon} />
+                </button>
+              </div>
+              <div className="ai-chat-input__trailing-actions">
+                {state.isRunning ? (
+                  <button
+                    aria-label="Cancel AI run"
+                    className="ai-chat-input__tool-button ai-chat-input__tool-button--danger"
+                    title="Cancel AI run"
+                    type="button"
+                    onClick={onCancel}
+                  >
+                    <AiChatInputIcon source={aiCircleStopIcon} />
+                  </button>
+                ) : null}
+                {showContextRing ? (
+                  <AiContextUsageRing
+                    estimateState={contextEstimateState}
+                    usage={activeContextUsage}
+                  />
+                ) : null}
+                <button
+                  aria-label="Voice input unavailable"
+                  className="ai-chat-input__tool-button"
+                  disabled
+                  title="Voice input unavailable"
+                  type="button"
+                >
+                  <AiChatInputIcon source={aiMicIcon} />
+                </button>
+                <button
+                  aria-label="Send message"
+                  className="ai-chat-send-button"
+                  disabled={!canSend}
+                  title="Send message"
+                  type="submit"
+                >
+                  <AiChatInputIcon source={aiArrowUpIcon} />
+                </button>
+              </div>
+            </div>
           </div>
         </form>
       </div>

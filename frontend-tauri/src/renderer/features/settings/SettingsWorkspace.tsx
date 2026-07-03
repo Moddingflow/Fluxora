@@ -1,5 +1,6 @@
 import {
-  Bot,
+  Code2,
+  ExternalLink,
   Languages,
   Link2,
   RefreshCw,
@@ -7,6 +8,7 @@ import {
 } from 'lucide-react';
 
 import {
+  formatLastBuildDate,
   languageOptions,
   nexusCanToggle,
   nexusConnectionSummary,
@@ -16,11 +18,9 @@ import {
 } from '../../settings-workspace-state';
 import { TransferSettingsPanel } from '../../TransferSettingsPanel';
 import { nexusModsIcon } from '../../design-system/assets';
-import { AiSettingsPanel } from '../ai/AiSettingsPanel';
-import type { AiChatSettings } from '../ai/ai-chat-settings';
 import { LanguageSelect } from './LanguageSelect';
 import type {
-  FluxoraAiHostStatus,
+  FluxoraAppInfo,
   FluxoraNexusModsAuthStatus,
   NativeBridgeStatus
 } from '../../../shared/fluxora-api';
@@ -28,19 +28,17 @@ import type {
 type SettingsCapabilities = ReturnType<typeof settingsCapabilityView>;
 
 interface SettingsWorkspaceProps {
-  aiHostStatus: FluxoraAiHostStatus | null;
-  aiSettings: AiChatSettings;
+  appInfo: FluxoraAppInfo | null;
   bridgeStatus: NativeBridgeStatus | null;
+  developerModeEnabled: boolean;
   isTransferRunning: boolean;
   languageBusy: string | null;
+  lastBuildDate: string;
   nexusBusy: boolean;
   nexusStatus: FluxoraNexusModsAuthStatus | null;
-  onAiSettingsChange: (settings: AiChatSettings) => void;
-  onClearAiLocalData: () => void;
-  onConnectAiProvider: (providerId: string) => void;
-  onDisconnectAiProvider: (providerId: string) => void;
-  onExportAiData: () => void;
+  onDeveloperModeChange: (enabled: boolean) => void;
   onOpenTransfer: () => void;
+  onOpenRepository: () => void;
   onSectionChange: (section: SettingsSectionId) => void;
   onSetLanguage: (language: string) => void;
   onToggleNexusConnection: () => void;
@@ -50,19 +48,17 @@ interface SettingsWorkspaceProps {
 }
 
 export function SettingsWorkspace({
-  aiHostStatus,
-  aiSettings,
+  appInfo,
   bridgeStatus,
+  developerModeEnabled,
   isTransferRunning,
   languageBusy,
+  lastBuildDate,
   nexusBusy,
   nexusStatus,
-  onAiSettingsChange,
-  onClearAiLocalData,
-  onConnectAiProvider,
-  onDisconnectAiProvider,
-  onExportAiData,
+  onDeveloperModeChange,
   onOpenTransfer,
+  onOpenRepository,
   onSectionChange,
   onSetLanguage,
   onToggleNexusConnection,
@@ -75,14 +71,19 @@ export function SettingsWorkspace({
       <div className="settings-nav__items">
         {settingsSections.map((item) => {
           const isActive = section === item.id;
-          const icon =
-            item.id === 'connections'
-              ? Link2
-              : item.id === 'ai'
-                ? Bot
-              : item.id === 'language'
-                ? Languages
-                : UploadCloud;
+          const icon = (() => {
+            switch (item.id) {
+              case 'connections':
+                return Link2;
+              case 'language':
+                return Languages;
+              case 'developers':
+                return Code2;
+              case 'transfer':
+              default:
+                return UploadCloud;
+            }
+          })();
           const Icon = icon;
           return (
             <button
@@ -172,27 +173,88 @@ export function SettingsWorkspace({
     />
   );
 
-  const renderAiSettings = () => (
-    <AiSettingsPanel
-      busyLabel={settingsBusyLabel}
-      settings={aiSettings}
-      status={aiHostStatus}
-      onChange={onAiSettingsChange}
-      onClearLocalData={onClearAiLocalData}
-      onConnectProvider={onConnectAiProvider}
-      onDisconnectProvider={onDisconnectAiProvider}
-      onExportData={onExportAiData}
-    />
+  const renderDeveloperSettings = () => (
+    <div className="settings-panel settings-panel--developer" aria-label="Developer settings">
+      <div className="settings-connections-list">
+        <div
+          className="settings-service-row settings-service-row--connection settings-service-row--developer"
+          data-status={developerModeEnabled ? 'ready' : 'checking'}
+        >
+          <div className="settings-service-main">
+            <span className="settings-service-icon settings-service-icon--developer" aria-hidden="true">
+              <Code2 size={20} />
+            </span>
+            <span className="settings-service-copy">
+              <strong>Режим разработчика</strong>
+              <span>{developerModeEnabled ? 'Включен' : 'Выключен'}</span>
+            </span>
+          </div>
+          <button
+            className="settings-switch"
+            type="button"
+            role="switch"
+            aria-checked={developerModeEnabled}
+            aria-label="Режим разработчика"
+            title={developerModeEnabled ? 'Режим разработчика включен' : 'Режим разработчика выключен'}
+            onClick={() => onDeveloperModeChange(!developerModeEnabled)}
+          >
+            <span aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+
+      <dl className="settings-facts settings-facts--developer">
+        <div>
+          <dt>Дата последней сборки</dt>
+          <dd>{formatLastBuildDate(lastBuildDate)}</dd>
+        </div>
+        <div>
+          <dt>UI</dt>
+          <dd>Tauri 2 / React / TypeScript</dd>
+        </div>
+        <div>
+          <dt>Core</dt>
+          <dd>Rust shell / C++ core</dd>
+        </div>
+        <div>
+          <dt>Версия</dt>
+          <dd>{appInfo?.version ?? 'pending'}</dd>
+        </div>
+        <div>
+          <dt>Платформа</dt>
+          <dd>{appInfo ? `${appInfo.platform}/${appInfo.arch}` : 'pending'}</dd>
+        </div>
+        <div>
+          <dt>Bridge</dt>
+          <dd>{bridgeStatus?.ready ? 'ready' : bridgeStatus?.error ? 'unavailable' : 'pending'}</dd>
+        </div>
+      </dl>
+
+      <button
+        className="primary-button settings-repository-button"
+        type="button"
+        aria-label="Открыть оригинальный репозиторий Fluxora на GitHub"
+        onClick={onOpenRepository}
+      >
+        <ExternalLink size={15} aria-hidden="true" />
+        <span>GitHub</span>
+      </button>
+    </div>
   );
 
-  const activeSection =
-    section === 'connections'
-      ? renderNexusSettings()
-      : section === 'ai'
-        ? renderAiSettings()
-      : section === 'language'
-        ? renderLanguageSettings()
-        : renderTransferSettings();
+  const activeSection = (() => {
+    switch (section) {
+      case 'connections':
+        return renderNexusSettings();
+      case 'language':
+        return renderLanguageSettings();
+      case 'developers':
+        return renderDeveloperSettings();
+      case 'transfer':
+      default:
+        return renderTransferSettings();
+    }
+  })();
 
   return (
     <section className="settings-layout" aria-label="Settings">

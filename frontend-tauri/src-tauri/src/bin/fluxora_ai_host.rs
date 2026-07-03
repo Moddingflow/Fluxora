@@ -135,6 +135,7 @@ struct ProviderChatReply {
     text: String,
     prompt_tokens: Option<u64>,
     completion_tokens: Option<u64>,
+    total_tokens: Option<u64>,
     sources: Vec<Value>,
 }
 
@@ -218,6 +219,24 @@ struct CostComputation {
     internal_cost: f64,
     ledger_entry: Value,
     web_cost: f64,
+}
+
+struct ChatPromptPackage {
+    candidates: Vec<&'static ModelDescriptor>,
+    context_bundle: Option<Value>,
+    current_month_spent: f64,
+    fallback_providers: Vec<String>,
+    gemini_google_search_enabled: bool,
+    local_inspection: Value,
+    messages: Vec<Value>,
+    mod_research_route: Value,
+    prompt: String,
+    prompt_cache_observation: PromptCacheObservation,
+    prompt_token_estimate: u64,
+    research_report: Option<Value>,
+    routing: &'static str,
+    run_size: &'static str,
+    auto_compression_applied: bool,
 }
 
 const PROVIDERS: &[ProviderDescriptor] = &[
@@ -1418,8 +1437,7 @@ fn extract_json_with_schema(content: &str, schema: &str) -> Option<Value> {
         if object_end <= object_start {
             continue;
         }
-        let Ok(value) = serde_json::from_str::<Value>(&content[object_start..=object_end])
-        else {
+        let Ok(value) = serde_json::from_str::<Value>(&content[object_start..=object_end]) else {
             continue;
         };
         if value.get("schema").and_then(Value::as_str) == Some(schema) {
@@ -1484,7 +1502,9 @@ fn value_has_tool(value: &Value, tool_name: &str) -> bool {
                 .and_then(Value::as_str)
                 .map(|value| value == tool_name)
                 .unwrap_or(false)
-                || fields.values().any(|nested| value_has_tool(nested, tool_name))
+                || fields
+                    .values()
+                    .any(|nested| value_has_tool(nested, tool_name))
         }
         Value::Array(items) => items.iter().any(|item| value_has_tool(item, tool_name)),
         _ => false,
@@ -1776,8 +1796,8 @@ fn decide_mod_research_route(
         let public_web_needed = research_param_bool(params, "allowPublicWebFetch")
             && prompt_requests_public_web(prompt)
             && !explicit_nexus_target;
-        let google_search_needed = research_param_bool(params, "allowGeminiGoogleSearch")
-            && !explicit_nexus_target;
+        let google_search_needed =
+            research_param_bool(params, "allowGeminiGoogleSearch") && !explicit_nexus_target;
         route = if google_search_needed || public_web_needed {
             "nexus-api-with-search"
         } else {
@@ -1888,7 +1908,11 @@ fn local_inspection_id(prefix: &str, parts: &[String]) -> String {
 }
 
 fn local_inspection_string(value: Option<&Value>) -> String {
-    value.and_then(Value::as_str).unwrap_or_default().trim().to_string()
+    value
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
 }
 
 fn local_inspection_array_strings(value: Option<&Value>) -> Vec<String> {
@@ -1917,9 +1941,7 @@ fn local_inspection_tools<'a>(snapshot: Option<&'a Value>, tool_name: &str) -> V
         .map(|tools| {
             tools
                 .iter()
-                .filter(|tool| {
-                    tool.get("toolName").and_then(Value::as_str) == Some(tool_name)
-                })
+                .filter(|tool| tool.get("toolName").and_then(Value::as_str) == Some(tool_name))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
@@ -2011,8 +2033,16 @@ fn local_inspection_push_card(cards: &mut Vec<Value>, card: Value) {
         .and_then(Value::as_str)
         .unwrap_or_default();
     if cards.iter().any(|existing| {
-        existing.get("sourceId").and_then(Value::as_str).unwrap_or_default() == source_id
-            && existing.get("claim").and_then(Value::as_str).unwrap_or_default() == claim
+        existing
+            .get("sourceId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            == source_id
+            && existing
+                .get("claim")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                == claim
     }) {
         return;
     }
@@ -2403,7 +2433,11 @@ fn build_local_inspection(
             let claim = format!(
                 "Concrete file-owner conflict evidence exists between {} on {}.",
                 owners.join(" and "),
-                if path.is_empty() { "a bounded file sample" } else { &path }
+                if path.is_empty() {
+                    "a bounded file sample"
+                } else {
+                    &path
+                }
             );
             local_inspection_push_finding(
                 &mut deterministic_findings,
@@ -2453,7 +2487,11 @@ fn build_local_inspection(
                     local_inspection_id("finding-failed-operation", &[claim.clone()]),
                     claim,
                     vec![label],
-                    local_inspection_tool_source_ids("downloads.list", operation_id, context_bundle),
+                    local_inspection_tool_source_ids(
+                        "downloads.list",
+                        operation_id,
+                        context_bundle,
+                    ),
                     0.9,
                     "downloads.list",
                     "failed-download-install-or-operation",
@@ -2478,8 +2516,10 @@ fn build_local_inspection(
                         .map(|key| local_inspection_string(item.get(*key)))
                         .find(|value| !value.is_empty())
                         .unwrap_or_else(|| "operation".to_string());
-                    let claim =
-                        format!("Fluxora operation {} failed locally with state: {}.", label, state);
+                    let claim = format!(
+                        "Fluxora operation {} failed locally with state: {}.",
+                        label, state
+                    );
                     local_inspection_push_finding(
                         &mut deterministic_findings,
                         &mut evidence_cards,
@@ -2515,7 +2555,10 @@ fn build_local_inspection(
                     continue;
                 }
                 let excerpt = line.chars().take(180).collect::<String>();
-                let claim = format!("Fluxora operation log reported a local failure: {}.", excerpt);
+                let claim = format!(
+                    "Fluxora operation log reported a local failure: {}.",
+                    excerpt
+                );
                 local_inspection_push_finding(
                     &mut deterministic_findings,
                     &mut evidence_cards,
@@ -2648,7 +2691,8 @@ fn build_local_inspection(
             .and_then(Value::as_array)
         {
             for file in files {
-                let preview = local_inspection_string(file.get("content_preview")).to_ascii_lowercase();
+                let preview =
+                    local_inspection_string(file.get("content_preview")).to_ascii_lowercase();
                 if !(preview.contains("skse")
                     || preview.contains("address library")
                     || preview.contains("require"))
@@ -4073,6 +4117,7 @@ fn local_reply(prompt: &str, fallback_providers: &[String]) -> ProviderChatReply
         ),
         prompt_tokens: None,
         completion_tokens: None,
+        total_tokens: None,
         sources: Vec::new(),
     }
 }
@@ -4130,6 +4175,125 @@ fn provider_fallback_reason(error: &ProviderChatError) -> Option<String> {
     None
 }
 
+fn gemini_content_parts_from_messages(messages: &[Value]) -> Vec<Value> {
+    messages
+        .iter()
+        .filter_map(|message| {
+            let text = message.get("content").and_then(Value::as_str)?.trim();
+            if text.is_empty() {
+                return None;
+            }
+            let role = match message.get("role").and_then(Value::as_str) {
+                Some("assistant") => "model",
+                _ => "user",
+            };
+            Some(json!({ "role": role, "parts": [{ "text": text }] }))
+        })
+        .collect()
+}
+
+fn gemini_generate_content_request_body(
+    model: &ModelDescriptor,
+    messages: &[Value],
+    google_search_enabled: bool,
+) -> Value {
+    let mut request_body = json!({
+        "systemInstruction": {
+            "parts": [
+                { "text": FLUXORA_DOMAIN_SYSTEM_PROMPT },
+                { "text": FLUXORA_SAFETY_PROMPT },
+                { "text": FLUXORA_RESPONSE_STYLE_PROMPT },
+                { "text": FLUXORA_SKYRIM_SKILL_PROMPT }
+            ]
+        },
+        "contents": gemini_content_parts_from_messages(messages),
+        "generationConfig": {
+            "temperature": 0.2
+        }
+    });
+    if google_search_enabled && model.supports_web {
+        request_body["tools"] = json!([{ "googleSearchRetrieval": {} }]);
+    }
+    request_body
+}
+
+fn gemini_model_endpoint(
+    provider: &ProviderDescriptor,
+    model: &ModelDescriptor,
+    method: &str,
+    credential: &str,
+) -> Result<String, ProviderChatError> {
+    Ok(format!(
+        "{}/{}:{}?key={}",
+        endpoint_for_provider(provider)?.trim_end_matches('/'),
+        model.id,
+        method,
+        credential
+    ))
+}
+
+fn gemini_usage_metadata_tokens(data: &Value, field: &str) -> Option<u64> {
+    data.get("usageMetadata")
+        .and_then(|usage| usage.get(field))
+        .and_then(Value::as_u64)
+}
+
+fn count_gemini_context_tokens(
+    provider: &ProviderDescriptor,
+    model: &ModelDescriptor,
+    messages: &[Value],
+    credential: &str,
+    google_search_enabled: bool,
+) -> Result<u64, ProviderChatError> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|error| ProviderChatError {
+            message: error.to_string(),
+            status_code: None,
+        })?;
+    let endpoint = gemini_model_endpoint(provider, model, "countTokens", credential)?;
+    let request_body = json!({
+        "generateContentRequest": gemini_generate_content_request_body(
+            model,
+            messages,
+            google_search_enabled,
+        )
+    });
+
+    let response = client
+        .post(endpoint)
+        .header("User-Agent", "FluxoraAIHost/0.0.0")
+        .json(&request_body)
+        .send()
+        .map_err(|error| ProviderChatError {
+            message: error.to_string(),
+            status_code: error.status().map(|status| status.as_u16()),
+        })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let message = response
+            .text()
+            .unwrap_or_else(|_| "Provider token count failed.".to_string());
+        return Err(ProviderChatError {
+            message,
+            status_code: Some(status.as_u16()),
+        });
+    }
+
+    let data: Value = response.json().map_err(|error| ProviderChatError {
+        message: error.to_string(),
+        status_code: None,
+    })?;
+    data.get("totalTokens")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ProviderChatError {
+            message: "Provider token count response missing totalTokens.".to_string(),
+            status_code: None,
+        })
+}
+
 fn call_gemini(
     provider: &ProviderDescriptor,
     model: &ModelDescriptor,
@@ -4144,43 +4308,8 @@ fn call_gemini(
             message: error.to_string(),
             status_code: None,
         })?;
-    let endpoint = format!(
-        "{}/{}:generateContent?key={}",
-        endpoint_for_provider(provider)?.trim_end_matches('/'),
-        model.id,
-        credential
-    );
-    let contents: Vec<Value> = messages
-        .iter()
-        .filter_map(|message| {
-            let text = message.get("content").and_then(Value::as_str)?.trim();
-            if text.is_empty() {
-                return None;
-            }
-            let role = match message.get("role").and_then(Value::as_str) {
-                Some("assistant") => "model",
-                _ => "user",
-            };
-            Some(json!({ "role": role, "parts": [{ "text": text }] }))
-        })
-        .collect();
-    let mut request_body = json!({
-        "systemInstruction": {
-            "parts": [
-                { "text": FLUXORA_DOMAIN_SYSTEM_PROMPT },
-                { "text": FLUXORA_SAFETY_PROMPT },
-                { "text": FLUXORA_RESPONSE_STYLE_PROMPT },
-                { "text": FLUXORA_SKYRIM_SKILL_PROMPT }
-            ]
-        },
-        "contents": contents,
-        "generationConfig": {
-            "temperature": 0.2
-        }
-    });
-    if google_search_enabled && model.supports_web {
-        request_body["tools"] = json!([{ "googleSearchRetrieval": {} }]);
-    }
+    let endpoint = gemini_model_endpoint(provider, model, "generateContent", credential)?;
+    let request_body = gemini_generate_content_request_body(model, messages, google_search_enabled);
 
     let response = client
         .post(endpoint)
@@ -4259,14 +4388,9 @@ fn call_gemini(
 
     Ok(ProviderChatReply {
         text,
-        prompt_tokens: data
-            .get("usageMetadata")
-            .and_then(|usage| usage.get("promptTokenCount"))
-            .and_then(Value::as_u64),
-        completion_tokens: data
-            .get("usageMetadata")
-            .and_then(|usage| usage.get("candidatesTokenCount"))
-            .and_then(Value::as_u64),
+        prompt_tokens: gemini_usage_metadata_tokens(&data, "promptTokenCount"),
+        completion_tokens: gemini_usage_metadata_tokens(&data, "candidatesTokenCount"),
+        total_tokens: gemini_usage_metadata_tokens(&data, "totalTokenCount"),
         sources,
     })
 }
@@ -4718,14 +4842,79 @@ fn run_orchestrated_chat(
     })
 }
 
-fn chat_response(
-    params: Value,
+fn strict_context_token_budget(context_window_tokens: u64) -> u64 {
+    std::cmp::max(1, context_window_tokens.saturating_mul(95) / 100)
+}
+
+fn strict_context_fallback_messages(
+    messages: Vec<Value>,
+    context_window_tokens: u64,
+) -> (Vec<Value>, bool) {
+    let budget = strict_context_token_budget(context_window_tokens);
+    if estimated_tokens_for_messages(&messages) <= budget {
+        return (messages, false);
+    }
+
+    let non_system_total = messages
+        .iter()
+        .filter(|message| message.get("role").and_then(Value::as_str) != Some("system"))
+        .count();
+    for keep_non_system in [12usize, 8, 4, 2, 1] {
+        let mut seen_non_system = 0usize;
+        let retained: Vec<Value> = messages
+            .iter()
+            .filter_map(|message| {
+                let is_system = message.get("role").and_then(Value::as_str) == Some("system");
+                if is_system {
+                    return Some(message.clone());
+                }
+
+                seen_non_system += 1;
+                (seen_non_system + keep_non_system > non_system_total).then(|| message.clone())
+            })
+            .collect();
+        if estimated_tokens_for_messages(&retained) <= budget {
+            return (retained, true);
+        }
+    }
+
+    let mut seen_non_system = 0usize;
+    let retained = messages
+        .iter()
+        .filter_map(|message| {
+            let is_system = message.get("role").and_then(Value::as_str) == Some("system");
+            if is_system {
+                return Some(message.clone());
+            }
+
+            seen_non_system += 1;
+            (seen_non_system == non_system_total).then(|| message.clone())
+        })
+        .collect();
+    (retained, true)
+}
+
+fn prompt_cache_observation_for_estimate(
+    messages: &[Value],
+    routing_preset: &str,
+    prompt_tokens: u64,
+) -> PromptCacheObservation {
+    PromptCacheObservation {
+        key: prompt_cache_key(messages, routing_preset),
+        status: "disabled",
+        read_tokens: 0,
+        write_tokens: prompt_tokens,
+    }
+}
+
+fn prepare_chat_prompt_package(
+    params: &Value,
     operation_id: &str,
     context_graph: &FluxoraContextGraph,
-    prompt_cache: &mut PromptCostCache,
+    prompt_cache: Option<&mut PromptCostCache>,
     research_cache: &mut ai_research::AiResearchCache,
-) -> Value {
-    let raw_messages = chat_messages(&params);
+) -> ChatPromptPackage {
+    let raw_messages = chat_messages(params);
     let prompt = last_user_prompt(&raw_messages);
     let mut fallback_providers = Vec::new();
     let context_bundle =
@@ -4737,17 +4926,20 @@ fn chat_response(
             }
         };
     let local_snapshot = build_context_snapshot_from_messages(&raw_messages);
-    let local_inspection =
-        build_local_inspection(operation_id, local_snapshot.as_ref(), context_bundle.as_ref());
+    let local_inspection = build_local_inspection(
+        operation_id,
+        local_snapshot.as_ref(),
+        context_bundle.as_ref(),
+    );
     let mod_research_route = decide_mod_research_route(
-        &params,
+        params,
         &prompt,
         &raw_messages,
         context_bundle.as_ref(),
         operation_id,
     );
     let research_bundle = if mod_research_route.collect_external_research {
-        let research_params = research_params_for_route(&params, &mod_research_route);
+        let research_params = research_params_for_route(params, &mod_research_route);
         collect_ai_research_bundle(
             &research_params,
             &prompt,
@@ -4761,6 +4953,14 @@ fn chat_response(
     };
     let mut messages =
         compact_chat_messages_with_context_graph(&raw_messages, context_bundle.as_ref());
+    let context_graph_compacted = context_bundle.is_some()
+        && raw_messages.iter().any(|message| {
+            message
+                .get("content")
+                .and_then(Value::as_str)
+                .map(|content| content.contains("fluxora.ai.build-context.v1"))
+                .unwrap_or(false)
+        });
     messages.push(json!({
         "role": "system",
         "content": mod_research_route_system_message(&mod_research_route.payload)
@@ -4771,23 +4971,225 @@ fn chat_response(
             "content": research.system_message
         }));
     }
-    let routing = routing_preset(&params);
-    let prompt_token_estimate = estimated_tokens_for_messages(&messages);
-    let prompt_cache_observation =
-        observe_prompt_cache(prompt_cache, &messages, routing, prompt_token_estimate);
+    let routing = routing_preset(params);
     let gemini_google_search_enabled = research_bundle
         .as_ref()
         .map(|research| research.gemini_google_search_enabled)
         .unwrap_or(false);
+    let candidates = candidate_models(params, research_bundle.as_ref());
+    let preflight_model = candidates
+        .first()
+        .copied()
+        .or_else(|| model_by_id("local-dry-run"))
+        .expect("local model must exist");
+    let (messages, strict_context_fallback_applied) =
+        strict_context_fallback_messages(messages, preflight_model.context_window_tokens);
+    let prompt_token_estimate = estimated_tokens_for_messages(&messages);
+    let prompt_cache_observation = match prompt_cache {
+        Some(cache) => observe_prompt_cache(cache, &messages, routing, prompt_token_estimate),
+        None => prompt_cache_observation_for_estimate(&messages, routing, prompt_token_estimate),
+    };
+    let run_size = run_size_for(params, &prompt);
+    let current_month_spent = f64_param(params, &["costPolicy", "currentMonthSpentCredits"])
+        .unwrap_or(0.0)
+        .max(0.0);
+    let research_report = research_bundle
+        .as_ref()
+        .map(|research| research.report.clone());
+
+    ChatPromptPackage {
+        candidates,
+        context_bundle,
+        current_month_spent,
+        fallback_providers,
+        gemini_google_search_enabled,
+        local_inspection,
+        messages,
+        mod_research_route: mod_research_route.payload,
+        prompt,
+        prompt_cache_observation,
+        prompt_token_estimate,
+        research_report,
+        routing,
+        run_size,
+        auto_compression_applied: context_graph_compacted || strict_context_fallback_applied,
+    }
+}
+
+fn context_usage_level(percent: f64) -> &'static str {
+    if percent >= 97.0 {
+        "almost-full"
+    } else if percent >= 92.0 {
+        "critical"
+    } else if percent >= 80.0 {
+        "warning"
+    } else if percent >= 60.0 {
+        "moderate"
+    } else {
+        "normal"
+    }
+}
+
+fn context_usage_mode(percent: f64) -> &'static str {
+    if percent >= 95.0 {
+        "strict"
+    } else if percent >= 85.0 {
+        "compressed"
+    } else if percent >= 70.0 {
+        "smart"
+    } else {
+        "full"
+    }
+}
+
+fn context_usage_included_sections(package: &ChatPromptPackage) -> Vec<&'static str> {
+    let mut sections = vec!["system-instructions", "chat-history", "mod-research-route"];
+    if package.context_bundle.is_some() {
+        sections.push("context-graph");
+    }
+    if package.research_report.is_some() {
+        sections.push("research-bundle");
+    }
+    if package.gemini_google_search_enabled {
+        sections.push("tool-declarations");
+    }
+    sections
+}
+
+fn context_usage_payload(
+    operation_id: &str,
+    provider: &ProviderDescriptor,
+    model: &ModelDescriptor,
+    current_context_tokens: u64,
+    precision: &str,
+    package: &ChatPromptPackage,
+) -> Value {
+    context_usage_payload_from_sections(
+        operation_id,
+        provider,
+        model,
+        current_context_tokens,
+        precision,
+        &context_usage_included_sections(package),
+        package.auto_compression_applied,
+    )
+}
+
+fn context_usage_payload_from_sections(
+    operation_id: &str,
+    provider: &ProviderDescriptor,
+    model: &ModelDescriptor,
+    current_context_tokens: u64,
+    precision: &str,
+    included_sections: &[&str],
+    auto_compression_applied: bool,
+) -> Value {
+    let percent =
+        ((current_context_tokens as f64 / model.context_window_tokens as f64) * 100.0).min(100.0);
+    json!({
+        "schema": "fluxora.ai.context-usage.v1",
+        "operationId": operation_id,
+        "providerId": provider.id,
+        "modelId": model.id,
+        "contextWindowTokens": model.context_window_tokens,
+        "currentContextTokens": current_context_tokens,
+        "currentContextPercent": percent,
+        "precision": precision,
+        "level": context_usage_level(percent),
+        "mode": context_usage_mode(percent),
+        "includedSections": included_sections,
+        "autoCompressionApplied": auto_compression_applied,
+        "actionRequired": percent >= 97.0,
+        "countedAt": now_iso_like()
+    })
+}
+
+fn estimate_context_response(
+    params: Value,
+    operation_id: &str,
+    context_graph: &FluxoraContextGraph,
+    research_cache: &mut ai_research::AiResearchCache,
+) -> Value {
+    let package =
+        prepare_chat_prompt_package(&params, operation_id, context_graph, None, research_cache);
+    let model = package
+        .candidates
+        .first()
+        .copied()
+        .or_else(|| model_by_id("local-dry-run"))
+        .expect("local model must exist");
+    let provider = provider_by_id(model.provider_id)
+        .or_else(|| provider_by_id("local-dry-run"))
+        .expect("local provider must exist");
+
+    if provider.endpoint_kind == ProviderEndpointKind::Gemini {
+        for credential in provider_credential_candidates(provider) {
+            if let Ok(tokens) = count_gemini_context_tokens(
+                provider,
+                model,
+                &package.messages,
+                &credential,
+                package.gemini_google_search_enabled,
+            ) {
+                return context_usage_payload(
+                    operation_id,
+                    provider,
+                    model,
+                    tokens,
+                    "exact",
+                    &package,
+                );
+            }
+        }
+    }
+
+    context_usage_payload(
+        operation_id,
+        provider,
+        model,
+        package.prompt_token_estimate,
+        "estimated",
+        &package,
+    )
+}
+
+fn chat_response(
+    params: Value,
+    operation_id: &str,
+    context_graph: &FluxoraContextGraph,
+    prompt_cache: &mut PromptCostCache,
+    research_cache: &mut ai_research::AiResearchCache,
+) -> Value {
+    let package = prepare_chat_prompt_package(
+        &params,
+        operation_id,
+        context_graph,
+        Some(prompt_cache),
+        research_cache,
+    );
+    let context_usage_sections = context_usage_included_sections(&package);
+    let auto_compression_applied = package.auto_compression_applied;
+    let ChatPromptPackage {
+        candidates,
+        context_bundle,
+        current_month_spent,
+        mut fallback_providers,
+        gemini_google_search_enabled,
+        local_inspection,
+        messages,
+        mod_research_route,
+        prompt,
+        prompt_cache_observation,
+        prompt_token_estimate,
+        research_report,
+        routing,
+        run_size,
+        ..
+    } = package;
     let simulate_status = params
         .get("simulateProviderStatusCode")
         .and_then(Value::as_u64)
         .and_then(|value| u16::try_from(value).ok());
-    let candidates = candidate_models(&params, research_bundle.as_ref());
-    let run_size = run_size_for(&params, &prompt);
-    let current_month_spent = f64_param(&params, &["costPolicy", "currentMonthSpentCredits"])
-        .unwrap_or(0.0)
-        .max(0.0);
     let preflight_model = candidates
         .first()
         .copied()
@@ -4808,10 +5210,10 @@ fn chat_response(
         0,
         0,
     );
-    let research_report = research_bundle.as_ref().map(|research| &research.report);
-    let preflight_web_cost = web_search_calls_for(research_report) as f64
+    let research_report_ref = research_report.as_ref();
+    let preflight_web_cost = web_search_calls_for(research_report_ref) as f64
         * WEB_SEARCH_INTERNAL_COST
-        + fetch_url_calls_for(research_report) as f64 * FETCH_URL_INTERNAL_COST;
+        + fetch_url_calls_for(research_report_ref) as f64 * FETCH_URL_INTERNAL_COST;
     let cost_preflight = cost_preflight_payload(
         &params,
         operation_id,
@@ -4846,6 +5248,7 @@ fn chat_response(
                 text: decision_text.to_string(),
                 prompt_tokens: None,
                 completion_tokens: None,
+                total_tokens: None,
                 sources: Vec::new(),
             },
             fallback_providers,
@@ -4854,9 +5257,11 @@ fn chat_response(
             &prompt_cache_observation,
             &cost_preflight,
             context_bundle.as_ref(),
-            research_report,
-            &mod_research_route.payload,
+            research_report_ref,
+            &mod_research_route,
             &local_inspection,
+            &context_usage_sections,
+            auto_compression_applied,
             None,
             RunCostSummary::default(),
             None,
@@ -4892,9 +5297,11 @@ fn chat_response(
                 &prompt_cache_observation,
                 &cost_preflight,
                 context_bundle.as_ref(),
-                research_report,
-                &mod_research_route.payload,
+                research_report_ref,
+                &mod_research_route,
                 &local_inspection,
+                &context_usage_sections,
+                auto_compression_applied,
                 Some(orchestrated.orchestration),
                 orchestrated.additional_cost,
                 None,
@@ -4925,9 +5332,11 @@ fn chat_response(
                 &prompt_cache_observation,
                 &cost_preflight,
                 context_bundle.as_ref(),
-                research_report,
-                &mod_research_route.payload,
+                research_report_ref,
+                &mod_research_route,
                 &local_inspection,
+                &context_usage_sections,
+                auto_compression_applied,
                 None,
                 RunCostSummary::default(),
                 None,
@@ -4976,9 +5385,11 @@ fn chat_response(
                         &prompt_cache_observation,
                         &cost_preflight,
                         context_bundle.as_ref(),
-                        research_report,
-                        &mod_research_route.payload,
+                        research_report_ref,
+                        &mod_research_route,
                         &local_inspection,
+                        &context_usage_sections,
+                        auto_compression_applied,
                         None,
                         RunCostSummary::default(),
                         None,
@@ -5026,9 +5437,11 @@ fn chat_response(
         &prompt_cache_observation,
         &cost_preflight,
         context_bundle.as_ref(),
-        research_report,
-        &mod_research_route.payload,
+        research_report_ref,
+        &mod_research_route,
         &local_inspection,
+        &context_usage_sections,
+        auto_compression_applied,
         None,
         RunCostSummary::default(),
         final_error,
@@ -5054,6 +5467,8 @@ fn chat_response_payload(
     research_report: Option<&Value>,
     mod_research_route: &Value,
     local_inspection: &Value,
+    context_usage_sections: &[&str],
+    auto_compression_applied: bool,
     orchestration: Option<Value>,
     additional_cost: RunCostSummary,
     error: Option<ProviderChatError>,
@@ -5064,6 +5479,34 @@ fn chat_response_payload(
     let completion_tokens = reply
         .completion_tokens
         .unwrap_or_else(|| estimated_tokens(&reply.text));
+    let total_tokens = reply
+        .total_tokens
+        .unwrap_or_else(|| prompt_tokens.saturating_add(completion_tokens));
+    let usage_source = if reply.prompt_tokens.is_some() || reply.completion_tokens.is_some() {
+        "gemini-usage-metadata"
+    } else {
+        "chars-per-token-estimate"
+    };
+    let context_usage = context_usage_payload_from_sections(
+        operation_id,
+        provider,
+        model,
+        prompt_tokens,
+        if reply.prompt_tokens.is_some() {
+            "exact"
+        } else {
+            "estimated"
+        },
+        context_usage_sections,
+        auto_compression_applied,
+    );
+    let token_usage = json!({
+        "inputTokens": prompt_tokens,
+        "outputTokens": completion_tokens,
+        "totalTokens": total_tokens,
+        "contextTokensBeforeRequest": prompt_tokens,
+        "source": usage_source
+    });
     let actual_tokens = reply.prompt_tokens.zip(reply.completion_tokens);
     let cost = cost_payload(
         operation_id,
@@ -5155,6 +5598,8 @@ fn chat_response_payload(
             current_month_spent,
         ),
         "routingDecision": routing_decision,
+        "contextUsage": context_usage,
+        "tokenUsage": token_usage,
         "modResearchRoute": mod_research_route,
         "localInspection": local_inspection,
         "fallbackProviders": fallback_providers,
@@ -5304,6 +5749,13 @@ fn handle_request(
                     prompt_cache,
                     research_cache,
                 ),
+            ),
+            false,
+        ),
+        "chat.estimateContext" => (
+            ok_response(
+                id,
+                estimate_context_response(params, operation_id, context_graph, research_cache),
             ),
             false,
         ),
@@ -5510,10 +5962,7 @@ mod tests {
         assert_eq!(route.payload["schema"], "fluxora.ai.mod-research-route.v1");
         assert_eq!(route.payload["route"], "no-web/local-only");
         assert_eq!(route.payload["externalResearchAllowed"], false);
-        assert!(route
-            .payload
-            .get("searchBudget")
-            .is_none());
+        assert!(route.payload.get("searchBudget").is_none());
         assert!(!route.collect_external_research);
         assert!(route.payload["highSignalIssues"]
             .as_array()
@@ -5574,10 +6023,7 @@ mod tests {
         assert_eq!(route.payload["searchBudget"]["maxSearchQueries"], 2);
         assert_eq!(route.payload["searchBudget"]["nexusApiRequests"], 2);
         assert_eq!(route.payload["searchBudget"]["publicWebFetches"], 0);
-        assert_eq!(
-            routed_params["research"]["allowGeminiGoogleSearch"],
-            true
-        );
+        assert_eq!(routed_params["research"]["allowGeminiGoogleSearch"], true);
         assert_eq!(routed_params["research"]["allowPublicWebFetch"], false);
     }
 
@@ -5730,6 +6176,143 @@ mod tests {
             model_quality_rank(model_by_id(MAIN_GEMINI_MODEL_ID).unwrap())
                 > model_quality_rank(model_by_id(ORCHESTRATION_GEMINI_MODEL_ID).unwrap())
         );
+    }
+
+    #[test]
+    fn prompt_package_preparation_is_shared_for_chat_and_context_estimate() {
+        let context_graph = FluxoraContextGraph::open_in_memory().unwrap();
+        let params = json!({
+            "routingPreset": "free-demo",
+            "modelId": "local-dry-run",
+            "providerId": "local-dry-run",
+            "messages": [
+                {
+                    "role": "user",
+                    "text": "Check the current plugin diagnostics.",
+                    "createdAt": "2026-07-03T10:00:00.000Z"
+                }
+            ]
+        });
+        let mut prompt_cache = PromptCostCache::default();
+        let mut chat_research_cache = ai_research::AiResearchCache::default();
+        let mut estimate_research_cache = ai_research::AiResearchCache::default();
+
+        let chat_package = prepare_chat_prompt_package(
+            &params,
+            "op_shared_prompt",
+            &context_graph,
+            Some(&mut prompt_cache),
+            &mut chat_research_cache,
+        );
+        let estimate_package = prepare_chat_prompt_package(
+            &params,
+            "op_shared_prompt",
+            &context_graph,
+            None,
+            &mut estimate_research_cache,
+        );
+
+        assert_eq!(chat_package.messages, estimate_package.messages);
+        assert_eq!(
+            chat_package.prompt_token_estimate,
+            estimate_package.prompt_token_estimate
+        );
+        assert_eq!(chat_package.routing, estimate_package.routing);
+        assert_eq!(
+            chat_package.mod_research_route,
+            estimate_package.mod_research_route
+        );
+    }
+
+    #[test]
+    fn gemini_count_tokens_body_wraps_matching_generate_content_request() {
+        let model = model_by_id(MAIN_GEMINI_MODEL_ID).expect("main gemini model");
+        let messages = vec![json!({
+            "role": "user",
+            "content": "Count this exact prompt package."
+        })];
+        let generate_content_request = gemini_generate_content_request_body(model, &messages, true);
+        let count_tokens_body = json!({
+            "generateContentRequest": generate_content_request
+        });
+
+        assert!(count_tokens_body.get("contents").is_none());
+        assert!(count_tokens_body["generateContentRequest"]
+            .get("systemInstruction")
+            .is_some());
+        assert_eq!(
+            count_tokens_body["generateContentRequest"]["contents"][0]["parts"][0]["text"],
+            "Count this exact prompt package."
+        );
+        assert_eq!(
+            count_tokens_body["generateContentRequest"]["generationConfig"]["temperature"],
+            0.2
+        );
+        assert_eq!(
+            count_tokens_body["generateContentRequest"]["tools"][0]
+                .get("googleSearchRetrieval")
+                .is_some(),
+            true
+        );
+    }
+
+    #[test]
+    fn gemini_usage_metadata_extracts_prompt_completion_and_total_tokens() {
+        let data = json!({
+            "usageMetadata": {
+                "promptTokenCount": 124800,
+                "candidatesTokenCount": 2048,
+                "totalTokenCount": 126848
+            }
+        });
+
+        assert_eq!(
+            gemini_usage_metadata_tokens(&data, "promptTokenCount"),
+            Some(124_800)
+        );
+        assert_eq!(
+            gemini_usage_metadata_tokens(&data, "candidatesTokenCount"),
+            Some(2_048)
+        );
+        assert_eq!(
+            gemini_usage_metadata_tokens(&data, "totalTokenCount"),
+            Some(126_848)
+        );
+        assert_eq!(
+            gemini_usage_metadata_tokens(&json!({}), "totalTokenCount"),
+            None
+        );
+    }
+
+    #[test]
+    fn strict_context_fallback_keeps_system_and_newest_history_when_over_budget() {
+        let messages = vec![
+            json!({
+                "role": "system",
+                "content": "System instructions stay available."
+            }),
+            json!({
+                "role": "user",
+                "content": "older raw history ".repeat(80)
+            }),
+            json!({
+                "role": "assistant",
+                "content": "middle answer that can be dropped ".repeat(80)
+            }),
+            json!({
+                "role": "user",
+                "content": "newest question"
+            }),
+        ];
+
+        let (retained, applied) = strict_context_fallback_messages(messages, 20);
+        let retained_text = serde_json::to_string(&retained).unwrap();
+
+        assert!(applied);
+        assert!(retained_text.contains("System instructions stay available."));
+        assert!(retained_text.contains("newest question"));
+        assert!(!retained_text.contains("older raw history"));
+        assert!(!retained_text.contains("middle answer that can be dropped"));
     }
 
     #[test]

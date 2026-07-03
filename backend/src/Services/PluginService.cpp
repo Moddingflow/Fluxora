@@ -45,6 +45,7 @@ namespace fluxora
             std::wstring name;
             NormalizedExtension extension;
             std::wstring sourceMod;
+            std::filesystem::path path;
             std::vector<std::wstring> masterFiles;
             bool hasMasterFlag{false};
             bool hasLightFlag{false};
@@ -1206,6 +1207,7 @@ namespace fluxora
                     fileName,
                     extension,
                     sourceMod,
+                    entry.path(),
                     headerMetadata.masterFiles,
                     headerMetadata.hasMasterFlag,
                     headerMetadata.hasLightFlag,
@@ -1451,6 +1453,7 @@ namespace fluxora
                         title,
                         {},
                         {},
+                        {},
                         true,
                         false,
                         false,
@@ -1501,6 +1504,7 @@ namespace fluxora
                         ? std::wstring(L"Base game")
                         : rules.basePluginSourceLabel) :
                         (detectedPlugin == detected.end() ? std::wstring() : detectedPlugin->second.sourceMod),
+                    detectedPlugin == detected.end() ? std::filesystem::path() : detectedPlugin->second.path,
                     enabled,
                     isMasterPlugin(rules, plugin.name, extension, detectedPluginInfo),
                     isLightPlugin(rules, extension, detectedPluginInfo),

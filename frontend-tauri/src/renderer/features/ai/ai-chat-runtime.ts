@@ -16,6 +16,7 @@ import {
 } from './ai-chat-state';
 import type {
   FluxoraAiCaseState,
+  FluxoraAiChatRequest,
   FluxoraAiChatResponse,
   FluxoraAiCitation,
   FluxoraAiCostLedgerEntry,
@@ -137,6 +138,7 @@ export interface AiHostRunSettings {
   jobStorage?: AiAutonomousJobStorage;
   modelId: string;
   modelSupportsBackground?: boolean;
+  preparedRequest?: FluxoraAiChatRequest;
   providerId?: string;
   routingPreset: FluxoraAiRoutingPreset;
 }
@@ -222,6 +224,13 @@ const isPersistedAiChatThread = (value: unknown): value is AiChatThread => {
 
 const normalizePersistedAiChatThread = (chat: AiChatThread): AiChatThread => ({
   ...chat,
+  contextEstimateState:
+    chat.contextEstimateState === 'counting' ||
+    chat.contextEstimateState === 'ready' ||
+    chat.contextEstimateState === 'error'
+      ? chat.contextEstimateState
+      : 'idle',
+  contextUsage: chat.contextUsage ?? null,
   costLedger: Array.isArray(chat.costLedger) ? chat.costLedger : []
 });
 
@@ -807,6 +816,47 @@ const finalCaseStateFromResponse = (
   });
 };
 
+export const createAiHostChatRequest = (
+  run: AiRun,
+  session: AiSession,
+  prompt: string,
+  settings: AiHostRunSettings
+): FluxoraAiChatRequest => {
+  const requestSession = syncAiSessionToActiveChat(session);
+  const buildContextMessages = settings.buildContextSnapshot
+    ? [
+        {
+          role: 'system' as const,
+          text: serializeAiBuildContextSnapshot(settings.buildContextSnapshot),
+          createdAt: settings.buildContextSnapshot.generatedAt
+        }
+      ]
+    : [];
+
+  return {
+    operationId: run.operationId,
+    sessionId: run.sessionId,
+    messages: [
+      ...buildContextMessages,
+      ...requestSession.messages.map((message) => ({
+        role: message.role,
+        text: message.text,
+        createdAt: message.createdAt
+      })),
+      {
+        role: 'user',
+        text: prompt,
+        createdAt: new Date().toISOString()
+      }
+    ],
+    modelId: settings.modelId,
+    providerId: settings.providerId,
+    research: createAiResearchRequestForPrompt(prompt, settings.routingPreset),
+    routingPreset: settings.routingPreset,
+    stream: true
+  };
+};
+
 export const startHostAiRun = (
   run: AiRun,
   session: AiSession,
@@ -818,7 +868,6 @@ export const startHostAiRun = (
   const timers: Array<ReturnType<typeof globalThis.setTimeout>> = [];
   let cancelled = false;
   let finished = false;
-  const requestSession = syncAiSessionToActiveChat(session);
   const planningBundle = createFluxoraAiTaskPlanningBundle(prompt, run.operationId);
   let autonomousJob = settings.jobStorage
     ? createAiAutonomousJob(run, session, planningBundle, {
@@ -885,39 +934,10 @@ export const startHostAiRun = (
     );
   }
 
-  const buildContextMessages = settings.buildContextSnapshot
-    ? [
-        {
-          role: 'system' as const,
-          text: serializeAiBuildContextSnapshot(settings.buildContextSnapshot),
-          createdAt: settings.buildContextSnapshot.generatedAt
-        }
-      ]
-    : [];
+  const chatRequest = settings.preparedRequest ?? createAiHostChatRequest(run, session, prompt, settings);
 
   void aiApi
-    .chatRespond({
-      operationId: run.operationId,
-      sessionId: run.sessionId,
-      messages: [
-        ...buildContextMessages,
-        ...requestSession.messages.map((message) => ({
-          role: message.role,
-          text: message.text,
-          createdAt: message.createdAt
-        })),
-        {
-          role: 'user',
-          text: prompt,
-          createdAt: new Date().toISOString()
-        }
-      ],
-      modelId: settings.modelId,
-      providerId: settings.providerId,
-      research: createAiResearchRequestForPrompt(prompt, settings.routingPreset),
-      routingPreset: settings.routingPreset,
-      stream: true
-    })
+    .chatRespond(chatRequest)
     .then(
       (response) => {
         if (cancelled || finished) {
@@ -1005,6 +1025,8 @@ export const startHostAiRun = (
               routingPreset: response.routingPreset,
               sources: finalSources,
               contextBundle: response.contextBundle ?? null,
+              contextUsage: response.contextUsage ?? null,
+              tokenUsage: response.tokenUsage ?? null,
               researchReport: response.researchReport ?? null,
               modResearchRoute: response.modResearchRoute ?? null,
               diagnosisJudge: response.diagnosisJudge ?? null,

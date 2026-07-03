@@ -24,6 +24,7 @@ import type {
   FluxoraAnalyzeFomodContentLayoutRequest,
   FluxoraAiChatRequest,
   FluxoraAiChatResponse,
+  FluxoraAiContextUsage,
   FluxoraAiHostStatus,
   FluxoraAiModelCapability,
   FluxoraAiProviderConnectionResult,
@@ -133,6 +134,8 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   ai: {
     chatRespond: (request: FluxoraAiChatRequest) =>
       invokeTyped<FluxoraAiChatResponse>(ipc, FluxoraIpcChannels.aiChatRespond, request),
+    estimateContext: (request: FluxoraAiChatRequest) =>
+      invokeTyped<FluxoraAiContextUsage>(ipc, FluxoraIpcChannels.aiEstimateContext, request),
     getStatus: (request?: OperationRequest) =>
       invokeTyped<FluxoraAiHostStatus>(ipc, FluxoraIpcChannels.aiGetStatus, request),
     restartHost: (request?: OperationRequest) =>
@@ -1381,6 +1384,66 @@ const browserPreviewAiStatus = (rawRequest: unknown): FluxoraAiHostStatus => {
   };
 };
 
+const contextUsageLevel = (percent: number): FluxoraAiContextUsage['level'] => {
+  if (percent >= 97) {
+    return 'almost-full';
+  }
+  if (percent >= 92) {
+    return 'critical';
+  }
+  if (percent >= 80) {
+    return 'warning';
+  }
+  if (percent >= 60) {
+    return 'moderate';
+  }
+  return 'normal';
+};
+
+const contextUsageMode = (percent: number): FluxoraAiContextUsage['mode'] => {
+  if (percent >= 95) {
+    return 'strict';
+  }
+  if (percent >= 85) {
+    return 'compressed';
+  }
+  if (percent >= 70) {
+    return 'smart';
+  }
+  return 'full';
+};
+
+const browserPreviewAiContextUsage = (rawRequest: unknown): FluxoraAiContextUsage => {
+  const chatRequest = (rawRequest && typeof rawRequest === 'object'
+    ? rawRequest
+    : {}) as Partial<FluxoraAiChatRequest>;
+  const request = requestWithOperationId(chatRequest, 'ai_context_estimate');
+  const operationId = operationIdOf(request, 'ai_context_estimate');
+  const promptText = chatRequest.messages?.map((message) => message.text).join('\n') ?? '';
+  const currentContextTokens = Math.max(1, Math.ceil(promptText.length / 4));
+  const contextWindowTokens = chatRequest.modelId && chatRequest.modelId !== 'local-dry-run'
+    ? 1_000_000
+    : 8_192;
+  const currentContextPercent = Math.min(100, (currentContextTokens / contextWindowTokens) * 100);
+
+  return {
+    schema: 'fluxora.ai.context-usage.v1',
+    operationId,
+    providerId: chatRequest.providerId || 'local-dry-run',
+    modelId: chatRequest.modelId || 'local-dry-run',
+    contextWindowTokens,
+    currentContextTokens,
+    currentContextPercent,
+    precision: 'estimated',
+    level: contextUsageLevel(currentContextPercent),
+    mode: contextUsageMode(currentContextPercent),
+    includedSections: ['browser-preview', 'messages'],
+    autoCompressionApplied: false,
+    actionRequired: currentContextPercent >= 97,
+    countedAt: new Date().toISOString()
+  };
+};
+
 const browserPreviewAiChatResponse = (rawRequest: unknown): FluxoraAiChatResponse => {
   const chatRequest = (rawRequest && typeof rawRequest === 'object'
     ? rawRequest
@@ -1400,6 +1463,7 @@ const browserPreviewAiChatResponse = (rawRequest: unknown): FluxoraAiChatRespons
   const modelId = chatRequest.modelId || 'local-dry-run';
   const routingPreset = chatRequest.routingPreset ?? 'free-demo';
   const planningBundle = createFluxoraAiTaskPlanningBundle(prompt, operationId);
+  const contextUsage = browserPreviewAiContextUsage({ ...chatRequest, operationId });
   const status =
     planningBundle.taskPlan.proposedMutations.length > 0 ? 'needs-approval' : 'done';
 
@@ -1552,6 +1616,14 @@ const browserPreviewAiChatResponse = (rawRequest: unknown): FluxoraAiChatRespons
       localModelPreferredWhenPossible: true,
       reasons: ['browser preview uses the local dry-run route']
     },
+    contextUsage,
+    tokenUsage: {
+      inputTokens: estimatedInputTokens,
+      outputTokens: estimatedOutputTokens,
+      totalTokens: estimatedInputTokens + estimatedOutputTokens,
+      contextTokensBeforeRequest: contextUsage.currentContextTokens,
+      source: 'chars-per-token-estimate'
+    },
     fallbackProviders: [],
     taskPlan: planningBundle.taskPlan,
     subagentSchedule: planningBundle.subagentSchedule,
@@ -1627,6 +1699,9 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.aiChatRespond:
         return browserPreviewAiChatResponse(args[0]);
+
+      case FluxoraIpcChannels.aiEstimateContext:
+        return browserPreviewAiContextUsage(args[0]);
 
       case FluxoraIpcChannels.aiListProviders:
         return browserPreviewAiProviders();
@@ -1945,6 +2020,17 @@ const createTauriInvoker = (): IpcInvoker => ({
             operationId: operationIdOf(
               requestWithOperationId(args[0], 'ai_chat_run'),
               'ai_chat_run'
+            )
+          }
+        });
+
+      case FluxoraIpcChannels.aiEstimateContext:
+        return invoke<FluxoraAiContextUsage>('fluxora_ai_estimate_context', {
+          request: {
+            ...(args[0] && typeof args[0] === 'object' ? args[0] as Record<string, unknown> : {}),
+            operationId: operationIdOf(
+              requestWithOperationId(args[0], 'ai_context_estimate'),
+              'ai_context_estimate'
             )
           }
         });

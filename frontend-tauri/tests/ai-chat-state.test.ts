@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_CHAT_PANEL_MAX_WIDTH,
   AI_CHAT_PANEL_MIN_WIDTH,
+  approximateAiContextUsageForDraft,
   aiChatReducer,
   createAiMessage,
   createAiRun,
@@ -11,6 +12,27 @@ import {
   createFakeAiRunPlan,
   initialAiChatState
 } from '../src/renderer/features/ai/ai-chat-state';
+import type { FluxoraAiContextUsage } from '../src/shared/fluxora-api';
+
+const createContextUsage = (
+  overrides: Partial<FluxoraAiContextUsage> = {}
+): FluxoraAiContextUsage => ({
+  schema: 'fluxora.ai.context-usage.v1',
+  operationId: 'op_ai_chat_run',
+  providerId: 'gemini',
+  modelId: 'gemini-3.1-flash-lite',
+  contextWindowTokens: 1000,
+  currentContextTokens: 125,
+  currentContextPercent: 12.5,
+  precision: 'exact',
+  level: 'normal',
+  mode: 'full',
+  includedSections: ['system-instructions', 'chat-history'],
+  autoCompressionApplied: false,
+  actionRequired: false,
+  countedAt: '2026-07-03T10:00:00.000Z',
+  ...overrides
+});
 
 describe('AI chat shell state', () => {
   it('opens, collapses and clamps the resizable panel width', () => {
@@ -90,6 +112,67 @@ describe('AI chat shell state', () => {
     ]);
     expect(createFakeAiRunPlan('needs approval before delete').finalStatus).toBe('needs-approval');
     expect(createFakeAiRunPlan('blocked by missing login').finalStatus).toBe('blocked');
+  });
+
+  it('keeps streamed assistant deltas out of visible messages until the final answer', () => {
+    const run = createAiRun(
+      initialAiChatState.session.id,
+      'op_ai_chat_run',
+      'prompt-digest',
+      'format final answer'.length,
+      new Date('2026-07-03T09:00:00Z')
+    );
+    const userMessage = createAiMessage(
+      'user',
+      'format final answer',
+      new Date('2026-07-03T09:00:00Z'),
+      run.id
+    );
+    const submitted = aiChatReducer(
+      { ...initialAiChatState, draft: userMessage.text },
+      {
+        type: 'submit-user-message',
+        message: userMessage,
+        run,
+        event: createAiStreamEvent(run, 'run-created', {
+          now: new Date('2026-07-03T09:00:00Z'),
+          status: 'thinking'
+        })
+      }
+    );
+    const streaming = aiChatReducer(submitted, {
+      type: 'apply-stream-event',
+      event: createAiStreamEvent(run, 'assistant-delta', {
+        now: new Date('2026-07-03T09:00:00.120Z'),
+        status: 'running',
+        textDelta: '### Partial\n\n- Still streaming'
+      })
+    });
+    const finished = aiChatReducer(streaming, {
+      type: 'append-assistant-message',
+      message: createAiMessage(
+        'assistant',
+        '### Итог\n\n- Готово',
+        new Date('2026-07-03T09:00:01Z'),
+        run.id
+      ),
+      event: createAiStreamEvent(run, 'run-finished', {
+        now: new Date('2026-07-03T09:00:01Z'),
+        status: 'done'
+      }),
+      status: 'done'
+    });
+
+    expect(streaming.messages.map((message) => message.role)).toEqual(['user']);
+    expect(streaming.session.streamEvents.map((event) => event.type)).toEqual([
+      'run-created',
+      'assistant-delta'
+    ]);
+    expect(finished.messages.map((message) => message.text)).toEqual([
+      'format final answer',
+      '### Итог\n\n- Готово'
+    ]);
+    expect(finished.messages[1]?.isStreaming).not.toBe(true);
   });
 
   it('creates isolated chat tabs and names a new chat from its first prompt', () => {
@@ -236,5 +319,102 @@ describe('AI chat shell state', () => {
     expect(subagentChat?.messages[0]?.providerId).toBe('gemini');
     expect(reopened.chats).toHaveLength(opened.chats.length);
     expect(reopened.activeChatId).toBe(opened.activeChatId);
+  });
+
+  it('stores context estimates on the run chat without leaking to other tabs', () => {
+    const firstChatId = initialAiChatState.activeChatId;
+    const withSecondChat = aiChatReducer(initialAiChatState, {
+      type: 'create-chat',
+      now: new Date('2026-07-03T10:00:00Z')
+    });
+    const secondChatId = withSecondChat.activeChatId;
+    const run = createAiRun(
+      secondChatId,
+      'op_ai_chat_run',
+      'prompt-digest',
+      'check context'.length,
+      new Date('2026-07-03T10:00:01Z')
+    );
+    const submitted = aiChatReducer(withSecondChat, {
+      type: 'submit-user-message',
+      message: createAiMessage('user', 'check context', new Date('2026-07-03T10:00:01Z'), run.id),
+      run,
+      event: createAiStreamEvent(run, 'run-created', {
+        now: new Date('2026-07-03T10:00:01Z'),
+        status: 'thinking'
+      })
+    });
+    const counting = aiChatReducer(submitted, {
+      type: 'set-context-estimate',
+      runId: run.id,
+      estimateState: 'counting'
+    });
+    const usage = createContextUsage({ operationId: run.operationId });
+    const ready = aiChatReducer(counting, {
+      type: 'set-context-estimate',
+      runId: run.id,
+      estimateState: 'ready',
+      contextUsage: usage
+    });
+
+    expect(ready.chats.find((chat) => chat.id === firstChatId)?.contextUsage).toBeNull();
+    expect(ready.chats.find((chat) => chat.id === secondChatId)?.contextUsage).toEqual(usage);
+    expect(ready.chats.find((chat) => chat.id === secondChatId)?.contextEstimateState).toBe('ready');
+  });
+
+  it('approximates draft context from the last host estimate and preserves chat switching', () => {
+    const run = createAiRun(
+      initialAiChatState.activeChatId,
+      'op_ai_chat_run',
+      'prompt-digest',
+      'finished context'.length,
+      new Date('2026-07-03T10:05:00Z')
+    );
+    const usage = createContextUsage({
+      contextWindowTokens: 1000,
+      currentContextTokens: 600,
+      currentContextPercent: 60,
+      level: 'moderate'
+    });
+    const submitted = aiChatReducer(initialAiChatState, {
+      type: 'submit-user-message',
+      message: createAiMessage('user', 'finished context', new Date('2026-07-03T10:05:00Z'), run.id),
+      run,
+      event: createAiStreamEvent(run, 'run-created', {
+        now: new Date('2026-07-03T10:05:00Z'),
+        status: 'thinking'
+      })
+    });
+    const finished = aiChatReducer(submitted, {
+      type: 'append-assistant-message',
+      message: createAiMessage(
+        'assistant',
+        'Done.',
+        new Date('2026-07-03T10:05:01Z'),
+        run.id,
+        { contextUsage: usage }
+      ),
+      event: createAiStreamEvent(run, 'run-finished', {
+        now: new Date('2026-07-03T10:05:01Z'),
+        status: 'done'
+      }),
+      status: 'done'
+    });
+    const withNewChat = aiChatReducer(finished, {
+      type: 'create-chat',
+      now: new Date('2026-07-03T10:06:00Z')
+    });
+    const switchedBack = aiChatReducer(withNewChat, {
+      type: 'select-chat',
+      chatId: finished.activeChatId
+    });
+    const approximated = approximateAiContextUsageForDraft(usage, '12345678');
+
+    expect(withNewChat.activeChatId).not.toBe(finished.activeChatId);
+    expect(withNewChat.chats.find((chat) => chat.id === withNewChat.activeChatId)?.contextUsage).toBeNull();
+    expect(switchedBack.chats.find((chat) => chat.id === finished.activeChatId)?.contextUsage).toEqual(usage);
+    expect(approximated?.currentContextTokens).toBe(602);
+    expect(approximated?.precision).toBe('estimated');
+    expect(approximated?.includedSections).toContain('draft-approximation');
   });
 });

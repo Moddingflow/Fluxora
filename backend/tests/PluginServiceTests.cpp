@@ -51,6 +51,16 @@ namespace fluxora::tests
             return match == plugins.end() ? nullptr : &(*match);
         }
 
+        void expectEquivalentPath(
+            const std::filesystem::path& actual,
+            const std::filesystem::path& expected)
+        {
+            std::error_code error;
+            const bool isEquivalent = std::filesystem::equivalent(actual, expected, error);
+            EXPECT_FALSE(error) << "actual=" << actual.string() << ", expected=" << expected.string();
+            EXPECT_TRUE(isEquivalent) << "actual=" << actual.string() << ", expected=" << expected.string();
+        }
+
         [[nodiscard]] CapabilitySet capabilities(bool plugins, bool loadOrder)
         {
             CapabilitySet set;
@@ -190,11 +200,13 @@ namespace fluxora::tests
         EXPECT_TRUE(weather->isMaster);
         EXPECT_FALSE(weather->isLocked);
         EXPECT_EQ(weather->sourceMod, L"Weather");
+        expectEquivalentPath(weather->path, mods / L"Weather" / L"Weather.esm");
 
         const PluginEntry* skyui = findPlugin(entries, L"SkyUI.esp");
         ASSERT_NE(skyui, nullptr);
         EXPECT_EQ(skyui->extension, L"ESP");
         EXPECT_EQ(skyui->sourceMod, L"SkyUI");
+        expectEquivalentPath(skyui->path, mods / L"SkyUI" / L"Data" / L"SkyUI.esp");
         EXPECT_FALSE(skyui->isLight);
         EXPECT_FALSE(skyui->hasLightFlag);
 
@@ -278,6 +290,7 @@ namespace fluxora::tests
         ASSERT_NE(base, nullptr);
         EXPECT_TRUE(base->isLocked);
         EXPECT_EQ(base->sourceMod, L"Skyrim Special Edition");
+        expectEquivalentPath(base->path, stockGame / L"Data" / L"Skyrim.esm");
 
         const PluginEntry* stockMaster = findPlugin(entries, L"ccBGSSSE001-Fish.esm");
         ASSERT_NE(stockMaster, nullptr);
@@ -285,11 +298,15 @@ namespace fluxora::tests
         EXPECT_TRUE(stockMaster->isMaster);
         EXPECT_FALSE(stockMaster->isLocked);
         EXPECT_EQ(stockMaster->sourceMod, L"Data");
+        expectEquivalentPath(stockMaster->path, stockGame / L"Data" / L"ccBGSSSE001-Fish.esm");
 
         const PluginEntry* overriddenLight = findPlugin(entries, L"ccQDRSSE001-SurvivalMode.esl");
         ASSERT_NE(overriddenLight, nullptr);
         EXPECT_TRUE(overriddenLight->isLight);
         EXPECT_EQ(overriddenLight->sourceMod, L"Survival Override");
+        expectEquivalentPath(
+            overriddenLight->path,
+            mods / L"Survival Override" / L"Data" / L"ccQDRSSE001-SurvivalMode.esl");
 #endif
     }
 

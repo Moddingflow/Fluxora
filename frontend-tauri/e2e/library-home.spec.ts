@@ -221,6 +221,7 @@ test.beforeEach(async ({ page }) => {
         separatorTitle: '',
         extension: 'ESM',
         sourceMod: 'Skyrim Special Edition',
+        path: 'D:\\Fluxora\\Games\\Skyrim Special Edition\\Data\\Skyrim.esm',
         isEnabled: true,
         isMaster: true,
         isLight: false,
@@ -259,6 +260,7 @@ test.beforeEach(async ({ page }) => {
         separatorTitle: '',
         extension: 'ESP',
         sourceMod: 'SkyUI',
+        path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI\\Data\\SkyUI.esp',
         isEnabled: true,
         isMaster: false,
         isLight: false,
@@ -646,7 +648,10 @@ test.beforeEach(async ({ page }) => {
         install: async () => ({ operationId: 'op_fluxpack_install', summary: {} })
       },
       links: {
-        openExternal: async () => ({ ok: true })
+        openExternal: async (url: any) => {
+          calls.push({ method: 'links.openExternal', payload: { url } });
+          return { ok: true };
+        }
       },
       mods: {
         checkUpdates: async (projectDirectory: any, operation: any) => {
@@ -923,6 +928,35 @@ const openSkyrimBuild = async (page: Page) => {
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
 };
 
+test('hides open-in-explorer actions for multi-selected mod and plugin rows', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const modRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const skyuiModRow = page.getByRole('row', { name: /SkyUI mod/ });
+  await modRow.click();
+  await page.keyboard.down('Control');
+  await skyuiModRow.click();
+  await page.keyboard.up('Control');
+  await expect(modRow).toHaveAttribute('data-selected', 'true');
+  await expect(skyuiModRow).toHaveAttribute('data-selected', 'true');
+  await modRow.click({ button: 'right' });
+  await expect(page.getByRole('menu')).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Open folder' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  const pluginRow = page.getByRole('row', { name: /SkyUI\.esp plugin/ });
+  const skyrimPluginRow = page.getByRole('row', { name: /Skyrim\.esm plugin/ });
+  await pluginRow.click();
+  await page.keyboard.down('Control');
+  await skyrimPluginRow.click();
+  await page.keyboard.up('Control');
+  await expect(pluginRow).toHaveAttribute('data-selected', 'true');
+  await expect(skyrimPluginRow).toHaveAttribute('data-selected', 'true');
+  await pluginRow.click({ button: 'right' });
+  await expect(page.getByRole('menu')).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Открыть в проводнике' })).toHaveCount(0);
+});
+
 const moveRowDragToSlot = async (
   page: Page,
   source: Locator,
@@ -1120,11 +1154,12 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
   await page.getByRole('button', { name: 'Open', exact: true }).click();
 
-  await expect(page.getByRole('table', { name: 'Mod order' })).toBeVisible();
-  await expect(page.getByRole('columnheader', { name: 'Название' })).toBeVisible();
-  await expect(page.getByRole('columnheader', { name: 'Версия' })).toBeVisible();
-  await expect(page.getByRole('columnheader', { name: 'Latest' })).toBeVisible();
-  await expect(page.getByRole('columnheader', { name: 'Статус' })).toBeVisible();
+  const modOrderTable = page.getByRole('table', { name: 'Mod order' });
+  await expect(modOrderTable).toBeVisible();
+  await expect(modOrderTable.getByRole('columnheader', { name: 'Название' })).toBeVisible();
+  await expect(modOrderTable.getByRole('columnheader', { name: 'Версия' })).toBeVisible();
+  await expect(modOrderTable.getByRole('columnheader', { name: 'Latest' })).toBeVisible();
+  await expect(modOrderTable.getByRole('columnheader', { name: 'Статус' })).toBeVisible();
   const separatorRow = page.getByRole('row', { name: /Core fixes separator/ });
   await expect(separatorRow).toBeVisible();
   await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'none');
@@ -1358,15 +1393,37 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   await expect(tooltip).toContainText('Zed.esm');
   await pluginRow.focus();
   await page.keyboard.press('Shift+F10');
-  await page.getByRole('menuitem', { name: 'Move up' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Move up' })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: 'Move down' })).toHaveCount(0);
+  const shellCallsBeforePluginReveal = await page.evaluate(() => {
+    const calls = (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls ?? [];
+    return {
+      openPath: calls.filter((call) => call.method === 'shell.openPath').length,
+      showItemInFolder: calls.filter((call) => call.method === 'shell.showItemInFolder').length
+    };
+  });
+  await page.getByRole('menuitem', { name: 'Открыть в проводнике' }).click();
+  await expect
+    .poll(() => latestCallPayload(page, 'shell.showItemInFolder'))
+    .toMatchObject({
+      path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI\\Data\\SkyUI.esp'
+    });
   await expect
     .poll(() =>
       page.evaluate(() =>
         (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
-          ?.map((call) => call.method)
+          ?.filter((call) => call.method === 'shell.showItemInFolder').length
       )
     )
-    .toContain('plugins.move');
+    .toBe(shellCallsBeforePluginReveal.showItemInFolder + 1);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.filter((call) => call.method === 'shell.openPath').length
+      )
+    )
+    .toBe(shellCallsBeforePluginReveal.openPath);
 
   await page.getByRole('row', { name: /Unofficial Patch mod/ }).click();
   await rightPane.getByRole('tab', { name: /Данные/ }).click();
@@ -1504,8 +1561,11 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
   await expect(page.locator('.titlebar__brand-name')).toHaveText('Settings');
   await expect(page.locator('.titlebar__mark--settings')).toBeVisible();
   await expect(page.getByRole('button', { name: /Connections/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^AI$/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Languages/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Transfer/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Для разработчиков/ })).toBeVisible();
+  await expect(page.locator('.settings-nav button').last()).toContainText('Для разработчиков');
   await expect(page.getByText('Account bridge')).toHaveCount(0);
   await expect(page.getByText('Nexus Mods', { exact: true })).toBeVisible();
   const connectionsPanelBox = await page.locator('.settings-panel--connections').boundingBox();
@@ -1605,6 +1665,29 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
     )
     .toContain('settings.setLanguage');
   await expect(page.getByText(/settings\.json - language=/)).toHaveCount(0);
+
+  await page.getByRole('button', { name: /Для разработчиков/ }).click();
+  await expect(page.locator('.settings-panel--developer')).toBeVisible();
+  const developerSwitch = page.getByRole('switch', { name: 'Режим разработчика' });
+  await expect(developerSwitch).toHaveAttribute('aria-checked', 'false');
+  await developerSwitch.click();
+  await expect(developerSwitch).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByText('Дата последней сборки')).toBeVisible();
+  await expect(page.getByText('Tauri 2 / React / TypeScript')).toBeVisible();
+  await expect(page.getByText('Rust shell / C++ core')).toBeVisible();
+  await expect(page.getByText('0.0.0-test')).toBeVisible();
+  await page.getByRole('button', { name: 'Открыть оригинальный репозиторий Fluxora на GitHub' }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string; payload?: unknown }> }).__fluxoraCalls
+          ?.find((call) => call.method === 'links.openExternal')
+      )
+    )
+    .toEqual({
+      method: 'links.openExternal',
+      payload: { url: 'https://github.com/WhistleSkyrim/Fluxora' }
+    });
 
   await page.getByRole('button', { name: /Transfer/ }).click();
   await expect(page.getByText('Mod Organizer 2', { exact: true })).toBeVisible();

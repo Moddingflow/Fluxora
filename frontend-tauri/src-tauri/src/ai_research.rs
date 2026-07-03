@@ -295,7 +295,10 @@ fn safe_nexus_numeric_id(value: &str) -> Option<String> {
     if normalized.is_empty() || normalized.len() > 12 {
         return None;
     }
-    if !normalized.chars().all(|character| character.is_ascii_digit()) {
+    if !normalized
+        .chars()
+        .all(|character| character.is_ascii_digit())
+    {
         return None;
     }
     if normalized
@@ -1204,7 +1207,9 @@ fn api_status_from_snapshot(snapshot: &Value) -> Value {
     if matches!(status, Some(401 | 403)) {
         return api_status_value("unauthenticated", "missing-credential", status, retry_after);
     }
-    if status == Some(429) || snapshot_has_retry_after(snapshot) || snapshot_quota_exhausted(snapshot)
+    if status == Some(429)
+        || snapshot_has_retry_after(snapshot)
+        || snapshot_quota_exhausted(snapshot)
     {
         return api_status_value("quota-exhausted", "rate-limited", status, retry_after);
     }
@@ -1258,7 +1263,11 @@ fn nexus_evidence_card(
         .chars()
         .take(360)
         .collect::<String>();
-    let claim = format!("Official Nexus API summary for {}: {}", nexus_target_id(target), summary);
+    let claim = format!(
+        "Official Nexus API summary for {}: {}",
+        nexus_target_id(target),
+        summary
+    );
     let title = snapshot
         .get("title")
         .and_then(Value::as_str)
@@ -1539,7 +1548,9 @@ fn api_endpoint(game_domain: &str, mod_id: &str, suffix: &str) -> String {
     format!(
         "{}/games/{}/mods/{}{}",
         nexus_api_base(),
-        game_domain, mod_id, suffix
+        game_domain,
+        mod_id,
+        suffix
     )
 }
 
@@ -1602,7 +1613,8 @@ pub fn collect_ai_research_bundle(
         'nexus: while target_index < targets.len() && api_request_count < MAX_NEXUS_API_REQUESTS {
             let target = targets[target_index].clone();
             target_index += 1;
-            if target_index > MAX_NEXUS_INITIAL_TARGETS && target.source != "api-direct-dependency" {
+            if target_index > MAX_NEXUS_INITIAL_TARGETS && target.source != "api-direct-dependency"
+            {
                 continue;
             }
 
@@ -2060,17 +2072,26 @@ mod tests {
         let responses = vec![
             http_json_response(
                 "200 OK",
-                &[("X-RL-Hourly-Remaining", "99"), ("X-RL-Daily-Remaining", "999")],
+                &[
+                    ("X-RL-Hourly-Remaining", "99"),
+                    ("X-RL-Daily-Remaining", "999"),
+                ],
                 r#"{"name":"RaceMenu","summary":"Character menu extension metadata."}"#,
             ),
             http_json_response(
                 "200 OK",
-                &[("X-RL-Hourly-Remaining", "98"), ("X-RL-Daily-Remaining", "998")],
+                &[
+                    ("X-RL-Hourly-Remaining", "98"),
+                    ("X-RL-Daily-Remaining", "998"),
+                ],
                 r#"{"files":[{"file_id":456,"name":"Main file"}]}"#,
             ),
             http_json_response(
                 "200 OK",
-                &[("X-RL-Hourly-Remaining", "97"), ("X-RL-Daily-Remaining", "997")],
+                &[
+                    ("X-RL-Hourly-Remaining", "97"),
+                    ("X-RL-Daily-Remaining", "997"),
+                ],
                 r#"{"file_id":456,"file_name":"RaceMenu.7z","version":"1.2.3"}"#,
             ),
         ];
@@ -2090,7 +2111,10 @@ mod tests {
         handle.join().expect("fixture finished");
 
         assert_eq!(request_count.load(Ordering::SeqCst), 3);
-        assert_eq!(bundle.report["nexusInvestigation"]["api"]["state"], "available");
+        assert_eq!(
+            bundle.report["nexusInvestigation"]["api"]["state"],
+            "available"
+        );
         assert_eq!(
             bundle.report["nexusInvestigation"]["evidenceCards"]
                 .as_array()

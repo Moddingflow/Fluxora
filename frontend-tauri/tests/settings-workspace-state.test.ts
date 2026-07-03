@@ -4,7 +4,11 @@ import {
   capabilityStateLabel,
   formatTransferBytes,
   currentPlatformSupport,
+  developerModeStorageKey,
+  fluxoraOriginalRepositoryUrl,
+  formatLastBuildDate,
   languageOptions,
+  loadDeveloperModeSetting,
   nexusActionLabel,
   nexusCanToggle,
   nexusConnectionSummary,
@@ -12,6 +16,7 @@ import {
   platformFeatureState,
   platformSupportRows,
   platformSupportSummary,
+  saveDeveloperModeSetting,
   selectPreferredTransferDrive,
   settingsCapabilityView,
   settingsSections,
@@ -179,16 +184,36 @@ describe('settings workspace state', () => {
   it('keeps settings sections focused on user-facing configuration', () => {
     expect(settingsSections.map((section) => section.id)).toEqual([
       'connections',
-      'ai',
       'language',
-      'transfer'
+      'transfer',
+      'developers'
     ]);
     expect(settingsSections).toEqual([
       { id: 'connections', label: 'Connections', hint: '' },
-      { id: 'ai', label: 'AI', hint: 'Model' },
       { id: 'language', label: 'Languages', hint: 'EN / RU / DE' },
-      { id: 'transfer', label: 'Transfer', hint: 'MO2 import' }
+      { id: 'transfer', label: 'Transfer', hint: 'MO2 import' },
+      { id: 'developers', label: 'Для разработчиков', hint: 'Debug' }
     ]);
+  });
+
+  it('keeps developer settings local and points to the original repository', () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, value);
+      }
+    };
+
+    expect(fluxoraOriginalRepositoryUrl).toBe('https://github.com/WhistleSkyrim/Fluxora');
+    expect(loadDeveloperModeSetting(storage)).toBe(false);
+    saveDeveloperModeSetting(storage, true);
+    expect(values.get(developerModeStorageKey)).toBe('true');
+    expect(loadDeveloperModeSetting(storage)).toBe(true);
+    saveDeveloperModeSetting(storage, false);
+    expect(values.get(developerModeStorageKey)).toBe('false');
+    expect(formatLastBuildDate('2026-07-03T10:15:00.000Z')).toBe('2026-07-03 10:15 UTC');
+    expect(formatLastBuildDate('')).toBe('pending');
   });
 
   it('keeps language options paired with country flag metadata', () => {

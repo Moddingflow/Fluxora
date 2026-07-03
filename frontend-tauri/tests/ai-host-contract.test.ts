@@ -93,6 +93,23 @@ describe('FluxoraAIHost MVP contract', () => {
               fallbackProviders: [],
               toolCallsAllowed: false
             };
+          case FluxoraIpcChannels.aiEstimateContext:
+            return {
+              schema: 'fluxora.ai.context-usage.v1',
+              operationId: 'op_ai_chat_run',
+              providerId: 'local-dry-run',
+              modelId: 'local-dry-run',
+              contextWindowTokens: 8192,
+              currentContextTokens: 12,
+              currentContextPercent: 0.146484375,
+              precision: 'estimated',
+              level: 'normal',
+              mode: 'full',
+              includedSections: ['messages'],
+              autoCompressionApplied: false,
+              actionRequired: false,
+              countedAt: '2026-07-03T10:00:00.000Z'
+            };
           case FluxoraIpcChannels.aiConnectProvider:
             return {
               providerId: args[0],
@@ -165,6 +182,18 @@ describe('FluxoraAIHost MVP contract', () => {
       toolCallsAllowed: false
     });
     await expect(
+      api.ai.estimateContext({
+        operationId: 'op_ai_chat_run',
+        sessionId: 'session-1',
+        messages: [{ role: 'user', text: 'check plugins' }],
+        routingPreset: 'free-demo'
+      })
+    ).resolves.toMatchObject({
+      schema: 'fluxora.ai.context-usage.v1',
+      currentContextTokens: 12,
+      precision: 'estimated'
+    });
+    await expect(
       api.ai.disconnectProvider('gemini', { operationId: 'op_ai_disconnect' })
     ).resolves.toMatchObject({ connected: false, providerId: 'gemini' });
 
@@ -173,6 +202,7 @@ describe('FluxoraAIHost MVP contract', () => {
       FluxoraIpcChannels.aiConnectProvider,
       FluxoraIpcChannels.aiTestProvider,
       FluxoraIpcChannels.aiChatRespond,
+      FluxoraIpcChannels.aiEstimateContext,
       FluxoraIpcChannels.aiDisconnectProvider
     ]);
 
@@ -182,13 +212,19 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(sharedApi).toContain('listSafeActions');
     expect(sharedApi).toContain('listSkills');
     expect(sharedApi).toContain('chatRespond');
+    expect(sharedApi).toContain('estimateContext');
+    expect(sharedApi).toContain('aiEstimateContext');
     expect(sharedApi).toContain('connectProvider');
+    expect(sharedApi).toContain('FluxoraAiContextUsage');
+    expect(sharedApi).toContain('FluxoraAiTokenUsage');
     expect(sharedApi).toContain('AiSafeActionCatalog');
     expect(sharedApi).toContain('FluxoraSkillCatalog');
     expect(sharedApi).toContain('FluxoraSkillSelection');
     expect(sharedApi).toContain('FluxoraAiCostLedgerEntry');
     expect(sharedApi).toContain('FluxoraAiContextBundle');
     expect(sharedApi).toContain('contextBundle?: FluxoraAiContextBundle | null');
+    expect(sharedApi).toContain('contextUsage?: FluxoraAiContextUsage | null');
+    expect(sharedApi).toContain('tokenUsage?: FluxoraAiTokenUsage | null');
     expect(sharedApi).toContain('FluxoraAiResearchRequest');
     expect(sharedApi).toContain('FluxoraAiResearchReport');
     expect(sharedApi).toContain('researchReport?: FluxoraAiResearchReport | null');
@@ -202,6 +238,8 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(sharedApi).toContain('subagentSchedule?: FluxoraAiSubagentSchedule | null');
     expect(facade).toContain('fluxora_ai_connect_provider');
     expect(facade).toContain('fluxora_ai_chat_respond');
+    expect(facade).toContain('fluxora_ai_estimate_context');
+    expect(facade).toContain('browserPreviewAiContextUsage');
     expect(facade).toContain('AI_SAFE_ACTION_CATALOG');
     expect(facade).toContain('safeActionCatalog');
     expect(facade).toContain('FLUXORA_SKILL_CATALOG');
@@ -308,6 +346,14 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(aiHost).toContain('GEMINI_API_KEY');
     expect(aiHost).toContain('gemini-3.1-flash-lite');
     expect(aiHost).toContain('gemini-2.5-flash-lite');
+    expect(aiHost).toContain('prepare_chat_prompt_package');
+    expect(aiHost).toContain('chat.estimateContext');
+    expect(aiHost).toContain('countTokens');
+    expect(aiHost).toContain('generateContentRequest');
+    expect(aiHost).toContain('usageMetadata');
+    expect(aiHost).toContain('promptTokenCount');
+    expect(aiHost).toContain('candidatesTokenCount');
+    expect(aiHost).toContain('totalTokenCount');
     expect(aiHost).not.toContain('DEEPSEEK_API_KEY');
     expect(aiHost).not.toContain('GLM_API_KEY');
     expect(aiHost).not.toContain('deepseek-v4');
@@ -321,6 +367,7 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(facade).not.toContain('GLM_API_KEY');
     expect(facade).not.toContain('GEMINI_API_KEY');
     expect(aiHost).toContain('chat.respond');
+    expect(rustShell).toContain('fluxora_ai_estimate_context');
     expect(aiHost).toContain('task_planning_bundle');
     expect(aiHost).toContain('"taskPlan": task_plan');
     expect(aiHost).toContain('"subagentSchedule": subagent_schedule');
@@ -349,6 +396,8 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(rustShell).toContain('fluxora_operations_get_status');
     expect(rustShell).toContain('fluxora_recent_operation_logs');
     expect(app).toContain('startHostAiRun');
+    expect(app).toContain('estimateContext');
+    expect(app).toContain('createAiHostChatRequest');
     expect(app).toContain('collectAiBuildContext');
     expect(app).not.toContain('limit: 80');
     expect(app).toContain('window.fluxora.ai');
@@ -413,7 +462,7 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["publicWebFetches"], 0);');
   });
 
-  it('fails the chat UI closed when the AI host status is unavailable', () => {
+  it('keeps AI chat input closed when the AI host status is unavailable', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const panel = readText('frontend-tauri', 'src', 'renderer', 'features', 'ai', 'AiChatPanel.tsx');
 
@@ -427,7 +476,8 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(panel).toContain('providerDiagnostic');
     expect(panel).toContain('ai-chat-diagnostic');
     expect(panel).toContain('providerDiagnostics');
-    expect(panel).toContain("hostReady ? activeStatusLabel : 'Unavailable'");
+    expect(panel).toContain("hostReady\n        ? 'Message'\n        : 'AI unavailable'");
+    expect(panel).toContain('placeholder={inputPlaceholder}');
     expect(panel).toContain('disabled={inputDisabled}');
   });
 

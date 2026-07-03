@@ -30,6 +30,13 @@ The following SVG assets are original Lucide icons downloaded from
 - `triangle-alert.svg`
 - `trash-2.svg`
 
+The AI chat composer also uses these original Lucide SVGs:
+
+- `ai-arrow-up.svg` (from `arrow-up.svg`)
+- `ai-circle-stop.svg` (from `circle-stop.svg`)
+- `ai-mic.svg` (from `mic.svg`)
+- `ai-plus.svg` (from `plus.svg`)
+
 Lucide is distributed under the ISC license and supports commercial use. The
 copied license text is stored in `LUCIDE-LICENSE.txt`.
 

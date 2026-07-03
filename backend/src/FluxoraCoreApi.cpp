@@ -1527,6 +1527,7 @@ namespace
         writer.field(L"separatorTitle", plugin.separatorTitle);
         writer.field(L"extension", plugin.extension);
         writer.field(L"sourceMod", plugin.sourceMod);
+        writer.field(L"path", plugin.path.wstring());
         writer.field(L"isEnabled", plugin.isEnabled);
         writer.field(L"isMaster", plugin.isMaster);
         writer.field(L"isLight", plugin.isLight);

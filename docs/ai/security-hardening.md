@@ -154,7 +154,7 @@ default, validate link schemes, and keep `target=_blank` anchors on
 | Provider/source | Mode | Default status | Data sent | Retention / terms review |
 | --- | --- | --- | --- | --- |
 | Local dry run | local/offline | Enabled | No external provider data | Local only; no provider retention. |
-| Google Gemini | BYOK/economy/planner/web | OS credential or Fluxora-managed Supabase key required | Prompt plus compact approved context; optional grounded search metadata. Gemini 3.1 Flash-Lite is the main chat model; Gemini 2.5 Flash-Lite is reserved for web/orchestration work. | User/provider terms apply; verify retention, grounding and transfer terms before public release. |
+| Google Gemini | BYOK/economy/planner/web | OS credential or Fluxora-managed Supabase key required | Prompt plus compact approved context; optional grounded search metadata. Context preflight sends the same compact prompt package to Gemini `models.countTokens` before generation when credentials are available. Gemini 3.1 Flash-Lite is the main chat model; Gemini 2.5 Flash-Lite is reserved for web/orchestration work. | User/provider terms apply; verify retention, grounding, token-count preflight and transfer terms before public release. |
 | Perplexity / paid deep research | future optional | Disabled by default | None until expensive-run/BYOK approval exists | Terms, retention, citation and cost behavior must be reviewed before enabling. |
 | Nexus API/cache | research source | API/cache first; public Nexus page fallback disabled for quota/credential failures | Nexus URLs/NXM links, official API/cache metadata summaries, rate-limit/backoff headers and blocked/quota state | Nexus terms/rate limits apply; do not send secrets to page content. Public Nexus page policy requires separate owner/legal review before enabling. |
 | Allowed non-Nexus sources | staged research source | Disabled unless policy and budget allow the staged path | Source URLs, source ids, citations, source-tier labels, compact summaries, contradiction/discard reasons | Terms, robots/access expectations, recipients and transfer behavior require owner/legal review before public release. |
@@ -171,6 +171,9 @@ Current controls and release requirements:
 - Chat/support export: AI settings writes a JSON support snapshot through the
   typed save-file/text-file facade. `createAiSupportBundleSnapshot()` redacts
   raw prompts by default; raw prompt export is not exposed in Phase 16.
+- Context usage: `FluxoraAiContextUsage` and `FluxoraAiTokenUsage` store counts,
+  model/provider ids, modes, precision and included-section names only. They do
+  not add raw prompt package storage.
 - Local AI history: AI settings exposes a clear action for the active build,
   deleting the scoped chat session and autonomous-job queue storage before
   restoring an empty session.

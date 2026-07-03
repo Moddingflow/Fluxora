@@ -11,6 +11,7 @@ import {
   aiSessionScopeKey,
   aiSessionStorageKey,
   aiResponseDiagnosticMessages,
+  createAiHostChatRequest,
   createAiPromptFingerprint,
   createAiResearchRequestForPrompt,
   createAiRunForPrompt,
@@ -273,6 +274,29 @@ describe('AI chat runtime', () => {
           billable: false,
           createdAt: '2026-06-30T00:00:00.000Z'
         },
+        contextUsage: {
+          schema: 'fluxora.ai.context-usage.v1',
+          operationId: 'op_ai_chat_run',
+          providerId: 'local-dry-run',
+          modelId: 'local-dry-run',
+          contextWindowTokens: 8192,
+          currentContextTokens: 42,
+          currentContextPercent: 0.5126953125,
+          precision: 'estimated',
+          level: 'normal',
+          mode: 'full',
+          includedSections: ['chat-history'],
+          autoCompressionApplied: false,
+          actionRequired: false,
+          countedAt: '2026-06-30T00:00:00.000Z'
+        },
+        tokenUsage: {
+          inputTokens: 42,
+          outputTokens: 7,
+          totalTokens: 49,
+          contextTokensBeforeRequest: 42,
+          source: 'chars-per-token-estimate'
+        },
         fallbackProviders: [],
         taskPlan: planningBundle.taskPlan,
         subagentSchedule: planningBundle.subagentSchedule,
@@ -305,6 +329,8 @@ describe('AI chat runtime', () => {
           expect(message.taskPlan?.schema).toBe('fluxora.ai.task-plan.v1');
           expect(message.subagentSchedule?.schema).toBe('fluxora.ai.subagent-schedule.v1');
           expect(message.selectedSkill?.schema).toBe('fluxora.ai.skill-selection.v1');
+          expect(message.contextUsage?.currentContextTokens).toBe(42);
+          expect(message.tokenUsage?.totalTokens).toBe(49);
         }
       }
     );
@@ -730,5 +756,73 @@ describe('AI chat runtime', () => {
     expect(request?.sessionId).toBe(activeChat.id);
     expect(request?.messages.map((message) => message.text)).toEqual(['new isolated question']);
     expect(JSON.stringify(request)).not.toContain('old context that must not leak');
+  });
+
+  it('reuses a prepared host request for context estimate and chat response shapes', async () => {
+    vi.useFakeTimers();
+    const session = createAiSessionForScope({ projectId: 'skyrim-main' });
+    const run = createAiRunForPrompt(session, 'op_ai_chat_run', 'check plugins');
+    const buildContextSnapshot = {
+      generatedAt: '2026-07-03T10:00:00.000Z',
+      issues: [],
+      operationId: 'op_build_context',
+      permissionClass: 'read' as const,
+      projectName: 'Skyrim Main',
+      tools: []
+    };
+    const request = createAiHostChatRequest(run, session, 'check plugins', {
+      buildContextSnapshot,
+      modelId: 'gemini-3.1-flash-lite',
+      providerId: 'gemini',
+      routingPreset: 'byok'
+    });
+    const aiApi = {
+      chatRespond: vi.fn(async () => ({
+        operationId: 'op_ai_chat_run',
+        providerId: 'gemini',
+        modelId: 'gemini-3.1-flash-lite',
+        routingPreset: 'byok',
+        status: 'done',
+        text: 'Scoped answer.',
+        streamChunks: [{ index: 0, text: 'Scoped answer.' }],
+        sources: [],
+        costEstimate: null,
+        ledgerEntry: undefined,
+        fallbackProviders: [],
+        taskPlan: null,
+        subagentSchedule: null,
+        selectedSkill: null,
+        toolCallsAllowed: false
+      }))
+    } as unknown as FluxoraApi['ai'];
+
+    startHostAiRun(
+      run,
+      session,
+      'check plugins',
+      aiApi,
+      {
+        buildContextSnapshot,
+        modelId: 'gemini-3.1-flash-lite',
+        preparedRequest: request,
+        providerId: 'gemini',
+        routingPreset: 'byok'
+      },
+      {
+        onEvent: () => undefined,
+        onFinish: () => undefined
+      }
+    );
+
+    await vi.runAllTimersAsync();
+
+    expect(request.messages[0]?.role).toBe('system');
+    expect(request.messages[0]?.text).toContain('fluxora.ai.build-context.v1');
+    expect(request.messages.at(-1)).toMatchObject({
+      role: 'user',
+      text: 'check plugins'
+    });
+    expect(request.research).toBeUndefined();
+    expect(aiApi.chatRespond).toHaveBeenCalledWith(request);
   });
 });
