@@ -1,13 +1,15 @@
 Уведомления Fluxora о сторонних компонентах
-Дата обновления: 24 июня 2026 г.
+Дата обновления: 3 июля 2026 г.
 
 Fluxora включает сторонние runtime, installer, build и test components. Этот документ является release checklist и уведомлением для прозрачности. Он не заменяет финальную проверку owner/legal перед публичным распространением.
 
 Runtime и компоненты приложения:
 - Tauri, включая runtime-компоненты Chromium и Node.js, для desktop app shell.
 - React и React DOM для renderer UI.
+- Three.js для локального 3D preview rendering.
 - Lucide React для UI icons.
 - spdlog для native logging.
+- zlib для чтения сжатых записей Bethesda archive в локальном preview файлов.
 - Microsoft Detours, если собрана Windows VFS/hook функция.
 
 Компоненты установщика:

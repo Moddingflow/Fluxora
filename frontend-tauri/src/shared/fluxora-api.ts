@@ -72,9 +72,11 @@ export const FluxoraIpcChannels = {
   modsDeleteSeparator: 'fluxora:mods:delete-separator',
   modsGetFileTree: 'fluxora:mods:get-file-tree',
   modsGetOrder: 'fluxora:mods:get-order',
+  modsListPreviewVariants: 'fluxora:mods:list-preview-variants',
   modsListInstalled: 'fluxora:mods:list-installed',
   modsMoveOrderItem: 'fluxora:mods:move-order-item',
   modsPreviewTextFile: 'fluxora:mods:preview-text-file',
+  modsReadPreviewAsset: 'fluxora:mods:read-preview-asset',
   modsReadTextFile: 'fluxora:mods:read-text-file',
   modsSaveTextFile: 'fluxora:mods:save-text-file',
   modsSetAllEnabled: 'fluxora:mods:set-all-enabled',
@@ -137,6 +139,7 @@ export const FluxoraIpcChannels = {
   windowClose: 'fluxora:window:close',
   windowMinimize: 'fluxora:window:minimize',
   windowOpenBuildSettings: 'fluxora:window:open-build-settings',
+  windowOpenFilePreview: 'fluxora:window:open-file-preview',
   windowOpenModDetails: 'fluxora:window:open-mod-details',
   windowOpenSettings: 'fluxora:window:open-settings',
   windowOpenTextEditor: 'fluxora:window:open-text-editor',
@@ -1252,6 +1255,28 @@ export interface FluxoraModFileTreeEntry {
   conflictOwners: string[];
 }
 
+export type FluxoraPreviewAssetKind = 'nif' | 'texture';
+
+export interface FluxoraPreviewVariant {
+  modPath: string;
+  modName: string;
+  order: number;
+  enabled: boolean;
+  relativePath: string;
+  size: number;
+}
+
+export interface FluxoraPreviewAsset {
+  kind: FluxoraPreviewAssetKind;
+  modPath: string;
+  modName: string;
+  relativePath: string;
+  fileName: string;
+  size: number;
+  mimeType: string;
+  contentBase64: string;
+}
+
 export interface FluxoraTextFileDocument {
   path: string;
   fileName: string;
@@ -1841,6 +1866,20 @@ export interface FluxoraApi {
       relativeDirectory?: string,
       request?: OperationRequest
     ) => Promise<FluxoraModFileTreeEntry[]>;
+    listPreviewVariants: (
+      projectDirectory: string,
+      profileName: string,
+      relativePath: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraPreviewVariant[]>;
+    readPreviewAsset: (
+      projectDirectory: string,
+      profileName: string,
+      modPath: string,
+      relativePath: string,
+      kind: FluxoraPreviewAssetKind,
+      request?: OperationRequest
+    ) => Promise<FluxoraPreviewAsset>;
     readTextFile: (
       projectDirectory: string,
       modPath: string,
@@ -2192,6 +2231,14 @@ export interface FluxoraApi {
     close: () => Promise<void>;
     minimize: () => Promise<void>;
     openBuildSettings: (configPath: string, buildName: string) => Promise<void>;
+    openFilePreview: (
+      configPath: string,
+      modPath: string,
+      relativePath: string,
+      fileName: string,
+      profileName: string,
+      kind: string
+    ) => Promise<void>;
     openModDetails: (
       configPath: string,
       modPath: string,

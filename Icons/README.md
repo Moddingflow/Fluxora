@@ -19,6 +19,7 @@ The following SVG assets are original Lucide icons downloaded from
 - `chevron-up.svg`
 - `circle-check.svg`
 - `circle-x.svg`
+- `cuboid.svg`
 - `folder-open.svg`
 - `folder-tree.svg`
 - `git-compare-arrows.svg`
@@ -33,7 +34,8 @@ Lucide is distributed under the ISC license and supports commercial use. The
 copied license text is stored in `LUCIDE-LICENSE.txt`.
 
 `folder-tree.svg` and `git-compare-arrows.svg` are used by the Tauri mod
-details window tabs. `circle-x.svg` is also used by AI chat tab close buttons.
+details window tabs. `cuboid.svg` is used by the generic file preview window
+header. `circle-x.svg` is also used by AI chat tab close buttons.
 
 # Bootstrap missing-master icon
 

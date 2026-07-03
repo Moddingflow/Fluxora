@@ -681,6 +681,46 @@ test.beforeEach(async ({ page }) => {
             conflictOwners: []
           }
         ],
+        listPreviewVariants: async () => [
+          {
+            modPath: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Low Model',
+            modName: 'Low Model',
+            order: 0,
+            enabled: true,
+            relativePath: 'meshes/armor/cuirass.nif',
+            size: 512
+          },
+          {
+            modPath: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Selected Model',
+            modName: 'Selected Model',
+            order: 1,
+            enabled: true,
+            relativePath: 'meshes/armor/cuirass.nif',
+            size: 512
+          }
+        ],
+        readPreviewAsset: async (_projectDirectory: any, _profileName: any, modPath: any, relativePath: any, kind: any) => {
+          const fixture = JSON.stringify({
+            meshes: [
+              {
+                name: 'Playwright preview triangle',
+                positions: [0, 0, 0, 1, 0, 0, 0, 1, 0],
+                indices: [0, 1, 2],
+                uvs: [0, 0, 1, 0, 0, 1]
+              }
+            ]
+          });
+          return {
+            kind,
+            modPath,
+            modName: String(modPath).includes('Selected Model') ? 'Selected Model' : 'Low Model',
+            relativePath,
+            fileName: String(relativePath).split(/[\\/]/).pop() || 'cuirass.nif',
+            size: fixture.length,
+            mimeType: 'application/octet-stream',
+            contentBase64: btoa(`Gamebryo File Format, Version 20.2.0.7\nNiNode NiTriShape NiTriShapeData BSLightingShaderProperty BSShaderTextureSet NiAlphaProperty\nFLUXORA_STATIC_MESH_JSON:${fixture}`)
+          };
+        },
         getOrder: async () => modRows,
         listInstalled: async () => modRows.filter((item) => item.isMod),
         moveOrderItem: async (projectDirectory: any, profileName: any, orderId: any, targetIndex: any, operation: any) => {
@@ -857,7 +897,11 @@ test.beforeEach(async ({ page }) => {
           return undefined;
         },
         minimize: async () => undefined,
+        openBuildSettings: async () => undefined,
+        openFilePreview: async () => undefined,
+        openModDetails: async () => undefined,
         openSettings: async () => undefined,
+        openTextEditor: async () => undefined,
         toggleMaximize: async () => undefined
       }
     };
@@ -879,7 +923,7 @@ const openSkyrimBuild = async (page: Page) => {
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
 };
 
-const dragRowToSlot = async (
+const moveRowDragToSlot = async (
   page: Page,
   source: Locator,
   target: Locator,
@@ -905,6 +949,15 @@ const dragRowToSlot = async (
   await expect(target).toHaveAttribute('data-drop-target', 'true');
   await expect(target).toHaveAttribute('data-drop-placement', placement);
   await expect(target.locator('.row-drop-target-chip')).toHaveText('Сюда');
+};
+
+const dragRowToSlot = async (
+  page: Page,
+  source: Locator,
+  target: Locator,
+  placement: 'before' | 'after'
+) => {
+  await moveRowDragToSlot(page, source, target, placement);
   await page.mouse.up();
 };
 
@@ -915,6 +968,23 @@ const latestCallPayload = async (page: Page, method: string) =>
         .__fluxoraCalls ?? [];
     return calls.filter((call) => call.method === methodName).at(-1)?.payload ?? null;
   }, method);
+
+const rightPaneTransientSnapshot = async (page: Page) =>
+  page.locator('.build-pane[aria-label="Right pane"]').evaluate((pane) => {
+    const textOf = (element: Element) => element.textContent?.trim() ?? '';
+    return {
+      busyStripText: Array.from(pane.querySelectorAll('.mod-busy-strip')).map(textOf),
+      downloadDropCueCount: pane.querySelectorAll('.download-drop-cue').length,
+      downloadDropState:
+        pane.querySelector('.download-drop-surface')?.getAttribute('data-drop-state') ?? null,
+      pluginLoadingCount: pane.querySelectorAll(
+        '.plugin-table--loading, .plugin-row--skeleton, .workspace-skeleton'
+      ).length,
+      rowDropTargetCount: pane.querySelectorAll(
+        '.mod-list-row[data-drop-target="true"], .plugin-row[data-drop-target="true"]'
+      ).length
+    };
+  });
 
 const expectNoDocumentHorizontalOverflow = async (page: Page) => {
   const overflow = await page.evaluate(() => ({
@@ -1188,6 +1258,51 @@ test('keeps downloads rows visible during delayed refresh', async ({ page }) => 
   await expect(skeletonTable).toHaveCount(0);
   await expect(rightPane.getByText('Loading downloads', { exact: true })).toHaveCount(0);
   await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
+});
+
+test('does not flash a stale downloads drop cue when returning to the downloads tab', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+
+  const dropSurface = rightPane.locator('.download-drop-surface');
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  await dropSurface.dispatchEvent('dragenter', { dataTransfer });
+  await dataTransfer.dispose();
+  await expect(dropSurface).toHaveAttribute('data-drop-state', 'hover');
+
+  await rightPane.getByRole('tab', { name: /Данные/ }).click();
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+
+  expect(await rightPaneTransientSnapshot(page)).toMatchObject({
+    downloadDropCueCount: 0,
+    downloadDropState: 'idle'
+  });
+});
+
+test('clears plugin row drop indicators before switching right pane tabs', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  const source = page.getByRole('row', { name: /SkyUI\.esp plugin/ });
+  const target = page.getByRole('row', { name: /Skyrim\.esm plugin/ });
+
+  await moveRowDragToSlot(page, source, target, 'after');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).evaluate((element) => {
+    (element as HTMLElement).click();
+  });
+  await rightPane.getByRole('tab', { name: /Плагины/ }).evaluate((element) => {
+    (element as HTMLElement).click();
+  });
+
+  const snapshot = await rightPaneTransientSnapshot(page);
+  await page.mouse.up();
+
+  expect(snapshot).toMatchObject({
+    pluginLoadingCount: 0,
+    rowDropTargetCount: 0
+  });
 });
 
 test('uses the redesigned right pane tabs for plugins, data and downloads', async ({ page }) => {
@@ -1621,4 +1736,44 @@ test('captures mods pane visual review sizes', async ({ page }, testInfo) => {
       path: testInfo.outputPath(`mods-pane-${size.width}x${size.height}.png`)
     });
   }
+});
+
+test('file preview window renders a nonblank nif canvas and source mod label', async ({ page }) => {
+  const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+  const mod = encodeURIComponent('D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Selected Model');
+  const relativePath = encodeURIComponent('meshes/armor/cuirass.nif');
+
+  await page.setViewportSize({ width: 1344, height: 912 });
+  await page.goto(
+    `${baseUrl}/?window=file-preview&project=${project}&mod=${mod}&path=${relativePath}&name=cuirass.nif&profile=Default&kind=nif`
+  );
+
+  await expect(page.getByRole('heading', { name: '.nif Preview' })).toBeVisible();
+  await expect(page.getByTestId('file-preview-source-mod')).toContainText('Selected Model');
+  await expect(page.getByText('meshes/armor/cuirass.nif')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Previous mod variant' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Next mod variant' })).toBeDisabled();
+  await expect(page.getByTestId('file-preview-canvas')).toBeVisible();
+
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector('[data-testid="file-preview-canvas"]') as HTMLCanvasElement | null;
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) {
+      return false;
+    }
+    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+    if (!gl) {
+      return false;
+    }
+    const pixels = new Uint8Array(4);
+    gl.readPixels(
+      Math.floor(canvas.width / 2),
+      Math.floor(canvas.height / 2),
+      1,
+      1,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      pixels
+    );
+    return pixels.some((value) => value !== 0);
+  });
 });

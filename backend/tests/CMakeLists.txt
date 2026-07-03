@@ -71,6 +71,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/ModOrganizerProfileOrderService.cpp
     ../src/Services/PathSafetyService.cpp
     ../src/Services/PluginService.cpp
+    ../src/Services/PreviewArchiveReader.cpp
     ../src/Services/ProfileOrderService.cpp
     ../src/Services/ProfileService.cpp
     ../src/Services/ProjectService.cpp
@@ -121,7 +122,7 @@ else()
     target_compile_options(FluxoraCoreTests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-target_link_libraries(FluxoraCoreTests PRIVATE GTest::gtest_main spdlog::spdlog_header_only)
+target_link_libraries(FluxoraCoreTests PRIVATE GTest::gtest_main spdlog::spdlog_header_only ${FLUXORA_ZLIB_TARGET})
 
 if(WIN32)
     target_link_libraries(FluxoraCoreTests PRIVATE advapi32 bcrypt crypt32 gdiplus rstrtmgr shell32 winhttp ws2_32)

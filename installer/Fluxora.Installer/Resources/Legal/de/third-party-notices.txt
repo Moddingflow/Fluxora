@@ -1,13 +1,15 @@
 Fluxora Hinweise zu Drittanbieter-Komponenten
-Stand: 24. Juni 2026
+Stand: 3. Juli 2026
 
 Fluxora enthält Drittanbieter-Komponenten für Laufzeit, Installer, Build und Tests. Dieser Hinweis dient als Release-Checkliste und Transparenzhinweis. Er ersetzt keine abschließende Prüfung durch Owner/Legal vor einer öffentlichen Distribution.
 
 Laufzeit- und Anwendungskomponenten:
 - Tauri, einschließlich Chromium- und Node.js-Laufzeitkomponenten, für die Desktop-App-Shell.
 - React und React DOM für die Renderer-Oberfläche.
+- Three.js für lokale 3D-Vorschau-Renderings.
 - Lucide React für UI-Icons.
 - spdlog für natives Logging.
+- zlib zum Lesen komprimierter Bethesda-Archiveinträge in lokalen Datei-Vorschauen.
 - Microsoft Detours, wenn die Windows VFS/Hook-Funktion gebaut wird.
 
 Installer-Komponenten:

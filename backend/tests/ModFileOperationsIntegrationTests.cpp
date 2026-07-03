@@ -8,6 +8,8 @@
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 #include "TestFilesystem.hpp"
 
+#include <zlib.h>
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -142,6 +144,52 @@ namespace fluxora::tests
             file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         }
 
+        void pushU16(std::vector<std::uint8_t>& bytes, std::uint16_t value)
+        {
+            bytes.push_back(static_cast<std::uint8_t>(value & 0xFFU));
+            bytes.push_back(static_cast<std::uint8_t>((value >> 8) & 0xFFU));
+        }
+
+        void pushU32(std::vector<std::uint8_t>& bytes, std::uint32_t value)
+        {
+            bytes.push_back(static_cast<std::uint8_t>(value & 0xFFU));
+            bytes.push_back(static_cast<std::uint8_t>((value >> 8) & 0xFFU));
+            bytes.push_back(static_cast<std::uint8_t>((value >> 16) & 0xFFU));
+            bytes.push_back(static_cast<std::uint8_t>((value >> 24) & 0xFFU));
+        }
+
+        void pushU64(std::vector<std::uint8_t>& bytes, std::uint64_t value)
+        {
+            for (int index = 0; index < 8; ++index)
+            {
+                bytes.push_back(static_cast<std::uint8_t>((value >> (index * 8)) & 0xFFU));
+            }
+        }
+
+        void patchU32(std::vector<std::uint8_t>& bytes, std::size_t offset, std::uint32_t value)
+        {
+            bytes[offset] = static_cast<std::uint8_t>(value & 0xFFU);
+            bytes[offset + 1] = static_cast<std::uint8_t>((value >> 8) & 0xFFU);
+            bytes[offset + 2] = static_cast<std::uint8_t>((value >> 16) & 0xFFU);
+            bytes[offset + 3] = static_cast<std::uint8_t>((value >> 24) & 0xFFU);
+        }
+
+        void pushText(std::vector<std::uint8_t>& bytes, std::string_view text)
+        {
+            bytes.insert(bytes.end(), text.begin(), text.end());
+        }
+
+        void writeBinaryFile(const std::filesystem::path& path, const std::vector<std::uint8_t>& bytes)
+        {
+            std::filesystem::create_directories(path.parent_path());
+            std::ofstream file(path, std::ios::out | std::ios::binary | std::ios::trunc);
+            if (!file)
+            {
+                throw std::runtime_error("Failed to create binary test file.");
+            }
+            file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        }
+
         std::uint32_t tellU32(std::ofstream& file)
         {
             return static_cast<std::uint32_t>(file.tellp());
@@ -264,6 +312,161 @@ namespace fluxora::tests
                     return mod.name == name;
             });
             return found == mods.end() ? nullptr : &*found;
+        }
+
+        std::string bytesToString(const std::vector<std::uint8_t>& bytes)
+        {
+            return std::string(bytes.begin(), bytes.end());
+        }
+
+        std::vector<std::uint8_t> bytesFromString(std::string_view text)
+        {
+            return std::vector<std::uint8_t>(text.begin(), text.end());
+        }
+
+        std::vector<std::uint8_t> zlibCompress(const std::vector<std::uint8_t>& bytes)
+        {
+            uLongf compressedSize = compressBound(static_cast<uLong>(bytes.size()));
+            std::vector<std::uint8_t> compressed(static_cast<std::size_t>(compressedSize));
+            const int result = compress2(
+                compressed.data(),
+                &compressedSize,
+                bytes.data(),
+                static_cast<uLong>(bytes.size()),
+                Z_BEST_SPEED);
+            if (result != Z_OK)
+            {
+                throw std::runtime_error("Failed to create compressed BA2 test payload.");
+            }
+            compressed.resize(static_cast<std::size_t>(compressedSize));
+            return compressed;
+        }
+
+        std::vector<std::uint8_t> lz4FrameWithUncompressedBlock(const std::vector<std::uint8_t>& bytes)
+        {
+            std::vector<std::uint8_t> frame;
+            frame.insert(frame.end(), {0x04, 0x22, 0x4d, 0x18});
+            frame.push_back(0x60);
+            frame.push_back(0x40);
+            frame.push_back(0x00);
+            pushU32(frame, static_cast<std::uint32_t>(bytes.size()) | 0x80000000U);
+            frame.insert(frame.end(), bytes.begin(), bytes.end());
+            pushU32(frame, 0);
+            return frame;
+        }
+
+        void writePreviewBsaArchive(
+            const std::filesystem::path& path,
+            std::wstring_view relativePath,
+            const std::vector<std::uint8_t>& payload,
+            bool prefixFullFileName = false)
+        {
+            std::filesystem::path relative(relativePath);
+            const auto directoryUtf8 = relative.parent_path().generic_u8string();
+            const auto fileUtf8 = relative.filename().generic_u8string();
+            const auto relativeUtf8 = relative.generic_u8string();
+            const std::string directoryName(
+                reinterpret_cast<const char*>(directoryUtf8.data()),
+                directoryUtf8.size());
+            const std::string fileName(
+                reinterpret_cast<const char*>(fileUtf8.data()),
+                fileUtf8.size());
+            const std::string relativeName(
+                reinterpret_cast<const char*>(relativeUtf8.data()),
+                relativeUtf8.size());
+            const std::vector<std::uint8_t> frame = lz4FrameWithUncompressedBlock(payload);
+
+            std::vector<std::uint8_t> bytes;
+            pushText(bytes, std::string("BSA", 3));
+            bytes.push_back(0);
+            pushU32(bytes, 105);
+            pushU32(bytes, 36);
+            pushU32(bytes, 0x001U | 0x002U | 0x004U | (prefixFullFileName ? 0x100U : 0U));
+            pushU32(bytes, 1);
+            pushU32(bytes, 1);
+            pushU32(bytes, static_cast<std::uint32_t>(directoryName.size() + 1));
+            pushU32(bytes, static_cast<std::uint32_t>(fileName.size() + 1));
+            pushU32(bytes, 0x002U);
+
+            pushU64(bytes, 0);
+            pushU32(bytes, 1);
+            pushU32(bytes, 0);
+            pushU64(bytes, 0);
+
+            bytes.push_back(static_cast<std::uint8_t>(directoryName.size() + 1));
+            pushText(bytes, directoryName);
+            bytes.push_back(0);
+
+            pushU64(bytes, 0);
+            const std::size_t sizeOffset = bytes.size();
+            pushU32(bytes, 0);
+            const std::size_t dataOffset = bytes.size();
+            pushU32(bytes, 0);
+
+            pushText(bytes, fileName);
+            bytes.push_back(0);
+
+            const std::uint32_t payloadOffset = static_cast<std::uint32_t>(bytes.size());
+            patchU32(bytes, dataOffset, payloadOffset);
+            const std::uint32_t embeddedNameSize =
+                prefixFullFileName ? static_cast<std::uint32_t>(relativeName.size() + 1) : 0U;
+            const std::uint32_t storedSize = static_cast<std::uint32_t>(frame.size() + 4) + embeddedNameSize;
+            patchU32(bytes, sizeOffset, storedSize);
+            if (prefixFullFileName)
+            {
+                bytes.push_back(static_cast<std::uint8_t>(relativeName.size()));
+                pushText(bytes, relativeName);
+            }
+            pushU32(bytes, static_cast<std::uint32_t>(payload.size()));
+            bytes.insert(bytes.end(), frame.begin(), frame.end());
+
+            writeBinaryFile(path, bytes);
+        }
+
+        void writePreviewBa2Dx10Archive(
+            const std::filesystem::path& path,
+            std::wstring_view relativePath,
+            const std::vector<std::uint8_t>& payload)
+        {
+            const auto relativeUtf8 = std::filesystem::path(relativePath).generic_u8string();
+            const std::string relativeName(
+                reinterpret_cast<const char*>(relativeUtf8.data()),
+                relativeUtf8.size());
+            const std::vector<std::uint8_t> compressed = zlibCompress(payload);
+            const std::uint64_t dataOffset = 24 + 24 + 24;
+            const std::uint64_t namesOffset = dataOffset + compressed.size();
+
+            std::vector<std::uint8_t> bytes;
+            pushText(bytes, "BTDX");
+            pushU32(bytes, 1);
+            pushText(bytes, "DX10");
+            pushU32(bytes, 1);
+            pushU64(bytes, namesOffset);
+
+            pushU32(bytes, 0);
+            pushText(bytes, std::string_view("dds\0", 4));
+            pushU32(bytes, 0);
+            bytes.push_back(0);
+            bytes.push_back(1);
+            pushU16(bytes, 24);
+            pushU16(bytes, 4);
+            pushU16(bytes, 4);
+            bytes.push_back(1);
+            bytes.push_back(71);
+            pushU16(bytes, 0);
+
+            pushU64(bytes, dataOffset);
+            pushU32(bytes, static_cast<std::uint32_t>(compressed.size()));
+            pushU32(bytes, static_cast<std::uint32_t>(payload.size()));
+            pushU16(bytes, 0);
+            pushU16(bytes, 0);
+            pushU32(bytes, 0xBAADF00DU);
+
+            bytes.insert(bytes.end(), compressed.begin(), compressed.end());
+            pushU16(bytes, static_cast<std::uint16_t>(relativeName.size()));
+            pushText(bytes, relativeName);
+
+            writeBinaryFile(path, bytes);
         }
 
         std::vector<std::filesystem::path> installStagingCachePayloads(
@@ -609,6 +812,278 @@ namespace fluxora::tests
             (void)mods_.saveModTextFile(project_, modPath, L"../Other Mod/settings.json", L"{}\n"),
             std::invalid_argument);
         EXPECT_EQ(readTextFile(modPath / L"config" / L"settings.json"), "{}\n");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ModPreviewVariantsReturnSameNifPathInProfileOrder)
+    {
+        const InstalledModEntry first = mods_.createEmptyMod(project_, L"Armor A");
+        const InstalledModEntry second = mods_.createEmptyMod(project_, L"Armor B");
+        const InstalledModEntry third = mods_.createEmptyMod(project_, L"Armor C");
+
+        writeTextFile(first.id / L"meshes" / L"armor" / L"cuirass.nif", "first-nif");
+        writeTextFile(second.id / L"meshes" / L"armor" / L"cuirass.nif", "second-nif");
+        writeTextFile(third.id / L"meshes" / L"armor" / L"cuirass.nif", "third-nif");
+        mods_.setInstalledModEnabled(project_, second.id, false);
+
+        const std::vector<ModPreviewVariant> variants =
+            mods_.listPreviewVariants(project_, L"Default", L"meshes/armor/cuirass.nif");
+
+        ASSERT_EQ(variants.size(), 3U);
+        EXPECT_EQ(variants[0].modName, L"Armor A");
+        EXPECT_EQ(variants[0].order, 0);
+        EXPECT_TRUE(variants[0].enabled);
+        EXPECT_EQ(variants[1].modName, L"Armor B");
+        EXPECT_EQ(variants[1].order, 1);
+        EXPECT_FALSE(variants[1].enabled);
+        EXPECT_EQ(variants[2].modName, L"Armor C");
+        EXPECT_EQ(variants[2].order, 2);
+        EXPECT_TRUE(variants[2].enabled);
+        EXPECT_EQ(variants[0].relativePath, L"meshes/armor/cuirass.nif");
+        EXPECT_EQ(variants[0].size, 9U);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ModPreviewVariantsOmitMissingNeighbors)
+    {
+        const InstalledModEntry only = mods_.createEmptyMod(project_, L"Only Mesh");
+        const InstalledModEntry missing = mods_.createEmptyMod(project_, L"Missing Mesh");
+        (void)missing;
+
+        writeTextFile(only.id / L"meshes" / L"armor" / L"cuirass.nif", "only-nif");
+
+        const std::vector<ModPreviewVariant> variants =
+            mods_.listPreviewVariants(project_, L"Default", L"meshes/armor/cuirass.nif");
+
+        ASSERT_EQ(variants.size(), 1U);
+        EXPECT_EQ(variants.front().modPath, only.id);
+        EXPECT_EQ(variants.front().modName, L"Only Mesh");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ModPreviewAssetRejectsTraversalAndUnsupportedExtensions)
+    {
+        const InstalledModEntry created = mods_.createEmptyMod(project_, L"Preview Safety");
+
+        writeTextFile(created.id / L"meshes" / L"armor" / L"cuirass.nif", "nif-bytes");
+        writeTextFile(created.id / L"textures" / L"armor" / L"cuirass.dds", "dds-bytes");
+
+        const ModPreviewAsset model =
+            mods_.readPreviewAsset(project_, L"Default", created.id, L"meshes/armor/cuirass.nif", L"nif");
+        EXPECT_EQ(model.kind, L"nif");
+        EXPECT_EQ(model.sourceModName, L"Preview Safety");
+        EXPECT_EQ(bytesToString(model.bytes), "nif-bytes");
+
+        const ModPreviewAsset texture =
+            mods_.readPreviewAsset(project_, L"Default", created.id, L"textures/armor/cuirass.dds", L"texture");
+        EXPECT_EQ(texture.kind, L"texture");
+        EXPECT_EQ(bytesToString(texture.bytes), "dds-bytes");
+
+        EXPECT_THROW(
+            (void)mods_.readPreviewAsset(project_, L"Default", created.id, L"../other/cuirass.nif", L"nif"),
+            std::invalid_argument);
+        EXPECT_THROW(
+            (void)mods_.readPreviewAsset(project_, L"Default", created.id, L"meshes/armor/cuirass.exe", L"nif"),
+            std::invalid_argument);
+        EXPECT_THROW(
+            (void)mods_.readPreviewAsset(project_, L"Default", created.id, L"textures/armor/cuirass.bmp", L"texture"),
+            std::invalid_argument);
+        EXPECT_THROW(
+            (void)mods_.listPreviewVariants(project_, L"Default", L"../meshes/armor/cuirass.nif"),
+            std::invalid_argument);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ModPreviewTextureResolutionUsesActiveProfileOrderWinner)
+    {
+        const InstalledModEntry low = mods_.createEmptyMod(project_, L"Base Texture");
+        const InstalledModEntry selected = mods_.createEmptyMod(project_, L"Selected Model");
+        const InstalledModEntry high = mods_.createEmptyMod(project_, L"Final Texture");
+
+        const std::vector<ProfileModOrderItem> initialOrder =
+            profileOrder_.listModOrder(project_, L"Default");
+        const ProfileModOrderItem* lowOrderItem = findModOrderItem(initialOrder, L"Base Texture");
+        const ProfileModOrderItem* selectedOrderItem = findModOrderItem(initialOrder, L"Selected Model");
+        const ProfileModOrderItem* highOrderItem = findModOrderItem(initialOrder, L"Final Texture");
+        ASSERT_NE(lowOrderItem, nullptr);
+        ASSERT_NE(selectedOrderItem, nullptr);
+        ASSERT_NE(highOrderItem, nullptr);
+        const std::wstring lowOrderId = lowOrderItem->orderId;
+        const std::wstring selectedOrderId = selectedOrderItem->orderId;
+        const std::wstring highOrderId = highOrderItem->orderId;
+
+        (void)profileOrder_.moveModOrderItem(project_, L"Default", lowOrderId, 0);
+        (void)profileOrder_.moveModOrderItem(project_, L"Default", selectedOrderId, 1);
+        const std::vector<ProfileModOrderItem> movedOrder =
+            profileOrder_.moveModOrderItem(project_, L"Default", highOrderId, 2);
+        ASSERT_EQ(movedOrder.size(), 3U);
+        EXPECT_EQ(movedOrder[0].name, L"Base Texture");
+        EXPECT_EQ(movedOrder[1].name, L"Selected Model");
+        EXPECT_EQ(movedOrder[2].name, L"Final Texture");
+
+        writeTextFile(selected.id / L"meshes" / L"armor" / L"cuirass.nif", "selected-model");
+        writeTextFile(low.id / L"textures" / L"armor" / L"cuirass.dds", "low-texture");
+        writeTextFile(selected.id / L"textures" / L"armor" / L"cuirass.dds", "selected-texture");
+        writeTextFile(high.id / L"textures" / L"armor" / L"cuirass.dds", "high-texture");
+
+        ModPreviewAsset winner =
+            mods_.readPreviewAsset(project_, L"Default", selected.id, L"textures/armor/cuirass.dds", L"texture");
+        EXPECT_EQ(winner.sourceModName, L"Final Texture");
+        EXPECT_EQ(bytesToString(winner.bytes), "high-texture");
+
+        mods_.setInstalledModEnabled(project_, high.id, false);
+        winner =
+            mods_.readPreviewAsset(project_, L"Default", selected.id, L"textures/armor/cuirass.dds", L"texture");
+        EXPECT_EQ(winner.sourceModName, L"Selected Model");
+        EXPECT_EQ(bytesToString(winner.bytes), "selected-texture");
+
+        mods_.setInstalledModEnabled(project_, selected.id, false);
+        winner =
+            mods_.readPreviewAsset(project_, L"Default", selected.id, L"textures/armor/cuirass.dds", L"texture");
+        EXPECT_EQ(winner.sourceModName, L"Base Texture");
+        EXPECT_EQ(bytesToString(winner.bytes), "low-texture");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ModPreviewTextureResolutionUsesGameDataAndOverwrite)
+    {
+        const std::wstring texturePath =
+            L"textures/creationclub/bgssse025/critters/FXButterflyGreen.dds";
+        const InstalledModEntry selected = mods_.createEmptyMod(project_, L"Selected Model");
+        const InstalledModEntry high = mods_.createEmptyMod(project_, L"Final Texture");
+
+        writeTextFile(project_ / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(project_ / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(
+            project_ / L".fluxora" / L"paths.json",
+            "{"
+            "\"gameDirectory\":\"stock game\","
+            "\"modsDirectory\":\"mods\","
+            "\"profilesDirectory\":\"profiles\","
+            "\"downloadsDirectory\":\"downloads\","
+            "\"overwriteDirectory\":\"overwrite\""
+            "}");
+        writeTextFile(project_ / L"stock game" / L"Data" / texturePath, "game-texture");
+        writeTextFile(selected.id / L"meshes" / L"creationclub" / L"bgssse025" / L"critters" /
+                L"greenbutterflyhinjar.nif",
+            "selected-model");
+        writeTextFile(high.id / texturePath, "high-texture");
+
+        ModPreviewAsset winner =
+            mods_.readPreviewAsset(project_, L"Default", selected.id, texturePath, L"texture");
+        EXPECT_EQ(winner.sourceModName, L"Final Texture");
+        EXPECT_EQ(bytesToString(winner.bytes), "high-texture");
+
+        writeTextFile(overwriteDirectory() / texturePath, "overwrite-texture");
+        winner = mods_.readPreviewAsset(project_, L"Default", selected.id, texturePath, L"texture");
+        EXPECT_EQ(winner.sourceModName, L"Overwrite");
+        EXPECT_EQ(bytesToString(winner.bytes), "overwrite-texture");
+
+        std::error_code removeError;
+        std::filesystem::remove(overwriteDirectory() / texturePath, removeError);
+        mods_.setInstalledModEnabled(project_, high.id, false);
+
+        winner = mods_.readPreviewAsset(project_, L"Default", selected.id, texturePath, L"texture");
+        EXPECT_EQ(winner.sourceModName, L"Game Data");
+        EXPECT_EQ(bytesToString(winner.bytes), "game-texture");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ModPreviewTextureResolutionReadsGameDataBsaArchives)
+    {
+        const std::wstring texturePath =
+            L"textures/creationclub/bgssse025/critters/FXButterflyGreen.dds";
+        const InstalledModEntry selected = mods_.createEmptyMod(project_, L"Selected Model");
+
+        writeTextFile(project_ / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(project_ / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(
+            project_ / L".fluxora" / L"paths.json",
+            "{"
+            "\"gameDirectory\":\"stock game\","
+            "\"modsDirectory\":\"mods\","
+            "\"profilesDirectory\":\"profiles\","
+            "\"downloadsDirectory\":\"downloads\","
+            "\"overwriteDirectory\":\"overwrite\""
+            "}");
+        writeTextFile(selected.id / L"meshes" / L"creationclub" / L"bgssse025" / L"critters" /
+                L"greenbutterflyhinjar.nif",
+            "selected-model");
+        writePreviewBsaArchive(
+            project_ / L"stock game" / L"Data" / L"ccBGSSSE025-AdvDSGS.bsa",
+            texturePath,
+            bytesFromString("bsa-texture"));
+
+        const ModPreviewAsset winner =
+            mods_.readPreviewAsset(project_, L"Default", selected.id, texturePath, L"texture");
+
+        EXPECT_EQ(winner.sourceModName, L"Game Data Archive: ccBGSSSE025-AdvDSGS.bsa");
+        EXPECT_EQ(winner.fileName, L"FXButterflyGreen.dds");
+        EXPECT_EQ(bytesToString(winner.bytes), "bsa-texture");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ModPreviewTextureResolutionReadsPrefixedCompressedBsaArchives)
+    {
+        const std::wstring texturePath =
+            L"textures/smim/furniture/smelter/smim_smelter_spout.dds";
+        const InstalledModEntry selected = mods_.createEmptyMod(project_, L"SMIM Model");
+
+        writeTextFile(project_ / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(project_ / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(
+            project_ / L".fluxora" / L"paths.json",
+            "{"
+            "\"gameDirectory\":\"stock game\","
+            "\"modsDirectory\":\"mods\","
+            "\"profilesDirectory\":\"profiles\","
+            "\"downloadsDirectory\":\"downloads\","
+            "\"overwriteDirectory\":\"overwrite\""
+            "}");
+        writeTextFile(
+            selected.id / L"meshes" / L"_byoh" / L"clutter" / L"house crafting" / L"inventory" /
+                L"invsmelter01.nif",
+            "selected-model");
+        writePreviewBsaArchive(
+            project_ / L"stock game" / L"Data" / L"SMIM - Textures.bsa",
+            texturePath,
+            bytesFromString("DDS prefixed-bsa-texture"),
+            true);
+
+        const ModPreviewAsset winner =
+            mods_.readPreviewAsset(project_, L"Default", selected.id, texturePath, L"texture");
+
+        EXPECT_EQ(winner.sourceModName, L"Game Data Archive: SMIM - Textures.bsa");
+        EXPECT_EQ(winner.fileName, L"smim_smelter_spout.dds");
+        EXPECT_EQ(bytesToString(winner.bytes), "DDS prefixed-bsa-texture");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ModPreviewTextureResolutionReadsGameDataBa2Archives)
+    {
+        const std::wstring texturePath =
+            L"textures/creationclub/bgssse025/critters/FXButterflyGreen.dds";
+        const InstalledModEntry selected = mods_.createEmptyMod(project_, L"Selected Model");
+        const std::vector<std::uint8_t> texturePayload = bytesFromString("ba2-texture-payload");
+
+        writeTextFile(project_ / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(project_ / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(
+            project_ / L".fluxora" / L"paths.json",
+            "{"
+            "\"gameDirectory\":\"stock game\","
+            "\"modsDirectory\":\"mods\","
+            "\"profilesDirectory\":\"profiles\","
+            "\"downloadsDirectory\":\"downloads\","
+            "\"overwriteDirectory\":\"overwrite\""
+            "}");
+        writeTextFile(selected.id / L"meshes" / L"creationclub" / L"bgssse025" / L"critters" /
+                L"greenbutterflyhinjar.nif",
+            "selected-model");
+        writePreviewBa2Dx10Archive(
+            project_ / L"stock game" / L"Data" / L"CreationClubTextures.ba2",
+            texturePath,
+            texturePayload);
+
+        const ModPreviewAsset winner =
+            mods_.readPreviewAsset(project_, L"Default", selected.id, texturePath, L"texture");
+
+        ASSERT_GE(winner.bytes.size(), 128U + texturePayload.size());
+        EXPECT_EQ(winner.sourceModName, L"Game Data Archive: CreationClubTextures.ba2");
+        EXPECT_EQ(std::string(winner.bytes.begin(), winner.bytes.begin() + 4), "DDS ");
+        EXPECT_TRUE(std::equal(texturePayload.begin(), texturePayload.end(), winner.bytes.end() - texturePayload.size()));
     }
 
     TEST_F(ModFileOperationsIntegrationTests, ClearOverwriteFolderDeletesGeneratedFilesAndKeepsFolder)

@@ -362,6 +362,22 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_list_mod_preview_variants(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* relativePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_read_mod_preview_asset(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* modPath,
+        const wchar_t* relativePath,
+        const wchar_t* kind,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_read_mod_text_file(
         const wchar_t* projectDirectory,
         const wchar_t* modPath,

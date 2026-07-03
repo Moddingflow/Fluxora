@@ -23,6 +23,26 @@ if(NOT TARGET spdlog::spdlog_header_only)
     FetchContent_MakeAvailable(spdlog)
 endif()
 
+find_package(ZLIB QUIET)
+if(TARGET ZLIB::ZLIB)
+    set(FLUXORA_ZLIB_TARGET ZLIB::ZLIB)
+else()
+    FetchContent_Declare(
+        zlib
+        GIT_REPOSITORY https://github.com/madler/zlib.git
+        GIT_TAG        v1.3.1
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(zlib)
+    if(TARGET zlibstatic)
+        set(FLUXORA_ZLIB_TARGET zlibstatic)
+    elseif(TARGET zlib)
+        set(FLUXORA_ZLIB_TARGET zlib)
+    else()
+        message(FATAL_ERROR "zlib target was not created.")
+    endif()
+endif()
+
 set(FLUXORA_GAME_DEFINITION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources/GameDefinitions")
 file(GLOB FLUXORA_GAME_DEFINITION_JSON CONFIGURE_DEPENDS "${FLUXORA_GAME_DEFINITION_DIR}/*.json")
 if(NOT FLUXORA_GAME_DEFINITION_JSON)
@@ -118,6 +138,7 @@ add_library(FluxoraCore SHARED
     src/Services/NexusModsAuthService.cpp
     src/Services/PathSafetyService.cpp
     src/Services/PluginService.cpp
+    src/Services/PreviewArchiveReader.cpp
     src/Services/ProfileOrderService.cpp
     src/Services/ProfileService.cpp
     src/Services/ProjectService.cpp
@@ -140,7 +161,7 @@ target_include_directories(FluxoraCore
 
 target_compile_features(FluxoraCore PUBLIC cxx_std_20)
 target_compile_definitions(FluxoraCore PRIVATE FLUXORA_CORE_EXPORTS)
-target_link_libraries(FluxoraCore PRIVATE spdlog::spdlog_header_only)
+target_link_libraries(FluxoraCore PRIVATE spdlog::spdlog_header_only ${FLUXORA_ZLIB_TARGET})
 
 if(MSVC)
     # /utf-8 makes MSVC read the UTF-8 sources correctly, so Cyrillic wide-string

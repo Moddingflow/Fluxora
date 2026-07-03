@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cwchar>
+#include <cwctype>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -1408,6 +1409,106 @@ namespace
             writeModFileTreeEntry(writer, entry);
         }
         writer.endArray();
+        return writer.str();
+    }
+
+    std::wstring base64Encode(const std::vector<std::uint8_t>& bytes)
+    {
+        static constexpr wchar_t table[] =
+            L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::wstring output;
+        output.reserve(((bytes.size() + 2) / 3) * 4);
+
+        for (std::size_t index = 0; index < bytes.size(); index += 3)
+        {
+            const std::uint32_t first = bytes[index];
+            const std::uint32_t second = index + 1 < bytes.size() ? bytes[index + 1] : 0;
+            const std::uint32_t third = index + 2 < bytes.size() ? bytes[index + 2] : 0;
+            const std::uint32_t packed = (first << 16) | (second << 8) | third;
+
+            output.push_back(table[(packed >> 18) & 0x3f]);
+            output.push_back(table[(packed >> 12) & 0x3f]);
+            output.push_back(index + 1 < bytes.size() ? table[(packed >> 6) & 0x3f] : L'=');
+            output.push_back(index + 2 < bytes.size() ? table[packed & 0x3f] : L'=');
+        }
+
+        return output;
+    }
+
+    std::wstring previewAssetMimeType(const fluxora::ModPreviewAsset& asset)
+    {
+        const std::wstring extension = [&asset]
+        {
+            std::wstring value = asset.fileName;
+            const std::size_t dot = value.find_last_of(L'.');
+            if (dot == std::wstring::npos)
+            {
+                return std::wstring{};
+            }
+            value = value.substr(dot);
+            std::transform(value.begin(), value.end(), value.begin(), [](wchar_t character)
+            {
+                return static_cast<wchar_t>(std::towlower(character));
+            });
+            return value;
+        }();
+
+        if (asset.kind == L"nif")
+        {
+            return L"application/x-nif";
+        }
+        if (extension == L".dds")
+        {
+            return L"image/vnd-ms.dds";
+        }
+        if (extension == L".png")
+        {
+            return L"image/png";
+        }
+        if (extension == L".jpg" || extension == L".jpeg")
+        {
+            return L"image/jpeg";
+        }
+        return L"application/octet-stream";
+    }
+
+    void writeModPreviewVariant(fluxora::JsonWriter& writer, const fluxora::ModPreviewVariant& variant)
+    {
+        writer.beginObject();
+        writer.field(L"modPath", variant.modPath.wstring());
+        writer.field(L"modName", variant.modName);
+        writer.field(L"order", variant.order);
+        writer.field(L"enabled", variant.enabled);
+        writer.field(L"relativePath", variant.relativePath);
+        writer.field(L"size", variant.size);
+        writer.endObject();
+    }
+
+    std::wstring serializeModPreviewVariants(const std::vector<fluxora::ModPreviewVariant>& variants)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginArray();
+        for (const auto& variant : variants)
+        {
+            writeModPreviewVariant(writer, variant);
+        }
+        writer.endArray();
+        return writer.str();
+    }
+
+    std::wstring serializeModPreviewAsset(const fluxora::ModPreviewAsset& asset)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"kind", asset.kind);
+        writer.field(L"modPath", asset.sourceModPath.wstring());
+        writer.field(L"modName", asset.sourceModName);
+        writer.field(L"relativePath", asset.relativePath);
+        writer.field(L"fileName", asset.fileName);
+        writer.field(L"size", asset.size);
+        writer.field(L"mimeType", previewAssetMimeType(asset));
+        writer.field(L"contentBase64", base64Encode(asset.bytes));
+        writer.endObject();
         return writer.str();
     }
 
@@ -3842,6 +3943,66 @@ extern "C"
                     std::filesystem::path(projectDirectory),
                     std::filesystem::path(modPath),
                     isBlank(relativeDirectory) ? L"" : std::wstring_view(relativeDirectory)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_list_mod_preview_variants(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* relativePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(relativePath))
+            {
+                lastError = L"Project directory and preview file path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeModPreviewVariants(
+                core().mods().listPreviewVariants(
+                    std::filesystem::path(projectDirectory),
+                    isBlank(profileName) ? L"" : std::wstring_view(profileName),
+                    std::wstring_view(relativePath)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_read_mod_preview_asset(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* modPath,
+        const wchar_t* relativePath,
+        const wchar_t* kind,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(modPath) || isBlank(relativePath) || isBlank(kind))
+            {
+                lastError = L"Project directory, mod path, preview file path and kind are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeModPreviewAsset(
+                core().mods().readPreviewAsset(
+                    std::filesystem::path(projectDirectory),
+                    isBlank(profileName) ? L"" : std::wstring_view(profileName),
+                    std::filesystem::path(modPath),
+                    std::wstring_view(relativePath),
+                    std::wstring_view(kind)));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)

@@ -90,4 +90,82 @@ describe('mod details window', () => {
     expect(rustShell).toContain('.inner_size(1344.0, 912.0)');
     expect(capabilities).toContain('"text-editor:*"');
   });
+
+  it('opens nif files from the mod tree in a generic file preview window', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const workspace = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'file-preview',
+      'FilePreviewWorkspace.tsx'
+    );
+    const parser = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'file-preview',
+      'nif-parser.ts'
+    );
+    const registry = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'file-preview',
+      'preview-kind-registry.ts'
+    );
+    const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+    const sharedApi = readText('frontend-tauri', 'src', 'shared', 'fluxora-api.ts');
+    const facade = readText('frontend-tauri', 'src', 'tauri', 'fluxora-api.ts');
+    const rustShell = readText('frontend-tauri', 'src-tauri', 'src', 'lib.rs');
+    const capabilities = readText('frontend-tauri', 'src-tauri', 'capabilities', 'main.json');
+    const packageJson = readText('frontend-tauri', 'package.json');
+    const iconsReadme = readText('Icons', 'README.md');
+    const cuboid = readText('Icons', 'cuboid.svg');
+
+    expect(app).toContain("const isFilePreviewWindow = windowMode === 'file-preview';");
+    expect(app).toContain('previewKindForFile(entry.name)');
+    expect(app).toContain('onDoubleClick={() => void openFilePreviewForFile(entry)}');
+    expect(app).toContain('window.fluxora.windowControls.openFilePreview(');
+    expect(app).toContain('<FilePreviewWorkspace');
+    expect(registry).toContain("title: '.nif Preview'");
+    expect(registry).toContain("extension: '.nif'");
+    expect(registry).toContain('cuboid.svg');
+    expect(workspace).toContain('new THREE.WebGLRenderer({ antialias: true })');
+    expect(workspace).toContain('OrbitControls');
+    expect(workspace).toContain('createDdsPreviewTexture');
+    expect(workspace).toContain('isDdsBuffer');
+    expect(workspace).toContain('new THREE.TextureLoader()');
+    expect(workspace).toContain('listPreviewVariants');
+    expect(workspace).toContain('readPreviewAsset');
+    expect(workspace).toContain('file-preview-source-mod');
+    expect(parser).toContain("'NiNode'");
+    expect(parser).toContain("'BSFadeNode'");
+    expect(parser).toContain("'NiTriShape'");
+    expect(parser).toContain("'BSTriShape'");
+    expect(parser).toContain("'NiTriShapeData'");
+    expect(parser).toContain("'BSLightingShaderProperty'");
+    expect(parser).toContain("'BSShaderTextureSet'");
+    expect(parser).toContain("'NiAlphaProperty'");
+    expect(styles).toContain('.file-preview-window');
+    expect(styles).toContain('.desktop-shell--file-preview-window');
+    expect(sharedApi).toContain("modsListPreviewVariants: 'fluxora:mods:list-preview-variants'");
+    expect(sharedApi).toContain("modsReadPreviewAsset: 'fluxora:mods:read-preview-asset'");
+    expect(sharedApi).toContain("windowOpenFilePreview: 'fluxora:window:open-file-preview'");
+    expect(facade).toContain("invoke('fluxora_open_file_preview_window'");
+    expect(facade).toContain("'mods.listPreviewVariants'");
+    expect(facade).toContain("'mods.readPreviewAsset'");
+    expect(rustShell).toContain('FILE_PREVIEW_WINDOW_LABEL_PREFIX');
+    expect(rustShell).toContain('fluxora_open_file_preview_window');
+    expect(rustShell).toContain('/?window=file-preview');
+    expect(rustShell).toContain('.inner_size(1344.0, 912.0)');
+    expect(rustShell).toContain('.min_inner_size(1080.0, 720.0)');
+    expect(capabilities).toContain('"file-preview:*"');
+    expect(packageJson).toContain('"three": "^0.185.1"');
+    expect(iconsReadme).toContain('cuboid.svg');
+    expect(cuboid).toContain('<svg');
+  });
 });

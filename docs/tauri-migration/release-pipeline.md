@@ -1,6 +1,6 @@
 # Fluxora Tauri release pipeline
 
-Дата обновления: 2026-06-24
+Дата обновления: 2026-07-03
 
 Статус: Phase 17 release pipeline is Tauri-only for the product payload. Linux/macOS public distribution remains gated by native smoke, signing/notarization and final owner/legal review.
 
@@ -88,7 +88,7 @@ Phase 15 reviewed these data-processing surfaces for German/EU transparency expe
 - Downloads: user-triggered network requests to mod hosting URLs or Nexus Mods.
 - Support logs: sent only when the user manually shares them.
 - Telemetry/analytics: none is enabled in Phase 15. Adding it later requires explicit opt-in/legal review.
-- Third-party components: Tauri, the platform webview runtime, React, Lucide, Vite, TypeScript, Tauri bundler, Playwright/Vitest test tooling, spdlog, Microsoft Detours where VFS is built, SharpVectors for the installer UI, and GoogleTest for backend tests.
+- Third-party components: Tauri, the platform webview runtime, React, Three.js, Lucide, Vite, TypeScript, Tauri bundler, Playwright/Vitest test tooling, spdlog, Microsoft Detours where VFS is built, SharpVectors for the installer UI, and GoogleTest for backend tests.
 
 Bundled legal resources live under `installer/Fluxora.Installer/Resources/Legal/`. The Phase 15 update keeps privacy/terms aligned with the Tauri architecture and adds third-party notice files. Final public distribution should still receive owner/legal review before publishing.
 

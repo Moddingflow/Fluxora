@@ -6,8 +6,10 @@
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
+#include "PreviewArchiveReader.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <cwctype>
@@ -17,6 +19,7 @@
 #include <iomanip>
 #include <initializer_list>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -417,6 +420,202 @@ namespace fluxora
         std::wstring normalizedRelativeTextPath(std::wstring_view relativePath)
         {
             return validateRelativeModTextPath(relativePath).generic_wstring();
+        }
+
+        constexpr std::uintmax_t maxPreviewAssetBytes = 64ULL * 1024ULL * 1024ULL;
+
+        std::wstring normalizedPreviewKind(std::wstring_view kind)
+        {
+            std::wstring value = toLower(trim(std::wstring(kind)));
+            if (value == L"file-preview:nif")
+            {
+                value = L"nif";
+            }
+
+            if (value != L"nif" && value != L"texture")
+            {
+                throw std::invalid_argument("Preview asset kind is not supported.");
+            }
+
+            return value;
+        }
+
+        bool isAllowedPreviewExtension(const std::filesystem::path& relativePath, std::wstring_view kind)
+        {
+            const std::wstring extension = toLower(relativePath.extension().wstring());
+            if (kind == L"nif")
+            {
+                return extension == L".nif";
+            }
+
+            return extension == L".dds" ||
+                extension == L".png" ||
+                extension == L".jpg" ||
+                extension == L".jpeg";
+        }
+
+        std::filesystem::path validateRelativePreviewPath(
+            std::wstring_view relativePath,
+            std::wstring_view kind)
+        {
+            std::filesystem::path requested(relativePath);
+            if (requested.empty())
+            {
+                throw std::invalid_argument("Preview asset path is required.");
+            }
+            if (requested.is_absolute())
+            {
+                throw std::invalid_argument("Preview asset path must be relative.");
+            }
+
+            PathSafetyService safety;
+            safety.validateRelativePath(requested).throwIfUnsafe("Preview asset path");
+
+            requested = requested.lexically_normal();
+            if (requested == L".")
+            {
+                throw std::invalid_argument("Preview asset path is required.");
+            }
+            if (!isAllowedPreviewExtension(requested, kind))
+            {
+                throw std::invalid_argument("Preview asset extension is not allowlisted.");
+            }
+
+            return requested;
+        }
+
+        std::vector<std::uint8_t> readPreviewAssetBytes(const std::filesystem::path& path)
+        {
+            std::error_code statusError;
+            if (!std::filesystem::is_regular_file(path, statusError) || statusError)
+            {
+                throw std::invalid_argument("Preview asset can only open regular files.");
+            }
+
+            const std::uintmax_t size = std::filesystem::file_size(path, statusError);
+            if (statusError)
+            {
+                throw std::runtime_error("Failed to inspect preview asset size.");
+            }
+            if (size > maxPreviewAssetBytes)
+            {
+                throw std::invalid_argument("Preview asset is too large.");
+            }
+
+            std::ifstream file(path, std::ios::binary);
+            if (!file)
+            {
+                throw std::runtime_error("Failed to open preview asset.");
+            }
+
+            std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+            if (!bytes.empty())
+            {
+                file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+                bytes.resize(static_cast<std::size_t>(file.gcount()));
+            }
+
+            return bytes;
+        }
+
+        bool regularFileExists(const std::filesystem::path& path)
+        {
+            std::error_code statusError;
+            return std::filesystem::is_regular_file(path, statusError) && !statusError;
+        }
+
+        std::uintmax_t fileSizeOrZero(const std::filesystem::path& path)
+        {
+            std::error_code sizeError;
+            const std::uintmax_t size = std::filesystem::file_size(path, sizeError);
+            return sizeError ? 0 : size;
+        }
+
+        std::wstring displayNameForModRecord(const InstalledModRecord& record)
+        {
+            return record.displayName.empty() ? record.folderName : record.displayName;
+        }
+
+        std::wstring displayNameForModPath(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modsRoot,
+            const std::filesystem::path& modPath)
+        {
+            const std::vector<InstalledModRecord> records =
+                InstanceMetadataStore::listInstalledMods(projectDirectory, modsRoot);
+            const auto found = std::find_if(
+                records.begin(),
+                records.end(),
+                [&modPath](const InstalledModRecord& record)
+                {
+                    return record.path == modPath;
+                });
+            return found == records.end()
+                ? modPath.filename().wstring()
+                : displayNameForModRecord(*found);
+        }
+
+        std::filesystem::path containedPreviewPath(
+            const std::filesystem::path& modPath,
+            const std::filesystem::path& relativePath)
+        {
+            PathSafetyService safety;
+            const std::filesystem::path targetPath = modPath / relativePath;
+            safety.validateContainedPath(modPath, targetPath).throwIfUnsafe("Preview asset");
+            return targetPath;
+        }
+
+        struct PreviewAssetSource
+        {
+            std::filesystem::path rootPath;
+            std::wstring sourceName;
+            std::filesystem::path targetPath;
+            std::optional<std::vector<std::uint8_t>> bytes;
+        };
+
+        std::optional<PreviewAssetSource> previewAssetSourceFromRoot(
+            const std::filesystem::path& rootPath,
+            const std::filesystem::path& relativePath,
+            std::wstring sourceName)
+        {
+            if (rootPath.empty())
+            {
+                return std::nullopt;
+            }
+
+            const std::filesystem::path targetPath = containedPreviewPath(rootPath, relativePath);
+            if (!regularFileExists(targetPath))
+            {
+                return std::nullopt;
+            }
+
+            return PreviewAssetSource{
+                rootPath,
+                std::move(sourceName),
+                targetPath,
+                std::nullopt
+            };
+        }
+
+        std::optional<PreviewAssetSource> previewAssetSourceFromArchives(
+            const std::filesystem::path& rootPath,
+            const std::filesystem::path& relativePath,
+            std::wstring sourceName)
+        {
+            std::optional<PreviewArchiveAsset> asset =
+                readPreviewAssetFromBethesdaArchives(rootPath, relativePath.generic_wstring());
+            if (!asset.has_value())
+            {
+                return std::nullopt;
+            }
+
+            sourceName += L" Archive: " + asset->archiveDisplayName;
+            return PreviewAssetSource{
+                asset->archivePath,
+                std::move(sourceName),
+                asset->archivePath,
+                std::move(asset->bytes)
+            };
         }
 
         std::wstring percentEncode(std::wstring_view value)
@@ -1470,6 +1669,162 @@ namespace fluxora
             normalizedRelativeTextPath(relativePath),
             targetPath.filename().wstring(),
             sizeError ? 0 : size
+        };
+    }
+
+    std::vector<ModPreviewVariant> ModService::listPreviewVariants(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName,
+        std::wstring_view relativePath) const
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const std::filesystem::path requested = validateRelativePreviewPath(relativePath, L"nif");
+        const std::wstring normalizedRelative = requested.generic_wstring();
+        const std::filesystem::path modsRoot = pathSettings_.modsDirectory(projectDirectory);
+        const std::vector<ProfileOrderItemRecord> order =
+            InstanceMetadataStore::listProfileOrderItems(projectDirectory, profileName, modsRoot);
+
+        std::vector<ModPreviewVariant> variants;
+        for (const ProfileOrderItemRecord& item : order)
+        {
+            if (item.kind != L"mod" || !item.hasMod)
+            {
+                continue;
+            }
+
+            PathSafetyService safety;
+            safety.validateContainedPath(modsRoot, item.mod.path).throwIfUnsafe("Installed mod folder");
+            const std::filesystem::path candidate = containedPreviewPath(item.mod.path, requested);
+            if (!regularFileExists(candidate))
+            {
+                continue;
+            }
+
+            variants.push_back(ModPreviewVariant{
+                item.mod.path,
+                displayNameForModRecord(item.mod),
+                item.position,
+                item.mod.state != L"disabled",
+                normalizedRelative,
+                fileSizeOrZero(candidate)
+            });
+        }
+
+        return variants;
+    }
+
+    ModPreviewAsset ModService::readPreviewAsset(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName,
+        const std::filesystem::path& modPath,
+        std::wstring_view relativePath,
+        std::wstring_view kind) const
+    {
+        if (projectDirectory.empty() || modPath.empty())
+        {
+            throw std::invalid_argument("Project directory and mod path are required.");
+        }
+
+        const std::wstring assetKind = normalizedPreviewKind(kind);
+        const std::filesystem::path requested = validateRelativePreviewPath(relativePath, assetKind);
+        const std::wstring normalizedRelative = requested.generic_wstring();
+        const BuildPathSettings settings = pathSettings_.loadForProjectDirectory(projectDirectory);
+        const std::filesystem::path modsRoot = settings.modsDirectory;
+        PathSafetyService safety;
+        safety.validateContainedPath(modsRoot, modPath).throwIfUnsafe("Installed mod folder");
+
+        std::filesystem::path sourceModPath = modPath;
+        std::wstring sourceModName = displayNameForModPath(projectDirectory, modsRoot, modPath);
+        std::filesystem::path targetPath = containedPreviewPath(modPath, requested);
+        std::optional<std::vector<std::uint8_t>> archiveBytes;
+
+        if (assetKind == L"texture")
+        {
+            const auto useSource = [&](const PreviewAssetSource& source)
+            {
+                sourceModPath = source.rootPath;
+                sourceModName = source.sourceName;
+                targetPath = source.targetPath;
+                archiveBytes = source.bytes;
+            };
+
+            std::optional<PreviewAssetSource> winner =
+                previewAssetSourceFromRoot(settings.overwriteDirectory, requested, L"Overwrite");
+            if (!winner.has_value())
+            {
+                winner = previewAssetSourceFromArchives(settings.overwriteDirectory, requested, L"Overwrite");
+            }
+
+            const std::vector<ProfileOrderItemRecord> order =
+                InstanceMetadataStore::listProfileOrderItems(projectDirectory, profileName, modsRoot);
+            for (auto item = order.rbegin(); !winner.has_value() && item != order.rend(); ++item)
+            {
+                if (item->kind != L"mod" || !item->hasMod || item->mod.state == L"disabled")
+                {
+                    continue;
+                }
+
+                safety.validateContainedPath(modsRoot, item->mod.path).throwIfUnsafe("Installed mod folder");
+                winner = previewAssetSourceFromRoot(
+                    item->mod.path,
+                    requested,
+                    displayNameForModRecord(item->mod));
+                if (!winner.has_value())
+                {
+                    winner = previewAssetSourceFromArchives(
+                        item->mod.path,
+                        requested,
+                        displayNameForModRecord(item->mod));
+                }
+            }
+
+            if (!winner.has_value() && !settings.gameDirectory.empty())
+            {
+                const std::filesystem::path gameDataRoot = settings.gameDirectory / L"Data";
+                winner = previewAssetSourceFromRoot(gameDataRoot, requested, L"Game Data");
+                if (!winner.has_value())
+                {
+                    winner = previewAssetSourceFromArchives(gameDataRoot, requested, L"Game Data");
+                }
+                if (!winner.has_value() && gameDataRoot != settings.gameDirectory)
+                {
+                    winner = previewAssetSourceFromRoot(settings.gameDirectory, requested, L"Game Data");
+                    if (!winner.has_value())
+                    {
+                        winner = previewAssetSourceFromArchives(settings.gameDirectory, requested, L"Game Data");
+                    }
+                }
+            }
+
+            if (winner.has_value())
+            {
+                useSource(*winner);
+            }
+        }
+
+        if (!archiveBytes.has_value() && !regularFileExists(targetPath))
+        {
+            throw std::invalid_argument(
+                assetKind == L"texture"
+                    ? "Preview texture asset was not found."
+                    : "Preview model asset was not found.");
+        }
+
+        std::vector<std::uint8_t> bytes = archiveBytes.has_value()
+            ? std::move(*archiveBytes)
+            : readPreviewAssetBytes(targetPath);
+        return ModPreviewAsset{
+            assetKind,
+            sourceModPath,
+            sourceModName,
+            normalizedRelative,
+            requested.filename().wstring(),
+            static_cast<std::uintmax_t>(bytes.size()),
+            std::move(bytes)
         };
     }
 

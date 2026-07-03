@@ -48,7 +48,7 @@ Phase 5 extends the first bridge slice to cover the build catalog and creation e
 
 Phase 6 extends `fluxora.bridge.v1` to the installed-mod workspace:
 
-- Native host routes `mods.listInstalled`, `mods.getOrder`, `mods.createSeparator`, `mods.deleteSeparator`, `mods.moveOrderItem`, `mods.deleteInstalled`, `mods.createEmpty`, `mods.setEnabled`, `mods.setAllEnabled`, `mods.checkUpdates`, `mods.clearOverwrite` and `mods.getFileTree` to existing C++ C ABI functions.
+- Native host routes `mods.listInstalled`, `mods.getOrder`, `mods.createSeparator`, `mods.deleteSeparator`, `mods.moveOrderItem`, `mods.deleteInstalled`, `mods.createEmpty`, `mods.setEnabled`, `mods.setAllEnabled`, `mods.checkUpdates`, `mods.clearOverwrite`, `mods.getFileTree`, `mods.listPreviewVariants` and `mods.readPreviewAsset` to existing C++ C ABI functions.
 - Tauri Rust shell/facade expose typed `window.fluxora.mods.*` calls only; renderer still has no Node.js, filesystem or raw command access.
 - Renderer owns local mod search, selection, row action menus, scroll windowing and expanded file-tree state.
 - C++ core remains the owner of installed mod records, profile order, enabled state, separator persistence, update checks, file tree indexing and filesystem mutations.
@@ -172,6 +172,8 @@ Implemented MVP methods:
 - `mods.checkUpdates`
 - `mods.clearOverwrite`
 - `mods.getFileTree`
+- `mods.listPreviewVariants`
+- `mods.readPreviewAsset`
 - `plugins.list`
 - `plugins.move`
 - `plugins.createSeparator`
@@ -698,6 +700,8 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `mods.checkUpdates`
 - `mods.clearOverwrite`
 - `mods.getFileTree`
+- `mods.listPreviewVariants`
+- `mods.readPreviewAsset`
 - `grassCache.generate`
 
 `mods.listInstalled` and `mods.getOrder` return conflict count fields plus directed

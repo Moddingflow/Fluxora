@@ -529,6 +529,8 @@ namespace
                 L"checkUpdates",
                 L"clearOverwrite",
                 L"getFileTree",
+                L"listPreviewVariants",
+                L"readPreviewAsset",
                 L"readTextFile",
                 L"saveTextFile"
             });
@@ -1533,6 +1535,48 @@ namespace
             });
     }
 
+    std::wstring payloadListModPreviewVariants(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        const std::wstring relativePath = requiredStringField(params, L"relativePath");
+        return payloadFromCoreJson(
+            L"core.modPreviewVariantsFailed",
+            [&projectDirectory, &profileName, &relativePath](wchar_t* buffer, int length)
+            {
+                return fluxora_list_mod_preview_variants(
+                    projectDirectory.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    relativePath.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadReadModPreviewAsset(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        const std::wstring modPath = requiredStringField(params, L"modPath");
+        const std::wstring relativePath = requiredStringField(params, L"relativePath");
+        const std::wstring kind = requiredStringField(params, L"kind");
+        return payloadFromCoreJson(
+            L"core.modPreviewAssetReadFailed",
+            [&projectDirectory, &profileName, &modPath, &relativePath, &kind](wchar_t* buffer, int length)
+            {
+                return fluxora_read_mod_preview_asset(
+                    projectDirectory.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    modPath.c_str(),
+                    relativePath.c_str(),
+                    kind.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadReadModTextFile(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -2379,6 +2423,14 @@ namespace
         if (request.method == L"mods.getFileTree")
         {
             return payloadGetModFileTree(request);
+        }
+        if (request.method == L"mods.listPreviewVariants")
+        {
+            return payloadListModPreviewVariants(request);
+        }
+        if (request.method == L"mods.readPreviewAsset")
+        {
+            return payloadReadModPreviewAsset(request);
         }
         if (request.method == L"mods.readTextFile")
         {

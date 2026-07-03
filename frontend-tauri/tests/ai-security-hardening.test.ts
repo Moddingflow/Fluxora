@@ -188,7 +188,8 @@ describe('AI security hardening', () => {
       'settings',
       'build-settings:*',
       'mod-details:*',
-      'text-editor:*'
+      'text-editor:*',
+      'file-preview:*'
     ]);
     expect(rustShell).toContain('async fn fluxora_open_external');
     expect(rustShell).toContain('starts_with("https://")');

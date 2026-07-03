@@ -112,6 +112,8 @@ import {
   isTextEditorFileName,
   TextEditorWorkspace
 } from './features/text-editor/TextEditorWorkspace';
+import { FilePreviewWorkspace } from './features/file-preview/FilePreviewWorkspace';
+import { previewKindForFile } from './features/file-preview/preview-kind-registry';
 import {
   emptyProjectDraft,
   filterProjects,
@@ -808,8 +810,13 @@ export const App = () => {
   const isBuildSettingsWindow = windowMode === 'build-settings';
   const isModDetailsWindow = windowMode === 'mod-details';
   const isTextEditorWindow = windowMode === 'text-editor';
+  const isFilePreviewWindow = windowMode === 'file-preview';
   const isSecondaryWindow =
-    isSettingsWindow || isBuildSettingsWindow || isModDetailsWindow || isTextEditorWindow;
+    isSettingsWindow ||
+    isBuildSettingsWindow ||
+    isModDetailsWindow ||
+    isTextEditorWindow ||
+    isFilePreviewWindow;
   const buildSettingsProjectId = windowParameters.get('project');
   const buildSettingsInitialName = windowParameters.get('name')?.trim() ?? '';
   const modDetailsProjectId = windowParameters.get('project');
@@ -820,8 +827,18 @@ export const App = () => {
   const textEditorModId = windowParameters.get('mod')?.trim() ?? '';
   const textEditorInitialPath = windowParameters.get('path')?.trim() ?? '';
   const textEditorInitialName = windowParameters.get('name')?.trim() ?? '';
+  const filePreviewProjectId = windowParameters.get('project');
+  const filePreviewModId = windowParameters.get('mod')?.trim() ?? '';
+  const filePreviewInitialPath = windowParameters.get('path')?.trim() ?? '';
+  const filePreviewInitialName = windowParameters.get('name')?.trim() ?? '';
+  const filePreviewProfileName = windowParameters.get('profile')?.trim() ?? '';
+  const filePreviewKind = windowParameters.get('kind')?.trim() ?? 'nif';
   const [activeRoute, setActiveRoute] = useState<RouteId>(() =>
-    isSettingsWindow ? 'settings' : isModDetailsWindow || isTextEditorWindow ? 'mods' : 'home'
+    isSettingsWindow
+      ? 'settings'
+      : isModDetailsWindow || isTextEditorWindow || isFilePreviewWindow
+        ? 'mods'
+        : 'home'
   );
   const [appInfo, setAppInfo] = useState<FluxoraAppInfo | null>(null);
   const [securityState, setSecurityState] = useState<FluxoraSecurityState | null>(null);
@@ -1027,9 +1044,15 @@ export const App = () => {
       return `Editor · ${textEditorInitialName || 'Text file'}`;
     }
 
+    if (isFilePreviewWindow) {
+      return `Preview · ${filePreviewInitialName || 'File'}`;
+    }
+
     return isSettingsWindow ? 'Settings' : 'Fluxora';
   }, [
     buildSettingsInitialName,
+    filePreviewInitialName,
+    isFilePreviewWindow,
     isBuildSettingsWindow,
     isModDetailsWindow,
     isSettingsWindow,
@@ -1207,7 +1230,9 @@ export const App = () => {
   );
 
   const modWorkspaceProfileName =
-    isModDetailsWindow && modDetailsProfileName
+    isFilePreviewWindow && filePreviewProfileName
+      ? filePreviewProfileName
+      : isModDetailsWindow && modDetailsProfileName
       ? modDetailsProfileName
       : selectedProjectProfileName;
 
@@ -2152,6 +2177,31 @@ export const App = () => {
     }
   };
 
+  const openFilePreviewForFile = async (entry: FluxoraModFileTreeEntry) => {
+    const previewKind = previewKindForFile(entry.name);
+    if (
+      !selectedProject ||
+      !selectedModItem?.isMod ||
+      entry.isDirectory ||
+      previewKind === null
+    ) {
+      return;
+    }
+
+    try {
+      await window.fluxora.windowControls.openFilePreview(
+        selectedProject.configPath,
+        selectedModItem.id,
+        entry.relativePath,
+        entry.name,
+        modWorkspaceProfileName,
+        previewKind.kind
+      );
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  };
+
   const loadModDetailsConflictTree = async (item: FluxoraModOrderItem | null = selectedModItem) => {
     if (!selectedProject || !item?.isMod) {
       return;
@@ -2212,8 +2262,9 @@ export const App = () => {
       return;
     }
 
-    const showBusy = options.showBusy ?? true;
-    const showLoading = options.showLoading ?? true;
+    const hasCurrentRows = pluginsWorkspace.items.length > 0;
+    const showLoading = options.showLoading ?? !hasCurrentRows;
+    const showBusy = options.showBusy ?? !hasCurrentRows;
     const resetScroll = options.resetScroll ?? true;
     const operationId = options.operationId ?? createRendererOperationId('plugins_load');
     const profileName = options.profileName ?? selectedProjectProfileName;
@@ -3691,19 +3742,31 @@ export const App = () => {
     }
   };
 
+  const resetDownloadDropCue = () => {
+    clearDownloadDropReset();
+    downloadDropCueRef.current = 'idle';
+    setDownloadDropCueState((current) => (current === 'idle' ? current : 'idle'));
+  };
+
   const showDownloadDropCue = (cue: DownloadDropCue) => {
     clearDownloadDropReset();
     downloadDropCueRef.current = cue;
-    setDownloadDropCueState(cue);
+    setDownloadDropCueState((current) => (current === cue ? current : cue));
   };
 
   const scheduleDownloadDropIdle = (delayMs = 140) => {
     clearDownloadDropReset();
     downloadDropResetRef.current = window.setTimeout(() => {
       downloadDropCueRef.current = 'idle';
-      setDownloadDropCueState('idle');
+      setDownloadDropCueState((current) => (current === 'idle' ? current : 'idle'));
       downloadDropResetRef.current = null;
     }, delayMs);
+  };
+
+  const activateRightPane = (id: RightPaneId) => {
+    clearRowReorderSession();
+    resetDownloadDropCue();
+    setActiveRightPane(id);
   };
 
   const isDownloadsDropPosition = (event: Exclude<FluxoraFileDropEvent, { type: 'leave' }>) => {
@@ -4398,9 +4461,15 @@ export const App = () => {
     if (isTextEditorWindow && textEditorProjectId) {
       setSelectedProjectId(textEditorProjectId);
     }
+
+    if (isFilePreviewWindow && filePreviewProjectId) {
+      setSelectedProjectId(filePreviewProjectId);
+    }
   }, [
     buildSettingsProjectId,
+    filePreviewProjectId,
     isBuildSettingsWindow,
+    isFilePreviewWindow,
     isModDetailsWindow,
     isTextEditorWindow,
     modDetailsProjectId,
@@ -4815,7 +4884,7 @@ export const App = () => {
       !downloadCapabilities.bridgeAvailable
     ) {
       if (downloadDropCueRef.current !== 'idle') {
-        showDownloadDropCue('idle');
+        resetDownloadDropCue();
       }
       return undefined;
     }
@@ -4837,8 +4906,7 @@ export const App = () => {
     return () => {
       disposed = true;
       unlisten?.();
-      clearDownloadDropReset();
-      downloadDropCueRef.current = 'idle';
+      resetDownloadDropCue();
     };
   }, [
     activeRightPane,
@@ -5131,6 +5199,8 @@ export const App = () => {
       return;
     }
 
+    clearRowReorderSession();
+    resetDownloadDropCue();
     setActiveRoute(route);
   };
 
@@ -5722,7 +5792,7 @@ export const App = () => {
       );
       setFluxPackSummary(summary);
       setFluxPackInstallResult(null);
-      setActiveRightPane('build');
+      activateRightPane('build');
       setMessage(`FluxPack exported: ${summary.outputPath}`);
       finishOperationOverlay(operationId, `Exported ${summary.buildName || selectedProject.name}`);
     } catch (error) {
@@ -5746,7 +5816,7 @@ export const App = () => {
       const summary = await window.fluxora.fluxPack.inspect(result.path, { operationId });
       setFluxPackSummary(summary);
       setFluxPackInstallResult(null);
-      setActiveRightPane('build');
+      activateRightPane('build');
       setMessage(`FluxPack ready: ${summary.buildName}`);
     } catch (error) {
       setMessage(errorMessage(error));
@@ -5790,7 +5860,7 @@ export const App = () => {
       );
       setFluxPackSummary(result.summary);
       setFluxPackInstallResult(result);
-      setActiveRightPane('build');
+      activateRightPane('build');
       const { project: opened } = await openProjectConfig(result.configPath, operationId);
       setProjects((current) => upsertProject(current, opened));
       setSelectedProjectId(opened.id);
@@ -7507,6 +7577,7 @@ export const App = () => {
     return entries.flatMap((entry) => {
       const isExpanded = Boolean(expandedFileTree[entry.relativePath]);
       const isLoading = fileTreeLoadingPath === entry.relativePath;
+      const previewKind = entry.isDirectory ? null : previewKindForFile(entry.name);
       const row = (
         <div
           className="file-tree-row"
@@ -7534,8 +7605,18 @@ export const App = () => {
               <File size={15} aria-hidden="true" />
             )}
           </button>
-          {entry.isDirectory || !isTextEditorFileName(entry.name) ? (
+          {entry.isDirectory || (!isTextEditorFileName(entry.name) && !previewKind) ? (
             <span>{entry.name}</span>
+          ) : previewKind ? (
+            <button
+              className="file-tree-file-link file-tree-file-link--preview"
+              data-preview-kind={previewKind.kind}
+              type="button"
+              onDoubleClick={() => void openFilePreviewForFile(entry)}
+              title={`Preview ${entry.name}`}
+            >
+              {entry.name}
+            </button>
           ) : (
             <button
               className="file-tree-file-link"
@@ -8559,15 +8640,17 @@ export const App = () => {
         onDrop={handleDownloadsDrop}
       >
         {content}
-        <div className="download-drop-cue" aria-hidden="true">
-          <div className="download-drop-cue__content">
-            <UploadCloud size={22} aria-hidden="true" />
-            <div>
-              <strong>{downloadDropCue === 'importing' ? 'Adding archive' : 'Drop archive'}</strong>
-              <span>Downloads</span>
+        {downloadDropCue !== 'idle' ? (
+          <div className="download-drop-cue" aria-hidden="true">
+            <div className="download-drop-cue__content">
+              <UploadCloud size={22} aria-hidden="true" />
+              <div>
+                <strong>{downloadDropCue === 'importing' ? 'Adding archive' : 'Drop archive'}</strong>
+                <span>Downloads</span>
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
         <span className="sr-only" role="status" aria-live="polite">
           {statusText}
         </span>
@@ -10375,7 +10458,7 @@ export const App = () => {
                       aria-selected={activeRightPane === id}
                       data-active={activeRightPane === id}
                       key={id}
-                      onClick={() => setActiveRightPane(id)}
+                      onClick={() => activateRightPane(id)}
                     >
                       <Icon size={15} aria-hidden="true" />
                       <span>{label}</span>
@@ -10615,6 +10698,22 @@ export const App = () => {
           initialModPath={textEditorModId}
           initialRelativePath={textEditorInitialPath}
           initialFileName={textEditorInitialName}
+        />
+      </main>
+    );
+  }
+
+  if (isFilePreviewWindow) {
+    return (
+      <main className="desktop-shell desktop-shell--settings-window desktop-shell--file-preview-window">
+        {renderTitlebar(false)}
+        <FilePreviewWorkspace
+          project={selectedProject}
+          initialModPath={filePreviewModId}
+          initialRelativePath={filePreviewInitialPath}
+          initialFileName={filePreviewInitialName}
+          initialProfileName={filePreviewProfileName}
+          initialKind={filePreviewKind}
         />
       </main>
     );

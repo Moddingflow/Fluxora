@@ -77,6 +77,27 @@ namespace fluxora
         bool truncated{false};
     };
 
+    struct ModPreviewVariant
+    {
+        std::filesystem::path modPath;
+        std::wstring modName;
+        int order{0};
+        bool enabled{false};
+        std::wstring relativePath;
+        std::uintmax_t size{0};
+    };
+
+    struct ModPreviewAsset
+    {
+        std::wstring kind;
+        std::filesystem::path sourceModPath;
+        std::wstring sourceModName;
+        std::wstring relativePath;
+        std::wstring fileName;
+        std::uintmax_t size{0};
+        std::vector<std::uint8_t> bytes;
+    };
+
     class ModService final : public IService
     {
     public:
@@ -113,6 +134,16 @@ namespace fluxora
             const std::filesystem::path& modPath,
             std::wstring_view relativePath,
             std::wstring_view content) const;
+        [[nodiscard]] std::vector<ModPreviewVariant> listPreviewVariants(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName,
+            std::wstring_view relativePath) const;
+        [[nodiscard]] ModPreviewAsset readPreviewAsset(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName,
+            const std::filesystem::path& modPath,
+            std::wstring_view relativePath,
+            std::wstring_view kind) const;
         [[nodiscard]] InstalledModEntry createEmptyMod(
             const std::filesystem::path& projectDirectory,
             std::wstring_view modName) const;

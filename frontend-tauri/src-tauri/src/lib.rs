@@ -39,6 +39,7 @@ const SETTINGS_WINDOW_LABEL: &str = "settings";
 const BUILD_SETTINGS_WINDOW_LABEL_PREFIX: &str = "build-settings";
 const MOD_DETAILS_WINDOW_LABEL_PREFIX: &str = "mod-details";
 const TEXT_EDITOR_WINDOW_LABEL_PREFIX: &str = "text-editor";
+const FILE_PREVIEW_WINDOW_LABEL_PREFIX: &str = "file-preview";
 const BUILD_SETTINGS_PATHS_SAVED_EVENT: &str = "fluxora:build-settings:paths-saved";
 const TRANSFER_MO2_HANDOFF_EVENT: &str = "fluxora:transfer:mo2-handoff";
 const TRANSFER_MO2_OPEN_EVENT: &str = "fluxora:transfer:mo2-open";
@@ -3606,6 +3607,80 @@ async fn fluxora_open_text_editor_window(
 }
 
 #[tauri::command]
+async fn fluxora_open_file_preview_window(
+    app: AppHandle,
+    config_path: String,
+    mod_path: String,
+    relative_path: String,
+    file_name: String,
+    profile_name: String,
+    kind: String,
+) -> Result<(), String> {
+    let config_path = config_path.trim();
+    if config_path.is_empty() {
+        return Err("File preview requires a project config path.".to_string());
+    }
+
+    let mod_path = mod_path.trim();
+    if mod_path.is_empty() {
+        return Err("File preview requires a mod path.".to_string());
+    }
+
+    let relative_path = relative_path.trim();
+    if relative_path.is_empty() {
+        return Err("File preview requires a relative file path.".to_string());
+    }
+
+    let file_name = file_name.trim();
+    let file_title = if file_name.is_empty() {
+        relative_path
+            .rsplit(['/', '\\'])
+            .next()
+            .filter(|value| !value.is_empty())
+            .unwrap_or("Preview")
+    } else {
+        file_name
+    };
+    let profile_name = profile_name.trim();
+    let kind = kind.trim();
+    let preview_kind = if kind.is_empty() { "nif" } else { kind };
+
+    let label = format!(
+        "{FILE_PREVIEW_WINDOW_LABEL_PREFIX}:{}",
+        stable_label_suffix(&format!(
+            "{config_path}\u{0}{mod_path}\u{0}{relative_path}\u{0}{profile_name}\u{0}{preview_kind}"
+        ))
+    );
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    let url = format!(
+        "/?window=file-preview&project={}&mod={}&path={}&name={}&profile={}&kind={}",
+        encode_query_component(config_path),
+        encode_query_component(mod_path),
+        encode_query_component(relative_path),
+        encode_query_component(file_title),
+        encode_query_component(profile_name),
+        encode_query_component(preview_kind)
+    );
+
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()))
+        .title(format!("Preview \u{00B7} {file_title}"))
+        .inner_size(1344.0, 912.0)
+        .min_inner_size(1080.0, 720.0)
+        .resizable(true)
+        .decorations(false)
+        .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn fluxora_build_settings_paths_saved(app: AppHandle, project: Value) -> Result<(), String> {
     app.emit_to(MAIN_WINDOW_LABEL, BUILD_SETTINGS_PATHS_SAVED_EVENT, project)
         .map_err(|error| error.to_string())
@@ -3831,6 +3906,7 @@ pub fn run() {
             fluxora_open_build_settings_window,
             fluxora_open_mod_details_window,
             fluxora_open_text_editor_window,
+            fluxora_open_file_preview_window,
             fluxora_build_settings_paths_saved,
             fluxora_downloads_watch_folder,
             fluxora_downloads_unwatch_folder

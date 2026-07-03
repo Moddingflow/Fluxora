@@ -61,6 +61,9 @@ import type {
   FluxoraOperationsStatus,
   FluxoraProcessWatchResult,
   FluxoraPluginOrderItem,
+  FluxoraPreviewAsset,
+  FluxoraPreviewAssetKind,
+  FluxoraPreviewVariant,
   FluxoraProject,
   FluxoraProjectCatalog,
   FluxoraProjectDirectoryPreview,
@@ -397,6 +400,38 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         projectDirectory,
         modPath,
         relativeDirectory,
+        request
+      ),
+    listPreviewVariants: (
+      projectDirectory: string,
+      profileName: string,
+      relativePath: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraPreviewVariant[]>(
+        ipc,
+        FluxoraIpcChannels.modsListPreviewVariants,
+        projectDirectory,
+        profileName,
+        relativePath,
+        request
+      ),
+    readPreviewAsset: (
+      projectDirectory: string,
+      profileName: string,
+      modPath: string,
+      relativePath: string,
+      kind: FluxoraPreviewAssetKind,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraPreviewAsset>(
+        ipc,
+        FluxoraIpcChannels.modsReadPreviewAsset,
+        projectDirectory,
+        profileName,
+        modPath,
+        relativePath,
+        kind,
         request
       ),
     readTextFile: (
@@ -1138,6 +1173,24 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         modName,
         profileName
       ),
+    openFilePreview: (
+      configPath: string,
+      modPath: string,
+      relativePath: string,
+      fileName: string,
+      profileName: string,
+      kind: string
+    ) =>
+      invokeTyped<void>(
+        ipc,
+        FluxoraIpcChannels.windowOpenFilePreview,
+        configPath,
+        modPath,
+        relativePath,
+        fileName,
+        profileName,
+        kind
+      ),
     openSettings: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowOpenSettings),
     openTextEditor: (
       configPath: string,
@@ -1667,6 +1720,7 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.windowClose:
       case FluxoraIpcChannels.windowMinimize:
       case FluxoraIpcChannels.windowOpenBuildSettings:
+      case FluxoraIpcChannels.windowOpenFilePreview:
       case FluxoraIpcChannels.windowOpenModDetails:
       case FluxoraIpcChannels.windowOpenSettings:
       case FluxoraIpcChannels.windowOpenTextEditor:
@@ -1720,6 +1774,32 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
           size: 0,
           operationId: operationIdOf(request, 'text_file_read')
         } satisfies FluxoraTextFileDocument;
+      }
+
+      case FluxoraIpcChannels.modsListPreviewVariants:
+        return [
+          {
+            modPath: optionalString(args[2]) || 'preview-mod',
+            modName: 'Preview Mod',
+            order: 0,
+            enabled: true,
+            relativePath: optionalString(args[2]),
+            size: 0
+          }
+        ] satisfies FluxoraPreviewVariant[];
+
+      case FluxoraIpcChannels.modsReadPreviewAsset: {
+        const kind = optionalString(args[4]) === 'texture' ? 'texture' : 'nif';
+        return {
+          kind,
+          modPath: optionalString(args[2]),
+          modName: 'Preview Mod',
+          relativePath: optionalString(args[3]),
+          fileName: optionalString(args[3]).split(/[\\/]/).pop() ?? 'preview.nif',
+          size: 0,
+          mimeType: kind === 'texture' ? 'image/png' : 'application/octet-stream',
+          contentBase64: ''
+        } satisfies FluxoraPreviewAsset;
       }
 
       case FluxoraIpcChannels.modsSaveTextFile:
@@ -2093,6 +2173,16 @@ const createTauriInvoker = (): IpcInvoker => ({
           profileName: optionalString(args[3])
         });
 
+      case FluxoraIpcChannels.windowOpenFilePreview:
+        return invoke('fluxora_open_file_preview_window', {
+          configPath: optionalString(args[0]),
+          modPath: optionalString(args[1]),
+          relativePath: optionalString(args[2]),
+          fileName: optionalString(args[3]),
+          profileName: optionalString(args[4]),
+          kind: optionalString(args[5])
+        });
+
       case FluxoraIpcChannels.windowOpenTextEditor:
         return invoke('fluxora_open_text_editor_window', {
           configPath: optionalString(args[0]),
@@ -2344,6 +2434,26 @@ const createTauriInvoker = (): IpcInvoker => ({
       }
       case FluxoraIpcChannels.modsGetFileTree:
         return bridgeRequest('mods.getFileTree', { projectDirectory: args[0], modPath: args[1], relativeDirectory: optionalString(args[2]) }, requestWithOperationId(args[3], 'mods_get_file_tree'));
+
+      case FluxoraIpcChannels.modsListPreviewVariants:
+        return bridgeRequest(
+          'mods.listPreviewVariants',
+          { projectDirectory: args[0], profileName: args[1], relativePath: args[2] },
+          requestWithOperationId(args[3], 'mods_list_preview_variants')
+        );
+
+      case FluxoraIpcChannels.modsReadPreviewAsset:
+        return bridgeRequest(
+          'mods.readPreviewAsset',
+          {
+            projectDirectory: args[0],
+            profileName: args[1],
+            modPath: args[2],
+            relativePath: args[3],
+            kind: args[4]
+          },
+          requestWithOperationId(args[5], 'mods_read_preview_asset')
+        );
 
       case FluxoraIpcChannels.modsReadTextFile: {
         const request = requestWithOperationId(args[3], 'mods_read_text_file');
