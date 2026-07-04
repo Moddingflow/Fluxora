@@ -26,10 +26,14 @@ import type {
   FluxoraAiChatResponse,
   FluxoraAiContextUsage,
   FluxoraAiHostStatus,
+  FluxoraAiIntermediateEvent,
   FluxoraAiModelCapability,
   FluxoraAiProviderConnectionResult,
   FluxoraAiProviderDescriptor,
   FluxoraAiProviderTestResult,
+  FluxoraBuildContentChangedEvent,
+  FluxoraBuildContentWatchRequest,
+  FluxoraBuildContentWatchResult,
   FluxoraContentLayoutPreview,
   FluxoraFomodInstaller,
   FluxoraDownloadsFolderChangedEvent,
@@ -140,6 +144,8 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
       invokeTyped<FluxoraAiHostStatus>(ipc, FluxoraIpcChannels.aiGetStatus, request),
     restartHost: (request?: OperationRequest) =>
       invokeTyped<FluxoraAiHostStatus>(ipc, FluxoraIpcChannels.aiRestartHost, request),
+    onRunEvent: (callback: (event: FluxoraAiIntermediateEvent) => void) =>
+      listenTyped<FluxoraAiIntermediateEvent>(ipc, FluxoraIpcChannels.aiRunEvent, callback),
     listSafeActions: async () => AI_SAFE_ACTION_CATALOG,
     listSkills: async () => FLUXORA_SKILL_CATALOG,
     listProviders: (request?: OperationRequest) =>
@@ -268,6 +274,27 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   },
   fileDrop: {
     onDragDrop: (callback: (event: FluxoraFileDropEvent) => void) => listenToFileDrop(callback)
+  },
+  buildContent: {
+    watch: (watchRequest: FluxoraBuildContentWatchRequest, request?: OperationRequest) =>
+      invokeTyped<FluxoraBuildContentWatchResult>(
+        ipc,
+        FluxoraIpcChannels.buildContentWatch,
+        watchRequest,
+        request
+      ),
+    unwatch: (request?: OperationRequest) =>
+      invokeTyped<FluxoraBuildContentWatchResult>(
+        ipc,
+        FluxoraIpcChannels.buildContentUnwatch,
+        request
+      ),
+    onChanged: (callback: (event: FluxoraBuildContentChangedEvent) => void) =>
+      listenTyped<FluxoraBuildContentChangedEvent>(
+        ipc,
+        FluxoraIpcChannels.buildContentChanged,
+        callback
+      )
   },
   links: {
     openExternal: (url: string) =>
@@ -2756,6 +2783,15 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.downloadsUnwatchFolder:
         return invoke<FluxoraDownloadsFolderWatchResult>('fluxora_downloads_unwatch_folder', {
           request: requestWithOperationId(args[0], 'downloads_unwatch_folder')
+        });
+      case FluxoraIpcChannels.buildContentWatch:
+        return invoke<FluxoraBuildContentWatchResult>('fluxora_build_content_watch', {
+          watchRequest: args[0] ?? {},
+          operation: requestWithOperationId(args[1], 'build_content_watch')
+        });
+      case FluxoraIpcChannels.buildContentUnwatch:
+        return invoke<FluxoraBuildContentWatchResult>('fluxora_build_content_unwatch', {
+          operation: requestWithOperationId(args[0], 'build_content_unwatch')
         });
 
       case FluxoraIpcChannels.downloadsList:

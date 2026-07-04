@@ -29,6 +29,7 @@ export const FluxoraIpcChannels = {
   aiListModels: 'fluxora:ai:list-models',
   aiListProviders: 'fluxora:ai:list-providers',
   aiRestartHost: 'fluxora:ai:restart-host',
+  aiRunEvent: 'fluxora:ai:run-event',
   aiTestProvider: 'fluxora:ai:test-provider',
   appGetInfo: 'fluxora:app:get-info',
   bridgeGetLanguage: 'fluxora:bridge:get-language',
@@ -58,6 +59,9 @@ export const FluxoraIpcChannels = {
   downloadsWatchFolder: 'fluxora:downloads:watch-folder',
   downloadsUnwatchFolder: 'fluxora:downloads:unwatch-folder',
   downloadsFolderChanged: 'fluxora:downloads:folder-changed',
+  buildContentWatch: 'fluxora:build-content:watch',
+  buildContentUnwatch: 'fluxora:build-content:unwatch',
+  buildContentChanged: 'fluxora:build-content:changed',
   executablesGetIcon: 'fluxora:executables:get-icon',
   executablesLaunch: 'fluxora:executables:launch',
   executablesList: 'fluxora:executables:list',
@@ -304,6 +308,49 @@ export type FluxoraAiBudgetTier = 'free' | 'paid' | 'byok';
 
 export type FluxoraAiRunSize = 'ordinary' | 'long-running';
 
+export type FluxoraAiIntermediateEventType =
+  | 'progress'
+  | 'note'
+  | 'tool-started'
+  | 'tool-completed'
+  | 'site-visited'
+  | 'error'
+  | 'heartbeat';
+
+export type FluxoraAiIntermediateEventLevel = 'info' | 'warning' | 'error';
+
+export type FluxoraAiIntermediateEventVisibility = 'user' | 'developer' | 'audit';
+
+export type FluxoraAiIntermediateEventPayloadValue =
+  | string
+  | number
+  | boolean
+  | null
+  | string[]
+  | number[]
+  | boolean[];
+
+export interface FluxoraAiIntermediateEventPayload {
+  kind: string;
+  data?: Record<string, FluxoraAiIntermediateEventPayloadValue>;
+}
+
+export interface FluxoraAiIntermediateEvent {
+  schema: 'fluxora.ai.intermediate-event.v1';
+  eventId: string;
+  runId: string;
+  operationId: string;
+  seq: number;
+  createdAt: string;
+  type: FluxoraAiIntermediateEventType;
+  level: FluxoraAiIntermediateEventLevel;
+  visibility: FluxoraAiIntermediateEventVisibility;
+  stage: string;
+  message: string;
+  percent?: number;
+  payload?: FluxoraAiIntermediateEventPayload;
+}
+
 export type FluxoraAiBudgetDecision =
   | 'allowed'
   | 'needs-expensive-run-approval'
@@ -325,6 +372,10 @@ export interface FluxoraAiResearchRequest {
   allowGeminiGoogleSearch: boolean;
   allowPublicWebFetch: boolean;
   deepResearchApproved: false;
+  auditScope?: 'targeted' | 'batch-requirements' | 'full-build-requirements';
+  maxNexusTargets?: number;
+  maxNexusInitialTargets?: number;
+  maxNexusApiRequests?: number;
 }
 
 export type FluxoraAiModResearchRouteKind =
@@ -334,11 +385,16 @@ export type FluxoraAiModResearchRouteKind =
   | 'nexus-api-with-search';
 
 export interface FluxoraAiModResearchSearchBudget {
+  auditScope?: 'targeted' | 'batch-requirements' | 'full-build-requirements';
   maxExternalSources: number;
   maxSearchQueries: number;
   nexusApiRequests: number;
+  maxNexusTargets?: number;
+  maxNexusInitialTargets?: number;
+  maxNexusApiRequests?: number;
   publicWebFetches: number;
   geminiGoogleSearch: boolean;
+  coverageMode?: 'targeted-official-api' | 'bounded-official-api-batch';
   reason: string;
 }
 
@@ -352,6 +408,7 @@ export interface FluxoraAiModResearchRoute {
   nexusAllowed: boolean;
   publicWebAllowed: boolean;
   geminiGoogleSearchAllowed: boolean;
+  auditScope?: 'targeted' | 'batch-requirements' | 'full-build-requirements';
   highSignalIssues: string[];
   missingFields: string[];
   reasons: string[];
@@ -359,6 +416,7 @@ export interface FluxoraAiModResearchRoute {
 }
 
 export interface FluxoraAiChatRequest extends OperationRequest {
+  runId: string;
   sessionId: string;
   messages: FluxoraAiChatMessage[];
   costPolicy?: {
@@ -846,7 +904,8 @@ export interface FluxoraAiAutonomousJobProgressEvent {
   stage: string;
   message: string;
   percent: number;
-  internal: true;
+  internal: boolean;
+  canonicalEvent?: FluxoraAiIntermediateEvent;
 }
 
 export interface FluxoraAiAutonomousJobHeartbeat {
@@ -1266,6 +1325,11 @@ export interface FluxoraInstalledMod {
   hasUpdate: boolean;
   sourceIsNexus: boolean;
   sourceIsModdingFlow: boolean;
+  sourceProvider?: string;
+  sourceGameDomain?: string;
+  sourceModId?: string;
+  sourceFileId?: string;
+  sourceUrl?: string;
   isLocal: boolean;
   isTranslation: boolean;
   isPatch: boolean;
@@ -1411,6 +1475,37 @@ export interface FluxoraDownloadsFolderChangedEvent {
   sequence: number;
   reason: string;
   changes: FluxoraDownloadsFolderChange[];
+}
+
+export interface FluxoraBuildContentWatchRequest {
+  projectDirectory: string;
+  modsDirectory: string;
+  profilesDirectory: string;
+  profileName?: string;
+  gameDirectory?: string;
+}
+
+export interface FluxoraBuildContentWatchResult {
+  accepted: boolean;
+  operationId: string;
+}
+
+export interface FluxoraBuildContentChange {
+  path: string;
+  fileName: string;
+  kind: string;
+  area: string;
+}
+
+export interface FluxoraBuildContentChangedEvent {
+  projectDirectory: string;
+  modsDirectory: string;
+  profilesDirectory: string;
+  profileName: string;
+  eventId: string;
+  sequence: number;
+  reason: string;
+  changes: FluxoraBuildContentChange[];
 }
 
 export type FluxoraExistingModInstallMode = 0 | 1 | 2;
@@ -1778,6 +1873,7 @@ export interface FluxoraApi {
     estimateContext: (request: FluxoraAiChatRequest) => Promise<FluxoraAiContextUsage>;
     getStatus: (request?: OperationRequest) => Promise<FluxoraAiHostStatus>;
     restartHost: (request?: OperationRequest) => Promise<FluxoraAiHostStatus>;
+    onRunEvent: (callback: (event: FluxoraAiIntermediateEvent) => void) => () => void;
     listSafeActions: () => Promise<AiSafeActionCatalog>;
     listSkills: () => Promise<FluxoraSkillCatalog>;
     listProviders: (request?: OperationRequest) => Promise<FluxoraAiProviderDescriptor[]>;
@@ -1838,6 +1934,16 @@ export interface FluxoraApi {
   };
   fileDrop: {
     onDragDrop: (callback: (event: FluxoraFileDropEvent) => void) => Promise<() => void>;
+  };
+  buildContent: {
+    watch: (
+      watchRequest: FluxoraBuildContentWatchRequest,
+      request?: OperationRequest
+    ) => Promise<FluxoraBuildContentWatchResult>;
+    unwatch: (request?: OperationRequest) => Promise<FluxoraBuildContentWatchResult>;
+    onChanged: (
+      callback: (event: FluxoraBuildContentChangedEvent) => void
+    ) => () => void;
   };
   links: {
     openExternal: (url: string) => Promise<OpenExternalResult>;

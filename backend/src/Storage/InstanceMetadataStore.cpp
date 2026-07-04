@@ -1901,7 +1901,6 @@ namespace fluxora
 
         void syncProfileOrderItems(Database& database, std::wstring_view profileName)
         {
-            removeInactiveProfileModItems(database, profileName);
             appendMissingProfileModItems(database, profileName);
             compactProfileOrderPositions(database, profileName);
         }
@@ -2107,7 +2106,6 @@ namespace fluxora
             std::wstring_view profileName,
             const std::vector<std::wstring>& pluginNames)
         {
-            removeMissingProfilePluginItems(database, profileName, pluginNames);
             appendMissingProfilePluginItems(database, profileName, pluginNames);
             compactProfilePluginOrderPositions(database, profileName);
         }

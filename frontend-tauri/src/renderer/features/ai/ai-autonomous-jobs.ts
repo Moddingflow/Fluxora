@@ -5,6 +5,7 @@ import type {
   FluxoraAiAutonomousJobCheckpoint,
   FluxoraAiAutonomousJobProgressEvent,
   FluxoraAiAutonomousJobQueue,
+  FluxoraAiIntermediateEvent,
   FluxoraAiTaskPlan,
   FluxoraAiSubagentSchedule
 } from '../../../shared/fluxora-api';
@@ -77,14 +78,16 @@ const progressEvent = (
   stage: string,
   message: string,
   percent: number,
-  now = new Date()
+  now = new Date(),
+  canonicalEvent?: FluxoraAiIntermediateEvent
 ): FluxoraAiAutonomousJobProgressEvent => ({
   id: eventId('ai-progress', now),
   createdAt: iso(now),
   stage,
   message,
   percent: normalizePercent(percent),
-  internal: true
+  internal: canonicalEvent ? canonicalEvent.visibility !== 'user' : true,
+  ...(canonicalEvent ? { canonicalEvent } : {})
 });
 
 const withUpdatedAt = (
@@ -290,6 +293,23 @@ export const recordAiAutonomousProgress = (
   now = new Date()
 ): FluxoraAiAutonomousJob =>
   appendProgress(job, progressEvent(stage, message, percent, now), now);
+
+export const recordAiAutonomousIntermediateEvent = (
+  job: FluxoraAiAutonomousJob,
+  event: FluxoraAiIntermediateEvent,
+  now = new Date()
+): FluxoraAiAutonomousJob =>
+  appendProgress(
+    job,
+    progressEvent(
+      event.stage,
+      event.message,
+      event.percent ?? job.percent,
+      now,
+      event
+    ),
+    now
+  );
 
 export const checkpointAiAutonomousJob = (
   job: FluxoraAiAutonomousJob,

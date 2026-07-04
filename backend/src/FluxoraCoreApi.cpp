@@ -917,6 +917,19 @@ namespace
         return writer.str();
     }
 
+    std::wstring serializeNexusModsApiAuthHeader(const fluxora::NexusModsApiAuthHeader& authHeader)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"isAvailable", authHeader.isAvailable);
+        writer.field(L"headerName", authHeader.headerName);
+        writer.field(L"headerValue", authHeader.headerValue);
+        writer.field(L"credentialKind", authHeader.credentialKind);
+        writer.field(L"message", authHeader.message);
+        writer.endObject();
+        return writer.str();
+    }
+
     void writeDownloadEntry(fluxora::JsonWriter& writer, const fluxora::DownloadEntry& download)
     {
         writer.beginObject();
@@ -1315,6 +1328,11 @@ namespace
         writer.field(L"isLocal", mod.isLocal);
         writer.field(L"isTranslation", mod.isTranslation);
         writer.field(L"isPatch", mod.isPatch);
+        writer.field(L"sourceProvider", mod.sourceProvider);
+        writer.field(L"sourceGameDomain", mod.sourceGameDomain);
+        writer.field(L"sourceModId", mod.sourceModId);
+        writer.field(L"sourceFileId", mod.sourceFileId);
+        writer.field(L"sourceUrl", mod.sourceUrl);
         writer.stringArray(L"overwritesModIds", mod.overwritesModIds);
         writer.stringArray(L"overwrittenByModIds", mod.overwrittenByModIds);
         writer.endObject();
@@ -1370,6 +1388,11 @@ namespace
         writer.field(L"isLocal", item.isLocal);
         writer.field(L"isTranslation", item.isTranslation);
         writer.field(L"isPatch", item.isPatch);
+        writer.field(L"sourceProvider", item.sourceProvider);
+        writer.field(L"sourceGameDomain", item.sourceGameDomain);
+        writer.field(L"sourceModId", item.sourceModId);
+        writer.field(L"sourceFileId", item.sourceFileId);
+        writer.field(L"sourceUrl", item.sourceUrl);
         writer.stringArray(L"overwritesModIds", item.overwritesModIds);
         writer.stringArray(L"overwrittenByModIds", item.overwrittenByModIds);
         writer.endObject();
@@ -3215,6 +3238,19 @@ extern "C"
         try
         {
             const std::wstring json = serializeNexusModsAuthStatus(core().nexusModsAuth().status());
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_nexusmods_api_auth_header(wchar_t* jsonBuffer, int jsonBufferLength)
+    {
+        try
+        {
+            const std::wstring json = serializeNexusModsApiAuthHeader(core().nexusModsAuth().apiAuthHeader());
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)

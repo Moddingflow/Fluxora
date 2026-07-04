@@ -45,6 +45,11 @@ namespace fluxora
         bool isLocal{false};
         bool isTranslation{false};
         bool isPatch{false};
+        std::wstring sourceProvider;
+        std::wstring sourceGameDomain;
+        std::wstring sourceModId;
+        std::wstring sourceFileId;
+        std::wstring sourceUrl;
         std::vector<std::wstring> overwritesModIds;
         std::vector<std::wstring> overwrittenByModIds;
     };

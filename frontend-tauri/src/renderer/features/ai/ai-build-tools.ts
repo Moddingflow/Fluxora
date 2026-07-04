@@ -99,6 +99,15 @@ export interface AiBuildContextSnapshot {
   tools: AiBuildToolResult[];
 }
 
+interface CompactNexusIdentity {
+  fileId?: string;
+  gameDomain: string;
+  modId: string;
+  pageUrl: string;
+  provider: 'nexus';
+  sourceUrl?: string;
+}
+
 interface CompactInstalledMod {
   conflictStatus: string;
   enabled: boolean;
@@ -109,6 +118,7 @@ interface CompactInstalledMod {
   installedAt?: string;
   inventoryRole: 'installed-mod';
   name: string;
+  nexus?: CompactNexusIdentity;
   overwrite: CompactOverwriteState;
   updatedAt?: string;
   updateCheckStatus: string;
@@ -124,6 +134,7 @@ interface CompactModOrderItem {
   label: string;
   modUuid: string;
   name: string;
+  nexus?: CompactNexusIdentity;
   order: number;
   orderMeaning: string;
   orderId: string;
@@ -615,6 +626,30 @@ const modFlags = (mod: FluxoraInstalledMod): string[] =>
 
 const safeCount = (value: number): number => (Number.isFinite(value) ? Math.max(0, value) : 0);
 
+const optionalText = (value: string | undefined): string | undefined => {
+  const text = value?.trim();
+  return text ? text : undefined;
+};
+
+const compactNexusIdentity = (mod: FluxoraInstalledMod): CompactNexusIdentity | undefined => {
+  const gameDomain = optionalText(mod.sourceGameDomain);
+  const modId = optionalText(mod.sourceModId);
+  if (!mod.sourceIsNexus || !gameDomain || !modId) {
+    return undefined;
+  }
+
+  const fileId = optionalText(mod.sourceFileId);
+  const pageUrl = `https://www.nexusmods.com/${gameDomain}/mods/${modId}`;
+  return {
+    fileId,
+    gameDomain,
+    modId,
+    pageUrl,
+    provider: 'nexus',
+    sourceUrl: optionalText(mod.sourceUrl) ?? pageUrl
+  };
+};
+
 const FILE_OVERWRITE_SEMANTICS =
   'Counts are file-level overwrites in the virtual data tree, not the number of broken mods or xEdit record conflicts.';
 
@@ -741,6 +776,7 @@ const compactMod = (mod: FluxoraInstalledMod): CompactInstalledMod => ({
   installedAt: mod.installedAt,
   inventoryRole: 'installed-mod',
   name: mod.name,
+  nexus: compactNexusIdentity(mod),
   overwrite: compactOverwriteState(mod),
   updatedAt: mod.updatedAt,
   updateCheckStatus: mod.updateStatus,
@@ -756,6 +792,7 @@ const compactModOrderItem = (item: FluxoraModOrderItem): CompactModOrderItem => 
   label: item.isSeparator ? item.separatorTitle || item.name : item.name,
   modUuid: item.modUuid,
   name: item.name,
+  nexus: compactNexusIdentity(item),
   order: item.order,
   orderMeaning: 'lower order means earlier/higher in the left mod panel',
   orderId: item.orderId,

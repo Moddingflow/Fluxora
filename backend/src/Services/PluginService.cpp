@@ -1157,15 +1157,6 @@ namespace fluxora
             const std::wstring revision =
                 pluginScanRevision(profileModFolders) +
                 stockGamePluginRevision(gameDirectory, rules);
-            {
-                std::lock_guard<std::mutex> lock(pluginScanCacheMutex());
-                const auto cached = pluginScanCache().find(cacheKey);
-                if (cached != pluginScanCache().end() && cached->second.revision == revision)
-                {
-                    return cached->second.detected;
-                }
-            }
-
             const std::wstring fingerprint = pluginScanFingerprint(directory, rules, profileModFolders);
             {
                 std::lock_guard<std::mutex> lock(pluginScanCacheMutex());

@@ -21,6 +21,7 @@ import type {
   FluxoraAiCitation,
   FluxoraAiCostLedgerEntry,
   FluxoraAiDiagnosisJudge,
+  FluxoraAiIntermediateEvent,
   FluxoraAiResearchRequest,
   FluxoraAiRoutingPreset,
   FluxoraApi
@@ -41,6 +42,7 @@ import {
   createAiAutonomousJob,
   heartbeatAiAutonomousJob,
   persistAiAutonomousJob,
+  recordAiAutonomousIntermediateEvent,
   recordAiAutonomousProgress,
   startAiAutonomousJob,
   type AiAutonomousJobStorage
@@ -76,6 +78,7 @@ export interface AiSupportBundleSnapshot {
     chats: Array<{
       costLedgerCount: number;
       id: string;
+      intermediateEventCount: number;
       messageCount: number;
       messages: Array<{
         createdAt: string;
@@ -113,11 +116,13 @@ export interface AiSupportBundleSnapshot {
     }>;
     scopeKey: string;
     streamEventCount: number;
+    intermediateEventCount: number;
   }>;
 }
 
 export interface AiLocalRunCallbacks {
   onEvent: (event: AiStreamEvent) => void;
+  onRunEvent?: (event: FluxoraAiIntermediateEvent) => void;
   onFinish: (
     message: ReturnType<typeof createAiMessage>,
     event: AiStreamEvent,
@@ -231,7 +236,8 @@ const normalizePersistedAiChatThread = (chat: AiChatThread): AiChatThread => ({
       ? chat.contextEstimateState
       : 'idle',
   contextUsage: chat.contextUsage ?? null,
-  costLedger: Array.isArray(chat.costLedger) ? chat.costLedger : []
+  costLedger: Array.isArray(chat.costLedger) ? chat.costLedger : [],
+  intermediateEvents: Array.isArray(chat.intermediateEvents) ? chat.intermediateEvents : []
 });
 
 const normalizePersistedAiSession = (session: AiSession): AiSession => {
@@ -254,6 +260,7 @@ const normalizePersistedAiSession = (session: AiSession): AiSession => {
           createdAt: session.createdAt,
           updatedAt: session.updatedAt,
           costLedger: rootCostLedger,
+          intermediateEvents: Array.isArray(session.intermediateEvents) ? session.intermediateEvents : [],
           messages: session.messages,
           runs: session.runs,
           streamEvents: session.streamEvents
@@ -268,7 +275,8 @@ const normalizePersistedAiSession = (session: AiSession): AiSession => {
     ...session,
     activeChatId,
     chats,
-    costLedger: rootCostLedger
+    costLedger: rootCostLedger,
+    intermediateEvents: Array.isArray(session.intermediateEvents) ? session.intermediateEvents : []
   });
 };
 
@@ -413,17 +421,67 @@ export const createAiRuntimeLogEntries = (
 
 const promptNeedsExternalResearch = (prompt: string): boolean => {
   const normalized = prompt.trim().toLowerCase();
+  const asksForRequirements =
+    normalized.includes('dependency') ||
+    normalized.includes('dependencies') ||
+    normalized.includes('requirement') ||
+    normalized.includes('requirements') ||
+    normalized.includes('required mods') ||
+    normalized.includes('\u0437\u0430\u0432\u0438\u0441\u0438\u043c') ||
+    normalized.includes('\u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d');
+  const asksForNexusApi =
+    normalized.includes('nexus') &&
+    (normalized.includes('api') ||
+      normalized.includes('\u0430\u043f\u0438') ||
+      normalized.includes('\u0441\u0432\u0435\u0440') ||
+      normalized.includes('\u043f\u0440\u043e\u0432\u0435\u0440') ||
+      normalized.includes('\u043f\u043e\u0441\u043c\u043e\u0442\u0440\u0438'));
   return (
     normalized.includes('nexusmods.com') ||
     normalized.includes('nxm://') ||
+    asksForRequirements ||
+    asksForNexusApi ||
     (normalized.includes('nexus') &&
       (normalized.includes('compat') ||
         normalized.includes('research') ||
         normalized.includes('check') ||
+        normalized.includes('dependency') ||
         normalized.includes('dependencies') ||
+        normalized.includes('requirement') ||
+        normalized.includes('requirements') ||
         normalized.includes('\u0441\u043e\u0432\u043c\u0435\u0441\u0442') ||
-        normalized.includes('\u043f\u0440\u043e\u0432\u0435\u0440\u044c')))
+        normalized.includes('\u0437\u0430\u0432\u0438\u0441\u0438\u043c') ||
+        normalized.includes('\u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d') ||
+        normalized.includes('\u043f\u0440\u043e\u0432\u0435\u0440')))
   );
+};
+
+const promptNeedsBatchRequirementAudit = (prompt: string): boolean => {
+  const normalized = prompt.trim().toLowerCase();
+  const asksForRequirements =
+    normalized.includes('dependency') ||
+    normalized.includes('dependencies') ||
+    normalized.includes('requirement') ||
+    normalized.includes('requirements') ||
+    normalized.includes('required mods') ||
+    normalized.includes('\u0437\u0430\u0432\u0438\u0441\u0438\u043c') ||
+    normalized.includes('\u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d') ||
+    normalized.includes('\u043d\u0443\u0436\u043d\u044b\u0435 \u043c\u043e\u0434\u044b') ||
+    normalized.includes('\u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0449\u0438\u0435 \u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d\u0438\u044f') ||
+    normalized.includes('\u043d\u0435\u0434\u043e\u0441\u0442\u0430\u044e\u0449\u0438\u0435 \u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d\u0438\u044f');
+  const asksForFullScope =
+    normalized.includes('all mods') ||
+    normalized.includes('every mod') ||
+    normalized.includes('whole build') ||
+    normalized.includes('entire build') ||
+    normalized.includes('full audit') ||
+    normalized.includes('\u0432\u0441\u0435 \u043c\u043e\u0434') ||
+    normalized.includes('\u043a\u0430\u0436\u0434') ||
+    normalized.includes('\u0432\u0441\u044e \u0441\u0431\u043e\u0440') ||
+    normalized.includes('\u0432\u0441\u044f \u0441\u0431\u043e\u0440') ||
+    normalized.includes('\u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e');
+
+  return asksForRequirements && asksForFullScope;
 };
 
 export const createAiResearchRequestForPrompt = (
@@ -434,7 +492,7 @@ export const createAiResearchRequestForPrompt = (
     return undefined;
   }
 
-  return {
+  const request: FluxoraAiResearchRequest = {
     enabled: true,
     mode: 'nexus-api-first',
     allowAuthenticatedPages: false,
@@ -443,6 +501,18 @@ export const createAiResearchRequestForPrompt = (
     allowPublicWebFetch: false,
     deepResearchApproved: false
   };
+
+  if (promptNeedsBatchRequirementAudit(prompt)) {
+    return {
+      ...request,
+      auditScope: 'batch-requirements',
+      maxNexusTargets: 128,
+      maxNexusInitialTargets: 128,
+      maxNexusApiRequests: 256
+    };
+  }
+
+  return request;
 };
 
 export const createAiSupportBundleSnapshot = (
@@ -469,6 +539,7 @@ export const createAiSupportBundleSnapshot = (
         chats: session.chats.map((chat) => ({
           costLedgerCount: chat.costLedger?.length ?? 0,
           id: chat.id,
+          intermediateEventCount: chat.intermediateEvents?.length ?? 0,
           messageCount: chat.messages.length,
           messages: serializeMessages(chat.messages),
           runCount: chat.runs.length,
@@ -491,6 +562,7 @@ export const createAiSupportBundleSnapshot = (
           updatedAt: run.updatedAt
         })),
         scopeKey: session.scopeKey,
+        intermediateEventCount: session.intermediateEvents?.length ?? 0,
         streamEventCount: session.streamEvents.length
       };
     })
@@ -835,6 +907,7 @@ export const createAiHostChatRequest = (
 
   return {
     operationId: run.operationId,
+    runId: run.id,
     sessionId: run.sessionId,
     messages: [
       ...buildContextMessages,
@@ -893,7 +966,19 @@ export const startHostAiRun = (
     persistAiAutonomousJob(settings.jobStorage, update, now);
   };
 
+  const disposeRunEvent = aiApi.onRunEvent((event) => {
+    if (event.runId !== run.id || event.operationId !== run.operationId) {
+      return;
+    }
+
+    callbacks.onRunEvent?.(event);
+    if (autonomousJob) {
+      persistAutonomousJob(recordAiAutonomousIntermediateEvent(autonomousJob, event));
+    }
+  });
+
   const dispose = () => {
+    disposeRunEvent();
     timers.forEach((timer) => globalThis.clearTimeout(timer));
     timers.length = 0;
   };

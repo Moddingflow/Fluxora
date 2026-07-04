@@ -12,7 +12,10 @@ import {
   createFakeAiRunPlan,
   initialAiChatState
 } from '../src/renderer/features/ai/ai-chat-state';
-import type { FluxoraAiContextUsage } from '../src/shared/fluxora-api';
+import type {
+  FluxoraAiContextUsage,
+  FluxoraAiIntermediateEvent
+} from '../src/shared/fluxora-api';
 
 const createContextUsage = (
   overrides: Partial<FluxoraAiContextUsage> = {}
@@ -31,6 +34,24 @@ const createContextUsage = (
   autoCompressionApplied: false,
   actionRequired: false,
   countedAt: '2026-07-03T10:00:00.000Z',
+  ...overrides
+});
+
+const createIntermediateEvent = (
+  overrides: Partial<FluxoraAiIntermediateEvent> = {}
+): FluxoraAiIntermediateEvent => ({
+  schema: 'fluxora.ai.intermediate-event.v1',
+  eventId: 'event-1',
+  runId: 'run-intermediate',
+  operationId: 'op_ai_intermediate',
+  seq: 1,
+  createdAt: '2026-07-03T10:00:00.100Z',
+  type: 'progress',
+  level: 'info',
+  visibility: 'user',
+  stage: 'prompt-preparation',
+  message: 'Preparing prompt and build context.',
+  percent: 5,
   ...overrides
 });
 
@@ -173,6 +194,85 @@ describe('AI chat shell state', () => {
       '### Итог\n\n- Готово'
     ]);
     expect(finished.messages[1]?.isStreaming).not.toBe(true);
+  });
+
+  it('stores canonical intermediate events by run with ordering and dedupe', () => {
+    const run = createAiRun(
+      initialAiChatState.session.id,
+      'op_ai_intermediate',
+      'prompt-digest',
+      'check plugins'.length,
+      new Date('2026-07-03T10:00:00Z')
+    );
+    const userMessage = createAiMessage(
+      'user',
+      'check plugins',
+      new Date('2026-07-03T10:00:00Z'),
+      run.id
+    );
+    const submitted = aiChatReducer(
+      { ...initialAiChatState, draft: userMessage.text },
+      {
+        type: 'submit-user-message',
+        message: userMessage,
+        run,
+        event: createAiStreamEvent(run, 'run-created', {
+          now: new Date('2026-07-03T10:00:00Z'),
+          status: 'thinking'
+        })
+      }
+    );
+    const laterEvent = createIntermediateEvent({
+      eventId: 'event-2',
+      runId: run.id,
+      operationId: run.operationId,
+      seq: 2,
+      createdAt: '2026-07-03T10:00:00.300Z',
+      stage: 'provider-attempt',
+      message: 'Provider attempt started.',
+      percent: 58
+    });
+    const earlierEvent = createIntermediateEvent({
+      eventId: 'event-1',
+      runId: run.id,
+      operationId: run.operationId,
+      seq: 1,
+      createdAt: '2026-07-03T10:00:00.200Z',
+      stage: 'local-inspection',
+      message: 'Local inspection finished.',
+      percent: 24
+    });
+
+    const withLater = aiChatReducer(submitted, { type: 'apply-run-event', event: laterEvent });
+    const withEarlier = aiChatReducer(withLater, { type: 'apply-run-event', event: earlierEvent });
+    const withDuplicate = aiChatReducer(withEarlier, { type: 'apply-run-event', event: laterEvent });
+    const blocked = aiChatReducer(withDuplicate, {
+      type: 'apply-run-event',
+      event: createIntermediateEvent({
+        eventId: 'event-error',
+        runId: run.id,
+        operationId: run.operationId,
+        seq: 3,
+        createdAt: '2026-07-03T10:00:00.400Z',
+        type: 'error',
+        level: 'error',
+        stage: 'provider-attempt',
+        message: 'Provider attempt failed.'
+      })
+    });
+
+    expect(withDuplicate.intermediateEvents.map((event) => event.eventId)).toEqual([
+      'event-1',
+      'event-2'
+    ]);
+    expect(withDuplicate.status).toBe('running');
+    expect(withDuplicate.session.runs[0]?.eventIds).toEqual(
+      expect.arrayContaining(['event-1', 'event-2'])
+    );
+    expect(blocked.status).toBe('blocked');
+    expect(blocked.session.runs[0]?.eventIds).toEqual(
+      expect.arrayContaining(['event-error'])
+    );
   });
 
   it('creates isolated chat tabs and names a new chat from its first prompt', () => {

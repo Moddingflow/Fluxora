@@ -4883,6 +4883,48 @@ export const App = () => {
   ]);
 
   useEffect(() => {
+    const modsDirectory = selectedProject?.paths?.modsDirectory;
+    const profilesDirectory = selectedProject?.paths?.profilesDirectory;
+    if (
+      isSecondaryWindow ||
+      !selectedProject ||
+      !bridgeStatus?.ready ||
+      !modsDirectory ||
+      !profilesDirectory
+    ) {
+      return undefined;
+    }
+
+    const operationId = createRendererOperationId('build_content_watch');
+    void window.fluxora.buildContent
+      .watch(
+        {
+          projectDirectory: selectedProject.projectDirectory,
+          modsDirectory,
+          profilesDirectory,
+          profileName: selectedProjectProfileName,
+          gameDirectory: selectedProject.paths?.gameDirectory
+        },
+        { operationId }
+      )
+      .catch(() => undefined);
+
+    return () => {
+      void window.fluxora.buildContent
+        .unwatch({ operationId: createRendererOperationId('build_content_unwatch') })
+        .catch(() => undefined);
+    };
+  }, [
+    bridgeStatus?.ready,
+    isSecondaryWindow,
+    selectedProject?.paths?.gameDirectory,
+    selectedProject?.paths?.modsDirectory,
+    selectedProject?.paths?.profilesDirectory,
+    selectedProject?.projectDirectory,
+    selectedProjectProfileName
+  ]);
+
+  useEffect(() => {
     if (isSecondaryWindow) {
       return undefined;
     }
@@ -4903,6 +4945,37 @@ export const App = () => {
   }, [
     isSecondaryWindow,
     selectedProject?.projectDirectory
+  ]);
+
+  useEffect(() => {
+    if (isSecondaryWindow) {
+      return undefined;
+    }
+
+    return window.fluxora.buildContent.onChanged((event) => {
+      if (!selectedProject || event.projectDirectory !== selectedProject.projectDirectory) {
+        return;
+      }
+
+      void loadModsWorkspace(selectedProject, {
+        operationId: createRendererOperationId('build_content_mods_changed'),
+        resetScroll: false,
+        showBusy: false,
+        showLoading: false,
+        profileName: selectedProjectProfileName
+      });
+      void loadPluginsWorkspace(selectedProject, {
+        operationId: createRendererOperationId('build_content_plugins_changed'),
+        resetScroll: false,
+        showBusy: false,
+        showLoading: false,
+        profileName: selectedProjectProfileName
+      });
+    });
+  }, [
+    isSecondaryWindow,
+    selectedProject?.projectDirectory,
+    selectedProjectProfileName
   ]);
 
   useEffect(() => {
@@ -10586,6 +10659,7 @@ export const App = () => {
       },
       {
         onEvent: (event) => dispatchAiChat({ type: 'apply-stream-event', event }),
+        onRunEvent: (event) => dispatchAiChat({ type: 'apply-run-event', event }),
         onFinish: (message, event, status, ledgerEntry) => {
           aiLocalRunRef.current = null;
           if (event.type === 'run-cancelled') {
@@ -10790,6 +10864,7 @@ export const App = () => {
           <AiChatPanel
             hostReady={aiHostStatus?.ready ?? false}
             providerDiagnostic={aiChatProviderDiagnostic}
+            showCheckedSites={developerModeEnabled}
             state={aiChat}
             onCancel={cancelAiChatRun}
             onClose={() => dispatchAiChat({ type: 'close' })}

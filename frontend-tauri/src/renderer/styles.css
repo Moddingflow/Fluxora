@@ -1095,8 +1095,18 @@ button:disabled {
 .ai-chat-message__sources {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 5px;
   min-width: 0;
+  color: var(--text-subtle);
+  font-size: 10px;
+  line-height: 1.15;
+}
+
+.ai-chat-message__sources-label {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .ai-chat-source {
@@ -1141,11 +1151,10 @@ button:disabled {
 }
 
 .ai-chat-progress {
-  display: inline-flex;
-  align-items: center;
+  display: grid;
   gap: 7px;
   justify-self: start;
-  max-width: min(84%, 260px);
+  max-width: min(88%, 420px);
   min-height: 38px;
   padding: 9px 11px;
   border: 1px solid var(--line-soft);
@@ -1153,11 +1162,76 @@ button:disabled {
   background: var(--surface);
 }
 
+.ai-chat-progress__headline {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
 .ai-chat-progress__label {
   color: var(--text);
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
+}
+
+.ai-chat-progress__current,
+.ai-chat-progress__step-message {
+  min-width: 0;
+  color: var(--text-subtle);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ai-chat-progress__percent {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ai-chat-progress__details {
+  min-width: 0;
+}
+
+.ai-chat-progress__details summary {
+  width: fit-content;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ai-chat-progress__steps {
+  display: grid;
+  gap: 6px;
+  margin: 7px 0 0;
+  padding: 0 0 0 16px;
+}
+
+.ai-chat-progress__step {
+  min-width: 0;
+  color: var(--text-subtle);
+}
+
+.ai-chat-progress__step[data-level="error"] {
+  color: var(--danger);
+}
+
+.ai-chat-progress__step[data-level="warning"] {
+  color: var(--warning);
+}
+
+.ai-chat-progress__step-stage {
+  display: block;
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
 }
 
 .ai-chat-progress__dots {

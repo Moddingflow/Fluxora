@@ -1807,6 +1807,16 @@ namespace
             });
     }
 
+    std::wstring payloadNexusApiAuthHeader()
+    {
+        return payloadFromCoreJson(
+            L"core.nexusApiAuthHeaderFailed",
+            [](wchar_t* buffer, int length)
+            {
+                return fluxora_get_nexusmods_api_auth_header(buffer, length);
+            });
+    }
+
     std::wstring payloadConnectNexus()
     {
         return payloadFromCoreJson(
@@ -2479,6 +2489,10 @@ namespace
         if (request.method == L"nexus.getAuthStatus")
         {
             return payloadNexusAuthStatus();
+        }
+        if (request.method == L"nexus.getApiAuthHeader")
+        {
+            return payloadNexusApiAuthHeader();
         }
         if (request.method == L"nexus.connect")
         {

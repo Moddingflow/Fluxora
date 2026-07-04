@@ -731,6 +731,32 @@ namespace fluxora
             return hex;
         }
 
+        std::vector<unsigned char> hexToBytes(const std::wstring& value)
+        {
+            std::vector<unsigned char> bytes;
+            if (value.size() % 2 != 0)
+            {
+                return bytes;
+            }
+
+            bytes.reserve(value.size() / 2);
+            for (std::size_t index = 0; index < value.size(); index += 2)
+            {
+                try
+                {
+                    bytes.push_back(static_cast<unsigned char>(
+                        std::stoul(value.substr(index, 2), nullptr, 16)));
+                }
+                catch (const std::exception&)
+                {
+                    bytes.clear();
+                    return bytes;
+                }
+            }
+
+            return bytes;
+        }
+
         std::vector<unsigned char> generateRandomBytes(std::size_t count)
         {
 #ifdef _WIN32
@@ -855,6 +881,42 @@ namespace fluxora
             return protectedValue;
 #else
             return value;
+#endif
+        }
+
+        std::wstring unprotectSecret(const std::wstring& protectedValue)
+        {
+#ifdef _WIN32
+            std::vector<unsigned char> bytes = hexToBytes(protectedValue);
+            if (bytes.empty())
+            {
+                return {};
+            }
+
+            DATA_BLOB input{};
+            input.pbData = bytes.data();
+            input.cbData = static_cast<DWORD>(bytes.size());
+
+            DATA_BLOB output{};
+            if (!CryptUnprotectData(
+                    &input,
+                    nullptr,
+                    nullptr,
+                    nullptr,
+                    nullptr,
+                    CRYPTPROTECT_UI_FORBIDDEN,
+                    &output))
+            {
+                return {};
+            }
+
+            std::wstring value(
+                reinterpret_cast<wchar_t*>(output.pbData),
+                output.cbData / sizeof(wchar_t));
+            LocalFree(output.pbData);
+            return value;
+#else
+            return protectedValue;
 #endif
         }
 
@@ -2029,6 +2091,11 @@ namespace fluxora
         {
             return resolveNexusClientSecret();
         }
+
+        std::wstring protectNexusSecretForTest(const std::wstring& value)
+        {
+            return protectSecret(value);
+        }
     }
 #endif
 
@@ -2063,6 +2130,65 @@ namespace fluxora
     NexusModsAuthStatus NexusModsAuthService::status() const
     {
         return buildStatus(loadConfig(), settings_.loadNexusModsAuth());
+    }
+
+    NexusModsApiAuthHeader NexusModsAuthService::apiAuthHeader() const
+    {
+        const NexusModsStoredAuth auth = settings_.loadNexusModsAuth();
+        if (!auth.linked)
+        {
+            return NexusModsApiAuthHeader{
+                false,
+                {},
+                {},
+                {},
+                L"NexusMods account is not linked."
+            };
+        }
+
+        if (!auth.protectedApiKey.empty())
+        {
+            const std::wstring apiKey = unprotectSecret(auth.protectedApiKey);
+            if (!apiKey.empty())
+            {
+                return NexusModsApiAuthHeader{
+                    true,
+                    L"apikey",
+                    apiKey,
+                    L"api-key",
+                    L"NexusMods API key is available for trusted native services."
+                };
+            }
+        }
+
+        if (!auth.protectedAccessToken.empty())
+        {
+            const std::wstring accessToken = unprotectSecret(auth.protectedAccessToken);
+            if (!accessToken.empty())
+            {
+                std::wstring tokenType = trimWhitespace(auth.tokenType);
+                if (tokenType.empty())
+                {
+                    tokenType = L"Bearer";
+                }
+
+                return NexusModsApiAuthHeader{
+                    true,
+                    L"Authorization",
+                    tokenType + L" " + accessToken,
+                    L"oauth",
+                    L"NexusMods OAuth token is available for trusted native services."
+                };
+            }
+        }
+
+        return NexusModsApiAuthHeader{
+            false,
+            {},
+            {},
+            {},
+            L"NexusMods authentication token is unavailable. Reconnect NexusMods in settings."
+        };
     }
 
     NexusModsAuthStatus NexusModsAuthService::connect()

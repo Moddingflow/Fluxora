@@ -49,6 +49,7 @@ describe('FluxoraAIHost MVP contract', () => {
       models: [],
       capabilities: {}
     };
+    const listeners = new Map<string, (...args: unknown[]) => void>();
     const ipc: IpcInvoker = {
       invoke: async (channel, ...args) => {
         calls.push({ channel, args });
@@ -140,10 +141,41 @@ describe('FluxoraAIHost MVP contract', () => {
           default:
             throw new Error(`Unexpected channel ${channel}`);
         }
+      },
+      on: (channel, listener) => listeners.set(channel, listener),
+      removeListener: (channel, listener) => {
+        if (listeners.get(channel) === listener) {
+          listeners.delete(channel);
+        }
       }
     };
 
     const api = createFluxoraApi(ipc);
+    const runEvents: Array<{ eventId: string; runId: string }> = [];
+    const disposeRunEvent = api.ai.onRunEvent((event) => {
+      runEvents.push({ eventId: event.eventId, runId: event.runId });
+    });
+    listeners.get(FluxoraIpcChannels.aiRunEvent)?.(
+      { type: 'event' },
+      {
+        schema: 'fluxora.ai.intermediate-event.v1',
+        eventId: 'event-contract-1',
+        runId: 'run-ai-chat-1',
+        operationId: 'op_ai_chat_run',
+        seq: 1,
+        createdAt: '2026-07-03T10:00:00.000Z',
+        type: 'progress',
+        level: 'info',
+        visibility: 'user',
+        stage: 'prompt-preparation',
+        message: 'Preparing prompt and build context.',
+        percent: 5
+      }
+    );
+    disposeRunEvent();
+    expect(runEvents).toEqual([{ eventId: 'event-contract-1', runId: 'run-ai-chat-1' }]);
+    expect(listeners.has(FluxoraIpcChannels.aiRunEvent)).toBe(false);
+
     await expect(api.ai.getStatus({ operationId: 'op_ai_status' })).resolves.toBe(aiStatus);
     await expect(api.ai.listSafeActions()).resolves.toMatchObject({
       schema: 'fluxora.ai.safe-action-catalog.v1',
@@ -172,6 +204,7 @@ describe('FluxoraAIHost MVP contract', () => {
     await expect(
       api.ai.chatRespond({
         operationId: 'op_ai_chat_run',
+        runId: 'run-ai-chat-1',
         sessionId: 'session-1',
         messages: [{ role: 'user', text: 'check plugins' }],
         routingPreset: 'free-demo'
@@ -184,6 +217,7 @@ describe('FluxoraAIHost MVP contract', () => {
     await expect(
       api.ai.estimateContext({
         operationId: 'op_ai_chat_run',
+        runId: 'run-ai-chat-1',
         sessionId: 'session-1',
         messages: [{ role: 'user', text: 'check plugins' }],
         routingPreset: 'free-demo'
@@ -207,6 +241,7 @@ describe('FluxoraAIHost MVP contract', () => {
     ]);
 
     const facade = readText('frontend-tauri', 'src', 'tauri', 'fluxora-api.ts');
+    const rustShell = readText('frontend-tauri', 'src-tauri', 'src', 'lib.rs');
     const sharedApi = readText('frontend-tauri', 'src', 'shared', 'fluxora-api.ts');
     expect(sharedApi).toContain('ai: {');
     expect(sharedApi).toContain('listSafeActions');
@@ -214,6 +249,10 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(sharedApi).toContain('chatRespond');
     expect(sharedApi).toContain('estimateContext');
     expect(sharedApi).toContain('aiEstimateContext');
+    expect(sharedApi).toContain("aiRunEvent: 'fluxora:ai:run-event'");
+    expect(sharedApi).toContain('FluxoraAiIntermediateEvent');
+    expect(sharedApi).toContain('runId: string');
+    expect(sharedApi).toContain('onRunEvent');
     expect(sharedApi).toContain('connectProvider');
     expect(sharedApi).toContain('FluxoraAiContextUsage');
     expect(sharedApi).toContain('FluxoraAiTokenUsage');
@@ -239,6 +278,14 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(facade).toContain('fluxora_ai_connect_provider');
     expect(facade).toContain('fluxora_ai_chat_respond');
     expect(facade).toContain('fluxora_ai_estimate_context');
+    expect(facade).toContain('FluxoraIpcChannels.aiRunEvent');
+    expect(facade).toContain('onRunEvent');
+    expect(rustShell).toContain('PRIVATE_NEXUS_API_AUTH_HEADER_METHOD');
+    expect(rustShell).toContain('ai.intermediateEvent');
+    expect(rustShell).toContain('AI_RUN_EVENT');
+    expect(rustShell).toContain('nativeNexusApiCredential');
+    expect(rustShell).toContain('enrich_ai_request_with_private_nexus_credential');
+    expect(rustShell).toContain('Unsupported bridge method.');
     expect(facade).toContain('browserPreviewAiContextUsage');
     expect(facade).toContain('AI_SAFE_ACTION_CATALOG');
     expect(facade).toContain('safeActionCatalog');
@@ -375,6 +422,9 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(aiHost).toContain('fallbackProviders');
     expect(aiHost).toContain('redacted_provider_error_message');
     expect(aiResearch).toContain('fluxora.ai.research.v1');
+    expect(aiResearch).toContain('nativeNexusApiCredential');
+    expect(aiResearch).toContain('credentialSource');
+    expect(aiResearch).toContain('credentialKind');
     expect(aiResearch).toContain('NEXUSMODS_API_KEY');
     expect(aiResearch).toContain('X-RL-Hourly-Remaining');
     expect(aiResearch).toContain('fluxora.ai.nexus-investigation.v1');
@@ -431,6 +481,9 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(sharedApi).toContain('FluxoraAiModResearchRoute');
     expect(sharedApi).toContain("schema: 'fluxora.ai.mod-research-route.v1'");
     expect(sharedApi).toContain('searchBudget?: FluxoraAiModResearchSearchBudget');
+    expect(sharedApi).toContain("auditScope?: 'targeted' | 'batch-requirements' | 'full-build-requirements'");
+    expect(sharedApi).toContain('maxNexusTargets?: number');
+    expect(sharedApi).toContain('maxNexusApiRequests?: number');
     expect(sharedApi).toContain('modResearchRoute?: FluxoraAiModResearchRoute | null');
     expect(facade).toContain('modResearchRouter');
     expect(facade).toContain('rendererPolicyDecisions: false');
@@ -445,6 +498,8 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(aiHost).toContain('if mod_research_route.collect_external_research');
     expect(aiHost).toContain('research_params_for_route');
     expect(aiHost).toContain('"modResearchRoute": mod_research_route');
+    expect(aiHost).toContain('use the provided Nexus API/cache research bundle as allowed external evidence');
+    expect(aiHost).toContain('public Nexus page scraping remains disabled');
     expect(aiHost.indexOf('let local_inspection =')).toBeLessThan(
       aiHost.indexOf('collect_ai_research_bundle(')
     );
@@ -460,6 +515,10 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["maxSearchQueries"], 2);');
     expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["nexusApiRequests"], 2);');
     expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["publicWebFetches"], 0);');
+    expect(aiHost).toContain('fn requirement_audit_with_missing_masters_still_collects_nexus_research()');
+    expect(aiHost).toContain('assert_eq!(route.payload["auditScope"], "batch-requirements");');
+    expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["nexusApiRequests"], 256);');
+    expect(aiHost).toContain('assert_eq!(routed_params["research"]["maxNexusTargets"], 128);');
   });
 
   it('keeps AI chat input closed when the AI host status is unavailable', () => {

@@ -1190,6 +1190,11 @@ namespace fluxora
                 mod.isLocal,
                 mod.isTranslation,
                 mod.isPatch,
+                mod.source.provider,
+                mod.source.gameDomain,
+                mod.source.remoteModId,
+                mod.source.remoteFileId,
+                mod.source.url,
                 summary.overwritesModIds,
                 summary.overwrittenByModIds
             };
@@ -1490,6 +1495,7 @@ namespace fluxora
         const std::filesystem::path& projectDirectory) const
     {
         const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
+        InstanceMetadataStore::refreshInstalledModsFromDisk(projectDirectory, modsDirectory);
         const std::vector<InstalledModRecord> mods =
             InstanceMetadataStore::listInstalledMods(projectDirectory, modsDirectory);
         const std::vector<ModFileSummaryRecord> summaries =

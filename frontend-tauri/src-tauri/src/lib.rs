@@ -32,8 +32,11 @@ const BRIDGE_TIMEOUT_MS: u64 = 10_000;
 const AI_HOST_PROTOCOL_VERSION: &str = "1.0";
 const AI_HOST_TIMEOUT_MS: u64 = 5_000;
 const AI_HOST_LONG_RUNNING_TIMEOUT_MS: u64 = 45 * 60 * 1_000;
+const PRIVATE_NEXUS_API_AUTH_HEADER_METHOD: &str = "nexus.getApiAuthHeader";
+const PRIVATE_AI_NEXUS_CREDENTIAL_FIELD: &str = "nativeNexusApiCredential";
 const AI_CREDENTIAL_SERVICE: &str = "app.fluxora.desktop.ai.provider";
 const PROGRESS_EVENT: &str = "fluxora:operations:progress";
+const AI_RUN_EVENT: &str = "fluxora:ai:run-event";
 const MAIN_WINDOW_LABEL: &str = "main";
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 const BUILD_SETTINGS_WINDOW_LABEL_PREFIX: &str = "build-settings";
@@ -45,6 +48,7 @@ const TRANSFER_MO2_HANDOFF_EVENT: &str = "fluxora:transfer:mo2-handoff";
 const TRANSFER_MO2_OPEN_EVENT: &str = "fluxora:transfer:mo2-open";
 const NXM_INBOUND_LINKS_CAPTURED_EVENT: &str = "fluxora:nxm:inbound-links-captured";
 const DOWNLOADS_FOLDER_CHANGED_EVENT: &str = "fluxora:downloads:folder-changed";
+const BUILD_CONTENT_CHANGED_EVENT: &str = "fluxora:build-content:changed";
 const OPERATION_CANCEL_DIR_NAME: &str = "operation-cancel";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -56,6 +60,7 @@ const OPERATION_PROGRESS_CACHE_LIMIT: usize = 100;
 const RECENT_OPERATION_LOG_MAX_LIMIT: usize = 80;
 const RECENT_OPERATION_LOG_TAIL_BYTES: u64 = 512 * 1024;
 const DOWNLOADS_FOLDER_WATCH_DEBOUNCE_MS: u64 = 650;
+const BUILD_CONTENT_WATCH_DEBOUNCE_MS: u64 = 900;
 
 fn encode_query_component(value: &str) -> String {
     let mut encoded = String::new();
@@ -339,6 +344,32 @@ struct DownloadsFolderWatcher {
     generation: u64,
 }
 
+struct BuildContentWatchState {
+    active: Mutex<Option<BuildContentWatcher>>,
+    generation: Arc<AtomicU64>,
+    sequence: Arc<AtomicU64>,
+}
+
+impl Default for BuildContentWatchState {
+    fn default() -> Self {
+        Self {
+            active: Mutex::new(None),
+            generation: Arc::new(AtomicU64::new(0)),
+            sequence: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+struct BuildContentWatcher {
+    debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
+    project_directory: String,
+    mods_directory: PathBuf,
+    profiles_directory: PathBuf,
+    profile_name: String,
+    operation_id: String,
+    generation: u64,
+}
+
 #[derive(Default)]
 struct BridgeProcess {
     child: Option<Child>,
@@ -375,6 +406,23 @@ struct DownloadsFolderWatchResult {
     operation_id: String,
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildContentWatchRequest {
+    project_directory: String,
+    mods_directory: String,
+    profiles_directory: String,
+    profile_name: Option<String>,
+    game_directory: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildContentWatchResult {
+    accepted: bool,
+    operation_id: String,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DownloadsFolderChangedPayload {
@@ -392,6 +440,33 @@ struct DownloadsFolderChange {
     path: String,
     file_name: String,
     kind: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildContentChangedPayload {
+    project_directory: String,
+    mods_directory: String,
+    profiles_directory: String,
+    profile_name: String,
+    event_id: String,
+    sequence: u64,
+    reason: String,
+    changes: Vec<BuildContentChange>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildContentChange {
+    path: String,
+    file_name: String,
+    kind: String,
+    area: String,
+}
+
+struct BuildContentWatchRoot {
+    path: PathBuf,
+    recursive: bool,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -676,6 +751,12 @@ fn downloads_watch_request(request: Option<OperationRequest>, scope: &str) -> Op
     })
 }
 
+fn build_content_watch_request(request: Option<OperationRequest>, scope: &str) -> OperationRequest {
+    request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, scope)),
+    })
+}
+
 fn is_transient_downloads_watch_path(path: &Path) -> bool {
     let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
         return true;
@@ -708,7 +789,7 @@ fn is_transient_downloads_watch_path(path: &Path) -> bool {
     .any(|suffix| lower.ends_with(suffix))
 }
 
-fn downloads_folder_event_kind(kind: &EventKind) -> &'static str {
+fn file_watch_event_kind(kind: &EventKind) -> &'static str {
     match kind {
         EventKind::Create(CreateKind::File | CreateKind::Folder | CreateKind::Any) => "created",
         EventKind::Modify(ModifyKind::Name(
@@ -718,6 +799,10 @@ fn downloads_folder_event_kind(kind: &EventKind) -> &'static str {
         EventKind::Remove(RemoveKind::File | RemoveKind::Folder | RemoveKind::Any) => "removed",
         _ => "changed",
     }
+}
+
+fn downloads_folder_event_kind(kind: &EventKind) -> &'static str {
+    file_watch_event_kind(kind)
 }
 
 fn downloads_folder_changes(events: Vec<DebouncedEvent>) -> Vec<DownloadsFolderChange> {
@@ -757,6 +842,161 @@ fn downloads_folder_batch_reason(changes: &[DownloadsFolderChange]) -> String {
     };
     if changes.iter().all(|change| change.kind == first.kind) {
         return first.kind.clone();
+    }
+    "batch".to_string()
+}
+
+fn is_transient_build_content_path(path: &Path) -> bool {
+    let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+        return true;
+    };
+    let file_name = file_name.trim();
+    if file_name.is_empty() {
+        return true;
+    }
+
+    let lower = file_name.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        ".ds_store" | "thumbs.db" | "desktop.ini" | ".fluxora-mod.json"
+    ) {
+        return true;
+    }
+    if lower.starts_with("~$") || lower.starts_with(".~") {
+        return true;
+    }
+
+    [
+        ".tmp",
+        ".temp",
+        ".crdownload",
+        ".download",
+        ".partial",
+        ".part",
+        ".swp",
+        ".swx",
+        ".lock",
+        ".journal",
+    ]
+    .iter()
+    .any(|suffix| lower.ends_with(suffix))
+}
+
+fn push_build_content_watch_root(
+    roots: &mut Vec<BuildContentWatchRoot>,
+    path: PathBuf,
+    recursive: bool,
+) {
+    if roots.iter().any(|root| root.path == path) {
+        return;
+    }
+    roots.push(BuildContentWatchRoot { path, recursive });
+}
+
+fn build_content_watch_roots(
+    mods_directory: &Path,
+    profiles_directory: &Path,
+    profile_name: &str,
+    game_directory: Option<&Path>,
+) -> Vec<BuildContentWatchRoot> {
+    let mut roots = Vec::new();
+    if mods_directory.is_dir() {
+        push_build_content_watch_root(&mut roots, mods_directory.to_path_buf(), true);
+    }
+
+    if profiles_directory.is_dir() {
+        let profile_directory = if profile_name.trim().is_empty() {
+            None
+        } else {
+            Some(profiles_directory.join(profile_name))
+        };
+        match profile_directory {
+            Some(path) if path.is_dir() => push_build_content_watch_root(&mut roots, path, false),
+            _ => push_build_content_watch_root(&mut roots, profiles_directory.to_path_buf(), true),
+        }
+    }
+
+    if let Some(game_directory) = game_directory {
+        let data_directory = game_directory.join("Data");
+        if data_directory.is_dir() {
+            push_build_content_watch_root(&mut roots, data_directory, false);
+        }
+    }
+
+    roots
+}
+
+fn build_content_area_for_path(
+    path: &Path,
+    mods_directory: &Path,
+    profiles_directory: &Path,
+    game_data_directory: Option<&Path>,
+) -> &'static str {
+    if path.starts_with(mods_directory) {
+        return "mods";
+    }
+    if path.starts_with(profiles_directory) {
+        return "profile";
+    }
+    if game_data_directory.is_some_and(|directory| path.starts_with(directory)) {
+        return "game";
+    }
+    "content"
+}
+
+fn build_content_changes(
+    events: Vec<DebouncedEvent>,
+    mods_directory: &Path,
+    profiles_directory: &Path,
+    game_data_directory: Option<&Path>,
+) -> Vec<BuildContentChange> {
+    let mut seen = HashSet::new();
+    let mut changes = Vec::new();
+
+    for event in events {
+        let kind = file_watch_event_kind(&event.kind).to_string();
+        for path in &event.paths {
+            if is_transient_build_content_path(path) {
+                continue;
+            }
+
+            let area = build_content_area_for_path(
+                path,
+                mods_directory,
+                profiles_directory,
+                game_data_directory,
+            )
+            .to_string();
+            let path_string = path.to_string_lossy().to_string();
+            let key = format!("{area}\0{kind}\0{path_string}");
+            if !seen.insert(key) {
+                continue;
+            }
+
+            changes.push(BuildContentChange {
+                path: path_string,
+                file_name: path
+                    .file_name()
+                    .map(|value| value.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                kind: kind.clone(),
+                area,
+            });
+        }
+    }
+
+    changes
+}
+
+fn build_content_batch_reason(changes: &[BuildContentChange]) -> String {
+    let Some(first) = changes.first() else {
+        return "changed".to_string();
+    };
+    if changes
+        .iter()
+        .all(|change| change.area == first.area && change.kind == first.kind)
+    {
+        return format!("{}-{}", first.area, first.kind);
     }
     "batch".to_string()
 }
@@ -801,6 +1041,64 @@ fn emit_downloads_folder_watch_result(
                     "warning",
                     "DownloadsFolderWatcher",
                     &format!("Downloads folder watcher reported an error. reason={message}"),
+                    None,
+                )
+                .await;
+            });
+        }
+    }
+}
+
+fn emit_build_content_watch_result(
+    app: &AppHandle,
+    project_directory: &str,
+    mods_directory: &Path,
+    profiles_directory: &Path,
+    profile_name: &str,
+    game_data_directory: Option<&Path>,
+    sequence: &AtomicU64,
+    result: DebounceEventResult,
+) {
+    match result {
+        Ok(events) => {
+            let changes = build_content_changes(
+                events,
+                mods_directory,
+                profiles_directory,
+                game_data_directory,
+            );
+            if changes.is_empty() {
+                return;
+            }
+
+            let sequence = sequence.fetch_add(1, Ordering::SeqCst) + 1;
+            let reason = build_content_batch_reason(&changes);
+            let payload = BuildContentChangedPayload {
+                project_directory: project_directory.to_string(),
+                mods_directory: mods_directory.to_string_lossy().to_string(),
+                profiles_directory: profiles_directory.to_string_lossy().to_string(),
+                profile_name: profile_name.to_string(),
+                event_id: format!("evt_{}_build_content_{sequence}", now_millis()),
+                sequence,
+                reason,
+                changes,
+            };
+            let _ = app.emit_to(MAIN_WINDOW_LABEL, BUILD_CONTENT_CHANGED_EVENT, payload);
+        }
+        Err(errors) => {
+            let message = errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ");
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = write_log(
+                    &app,
+                    "main",
+                    "warning",
+                    "BuildContentWatcher",
+                    &format!("Build content watcher reported an error. reason={message}"),
                     None,
                 )
                 .await;
@@ -1131,6 +1429,151 @@ fn sanitize_log(value: &str) -> String {
     let value = redact_query_key(&value);
     let value = redact_bearer_tokens(&value);
     redact_named_secret_assignments(&value).trim().to_string()
+}
+
+fn sanitize_ai_event_text(value: &str, max_len: usize) -> String {
+    let mut sanitized = sanitize_log(value);
+    if sanitized.len() > max_len {
+        sanitized.truncate(max_len);
+    }
+    sanitized
+}
+
+fn supported_ai_event_type(value: &str) -> bool {
+    matches!(
+        value,
+        "progress"
+            | "note"
+            | "tool-started"
+            | "tool-completed"
+            | "site-visited"
+            | "error"
+            | "heartbeat"
+    )
+}
+
+fn supported_ai_event_level(value: &str) -> bool {
+    matches!(value, "info" | "warning" | "error")
+}
+
+fn supported_ai_event_visibility(value: &str) -> bool {
+    matches!(value, "user" | "developer" | "audit")
+}
+
+fn sanitize_ai_event_payload_value(value: &Value) -> Option<Value> {
+    match value {
+        Value::Null => Some(Value::Null),
+        Value::Bool(flag) => Some(json!(flag)),
+        Value::Number(number) => Some(Value::Number(number.clone())),
+        Value::String(text) => Some(json!(sanitize_ai_event_text(text, 240))),
+        Value::Array(items) => {
+            let values = items
+                .iter()
+                .take(12)
+                .filter_map(sanitize_ai_event_payload_value)
+                .filter(|item| {
+                    item.is_null() || item.is_boolean() || item.is_number() || item.is_string()
+                })
+                .collect::<Vec<_>>();
+            Some(Value::Array(values))
+        }
+        Value::Object(_) => None,
+    }
+}
+
+fn sanitize_ai_event_payload(payload: Option<&Value>) -> Option<Value> {
+    let payload = payload?.as_object()?;
+    let kind = sanitize_ai_event_text(payload.get("kind")?.as_str()?, 80);
+    if kind.is_empty() {
+        return None;
+    }
+
+    let mut data = serde_json::Map::new();
+    if let Some(raw_data) = payload.get("data").and_then(Value::as_object) {
+        for (key, value) in raw_data.iter().take(16) {
+            let safe_key = sanitize_ai_event_text(key, 64);
+            if safe_key.is_empty() {
+                continue;
+            }
+            if let Some(safe_value) = sanitize_ai_event_payload_value(value) {
+                data.insert(safe_key, safe_value);
+            }
+        }
+    }
+
+    let mut result = serde_json::Map::new();
+    result.insert("kind".to_string(), json!(kind));
+    if !data.is_empty() {
+        result.insert("data".to_string(), Value::Object(data));
+    }
+    Some(Value::Object(result))
+}
+
+fn sanitize_ai_intermediate_event(envelope: &Value, fallback_operation_id: &str) -> Option<Value> {
+    if envelope.get("method").and_then(Value::as_str) != Some("ai.intermediateEvent") {
+        return None;
+    }
+
+    let params = envelope.get("params")?.as_object()?;
+    if params.get("schema").and_then(Value::as_str) != Some("fluxora.ai.intermediate-event.v1") {
+        return None;
+    }
+
+    let event_id = sanitize_ai_event_text(params.get("eventId")?.as_str()?, 96);
+    let run_id = sanitize_ai_event_text(params.get("runId")?.as_str()?, 96);
+    let operation_id = sanitize_ai_event_text(
+        params
+            .get("operationId")
+            .and_then(Value::as_str)
+            .unwrap_or(fallback_operation_id),
+        128,
+    );
+    let seq = params.get("seq")?.as_u64()?;
+    let event_type = params.get("type")?.as_str()?;
+    let level = params.get("level")?.as_str()?;
+    let visibility = params.get("visibility")?.as_str()?;
+    if event_id.is_empty()
+        || run_id.is_empty()
+        || operation_id.is_empty()
+        || !supported_ai_event_type(event_type)
+        || !supported_ai_event_level(level)
+        || !supported_ai_event_visibility(visibility)
+    {
+        return None;
+    }
+
+    let stage = sanitize_ai_event_text(params.get("stage")?.as_str()?, 96);
+    let message = sanitize_ai_event_text(params.get("message")?.as_str()?, 320);
+    if stage.is_empty() || message.is_empty() {
+        return None;
+    }
+
+    let mut event = serde_json::Map::new();
+    event.insert("schema".to_string(), json!("fluxora.ai.intermediate-event.v1"));
+    event.insert("eventId".to_string(), json!(event_id));
+    event.insert("runId".to_string(), json!(run_id));
+    event.insert("operationId".to_string(), json!(operation_id));
+    event.insert("seq".to_string(), json!(seq));
+    event.insert(
+        "createdAt".to_string(),
+        json!(sanitize_ai_event_text(
+            params.get("createdAt")?.as_str()?,
+            64
+        )),
+    );
+    event.insert("type".to_string(), json!(event_type));
+    event.insert("level".to_string(), json!(level));
+    event.insert("visibility".to_string(), json!(visibility));
+    event.insert("stage".to_string(), json!(stage));
+    event.insert("message".to_string(), json!(message));
+    if let Some(percent) = params.get("percent").and_then(Value::as_f64) {
+        event.insert("percent".to_string(), json!(percent.clamp(0.0, 100.0)));
+    }
+    if let Some(payload) = sanitize_ai_event_payload(params.get("payload")) {
+        event.insert("payload".to_string(), payload);
+    }
+
+    Some(Value::Object(event))
 }
 
 fn safe_external_url(url: &str) -> Result<String, &'static str> {
@@ -1859,6 +2302,48 @@ impl AiHostProcess {
                     continue;
                 }
             };
+            if envelope.get("method").and_then(Value::as_str) == Some("ai.intermediateEvent") {
+                if let Some(event) = sanitize_ai_intermediate_event(&envelope, &operation_id) {
+                    let event_operation_id = event
+                        .get("operationId")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&operation_id)
+                        .to_string();
+                    let event_level = event
+                        .get("level")
+                        .and_then(Value::as_str)
+                        .unwrap_or("info")
+                        .to_string();
+                    let event_type = event
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("progress");
+                    let event_stage = event
+                        .get("stage")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let event_message = event
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let _ = write_log(
+                        app,
+                        "ai-host",
+                        &event_level,
+                        "AiRunEvent",
+                        &format!(
+                            "Event received. type={} stage={} message={}",
+                            sanitize_log(event_type),
+                            sanitize_log(event_stage),
+                            sanitize_log(event_message)
+                        ),
+                        Some(&event_operation_id),
+                    )
+                    .await;
+                    let _ = app.emit(AI_RUN_EVENT, event);
+                }
+                continue;
+            }
             if envelope.get("id").and_then(Value::as_str) != Some(request_id.as_str()) {
                 continue;
             }
@@ -2598,8 +3083,89 @@ async fn fluxora_ai_estimate_context(app: AppHandle, request: Value) -> Result<V
     }
 }
 
+fn remove_private_nexus_credential(request: &mut Value) {
+    if let Value::Object(fields) = request {
+        fields.remove(PRIVATE_AI_NEXUS_CREDENTIAL_FIELD);
+    }
+}
+
+fn nexus_api_auth_header_from_bridge_payload(payload: &Value) -> Option<Value> {
+    if payload.get("isAvailable").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+
+    let header_name = payload
+        .get("headerName")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| matches!(*value, "apikey" | "Authorization"))?;
+    let header_value = payload
+        .get("headerValue")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let credential_kind = payload
+        .get("credentialKind")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("linked-account");
+
+    if header_name
+        .chars()
+        .any(|character| matches!(character, '\r' | '\n'))
+        || header_value
+            .chars()
+            .any(|character| matches!(character, '\r' | '\n'))
+    {
+        return None;
+    }
+
+    Some(json!({
+        "headerName": header_name,
+        "headerValue": header_value,
+        "credentialKind": credential_kind,
+        "source": "linked-account"
+    }))
+}
+
+async fn trusted_nexus_api_credential_for_ai(app: &AppHandle, operation_id: &str) -> Option<Value> {
+    let state = bridge_state(app);
+    let mut bridge = state.process.lock().await;
+    let payload = bridge
+        .request(
+            app,
+            PRIVATE_NEXUS_API_AUTH_HEADER_METHOD,
+            json!({}),
+            OperationRequest {
+                operation_id: Some(operation_id.to_string()),
+            },
+            BRIDGE_TIMEOUT_MS,
+        )
+        .await
+        .ok()?;
+
+    nexus_api_auth_header_from_bridge_payload(&payload)
+}
+
+async fn enrich_ai_request_with_private_nexus_credential(
+    app: &AppHandle,
+    request: &mut Value,
+    operation_id: &str,
+) {
+    remove_private_nexus_credential(request);
+    let Some(credential) = trusted_nexus_api_credential_for_ai(app, operation_id).await else {
+        return;
+    };
+
+    if let Value::Object(fields) = request {
+        fields.insert(PRIVATE_AI_NEXUS_CREDENTIAL_FIELD.to_string(), credential);
+    }
+}
+
 #[tauri::command]
 async fn fluxora_ai_chat_respond(app: AppHandle, request: Value) -> Result<Value, String> {
+    let mut request = request;
     let operation_id = request
         .get("operationId")
         .and_then(Value::as_str)
@@ -2609,6 +3175,7 @@ async fn fluxora_ai_chat_respond(app: AppHandle, request: Value) -> Result<Value
     let operation_request = OperationRequest {
         operation_id: Some(operation_id.clone()),
     };
+    enrich_ai_request_with_private_nexus_credential(&app, &mut request, &operation_id).await;
     let state = ai_host_state(&app);
     let mut host = state.process.lock().await;
     let result = host
@@ -2705,6 +3272,10 @@ async fn fluxora_bridge_request(
     request: Option<OperationRequest>,
     timeout_ms: Option<u64>,
 ) -> Result<Value, String> {
+    if method == PRIVATE_NEXUS_API_AUTH_HEADER_METHOD {
+        return Err("Unsupported bridge method.".to_string());
+    }
+
     let request = request.unwrap_or(OperationRequest {
         operation_id: Some(operation_id(None, &method)),
     });
@@ -3962,6 +4533,215 @@ async fn fluxora_downloads_unwatch_folder(
     })
 }
 
+#[tauri::command]
+async fn fluxora_build_content_watch(
+    app: AppHandle,
+    watch_request: BuildContentWatchRequest,
+    operation: Option<OperationRequest>,
+) -> Result<BuildContentWatchResult, String> {
+    let operation = build_content_watch_request(operation, "build_content_watch");
+    let operation_id = operation_id(Some(&operation), "build_content_watch");
+    let project_directory = watch_request.project_directory.trim().to_string();
+    let mods_directory = watch_request.mods_directory.trim().to_string();
+    let profiles_directory = watch_request.profiles_directory.trim().to_string();
+    let profile_name = watch_request
+        .profile_name
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let game_directory = watch_request
+        .game_directory
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    if project_directory.is_empty() {
+        return Err("projectDirectory is required".to_string());
+    }
+    if mods_directory.is_empty() {
+        return Err("modsDirectory is required".to_string());
+    }
+    if profiles_directory.is_empty() {
+        return Err("profilesDirectory is required".to_string());
+    }
+
+    let mods_path = PathBuf::from(&mods_directory);
+    if !mods_path.is_dir() {
+        return Err("modsDirectory must point to an existing folder".to_string());
+    }
+    let profiles_path = PathBuf::from(&profiles_directory);
+    if !profiles_path.is_dir() {
+        return Err("profilesDirectory must point to an existing folder".to_string());
+    }
+    let game_path = if game_directory.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(&game_directory))
+    };
+    let game_data_path = game_path
+        .as_ref()
+        .map(|path| path.join("Data"))
+        .filter(|path| path.is_dir());
+    let watch_roots = build_content_watch_roots(
+        &mods_path,
+        &profiles_path,
+        &profile_name,
+        game_path.as_deref(),
+    );
+    if watch_roots.is_empty() {
+        return Err("No build content folders are available to watch".to_string());
+    }
+
+    let state = app.state::<BuildContentWatchState>();
+    let watcher_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let active_generation = state.generation.clone();
+    let sequence = state.sequence.clone();
+    let app_for_events = app.clone();
+    let project_for_events = project_directory.clone();
+    let mods_for_events = mods_path.clone();
+    let profiles_for_events = profiles_path.clone();
+    let profile_for_events = profile_name.clone();
+    let game_data_for_events = game_data_path.clone();
+
+    let mut debouncer = new_debouncer(
+        Duration::from_millis(BUILD_CONTENT_WATCH_DEBOUNCE_MS),
+        None,
+        move |result: DebounceEventResult| {
+            if active_generation.load(Ordering::SeqCst) != watcher_generation {
+                return;
+            }
+            emit_build_content_watch_result(
+                &app_for_events,
+                &project_for_events,
+                &mods_for_events,
+                &profiles_for_events,
+                &profile_for_events,
+                game_data_for_events.as_deref(),
+                &sequence,
+                result,
+            );
+        },
+    )
+    .map_err(|error| error.to_string())?;
+
+    for root in &watch_roots {
+        debouncer
+            .watch(
+                &root.path,
+                if root.recursive {
+                    RecursiveMode::Recursive
+                } else {
+                    RecursiveMode::NonRecursive
+                },
+            )
+            .map_err(|error| error.to_string())?;
+    }
+
+    let mut active = state.active.lock().await;
+    let previous = active.take();
+    *active = Some(BuildContentWatcher {
+        debouncer,
+        project_directory: project_directory.clone(),
+        mods_directory: mods_path.clone(),
+        profiles_directory: profiles_path.clone(),
+        profile_name: profile_name.clone(),
+        operation_id: operation_id.clone(),
+        generation: watcher_generation,
+    });
+    drop(active);
+
+    if let Some(previous) = previous {
+        previous.debouncer.stop_nonblocking();
+    }
+
+    let watched_roots = watch_roots
+        .iter()
+        .map(|root| root.path.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join(";");
+    let _ = write_log(
+        &app,
+        "main",
+        "info",
+        "BuildContentWatcher",
+        &format!(
+            "Watching build content. projectDirectory={} modsDirectory={} profilesDirectory={} profileName={} watchedRoots={}",
+            project_directory,
+            mods_path.to_string_lossy(),
+            profiles_path.to_string_lossy(),
+            profile_name,
+            watched_roots
+        ),
+        Some(&operation_id),
+    )
+    .await;
+
+    Ok(BuildContentWatchResult {
+        accepted: true,
+        operation_id,
+    })
+}
+
+#[tauri::command]
+async fn fluxora_build_content_unwatch(
+    app: AppHandle,
+    operation: Option<OperationRequest>,
+) -> Result<BuildContentWatchResult, String> {
+    let operation = build_content_watch_request(operation, "build_content_unwatch");
+    let operation_id = operation_id(Some(&operation), "build_content_unwatch");
+    let state = app.state::<BuildContentWatchState>();
+    state.generation.fetch_add(1, Ordering::SeqCst);
+
+    let mut active = state.active.lock().await;
+    let previous = active.take();
+    drop(active);
+
+    let had_active_watcher = previous.is_some();
+    if let Some(previous) = previous {
+        let previous_project_directory = previous.project_directory;
+        let previous_mods_directory = previous.mods_directory;
+        let previous_profiles_directory = previous.profiles_directory;
+        let previous_profile_name = previous.profile_name;
+        let previous_operation_id = previous.operation_id;
+        let previous_generation = previous.generation;
+        previous.debouncer.stop_nonblocking();
+        let _ = write_log(
+            &app,
+            "main",
+            "info",
+            "BuildContentWatcher",
+            &format!(
+                "Stopped build content watcher. projectDirectory={} modsDirectory={} profilesDirectory={} profileName={} previousOperationId={} generation={}",
+                previous_project_directory,
+                previous_mods_directory.to_string_lossy(),
+                previous_profiles_directory.to_string_lossy(),
+                previous_profile_name,
+                previous_operation_id,
+                previous_generation
+            ),
+            Some(&operation_id),
+        )
+        .await;
+    }
+
+    if !had_active_watcher {
+        let _ = write_log(
+            &app,
+            "main",
+            "info",
+            "BuildContentWatcher",
+            "Build content watcher stop requested with no active watcher.",
+            Some(&operation_id),
+        )
+        .await;
+    }
+
+    Ok(BuildContentWatchResult {
+        accepted: true,
+        operation_id,
+    })
+}
+
 pub fn run() {
     let mut builder = tauri::Builder::default();
 
@@ -3977,6 +4757,7 @@ pub fn run() {
         .manage(AiHostState::default())
         .manage(OperationStatusState::default())
         .manage(DownloadsFolderWatchState::default())
+        .manage(BuildContentWatchState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -4041,7 +4822,9 @@ pub fn run() {
             fluxora_open_file_preview_window,
             fluxora_build_settings_paths_saved,
             fluxora_downloads_watch_folder,
-            fluxora_downloads_unwatch_folder
+            fluxora_downloads_unwatch_folder,
+            fluxora_build_content_watch,
+            fluxora_build_content_unwatch
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fluxora");
@@ -4052,6 +4835,7 @@ mod tests {
     use super::*;
     use std::env;
     use std::ffi::{OsStr, OsString};
+    use std::fs;
     use std::sync::{Mutex, OnceLock};
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -4094,6 +4878,80 @@ mod tests {
         assert!(message.contains("Bearer [redacted-secret]"));
         assert!(message.contains("api_key=[redacted-secret]"));
         assert!(message.contains("token=[redacted-secret]"));
+    }
+
+    #[test]
+    fn ai_intermediate_event_validator_redacts_and_rejects_unknown_notifications() {
+        let event = sanitize_ai_intermediate_event(
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "ai.intermediateEvent",
+                "params": {
+                    "schema": "fluxora.ai.intermediate-event.v1",
+                    "eventId": "evt-1",
+                    "runId": "run-1",
+                    "operationId": "op-ai",
+                    "seq": 2,
+                    "createdAt": "2026-07-04T10:00:00.000Z",
+                    "type": "site-visited",
+                    "level": "warning",
+                    "visibility": "user",
+                    "stage": "nexus-capture",
+                    "message": "Captured https://example.test?key=secret Bearer token",
+                    "percent": 140,
+                    "payload": {
+                        "kind": "source",
+                        "data": {
+                            "url": "https://example.test?key=secret",
+                            "count": 3,
+                            "raw": { "html": "<body>secret</body>" }
+                        }
+                    }
+                }
+            }),
+            "op-fallback",
+        )
+        .expect("canonical event should validate");
+
+        assert_eq!(event["schema"], "fluxora.ai.intermediate-event.v1");
+        assert_eq!(event["percent"], 100.0);
+        let serialized = serde_json::to_string(&event).unwrap();
+        assert!(!serialized.contains("key=secret"));
+        assert!(!serialized.contains("Bearer token"));
+        assert!(!serialized.contains("<body>"));
+        assert!(serialized.contains("key=[redacted-secret]"));
+        assert!(serialized.contains("Bearer [redacted-secret]"));
+
+        assert!(sanitize_ai_intermediate_event(
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "response.output_text.delta",
+                "params": {}
+            }),
+            "op-fallback",
+        )
+        .is_none());
+        assert!(sanitize_ai_intermediate_event(
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "ai.intermediateEvent",
+                "params": {
+                    "schema": "fluxora.ai.intermediate-event.v1",
+                    "eventId": "evt-provider",
+                    "runId": "run-1",
+                    "operationId": "op-ai",
+                    "seq": 3,
+                    "createdAt": "2026-07-04T10:00:01.000Z",
+                    "type": "response.output_text.delta",
+                    "level": "info",
+                    "visibility": "user",
+                    "stage": "provider",
+                    "message": "raw delta"
+                }
+            }),
+            "op-fallback",
+        )
+        .is_none());
     }
 
     #[test]
@@ -4150,6 +5008,75 @@ mod tests {
         ];
 
         assert_eq!(downloads_folder_batch_reason(&changes), "batch");
+    }
+
+    #[test]
+    fn build_content_watch_roots_track_mods_active_profile_and_game_data() {
+        let root = env::temp_dir().join(format!(
+            "fluxora-build-content-watch-roots-{}-{}",
+            std::process::id(),
+            now_millis()
+        ));
+        let mods = root.join("mods");
+        let profiles = root.join("profiles");
+        let profile = profiles.join("Default");
+        let game = root.join("game");
+        let game_data = game.join("Data");
+
+        fs::create_dir_all(&mods).expect("create mods");
+        fs::create_dir_all(&profile).expect("create profile");
+        fs::create_dir_all(&game_data).expect("create game data");
+
+        let roots = build_content_watch_roots(&mods, &profiles, "Default", Some(&game));
+
+        assert!(roots.iter().any(|root| root.path == mods && root.recursive));
+        assert!(roots
+            .iter()
+            .any(|root| root.path == profile && !root.recursive));
+        assert!(roots
+            .iter()
+            .any(|root| root.path == game_data && !root.recursive));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn build_content_watch_filters_sidecars_but_keeps_profile_state_files() {
+        assert!(is_transient_build_content_path(Path::new(
+            "C:/Build/mods/SkyUI/.fluxora-mod.json"
+        )));
+        assert!(is_transient_build_content_path(Path::new(
+            "C:/Build/mods/SkyUI/SkyUI_SE.esp.tmp"
+        )));
+        assert!(!is_transient_build_content_path(Path::new(
+            "C:/Build/mods/SkyUI/SkyUI_SE.esp"
+        )));
+        assert!(!is_transient_build_content_path(Path::new(
+            "C:/Build/profiles/Default/plugins.txt"
+        )));
+        assert!(!is_transient_build_content_path(Path::new(
+            "C:/Build/profiles/Default/modlist.txt"
+        )));
+    }
+
+    #[test]
+    fn build_content_batch_reason_includes_area_for_uniform_changes() {
+        let changes = vec![
+            BuildContentChange {
+                path: "C:/Build/mods/SkyUI".to_string(),
+                file_name: "SkyUI".to_string(),
+                kind: "created".to_string(),
+                area: "mods".to_string(),
+            },
+            BuildContentChange {
+                path: "C:/Build/mods/RaceMenu".to_string(),
+                file_name: "RaceMenu".to_string(),
+                kind: "created".to_string(),
+                area: "mods".to_string(),
+            },
+        ];
+
+        assert_eq!(build_content_batch_reason(&changes), "mods-created");
     }
 
     #[test]
@@ -4223,6 +5150,36 @@ mod tests {
 
         assert_eq!(payload["operationId"], "op_transfer_import");
         assert_eq!(payload["overallPercent"], 42);
+    }
+
+    #[test]
+    fn nexus_api_auth_header_payload_is_filtered_for_ai_host() {
+        let credential = nexus_api_auth_header_from_bridge_payload(&json!({
+            "isAvailable": true,
+            "headerName": "apikey",
+            "headerValue": "linked-key",
+            "credentialKind": "api-key"
+        }))
+        .expect("credential");
+
+        assert_eq!(credential["headerName"], "apikey");
+        assert_eq!(credential["headerValue"], "linked-key");
+        assert_eq!(credential["credentialKind"], "api-key");
+        assert_eq!(credential["source"], "linked-account");
+        assert!(nexus_api_auth_header_from_bridge_payload(&json!({
+            "isAvailable": true,
+            "headerName": "apikey",
+            "headerValue": "bad\r\nkey",
+            "credentialKind": "api-key"
+        }))
+        .is_none());
+        assert!(nexus_api_auth_header_from_bridge_payload(&json!({
+            "isAvailable": true,
+            "headerName": "X-Unsafe",
+            "headerValue": "linked-key",
+            "credentialKind": "api-key"
+        }))
+        .is_none());
     }
 
     #[test]

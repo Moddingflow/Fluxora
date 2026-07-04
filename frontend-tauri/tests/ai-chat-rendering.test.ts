@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AiChatPanel,
+  aiVisibleRunEventsForRun,
   renderAiChatMessageContent
 } from '../src/renderer/features/ai/AiChatPanel';
 import { AI_CONTEXT_SOURCE_URL_PREFIX } from '../src/renderer/features/ai/ai-chat-security';
@@ -18,6 +19,7 @@ import type {
   FluxoraAiCaseState,
   FluxoraAiCitation,
   FluxoraAiContextUsage,
+  FluxoraAiIntermediateEvent,
   FluxoraAiResearchReport
 } from '../src/shared/fluxora-api';
 
@@ -75,6 +77,24 @@ const createContextUsage = (
   ...overrides
 });
 
+const createIntermediateEvent = (
+  overrides: Partial<FluxoraAiIntermediateEvent> = {}
+): FluxoraAiIntermediateEvent => ({
+  schema: 'fluxora.ai.intermediate-event.v1',
+  eventId: 'event-progress-1',
+  runId: 'run-thinking',
+  operationId: 'op_ai_thinking',
+  seq: 1,
+  createdAt: '2026-07-03T09:05:00.250Z',
+  type: 'progress',
+  level: 'info',
+  visibility: 'user',
+  stage: 'prompt-preparation',
+  message: 'Preparing prompt and build context.',
+  percent: 5,
+  ...overrides
+});
+
 const stateWithMessages = (
   messages: AiMessage[],
   chatOverrides: Partial<AiChatState['chats'][number]> = {}
@@ -103,10 +123,11 @@ const stateWithMessages = (
   };
 };
 
-const renderPanel = (state: AiChatState) =>
+const renderPanel = (state: AiChatState, props: { showCheckedSites?: boolean } = {}) =>
   renderToStaticMarkup(
     React.createElement(AiChatPanel, {
       state,
+      showCheckedSites: props.showCheckedSites,
       onCancel: noop,
       onClose: noop,
       onCloseChat: noop,
@@ -118,6 +139,8 @@ const renderPanel = (state: AiChatState) =>
       onToggleCollapse: noop
     })
   );
+
+const sourceButtonCount = (markup: string) => markup.match(/class="ai-chat-source"/g)?.length ?? 0;
 
 const researchGeneratedAt = '2026-07-01T08:00:00.000Z';
 
@@ -326,16 +349,99 @@ describe('AI chat message rendering', () => {
       'run-thinking',
       { isStreaming: true }
     );
+    const baseState = stateWithMessages([userMessage, streamingMessage]);
+    const runEvent = createIntermediateEvent();
     const markup = renderPanel({
-      ...stateWithMessages([userMessage, streamingMessage]),
+      ...baseState,
+      activeRunId: 'run-thinking',
+      intermediateEvents: [runEvent],
       isRunning: true,
+      session: {
+        ...baseState.session,
+        intermediateEvents: [runEvent],
+        chats: baseState.session.chats.map((chat) => ({
+          ...chat,
+          intermediateEvents: [runEvent]
+        }))
+      },
       status: 'thinking'
     });
 
     expect(markup).toContain('ai-chat-progress');
-    expect(markup).toContain('Думаю');
+    expect(markup).toContain('Работаю');
+    expect(markup).toContain('Preparing prompt and build context.');
+    expect(markup).toContain('Prompt Preparation');
+    expect(markup).toContain('5%');
     expect(markup).not.toContain('Полуответ');
     expect(markup).not.toContain('Это еще поток');
+  });
+
+  it('derives visible progress from canonical host events only', () => {
+    const run = {
+      id: 'run-progress-events',
+      operationId: 'op-progress-events'
+    };
+    const events = aiVisibleRunEventsForRun(
+      {
+        activeRunId: run.id,
+        intermediateEvents: [
+          createIntermediateEvent({
+            eventId: 'event-developer',
+            runId: run.id,
+            operationId: run.operationId,
+            seq: 1,
+            visibility: 'developer',
+            message: 'developer heartbeat'
+          }),
+          createIntermediateEvent({
+            eventId: 'event-user-2',
+            runId: run.id,
+            operationId: run.operationId,
+            seq: 3,
+            stage: 'provider-attempt',
+            message: 'Provider attempt is running.'
+          }),
+          createIntermediateEvent({
+            eventId: 'event-audit',
+            runId: run.id,
+            operationId: run.operationId,
+            seq: 4,
+            visibility: 'audit',
+            message: 'audit detail'
+          }),
+          createIntermediateEvent({
+            eventId: 'event-user-1',
+            runId: run.id,
+            operationId: run.operationId,
+            seq: 2,
+            stage: 'local-inspection',
+            message: 'Local inspection finished.'
+          })
+        ],
+        isRunning: true
+      },
+      4
+    );
+
+    expect(events.map((event) => event.eventId)).toEqual(['event-user-1', 'event-user-2']);
+    expect(events.map((event) => event.message).join(' ')).not.toContain('developer heartbeat');
+    expect(events.map((event) => event.message).join(' ')).not.toContain('audit detail');
+    expect(
+      aiVisibleRunEventsForRun(
+        {
+          activeRunId: run.id,
+          intermediateEvents: [
+            createIntermediateEvent({
+              eventId: 'event-user-hidden',
+              runId: run.id,
+              operationId: run.operationId
+            })
+          ],
+          isRunning: false
+        },
+        4
+      )
+    ).toEqual([]);
   });
 
   it('hides internal status, skill and subagent planning chrome from the chat surface', () => {
@@ -427,8 +533,10 @@ describe('AI chat message rendering', () => {
     expect(plainMarkup).not.toContain('ai-chat-subagents');
     expect(plainMarkup).not.toContain('ai-chat-research');
     expect(sourceOnlyMarkup).not.toContain('ai-chat-research');
-    expect(sourceOnlyMarkup).toContain('Fluxora docs');
-    expect(hiddenMetadataMarkup).toContain('Fluxora docs');
+    expect(sourceOnlyMarkup).not.toContain('ai-chat-message__sources');
+    expect(sourceOnlyMarkup).not.toContain('Fluxora docs');
+    expect(hiddenMetadataMarkup).not.toContain('Fluxora docs');
+    expect(hiddenMetadataMarkup).not.toContain('Проверено');
     expect(hiddenMetadataMarkup).not.toContain('Why: build.summary context');
     expect(hiddenMetadataMarkup).not.toContain('ai-chat-message__cost');
     expect(hiddenMetadataMarkup).not.toContain('Actual USD');
@@ -451,7 +559,112 @@ describe('AI chat message rendering', () => {
     expect(plannedMarkup).not.toContain('Queue ');
   });
 
-  it('renders research sources without internal research stages or counts', () => {
+  it('hides checked-site domains when developer mode is off', () => {
+    const researchReport = createResearchReport();
+    const message = createAiMessage(
+      'assistant',
+      'Structured answer with cited evidence.',
+      new Date('2026-07-01T08:00:01Z'),
+      'run-research-hidden-sites',
+      {
+        agentStatus: 'done',
+        researchReport: {
+          ...researchReport,
+          snapshots: [
+            ...researchReport.snapshots,
+            {
+              ...researchReport.snapshots[0]!,
+              id: 'snapshot-nexus-api-weather-patch',
+              title: 'Nexus API weather metadata',
+              url: 'https://api.nexusmods.com/v1/games/skyrimspecialedition/mods/42'
+            }
+          ]
+        },
+        sources: [
+          {
+            id: 'web:maintainer-release',
+            title: 'Maintainer release notes',
+            url: 'https://github.com/example/weather-patch/releases',
+            kind: 'public-web',
+            provider: 'github'
+          }
+        ]
+      }
+    );
+    const markup = renderPanel(stateWithMessages([message]));
+
+    expect(markup).not.toContain('Проверено:');
+    expect(markup).not.toContain('ai-chat-message__sources');
+    expect(markup).not.toContain('github.com');
+    expect(markup).not.toContain('www.nexusmods.com');
+    expect(markup).not.toContain('api.nexusmods.com');
+    expect(markup).not.toContain('Maintainer release notes');
+    expect(markup).not.toContain('Weather Patch Nexus files');
+  });
+
+  it('renders deduped checked website domains for developers', () => {
+    const researchReport = createResearchReport();
+    const message = createAiMessage(
+      'assistant',
+      'Structured answer with cited evidence.',
+      new Date('2026-07-01T08:00:01Z'),
+      'run-research-checked-sites',
+      {
+        agentStatus: 'done',
+        researchReport: {
+          ...researchReport,
+          sources: [
+            ...researchReport.sources,
+            {
+              ...nexusCitation,
+              id: 'nexus-api:weather-patch-description',
+              title: 'Weather Patch Nexus description',
+              url: 'https://www.nexusmods.com/skyrimspecialedition/mods/42?tab=description'
+            }
+          ],
+          snapshots: [
+            ...researchReport.snapshots,
+            {
+              ...researchReport.snapshots[0]!,
+              id: 'snapshot-nexus-api-weather-patch',
+              title: 'Nexus API weather metadata',
+              url: 'https://api.nexusmods.com/v1/games/skyrimspecialedition/mods/42'
+            }
+          ]
+        },
+        caseState: createCaseState(),
+        sources: [
+          {
+            id: 'web:maintainer-release',
+            title: 'Maintainer release notes',
+            url: 'https://github.com/example/weather-patch/releases',
+            kind: 'public-web',
+            provider: 'github'
+          },
+          {
+            id: 'web:maintainer-issue',
+            title: 'Maintainer issue tracker',
+            url: 'https://github.com/example/weather-patch/issues/12',
+            kind: 'public-web',
+            provider: 'github'
+          }
+        ]
+      }
+    );
+    const markup = renderPanel(stateWithMessages([message]), { showCheckedSites: true });
+
+    expect(markup).toContain('Проверено:');
+    expect(markup).toContain('github.com');
+    expect(markup).toContain('www.nexusmods.com');
+    expect(markup).toContain('api.nexusmods.com');
+    expect(sourceButtonCount(markup)).toBe(3);
+    expect(markup).not.toContain('Maintainer release notes');
+    expect(markup).not.toContain('Maintainer issue tracker');
+    expect(markup).not.toContain('Weather Patch Nexus files');
+    expect(markup).not.toContain('Nexus API weather metadata');
+  });
+
+  it('keeps research metadata hidden without internal research stages or counts', () => {
     const message = createAiMessage(
       'assistant',
       'Structured answer with cited evidence.',
@@ -474,8 +687,9 @@ describe('AI chat message rendering', () => {
     );
     const markup = renderPanel(stateWithMessages([message]));
 
-    expect(markup).toContain('Maintainer release notes');
-    expect(markup).toContain('Weather Patch Nexus files');
+    expect(markup).not.toContain('Проверено:');
+    expect(markup).not.toContain('Maintainer release notes');
+    expect(markup).not.toContain('Weather Patch Nexus files');
     expect(markup).not.toContain('ai-chat-research');
     expect(markup).not.toContain('Local');
     expect(markup).not.toContain('Judge');
@@ -523,7 +737,7 @@ describe('AI chat message rendering', () => {
     expect(markup).not.toContain('research limitation leaves Nexus evidence incomplete');
   });
 
-  it('keeps source URLs behind safe source validation', () => {
+  it('does not render internal context or unsafe URLs as checked websites', () => {
     const message = createAiMessage(
       'assistant',
       'Sources checked.',
@@ -538,22 +752,61 @@ describe('AI chat message rendering', () => {
           {
             id: 'safe-source',
             title: 'Safe maintainer page',
-            url: 'https://example.test/maintainer'
+            url: 'https://safe.example.test/maintainer'
+          },
+          {
+            id: 'local-context',
+            title: 'Local build context',
+            url: `${AI_CONTEXT_SOURCE_URL_PREFIX}build.summary`,
+            kind: 'context-source',
+            provider: 'fluxora-local-context',
+            trust: 'local-context'
+          },
+          {
+            id: 'structured-evidence',
+            title: 'Structured evidence id',
+            url: 'https://internal.example.test/evidence/structured',
+            kind: 'structured-evidence-id',
+            provider: 'fluxora-local-context'
           },
           {
             id: 'unsafe-source',
             title: 'Unsafe source',
             url: 'javascript:alert(1)'
+          },
+          {
+            id: 'malformed-source',
+            title: 'Malformed source',
+            url: 'not a url'
+          },
+          {
+            id: 'whitespace-source',
+            title: 'Whitespace source',
+            url: ' https://spaces.example.test/maintainer'
+          },
+          {
+            id: 'mailto-source',
+            title: 'Maintainer email',
+            url: 'mailto:privacy@example.test'
           }
         ]
       }
     );
-    const markup = renderPanel(stateWithMessages([message]));
+    const markup = renderPanel(stateWithMessages([message]), { showCheckedSites: true });
 
-    expect(markup).toContain('Safe maintainer page');
-    expect(markup).toContain('Unsafe source');
-    expect(markup).toContain('Blocked unsafe source URL');
-    expect(markup).toContain('disabled=""');
+    expect(markup).toContain('Проверено:');
+    expect(markup).toContain('safe.example.test');
+    expect(sourceButtonCount(markup)).toBe(1);
+    expect(markup).not.toContain('Safe maintainer page');
+    expect(markup).not.toContain('Local build context');
+    expect(markup).not.toContain('Structured evidence id');
+    expect(markup).not.toContain('Unsafe source');
+    expect(markup).not.toContain('Malformed source');
+    expect(markup).not.toContain('Whitespace source');
+    expect(markup).not.toContain('Maintainer email');
+    expect(markup).not.toContain('internal.example.test');
+    expect(markup).not.toContain('spaces.example.test');
+    expect(markup).not.toContain('privacy@example.test');
     expect(markup).not.toContain('javascript:alert');
   });
 

@@ -28,6 +28,7 @@ namespace fluxora::test_hooks
     std::wstring resolvedNexusRedirectUriForTest();
     std::wstring extractSupabaseCredentialValueForTest(const std::wstring& json);
     std::wstring resolvedNexusClientSecretForTest();
+    std::wstring protectNexusSecretForTest(const std::wstring& value);
 }
 #endif
 
@@ -97,6 +98,79 @@ namespace fluxora::tests
     }
 
 #ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
+    TEST(NexusModsAuthServiceTests, ApiAuthHeaderUsesProtectedApiKeyForTrustedNativeServices)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.username = L"modder";
+        auth.userId = L"42";
+        auth.protectedApiKey = nexus_auth_test_hooks::protectNexusSecretForTest(L"linked-api-key");
+        settings.saveNexusModsAuth(auth);
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsApiAuthHeader header = service.apiAuthHeader();
+
+        EXPECT_TRUE(header.isAvailable);
+        EXPECT_EQ(header.headerName, L"apikey");
+        EXPECT_EQ(header.headerValue, L"linked-api-key");
+        EXPECT_EQ(header.credentialKind, L"api-key");
+
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, ApiAuthHeaderUsesOAuthBearerWhenApiKeyIsAbsent)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.username = L"modder";
+        auth.userId = L"42";
+        auth.protectedAccessToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"linked-access-token");
+        settings.saveNexusModsAuth(auth);
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsApiAuthHeader header = service.apiAuthHeader();
+
+        EXPECT_TRUE(header.isAvailable);
+        EXPECT_EQ(header.headerName, L"Authorization");
+        EXPECT_EQ(header.headerValue, L"Bearer linked-access-token");
+        EXPECT_EQ(header.credentialKind, L"oauth");
+
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, ApiAuthHeaderIsUnavailableWithoutLinkedAccount)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsApiAuthHeader header = service.apiAuthHeader();
+
+        EXPECT_FALSE(header.isAvailable);
+        EXPECT_TRUE(header.headerName.empty());
+        EXPECT_TRUE(header.headerValue.empty());
+
+        settings.shutdown();
+    }
+
     TEST(NexusModsAuthServiceTests, DefaultRedirectUriUsesRegisteredLoopbackCallback)
     {
         EXPECT_EQ(

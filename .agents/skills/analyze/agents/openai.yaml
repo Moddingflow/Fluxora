@@ -1,0 +1,4 @@
+interface:
+  display_name: "Analyze"
+  short_description: "Research and diagnose build issues"
+  default_prompt: "Use $analyze to research the issue and diagnose the local build failure."

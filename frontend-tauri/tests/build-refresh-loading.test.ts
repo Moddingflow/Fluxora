@@ -38,4 +38,20 @@ describe('build refresh loading', () => {
     expect(styles).toContain('min-height: 48px;');
     expect(styles).toContain('.workspace-skeleton');
   });
+
+  it('refreshes mods and plugins from filesystem watcher events without loading chrome', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+
+    expect(app).toMatch(/window\.fluxora\.buildContent\s*\.\s*watch/);
+    expect(app).not.toContain('modsDirectory: selectedProject.projectDirectory');
+    expect(app).toContain('modsDirectory,');
+    expect(app).toContain('profilesDirectory,');
+    expect(app).toContain("createRendererOperationId('build_content_watch')");
+    expect(app).toMatch(/window\.fluxora\.buildContent\s*\.\s*onChanged/);
+    expect(app).toContain("createRendererOperationId('build_content_mods_changed')");
+    expect(app).toContain("createRendererOperationId('build_content_plugins_changed')");
+    expect(app).toContain('showBusy: false');
+    expect(app).toContain('showLoading: false');
+    expect(app).toContain('resetScroll: false');
+  });
 });

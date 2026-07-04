@@ -203,6 +203,13 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    // Trusted native-only helper for Fluxora-owned background services. The
+    // returned JSON contains the current Nexus API HTTP auth header and must not
+    // be exposed through renderer-facing DTOs or logs.
+    FLUXORA_CORE_API int fluxora_get_nexusmods_api_auth_header(
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     // Starts the official Nexus Mods OAuth2 Authorization Code + PKCE flow for
     // public desktop applications. The core opens the system browser, listens
     // for the registered localhost callback, exchanges the code for tokens, and

@@ -33,7 +33,10 @@ import {
   type FluxoraAiModResearchFinding
 } from '../src/shared/ai-mod-research-pipeline';
 import { createFluxoraAiTaskPlanningBundle } from '../src/shared/ai-task-planner';
-import type { FluxoraApi } from '../src/shared/fluxora-api';
+import type {
+  FluxoraAiIntermediateEvent,
+  FluxoraApi
+} from '../src/shared/fluxora-api';
 
 const createMemoryStorage = () => {
   const values = new Map<string, string>();
@@ -44,6 +47,30 @@ const createMemoryStorage = () => {
     values
   };
 };
+
+const createIntermediateEvent = (
+  overrides: Partial<FluxoraAiIntermediateEvent> = {}
+): FluxoraAiIntermediateEvent => ({
+  schema: 'fluxora.ai.intermediate-event.v1',
+  eventId: 'event-runtime-1',
+  runId: 'run-runtime',
+  operationId: 'op_ai_runtime',
+  seq: 1,
+  createdAt: '2026-07-03T10:00:00.000Z',
+  type: 'progress',
+  level: 'info',
+  visibility: 'user',
+  stage: 'provider-attempt',
+  message: 'Provider attempt is running.',
+  percent: 58,
+  payload: {
+    kind: 'provider-attempt',
+    data: {
+      providerId: 'gemini'
+    }
+  },
+  ...overrides
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -126,6 +153,20 @@ describe('AI chat runtime', () => {
     );
     const sessionWithPrompt = {
       ...session,
+      intermediateEvents: [
+        createIntermediateEvent({
+          eventId: 'event-secret-count-only',
+          runId: run.id,
+          operationId: run.operationId,
+          message: 'Provider attempt is running.',
+          payload: {
+            kind: 'provider-attempt',
+            data: {
+              note: 'token=super-secret-value'
+            }
+          }
+        })
+      ],
       messages: [createAiMessage('user', prompt, new Date('2026-06-29T10:00:01Z'), run.id)],
       runs: [run]
     };
@@ -146,6 +187,9 @@ describe('AI chat runtime', () => {
     ]);
     expect(JSON.stringify(logs)).not.toContain('super-secret-value');
     expect(JSON.stringify(supportSnapshot)).not.toContain(prompt);
+    expect(JSON.stringify(supportSnapshot)).not.toContain('event-secret-count-only');
+    expect(JSON.stringify(supportSnapshot)).not.toContain('super-secret-value');
+    expect(supportSnapshot.sessions[0]?.intermediateEventCount).toBe(1);
     expect(supportSnapshot.sessions[0]?.messages[0]?.textRedacted).toBe(true);
     expect(optedInSnapshot.sessions[0]?.messages[0]?.text).toBe(prompt);
     expect(redactAiTextForLog('Bearer abcdefghijklmnopqrstuvwxyz')).toBe(
@@ -163,6 +207,32 @@ describe('AI chat runtime', () => {
     );
 
     expect(request).toEqual({
+      enabled: true,
+      mode: 'nexus-api-first',
+      allowAuthenticatedPages: false,
+      allowBrowserSandbox: false,
+      allowGeminiGoogleSearch: true,
+      allowPublicWebFetch: false,
+      deepResearchApproved: false
+    });
+
+    expect(
+      createAiResearchRequestForPrompt('Проверь все моды на отсутствующие требования', 'byok')
+    ).toEqual({
+      enabled: true,
+      mode: 'nexus-api-first',
+      allowAuthenticatedPages: false,
+      allowBrowserSandbox: false,
+      allowGeminiGoogleSearch: true,
+      allowPublicWebFetch: false,
+      deepResearchApproved: false,
+      auditScope: 'batch-requirements',
+      maxNexusTargets: 128,
+      maxNexusInitialTargets: 128,
+      maxNexusApiRequests: 256
+    });
+
+    expect(createAiResearchRequestForPrompt('Посмотри Nexus Mods через API', 'byok')).toEqual({
       enabled: true,
       mode: 'nexus-api-first',
       allowAuthenticatedPages: false,
@@ -235,6 +305,7 @@ describe('AI chat runtime', () => {
       new Date('2026-06-30T00:00:00.000Z')
     );
     const aiApi = {
+      onRunEvent: vi.fn(() => () => undefined),
       chatRespond: vi.fn(async () => ({
         operationId: 'op_ai_chat_run',
         providerId: 'local-dry-run',
@@ -365,12 +436,107 @@ describe('AI chat runtime', () => {
     expect(aiApi.chatRespond).toHaveBeenCalledWith(
       expect.objectContaining({
         operationId: 'op_ai_chat_run',
+        runId: run.id,
         modelId: 'local-dry-run',
         providerId: 'local-dry-run',
         routingPreset: 'free-demo',
         stream: true
       })
     );
+  });
+
+  it('forwards matching host intermediate events and persists them for autonomous runs', async () => {
+    vi.useFakeTimers();
+    const session = createAiSessionForScope({ projectId: 'skyrim-main' });
+    const run = createAiRunForPrompt(session, 'op_ai_stream_events', 'check plugins');
+    const storage = createMemoryStorage();
+    const forwarded: FluxoraAiIntermediateEvent[] = [];
+    let runEventListener: ((event: FluxoraAiIntermediateEvent) => void) | null = null;
+    const matchingEvent = createIntermediateEvent({
+      eventId: 'event-provider-started',
+      runId: run.id,
+      operationId: run.operationId,
+      seq: 2,
+      stage: 'provider-attempt',
+      message: 'Provider attempt started.',
+      percent: 58
+    });
+    const aiApi = {
+      onRunEvent: vi.fn((callback: (event: FluxoraAiIntermediateEvent) => void) => {
+        runEventListener = callback;
+        return () => {
+          runEventListener = null;
+        };
+      }),
+      chatRespond: vi.fn(async () => {
+        runEventListener?.(
+          createIntermediateEvent({
+            eventId: 'event-other-run',
+            runId: 'run-other',
+            operationId: run.operationId,
+            seq: 1
+          })
+        );
+        runEventListener?.(matchingEvent);
+        return {
+          operationId: run.operationId,
+          providerId: 'local-dry-run',
+          modelId: 'local-dry-run',
+          routingPreset: 'free-demo',
+          status: 'done',
+          text: 'Scoped answer.',
+          streamChunks: [{ index: 0, text: 'Scoped answer.' }],
+          sources: [],
+          costEstimate: null,
+          ledgerEntry: undefined,
+          fallbackProviders: [],
+          taskPlan: null,
+          subagentSchedule: null,
+          selectedSkill: null,
+          toolCallsAllowed: false
+        };
+      })
+    } as unknown as FluxoraApi['ai'];
+
+    startHostAiRun(
+      run,
+      session,
+      'check plugins',
+      aiApi,
+      {
+        jobStorage: storage,
+        modelId: 'local-dry-run',
+        routingPreset: 'free-demo',
+        providerId: 'local-dry-run'
+      },
+      {
+        onEvent: () => undefined,
+        onFinish: () => undefined,
+        onRunEvent: (event) => forwarded.push(event)
+      }
+    );
+
+    await vi.runAllTimersAsync();
+
+    const persistedQueue = JSON.parse(
+      storage.values.get(aiAutonomousJobQueueStorageKey(session.scopeKey)) ?? '{}'
+    ) as { jobs?: Array<{ progressEvents?: Array<{ canonicalEvent?: FluxoraAiIntermediateEvent; internal: boolean; stage: string }> }> };
+    const canonicalProgress = persistedQueue.jobs?.[0]?.progressEvents?.filter(
+      (event) => event.canonicalEvent
+    ) ?? [];
+
+    expect(aiApi.onRunEvent).toHaveBeenCalledTimes(1);
+    expect(forwarded.map((event) => event.eventId)).toEqual(['event-provider-started']);
+    expect(canonicalProgress).toHaveLength(1);
+    expect(canonicalProgress[0]).toMatchObject({
+      internal: false,
+      stage: 'provider-attempt',
+      canonicalEvent: {
+        eventId: 'event-provider-started',
+        runId: run.id,
+        operationId: run.operationId
+      }
+    });
   });
 
   it('marks provider fallbacks as blocked diagnostics instead of silent template success', async () => {
@@ -380,6 +546,7 @@ describe('AI chat runtime', () => {
     const statuses: string[] = [];
     const diagnostics: string[] = [];
     const aiApi = {
+      onRunEvent: vi.fn(() => () => undefined),
       chatRespond: vi.fn(async () => ({
         operationId: 'op_ai_chat_run',
         providerId: 'local-dry-run',
@@ -522,6 +689,7 @@ describe('AI chat runtime', () => {
       diagnosis: diagnosisJudge
     });
     const aiApi = {
+      onRunEvent: vi.fn(() => () => undefined),
       chatRespond: vi.fn(async () => ({
         operationId: 'op_ai_structured_final',
         providerId: 'gemini',
@@ -585,6 +753,7 @@ describe('AI chat runtime', () => {
     const statuses: string[] = [];
     const diagnostics: string[] = [];
     const aiApi = {
+      onRunEvent: vi.fn(() => () => undefined),
       chatRespond: vi.fn(async () => ({
         operationId: 'op_ai_chat_run',
         providerId: 'gemini',
@@ -714,6 +883,7 @@ describe('AI chat runtime', () => {
     });
     const run = createAiRunForPrompt(session, 'op_ai_chat_run', 'new isolated question');
     const aiApi = {
+      onRunEvent: vi.fn(() => () => undefined),
       chatRespond: vi.fn(async () => ({
         operationId: 'op_ai_chat_run',
         providerId: 'local-dry-run',
@@ -777,6 +947,7 @@ describe('AI chat runtime', () => {
       routingPreset: 'byok'
     });
     const aiApi = {
+      onRunEvent: vi.fn(() => () => undefined),
       chatRespond: vi.fn(async () => ({
         operationId: 'op_ai_chat_run',
         providerId: 'gemini',

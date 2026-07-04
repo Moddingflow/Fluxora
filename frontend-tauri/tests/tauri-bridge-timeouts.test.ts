@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
+  FluxoraBuildContentWatchRequest,
   FluxoraExecutable,
   FluxoraProject,
   OperationRequest
@@ -369,6 +370,79 @@ describe('Tauri bridge request timeouts', () => {
           path: 'C:\\Fluxora\\Builds\\Foundation\\downloads\\mod.7z',
           fileName: 'mod.7z',
           kind: 'created'
+        }
+      ]
+    };
+    listener({ payload: event });
+    expect(callback).toHaveBeenCalledWith(event);
+
+    unsubscribe();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(dispose).toHaveBeenCalled();
+  });
+
+  it('routes build content watch commands through the typed Rust shell facade', async () => {
+    const watchRequest: FluxoraBuildContentWatchRequest = {
+      projectDirectory: 'C:\\Fluxora\\Builds\\Foundation',
+      modsDirectory: 'C:\\Fluxora\\Builds\\Foundation\\mods',
+      profilesDirectory: 'C:\\Fluxora\\Builds\\Foundation\\profiles',
+      profileName: 'Default',
+      gameDirectory: 'E:\\Steam\\Skyrim Special Edition'
+    };
+    const operation: OperationRequest = { operationId: 'op_build_content_watch' };
+    const unwatchRequest: OperationRequest = { operationId: 'op_build_content_unwatch' };
+    invokeMock
+      .mockResolvedValueOnce({ accepted: true, operationId: operation.operationId })
+      .mockResolvedValueOnce({ accepted: true, operationId: unwatchRequest.operationId });
+
+    const api = createTauriFluxoraApi();
+    await expect(api.buildContent.watch(watchRequest, operation)).resolves.toEqual({
+      accepted: true,
+      operationId: operation.operationId
+    });
+    await expect(api.buildContent.unwatch(unwatchRequest)).resolves.toEqual({
+      accepted: true,
+      operationId: unwatchRequest.operationId
+    });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'fluxora_build_content_watch', {
+      watchRequest,
+      operation
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'fluxora_build_content_unwatch', {
+      operation: unwatchRequest
+    });
+  });
+
+  it('subscribes to build content changes through the typed Tauri event bridge', async () => {
+    const dispose = vi.fn();
+    const callback = vi.fn();
+    listenMock.mockResolvedValue(dispose);
+
+    const api = createTauriFluxoraApi();
+    const unsubscribe = api.buildContent.onChanged(callback);
+
+    expect(listenMock).toHaveBeenCalledWith(
+      'fluxora:build-content:changed',
+      expect.any(Function)
+    );
+
+    const listener = listenMock.mock.calls[0][1] as (event: { payload: unknown }) => void;
+    const event = {
+      projectDirectory: 'C:\\Fluxora\\Builds\\Foundation',
+      modsDirectory: 'C:\\Fluxora\\Builds\\Foundation\\mods',
+      profilesDirectory: 'C:\\Fluxora\\Builds\\Foundation\\profiles',
+      profileName: 'Default',
+      eventId: 'evt_1_build_content_1',
+      sequence: 1,
+      reason: 'mods-created',
+      changes: [
+        {
+          path: 'C:\\Fluxora\\Builds\\Foundation\\mods\\SkyUI',
+          fileName: 'SkyUI',
+          kind: 'created',
+          area: 'mods'
         }
       ]
     };

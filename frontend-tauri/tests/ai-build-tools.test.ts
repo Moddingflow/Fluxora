@@ -60,6 +60,11 @@ const installedMods: FluxoraInstalledMod[] = [
     hasUpdate: true,
     sourceIsNexus: true,
     sourceIsModdingFlow: false,
+    sourceProvider: 'nexus',
+    sourceGameDomain: 'skyrimspecialedition',
+    sourceModId: '123',
+    sourceFileId: '456',
+    sourceUrl: 'https://www.nexusmods.com/skyrimspecialedition/mods/123?tab=files&file_id=456',
     isLocal: false,
     isTranslation: false,
     isPatch: false,
@@ -83,6 +88,11 @@ const installedMods: FluxoraInstalledMod[] = [
     hasUpdate: false,
     sourceIsNexus: false,
     sourceIsModdingFlow: false,
+    sourceProvider: '',
+    sourceGameDomain: '',
+    sourceModId: '',
+    sourceFileId: '',
+    sourceUrl: '',
     isLocal: true,
     isTranslation: false,
     isPatch: true,
@@ -392,6 +402,31 @@ describe('AI read-only build tools', () => {
     expect(logs.every((entry) => entry.operationId === 'op_ai_build_context')).toBe(true);
     expect(logs.map((entry) => entry.category)).toContain('AI.Tool');
 
+    const installedPageItem = snapshot.tools.find((tool) => tool.toolName === 'mods.installed')?.page
+      ?.items?.[0] as
+      | {
+          nexus?: {
+            fileId?: string;
+            gameDomain: string;
+            modId: string;
+            pageUrl: string;
+            provider: string;
+            sourceUrl?: string;
+          };
+        }
+      | undefined;
+    const orderPageItem = snapshot.tools.find((tool) => tool.toolName === 'mods.order')?.page
+      ?.items?.[0] as typeof installedPageItem;
+    expect(installedPageItem?.nexus).toMatchObject({
+      fileId: '456',
+      gameDomain: 'skyrimspecialedition',
+      modId: '123',
+      pageUrl: 'https://www.nexusmods.com/skyrimspecialedition/mods/123',
+      provider: 'nexus',
+      sourceUrl: 'https://www.nexusmods.com/skyrimspecialedition/mods/123?tab=files&file_id=456'
+    });
+    expect(orderPageItem?.nexus).toMatchObject(installedPageItem?.nexus ?? {});
+
     const buildSummary = snapshot.tools.find((tool) => tool.toolName === 'build.summary')?.output as {
       plugins?: {
         fullPluginSlots?: { active: number; limit: number };
@@ -455,6 +490,9 @@ describe('AI read-only build tools', () => {
     expect(serialized).toContain('"fullPluginSlots"');
     expect(serialized).toContain('"lightPluginSlots"');
     expect(serialized).toContain('"sourceMod": "Visual Pack"');
+    expect(serialized).toContain('"nexus"');
+    expect(serialized).toContain('"gameDomain": "skyrimspecialedition"');
+    expect(serialized).toContain('"modId": "123"');
     expect(serialized).toContain('"overwrite"');
     expect(serialized).toContain('"updateCheckStatus"');
     expect(serialized).toContain('"inventoryRole": "download-archive-queue"');

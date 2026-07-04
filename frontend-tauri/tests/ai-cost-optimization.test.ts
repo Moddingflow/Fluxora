@@ -17,6 +17,7 @@ describe('AI cost optimization and unit economics contract', () => {
     const api = createTauriFluxoraApi();
     const response = await api.ai.chatRespond({
       operationId: 'op_ai_cost_contract',
+      runId: 'run-ai-cost-contract',
       sessionId: 'session-cost',
       messages: [{ role: 'user', text: 'check this build cheaply' }],
       routingPreset: 'paid-economy'
@@ -77,13 +78,14 @@ describe('AI cost optimization and unit economics contract', () => {
     expect(sharedApi).toContain('FluxoraAiMarginTelemetry');
     expect(sharedApi).toContain('gross_margin_after_ai_cost');
     expect(sharedApi).toContain('orchestrationInternalCost?: number');
+    expect(sharedApi).toContain('actualInternalCost: number | null');
 
     expect(host).toContain('SAFE_PROMPT_MAX_MONTHLY_PERCENT');
     expect(host).toContain('FREE_DEMO_WALLET_CREDITS');
     expect(host).toContain('PAID_MONTHLY_WALLET_CREDITS');
     expect(host).toContain('cost_preflight_payload');
     expect(host).toContain('observe_prompt_cache');
-    expect(host).toContain('candidate_models(&params, research_bundle.as_ref())');
+    expect(host).toContain('candidate_models(params, research_bundle.as_ref())');
     expect(host).toContain('reply_cost_summary');
     expect(host).toContain('additional_cost');
     expect(host).toContain('"orchestrationInternalCost"');
@@ -106,7 +108,9 @@ describe('AI cost optimization and unit economics contract', () => {
 
     expect(app).not.toContain('FREE_DEMO_WALLET_CREDITS');
     expect(app).not.toContain('PAID_MONTHLY_WALLET_CREDITS');
-    expect(panel).toContain('aiCostLabel');
-    expect(panel).toContain('actualInternalCost');
+    expect(panel).not.toContain('FREE_DEMO_WALLET_CREDITS');
+    expect(panel).not.toContain('PAID_MONTHLY_WALLET_CREDITS');
+    expect(panel).not.toContain('aiCostLabel');
+    expect(panel).not.toContain('actualInternalCost');
   });
 });

@@ -516,6 +516,44 @@ iteration can move queue persistence into an AI-host SQLite store and replace
 request/response stdout with a long-lived response/event router without changing
 the renderer DTO schema.
 
+### AI Intermediate Run Events V1
+
+The first live AI progress stream is Fluxora-owned runtime event streaming, not
+provider-native token streaming. `FluxoraAIHost` emits JSON-RPC notifications on
+stdout with method `ai.intermediateEvent`; Tauri validates and redacts the
+payload, logs it to the AI host log with `operationId`, then forwards it to the
+renderer on `fluxora:ai:run-event` through
+`window.fluxora.ai.onRunEvent(callback)`.
+
+The shared DTO schema is `fluxora.ai.intermediate-event.v1`. Each event has
+`eventId`, renderer-created `runId`, `operationId`, monotonic `seq`,
+`createdAt`, canonical `type`, `level`, `visibility`, `stage`, `message`,
+optional `percent`, and an optional typed redacted `payload`. V1 event types are
+`progress`, `note`, `tool-started`, `tool-completed`, `site-visited`, `error`,
+and `heartbeat`; provider/OpenAI/Anthropic/Gemini raw event names are not part
+of the renderer contract.
+
+Events describe real host stages only: prompt/context preparation, local
+inspection, research routing, Nexus/web source capture or policy block,
+provider attempt/fallback, response finalization, heartbeat, and terminal
+blocked/error states. They do not carry assistant deltas, raw tool output, raw
+HTML, raw prompts, provider credentials, Nexus auth headers, cookies, tokens,
+stdout/stderr, or full logs. Renderer display treats all event text and URLs as
+untrusted and runs them through the existing AI chat sanitization path.
+
+The chat UI shows only `visibility: "user"` events as a compact latest status
+and collapsed step list while keeping final answer text hidden until completion.
+`developer` and `audit` events remain available for logging/debug surfaces but
+are not normal chat chrome. The autonomous job queue may persist canonical
+events in its bounded progress trail, capped at 80 entries. Support bundles
+record intermediate-event counts only and never include event payloads or
+messages by default.
+
+This stream is separate from C++ `operations.progress`. AI run events explain
+host orchestration for one chat run; C++ operation progress remains the source
+of truth for mod-management mutations and filesystem work. The two can share an
+`operationId` for correlation, but one must not be converted into the other.
+
 ### Phase 14 Skills System
 
 `frontend-tauri/src/shared/ai-skills.ts` defines the first Fluxora skills
@@ -593,6 +631,16 @@ downloads/installs, or concrete file-conflict samples, the route is
 `no-web/local-only` and no `searchBudget` is emitted. `searchBudget` is present
 only when local inspection is insufficient and external Nexus/search
 verification is allowed by policy.
+Explicit requirement/dependency audits are the narrow exception: local missing
+masters are treated as suspect evidence to verify through Nexus API/cache, not
+as a terminal local-only answer. Public Nexus page scraping still remains
+disabled unless a separate public-web policy explicitly allows it.
+When the user asks to audit every mod or the whole build for missing
+requirements, the route switches to `auditScope=batch-requirements`: Fluxora may
+collect a bounded official Nexus API/cache batch from local Nexus mod ids,
+report exact coverage and continuation limits, and stop on credential, quota,
+429, retry-after or availability failures instead of claiming that Nexus API
+research is forbidden.
 
 For the target staged mod research flow, `docs/ai/mod-research-pipeline.md` is
 the governing pre-code specification. It requires a single `FluxoraAIHost`

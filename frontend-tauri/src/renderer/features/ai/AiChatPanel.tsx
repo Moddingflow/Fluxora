@@ -19,15 +19,19 @@ import aiMicIcon from '../../../../../Icons/ai-mic.svg';
 import aiPlusIcon from '../../../../../Icons/ai-plus.svg';
 import closeTabIcon from '../../../../../Icons/circle-x.svg';
 import geminiIcon from '../../../../../Icons/gemini.svg';
-import type { FluxoraAiCitation, FluxoraAiContextUsage } from '../../../shared/fluxora-api';
+import type {
+  FluxoraAiCitation,
+  FluxoraAiContextUsage,
+  FluxoraAiResearchSnapshot
+} from '../../../shared/fluxora-api';
 import {
   AI_CHAT_PANEL_COLLAPSED_WIDTH,
   AI_CHAT_PANEL_MAX_WIDTH,
   AI_CHAT_PANEL_MIN_WIDTH,
   approximateAiContextUsageForDraft,
   aiStatusLabels,
-  type AiChatState,
   type AiContextEstimateState,
+  type AiChatState,
   type AiMessage
 } from './ai-chat-state';
 import { type AiProviderDiagnostic } from './ai-chat-settings';
@@ -36,6 +40,7 @@ import { AI_CONTEXT_SOURCE_URL_PREFIX, safeAiSourceUrl, sanitizeAiChatText } fro
 export interface AiChatPanelProps {
   hostReady?: boolean;
   providerDiagnostic?: AiProviderDiagnostic | null;
+  showCheckedSites?: boolean;
   state: AiChatState;
   onCancel: () => void;
   onClose: () => void;
@@ -68,6 +73,35 @@ const contextPercentFormat = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 1,
   minimumFractionDigits: 0
 });
+const AI_VISIBLE_RUN_EVENT_LIMIT = 5;
+
+const activeRunEvents = (
+  activeRunId: string | null,
+  events: AiChatState['intermediateEvents']
+): AiChatState['intermediateEvents'] =>
+  activeRunId
+    ? events
+        .filter((event) => event.runId === activeRunId && event.visibility === 'user')
+        .sort((left, right) => left.seq - right.seq || left.createdAt.localeCompare(right.createdAt))
+    : [];
+
+export const aiVisibleRunEventsForRun = (
+  state: Pick<AiChatState, 'activeRunId' | 'isRunning' | 'intermediateEvents'>,
+  limit = AI_VISIBLE_RUN_EVENT_LIMIT
+): AiChatState['intermediateEvents'] => {
+  if (!state.isRunning) {
+    return [];
+  }
+
+  return activeRunEvents(state.activeRunId, state.intermediateEvents).slice(-Math.max(1, limit));
+};
+
+const eventStageLabel = (stage: string): string =>
+  stage
+    .split(/[-_.\s]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ') || 'Progress';
 
 function AiContextUsageRing({
   estimateState,
@@ -140,30 +174,82 @@ const citationToAiSource = (
   trust: 'untrusted-external-content'
 });
 
+const snapshotToAiSource = (snapshot: FluxoraAiResearchSnapshot): FluxoraAiCitation => ({
+  id: snapshot.id,
+  title: snapshot.title,
+  url: snapshot.url,
+  capturedAt: snapshot.capturedAt,
+  kind: snapshot.kind,
+  provider: 'fluxora-research-snapshot',
+  trust: snapshot.trust
+});
+
 const isInternalAiContextSource = (source: FluxoraAiCitation) =>
   source.trust === 'local-context' ||
   source.kind === 'structured-evidence-id' ||
   source.url.trim().startsWith(AI_CONTEXT_SOURCE_URL_PREFIX);
 
-const aiSourcesForMessage = (message: AiMessage): FluxoraAiCitation[] => {
-  const sources = [
-    ...(message.sources ?? []),
-    ...(message.researchReport?.sources ?? []),
-    ...evidenceCardsForMessage(message).flatMap((card) => card.citations.map(citationToAiSource))
-  ];
-  const seen = new Set<string>();
+const aiSourceCandidatesForMessage = (message: AiMessage): FluxoraAiCitation[] => [
+  ...(message.sources ?? []),
+  ...(message.researchReport?.sources ?? []),
+  ...evidenceCardsForMessage(message).flatMap((card) => card.citations.map(citationToAiSource)),
+  ...(message.researchReport?.snapshots ?? []).map(snapshotToAiSource)
+];
 
-  return sources.filter((source) => {
-    if (isInternalAiContextSource(source)) {
-      return false;
+interface AiCheckedSite {
+  domain: string;
+  key: string;
+  url: string;
+}
+
+const checkedSiteForSource = (source: FluxoraAiCitation): AiCheckedSite | null => {
+  if (isInternalAiContextSource(source)) {
+    return null;
+  }
+
+  const originalUrl = source.url;
+  const trimmedUrl = originalUrl.trim();
+  if (!trimmedUrl || trimmedUrl.length !== originalUrl.length) {
+    return null;
+  }
+
+  const sourceUrl = safeAiSourceUrl(originalUrl);
+  if (!sourceUrl || !sourceUrl.startsWith('https://')) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(sourceUrl);
+    if (parsed.protocol !== 'https:' || !parsed.hostname) {
+      return null;
     }
-    const key = [source.id, source.url, source.title].join('|').toLowerCase();
-    if (seen.has(key)) {
-      return false;
+
+    const domain = parsed.hostname.toLowerCase();
+    return {
+      domain,
+      key: domain,
+      url: originalUrl
+    };
+  } catch {
+    return null;
+  }
+};
+
+const checkedSitesForMessage = (message: AiMessage): AiCheckedSite[] => {
+  const seen = new Set<string>();
+  const sites: AiCheckedSite[] = [];
+
+  for (const source of aiSourceCandidatesForMessage(message)) {
+    const site = checkedSiteForSource(source);
+    if (!site || seen.has(site.key)) {
+      continue;
     }
-    seen.add(key);
-    return true;
-  });
+
+    seen.add(site.key);
+    sites.push(site);
+  }
+
+  return sites;
 };
 
 type AiMessageTextBlock =
@@ -341,6 +427,7 @@ export const renderAiChatMessageContent = (text: string): ReactNode => {
 export function AiChatPanel({
   hostReady = true,
   providerDiagnostic = null,
+  showCheckedSites = false,
   state,
   onCancel,
   onClose,
@@ -372,6 +459,11 @@ export function AiChatPanel({
       (activeContextUsage || contextEstimateState === 'counting' || contextEstimateState === 'error') &&
       (activeChat.messages.length > 0 || state.activeRunId || contextEstimateState === 'counting')
   );
+  const visibleRunEvents = aiVisibleRunEventsForRun(state);
+  const latestRunEvent = visibleRunEvents.at(-1) ?? null;
+  const currentRunStatus = latestRunEvent
+    ? sanitizeAiChatText(latestRunEvent.message)
+    : 'Waiting for AI host progress.';
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -575,7 +667,8 @@ export function AiChatPanel({
           ) : null}
 
           {visibleMessages.map((message) => {
-            const messageSources = aiSourcesForMessage(message);
+            const checkedSites =
+              showCheckedSites && message.role === 'assistant' ? checkedSitesForMessage(message) : [];
 
             return (
               <article className="ai-chat-message" data-role={message.role} key={message.id}>
@@ -593,25 +686,22 @@ export function AiChatPanel({
                     ))}
                   </div>
                 ) : null}
-                {messageSources.length ? (
-                  <div className="ai-chat-message__sources" aria-label="AI sources">
-                    {messageSources.map((source) => {
-                      const sourceUrl = safeAiSourceUrl(source.url);
-                      const sourceLabel = sanitizeAiChatText(source.title || (sourceUrl ? source.url : source.id));
+                {checkedSites.length ? (
+                  <div className="ai-chat-message__sources" aria-label="Проверено">
+                    <span className="ai-chat-message__sources-label">Проверено:</span>
+                    {checkedSites.map((site) => {
                       return (
                         <button
-                          key={source.id}
+                          key={site.key}
+                          aria-label={`Открыть ${site.domain}`}
                           className="ai-chat-source"
-                          disabled={!sourceUrl}
-                          title={sourceUrl ?? 'Blocked unsafe source URL'}
+                          title={site.domain}
                           type="button"
                           onClick={() => {
-                            if (sourceUrl) {
-                              onOpenSource?.(sourceUrl);
-                            }
+                            onOpenSource?.(site.url);
                           }}
                         >
-                          {sourceLabel}
+                          {site.domain}
                         </button>
                       );
                     })}
@@ -622,13 +712,46 @@ export function AiChatPanel({
           })}
 
           {state.isRunning ? (
-            <div className="ai-chat-progress" role="status" aria-label={`AI ${activeStatusLabel}. Думаю`}>
-              <span className="ai-chat-progress__label">Думаю</span>
-              <span className="ai-chat-progress__dots" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </span>
+            <div
+              className="ai-chat-progress"
+              role="status"
+              aria-label={`AI ${activeStatusLabel}. ${currentRunStatus}`}
+            >
+              <div className="ai-chat-progress__headline">
+                <span className="ai-chat-progress__label">Работаю</span>
+                <span className="ai-chat-progress__current">{currentRunStatus}</span>
+                {latestRunEvent?.percent !== undefined ? (
+                  <span className="ai-chat-progress__percent">
+                    {Math.max(0, Math.min(100, Math.round(latestRunEvent.percent)))}%
+                  </span>
+                ) : null}
+                <span className="ai-chat-progress__dots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              </div>
+              {visibleRunEvents.length > 0 ? (
+                <details className="ai-chat-progress__details">
+                  <summary>Live steps</summary>
+                  <ol className="ai-chat-progress__steps">
+                    {visibleRunEvents.map((event) => (
+                      <li
+                        className="ai-chat-progress__step"
+                        data-level={event.level}
+                        key={event.eventId}
+                      >
+                        <span className="ai-chat-progress__step-stage">
+                          {eventStageLabel(event.stage)}
+                        </span>
+                        <span className="ai-chat-progress__step-message">
+                          {sanitizeAiChatText(event.message)}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                </details>
+              ) : null}
             </div>
           ) : null}
         </div>

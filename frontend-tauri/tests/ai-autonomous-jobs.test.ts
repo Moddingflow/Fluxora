@@ -13,6 +13,7 @@ import {
   pauseAiAutonomousJob,
   persistAiAutonomousJob,
   recoverAiAutonomousJobQueueAfterRestart,
+  recordAiAutonomousIntermediateEvent,
   recordAiAutonomousProgress,
   resumeAiAutonomousJob,
   saveAiAutonomousJobQueue,
@@ -21,7 +22,10 @@ import {
 } from '../src/renderer/features/ai/ai-autonomous-jobs';
 import { createAiRunForPrompt, createAiSessionForScope } from '../src/renderer/features/ai/ai-chat-runtime';
 import { createFluxoraAiTaskPlanningBundle } from '../src/shared/ai-task-planner';
-import type { FluxoraAiAutonomousJobBlockedReason } from '../src/shared/fluxora-api';
+import type {
+  FluxoraAiAutonomousJobBlockedReason,
+  FluxoraAiIntermediateEvent
+} from '../src/shared/fluxora-api';
 
 const createMemoryStorage = () => {
   const values = new Map<string, string>();
@@ -32,6 +36,24 @@ const createMemoryStorage = () => {
     values
   };
 };
+
+const createIntermediateEvent = (
+  overrides: Partial<FluxoraAiIntermediateEvent> = {}
+): FluxoraAiIntermediateEvent => ({
+  schema: 'fluxora.ai.intermediate-event.v1',
+  eventId: 'event-1',
+  runId: 'run-autonomous',
+  operationId: 'op_ai_autonomous',
+  seq: 1,
+  createdAt: '2026-07-03T10:00:00.000Z',
+  type: 'progress',
+  level: 'info',
+  visibility: 'user',
+  stage: 'provider-attempt',
+  message: 'Provider attempt is running.',
+  percent: 58,
+  ...overrides
+});
 
 describe('AI autonomous job queue', () => {
   it('creates a persistent background job with checkpoints, heartbeat and provider capability state', () => {
@@ -167,6 +189,46 @@ describe('AI autonomous job queue', () => {
     expect(completed.checkpoints.map((checkpoint) => checkpoint.title)).toEqual(
       expect.arrayContaining(['Verification checkpoint', 'Final report'])
     );
+  });
+
+  it('stores canonical intermediate events in the bounded progress trail', () => {
+    const session = createAiSessionForScope({ projectId: 'skyrim-main' });
+    const run = createAiRunForPrompt(session, 'op_ai_canonical_progress', 'run a long job');
+    const job = createAiAutonomousJob(
+      run,
+      session,
+      createFluxoraAiTaskPlanningBundle('run a long job', run.operationId)
+    );
+
+    const progressed = Array.from({ length: 85 }, (_, index) => index + 1).reduce(
+      (current, seq) =>
+        recordAiAutonomousIntermediateEvent(
+          current,
+          createIntermediateEvent({
+            eventId: `event-${seq}`,
+            runId: run.id,
+            operationId: run.operationId,
+            seq,
+            message: `Provider attempt ${seq}.`,
+            percent: seq
+          }),
+          new Date(Date.UTC(2026, 6, 3, 10, 0, 0) + seq * 1000)
+        ),
+      job
+    );
+
+    expect(progressed.progressEvents).toHaveLength(80);
+    expect(progressed.progressEvents[0]?.canonicalEvent?.eventId).toBe('event-6');
+    expect(progressed.progressEvents.at(-1)).toMatchObject({
+      stage: 'provider-attempt',
+      message: 'Provider attempt 85.',
+      percent: 85,
+      internal: false,
+      canonicalEvent: {
+        eventId: 'event-85',
+        visibility: 'user'
+      }
+    });
   });
 
   it('supports pause, resume and cancellation as explicit persistent states', () => {

@@ -105,6 +105,7 @@ Phase 11 extends `fluxora.bridge.v1` to WPF-parity settings and MO2 transfer:
 - When Nexus requires a confidential `client_secret` during token exchange, the C++ service resolves it from `FLUXORA_NEXUS_CLIENT_SECRET`, `NEXUS_CLIENT_SECRET`, `NEXUS_OAUTH_CLIENT_SECRET` or the Fluxora Supabase credential RPC/table using secret names `NEXUS_CLIENT_SECRET` / `NEXUS_OAUTH_CLIENT_SECRET`; the secret is never exposed through the Tauri renderer facade or bridge DTOs.
 - Nexus OAuth uses the registered loopback callback `http://127.0.0.1:8089/callback` by default. `FLUXORA_NEXUS_REDIRECT_URI`, `NEXUS_REDIRECT_URI`, `NEXUS_OAUTH_REDIRECT_URI` or matching Fluxora Supabase credential entries may override it for a different registered client, but the authorize and token exchange requests must use the exact same redirect URI.
 - Nexus downloads use the linked account automatically after OAuth login. C++ protects OAuth tokens locally and can still accept a legacy `apikey` credential through `nexus.connectWithApiKey` for compatibility, but the renderer must not require users to paste a Personal API Key during the normal connection flow.
+- AI Nexus research also uses the linked account automatically, but only through a trusted native-only path: Tauri main asks `FluxoraBridgeHost` for a transient Nexus API auth header, injects it into the AI host request as private `nativeNexusApiCredential`, and removes any renderer-supplied value before dispatch. The generic renderer bridge command rejects `nexus.getApiAuthHeader`, so API keys and OAuth tokens are never exposed through `window.fluxora` or stored in renderer state. If no Nexus account is linked, Nexus API research remains unavailable and the AI report must show that as missing credential evidence instead of pretending it searched.
 - Native host emits `operations.progress` JSON-RPC events during MO2 import. Tauri main subscribes through the bridge client and broadcasts them on the allowlisted `fluxora:operations:progress` channel.
 - Tauri Rust shell/facade expose typed `window.fluxora.settings.*`, `window.fluxora.nexus.*`, `window.fluxora.transfer.*` and `window.fluxora.operations.*` calls only; renderer still has no Node.js, filesystem, shell, native module or raw command access.
 - Renderer owns settings section state, language controls, single-theme mirroring into CSS, Nexus status display, MO2 source/destination form state, analysis display, transfer progress display and route/close guard while transfer is running. Theme customization controls are deferred until more supported themes are added.
@@ -529,6 +530,33 @@ Rules:
 - Progress payloads must be small and stable.
 - Existing native callbacks from FluxPack, MO2 import and build deletion map into this event shape.
 
+### AI run events
+
+AI intermediate run events are intentionally not `operations.progress`.
+`FluxoraAIHost` emits `ai.intermediateEvent` JSON-RPC notifications while a
+`chat.respond` request is in flight. Tauri main recognizes those notifications
+on the AI host stdout stream, validates the canonical
+`fluxora.ai.intermediate-event.v1` DTO, redacts text and typed payload values,
+logs the sanitized event on the AI host log with `operationId`, and emits the
+renderer channel `fluxora:ai:run-event` for
+`window.fluxora.ai.onRunEvent(callback)`.
+
+The renderer-surface event contract carries `eventId`, `runId`, `operationId`,
+monotonic `seq`, `createdAt`, canonical event `type`, `level`, `visibility`,
+`stage`, `message`, optional `percent`, and optional typed redacted `payload`.
+Supported v1 types are `progress`, `note`, `tool-started`, `tool-completed`,
+`site-visited`, `error`, and `heartbeat`. Tauri ignores unrelated JSON-RPC
+notifications and provider-native event names instead of forwarding them.
+
+AI events are for low-volume chat-run progress: prompt/context preparation,
+local inspection, research route decisions, Nexus/web source capture or block,
+provider attempt/fallback, finalization, heartbeat, and terminal blocked/error
+state. They never replace the final `chat.respond` response, never expose raw
+provider deltas or tool output, and never carry provider credentials,
+`nativeNexusApiCredential`, Nexus auth headers, cookies, tokens, raw prompts,
+raw HTML/page bodies, raw stdout/stderr, or full logs. C++ remains the owner of
+domain operation progress and filesystem mutation truth.
+
 ### Cancellation
 
 Cancellation uses a separate request:
@@ -677,6 +705,7 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `nexus.connect`
 - `nexus.connectWithApiKey`
 - `nexus.disconnect`
+- `nexus.getApiAuthHeader` (trusted native-only; blocked from the generic renderer bridge facade)
 - `nxm.registerProtocol`
 - `nxm.captureLinks`
 - `nxm.importInboundDownloads`
@@ -751,6 +780,12 @@ but must not parse plugin files or invent master dependency data.
 `operations.getStatus` is in the typed contract. It allows renderer and AI recovery after refresh, route changes or bridge reconnects without inventing UI-only operation truth. The Tauri shell keeps a small read-only cache of recent `operations.progress` envelopes and exposes it as a compact status snapshot until the native core grows a broader persistent operation queue.
 
 AI long-running jobs use a separate `fluxora.ai.autonomous-job.v1` / `fluxora.ai.autonomous-job-queue.v1` contract rather than overloading core operation snapshots. The AI queue records job plans, heartbeats, checkpoints, pause/cancel state and final reports for host orchestration, while C++ `operations.*` remains the source of truth for real domain operations and filesystem mutations.
+
+`fluxora.ai.intermediate-event.v1` is the live AI run timeline contract that
+feeds the chat panel and can be persisted into the autonomous job queue as a
+bounded 80-event progress trail. It is correlated by `runId` and `operationId`,
+not by core operation subscriptions, and support bundles expose counts only
+unless a future explicit diagnostic export policy says otherwise.
 
 `operations.recentLogs` is a read-only Tauri shell helper for AI/build diagnostics. It tails only Fluxora-owned log files in the app log directory, filters operation-related lines, caps output size and returns typed compact entries. The renderer does not receive arbitrary filesystem access.
 

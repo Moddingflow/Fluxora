@@ -6,6 +6,7 @@ import type {
   FluxoraAiCostLedgerEntry,
   FluxoraAiCaseState,
   FluxoraAiDiagnosisJudge,
+  FluxoraAiIntermediateEvent,
   FluxoraAiResearchReport,
   FluxoraAiRoutingPreset,
   FluxoraAiMultiModelOrchestration,
@@ -119,6 +120,7 @@ export interface AiChatThread {
   contextEstimateState: AiContextEstimateState;
   contextUsage?: FluxoraAiContextUsage | null;
   costLedger: FluxoraAiCostLedgerEntry[];
+  intermediateEvents: FluxoraAiIntermediateEvent[];
   messages: AiMessage[];
   runs: AiRun[];
   streamEvents: AiStreamEvent[];
@@ -133,6 +135,7 @@ export interface AiSession {
   activeChatId: string;
   chats: AiChatThread[];
   costLedger: FluxoraAiCostLedgerEntry[];
+  intermediateEvents: FluxoraAiIntermediateEvent[];
   messages: AiMessage[];
   runs: AiRun[];
   streamEvents: AiStreamEvent[];
@@ -149,6 +152,7 @@ export interface AiChatState {
   messages: AiMessage[];
   session: AiSession;
   status: AiAgentStatus;
+  intermediateEvents: FluxoraAiIntermediateEvent[];
   streamEvents: AiStreamEvent[];
   width: number;
 }
@@ -175,6 +179,7 @@ export type AiChatAction =
       contextUsage?: FluxoraAiContextUsage | null;
     }
   | { type: 'apply-stream-event'; event: AiStreamEvent }
+  | { type: 'apply-run-event'; event: FluxoraAiIntermediateEvent }
   | {
       type: 'append-assistant-message';
       message: AiMessage;
@@ -336,6 +341,7 @@ export function createAiChatThread(
     contextEstimateState: 'idle',
     contextUsage: null,
     costLedger: [],
+    intermediateEvents: [],
     messages: [],
     runs: [],
     streamEvents: []
@@ -399,6 +405,7 @@ const createAiSubagentChatThread = (
     contextEstimateState: 'idle',
     contextUsage: message.contextUsage ?? null,
     costLedger: [],
+    intermediateEvents: [],
     messages: [message],
     runs: [],
     streamEvents: []
@@ -416,6 +423,7 @@ const createLegacyAiChatThread = (session: AiSession): AiChatThread => {
     contextEstimateState: 'idle',
     contextUsage: latestContextUsageForMessages(session.messages ?? []),
     costLedger: session.costLedger ?? [],
+    intermediateEvents: session.intermediateEvents ?? [],
     messages: session.messages ?? [],
     runs: session.runs ?? [],
     streamEvents: session.streamEvents ?? []
@@ -432,6 +440,7 @@ export const syncAiSessionToActiveChat = (session: AiSession): AiSession => {
     (session.messages?.length ?? 0) > 0 ||
     (session.runs?.length ?? 0) > 0 ||
     (session.streamEvents?.length ?? 0) > 0 ||
+    (session.intermediateEvents?.length ?? 0) > 0 ||
     (session.costLedger?.length ?? 0) > 0;
   let chats = session.chats.length > 0 ? session.chats : [createLegacyAiChatThread(session)];
   const initialActiveChat = chats.find((chat) => chat.id === session.activeChatId) ?? chats[0];
@@ -441,7 +450,8 @@ export const syncAiSessionToActiveChat = (session: AiSession): AiSession => {
     initialActiveChat &&
     initialActiveChat.messages.length === 0 &&
     initialActiveChat.runs.length === 0 &&
-    initialActiveChat.streamEvents.length === 0
+    initialActiveChat.streamEvents.length === 0 &&
+    (initialActiveChat.intermediateEvents?.length ?? 0) === 0
   ) {
     const firstUserMessage = session.messages.find((message) => message.role === 'user');
     const hydratedChat = {
@@ -452,6 +462,7 @@ export const syncAiSessionToActiveChat = (session: AiSession): AiSession => {
           : initialActiveChat.title,
       updatedAt: session.updatedAt,
       costLedger: session.costLedger ?? [],
+      intermediateEvents: session.intermediateEvents ?? [],
       messages: session.messages ?? [],
       runs: session.runs ?? [],
       streamEvents: session.streamEvents ?? []
@@ -466,6 +477,7 @@ export const syncAiSessionToActiveChat = (session: AiSession): AiSession => {
     activeChatId: activeChat.id,
     updatedAt: activeChat.updatedAt,
     costLedger: activeChat.costLedger ?? [],
+    intermediateEvents: activeChat.intermediateEvents ?? [],
     messages: activeChat.messages ?? [],
     runs: activeChat.runs ?? [],
     streamEvents: activeChat.streamEvents ?? [],
@@ -490,6 +502,7 @@ export function createAiSession(
     activeChatId: chat.id,
     chats: [chat],
     costLedger: chat.costLedger,
+    intermediateEvents: chat.intermediateEvents,
     messages: chat.messages,
     runs: chat.runs,
     streamEvents: chat.streamEvents
@@ -506,6 +519,7 @@ export const initialAiChatState: AiChatState = {
   isCollapsed: false,
   isOpen: false,
   isRunning: false,
+  intermediateEvents: [],
   messages: [],
   session: initialAiSession,
   status: 'idle',
@@ -634,6 +648,47 @@ const appendChatEvent = (chat: AiChatThread, event: AiStreamEvent): AiChatThread
   )
 });
 
+const intermediateEventStatus = (event: FluxoraAiIntermediateEvent): AiAgentStatus =>
+  event.level === 'error' || event.type === 'error' ? 'blocked' : 'running';
+
+const intermediateEventSortKey = (event: FluxoraAiIntermediateEvent): string =>
+  `${String(event.seq).padStart(12, '0')}|${event.createdAt}|${event.eventId}`;
+
+const appendIntermediateEvent = (
+  chat: AiChatThread,
+  event: FluxoraAiIntermediateEvent
+): AiChatThread => {
+  if (chat.intermediateEvents.some((candidate) => candidate.eventId === event.eventId)) {
+    return chat;
+  }
+
+  const intermediateEvents = [...chat.intermediateEvents, event].sort((left, right) =>
+    intermediateEventSortKey(left).localeCompare(intermediateEventSortKey(right))
+  );
+
+  return {
+    ...touchChat(chat, event.createdAt),
+    intermediateEvents,
+    runs: chat.runs.map((run) => {
+      if (run.id !== event.runId) {
+        return run;
+      }
+
+      const terminal =
+        run.state === 'completed' || run.state === 'cancelled' || run.state === 'recovered';
+      return {
+        ...run,
+        eventIds: run.eventIds.includes(event.eventId)
+          ? run.eventIds
+          : [...run.eventIds, event.eventId],
+        status: terminal ? run.status : intermediateEventStatus(event),
+        state: terminal ? run.state : 'streaming',
+        updatedAt: event.createdAt
+      };
+    })
+  };
+};
+
 const updateSessionChat = (
   session: AiSession,
   chatId: string,
@@ -680,6 +735,7 @@ const applySessionToState = (state: AiChatState, session: AiSession): AiChatStat
     activeRunId: activeRun?.id ?? null,
     chats: normalizedSession.chats,
     isRunning: Boolean(activeRun),
+    intermediateEvents: activeChat.intermediateEvents,
     messages: activeChat.messages,
     session: normalizedSession,
     status: activeRun?.status ?? activeChat.runs.at(-1)?.status ?? 'idle',
@@ -783,6 +839,7 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
           ...normalizedSession,
           activeChatId: chat.id,
           costLedger: chat.costLedger,
+          intermediateEvents: chat.intermediateEvents,
           messages: chat.messages,
           runs: chat.runs,
           streamEvents: chat.streamEvents,
@@ -817,6 +874,7 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
             ...normalizedSession,
             activeChatId: chat.id,
             costLedger: chat.costLedger,
+            intermediateEvents: chat.intermediateEvents,
             messages: chat.messages,
             runs: chat.runs,
             streamEvents: chat.streamEvents,
@@ -838,6 +896,7 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
           ...normalizedSession,
           activeChatId: activeChat.id,
           costLedger: activeChat.costLedger,
+          intermediateEvents: activeChat.intermediateEvents,
           messages: activeChat.messages,
           runs: activeChat.runs,
           streamEvents: activeChat.streamEvents,
@@ -868,6 +927,7 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
           ...normalizedSession,
           activeChatId: selectedChat.id,
           costLedger: selectedChat.costLedger,
+          intermediateEvents: selectedChat.intermediateEvents,
           messages: selectedChat.messages,
           runs: selectedChat.runs,
           streamEvents: selectedChat.streamEvents
@@ -895,6 +955,7 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
             ...normalizedSession,
             activeChatId: existingChat.id,
             costLedger: existingChat.costLedger,
+            intermediateEvents: existingChat.intermediateEvents,
             messages: existingChat.messages,
             runs: existingChat.runs,
             streamEvents: existingChat.streamEvents
@@ -919,6 +980,7 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
           ...normalizedSession,
           activeChatId: chat.id,
           costLedger: chat.costLedger,
+          intermediateEvents: chat.intermediateEvents,
           messages: chat.messages,
           runs: chat.runs,
           streamEvents: chat.streamEvents,
@@ -965,6 +1027,13 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
     case 'apply-stream-event': {
       const session = updateSessionChatByRun(state.session, action.event.runId, (chat) => {
         return appendChatEvent(chat, action.event);
+      });
+
+      return applySessionToState(state, session);
+    }
+    case 'apply-run-event': {
+      const session = updateSessionChatByRun(state.session, action.event.runId, (chat) => {
+        return appendIntermediateEvent(chat, action.event);
       });
 
       return applySessionToState(state, session);

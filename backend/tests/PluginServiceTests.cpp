@@ -532,7 +532,7 @@ namespace fluxora::tests
 #endif
     }
 
-    TEST(PluginServiceTests, RepeatedListPluginsUsesRevisionCacheBeforeScanningNestedSearchDirectories)
+    TEST(PluginServiceTests, RepeatedListPluginsInvalidatesCacheWhenSearchDirectoryChanges)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
@@ -588,16 +588,70 @@ namespace fluxora::tests
         std::filesystem::remove_all(sentinelSearchDirectory);
 
         const std::vector<PluginEntry> second = plugins.listPlugins(project, context, L"Default");
-        EXPECT_NE(findPlugin(second, sentinelPlugin), nullptr);
+        EXPECT_EQ(findPlugin(second, sentinelPlugin), nullptr);
 
-        InstanceMetadataStore::setInstalledModEnabled(
-            project,
-            mods / (L"Mod " + std::to_wstring(sentinelIndex)),
-            false);
+        writeTextFile(sentinelSearchDirectory / sentinelPlugin, "plugin");
 
-        const std::vector<PluginEntry> afterRevisionChange =
+        const std::vector<PluginEntry> afterRestore =
             plugins.listPlugins(project, context, L"Default");
-        EXPECT_EQ(findPlugin(afterRevisionChange, sentinelPlugin), nullptr);
+        EXPECT_NE(findPlugin(afterRestore, sentinelPlugin), nullptr);
+#endif
+    }
+
+    TEST(PluginServiceTests, RestoredPluginReturnsToCachedProfileOrderPosition)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Plugin Order Restore Build";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path alphaPlugin = mods / L"Alpha Mod" / L"AddOns" / L"Alpha.ABC";
+        const std::filesystem::path betaPlugin = mods / L"Beta Mod" / L"AddOns" / L"Beta.ABC";
+        writeTextFile(alphaPlugin, "plugin");
+        writeTextFile(betaPlugin, "plugin");
+
+        InstanceMetadataStore::ensureInstance(project, L"customgame");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{mods / L"Alpha Mod", L"Alpha Mod", {}, true, {}},
+                InstalledModImportRecord{mods / L"Beta Mod", L"Beta Mod", {}, true, {}}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+
+        FakePluginRulesProvider provider(customRules());
+        const CapabilitySet caps = capabilities(true, true);
+        const PluginRuleContext context{&provider, &caps, nullptr, L"Default"};
+
+        const std::vector<PluginEntry> initial = plugins.listPlugins(project, context, L"Default");
+        const PluginEntry* beta = findPlugin(initial, L"Beta.ABC");
+        ASSERT_NE(beta, nullptr);
+
+        const std::vector<PluginEntry> moved =
+            plugins.movePlugin(project, context, L"Default", beta->orderId, 1);
+        ASSERT_GE(moved.size(), 3U);
+        EXPECT_EQ(moved[0].name, L"Base.master");
+        EXPECT_EQ(moved[1].name, L"Beta.ABC");
+        EXPECT_EQ(moved[2].name, L"Alpha.ABC");
+
+        std::filesystem::remove(betaPlugin);
+        const std::vector<PluginEntry> afterDelete =
+            plugins.listPlugins(project, context, L"Default");
+        EXPECT_EQ(findPlugin(afterDelete, L"Beta.ABC"), nullptr);
+        ASSERT_NE(findPlugin(afterDelete, L"Alpha.ABC"), nullptr);
+
+        writeTextFile(betaPlugin, "plugin");
+        const std::vector<PluginEntry> afterRestore =
+            plugins.listPlugins(project, context, L"Default");
+        ASSERT_GE(afterRestore.size(), 3U);
+        EXPECT_EQ(afterRestore[0].name, L"Base.master");
+        EXPECT_EQ(afterRestore[1].name, L"Beta.ABC");
+        EXPECT_EQ(afterRestore[2].name, L"Alpha.ABC");
 #endif
     }
 

@@ -21,6 +21,15 @@ namespace fluxora
         std::wstring redirectUri;
     };
 
+    struct NexusModsApiAuthHeader
+    {
+        bool isAvailable{false};
+        std::wstring headerName;
+        std::wstring headerValue;
+        std::wstring credentialKind;
+        std::wstring message;
+    };
+
     class NexusModsAuthService final : public IService
     {
     public:
@@ -30,6 +39,7 @@ namespace fluxora
         void shutdown() override;
 
         [[nodiscard]] NexusModsAuthStatus status() const;
+        [[nodiscard]] NexusModsApiAuthHeader apiAuthHeader() const;
         NexusModsAuthStatus connect();
         NexusModsAuthStatus connectWithApiKey(std::wstring_view apiKey);
         NexusModsAuthStatus disconnect();

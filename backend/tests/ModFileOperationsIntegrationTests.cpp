@@ -720,6 +720,74 @@ namespace fluxora::tests
         EXPECT_EQ(order[1].name, L"Nemesis Output");
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, ListInstalledModsReflectsManualFolderAddsAndDeletes)
+    {
+        const std::filesystem::path manualMod = modsDirectory() / L"Manual Drop";
+        writeTextFile(manualMod / L"Data" / L"ManualDrop.esp", "plugin");
+
+        std::vector<InstalledModEntry> entries = mods_.listInstalledMods(project_);
+        auto found = std::find_if(
+            entries.begin(),
+            entries.end(),
+            [](const InstalledModEntry& entry)
+            {
+                return entry.name == L"Manual Drop";
+            });
+        ASSERT_NE(found, entries.end());
+        EXPECT_EQ(found->id, manualMod);
+        EXPECT_TRUE(found->isLocal);
+
+        std::filesystem::remove_all(manualMod);
+        entries = mods_.listInstalledMods(project_);
+        found = std::find_if(
+            entries.begin(),
+            entries.end(),
+            [](const InstalledModEntry& entry)
+            {
+                return entry.name == L"Manual Drop";
+            });
+        EXPECT_EQ(found, entries.end());
+
+        const std::vector<InstalledModRecord> records =
+            InstanceMetadataStore::listInstalledMods(project_, modsDirectory());
+        EXPECT_EQ(findInstalledMod(records, L"Manual Drop"), nullptr);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ProfileModOrderRestoresManualFolderToCachedPosition)
+    {
+        const InstalledModEntry first = mods_.createEmptyMod(project_, L"First Manual Mod");
+        const InstalledModEntry second = mods_.createEmptyMod(project_, L"Second Manual Mod");
+        const InstalledModEntry third = mods_.createEmptyMod(project_, L"Third Manual Mod");
+
+        const std::vector<ProfileModOrderItem> initialOrder =
+            profileOrder_.listModOrder(project_, L"Default");
+        const ProfileModOrderItem* thirdOrderItem = findModOrderItem(initialOrder, L"Third Manual Mod");
+        ASSERT_NE(thirdOrderItem, nullptr);
+
+        const std::vector<ProfileModOrderItem> movedOrder =
+            profileOrder_.moveModOrderItem(project_, L"Default", thirdOrderItem->orderId, 0);
+        ASSERT_GE(movedOrder.size(), 3U);
+        EXPECT_EQ(movedOrder[0].name, L"Third Manual Mod");
+
+        std::filesystem::remove_all(third.id);
+        const std::vector<ProfileModOrderItem> afterDelete =
+            profileOrder_.listModOrder(project_, L"Default");
+        EXPECT_EQ(findModOrderItem(afterDelete, L"Third Manual Mod"), nullptr);
+        ASSERT_NE(findModOrderItem(afterDelete, L"First Manual Mod"), nullptr);
+        ASSERT_NE(findModOrderItem(afterDelete, L"Second Manual Mod"), nullptr);
+
+        writeTextFile(third.id / L"Data" / L"ThirdManualMod.esp", "plugin");
+        const std::vector<ProfileModOrderItem> afterRestore =
+            profileOrder_.listModOrder(project_, L"Default");
+        ASSERT_GE(afterRestore.size(), 3U);
+        EXPECT_EQ(afterRestore[0].name, L"Third Manual Mod");
+        EXPECT_EQ(afterRestore[1].name, L"First Manual Mod");
+        EXPECT_EQ(afterRestore[2].name, L"Second Manual Mod");
+
+        EXPECT_TRUE(std::filesystem::exists(first.id));
+        EXPECT_TRUE(std::filesystem::exists(second.id));
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, ModTextFileEditorReadsAndSavesContainedUtf8Files)
     {
         const InstalledModEntry created = mods_.createEmptyMod(project_, L"Config Patch");
