@@ -122,6 +122,46 @@ describe('AI case-state compressor', () => {
     expect(caseState.nextRecommendedStage).toBe('run-external-pass');
   });
 
+  it('accepts rejected Nexus credentials as a typed research limitation', () => {
+    const nexusInvestigation = createAiNexusInvestigation({
+      operationId,
+      generatedAt,
+      targetNexusIds: ['skyrim:1234'],
+      api: {
+        state: 'unauthenticated',
+        unavailableReason: 'invalid-credential',
+        lastHttpStatus: 401,
+        retryAfterSeconds: null
+      },
+      quota: {
+        hourlyRemaining: null,
+        dailyRemaining: null,
+        resetAt: null,
+        source: 'not-provided'
+      },
+      ordinaryError: null,
+      deterministicFindings: [],
+      hypotheses: [],
+      evidenceCards: []
+    });
+
+    const caseState = compressAiCaseState({
+      operationId,
+      generatedAt,
+      caseState: 'nexus-pass-complete',
+      nexusInvestigation
+    });
+
+    expect(validateAiModResearchPipelineDto(caseState)).toEqual({ ok: true, errors: [] });
+    expect(caseState.quotaState).toMatchObject({
+      nexusApiState: 'unauthenticated',
+      unavailableReason: 'invalid-credential',
+      lastHttpStatus: 401,
+      limitation:
+        'Nexus API credentials were rejected; reconnect Nexus or update the configured API key/token before retrying.'
+    });
+  });
+
   it('compresses every major research milestone in order', () => {
     const localInspection = createAiLocalInspection({
       operationId,

@@ -112,6 +112,10 @@ test.beforeEach(async ({ page }) => {
       new Promise<void>((resolve) =>
         setTimeout(resolve, Number((window as any).__fluxoraDownloadsListDelayMs ?? 0))
       );
+    const waitForNexusStatus = () =>
+      new Promise<void>((resolve) =>
+        setTimeout(resolve, Number((window as any).__fluxoraNexusStatusDelayMs ?? 0))
+      );
     const template = {
       id: 'skyrim-special-edition',
       displayName: 'Skyrim Special Edition',
@@ -559,6 +563,17 @@ test.beforeEach(async ({ page }) => {
       fileDrop: {
         onDragDrop: async () => () => undefined
       },
+      buildContent: {
+        onChanged: () => () => undefined,
+        unwatch: async (operation: any) => ({
+          accepted: true,
+          operationId: operation?.operationId ?? 'op_build_content_unwatch'
+        }),
+        watch: async (_watchRequest: any, operation: any) => ({
+          accepted: true,
+          operationId: operation?.operationId ?? 'op_build_content_watch'
+        })
+      },
       downloads: {
         analyzeContentLayout: async (request: any, operation: any) => {
           calls.push({ method: 'downloads.analyzeContentLayout', payload: { operation, request } });
@@ -759,6 +774,7 @@ test.beforeEach(async ({ page }) => {
         },
         getAuthStatus: async (operation: any) => {
           calls.push({ method: 'nexus.getAuthStatus', payload: { operation } });
+          await waitForNexusStatus();
           return nexusStatus();
         }
       },
@@ -1081,7 +1097,7 @@ test('selects, opens and creates builds from the redesigned library home', async
 
   await page.getByLabel('Home').click();
   await page.getByRole('button', { name: 'New build' }).first().click();
-  await page.getByPlaceholder('My Skyrim build').fill('Playwright build');
+  await page.getByPlaceholder('My Skyrim build').fill('  Playwright build  ');
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByPlaceholder('Path to game executable').fill('C:\\Games\\Skyrim\\SkyrimSE.exe');
@@ -1090,13 +1106,20 @@ test('selects, opens and creates builds from the redesigned library home', async
   await page.getByRole('button', { name: 'Create' }).click();
 
   await expect
-    .poll(() =>
-      page.evaluate(() =>
-        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
-          ?.map((call) => call.method)
-      )
-    )
-    .toContain('projects.create');
+    .poll(() => latestCallPayload(page, 'projects.create'))
+    .toMatchObject({
+      operation: {
+        operationId: expect.stringContaining('projects_create')
+      },
+      request: {
+        gamePath: 'C:\\Games\\Skyrim\\SkyrimSE.exe',
+        installRootDirectory: 'D:\\Fluxora\\Builds',
+        projectName: 'Playwright build',
+        templateId: 'skyrim-special-edition'
+      }
+    });
+  await expect(page.getByRole('heading', { name: 'Playwright build' })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 test('runs build header package, check and launch actions through the facade', async ({ page }) => {
@@ -1552,6 +1575,42 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
       )
     )
     .toContain('archives.installFomod');
+});
+
+test('renders Settings Nexus status instantly while native auth status is delayed', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      'fluxora.settings.nexusStatus',
+      JSON.stringify({
+        isConfigured: true,
+        isLinked: true,
+        hasApiKey: true,
+        displayName: 'Cached Playwright user',
+        userId: 'cached-playwright',
+        message: 'Linked',
+        clientId: 'fluxora',
+        redirectUri: 'http://127.0.0.1:8089/callback',
+        operationId: 'op_cached_nexus'
+      })
+    );
+    (window as typeof window & { __fluxoraNexusStatusDelayMs?: number }).__fluxoraNexusStatusDelayMs = 60_000;
+  });
+
+  await page.goto(`${baseUrl}/?window=settings`);
+
+  await expect(page.locator('.titlebar__brand-name')).toHaveText('Settings');
+  await expect(page.getByText('Linked - Cached Playwright user')).toBeVisible();
+  await expect(page.getByText('Status not loaded')).toHaveCount(0);
+  await expect(page.getByText('Loading settings')).toHaveCount(0);
+  await expect(page.locator('.mod-busy-strip')).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.map((call) => call.method)
+      )
+    )
+    .toContain('nexus.getAuthStatus');
 });
 
 test('uses the redesigned Settings window for Nexus, language and MO2 transfer actions', async ({ page }) => {

@@ -65,6 +65,7 @@ export type FluxoraAiModResearchNexusApiState =
 export type FluxoraAiModResearchNexusUnavailableReason =
   | 'none'
   | 'missing-credential'
+  | 'invalid-credential'
   | 'rate-limited'
   | 'service-unavailable'
   | 'transport-unavailable'
@@ -3165,6 +3166,9 @@ const quotaLimitationText = (
   if (api.state === 'quota-exhausted') {
     return 'Nexus API quota is exhausted or rate-limited; this research limitation leaves Nexus evidence incomplete for this pass.';
   }
+  if (api.unavailableReason === 'invalid-credential') {
+    return 'Nexus API credentials were rejected; reconnect Nexus or update the configured API key/token before retrying.';
+  }
   if (api.state === 'unauthenticated' || api.unavailableReason === 'missing-credential') {
     return 'Nexus API credentials are unavailable; Nexus evidence may be incomplete.';
   }
@@ -3452,6 +3456,7 @@ const NEXUS_API_STATES: readonly FluxoraAiModResearchNexusApiState[] = [
 const NEXUS_UNAVAILABLE_REASONS: readonly FluxoraAiModResearchNexusUnavailableReason[] = [
   'none',
   'missing-credential',
+  'invalid-credential',
   'rate-limited',
   'service-unavailable',
   'transport-unavailable',

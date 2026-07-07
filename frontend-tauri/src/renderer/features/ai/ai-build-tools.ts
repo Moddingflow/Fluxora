@@ -99,6 +99,10 @@ export interface AiBuildContextSnapshot {
   tools: AiBuildToolResult[];
 }
 
+export interface AiBuildContextCollectionOptions {
+  budgetMs?: number;
+}
+
 interface CompactNexusIdentity {
   fileId?: string;
   gameDomain: string;
@@ -106,6 +110,20 @@ interface CompactNexusIdentity {
   pageUrl: string;
   provider: 'nexus';
   sourceUrl?: string;
+}
+
+interface CompactNexusResearchTarget {
+  fileId?: string;
+  gameDomain: string;
+  modId: string;
+  name: string;
+}
+
+interface CompactNexusResearchTargets {
+  items: CompactNexusResearchTarget[];
+  maxTargets: number;
+  totalCount: number;
+  truncated: boolean;
 }
 
 interface CompactInstalledMod {
@@ -282,6 +300,7 @@ interface CompactConflictEvidencePair {
 }
 
 interface CompactConflictEvidenceSummary {
+  budgetExhausted: boolean;
   maxDepth: number;
   maxFilesPerMod: number;
   maxMods: number;
@@ -332,6 +351,7 @@ interface CompactLocalFileSample {
 
 interface CompactLocalFilesystemScan {
   byKind: Record<string, number>;
+  budgetExhausted: boolean;
   conflictFiles: CompactLocalFileSample[];
   directoryCount: number;
   errors: Array<{ message: string; modId: string; modName: string }>;
@@ -444,6 +464,7 @@ const AI_BUILD_CONTEXT_TOOL_SEMANTICS: Record<AiReadOnlyBuildToolName, string> =
 
 const DEFAULT_TOOL_PAGE_LIMIT = 20;
 const MAX_TOOL_PAGE_LIMIT = 80;
+const MAX_NEXUS_RESEARCH_TARGETS_IN_CONTEXT = 1000;
 const MAX_CONFLICT_EVIDENCE_MODS = 24;
 const MAX_CONFLICT_EVIDENCE_DEPTH = 2;
 const MAX_CONFLICT_EVIDENCE_DIRECTORIES_PER_MOD = 40;
@@ -463,6 +484,8 @@ const MAX_LOCAL_READ_TEXT_FILE_SCAN_MODS = 12;
 const MAX_LOCAL_READ_TEXT_FILE_SCAN_DEPTH = 3;
 const MAX_LOCAL_READ_TEXT_FILE_SCAN_DIRECTORIES = 80;
 const MAX_LOCAL_READ_TEXT_FILE_SCAN_FILES = 300;
+const AI_BUILD_CONTEXT_PREFLIGHT_BUDGET_MS = 15_000;
+const AI_BUILD_CONTEXT_HEAVY_SCAN_MIN_REMAINING_MS = 1_500;
 const LOCAL_READ_TEXT_FILE_ALLOWED_EXTENSIONS = [
   '.txt',
   '.log',
@@ -494,10 +517,44 @@ interface ToolPageLimitOptions {
   maxLimit?: number;
 }
 
+interface AiBuildToolBudget {
+  deadlineMs: number;
+  exhausted: boolean;
+}
+
 const toolRequest = (operationId: string): OperationRequest => ({ operationId });
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : 'Read-only AI tool failed.';
+
+const createAiBuildToolBudget = (budgetMs: number): AiBuildToolBudget => ({
+  deadlineMs: Date.now() + Math.max(0, budgetMs),
+  exhausted: false
+});
+
+const aiBuildToolBudgetExhausted = (
+  budget: AiBuildToolBudget | undefined,
+  minRemainingMs = 0
+): boolean => {
+  if (!budget) {
+    return false;
+  }
+
+  if (Date.now() + Math.max(0, minRemainingMs) >= budget.deadlineMs) {
+    budget.exhausted = true;
+    return true;
+  }
+
+  return false;
+};
+
+const preflightBudgetIssue = (toolName: AiReadOnlyBuildToolName): AiBuildToolIssue =>
+  issue(
+    toolName,
+    'warning',
+    'tool.preflight-budget-exhausted',
+    'Fluxora used a partial AI context because read-only preflight reached its time budget. Treat omitted local evidence as unknown, not clean.'
+  );
 
 const normalizeLimit = (
   limit: number | undefined,
@@ -539,8 +596,8 @@ const pageBuildInventoryItems = <TItem>(
   limit: number | undefined
 ): AiToolCursorPage<TItem> =>
   pageItems(items, cursor, limit, {
-    defaultLimit: Math.max(1, items.length),
-    maxLimit: Math.max(1, items.length)
+    defaultLimit: DEFAULT_TOOL_PAGE_LIMIT,
+    maxLimit: MAX_TOOL_PAGE_LIMIT
   });
 
 const issue = (
@@ -599,7 +656,7 @@ const createResult = <TOutput, TItem = unknown>(
 const logToolCall = async (
   api: FluxoraApi,
   toolName: AiReadOnlyBuildToolName,
-  phase: 'started' | 'succeeded' | 'failed',
+  phase: 'started' | 'succeeded' | 'failed' | 'skipped',
   operationId: string,
   level: 'info' | 'warning' | 'error' = phase === 'failed' ? 'error' : 'info'
 ) => {
@@ -782,6 +839,31 @@ const compactMod = (mod: FluxoraInstalledMod): CompactInstalledMod => ({
   updateCheckStatus: mod.updateStatus,
   version: mod.version
 });
+
+const compactNexusResearchTargets = (
+  mods: FluxoraInstalledMod[]
+): CompactNexusResearchTargets => {
+  const targets = mods.flatMap((mod): CompactNexusResearchTarget[] => {
+    const nexus = compactNexusIdentity(mod);
+    return nexus
+      ? [
+          {
+            ...(nexus.fileId ? { fileId: nexus.fileId } : {}),
+            gameDomain: nexus.gameDomain,
+            modId: nexus.modId,
+            name: mod.name
+          }
+        ]
+      : [];
+  });
+
+  return {
+    items: targets.slice(0, MAX_NEXUS_RESEARCH_TARGETS_IN_CONTEXT),
+    maxTargets: MAX_NEXUS_RESEARCH_TARGETS_IN_CONTEXT,
+    totalCount: targets.length,
+    truncated: targets.length > MAX_NEXUS_RESEARCH_TARGETS_IN_CONTEXT
+  };
+};
 
 const compactModOrderItem = (item: FluxoraModOrderItem): CompactModOrderItem => ({
   enabled: item.isEnabled,
@@ -1182,12 +1264,14 @@ const scanConflictEvidenceDirectory = async (
   request: OperationRequest,
   pairs: Map<string, CompactConflictEvidencePair>,
   state: { directoryCount: number; fileCount: number; truncated: boolean },
+  budget?: AiBuildToolBudget,
   depth = 0
 ): Promise<void> => {
   if (
     depth > MAX_CONFLICT_EVIDENCE_DEPTH ||
     state.directoryCount >= MAX_CONFLICT_EVIDENCE_DIRECTORIES_PER_MOD ||
-    state.fileCount >= MAX_CONFLICT_EVIDENCE_FILES_PER_MOD
+    state.fileCount >= MAX_CONFLICT_EVIDENCE_FILES_PER_MOD ||
+    aiBuildToolBudgetExhausted(budget, AI_BUILD_CONTEXT_HEAVY_SCAN_MIN_REMAINING_MS)
   ) {
     state.truncated = true;
     return;
@@ -1225,6 +1309,7 @@ const scanConflictEvidenceDirectory = async (
         request,
         pairs,
         state,
+        budget,
         depth + 1
       );
       if (state.truncated) {
@@ -1238,13 +1323,23 @@ const collectConflictEvidence = async (
   api: FluxoraApi,
   projectDirectory: string,
   candidates: ConflictEvidenceCandidate[],
-  request: OperationRequest
+  request: OperationRequest,
+  budget?: AiBuildToolBudget
 ): Promise<CompactConflictEvidenceSummary> => {
   const selectedCandidates = candidates.slice(0, MAX_CONFLICT_EVIDENCE_MODS);
+  const scannedCandidates: ConflictEvidenceCandidate[] = [];
   const pairs = new Map<string, CompactConflictEvidencePair>();
   let truncated = candidates.length > selectedCandidates.length;
+  let budgetExhausted = false;
 
   for (const candidate of selectedCandidates) {
+    if (aiBuildToolBudgetExhausted(budget, AI_BUILD_CONTEXT_HEAVY_SCAN_MIN_REMAINING_MS)) {
+      truncated = true;
+      budgetExhausted = true;
+      break;
+    }
+
+    scannedCandidates.push(candidate);
     try {
       const state = { directoryCount: 0, fileCount: 0, truncated: false };
       await scanConflictEvidenceDirectory(
@@ -1254,9 +1349,11 @@ const collectConflictEvidence = async (
         undefined,
         request,
         pairs,
-        state
+        state,
+        budget
       );
       truncated = truncated || state.truncated;
+      budgetExhausted = budgetExhausted || Boolean(budget?.exhausted);
     } catch {
       truncated = true;
     }
@@ -1276,20 +1373,21 @@ const collectConflictEvidence = async (
     .slice(0, MAX_CONFLICT_EVIDENCE_PAIRS);
 
   return {
+    budgetExhausted,
     maxDepth: MAX_CONFLICT_EVIDENCE_DEPTH,
     maxFilesPerMod: MAX_CONFLICT_EVIDENCE_FILES_PER_MOD,
     maxMods: MAX_CONFLICT_EVIDENCE_MODS,
     pairCount: pairList.length,
     pairs: pairList,
     schema: 'fluxora.ai.conflict-evidence.v1',
-    scannedModCount: selectedCandidates.length,
-    scannedMods: selectedCandidates.map((candidate) => ({
+    scannedModCount: scannedCandidates.length,
+    scannedMods: scannedCandidates.map((candidate) => ({
       id: candidate.id,
       name: candidate.name,
       order: candidate.order,
       overwrite: candidate.overwrite
     })),
-    skippedCandidateCount: Math.max(0, candidates.length - selectedCandidates.length),
+    skippedCandidateCount: Math.max(0, candidates.length - scannedCandidates.length),
     truncated
   };
 };
@@ -1470,15 +1568,18 @@ const scanLocalFilesystemDirectory = async (
   relativeDirectory: string | undefined,
   request: OperationRequest,
   scan: CompactLocalFilesystemScan,
+  budget?: AiBuildToolBudget,
   depth = 0
 ): Promise<void> => {
   if (
     scan.truncated ||
     depth > MAX_LOCAL_FILESYSTEM_SCAN_DEPTH ||
     scan.directoryCount >= MAX_LOCAL_FILESYSTEM_SCAN_DIRECTORIES ||
-    scan.scannedFileCount >= MAX_LOCAL_FILESYSTEM_SCAN_FILES
+    scan.scannedFileCount >= MAX_LOCAL_FILESYSTEM_SCAN_FILES ||
+    aiBuildToolBudgetExhausted(budget, AI_BUILD_CONTEXT_HEAVY_SCAN_MIN_REMAINING_MS)
   ) {
     scan.truncated = true;
+    scan.budgetExhausted = scan.budgetExhausted || Boolean(budget?.exhausted);
     return;
   }
 
@@ -1495,6 +1596,7 @@ const scanLocalFilesystemDirectory = async (
           entry.relativePath,
           request,
           scan,
+          budget,
           depth + 1
         );
       }
@@ -1517,12 +1619,14 @@ const collectLocalFilesystemScan = async (
   projectDirectory: string,
   installedMods: FluxoraInstalledMod[],
   modOrder: FluxoraModOrderItem[],
-  request: OperationRequest
+  request: OperationRequest,
+  budget?: AiBuildToolBudget
 ): Promise<CompactLocalFilesystemScan> => {
   const candidates = localFilesystemScanCandidates(installedMods, modOrder);
   const selectedCandidates = candidates.slice(0, MAX_LOCAL_FILESYSTEM_SCAN_MODS);
   const scan: CompactLocalFilesystemScan = {
     byKind: {},
+    budgetExhausted: false,
     conflictFiles: [],
     directoryCount: 0,
     errors: [],
@@ -1548,6 +1652,12 @@ const collectLocalFilesystemScan = async (
   };
 
   for (const candidate of selectedCandidates) {
+    if (aiBuildToolBudgetExhausted(budget, AI_BUILD_CONTEXT_HEAVY_SCAN_MIN_REMAINING_MS)) {
+      scan.truncated = true;
+      scan.budgetExhausted = true;
+      break;
+    }
+
     try {
       await scanLocalFilesystemDirectory(
         api,
@@ -1555,7 +1665,8 @@ const collectLocalFilesystemScan = async (
         candidate,
         undefined,
         request,
-        scan
+        scan,
+        budget
       );
     } catch (error) {
       scan.errors.push({
@@ -1625,12 +1736,145 @@ const localSksePluginSummary = (scan: CompactLocalFilesystemScan) => {
   };
 };
 
+type LocalCrashLoggerConfidence = 'high' | 'medium' | 'low';
+
+interface LocalCrashLoggerSignal {
+  confidence: LocalCrashLoggerConfidence;
+  enabled: boolean;
+  evidence: 'mod-name' | 'file-path';
+  logger: string;
+  modId: string;
+  modName: string;
+  note: string;
+  relativePath?: string;
+}
+
+const CRASH_LOGGER_PATTERNS = [
+  {
+    fileTerms: ['crashlogger', 'crash logger'],
+    logger: 'Crash Logger SSE/AE/VR',
+    modTerms: ['crash logger', 'crashlogger', 'crash logger sse', 'crash logger ae'],
+    note: 'Prefer the newest Crash Logger log for Possible Relevant Objects, call stack, modules, and FormID clues.',
+    priority: 3
+  },
+  {
+    fileTerms: ['netscriptframework', 'net script framework'],
+    logger: '.NET Script Framework',
+    modTerms: ['netscriptframework', 'net script framework', '.net script framework'],
+    note: 'Usually indicates an older SE 1.5.97-style setup; use its crash log format and runtime assumptions.',
+    priority: 2
+  },
+  {
+    fileTerms: ['trainwreck'],
+    logger: 'Trainwreck',
+    modTerms: ['trainwreck'],
+    note: 'Useful as a crash clue, but usually weaker than Crash Logger for object and stack detail.',
+    priority: 1
+  }
+] as const;
+
+const CRASH_LOGGER_CONFIDENCE_WEIGHT: Record<LocalCrashLoggerConfidence, number> = {
+  high: 3,
+  medium: 2,
+  low: 1
+};
+
+const normalizeCrashLoggerText = (value: string): string =>
+  value.toLowerCase().replace(/[^a-z0-9а-яё.]+/g, ' ').trim();
+
+const textMatchesAnyCrashLoggerTerm = (text: string, terms: readonly string[]): boolean =>
+  terms.some((term) => text.includes(normalizeCrashLoggerText(term)));
+
+const localCrashLoggerSummary = (
+  scan: CompactLocalFilesystemScan,
+  installedMods: FluxoraInstalledMod[]
+) => {
+  const signals: LocalCrashLoggerSignal[] = [];
+  const seen = new Set<string>();
+  const pushSignal = (signal: LocalCrashLoggerSignal) => {
+    const key = [
+      signal.logger,
+      signal.evidence,
+      signal.modId,
+      signal.relativePath ?? ''
+    ].join('|');
+    if (!seen.has(key)) {
+      seen.add(key);
+      signals.push(signal);
+    }
+  };
+
+  for (const mod of installedMods) {
+    const searchable = normalizeCrashLoggerText(`${mod.name} ${mod.id}`);
+    for (const pattern of CRASH_LOGGER_PATTERNS) {
+      if (textMatchesAnyCrashLoggerTerm(searchable, pattern.modTerms)) {
+        pushSignal({
+          confidence: mod.isEnabled ? 'medium' : 'low',
+          enabled: mod.isEnabled,
+          evidence: 'mod-name',
+          logger: pattern.logger,
+          modId: mod.id,
+          modName: mod.name,
+          note: pattern.note
+        });
+      }
+    }
+  }
+
+  for (const sample of [...scan.nativePlugins, ...scan.scriptExtenderFiles]) {
+    const searchable = normalizeCrashLoggerText(`${sample.modName} ${sample.relativePath}`);
+    for (const pattern of CRASH_LOGGER_PATTERNS) {
+      if (textMatchesAnyCrashLoggerTerm(searchable, pattern.fileTerms)) {
+        pushSignal({
+          confidence: sample.enabled ? 'high' : 'medium',
+          enabled: sample.enabled,
+          evidence: 'file-path',
+          logger: pattern.logger,
+          modId: sample.modId,
+          modName: sample.modName,
+          note: pattern.note,
+          relativePath: sample.relativePath
+        });
+      }
+    }
+  }
+
+  const sortedSignals = signals.sort((left, right) => {
+    const leftPattern = CRASH_LOGGER_PATTERNS.find((pattern) => pattern.logger === left.logger);
+    const rightPattern = CRASH_LOGGER_PATTERNS.find((pattern) => pattern.logger === right.logger);
+    return (
+      (rightPattern?.priority ?? 0) - (leftPattern?.priority ?? 0) ||
+      CRASH_LOGGER_CONFIDENCE_WEIGHT[right.confidence] -
+        CRASH_LOGGER_CONFIDENCE_WEIGHT[left.confidence] ||
+      left.modName.localeCompare(right.modName) ||
+      (left.relativePath ?? '').localeCompare(right.relativePath ?? '')
+    );
+  });
+
+  return {
+    fallbackOrder: [
+      'If the user provides a current crash log from the detected logger, inspect that log first.',
+      'If the logger is present but no current log is available, compare older crash logs only as stale pattern evidence.',
+      'If no crash logs exist, use SKSE/Papyrus/plugin logs, plugins.txt, loadorder.txt, modlist.txt, recent operation logs, file conflicts, and the user-described symptom timeline.'
+    ],
+    gameCrashLogParserAvailable: false,
+    installedLoggerCandidates: sortedSignals.slice(0, 8),
+    installedLoggerDetected: sortedSignals.length > 0,
+    likelyInstalledLogger: sortedSignals[0]?.logger ?? null,
+    logDiscoveryAvailable: false,
+    newestCrashLogStatus: 'not-exposed-by-current-core-api',
+    note:
+      'Fluxora currently exposes bounded mod/file metadata and operation logs. It can infer crash logger candidates from installed mods and SKSE file paths, but direct Skyrim crash-log discovery/parsing still needs a future core-owned parser.'
+  };
+};
+
 const collectLocalFilesystemSnapshotTool = async (
   api: FluxoraApi,
   context: AiBuildToolRuntimeContext,
   operationId: string,
   project: FluxoraProject,
-  request: OperationRequest
+  request: OperationRequest,
+  budget?: AiBuildToolBudget
 ) => {
   const [mods, order, plugins, profiles, downloads, logs] = await Promise.allSettled([
     api.mods.listInstalled(project.projectDirectory, request),
@@ -1654,7 +1898,8 @@ const collectLocalFilesystemSnapshotTool = async (
     project.projectDirectory,
     installedMods,
     modOrder,
-    request
+    request,
+    budget
   );
   const missingMasters = localMissingMasterSummary(pluginOrder);
   const recentMods = recentInstalledMods(installedMods);
@@ -1678,6 +1923,7 @@ const collectLocalFilesystemSnapshotTool = async (
         error.modId
       )
     ),
+    ...(scan.budgetExhausted ? [preflightBudgetIssue('local.filesystemSnapshot')] : []),
     ...(missingMasters.missingMasterPluginCount > 0
       ? [
           issue(
@@ -1692,7 +1938,7 @@ const collectLocalFilesystemSnapshotTool = async (
       'local.filesystemSnapshot',
       'info',
       'local.crash-log-parser-not-exposed',
-      'Fluxora can tail its own operation logs here; arbitrary Skyrim crash-log parsing is not exposed as a core API yet.'
+      'Fluxora can infer crash logger candidates from bounded mod metadata, but direct Skyrim crash-log discovery/parsing is not exposed as a core API yet.'
     )
   ];
 
@@ -1737,9 +1983,7 @@ const collectLocalFilesystemSnapshotTool = async (
           totalCount: installedMods.length
         },
         'local.parse_crash_logs': {
-          gameCrashLogParserAvailable: false,
-          note:
-            'Only Fluxora-owned operation logs are exposed in this phase; Skyrim crash logs need a future core-owned parser before AI can inspect them.',
+          ...localCrashLoggerSummary(scan, installedMods),
           operationLogs: {
             entries: recentLogs?.entries.slice(0, 12) ?? [],
             logPaths: recentLogs?.logPaths ?? [],
@@ -1767,8 +2011,15 @@ export const shouldCollectAnalyzeTextFiles = (prompt?: string): boolean => {
     'analyse build',
     'build crashes',
     'build crash',
+    'cdt',
     'crash log',
+    'crash logger',
+    'trainwreck',
+    'netscriptframework',
+    'possible relevant objects',
+    'call stack',
     'skse log',
+    'papyrus log',
     'plugin list',
     'loadorder.txt',
     'modlist.txt',
@@ -1780,10 +2031,15 @@ export const shouldCollectAnalyzeTextFiles = (prompt?: string): boolean => {
     'анализ сборки',
     'сборка крашит',
     'сборка падает',
+    'вылетает',
+    'крашит',
     'краш лог',
     'лог краша',
     'логи skse',
-    'список плагинов'
+    'список плагинов',
+    'битый меш',
+    'битая текстура',
+    'скрипты'
   ].some((trigger) => normalized.includes(trigger));
 };
 
@@ -1903,6 +2159,7 @@ const collectModTextFileCandidatesDirectory = async (
   output: LocalReadTextFileCandidate[],
   skipped: Array<{ path: string; reason: string }>,
   state: { directories: number; files: number; truncated: boolean },
+  budget?: AiBuildToolBudget,
   relativeDirectory?: string,
   depth = 0
 ): Promise<void> => {
@@ -1910,7 +2167,8 @@ const collectModTextFileCandidatesDirectory = async (
     state.truncated ||
     depth > MAX_LOCAL_READ_TEXT_FILE_SCAN_DEPTH ||
     state.directories >= MAX_LOCAL_READ_TEXT_FILE_SCAN_DIRECTORIES ||
-    state.files >= MAX_LOCAL_READ_TEXT_FILE_SCAN_FILES
+    state.files >= MAX_LOCAL_READ_TEXT_FILE_SCAN_FILES ||
+    aiBuildToolBudgetExhausted(budget, AI_BUILD_CONTEXT_HEAVY_SCAN_MIN_REMAINING_MS)
   ) {
     state.truncated = true;
     return;
@@ -1941,6 +2199,7 @@ const collectModTextFileCandidatesDirectory = async (
           output,
           skipped,
           state,
+          budget,
           entry.relativePath,
           depth + 1
         );
@@ -1982,8 +2241,10 @@ const collectLocalReadTextFileCandidates = async (
   installedMods: FluxoraInstalledMod[],
   modOrder: FluxoraModOrderItem[],
   profiles: string[],
-  request: OperationRequest
+  request: OperationRequest,
+  budget?: AiBuildToolBudget
 ): Promise<{
+  budgetExhausted: boolean;
   candidates: LocalReadTextFileCandidate[];
   skipped: Array<{ path: string; reason: string }>;
   truncated: boolean;
@@ -2005,6 +2266,11 @@ const collectLocalReadTextFileCandidates = async (
   const state = { directories: 0, files: 0, truncated: modCandidates.length < installedMods.length };
 
   for (const candidate of modCandidates) {
+    if (aiBuildToolBudgetExhausted(budget, AI_BUILD_CONTEXT_HEAVY_SCAN_MIN_REMAINING_MS)) {
+      state.truncated = true;
+      break;
+    }
+
     await collectModTextFileCandidatesDirectory(
       api,
       project.projectDirectory,
@@ -2013,7 +2279,8 @@ const collectLocalReadTextFileCandidates = async (
       prompt,
       candidates,
       skipped,
-      state
+      state,
+      budget
     );
     if (candidates.length >= MAX_LOCAL_READ_TEXT_FILE_CANDIDATES * 2 || state.truncated) {
       break;
@@ -2021,6 +2288,7 @@ const collectLocalReadTextFileCandidates = async (
   }
 
   return {
+    budgetExhausted: Boolean(budget?.exhausted),
     candidates: candidates
       .sort(
         (left, right) =>
@@ -2053,7 +2321,8 @@ const collectLocalReadTextFileTool = async (
   context: AiBuildToolRuntimeContext,
   operationId: string,
   project: FluxoraProject,
-  request: OperationRequest
+  request: OperationRequest,
+  budget?: AiBuildToolBudget
 ) => {
   const [mods, order, profiles] = await Promise.allSettled([
     api.mods.listInstalled(project.projectDirectory, request),
@@ -2070,7 +2339,8 @@ const collectLocalReadTextFileTool = async (
     installedMods,
     modOrder,
     profileNames,
-    request
+    request,
+    budget
   );
   const files: CompactLocalReadTextFilePreview[] = [];
   const skipped = [...candidateResult.skipped];
@@ -2121,6 +2391,7 @@ const collectLocalReadTextFileTool = async (
           )
         ]
       : []),
+    ...(candidateResult.budgetExhausted ? [preflightBudgetIssue('local.read_text_file')] : []),
     ...files
       .filter((file) => file.truncated)
       .map((file) =>
@@ -2249,7 +2520,8 @@ const settledValue = <TValue>(result: PromiseSettledResult<TValue>, fallback: TV
 const runBuildSummaryTool = async (
   api: FluxoraApi,
   context: AiBuildToolRuntimeContext,
-  operationId: string
+  operationId: string,
+  budget?: AiBuildToolBudget
 ) => {
   const project = context.project;
   if (!project) {
@@ -2283,6 +2555,7 @@ const runBuildSummaryTool = async (
   const downloadEntries = settledValue<FluxoraDownloadEntry[]>(downloads, []);
   const nexusStatus = settledValue<FluxoraNexusModsAuthStatus | null>(nexus, null);
   const operationStatus = settledValue<FluxoraOperationsStatus | null>(operations, null);
+  const nexusResearchTargets = compactNexusResearchTargets(installedMods);
   const toolIssues = [
     ...issuesFromMods(installedMods),
     ...issuesFromPlugins(pluginOrder),
@@ -2298,8 +2571,12 @@ const runBuildSummaryTool = async (
     api,
     project.projectDirectory,
     conflictEvidenceCandidates(installedMods, modOrder),
-    request
+    request,
+    budget
   );
+  if (conflictEvidence.budgetExhausted) {
+    toolIssues.push(preflightBudgetIssue('build.summary'));
+  }
 
   return createResult(
     'build.summary',
@@ -2340,6 +2617,7 @@ const runBuildSummaryTool = async (
         withFileOverwrites: modOverwriteStates.filter((state) => state.state !== 'none').length
       },
       nexusLinked: nexusStatus?.isLinked ?? false,
+      nexusTargets: nexusResearchTargets,
       pathsConfigured: {
         downloads: Boolean(project.paths?.downloadsDirectory),
         game: Boolean(project.paths?.gameDirectory || project.gamePath),
@@ -2378,7 +2656,8 @@ export const runAiBuildTool = async (
   api: FluxoraApi,
   toolName: AiReadOnlyBuildToolName,
   context: AiBuildToolRuntimeContext,
-  operationId: string
+  operationId: string,
+  budget?: AiBuildToolBudget
 ): Promise<AiBuildToolResult> => {
   await logToolCall(api, toolName, 'started', operationId);
 
@@ -2387,8 +2666,16 @@ export const runAiBuildTool = async (
     const request = toolRequest(operationId);
 
     if (toolName === 'build.summary') {
-      const result = await runBuildSummaryTool(api, context, operationId);
-      await logToolCall(api, toolName, 'succeeded', operationId);
+      const result = await runBuildSummaryTool(api, context, operationId, budget);
+      await logToolCall(
+        api,
+        toolName,
+        'succeeded',
+        operationId,
+        result.issues.some((item) => item.code === 'tool.preflight-budget-exhausted')
+          ? 'warning'
+          : 'info'
+      );
       return result;
     }
 
@@ -2610,7 +2897,8 @@ export const runAiBuildTool = async (
           context,
           operationId,
           project!,
-          request
+          request,
+          budget
         );
         await logToolCall(
           api,
@@ -2628,7 +2916,8 @@ export const runAiBuildTool = async (
           context,
           operationId,
           project!,
-          request
+          request,
+          budget
         );
         await logToolCall(
           api,
@@ -2651,15 +2940,39 @@ export const runAiBuildTool = async (
 export const collectAiBuildContext = async (
   api: FluxoraApi,
   context: AiBuildToolRuntimeContext,
-  operationId: string
+  operationId: string,
+  options: AiBuildContextCollectionOptions = {}
 ): Promise<AiBuildContextSnapshot> => {
+  const budget = createAiBuildToolBudget(
+    options.budgetMs ?? AI_BUILD_CONTEXT_PREFLIGHT_BUDGET_MS
+  );
   const tools: AiBuildToolResult[] = [];
   for (const descriptor of AI_READ_ONLY_BUILD_TOOLS) {
-    tools.push(await runAiBuildTool(api, descriptor.name, context, operationId));
+    if (descriptor.name !== 'build.summary' && aiBuildToolBudgetExhausted(budget)) {
+      await logToolCall(api, descriptor.name, 'skipped', operationId, 'warning');
+      tools.push(
+        createResult(descriptor.name, context, operationId, { skipped: 'preflight-budget' }, [
+          preflightBudgetIssue(descriptor.name)
+        ])
+      );
+      continue;
+    }
+
+    tools.push(await runAiBuildTool(api, descriptor.name, context, operationId, budget));
   }
   if (shouldCollectAnalyzeTextFiles(context.prompt)) {
     for (const descriptor of AI_ON_DEMAND_ANALYZE_TOOLS) {
-      tools.push(await runAiBuildTool(api, descriptor.name, context, operationId));
+      if (aiBuildToolBudgetExhausted(budget)) {
+        await logToolCall(api, descriptor.name, 'skipped', operationId, 'warning');
+        tools.push(
+          createResult(descriptor.name, context, operationId, { skipped: 'preflight-budget' }, [
+            preflightBudgetIssue(descriptor.name)
+          ])
+        );
+        continue;
+      }
+
+      tools.push(await runAiBuildTool(api, descriptor.name, context, operationId, budget));
     }
   }
 

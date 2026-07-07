@@ -7,9 +7,11 @@ import type {
   FluxoraAiCaseState,
   FluxoraAiDiagnosisJudge,
   FluxoraAiIntermediateEvent,
+  FluxoraAiIntentRoute,
   FluxoraAiResearchReport,
   FluxoraAiRoutingPreset,
   FluxoraAiMultiModelOrchestration,
+  FluxoraAiOrchestrationDecision,
   FluxoraAiModResearchRoute,
   FluxoraAiTaskPermissionClass,
   FluxoraAiTokenUsage,
@@ -18,7 +20,14 @@ import type {
   FluxoraSkillSelection
 } from '../../../shared/fluxora-api';
 
-export type AiAgentStatus = 'idle' | 'thinking' | 'needs-approval' | 'running' | 'done' | 'blocked';
+export type AiAgentStatus =
+  | 'idle'
+  | 'thinking'
+  | 'needs-approval'
+  | 'running'
+  | 'done'
+  | 'blocked'
+  | 'stopped';
 export type AiSubagentChatStatus = 'queued' | 'thinking' | 'needs-approval' | 'done' | 'blocked';
 
 export type AiMessageRole = 'user' | 'assistant';
@@ -49,6 +58,7 @@ export interface AiMessage {
   sources?: FluxoraAiCitation[];
   contextBundle?: FluxoraAiContextBundle | null;
   contextUsage?: FluxoraAiContextUsage | null;
+  intentRoute?: FluxoraAiIntentRoute | null;
   tokenUsage?: FluxoraAiTokenUsage | null;
   researchReport?: FluxoraAiResearchReport | null;
   modResearchRoute?: FluxoraAiModResearchRoute | null;
@@ -57,6 +67,7 @@ export interface AiMessage {
   taskPlan?: FluxoraAiTaskPlan | null;
   subagentSchedule?: FluxoraAiSubagentSchedule | null;
   orchestration?: FluxoraAiMultiModelOrchestration | null;
+  orchestrationDecision?: FluxoraAiOrchestrationDecision | null;
   selectedSkill?: FluxoraSkillSelection | null;
   providerDiagnostics?: string[];
 }
@@ -194,6 +205,9 @@ export const AI_CHAT_PANEL_MAX_WIDTH = 560;
 export const AI_CHAT_PANEL_DEFAULT_WIDTH = 380;
 export const AI_CHAT_PANEL_COLLAPSED_WIDTH = 56;
 export const DEFAULT_AI_CHAT_TITLE = 'New chat';
+const AI_STREAM_EVENT_HISTORY_LIMIT = 120;
+const AI_INTERMEDIATE_EVENT_HISTORY_LIMIT = 160;
+const AI_RUN_EVENT_ID_HISTORY_LIMIT = 240;
 
 export const aiStatusLabels: Record<AiAgentStatus, string> = {
   idle: 'Idle',
@@ -201,7 +215,8 @@ export const aiStatusLabels: Record<AiAgentStatus, string> = {
   'needs-approval': 'Needs approval',
   running: 'Running',
   done: 'Done',
-  blocked: 'Blocked'
+  blocked: 'Blocked',
+  stopped: 'Остановлено'
 };
 
 export const aiStatusOrder: AiAgentStatus[] = [
@@ -210,7 +225,8 @@ export const aiStatusOrder: AiAgentStatus[] = [
   'needs-approval',
   'running',
   'done',
-  'blocked'
+  'blocked',
+  'stopped'
 ];
 
 export const aiContextUsageLevelForPercent = (
@@ -624,12 +640,12 @@ const touchChat = (chat: AiChatThread, updatedAt: string): AiChatThread => ({
 
 const appendChatEvent = (chat: AiChatThread, event: AiStreamEvent): AiChatThread => ({
   ...touchChat(chat, event.createdAt),
-  streamEvents: [...chat.streamEvents, event],
+  streamEvents: [...chat.streamEvents, event].slice(-AI_STREAM_EVENT_HISTORY_LIMIT),
   runs: chat.runs.map((run) =>
     run.id === event.runId
       ? {
           ...run,
-          eventIds: [...run.eventIds, event.id],
+          eventIds: [...run.eventIds, event.id].slice(-AI_RUN_EVENT_ID_HISTORY_LIMIT),
           status: event.status ?? run.status,
           state:
             event.type === 'status'
@@ -662,9 +678,9 @@ const appendIntermediateEvent = (
     return chat;
   }
 
-  const intermediateEvents = [...chat.intermediateEvents, event].sort((left, right) =>
-    intermediateEventSortKey(left).localeCompare(intermediateEventSortKey(right))
-  );
+  const intermediateEvents = [...chat.intermediateEvents, event]
+    .sort((left, right) => intermediateEventSortKey(left).localeCompare(intermediateEventSortKey(right)))
+    .slice(-AI_INTERMEDIATE_EVENT_HISTORY_LIMIT);
 
   return {
     ...touchChat(chat, event.createdAt),
@@ -680,7 +696,7 @@ const appendIntermediateEvent = (
         ...run,
         eventIds: run.eventIds.includes(event.eventId)
           ? run.eventIds
-          : [...run.eventIds, event.eventId],
+          : [...run.eventIds, event.eventId].slice(-AI_RUN_EVENT_ID_HISTORY_LIMIT),
         status: terminal ? run.status : intermediateEventStatus(event),
         state: terminal ? run.state : 'streaming',
         updatedAt: event.createdAt
@@ -1072,7 +1088,7 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
 
       return {
         ...applySessionToState(state, session),
-        status: 'idle'
+        status: action.event.status ?? 'stopped'
       };
     }
     default: {

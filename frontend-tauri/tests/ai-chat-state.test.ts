@@ -135,6 +135,89 @@ describe('AI chat shell state', () => {
     expect(createFakeAiRunPlan('blocked by missing login').finalStatus).toBe('blocked');
   });
 
+  it('marks cancelled AI runs as stopped instead of idle', () => {
+    const run = createAiRun(
+      initialAiChatState.session.id,
+      'op_ai_chat_cancel',
+      'prompt-digest',
+      'stop me'.length,
+      new Date('2026-07-03T09:00:00Z')
+    );
+    const submitted = aiChatReducer(initialAiChatState, {
+      type: 'submit-user-message',
+      message: createAiMessage('user', 'stop me', new Date('2026-07-03T09:00:00Z'), run.id),
+      run,
+      event: createAiStreamEvent(run, 'run-created', {
+        now: new Date('2026-07-03T09:00:00Z'),
+        status: 'thinking'
+      })
+    });
+    const stopped = aiChatReducer(submitted, {
+      type: 'cancel-run',
+      message: createAiMessage('assistant', 'Остановлено', new Date('2026-07-03T09:00:01Z'), run.id, {
+        agentStatus: 'stopped'
+      }),
+      event: createAiStreamEvent(run, 'run-cancelled', {
+        now: new Date('2026-07-03T09:00:01Z'),
+        status: 'stopped'
+      })
+    });
+
+    expect(stopped.status).toBe('stopped');
+    expect(stopped.activeRunId).toBeNull();
+    expect(stopped.isRunning).toBe(false);
+    expect(stopped.messages.at(-1)?.text).toBe('Остановлено');
+    expect(stopped.session.runs[0]).toMatchObject({
+      cancellationRequested: true,
+      state: 'cancelled',
+      status: 'stopped'
+    });
+  });
+
+  it('keeps only recent intermediate events for long AI runs', () => {
+    const run = createAiRun(
+      initialAiChatState.session.id,
+      'op_ai_long_requirements',
+      'prompt-digest',
+      'Проверь требования всех модов'.length,
+      new Date('2026-07-07T09:00:00Z')
+    );
+    let state = aiChatReducer(initialAiChatState, {
+      type: 'submit-user-message',
+      message: createAiMessage(
+        'user',
+        'Проверь требования всех модов',
+        new Date('2026-07-07T09:00:00Z'),
+        run.id
+      ),
+      run,
+      event: createAiStreamEvent(run, 'run-created', {
+        now: new Date('2026-07-07T09:00:00Z'),
+        status: 'thinking'
+      })
+    });
+
+    for (let index = 0; index < 220; index += 1) {
+      state = aiChatReducer(state, {
+        type: 'apply-run-event',
+        event: createIntermediateEvent({
+          eventId: `event-long-${index}`,
+          runId: run.id,
+          operationId: run.operationId,
+          seq: index,
+          createdAt: new Date(Date.parse('2026-07-07T09:00:00Z') + index * 1000).toISOString(),
+          stage: 'nexus-requirement-audit',
+          message: `Checked mod ${index}.`
+        })
+      });
+    }
+
+    expect(state.intermediateEvents).toHaveLength(160);
+    expect(state.intermediateEvents[0]?.eventId).toBe('event-long-60');
+    expect(state.intermediateEvents.at(-1)?.eventId).toBe('event-long-219');
+    expect(state.session.chats[0]?.intermediateEvents).toHaveLength(160);
+  });
+
   it('keeps streamed assistant deltas out of visible messages until the final answer', () => {
     const run = createAiRun(
       initialAiChatState.session.id,

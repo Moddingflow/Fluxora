@@ -32,6 +32,7 @@ add_executable(FluxoraCoreTests
     GrassCacheServiceTests.cpp
     LoggerTests.cpp
     ModFileOperationsIntegrationTests.cpp
+    ModOrganizerTransferBuildTests.cpp
     ModOrganizerImportServiceTests.cpp
     ModOrganizerPluginGroupServiceTests.cpp
     ModOrganizerProfileOrderServiceTests.cpp

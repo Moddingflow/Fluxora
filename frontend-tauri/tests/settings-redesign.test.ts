@@ -6,8 +6,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { SettingsWorkspace } from '../src/renderer/features/settings/SettingsWorkspace';
+import { createCheckingNexusAuthStatus } from '../src/renderer/settings-workspace-state';
 import { TransferSettingsPanel } from '../src/renderer/TransferSettingsPanel';
-import type { FluxoraAppInfo } from '../src/shared/fluxora-api';
+import type { FluxoraAppInfo, FluxoraNexusModsAuthStatus } from '../src/shared/fluxora-api';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -69,6 +70,19 @@ const baseSettingsWorkspaceProps: SettingsWorkspaceProps = {
   onSetLanguage: () => undefined,
   onToggleNexusConnection: () => undefined
 };
+
+const cachedNativeNexusStatus: FluxoraNexusModsAuthStatus = {
+  isConfigured: true,
+  isLinked: true,
+  hasApiKey: true,
+  displayName: 'Cached user',
+  userId: 'cached-user',
+  message: 'Linked',
+  clientId: 'fluxora',
+  redirectUri: 'http://127.0.0.1:8089/callback',
+  operationId: 'op_cached_nexus'
+};
+const cachedNexusStatus = createCheckingNexusAuthStatus(cachedNativeNexusStatus, 'op_cached_nexus');
 
 const renderSettingsWorkspace = (
   overrides: Partial<SettingsWorkspaceProps> = {}
@@ -159,6 +173,11 @@ describe('settings redesign', () => {
     expect(app).toContain('window.fluxora.nexus.getAuthStatus');
     expect(app).toContain('window.fluxora.nexus.connect');
     expect(app).toContain('window.fluxora.nexus.disconnect');
+    expect(app).toContain('loadCachedNexusAuthStatus(window.localStorage)');
+    expect(app).toContain('saveCachedNexusAuthStatus(window.localStorage, status)');
+    expect(app).toContain("window.addEventListener('online', handleOnline)");
+    expect(app).toContain('nexus_online_retry');
+    expect(app).not.toContain("setSettingsBusyLabel('Loading settings')");
     expect(app).toContain('window.fluxora.transfer.analyzeMo2');
     expect(app).toContain('window.fluxora.transfer.importMo2');
     expect(app).toContain('window.fluxora.operations.cancel');
@@ -235,5 +254,25 @@ describe('settings redesign', () => {
     expect(html).toContain('win32/x64');
     expect(html).toContain('GitHub');
     expect(html).not.toContain('settings-card');
+  });
+
+  it('renders Nexus cached hints as checking until the native bridge verifies status', () => {
+    const html = renderSettingsWorkspace({
+      section: 'connections',
+      nexusStatus: cachedNexusStatus,
+      settingsCapabilities: {
+        ...baseSettingsWorkspaceProps.settingsCapabilities,
+        nexusAvailable: true
+      }
+    });
+
+    expect(html).toContain('Nexus Mods');
+    expect(html).toContain('Checking - last linked as Cached user');
+    expect(html).toContain('aria-checked="false"');
+    expect(html).toContain('disabled=""');
+    expect(html).not.toContain('Linked - Cached user');
+    expect(html).not.toContain('Status not loaded');
+    expect(html).not.toContain('Loading settings');
+    expect(html).not.toContain('Refresh status');
   });
 });

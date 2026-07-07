@@ -14,6 +14,10 @@ namespace fluxora::test_hooks
         const std::wstring& redirectUri,
         const std::string& code,
         const std::wstring& codeVerifier);
+    std::string buildNexusRefreshTokenRequestBodyForTest(
+        const std::wstring& clientId,
+        const std::wstring& clientSecret,
+        const std::wstring& refreshToken);
     std::string buildNexusAuthorizeUrlForTest(
         const std::wstring& clientId,
         const std::wstring& clientSecret,
@@ -97,6 +101,35 @@ namespace fluxora::tests
         settings.shutdown();
     }
 
+    TEST(NexusModsAuthServiceTests, StatusUsesPublicDefaultWithoutSecretResolution)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        ScopedEnvironmentVariable fluxoraClientId(L"FLUXORA_NEXUS_CLIENT_ID", L"");
+        ScopedEnvironmentVariable nexusClientId(L"NEXUS_CLIENT_ID", L"");
+        ScopedEnvironmentVariable nexusOAuthClientId(L"NEXUS_OAUTH_CLIENT_ID", L"");
+        ScopedEnvironmentVariable fluxoraRedirectUri(L"FLUXORA_NEXUS_REDIRECT_URI", L"");
+        ScopedEnvironmentVariable nexusRedirectUri(L"NEXUS_REDIRECT_URI", L"");
+        ScopedEnvironmentVariable nexusOAuthRedirectUri(L"NEXUS_OAUTH_REDIRECT_URI", L"");
+        ScopedEnvironmentVariable clientSecret(L"FLUXORA_NEXUS_CLIENT_SECRET", L"confidential-status-test-secret");
+
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsAuthStatus status = service.status();
+
+        EXPECT_TRUE(status.isConfigured);
+        EXPECT_FALSE(status.isLinked);
+        EXPECT_FALSE(status.hasApiKey);
+        EXPECT_EQ(status.clientId, L"fluxora");
+        EXPECT_EQ(status.redirectUri, L"http://127.0.0.1:8089/callback");
+        EXPECT_EQ(status.message, L"NexusMods не привязан.");
+
+        settings.shutdown();
+    }
+
 #ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
     TEST(NexusModsAuthServiceTests, ApiAuthHeaderUsesProtectedApiKeyForTrustedNativeServices)
     {
@@ -148,6 +181,34 @@ namespace fluxora::tests
         EXPECT_EQ(header.headerName, L"Authorization");
         EXPECT_EQ(header.headerValue, L"Bearer linked-access-token");
         EXPECT_EQ(header.credentialKind, L"oauth");
+
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, ApiAuthHeaderDoesNotExposeExpiredOAuthBearerWithoutRefreshToken)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.username = L"modder";
+        auth.userId = L"42";
+        auth.tokenType = L"Bearer";
+        auth.expiresAtUtc = L"2000-01-01T00:00:00Z";
+        auth.protectedAccessToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"expired-access-token");
+        settings.saveNexusModsAuth(auth);
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsApiAuthHeader header = service.apiAuthHeader();
+
+        EXPECT_FALSE(header.isAvailable);
+        EXPECT_TRUE(header.headerValue.empty());
+        EXPECT_NE(header.message.find(L"expired"), std::wstring::npos);
 
         settings.shutdown();
     }
@@ -225,6 +286,20 @@ namespace fluxora::tests
         EXPECT_NE(body.find("client_secret=s%20e%2Bc%2Fret"), std::string::npos);
         EXPECT_NE(body.find("code=auth-code"), std::string::npos);
         EXPECT_EQ(body.find("code_verifier=verifier"), std::string::npos);
+    }
+
+    TEST(NexusModsAuthServiceTests, RefreshRequestUsesRefreshGrantAndConfidentialSecret)
+    {
+        const std::string body = nexus_auth_test_hooks::buildNexusRefreshTokenRequestBodyForTest(
+            L"fluxora",
+            L"secret value",
+            L"refresh token");
+
+        EXPECT_NE(body.find("grant_type=refresh_token"), std::string::npos);
+        EXPECT_NE(body.find("client_id=fluxora"), std::string::npos);
+        EXPECT_NE(body.find("client_secret=secret%20value"), std::string::npos);
+        EXPECT_NE(body.find("refresh_token=refresh%20token"), std::string::npos);
+        EXPECT_EQ(body.find("code_verifier"), std::string::npos);
     }
 
     TEST(NexusModsAuthServiceTests, ClientSecretResolverUsesExpectedNameAndEnvironmentOverride)

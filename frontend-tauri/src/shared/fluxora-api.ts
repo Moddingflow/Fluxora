@@ -21,6 +21,7 @@ export type {
 export type { FluxoraSkillCatalog, FluxoraSkillSelection } from './ai-skills';
 
 export const FluxoraIpcChannels = {
+  aiCancelRun: 'fluxora:ai:cancel-run',
   aiChatRespond: 'fluxora:ai:chat-respond',
   aiEstimateContext: 'fluxora:ai:estimate-context',
   aiConnectProvider: 'fluxora:ai:connect-provider',
@@ -296,6 +297,13 @@ export interface FluxoraAiProviderTestResult {
   modelIds: string[];
 }
 
+export interface FluxoraAiCancelRunResult {
+  operationId: string;
+  status: 'accepted' | 'notFound';
+  accepted: boolean;
+  processId?: number | null;
+}
+
 export type FluxoraAiChatRole = 'system' | 'user' | 'assistant';
 
 export type FluxoraAiRoutingPreset =
@@ -394,8 +402,46 @@ export interface FluxoraAiModResearchSearchBudget {
   maxNexusApiRequests?: number;
   publicWebFetches: number;
   geminiGoogleSearch: boolean;
-  coverageMode?: 'targeted-official-api' | 'bounded-official-api-batch';
+  coverageMode?: 'targeted-official-api' | 'bounded-official-api-batch' | 'full-build-official-api-audit';
   reason: string;
+}
+
+export type FluxoraAiCanonicalIntent =
+  | 'nexus-api-research'
+  | 'requirement-audit'
+  | 'compatibility-check'
+  | 'public-web-research'
+  | 'local-build-diagnosis'
+  | 'mutation-request'
+  | 'unknown';
+
+export interface FluxoraAiIntentSignal {
+  kind: string;
+  value: string;
+  confidence: number;
+  source: 'deterministic' | 'multilingual-examples' | 'structured-classifier' | string;
+}
+
+export interface FluxoraAiIntentTarget {
+  kind: 'nexus-url' | 'nxm-link' | 'game-domain-mod-id' | 'local-nexus-metadata' | string;
+  value?: string;
+  gameDomain?: string;
+  modId?: string;
+}
+
+export interface FluxoraAiIntentRoute {
+  schema: 'fluxora.ai.intent-route.v1';
+  promptLanguage: string;
+  replyLanguage: string;
+  confidence: number;
+  signals: FluxoraAiIntentSignal[];
+  canonicalIntent: FluxoraAiCanonicalIntent;
+  scope: string;
+  explicitTargets: FluxoraAiIntentTarget[];
+  nexusApiRequested: boolean;
+  publicWebRequested: boolean;
+  requiresExternalNetwork: boolean;
+  clarificationRequired: boolean;
 }
 
 export interface FluxoraAiModResearchRoute {
@@ -409,6 +455,7 @@ export interface FluxoraAiModResearchRoute {
   publicWebAllowed: boolean;
   geminiGoogleSearchAllowed: boolean;
   auditScope?: 'targeted' | 'batch-requirements' | 'full-build-requirements';
+  intentRoute?: FluxoraAiIntentRoute;
   highSignalIssues: string[];
   missingFields: string[];
   reasons: string[];
@@ -456,6 +503,12 @@ export interface FluxoraAiContextUsage {
   autoCompressionApplied: boolean;
   actionRequired: boolean;
   countedAt: string;
+  trace?: {
+    schema?: 'fluxora.ai.context-usage-trace.v1';
+    policyDecisionsUseIntentRouter?: boolean;
+    routingSchemas?: string[];
+    intentRoute?: FluxoraAiIntentRoute;
+  };
 }
 
 export interface FluxoraAiTokenUsage {
@@ -593,6 +646,25 @@ export interface FluxoraAiMultiModelOrchestration {
     mutationsAllowed: false;
     askUserOnlyIfBlocked: true;
   };
+}
+
+export type FluxoraAiOrchestrationDecisionReason =
+  | 'started'
+  | 'completed'
+  | 'free-demo-disabled'
+  | 'insufficient-remote-targets'
+  | 'chef-provider-error'
+  | 'all-workers-blocked'
+  | 'missing-local-context'
+  | string;
+
+export interface FluxoraAiOrchestrationDecision {
+  schema: 'fluxora.ai.orchestration-decision.v1';
+  generatedAt: string;
+  operationId: string;
+  reason: FluxoraAiOrchestrationDecisionReason;
+  attempted: boolean;
+  completed: boolean;
 }
 
 export interface FluxoraAiCreditWalletPolicy {
@@ -992,6 +1064,7 @@ export interface FluxoraAiChatResponse {
   marginTelemetry: FluxoraAiMarginTelemetry;
   routingDecision: FluxoraAiRoutingDecision;
   contextUsage?: FluxoraAiContextUsage | null;
+  intentRoute?: FluxoraAiIntentRoute | null;
   tokenUsage?: FluxoraAiTokenUsage | null;
   modResearchRoute?: FluxoraAiModResearchRoute | null;
   localInspection?: FluxoraAiLocalInspection | null;
@@ -1000,6 +1073,7 @@ export interface FluxoraAiChatResponse {
   diagnosisJudge?: FluxoraAiDiagnosisJudge | null;
   caseState?: FluxoraAiCaseState | null;
   orchestration?: FluxoraAiMultiModelOrchestration | null;
+  orchestrationDecision?: FluxoraAiOrchestrationDecision | null;
   contextBundle?: FluxoraAiContextBundle | null;
   researchReport?: FluxoraAiResearchReport | null;
   taskPlan?: FluxoraAiTaskPlan | null;
@@ -1840,6 +1914,65 @@ export interface UiLogEntry {
   category?: string;
 }
 
+export interface FluxoraPublicApiEnvelope<TData = Record<string, unknown>> {
+  ok?: boolean;
+  code?: string;
+  data?: TData;
+  error?: Record<string, unknown>;
+}
+
+export interface FluxoraPublicApiCallOptions extends OperationRequest {
+  accessToken?: string;
+  baseUrl?: string;
+  headers?: Record<string, string>;
+}
+
+export interface FluxoraPublicApiCatalogRequest {
+  category?: string;
+  cursor?: string;
+  game?: string;
+  gameVersion?: string;
+  limit?: number;
+  loader?: string;
+  q?: string;
+  query?: string;
+  sort?: 'relevance' | 'latest' | 'trending' | 'downloads';
+}
+
+export interface FluxoraPublicApiDownloadResolveRequest {
+  preferred_cdn?: 'r2' | 'bunny' | null;
+}
+
+export interface FluxoraPublicApiInstallPlanResolveRequest {
+  artifact_id?: string;
+  artifact_ids?: string[];
+  game_slug: string;
+  game_version: string;
+  include_optional?: boolean;
+  loader?: string | null;
+  mod_id?: string;
+  mod_ids?: string[];
+  platform?: string | null;
+  version_id?: string;
+  version_ids?: string[];
+}
+
+export interface FluxoraPublicApiClient {
+  listMods: (
+    request?: FluxoraPublicApiCatalogRequest,
+    options?: FluxoraPublicApiCallOptions
+  ) => Promise<FluxoraPublicApiEnvelope>;
+  resolveDownload: (
+    artifactId: string,
+    request?: FluxoraPublicApiDownloadResolveRequest,
+    options?: FluxoraPublicApiCallOptions
+  ) => Promise<FluxoraPublicApiEnvelope>;
+  resolveInstallPlan: (
+    request: FluxoraPublicApiInstallPlanResolveRequest,
+    options?: FluxoraPublicApiCallOptions
+  ) => Promise<FluxoraPublicApiEnvelope>;
+}
+
 export type FluxoraFileDropPosition = {
   x: number;
   y: number;
@@ -1868,7 +2001,12 @@ export interface FluxoraApi {
   app: {
     getInfo: () => Promise<FluxoraAppInfo>;
   };
+  publicApi: FluxoraPublicApiClient;
   ai: {
+    cancelRun: (
+      operationId: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraAiCancelRunResult>;
     chatRespond: (request: FluxoraAiChatRequest) => Promise<FluxoraAiChatResponse>;
     estimateContext: (request: FluxoraAiChatRequest) => Promise<FluxoraAiContextUsage>;
     getStatus: (request?: OperationRequest) => Promise<FluxoraAiHostStatus>;

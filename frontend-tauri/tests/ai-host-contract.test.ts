@@ -26,6 +26,7 @@ describe('FluxoraAIHost MVP contract', () => {
     const buildScript = readText('Build.ps1');
 
     expect(fileExists('frontend-tauri', 'src-tauri', 'src', 'bin', 'fluxora_ai_host.rs')).toBe(true);
+    expect(fileExists('frontend-tauri', 'src-tauri', 'src', 'ai_intent.rs')).toBe(true);
     expect(gitignore).toContain('!frontend-tauri/src-tauri/src/bin/');
     expect(gitignore).toContain('!frontend-tauri/src-tauri/src/bin/**');
     expect(cargoToml).toContain('name = "fluxora-ai-host"');
@@ -106,10 +107,22 @@ describe('FluxoraAIHost MVP contract', () => {
               precision: 'estimated',
               level: 'normal',
               mode: 'full',
-              includedSections: ['messages'],
+              includedSections: ['messages', 'intent-route'],
               autoCompressionApplied: false,
               actionRequired: false,
-              countedAt: '2026-07-03T10:00:00.000Z'
+              countedAt: '2026-07-03T10:00:00.000Z',
+              trace: {
+                schema: 'fluxora.ai.context-usage-trace.v1',
+                policyDecisionsUseIntentRouter: true,
+                routingSchemas: ['fluxora.ai.intent-route.v1', 'fluxora.ai.mod-research-route.v1']
+              }
+            };
+          case FluxoraIpcChannels.aiCancelRun:
+            return {
+              operationId: args[0],
+              status: 'accepted',
+              accepted: true,
+              processId: 1234
             };
           case FluxoraIpcChannels.aiConnectProvider:
             return {
@@ -227,6 +240,10 @@ describe('FluxoraAIHost MVP contract', () => {
       currentContextTokens: 12,
       precision: 'estimated'
     });
+    await expect(api.ai.cancelRun('op_ai_chat_run', { operationId: 'op_ai_cancel' })).resolves.toMatchObject({
+      accepted: true,
+      operationId: 'op_ai_chat_run'
+    });
     await expect(
       api.ai.disconnectProvider('gemini', { operationId: 'op_ai_disconnect' })
     ).resolves.toMatchObject({ connected: false, providerId: 'gemini' });
@@ -237,6 +254,7 @@ describe('FluxoraAIHost MVP contract', () => {
       FluxoraIpcChannels.aiTestProvider,
       FluxoraIpcChannels.aiChatRespond,
       FluxoraIpcChannels.aiEstimateContext,
+      FluxoraIpcChannels.aiCancelRun,
       FluxoraIpcChannels.aiDisconnectProvider
     ]);
 
@@ -246,15 +264,19 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(sharedApi).toContain('ai: {');
     expect(sharedApi).toContain('listSafeActions');
     expect(sharedApi).toContain('listSkills');
+    expect(sharedApi).toContain('cancelRun');
+    expect(sharedApi).toContain('FluxoraAiCancelRunResult');
     expect(sharedApi).toContain('chatRespond');
     expect(sharedApi).toContain('estimateContext');
     expect(sharedApi).toContain('aiEstimateContext');
     expect(sharedApi).toContain("aiRunEvent: 'fluxora:ai:run-event'");
+    expect(sharedApi).toContain("aiCancelRun: 'fluxora:ai:cancel-run'");
     expect(sharedApi).toContain('FluxoraAiIntermediateEvent');
     expect(sharedApi).toContain('runId: string');
     expect(sharedApi).toContain('onRunEvent');
     expect(sharedApi).toContain('connectProvider');
     expect(sharedApi).toContain('FluxoraAiContextUsage');
+    expect(sharedApi).toContain('FluxoraAiIntentRoute');
     expect(sharedApi).toContain('FluxoraAiTokenUsage');
     expect(sharedApi).toContain('AiSafeActionCatalog');
     expect(sharedApi).toContain('FluxoraSkillCatalog');
@@ -263,6 +285,8 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(sharedApi).toContain('FluxoraAiContextBundle');
     expect(sharedApi).toContain('contextBundle?: FluxoraAiContextBundle | null');
     expect(sharedApi).toContain('contextUsage?: FluxoraAiContextUsage | null');
+    expect(sharedApi).toContain('intentRoute?: FluxoraAiIntentRoute | null');
+    expect(sharedApi).toContain('policyDecisionsUseIntentRouter?: boolean');
     expect(sharedApi).toContain('tokenUsage?: FluxoraAiTokenUsage | null');
     expect(sharedApi).toContain('FluxoraAiResearchRequest');
     expect(sharedApi).toContain('FluxoraAiResearchReport');
@@ -271,16 +295,21 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(sharedApi).toContain('localInspection?: FluxoraAiLocalInspection | null');
     expect(sharedApi).toContain('FluxoraAiTaskPlan');
     expect(sharedApi).toContain('FluxoraAiSubagentSchedule');
+    expect(sharedApi).toContain('FluxoraAiOrchestrationDecision');
     expect(sharedApi).toContain("status: 'done' | 'blocked' | 'needs-approval'");
     expect(sharedApi).toContain('selectedSkill?: FluxoraSkillSelection | null');
     expect(sharedApi).toContain('taskPlan?: FluxoraAiTaskPlan | null');
     expect(sharedApi).toContain('subagentSchedule?: FluxoraAiSubagentSchedule | null');
+    expect(sharedApi).toContain('orchestrationDecision?: FluxoraAiOrchestrationDecision | null');
     expect(facade).toContain('fluxora_ai_connect_provider');
+    expect(facade).toContain('fluxora_ai_cancel_run');
     expect(facade).toContain('fluxora_ai_chat_respond');
     expect(facade).toContain('fluxora_ai_estimate_context');
     expect(facade).toContain('FluxoraIpcChannels.aiRunEvent');
     expect(facade).toContain('onRunEvent');
     expect(rustShell).toContain('PRIVATE_NEXUS_API_AUTH_HEADER_METHOD');
+    expect(rustShell).toContain('fluxora_ai_cancel_run');
+    expect(rustShell).toContain('terminate_process(process_id)');
     expect(rustShell).toContain('ai.intermediateEvent');
     expect(rustShell).toContain('AI_RUN_EVENT');
     expect(rustShell).toContain('nativeNexusApiCredential');
@@ -380,7 +409,8 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(aiHost).toContain('"arbitraryBrowserAutomation": false');
     expect(aiHost).toContain('"geminiGoogleSearch"');
     expect(aiHost).toContain('collect_ai_research_bundle');
-    expect(aiHost).toContain('googleSearchRetrieval');
+    expect(aiHost).toContain('"google_search"');
+    expect(aiHost).toContain('orchestrationDecision');
     expect(aiHost).toContain('FluxoraContextGraph::open_in_memory');
     expect(aiHost).toContain('compact_chat_messages_with_context_graph');
     expect(aiHost).toContain('context_sources_for_citations');
@@ -473,13 +503,50 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(contextGraph).toContain('active full-slot plugins');
   });
 
+  it('starts the chat response before background context estimation can occupy the AI host', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const start = app.indexOf('const sendAiChatMessageAsync = async () => {');
+    const end = app.indexOf('const sendAiChatMessage = () => {', start);
+    const sendFlow = app.slice(start, end);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(sendFlow).toContain('const estimateAiContextUsage = async () => {');
+
+    const startRunIndex = sendFlow.indexOf('runControl.handle = startHostAiRun(');
+    const estimateIndex = sendFlow.indexOf('void estimateAiContextUsage();');
+    const preparedRequestIndex = sendFlow.indexOf('preparedRequest: chatRequest');
+    const blockingEstimateIndex = sendFlow.indexOf(
+      'const contextUsage = await window.fluxora.ai.estimateContext(chatRequest);'
+    );
+
+    expect(startRunIndex).toBeGreaterThanOrEqual(0);
+    expect(blockingEstimateIndex).toBeGreaterThanOrEqual(0);
+    expect(blockingEstimateIndex).toBeLessThan(startRunIndex);
+    expect(preparedRequestIndex).toBeGreaterThan(startRunIndex);
+    expect(estimateIndex).toBeGreaterThan(startRunIndex);
+  });
+
   it('routes mod research local-first before spending Nexus or web budget', () => {
     const aiHost = readText('frontend-tauri', 'src-tauri', 'src', 'bin', 'fluxora_ai_host.rs');
+    const aiResearch = readText('frontend-tauri', 'src-tauri', 'src', 'ai_research.rs');
+    const aiIntent = readText('frontend-tauri', 'src-tauri', 'src', 'ai_intent.rs');
     const facade = readText('frontend-tauri', 'src', 'tauri', 'fluxora-api.ts');
     const sharedApi = readText('frontend-tauri', 'src', 'shared', 'fluxora-api.ts');
 
+    expect(aiIntent).toContain('fluxora.ai.intent-route.v1');
+    expect(aiIntent).toContain('requirement-audit');
+    expect(aiIntent).toContain('public-web-research');
+    expect(aiIntent).toContain('multilingual-examples');
+    expect(aiHost).toContain('"intentRouter"');
+    expect(aiHost).toContain('intent_route_system_message');
+    expect(aiHost).toContain('"intentRoute": intent_route');
+    expect(aiHost).not.toContain('fn prompt_requests_compatibility_research');
+    expect(aiHost).not.toContain('fn prompt_requests_requirement_audit');
+    expect(aiHost).not.toContain('fn prompt_requests_public_web');
     expect(sharedApi).toContain('FluxoraAiModResearchRoute');
     expect(sharedApi).toContain("schema: 'fluxora.ai.mod-research-route.v1'");
+    expect(sharedApi).toContain('intentRoute?: FluxoraAiIntentRoute');
     expect(sharedApi).toContain('searchBudget?: FluxoraAiModResearchSearchBudget');
     expect(sharedApi).toContain("auditScope?: 'targeted' | 'batch-requirements' | 'full-build-requirements'");
     expect(sharedApi).toContain('maxNexusTargets?: number');
@@ -500,6 +567,12 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(aiHost).toContain('"modResearchRoute": mod_research_route');
     expect(aiHost).toContain('use the provided Nexus API/cache research bundle as allowed external evidence');
     expect(aiHost).toContain('public Nexus page scraping remains disabled');
+    expect(aiHost).toContain('Official Nexus API/cache research supplied by Fluxora is allowed when nexusAllowed=true');
+    expect(aiHost).toContain('nexus_api_policy_refusal_correction');
+    expect(aiHost).toContain('web-search policy forbids Nexus API research');
+    expect(aiHost).toContain('Внешний поиск (Nexus API/Web)');
+    expect(aiResearch).toContain('Official Nexus API research needs a concrete target');
+    expect(aiResearch).toContain('target-resolution limit, not a web-search policy refusal');
     expect(aiHost.indexOf('let local_inspection =')).toBeLessThan(
       aiHost.indexOf('collect_ai_research_bundle(')
     );
@@ -516,9 +589,15 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["nexusApiRequests"], 2);');
     expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["publicWebFetches"], 0);');
     expect(aiHost).toContain('fn requirement_audit_with_missing_masters_still_collects_nexus_research()');
-    expect(aiHost).toContain('assert_eq!(route.payload["auditScope"], "batch-requirements");');
-    expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["nexusApiRequests"], 256);');
-    expect(aiHost).toContain('assert_eq!(routed_params["research"]["maxNexusTargets"], 128);');
+    expect(aiHost).toContain('assert_eq!(route.payload["auditScope"], "full-build-requirements");');
+    expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["nexusApiRequests"], 2500);');
+    expect(aiHost).toContain('assert_eq!(routed_params["research"]["maxNexusTargets"], 1000);');
+    expect(aiHost).toContain('fn nexus_api_policy_refusal_is_corrected_to_target_limit()');
+    expect(aiHost).toContain('fn nexus_api_policy_refusal_corrects_external_search_wording()');
+    expect(aiHost).toContain('fn nexus_api_policy_refusal_reports_captured_api_snapshots()');
+    expect(aiHost).toContain('fn multilingual_requirement_audit_routes_to_same_nexus_api_batch()');
+    expect(aiHost).toContain('fn no_internet_and_generic_public_search_stay_local_only_without_nexus_policy()');
+    expect(aiResearch).toContain('multilingual_requirement_audit_prompts_enable_batch_nexus_options_without_renderer_params');
   });
 
   it('keeps AI chat input closed when the AI host status is unavailable', () => {

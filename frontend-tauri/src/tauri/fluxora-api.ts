@@ -22,6 +22,7 @@ import type {
   FluxoraGameTemplate,
   FluxoraAnalyzeContentLayoutRequest,
   FluxoraAnalyzeFomodContentLayoutRequest,
+  FluxoraAiCancelRunResult,
   FluxoraAiChatRequest,
   FluxoraAiChatResponse,
   FluxoraAiContextUsage,
@@ -93,6 +94,7 @@ import {
   AI_SAFE_ACTION_CATALOG_CAPABILITY
 } from '../shared/ai-safe-action-catalog';
 import { createFluxoraAiTaskPlanningBundle } from '../shared/ai-task-planner';
+import { createModdingflowPublicApiDogfoodClient } from '../shared/moddingflow-public-api-dogfood';
 import {
   FLUXORA_SKILL_CATALOG,
   FLUXORA_SKILL_CATALOG_CAPABILITY
@@ -135,7 +137,15 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   app: {
     getInfo: () => invokeTyped<FluxoraAppInfo>(ipc, FluxoraIpcChannels.appGetInfo)
   },
+  publicApi: createModdingflowPublicApiDogfoodClient(),
   ai: {
+    cancelRun: (operationId: string, request?: OperationRequest) =>
+      invokeTyped<FluxoraAiCancelRunResult>(
+        ipc,
+        FluxoraIpcChannels.aiCancelRun,
+        operationId,
+        request
+      ),
     chatRespond: (request: FluxoraAiChatRequest) =>
       invokeTyped<FluxoraAiChatResponse>(ipc, FluxoraIpcChannels.aiChatRespond, request),
     estimateContext: (request: FluxoraAiChatRequest) =>
@@ -2004,6 +2014,12 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.aiGetStatus:
         return invoke<FluxoraAiHostStatus>('fluxora_ai_get_status', {
           request: requestWithOperationId(args[0], 'ai_status')
+        });
+
+      case FluxoraIpcChannels.aiCancelRun:
+        return invoke<FluxoraAiCancelRunResult>('fluxora_ai_cancel_run', {
+          operationId: optionalString(args[0]),
+          request: requestWithOperationId(args[1], 'ai_cancel_run')
         });
 
       case FluxoraIpcChannels.aiRestartHost:

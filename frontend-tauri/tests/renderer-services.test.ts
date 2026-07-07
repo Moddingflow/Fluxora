@@ -194,6 +194,34 @@ describe('project catalog service', () => {
     );
   });
 
+  it('generates create operation ids and forwards trimmed draft DTOs', async () => {
+    const create = vi.fn(async () => project({ name: 'Nordic Build' }));
+
+    setFluxoraApi({
+      projects: {
+        create
+      } as unknown as FluxoraApi['projects']
+    });
+
+    const result = await createProjectFromDraft({
+      projectName: '  Nordic Build  ',
+      templateId: 'skyrim-special-edition',
+      gamePath: '  C:\\Games\\Skyrim\\SkyrimSE.exe  ',
+      installRootDirectory: '  C:\\Fluxora Projects  '
+    });
+
+    expect(result.operationId).toContain('_projects_create_');
+    expect(create).toHaveBeenCalledWith(
+      {
+        projectName: 'Nordic Build',
+        templateId: 'skyrim-special-edition',
+        gamePath: 'C:\\Games\\Skyrim\\SkyrimSE.exe',
+        installRootDirectory: 'C:\\Fluxora Projects'
+      },
+      { operationId: result.operationId }
+    );
+  });
+
   it('cleans up a cancelled created project through the typed project delete API', async () => {
     const created = project({
       name: 'Cancelled Build',
@@ -216,6 +244,32 @@ describe('project catalog service', () => {
     expect(result.result.accepted).toBe(true);
     expect(remove).toHaveBeenCalledWith(created.configPath, {
       operationId: 'op_cancel_cleanup'
+    });
+  });
+
+  it('generates cancel cleanup operation ids when omitted', async () => {
+    const created = project({
+      name: 'Cancelled Build',
+      configPath: 'C:\\Fluxora\\Builds\\Cancelled.json'
+    });
+    const remove = vi.fn(async () => ({
+      accepted: true,
+      configPath: created.configPath,
+      operationId: 'op_native_cleanup'
+    }));
+
+    setFluxoraApi({
+      projects: {
+        delete: remove
+      } as unknown as FluxoraApi['projects']
+    });
+
+    const result = await cleanupCreatedProject(created);
+
+    expect(result.result.accepted).toBe(true);
+    expect(result.operationId).toContain('_projects_create_cancel_cleanup_');
+    expect(remove).toHaveBeenCalledWith(created.configPath, {
+      operationId: result.operationId
     });
   });
 });

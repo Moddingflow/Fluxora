@@ -66,7 +66,9 @@ import {
   aiChatReducer,
   createAiMessage,
   createAiStreamEvent,
-  initialAiChatState
+  initialAiChatState,
+  type AiSubagentChatMetadata,
+  type AiRun
 } from './features/ai/ai-chat-state';
 import {
   aiSessionStorageKey,
@@ -213,12 +215,19 @@ import {
   selectedProfileName
 } from './profiles-executables-workspace-state';
 import {
+  createCheckingNexusAuthStatus,
+  createVerifiedNexusAuthStatus,
+  loadCachedNexusAuthStatus,
+  nexusCanToggle,
+  nexusIsVerifiedLinked,
   normalizeThemeMode,
   selectPreferredTransferDrive,
   fluxoraOriginalRepositoryUrl,
   loadDeveloperModeSetting,
+  saveCachedNexusAuthStatus,
   saveDeveloperModeSetting,
   settingsCapabilityView,
+  type NexusAuthViewStatus,
   type SettingsSectionId
 } from './settings-workspace-state';
 import {
@@ -410,6 +419,13 @@ interface PendingPluginEnableSave extends PendingPluginEnabledState {
   contextKey: string;
   pending: boolean;
   sequence: number;
+}
+
+interface ActiveAiRunControl {
+  cancelled: boolean;
+  handle: AiLocalRunHandle | null;
+  operationId: string;
+  runId: string;
 }
 
 type MenuIconStyle = CSSProperties & { '--menu-icon': string };
@@ -866,7 +882,7 @@ export const App = () => {
   const [aiChatSettings, setAiChatSettings] = useState<AiChatSettings>(() =>
     loadAiChatSettings(window.localStorage)
   );
-  const aiLocalRunRef = useRef<AiLocalRunHandle | null>(null);
+  const activeAiRunRef = useRef<ActiveAiRunControl | null>(null);
   const [openingBuildSplash, setOpeningBuildSplash] =
     useState<OpeningBuildSplashState | null>(null);
   const [interfaceRefreshSplash, setInterfaceRefreshSplash] =
@@ -887,7 +903,9 @@ export const App = () => {
     loadDeveloperModeSetting(window.localStorage)
   );
   const [settingsBusyLabel, setSettingsBusyLabel] = useState<string | null>(null);
-  const [nexusStatus, setNexusStatus] = useState<FluxoraNexusModsAuthStatus | null>(null);
+  const [nexusStatus, setNexusStatus] = useState<NexusAuthViewStatus>(() =>
+    loadCachedNexusAuthStatus(window.localStorage)
+  );
   const [nexusBusy, setNexusBusy] = useState(false);
   const nxmAutoRegistrationAttemptedRef = useRef(false);
   const pendingInboundNxmEventRef = useRef<FluxoraNxmInboundLinksCaptured | null>(null);
@@ -1408,6 +1426,15 @@ export const App = () => {
     () => settingsCapabilityView(bridgeStatus),
     [bridgeStatus]
   );
+
+  const rememberNexusStatus = (status: FluxoraNexusModsAuthStatus) => {
+    setNexusStatus(createVerifiedNexusAuthStatus(status));
+    saveCachedNexusAuthStatus(window.localStorage, status);
+  };
+  const markNexusStatusChecking = () => {
+    setNexusStatus((currentStatus) => createCheckingNexusAuthStatus(currentStatus));
+  };
+  const nexusVerifiedLinked = nexusIsVerifiedLinked(nexusStatus);
 
   const isTransferRunning = transferRunningOperationId !== null;
   const operationCancellationSupported =
@@ -4420,10 +4447,12 @@ export const App = () => {
           try {
             const nextNexusStatus = await window.fluxora.nexus.getAuthStatus({ operationId });
             if (isMounted) {
-              setNexusStatus(nextNexusStatus);
+              rememberNexusStatus(nextNexusStatus);
             }
           } catch {
-            // Settings can still surface the exact Nexus auth error when opened.
+            if (isMounted) {
+              setNexusStatus((currentStatus) => createCheckingNexusAuthStatus(currentStatus));
+            }
           }
           await loadCatalog();
           return;
@@ -4447,10 +4476,30 @@ export const App = () => {
   }, []);
 
   useEffect(() => {
+    const handleOnline = () => {
+      const operationId = createRendererOperationId('nexus_online_retry');
+      markNexusStatusChecking();
+      void window.fluxora.nexus.getAuthStatus({ operationId }).then(
+        (nextNexusStatus) => {
+          rememberNexusStatus(nextNexusStatus);
+        },
+        () => {
+          markNexusStatusChecking();
+        }
+      );
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
+  }, []);
+
+  useEffect(() => {
     if (
       isSecondaryWindow ||
       !bridgeStatus?.ready ||
-      !nexusStatus?.isLinked ||
+      !nexusVerifiedLinked ||
       nxmAutoRegistrationAttemptedRef.current
     ) {
       return;
@@ -4478,7 +4527,7 @@ export const App = () => {
     bridgeStatus?.capabilities?.platform,
     bridgeStatus?.ready,
     isSecondaryWindow,
-    nexusStatus?.isLinked
+    nexusVerifiedLinked
   ]);
 
   useEffect(() => {
@@ -4513,8 +4562,8 @@ export const App = () => {
   }, [themeMode]);
 
   useEffect(() => {
-    aiLocalRunRef.current?.dispose();
-    aiLocalRunRef.current = null;
+    activeAiRunRef.current?.handle?.dispose();
+    activeAiRunRef.current = null;
     dispatchAiChat({
       type: 'restore-session',
       session: loadAiSession(window.localStorage, aiSessionScope)
@@ -4582,8 +4631,8 @@ export const App = () => {
 
   useEffect(
     () => () => {
-      aiLocalRunRef.current?.dispose();
-      aiLocalRunRef.current = null;
+      activeAiRunRef.current?.handle?.dispose();
+      activeAiRunRef.current = null;
     },
     []
   );
@@ -6216,7 +6265,6 @@ export const App = () => {
     }
 
     const operationId = createRendererOperationId('settings_load');
-    setSettingsBusyLabel('Loading settings');
     setMessage(null);
 
     try {
@@ -6231,24 +6279,28 @@ export const App = () => {
         operationId
       });
       setThemeMode(nextThemeMode);
-      setNexusStatus(nextNexusStatus);
+      rememberNexusStatus(nextNexusStatus);
     } catch (error) {
+      markNexusStatusChecking();
       setMessage(errorMessage(error));
-    } finally {
-      setSettingsBusyLabel(null);
     }
   };
 
   const toggleNexusConnection = async () => {
-    const operationId = createRendererOperationId(nexusStatus?.isLinked ? 'nexus_disconnect' : 'nexus_connect');
+    if (nexusBusy || !nexusCanToggle(nexusStatus, settingsCapabilities.nexusAvailable)) {
+      return;
+    }
+
+    const shouldDisconnect = nexusIsVerifiedLinked(nexusStatus);
+    const operationId = createRendererOperationId(shouldDisconnect ? 'nexus_disconnect' : 'nexus_connect');
     setNexusBusy(true);
     setMessage(null);
 
     try {
-      const status = nexusStatus?.isLinked
+      const status = shouldDisconnect
         ? await window.fluxora.nexus.disconnect({ operationId })
         : await window.fluxora.nexus.connect({ operationId });
-      setNexusStatus(status);
+      rememberNexusStatus(status);
       setMessage(status.message || (status.isLinked ? 'Nexus Mods connected.' : 'Nexus Mods disconnected.'));
     } catch (error) {
       setMessage(errorMessage(error));
@@ -10291,8 +10343,8 @@ export const App = () => {
       return;
     }
 
-    aiLocalRunRef.current?.dispose();
-    aiLocalRunRef.current = null;
+    activeAiRunRef.current?.handle?.dispose();
+    activeAiRunRef.current = null;
     window.localStorage.removeItem(aiSessionStorageKey(aiChat.session.scopeKey));
     window.localStorage.removeItem(aiAutonomousJobQueueStorageKey(aiChat.session.scopeKey));
     dispatchAiChat({
@@ -10567,17 +10619,71 @@ export const App = () => {
     ].filter((hint): hint is AiBuildOperationHint => Boolean(hint));
   const aiChatProviderDiagnostic = aiProviderDiagnostic(aiChatSettings, aiHostStatus);
 
+  const finishAiRunAsStopped = (run: Pick<AiRun, 'id' | 'operationId'>) => {
+    const event = createAiStreamEvent(run, 'run-cancelled', { status: 'stopped' });
+    dispatchAiChat({
+      type: 'cancel-run',
+      message: createAiMessage('assistant', 'Остановлено', new Date(), run.id, {
+        agentStatus: 'stopped'
+      }),
+      event
+    });
+  };
+
+  const finishAiRunAsBlocked = (run: Pick<AiRun, 'id' | 'operationId'>, error: unknown) => {
+    const messageText = `AI host blocked the response before it started: ${errorMessage(error)}`;
+    const event = createAiStreamEvent(run, 'run-finished', { status: 'blocked' });
+    dispatchAiChat({
+      type: 'append-assistant-message',
+      message: createAiMessage('assistant', messageText, new Date(), run.id, {
+        agentStatus: 'blocked'
+      }),
+      event,
+      status: 'blocked'
+    });
+  };
+
+  const requestNativeAiRunCancel = (operationId: string) => {
+    void window.fluxora.ai
+      .cancelRun(operationId, {
+        operationId: createRendererOperationId('ai_cancel_run')
+      })
+      .catch((error) => {
+        logAiRuntimeEntry({
+          category: 'ai-chat',
+          channel: 'tauri-bridge',
+          level: 'warning',
+          message:
+            error instanceof Error && error.message
+              ? `AI host cancel request failed: ${error.message}`
+              : 'AI host cancel request failed.',
+          operationId
+        });
+      });
+  };
+
+  const openAiSubagentChat = (subagent: AiSubagentChatMetadata) => {
+    dispatchAiChat({ type: 'open-subagent-chat', subagent });
+  };
+
   const sendAiChatMessageAsync = async () => {
     const prompt = aiChat.draft.trim();
     if (!prompt || aiChat.isRunning || !aiHostStatus?.ready || aiChatProviderDiagnostic?.level === 'error') {
       return;
     }
 
-    aiLocalRunRef.current?.dispose();
-    aiLocalRunRef.current = null;
+    activeAiRunRef.current?.handle?.dispose();
+    activeAiRunRef.current = null;
     const operationId = createRendererOperationId('ai_chat_run');
     const requestSession = aiChat.session;
     const run = createAiRunForPrompt(requestSession, operationId, prompt);
+    const runControl: ActiveAiRunControl = {
+      cancelled: false,
+      handle: null,
+      operationId,
+      runId: run.id
+    };
+    activeAiRunRef.current = runControl;
     const runCreatedEvent = createAiStreamEvent(run, 'run-created', { status: 'thinking' });
     dispatchAiChat({
       type: 'submit-user-message',
@@ -10599,85 +10705,132 @@ export const App = () => {
     const modelSupportsBackground =
       aiHostStatus.models.find((model) => model.id === aiChatSettings.modelId)
         ?.supportsBackground === true;
-    const buildContextSnapshot = await collectAiBuildContext(
-      window.fluxora,
-      {
-        activeOperationHints: currentAiBuildOperationHints(),
-        bridgeStatus,
-        defaultProfileName: selectedProjectDefaultProfileName,
-        profileName: selectedProjectProfileName,
-        prompt,
-        project: selectedProject,
-        selectedModId: selectedModItem?.isMod ? selectedModItem.id : null,
-        selectedModName: selectedModItem?.isMod ? selectedModItem.name : null
-      },
-      operationId
-    );
-    const runSettings = {
-      ...aiChatSettings,
-      buildContextSnapshot,
-      jobStorage: window.localStorage,
-      modelSupportsBackground,
-      providerId
-    };
-    const chatRequest = createAiHostChatRequest(run, requestSession, prompt, runSettings);
+
     try {
-      const contextUsage = await window.fluxora.ai.estimateContext(chatRequest);
-      dispatchAiChat({
-        type: 'set-context-estimate',
-        runId: run.id,
-        estimateState: 'ready',
-        contextUsage
-      });
+      const buildContextSnapshot = await collectAiBuildContext(
+        window.fluxora,
+        {
+          activeOperationHints: currentAiBuildOperationHints(),
+          bridgeStatus,
+          defaultProfileName: selectedProjectDefaultProfileName,
+          profileName: selectedProjectProfileName,
+          prompt,
+          project: selectedProject,
+          selectedModId: selectedModItem?.isMod ? selectedModItem.id : null,
+          selectedModName: selectedModItem?.isMod ? selectedModItem.name : null
+        },
+        operationId
+      );
+      if (activeAiRunRef.current !== runControl || runControl.cancelled) {
+        return;
+      }
+
+      const runSettings = {
+        ...aiChatSettings,
+        buildContextSnapshot,
+        jobStorage: window.localStorage,
+        modelSupportsBackground,
+        providerId
+      };
+      const chatRequest = createAiHostChatRequest(run, requestSession, prompt, runSettings);
+
+      const estimateAiContextUsage = async () => {
+        try {
+          const contextUsage = await window.fluxora.ai.estimateContext(chatRequest);
+          if (activeAiRunRef.current !== runControl || runControl.cancelled) {
+            return;
+          }
+          dispatchAiChat({
+            type: 'set-context-estimate',
+            runId: run.id,
+            estimateState: 'ready',
+            contextUsage
+          });
+        } catch (error) {
+          if (activeAiRunRef.current !== runControl || runControl.cancelled) {
+            return;
+          }
+          dispatchAiChat({
+            type: 'set-context-estimate',
+            runId: run.id,
+            estimateState: 'error',
+            contextUsage: null
+          });
+          logAiRuntimeEntry({
+            category: 'ai-chat',
+            channel: 'tauri-bridge',
+            level: 'warning',
+            message:
+              error instanceof Error && error.message
+                ? `Context estimate failed: ${error.message}`
+                : 'Context estimate failed.',
+            operationId
+          });
+        }
+      };
+
+      if (activeAiRunRef.current !== runControl || runControl.cancelled) {
+        return;
+      }
+
+      runControl.handle = startHostAiRun(
+        run,
+        requestSession,
+        prompt,
+        window.fluxora.ai,
+        {
+          ...runSettings,
+          preparedRequest: chatRequest
+        },
+        {
+          onEvent: (event) => dispatchAiChat({ type: 'apply-stream-event', event }),
+          onRunEvent: (event) => dispatchAiChat({ type: 'apply-run-event', event }),
+          onFinish: (message, event, status, ledgerEntry) => {
+            if (activeAiRunRef.current === runControl) {
+              activeAiRunRef.current = null;
+            }
+            if (runControl.cancelled && event.type !== 'run-cancelled') {
+              return;
+            }
+            if (event.type === 'run-cancelled') {
+              dispatchAiChat({ type: 'cancel-run', message, event });
+              return;
+            }
+
+            dispatchAiChat({
+              type: 'append-assistant-message',
+              message,
+              event,
+              status,
+              ledgerEntry
+            });
+          },
+          onLog: logAiRuntimeEntry
+        }
+      );
+      if (runControl.cancelled) {
+        runControl.handle.cancel();
+        return;
+      }
+      void estimateAiContextUsage();
     } catch (error) {
-      dispatchAiChat({
-        type: 'set-context-estimate',
-        runId: run.id,
-        estimateState: 'error',
-        contextUsage: null
-      });
+      if (activeAiRunRef.current !== runControl || runControl.cancelled) {
+        return;
+      }
+
+      activeAiRunRef.current = null;
+      finishAiRunAsBlocked(run, error);
       logAiRuntimeEntry({
         category: 'ai-chat',
         channel: 'tauri-bridge',
-        level: 'warning',
+        level: 'error',
         message:
           error instanceof Error && error.message
-            ? `Context estimate failed: ${error.message}`
-            : 'Context estimate failed.',
+            ? `AI chat preflight failed: ${error.message}`
+            : 'AI chat preflight failed.',
         operationId
       });
     }
-
-    aiLocalRunRef.current = startHostAiRun(
-      run,
-      requestSession,
-      prompt,
-      window.fluxora.ai,
-      {
-        ...runSettings,
-        preparedRequest: chatRequest
-      },
-      {
-        onEvent: (event) => dispatchAiChat({ type: 'apply-stream-event', event }),
-        onRunEvent: (event) => dispatchAiChat({ type: 'apply-run-event', event }),
-        onFinish: (message, event, status, ledgerEntry) => {
-          aiLocalRunRef.current = null;
-          if (event.type === 'run-cancelled') {
-            dispatchAiChat({ type: 'cancel-run', message, event });
-            return;
-          }
-
-          dispatchAiChat({
-            type: 'append-assistant-message',
-            message,
-            event,
-            status,
-            ledgerEntry
-          });
-        },
-        onLog: logAiRuntimeEntry
-      }
-    );
   };
 
   const sendAiChatMessage = () => {
@@ -10685,7 +10838,23 @@ export const App = () => {
   };
 
   const cancelAiChatRun = () => {
-    aiLocalRunRef.current?.cancel();
+    const runControl = activeAiRunRef.current;
+    if (!runControl || runControl.cancelled) {
+      return;
+    }
+
+    runControl.cancelled = true;
+    requestNativeAiRunCancel(runControl.operationId);
+    if (runControl.handle) {
+      runControl.handle.cancel();
+      return;
+    }
+
+    activeAiRunRef.current = null;
+    finishAiRunAsStopped({
+      id: runControl.runId,
+      operationId: runControl.operationId
+    });
   };
 
   const openAiSource = (url: string) => {
@@ -10871,6 +11040,7 @@ export const App = () => {
             onCloseChat={(chatId) => dispatchAiChat({ type: 'close-chat', chatId })}
             onCreateChat={() => dispatchAiChat({ type: 'create-chat' })}
             onDraftChange={(value) => dispatchAiChat({ type: 'set-draft', value })}
+            onOpenSubagentChat={openAiSubagentChat}
             onOpenSource={openAiSource}
             onResize={(width) => dispatchAiChat({ type: 'set-width', width })}
             onSend={sendAiChatMessage}

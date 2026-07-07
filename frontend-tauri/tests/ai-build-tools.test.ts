@@ -499,6 +499,47 @@ describe('AI read-only build tools', () => {
     expect(serialized).toContain('Treat page items as a sample, not the complete build.');
   });
 
+  it('returns partial context when preflight budget is exhausted before expensive file-tree evidence', async () => {
+    const { api, logs } = createApi();
+    const snapshot = await collectAiBuildContext(
+      api,
+      {
+        defaultProfileName: 'Default',
+        profileName: 'Testing',
+        project,
+        selectedModId: 'mod-a',
+        selectedModName: 'Visual Pack'
+      },
+      'op_ai_preflight_budget',
+      { budgetMs: 0 }
+    );
+
+    const summary = snapshot.tools.find((tool) => tool.toolName === 'build.summary');
+    const summaryOutput = summary?.output as
+      | {
+          conflictEvidence?: {
+            budgetExhausted?: boolean;
+            scannedModCount?: number;
+            truncated?: boolean;
+          };
+        }
+      | undefined;
+
+    expect(api.mods.getFileTree).not.toHaveBeenCalled();
+    expect(summaryOutput?.conflictEvidence).toMatchObject({
+      budgetExhausted: true,
+      scannedModCount: 0,
+      truncated: true
+    });
+    expect(summary?.issues.map((item) => item.code)).toContain('tool.preflight-budget-exhausted');
+    expect(snapshot.tools.find((tool) => tool.toolName === 'mods.installed')?.issues[0]?.code).toBe(
+      'tool.preflight-budget-exhausted'
+    );
+    expect(logs.some((entry) => entry.message === 'tool=mods.installed permission=read phase=skipped')).toBe(
+      true
+    );
+  });
+
   it('builds deterministic local inspection findings for missing masters with source ids', async () => {
     const { api } = createApi();
     const snapshot = await collectAiBuildContext(
@@ -806,6 +847,7 @@ describe('AI read-only build tools', () => {
       'local.filesystemSnapshot',
       {
         defaultProfileName: 'Default',
+        limit: 80,
         profileName: 'Default',
         project
       },
@@ -857,6 +899,81 @@ describe('AI read-only build tools', () => {
     expect(result.issues.map((item) => item.code)).toContain('local.crash-log-parser-not-exposed');
   });
 
+  it('infers installed Skyrim crash logger candidates without direct crash-log parsing', async () => {
+    const crashLogger: FluxoraInstalledMod = {
+      ...installedMods[0],
+      id: 'C:\\Fluxora Projects\\Skyrim Main\\mods\\Crash Logger SSE AE VR',
+      name: 'Crash Logger SSE AE VR',
+      version: '1.15.0'
+    };
+    const { api } = createApi({
+      fileTree: [
+        {
+          name: 'CrashLogger.dll',
+          relativePath: 'SKSE/Plugins/CrashLogger.dll',
+          isDirectory: false,
+          hasChildren: false,
+          size: 420000,
+          conflictState: 'none',
+          conflictOwners: []
+        }
+      ],
+      installedMods: [crashLogger],
+      modOrder: createModOrderItems([crashLogger]),
+      plugins: []
+    });
+
+    const result = await runAiBuildTool(
+      api,
+      'local.filesystemSnapshot',
+      {
+        defaultProfileName: 'Default',
+        profileName: 'Default',
+        project
+      },
+      'op_ai_crash_logger_snapshot'
+    );
+    const output = result.output as {
+      localTools?: {
+        'local.parse_crash_logs'?: {
+          fallbackOrder?: string[];
+          gameCrashLogParserAvailable?: boolean;
+          installedLoggerCandidates?: Array<{
+            confidence?: string;
+            evidence?: string;
+            logger?: string;
+            relativePath?: string;
+          }>;
+          installedLoggerDetected?: boolean;
+          likelyInstalledLogger?: string | null;
+          logDiscoveryAvailable?: boolean;
+          newestCrashLogStatus?: string;
+        };
+      };
+    };
+    const crashLogTool = output.localTools?.['local.parse_crash_logs'];
+
+    expect(crashLogTool).toMatchObject({
+      gameCrashLogParserAvailable: false,
+      installedLoggerDetected: true,
+      likelyInstalledLogger: 'Crash Logger SSE/AE/VR',
+      logDiscoveryAvailable: false,
+      newestCrashLogStatus: 'not-exposed-by-current-core-api'
+    });
+    expect(crashLogTool?.installedLoggerCandidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          confidence: 'high',
+          evidence: 'file-path',
+          logger: 'Crash Logger SSE/AE/VR',
+          relativePath: 'SKSE/Plugins/CrashLogger.dll'
+        })
+      ])
+    );
+    expect(crashLogTool?.fallbackOrder?.join(' ')).toContain('older crash logs');
+    expect(result.issues.map((item) => item.code)).toContain('local.crash-log-parser-not-exposed');
+  });
+
   it('uses local.read_text_file only for Analyze diagnostic prompts', async () => {
     const raceMenu: FluxoraInstalledMod = {
       ...installedMods[0],
@@ -891,6 +1008,7 @@ describe('AI read-only build tools', () => {
     });
 
     expect(shouldCollectAnalyzeTextFiles('hello')).toBe(false);
+    expect(shouldCollectAnalyzeTextFiles('Skyrim AE CDT when entering Solitude; possible Crash Logger log')).toBe(true);
     const ordinary = await collectAiBuildContext(
       api,
       {
@@ -1056,6 +1174,7 @@ describe('AI read-only build tools', () => {
       api,
       {
         defaultProfileName: 'Default',
+        limit: 80,
         profileName: 'Default',
         project
       },
@@ -1103,10 +1222,16 @@ describe('AI read-only build tools', () => {
     expect(serialized).toContain('hasLightFlag=true are light plugins');
   });
 
-  it('includes full mod and plugin inventories when no page limit is provided', async () => {
-    const largeInstalledMods = Array.from({ length: 125 }, (_value, index) =>
-      createInstalledModFixture(index)
-    );
+  it('limits large inventory pages while preserving compact Nexus targets for full requirement audits', async () => {
+    const largeInstalledMods = Array.from({ length: 610 }, (_value, index) => ({
+      ...createInstalledModFixture(index),
+      sourceFileId: String(2000 + index),
+      sourceGameDomain: 'skyrimspecialedition',
+      sourceIsNexus: true,
+      sourceModId: String(1000 + index),
+      sourceProvider: 'nexus',
+      sourceUrl: `https://www.nexusmods.com/skyrimspecialedition/mods/${1000 + index}?tab=files&file_id=${2000 + index}`
+    }));
     const largePlugins = Array.from({ length: 121 }, (_value, index) =>
       createPluginFixture(index)
     );
@@ -1130,21 +1255,42 @@ describe('AI read-only build tools', () => {
     const orderPage = snapshot.tools.find((tool) => tool.toolName === 'mods.order')?.page;
     const pluginsPage = snapshot.tools.find((tool) => tool.toolName === 'plugins.loadOrder')?.page;
 
-    expect(modsPage?.items).toHaveLength(largeInstalledMods.length);
-    expect(modsPage?.limit).toBe(largeInstalledMods.length);
-    expect(modsPage?.nextCursor).toBeNull();
-    expect(orderPage?.items).toHaveLength(largeInstalledMods.length);
-    expect(orderPage?.nextCursor).toBeNull();
-    expect(pluginsPage?.items).toHaveLength(largePlugins.length);
-    expect(pluginsPage?.limit).toBe(largePlugins.length);
-    expect(pluginsPage?.nextCursor).toBeNull();
+    expect(modsPage?.items).toHaveLength(20);
+    expect(modsPage?.limit).toBe(20);
+    expect(modsPage?.nextCursor).toBe('20');
+    expect(orderPage?.items).toHaveLength(20);
+    expect(orderPage?.nextCursor).toBe('20');
+    expect(pluginsPage?.items).toHaveLength(20);
+    expect(pluginsPage?.limit).toBe(20);
+    expect(pluginsPage?.nextCursor).toBe('20');
     expect(
       snapshot.tools
         .filter((tool) =>
           ['mods.installed', 'mods.order', 'plugins.loadOrder'].includes(tool.toolName)
         )
         .flatMap((tool) => tool.issues.map((item) => item.code))
-    ).not.toContain('tool.page-sampled');
+    ).toContain('tool.page-sampled');
+
+    const buildSummary = snapshot.tools.find((tool) => tool.toolName === 'build.summary')?.output as {
+      nexusTargets?: {
+        items: Array<{ fileId?: string; gameDomain: string; modId: string; name: string }>;
+        maxTargets: number;
+        totalCount: number;
+        truncated: boolean;
+      };
+    };
+    expect(buildSummary.nexusTargets).toMatchObject({
+      maxTargets: 1000,
+      totalCount: 610,
+      truncated: false
+    });
+    expect(buildSummary.nexusTargets?.items).toHaveLength(610);
+    expect(buildSummary.nexusTargets?.items[609]).toMatchObject({
+      fileId: '2609',
+      gameDomain: 'skyrimspecialedition',
+      modId: '1609',
+      name: 'Large Mod 609'
+    });
 
     const explicitLargePage = await runAiBuildTool(
       api,
@@ -1157,9 +1303,9 @@ describe('AI read-only build tools', () => {
       'op_ai_large_plugin_page'
     );
 
-    expect(explicitLargePage.page?.items).toHaveLength(100);
-    expect(explicitLargePage.page?.limit).toBe(100);
-    expect(explicitLargePage.page?.nextCursor).toBe('100');
+    expect(explicitLargePage.page?.items).toHaveLength(80);
+    expect(explicitLargePage.page?.limit).toBe(80);
+    expect(explicitLargePage.page?.nextCursor).toBe('80');
   });
 
   it('keeps selected mod file-tree reads explicit', async () => {

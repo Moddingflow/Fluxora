@@ -60,7 +60,8 @@ renderer services as AI tools.
 
 The Tauri shell/facade owns the safe native app boundary:
 
-- typed `window.fluxora.ai.*` APIs in future phases;
+- typed `window.fluxora.ai.*` APIs, including chat response, status, restart,
+  and best-effort `cancelRun(operationId)` for the active AI host sidecar run;
 - starting, stopping, health-checking, and restarting `FluxoraAIHost`;
 - credential storage through the OS credential store;
 - native dialogs, cancellation, background job lifecycle, safe external links,
@@ -510,8 +511,10 @@ Phase 12 introduces the first persistent autonomous-job contract:
   terminal state instead of arbitrary model prose.
 - The final report is stored only after verification or a clear blocked state.
 
-The current renderer records this queue through typed Fluxora AI runtime state
-and the Tauri shell gives AI chat runs a long-running timeout. A future host
+The current renderer records this queue through typed Fluxora AI runtime state,
+shows explicit `Остановлено` terminal state on user cancellation, and the Tauri
+shell gives AI chat runs a long-running timeout plus best-effort host-sidecar
+cancel by operation id. A future host
 iteration can move queue persistence into an AI-host SQLite store and replace
 request/response stdout with a long-lived response/event router without changing
 the renderer DTO schema.
@@ -636,11 +639,29 @@ masters are treated as suspect evidence to verify through Nexus API/cache, not
 as a terminal local-only answer. Public Nexus page scraping still remains
 disabled unless a separate public-web policy explicitly allows it.
 When the user asks to audit every mod or the whole build for missing
-requirements, the route switches to `auditScope=batch-requirements`: Fluxora may
-collect a bounded official Nexus API/cache batch from local Nexus mod ids,
-report exact coverage and continuation limits, and stop on credential, quota,
-429, retry-after or availability failures instead of claiming that Nexus API
-research is forbidden.
+requirements, the route switches to `auditScope=full-build-requirements`:
+Fluxora may collect official Nexus API/cache evidence from local Nexus mod ids
+up to the daily Nexus request budget, including GraphQL legacy requirements and
+v3 file-version dependency evidence when a file-version id is known. The report
+must include exact checked/target/remaining coverage and stop on credential,
+quota, 429, retry-after or availability failures instead of claiming that Nexus
+API research is forbidden or that all mods were checked.
+
+Intent routing is represented separately as `fluxora.ai.intent-route.v1`.
+`FluxoraAIHost` derives this canonical DTO before the mod-research route so
+policy decisions are language-independent and do not depend on renderer keyword
+checks. The DTO records `promptLanguage`, `replyLanguage`, confidence, signals,
+canonical intent, scope, explicit targets, Nexus API/public-web flags, external
+network need, and clarification state. Deterministic signals such as Nexus URLs,
+`nxm://`, explicit `gameDomain:modId`, tool ids, local Nexus metadata, and
+research params win first; multilingual semantic examples or a low-cost
+structured classifier may classify requirements, compatibility, public-web,
+local diagnosis, mutation, or unknown intents after that. Embeddings may
+optimize matching only through the existing context graph `context_embeddings`
+hook when a provider is configured; embeddings are not a policy boundary and are
+not exposed to the renderer. The renderer may display `intentRoute` from chat
+responses, mod-research routes, or context-usage traces, but it must not approve
+Nexus API, public web, or mutation policy from source text or renderer state.
 
 For the target staged mod research flow, `docs/ai/mod-research-pipeline.md` is
 the governing pre-code specification. It requires a single `FluxoraAIHost`

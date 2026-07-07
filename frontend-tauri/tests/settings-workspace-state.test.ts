@@ -2,20 +2,28 @@ import { describe, expect, it } from 'vitest';
 
 import {
   capabilityStateLabel,
+  createCheckingNexusAuthStatus,
+  createInstantNexusAuthStatus,
+  createVerifiedNexusAuthStatus,
   formatTransferBytes,
   currentPlatformSupport,
   developerModeStorageKey,
   fluxoraOriginalRepositoryUrl,
   formatLastBuildDate,
   languageOptions,
+  isInstantNexusAuthStatus,
+  loadCachedNexusAuthStatus,
   loadDeveloperModeSetting,
   nexusActionLabel,
   nexusCanToggle,
   nexusConnectionSummary,
+  nexusIsVerifiedLinked,
+  nexusStatusStorageKey,
   normalizeThemeMode,
   platformFeatureState,
   platformSupportRows,
   platformSupportSummary,
+  saveCachedNexusAuthStatus,
   saveDeveloperModeSetting,
   selectPreferredTransferDrive,
   settingsCapabilityView,
@@ -275,12 +283,68 @@ describe('settings workspace state', () => {
   });
 
   it('keeps Nexus account copy action-oriented without exposing token data', () => {
-    expect(nexusConnectionSummary(nexusStatus)).toBe('Linked - Valerii');
-    expect(nexusActionLabel(nexusStatus)).toBe('Disconnect Nexus Mods');
-    expect(nexusCanToggle(nexusStatus, true)).toBe(true);
-    expect(nexusCanToggle({ ...nexusStatus, isConfigured: false, isLinked: false }, true)).toBe(false);
-    expect(nexusConnectionSummary({ ...nexusStatus, hasApiKey: false })).toBe(
+    const verifiedNexusStatus = createVerifiedNexusAuthStatus(nexusStatus);
+
+    expect(nexusConnectionSummary(null)).toBe('Not linked');
+    expect(nexusConnectionSummary(verifiedNexusStatus)).toBe('Linked - Valerii');
+    expect(nexusActionLabel(verifiedNexusStatus)).toBe('Disconnect Nexus Mods');
+    expect(nexusCanToggle(verifiedNexusStatus, true)).toBe(true);
+    expect(nexusIsVerifiedLinked(verifiedNexusStatus)).toBe(true);
+    expect(nexusCanToggle({ ...verifiedNexusStatus, isConfigured: false, isLinked: false }, true)).toBe(false);
+    expect(nexusConnectionSummary({ ...verifiedNexusStatus, hasApiKey: false })).toBe(
       'Linked - Valerii'
+    );
+
+    const checkingStatus = createCheckingNexusAuthStatus(verifiedNexusStatus);
+    expect(nexusConnectionSummary(checkingStatus)).toBe('Checking - last linked as Valerii');
+    expect(nexusActionLabel(checkingStatus)).toBe('Checking Nexus Mods');
+    expect(nexusCanToggle(checkingStatus, true)).toBe(false);
+    expect(nexusIsVerifiedLinked(checkingStatus)).toBe(false);
+  });
+
+  it('loads Nexus account status from an instant cache-safe fallback', () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, value);
+      }
+    };
+
+    const instantStatus = createInstantNexusAuthStatus();
+
+    expect(instantStatus).toMatchObject({
+      isConfigured: true,
+      isLinked: false,
+      verificationState: 'checking',
+      clientId: 'fluxora',
+      redirectUri: 'http://127.0.0.1:8089/callback'
+    });
+    expect(isInstantNexusAuthStatus(instantStatus)).toBe(true);
+    expect(nexusCanToggle(instantStatus, true)).toBe(false);
+    expect(loadCachedNexusAuthStatus(storage)).toMatchObject({
+      isConfigured: true,
+      isLinked: false,
+      verificationState: 'checking',
+      clientId: 'fluxora'
+    });
+
+    saveCachedNexusAuthStatus(storage, nexusStatus);
+
+    const cachedPayload = values.get(nexusStatusStorageKey) ?? '';
+    expect(cachedPayload).not.toContain('token');
+    expect(cachedPayload).not.toContain('hasApiKey');
+    expect(cachedPayload).not.toContain('"isLinked":true');
+    expect(loadCachedNexusAuthStatus(storage)).toMatchObject({
+      isLinked: false,
+      hasApiKey: false,
+      verificationState: 'stale',
+      lastKnownLinked: true,
+      lastKnownDisplayName: 'Valerii',
+      lastKnownUserId: '123'
+    });
+    expect(nexusConnectionSummary(loadCachedNexusAuthStatus(storage))).toBe(
+      'Checking - last linked as Valerii'
     );
   });
 

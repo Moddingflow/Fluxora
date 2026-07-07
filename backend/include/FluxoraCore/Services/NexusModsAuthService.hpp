@@ -39,7 +39,7 @@ namespace fluxora
         void shutdown() override;
 
         [[nodiscard]] NexusModsAuthStatus status() const;
-        [[nodiscard]] NexusModsApiAuthHeader apiAuthHeader() const;
+        [[nodiscard]] NexusModsApiAuthHeader apiAuthHeader();
         NexusModsAuthStatus connect();
         NexusModsAuthStatus connectWithApiKey(std::wstring_view apiKey);
         NexusModsAuthStatus disconnect();

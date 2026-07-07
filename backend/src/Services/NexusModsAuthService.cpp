@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <cctype>
 #include <cwctype>
 #include <iomanip>
@@ -404,7 +405,7 @@ namespace fluxora
 
         std::optional<std::wstring> safeSupabaseIdentifier(const std::wstring& value)
         {
-            const std::wstring trimmed = trimWhitespace(value);
+            const std::wstring trimmed = trimWhitespace(std::wstring(value));
             if (trimmed.empty() || trimmed.size() > 80)
             {
                 return std::nullopt;
@@ -1264,6 +1265,21 @@ namespace fluxora
             return toUtf8(body);
         }
 
+        std::string buildRefreshTokenRequestBody(
+            const OAuthConfig& config,
+            const std::wstring& refreshToken)
+        {
+            std::wstring body;
+            body += L"grant_type=refresh_token";
+            body += L"&client_id=" + urlEncode(config.clientId);
+            if (!config.clientSecret.empty())
+            {
+                body += L"&client_secret=" + urlEncode(config.clientSecret);
+            }
+            body += L"&refresh_token=" + urlEncode(refreshToken);
+            return toUtf8(body);
+        }
+
         std::wstring readJsonString(const JsonValue& object, std::wstring_view field);
 
         std::string limitForError(std::string value)
@@ -1992,6 +2008,48 @@ namespace fluxora
             return stream.str();
         }
 
+        std::optional<std::chrono::system_clock::time_point> parseUtcExpiry(std::wstring_view value)
+        {
+            const std::wstring trimmed = trimWhitespace(std::wstring(value));
+            if (trimmed.empty())
+            {
+                return std::nullopt;
+            }
+
+            std::tm utc{};
+            std::wistringstream stream(trimmed);
+            stream >> std::get_time(&utc, L"%Y-%m-%dT%H:%M:%SZ");
+            if (stream.fail())
+            {
+                return std::nullopt;
+            }
+
+#ifdef _WIN32
+            const std::time_t time = _mkgmtime(&utc);
+#else
+            const std::time_t time = timegm(&utc);
+#endif
+            if (time == static_cast<std::time_t>(-1))
+            {
+                return std::nullopt;
+            }
+
+            return std::chrono::system_clock::from_time_t(time);
+        }
+
+        bool accessTokenRequiresRefresh(const NexusModsStoredAuth& auth)
+        {
+            const std::optional<std::chrono::system_clock::time_point> expiresAt =
+                parseUtcExpiry(auth.expiresAtUtc);
+            if (!expiresAt.has_value())
+            {
+                return false;
+            }
+
+            constexpr auto refreshSkew = std::chrono::minutes(2);
+            return *expiresAt <= std::chrono::system_clock::now() + refreshSkew;
+        }
+
         NexusModsAuthStatus buildStatus(const OAuthConfig& config, const NexusModsStoredAuth& auth)
         {
             NexusModsAuthStatus status;
@@ -2037,6 +2095,17 @@ namespace fluxora
             config.clientId = clientId;
             config.clientSecret = clientSecret;
             return buildTokenRequestBody(config, redirectUri, code, codeVerifier);
+        }
+
+        std::string buildNexusRefreshTokenRequestBodyForTest(
+            const std::wstring& clientId,
+            const std::wstring& clientSecret,
+            const std::wstring& refreshToken)
+        {
+            OAuthConfig config;
+            config.clientId = clientId;
+            config.clientSecret = clientSecret;
+            return buildRefreshTokenRequestBody(config, refreshToken);
         }
 
         std::string buildNexusAuthorizeUrlForTest(
@@ -2132,18 +2201,21 @@ namespace fluxora
         return buildStatus(loadConfig(), settings_.loadNexusModsAuth());
     }
 
-    NexusModsApiAuthHeader NexusModsAuthService::apiAuthHeader() const
+    NexusModsApiAuthHeader NexusModsAuthService::apiAuthHeader()
     {
-        const NexusModsStoredAuth auth = settings_.loadNexusModsAuth();
-        if (!auth.linked)
-        {
+        NexusModsStoredAuth auth = settings_.loadNexusModsAuth();
+        const auto unavailable = [](std::wstring message) {
             return NexusModsApiAuthHeader{
                 false,
                 {},
                 {},
                 {},
-                L"NexusMods account is not linked."
+                std::move(message)
             };
+        };
+        if (!auth.linked)
+        {
+            return unavailable(L"NexusMods account is not linked.");
         }
 
         if (!auth.protectedApiKey.empty())
@@ -2163,6 +2235,52 @@ namespace fluxora
 
         if (!auth.protectedAccessToken.empty())
         {
+            if (accessTokenRequiresRefresh(auth))
+            {
+                if (auth.protectedRefreshToken.empty())
+                {
+                    return unavailable(
+                        L"NexusMods OAuth token expired and no refresh token is available. Reconnect NexusMods in settings.");
+                }
+
+                const std::wstring refreshToken = unprotectSecret(auth.protectedRefreshToken);
+                if (refreshToken.empty())
+                {
+                    return unavailable(
+                        L"NexusMods OAuth token expired and the refresh token could not be read. Reconnect NexusMods in settings.");
+                }
+
+                try
+                {
+                    const OAuthConfig config = loadConfig(true);
+                    if (config.clientId.empty())
+                    {
+                        throw std::runtime_error("NexusMods OAuth client_id is missing.");
+                    }
+
+                    const TokenResponse tokens = parseTokenResponse(
+                        postTokenRequest(buildRefreshTokenRequestBody(config, refreshToken)));
+                    auth.protectedAccessToken = protectSecret(tokens.accessToken);
+                    auth.protectedRefreshToken = tokens.refreshToken.empty()
+                        ? auth.protectedRefreshToken
+                        : protectSecret(tokens.refreshToken);
+                    auth.tokenType = tokens.tokenType.empty() ? L"Bearer" : tokens.tokenType;
+                    auth.expiresAtUtc = tokens.expiresInSeconds > 0
+                        ? formatUtcExpiry(tokens.expiresInSeconds)
+                        : L"";
+                    settings_.saveNexusModsAuth(auth);
+                    logger_.write(LogLevel::Info, "NexusMods OAuth token refreshed for trusted native services.");
+                }
+                catch (const std::exception& error)
+                {
+                    logger_.write(
+                        LogLevel::Warning,
+                        std::string("NexusMods OAuth token refresh failed: ") + error.what());
+                    return unavailable(
+                        L"NexusMods OAuth token expired and refresh failed. Reconnect NexusMods or retry when Nexus is reachable.");
+                }
+            }
+
             const std::wstring accessToken = unprotectSecret(auth.protectedAccessToken);
             if (!accessToken.empty())
             {
@@ -2182,13 +2300,7 @@ namespace fluxora
             }
         }
 
-        return NexusModsApiAuthHeader{
-            false,
-            {},
-            {},
-            {},
-            L"NexusMods authentication token is unavailable. Reconnect NexusMods in settings."
-        };
+        return unavailable(L"NexusMods authentication token is unavailable. Reconnect NexusMods in settings.");
     }
 
     NexusModsAuthStatus NexusModsAuthService::connect()

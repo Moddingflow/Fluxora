@@ -10,6 +10,7 @@ import {
   syncAiSessionToActiveChat,
   type AiAgentStatus,
   type AiChatThread,
+  type AiMessage,
   type AiRun,
   type AiSession,
   type AiStreamEvent
@@ -22,12 +23,19 @@ import type {
   FluxoraAiCostLedgerEntry,
   FluxoraAiDiagnosisJudge,
   FluxoraAiIntermediateEvent,
+  FluxoraAiIntermediateEventPayloadValue,
+  FluxoraAiMultiModelOrchestration,
+  FluxoraAiResearchReport,
+  FluxoraAiResearchSnapshot,
   FluxoraAiResearchRequest,
   FluxoraAiRoutingPreset,
   FluxoraApi
 } from '../../../shared/fluxora-api';
 import { createFluxoraAiTaskPlanningBundle } from '../../../shared/ai-task-planner';
-import { compressAiCaseState } from '../../../shared/ai-mod-research-pipeline';
+import {
+  compressAiCaseState,
+  type FluxoraAiModResearchEvidenceCard
+} from '../../../shared/ai-mod-research-pipeline';
 import { LOCAL_DRY_RUN_MODEL_ID, LOCAL_DRY_RUN_PROVIDER_ID } from './ai-chat-settings';
 import {
   serializeAiBuildContextSnapshot,
@@ -154,6 +162,19 @@ interface AiSessionStorage {
 }
 
 const AI_SESSION_STORAGE_PREFIX = 'fluxora.ai.chat.session.v1';
+const AI_HOST_CHAT_RESPONSE_MAX_ATTEMPTS = 2;
+const AI_RUN_CANCELLED_TEXT = 'Остановлено';
+const AI_SESSION_STORED_MESSAGE_TEXT_LIMIT = 120_000;
+const AI_SESSION_STORED_SMALL_TEXT_LIMIT = 4_000;
+const AI_SESSION_STORED_SOURCE_LIMIT = 80;
+const AI_SESSION_STORED_SNAPSHOT_LIMIT = 32;
+const AI_SESSION_STORED_TARGET_LIMIT = 24;
+const AI_SESSION_STORED_EVENT_LIMIT = 160;
+const AI_SESSION_STORED_STREAM_EVENT_LIMIT = 120;
+const AI_SESSION_STORED_RUN_LIMIT = 24;
+const AI_SESSION_STORED_LEDGER_LIMIT = 40;
+const AI_STREAM_CHUNK_LIMIT = 32;
+const AI_STREAM_CHUNK_TEXT_LIMIT = 2_000;
 
 const normalizeScopePart = (value: string | null | undefined) => value?.trim() || '';
 
@@ -187,6 +208,313 @@ export const aiSessionBuildLabel = (scope: AiSessionScope): string =>
 
 export const aiSessionStorageKey = (scopeKey: string): string =>
   `${AI_SESSION_STORAGE_PREFIX}.${scopeKey}`;
+
+const truncateAiRuntimeText = (value: string, limit: number): string =>
+  value.length > limit
+    ? `${value.slice(0, limit).trimEnd()}\n\n[Truncated to keep Fluxora responsive.]`
+    : value;
+
+const compactAiRuntimeArray = <T>(values: T[] | undefined, limit: number): T[] =>
+  Array.isArray(values) ? values.slice(0, Math.max(0, limit)) : [];
+
+const compactAiCitationForStorage = (source: FluxoraAiCitation): FluxoraAiCitation => ({
+  id: truncateAiRuntimeText(source.id, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+  title: truncateAiRuntimeText(source.title, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+  url: truncateAiRuntimeText(source.url, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+  capturedAt: source.capturedAt,
+  kind: source.kind,
+  provider: source.provider,
+  snippet: source.snippet
+    ? truncateAiRuntimeText(source.snippet, AI_SESSION_STORED_SMALL_TEXT_LIMIT)
+    : undefined,
+  trust: source.trust
+});
+
+const compactAiCitationsForStorage = (
+  sources: FluxoraAiCitation[] | undefined,
+  limit = AI_SESSION_STORED_SOURCE_LIMIT
+): FluxoraAiCitation[] => compactAiRuntimeArray(sources, limit).map(compactAiCitationForStorage);
+
+const compactAiUnknownRecordForStorage = (record: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(
+    Object.entries(record)
+      .slice(0, 12)
+      .map(([key, value]) => {
+        if (typeof value === 'string') {
+          return [key, truncateAiRuntimeText(value, AI_SESSION_STORED_SMALL_TEXT_LIMIT)];
+        }
+        if (
+          typeof value === 'number' ||
+          typeof value === 'boolean' ||
+          value === null
+        ) {
+          return [key, value];
+        }
+        if (Array.isArray(value)) {
+          return [
+            key,
+            value.slice(0, 24).map((item) =>
+              typeof item === 'string'
+                ? truncateAiRuntimeText(item, AI_SESSION_STORED_SMALL_TEXT_LIMIT)
+                : typeof item === 'number' || typeof item === 'boolean' || item === null
+                  ? item
+                  : '[object]'
+            )
+          ];
+        }
+        return [key, '[object]'];
+      })
+  );
+
+const compactAiResearchSnapshotForStorage = (
+  snapshot: FluxoraAiResearchSnapshot
+): FluxoraAiResearchSnapshot => {
+  const compact: FluxoraAiResearchSnapshot = {
+    id: truncateAiRuntimeText(snapshot.id, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+    kind: truncateAiRuntimeText(snapshot.kind, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+    title: truncateAiRuntimeText(snapshot.title, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+    url: truncateAiRuntimeText(snapshot.url, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+    capturedAt: snapshot.capturedAt,
+    status: snapshot.status,
+    trust: snapshot.trust,
+    instructionsAllowed: false
+  };
+
+  if (snapshot.summary) {
+    compact.summary = truncateAiRuntimeText(snapshot.summary, AI_SESSION_STORED_SMALL_TEXT_LIMIT);
+  }
+  if (snapshot.reason) {
+    compact.reason = truncateAiRuntimeText(snapshot.reason, AI_SESSION_STORED_SMALL_TEXT_LIMIT);
+  }
+  if (snapshot.httpStatus !== undefined) {
+    compact.httpStatus = snapshot.httpStatus;
+  }
+
+  return compact;
+};
+
+const compactAiEvidenceCardForStorage = (
+  card: FluxoraAiModResearchEvidenceCard
+): FluxoraAiModResearchEvidenceCard => ({
+  ...card,
+  sourceId: truncateAiRuntimeText(card.sourceId, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+  sourceIds: compactAiRuntimeArray(card.sourceIds, 16).map((sourceId) =>
+    truncateAiRuntimeText(sourceId, AI_SESSION_STORED_SMALL_TEXT_LIMIT)
+  ),
+  citations: compactAiRuntimeArray(card.citations, 8).map((citation) => ({
+    sourceId: truncateAiRuntimeText(citation.sourceId, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+    url: citation.url
+      ? truncateAiRuntimeText(citation.url, AI_SESSION_STORED_SMALL_TEXT_LIMIT)
+      : null,
+    title: truncateAiRuntimeText(citation.title, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+    locator: truncateAiRuntimeText(citation.locator, AI_SESSION_STORED_SMALL_TEXT_LIMIT)
+  })),
+  claim: truncateAiRuntimeText(card.claim, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+  relevantMods: compactAiRuntimeArray(card.relevantMods, 16).map((modName) =>
+    truncateAiRuntimeText(modName, AI_SESSION_STORED_SMALL_TEXT_LIMIT)
+  ),
+  affectedVersions: compactAiRuntimeArray(card.affectedVersions, 16).map((version) =>
+    truncateAiRuntimeText(version, AI_SESSION_STORED_SMALL_TEXT_LIMIT)
+  )
+});
+
+const compactAiResearchReportForStorage = (
+  report: FluxoraAiResearchReport | null | undefined
+): FluxoraAiResearchReport | null => {
+  if (!report) {
+    return null;
+  }
+
+  const compact: FluxoraAiResearchReport = {
+    schema: report.schema,
+    generatedAt: report.generatedAt,
+    operationId: report.operationId,
+    permissionClass: report.permissionClass,
+    mode: report.mode,
+    policy: {
+      rendererCompacted: true,
+      originalTargetCount: report.targets.length,
+      originalSnapshotCount: report.snapshots.length,
+      originalSourceCount: report.sources.length
+    },
+    targets: compactAiRuntimeArray(report.targets, AI_SESSION_STORED_TARGET_LIMIT).map(
+      compactAiUnknownRecordForStorage
+    ),
+    snapshots: compactAiRuntimeArray(report.snapshots, AI_SESSION_STORED_SNAPSHOT_LIMIT).map(
+      compactAiResearchSnapshotForStorage
+    ),
+    sources: compactAiCitationsForStorage(report.sources),
+    issues: compactAiRuntimeArray(report.issues, 12).map(compactAiUnknownRecordForStorage)
+  };
+
+  if (report.apiAvailability) {
+    compact.apiAvailability = report.apiAvailability;
+  }
+  if (report.apiQuotaState) {
+    compact.apiQuotaState = report.apiQuotaState;
+  }
+  if (report.nextBestNonNexusQueries) {
+    compact.nextBestNonNexusQueries = compactAiRuntimeArray(report.nextBestNonNexusQueries, 12).map(
+      (query) => truncateAiRuntimeText(query, AI_SESSION_STORED_SMALL_TEXT_LIMIT)
+    );
+  }
+  if (report.nexusInvestigation) {
+    compact.nexusInvestigation = {
+      ...report.nexusInvestigation,
+      targetNexusIds: compactAiRuntimeArray(report.nexusInvestigation.targetNexusIds, 64),
+      deterministicFindings: [],
+      hypotheses: [],
+      evidenceCards: compactAiRuntimeArray(report.nexusInvestigation.evidenceCards, 24).map(
+        compactAiEvidenceCardForStorage
+      )
+    };
+  }
+  if (report.webQueryPlan) {
+    compact.webQueryPlan = {
+      ...report.webQueryPlan,
+      queries: compactAiRuntimeArray(report.webQueryPlan.queries, 12),
+      discardedSources: []
+    };
+  }
+
+  return compact;
+};
+
+const compactAiOrchestrationForStorage = (
+  orchestration: FluxoraAiMultiModelOrchestration | null | undefined
+): FluxoraAiMultiModelOrchestration | null => {
+  if (!orchestration) {
+    return null;
+  }
+
+  return {
+    ...orchestration,
+    strategy: truncateAiRuntimeText(orchestration.strategy, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+    chef: {
+      ...orchestration.chef,
+      dispatchPlan: truncateAiRuntimeText(
+        orchestration.chef.dispatchPlan,
+        AI_SESSION_STORED_SMALL_TEXT_LIMIT
+      )
+    },
+    subagents: compactAiRuntimeArray(orchestration.subagents, 24).map((subagent) => ({
+      ...subagent,
+      text: truncateAiRuntimeText(subagent.text, AI_SESSION_STORED_SMALL_TEXT_LIMIT),
+      error: subagent.error
+        ? {
+            ...subagent.error,
+            message: truncateAiRuntimeText(subagent.error.message, AI_SESSION_STORED_SMALL_TEXT_LIMIT)
+          }
+        : subagent.error
+    }))
+  };
+};
+
+const compactAiIntermediatePayloadValue = (
+  value: FluxoraAiIntermediateEventPayloadValue
+): FluxoraAiIntermediateEventPayloadValue => {
+  if (typeof value === 'string') {
+    return truncateAiRuntimeText(value, AI_SESSION_STORED_SMALL_TEXT_LIMIT);
+  }
+  if (!Array.isArray(value)) {
+    return value;
+  }
+  if (value.every((item): item is string => typeof item === 'string')) {
+    return value
+      .slice(0, 24)
+      .map((item) => truncateAiRuntimeText(item, AI_SESSION_STORED_SMALL_TEXT_LIMIT));
+  }
+  if (value.every((item): item is number => typeof item === 'number')) {
+    return value.slice(0, 24);
+  }
+  if (value.every((item): item is boolean => typeof item === 'boolean')) {
+    return value.slice(0, 24);
+  }
+  return [];
+};
+
+const compactAiIntermediateEventForStorage = (
+  event: FluxoraAiIntermediateEvent
+): FluxoraAiIntermediateEvent => {
+  const compact: FluxoraAiIntermediateEvent = {
+    ...event,
+    stage: truncateAiRuntimeText(event.stage, 160),
+    message: truncateAiRuntimeText(event.message, AI_SESSION_STORED_SMALL_TEXT_LIMIT)
+  };
+
+  if (event.payload) {
+    const dataEntries = Object.entries(event.payload.data ?? {})
+      .slice(0, 12)
+      .map(([key, value]) => {
+        const compactValue = compactAiIntermediatePayloadValue(value);
+        return [truncateAiRuntimeText(key, 160), compactValue] as const;
+      });
+    compact.payload = {
+      kind: truncateAiRuntimeText(event.payload.kind, 160),
+      data: Object.fromEntries(dataEntries)
+    };
+  }
+
+  return compact;
+};
+
+const compactAiStreamEventForStorage = (event: AiStreamEvent): AiStreamEvent => ({
+  ...event,
+  textDelta: event.textDelta
+    ? truncateAiRuntimeText(event.textDelta, AI_STREAM_CHUNK_TEXT_LIMIT)
+    : event.textDelta
+});
+
+const compactAiRunForStorage = (run: AiRun): AiRun => ({
+  ...run,
+  eventIds: compactAiRuntimeArray(run.eventIds, AI_SESSION_STORED_EVENT_LIMIT)
+});
+
+const compactAiMessageForStorage = (message: AiMessage): AiMessage => ({
+  ...message,
+  text: truncateAiRuntimeText(message.text, AI_SESSION_STORED_MESSAGE_TEXT_LIMIT),
+  providerDiagnostics: message.providerDiagnostics
+    ? compactAiRuntimeArray(message.providerDiagnostics, 8).map((diagnostic) =>
+        truncateAiRuntimeText(diagnostic, AI_SESSION_STORED_SMALL_TEXT_LIMIT)
+      )
+    : undefined,
+  sources: compactAiCitationsForStorage(message.sources),
+  contextBundle: null,
+  researchReport: compactAiResearchReportForStorage(message.researchReport),
+  diagnosisJudge: null,
+  orchestration: compactAiOrchestrationForStorage(message.orchestration)
+});
+
+const compactAiChatThreadForStorage = (chat: AiChatThread): AiChatThread => ({
+  ...chat,
+  costLedger: compactAiRuntimeArray(chat.costLedger, AI_SESSION_STORED_LEDGER_LIMIT),
+  intermediateEvents: chat.intermediateEvents
+    .slice(-AI_SESSION_STORED_EVENT_LIMIT)
+    .map(compactAiIntermediateEventForStorage),
+  messages: chat.messages.map(compactAiMessageForStorage),
+  runs: chat.runs.slice(-AI_SESSION_STORED_RUN_LIMIT).map(compactAiRunForStorage),
+  streamEvents: chat.streamEvents
+    .slice(-AI_SESSION_STORED_STREAM_EVENT_LIMIT)
+    .map(compactAiStreamEventForStorage)
+});
+
+export const compactAiSessionForStorage = (session: AiSession): AiSession => {
+  const normalizedSession = syncAiSessionToActiveChat(session);
+  const chats = normalizedSession.chats.map(compactAiChatThreadForStorage);
+  const activeChat =
+    chats.find((chat) => chat.id === normalizedSession.activeChatId) ?? chats[0] ?? createAiChatThread();
+
+  return {
+    ...normalizedSession,
+    activeChatId: activeChat.id,
+    chats,
+    costLedger: activeChat.costLedger,
+    intermediateEvents: activeChat.intermediateEvents,
+    messages: activeChat.messages,
+    runs: activeChat.runs,
+    streamEvents: activeChat.streamEvents
+  };
+};
 
 export const createAiSessionForScope = (scope: AiSessionScope, now = new Date()): AiSession =>
   createAiSession(aiSessionScopeKey(scope), aiSessionBuildLabel(scope), now);
@@ -366,7 +694,12 @@ export const saveAiSession = (storage: AiSessionStorage | undefined, session: Ai
     return;
   }
 
-  storage.setItem(aiSessionStorageKey(session.scopeKey), JSON.stringify(session));
+  try {
+    const compactSession = compactAiSessionForStorage(session);
+    storage.setItem(aiSessionStorageKey(compactSession.scopeKey), JSON.stringify(compactSession));
+  } catch {
+    // A huge AI result must never take down the renderer just because history persistence failed.
+  }
 };
 
 export const redactAiTextForLog = (value: string): string =>
@@ -417,6 +750,37 @@ export const createAiRuntimeLogEntries = (
       operationId: run.operationId
     }
   ];
+};
+
+const createAiRuntimeIntermediateEvent = (
+  run: AiRun,
+  sequence: number,
+  stage: string,
+  message: string,
+  level: FluxoraAiIntermediateEvent['level'] = 'info',
+  percent?: number
+): FluxoraAiIntermediateEvent => {
+  const createdAt = new Date().toISOString();
+  return {
+    schema: 'fluxora.ai.intermediate-event.v1',
+    eventId: `runtime-${run.id}-${sequence}-${createdAt.replace(/[-:.TZ]/g, '')}`,
+    runId: run.id,
+    operationId: run.operationId,
+    seq: 900_000 + sequence,
+    createdAt,
+    type: 'progress',
+    level,
+    visibility: 'user',
+    stage,
+    message,
+    percent,
+    payload: {
+      kind: 'runtime-watchdog',
+      data: {
+        attempt: sequence
+      }
+    }
+  };
 };
 
 const promptNeedsExternalResearch = (prompt: string): boolean => {
@@ -505,10 +869,10 @@ export const createAiResearchRequestForPrompt = (
   if (promptNeedsBatchRequirementAudit(prompt)) {
     return {
       ...request,
-      auditScope: 'batch-requirements',
-      maxNexusTargets: 128,
-      maxNexusInitialTargets: 128,
-      maxNexusApiRequests: 256
+      auditScope: 'full-build-requirements',
+      maxNexusTargets: 1000,
+      maxNexusInitialTargets: 1000,
+      maxNexusApiRequests: 2500
     };
   }
 
@@ -592,6 +956,14 @@ const providerFallbackLabel = (fallback: string): string => {
     return `${providerLabel} key was rejected`;
   }
 
+  if (reason === 'searchToolSchemaRejected') {
+    return `${providerLabel} rejected the Google Search tool schema`;
+  }
+
+  if (reason === 'emptyResponse') {
+    return `${providerLabel} returned an empty response`;
+  }
+
   if (reason.startsWith('simulatedStatus')) {
     return `${providerLabel} simulated HTTP ${reason.slice('simulatedStatus'.length) || 'error'}`;
   }
@@ -637,14 +1009,21 @@ export const aiResponseDiagnosticMessages = (response: FluxoraAiChatResponse): s
   return [...new Set(diagnostics)];
 };
 
-const responseStatusToAgentStatus = (response: FluxoraAiChatResponse): AiAgentStatus =>
+const responseStatusToAgentStatus = (
+  response: FluxoraAiChatResponse,
+  hasVisibleAnswer = true
+): AiAgentStatus =>
   response.status === 'needs-approval'
     ? 'needs-approval'
     : response.status === 'blocked' ||
         response.error ||
-        (responseUsedLocalDryRun(response) && responseHasProviderFallback(response))
+        (responseUsedLocalDryRun(response) && responseHasProviderFallback(response)) ||
+        !hasVisibleAnswer
       ? 'blocked'
       : 'done';
+
+const isRetryableAiHostResponse = (response: FluxoraAiChatResponse): boolean =>
+  response.error?.retryable === true && response.error.category === 'transport';
 
 const streamChunksFromResponse = (response: FluxoraAiChatResponse): string[] => {
   const chunks = response.streamChunks
@@ -653,7 +1032,20 @@ const streamChunksFromResponse = (response: FluxoraAiChatResponse): string[] => 
     .map((chunk) => chunk.text)
     .filter(Boolean);
 
-  return chunks.length > 0 ? chunks : [response.text];
+  return chunks.length > 0 ? chunks : response.text.trim() ? [response.text] : [];
+};
+
+const compactAiStreamChunks = (chunks: string[]): string[] => {
+  if (chunks.length <= AI_STREAM_CHUNK_LIMIT) {
+    return chunks.map((chunk) => truncateAiRuntimeText(chunk, AI_STREAM_CHUNK_TEXT_LIMIT));
+  }
+
+  return [
+    ...chunks
+      .slice(0, AI_STREAM_CHUNK_LIMIT)
+      .map((chunk) => truncateAiRuntimeText(chunk, AI_STREAM_CHUNK_TEXT_LIMIT)),
+    `[${chunks.length - AI_STREAM_CHUNK_LIMIT} additional stream chunks suppressed to keep Fluxora responsive.]`
+  ];
 };
 
 const uniqueAiRuntimeStrings = (values: Array<string | null | undefined>): string[] =>
@@ -690,6 +1082,9 @@ const localizedQuotaLimitation = (caseState: FluxoraAiCaseState, russian: boolea
   }
   if (quota.nexusApiState === 'quota-exhausted') {
     return 'Лимит Nexus API исчерпан или сработал rate limit; это ограничение исследования, а не обычная ошибка.';
+  }
+  if (quota.unavailableReason === 'invalid-credential') {
+    return 'Учетные данные Nexus API были отклонены. Переподключи Nexus Mods или обнови API key/token перед повторной проверкой.';
   }
   if (quota.nexusApiState === 'unauthenticated' || quota.unavailableReason === 'missing-credential') {
     return 'У Fluxora нет доступных учетных данных Nexus API, поэтому Nexus-доказательства могут быть неполными.';
@@ -836,7 +1231,57 @@ export const sourcesForStructuredFinalAnswer = (
 const streamChunksForFinalText = (
   response: FluxoraAiChatResponse,
   finalText: string
-): string[] => (finalText === response.text ? streamChunksFromResponse(response) : [finalText]);
+): string[] =>
+  compactAiStreamChunks(finalText === response.text ? streamChunksFromResponse(response) : [finalText]);
+
+const emptyHostResponseText = (response: FluxoraAiChatResponse, prompt: string): string => {
+  const russian = userPrefersRussian(prompt);
+  const safeError = response.error?.message ? redactAiTextForLog(response.error.message) : '';
+  const diagnostic = aiResponseDiagnosticMessages(response)[0];
+
+  if (diagnostic) {
+    return diagnostic;
+  }
+
+  if (response.status === 'needs-approval') {
+    return russian
+      ? 'ИИ-хост запросил подтверждение, но не вернул видимый план. Проверь Settings > AI и попробуй снова.'
+      : 'AI host requested approval but did not return a visible plan. Check Settings > AI and try again.';
+  }
+
+  if (response.status === 'blocked' || safeError) {
+    return russian
+      ? `ИИ-хост не смог подготовить ответ${safeError ? `: ${safeError}` : ''}. Проверь Settings > AI и попробуй снова.`
+      : `AI host could not prepare a reply${safeError ? `: ${safeError}` : ''}. Check Settings > AI and try again.`;
+  }
+
+  return russian
+    ? 'ИИ-хост завершил запрос без видимого ответа. Попробуй еще раз или проверь Settings > AI.'
+    : 'AI host finished without a visible reply. Try again or check Settings > AI.';
+};
+
+const visibleFinalTextFromResponse = (
+  response: FluxoraAiChatResponse,
+  prompt: string,
+  candidate: string | null | undefined
+): string => {
+  const text = candidate?.trim() ?? '';
+  return text || emptyHostResponseText(response, prompt);
+};
+
+const nexusInvestigationHasCompletedEvidence = (
+  nexusInvestigation: FluxoraAiChatResponse['nexusInvestigation'] | null
+): boolean => {
+  if (!nexusInvestigation) {
+    return false;
+  }
+
+  if (nexusInvestigation.evidenceCards.length > 0) {
+    return true;
+  }
+
+  return nexusInvestigation.api.state === 'available' || nexusInvestigation.api.state === 'quota-exhausted';
+};
 
 const compactCaseStateFromResponse = (
   response: FluxoraAiChatResponse
@@ -850,7 +1295,7 @@ const compactCaseStateFromResponse = (
     ? 'diagnosis-complete'
     : externalInvestigation
       ? 'external-pass-complete'
-      : nexusInvestigation
+      : nexusInvestigationHasCompletedEvidence(nexusInvestigation)
         ? 'nexus-pass-complete'
         : response.localInspection
           ? 'local-inspection-complete'
@@ -949,6 +1394,7 @@ export const startHostAiRun = (
         providerId: settings.providerId
       })
     : null;
+  let runtimeEventSequence = 0;
 
   const emitLog = (eventName: string, level: AiRuntimeLogEntry['level'] = 'info') => {
     createAiRuntimeLogEntries(eventName, run, level).forEach((entry) => callbacks.onLog?.(entry));
@@ -966,15 +1412,29 @@ export const startHostAiRun = (
     persistAiAutonomousJob(settings.jobStorage, update, now);
   };
 
+  const emitRunEvent = (event: FluxoraAiIntermediateEvent): void => {
+    callbacks.onRunEvent?.(event);
+    if (autonomousJob) {
+      persistAutonomousJob(recordAiAutonomousIntermediateEvent(autonomousJob, event));
+    }
+  };
+
+  const emitRuntimeRunEvent = (
+    stage: string,
+    message: string,
+    level: FluxoraAiIntermediateEvent['level'] = 'info',
+    percent?: number
+  ): void => {
+    runtimeEventSequence += 1;
+    emitRunEvent(createAiRuntimeIntermediateEvent(run, runtimeEventSequence, stage, message, level, percent));
+  };
+
   const disposeRunEvent = aiApi.onRunEvent((event) => {
     if (event.runId !== run.id || event.operationId !== run.operationId) {
       return;
     }
 
-    callbacks.onRunEvent?.(event);
-    if (autonomousJob) {
-      persistAutonomousJob(recordAiAutonomousIntermediateEvent(autonomousJob, event));
-    }
+    emitRunEvent(event);
   });
 
   const dispose = () => {
@@ -991,21 +1451,24 @@ export const startHostAiRun = (
     cancelled = true;
     finished = true;
     dispose();
-    const event = createAiStreamEvent(run, 'run-cancelled', { status: 'idle' });
+    const event = createAiStreamEvent(run, 'run-cancelled', { status: 'stopped' });
     emitLog('run-cancelled', 'warning');
     if (autonomousJob) {
       persistAutonomousJob(cancelAiAutonomousJob(autonomousJob));
     }
     callbacks.onFinish(
-      createAiMessage('assistant', 'AI run cancelled.', new Date(), run.id),
+      createAiMessage('assistant', AI_RUN_CANCELLED_TEXT, new Date(), run.id, {
+        agentStatus: 'stopped'
+      }),
       event,
-      'idle'
+      'stopped'
     );
   };
 
   persistAutonomousJob(autonomousJob);
   emitLog('run-created');
   callbacks.onEvent(createAiStreamEvent(run, 'status', { status: 'running' }));
+  emitRuntimeRunEvent('prompt-preparation', 'AI host is preparing the run.', 'info', 5);
   if (autonomousJob) {
     const startedAt = new Date();
     persistAutonomousJob(
@@ -1021,18 +1484,65 @@ export const startHostAiRun = (
 
   const chatRequest = settings.preparedRequest ?? createAiHostChatRequest(run, session, prompt, settings);
 
-  void aiApi
-    .chatRespond(chatRequest)
+  const requestHostResponse = async (): Promise<FluxoraAiChatResponse> => {
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= AI_HOST_CHAT_RESPONSE_MAX_ATTEMPTS; attempt += 1) {
+      if (cancelled || finished) {
+        throw new Error('AI run stopped.');
+      }
+
+      try {
+        const response = await aiApi.chatRespond(chatRequest);
+        if (
+          !isRetryableAiHostResponse(response) ||
+          attempt >= AI_HOST_CHAT_RESPONSE_MAX_ATTEMPTS ||
+          cancelled ||
+          finished
+        ) {
+          return response;
+        }
+
+        emitRuntimeRunEvent(
+          'host-retry',
+          'AI host did not return a usable response. Retrying once.',
+          'warning',
+          12
+        );
+        emitLog('run-retry-ai-host', 'warning');
+      } catch (error) {
+        lastError = error;
+        if (attempt >= AI_HOST_CHAT_RESPONSE_MAX_ATTEMPTS || cancelled || finished) {
+          throw error;
+        }
+
+        emitRuntimeRunEvent(
+          'host-retry',
+          'AI host request failed before a reply. Retrying once.',
+          'warning',
+          12
+        );
+        emitLog('run-retry-ai-host', 'warning');
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error('AI host request failed.');
+  };
+
+  void requestHostResponse()
     .then(
       (response) => {
         if (cancelled || finished) {
           return;
         }
 
-        const status = responseStatusToAgentStatus(response);
         const compactCaseState = compactCaseStateFromResponse(response);
         const structuredResponse = compactCaseState ? { ...response, caseState: compactCaseState } : response;
-        const finalText = structuredFinalAnswerFromResponse(structuredResponse, prompt) ?? response.text;
+        const rawFinalText = structuredFinalAnswerFromResponse(structuredResponse, prompt) ?? response.text;
+        const hostReturnedVisibleAnswer =
+          rawFinalText.trim().length > 0 || streamChunksFromResponse(response).length > 0;
+        const status = responseStatusToAgentStatus(response, hostReturnedVisibleAnswer);
+        const finalText = visibleFinalTextFromResponse(response, prompt, rawFinalText);
         const finalCaseState = finalCaseStateFromResponse(response, compactCaseState, finalText);
         const finalResponse = finalCaseState ? { ...response, caseState: finalCaseState } : response;
         const finalSources = sourcesForStructuredFinalAnswer(finalResponse);
@@ -1108,17 +1618,19 @@ export const startHostAiRun = (
               providerId: response.providerId,
               providerDiagnostics: providerDiagnostics.length > 0 ? providerDiagnostics : undefined,
               routingPreset: response.routingPreset,
-              sources: finalSources,
-              contextBundle: response.contextBundle ?? null,
+              sources: compactAiCitationsForStorage(finalSources),
+              contextBundle: null,
               contextUsage: response.contextUsage ?? null,
+              intentRoute: response.intentRoute ?? response.modResearchRoute?.intentRoute ?? null,
               tokenUsage: response.tokenUsage ?? null,
-              researchReport: response.researchReport ?? null,
+              researchReport: compactAiResearchReportForStorage(response.researchReport),
               modResearchRoute: response.modResearchRoute ?? null,
-              diagnosisJudge: response.diagnosisJudge ?? null,
+              diagnosisJudge: null,
               caseState: finalCaseState,
               taskPlan: response.taskPlan ?? null,
               subagentSchedule: response.subagentSchedule ?? null,
-              orchestration: response.orchestration ?? null,
+              orchestration: compactAiOrchestrationForStorage(response.orchestration),
+              orchestrationDecision: response.orchestrationDecision ?? null,
               selectedSkill: response.selectedSkill ?? response.taskPlan?.selectedSkill ?? null
             });
             callbacks.onFinish(message, event, status, response.ledgerEntry, response);
@@ -1271,14 +1783,16 @@ export const startLocalAiRun = (
 
       finished = true;
       dispose();
-      const event = createAiStreamEvent(run, 'run-cancelled', { status: 'idle' });
+      const event = createAiStreamEvent(run, 'run-cancelled', { status: 'stopped' });
       createAiRuntimeLogEntries('run-cancelled', run, 'warning').forEach((entry) =>
         callbacks.onLog?.(entry)
       );
       callbacks.onFinish(
-        createAiMessage('assistant', 'Local AI run cancelled.', new Date(), run.id),
+        createAiMessage('assistant', AI_RUN_CANCELLED_TEXT, new Date(), run.id, {
+          agentStatus: 'stopped'
+        }),
         event,
-        'idle'
+        'stopped'
       );
     },
     dispose

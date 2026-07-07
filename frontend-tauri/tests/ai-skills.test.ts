@@ -83,6 +83,21 @@ describe('Fluxora AI skills catalog', () => {
       'op_skill_stability',
       new Date('2026-06-30T09:02:15Z')
     );
+    const ctdTypo = selectFluxoraSkillForPrompt(
+      'Skyrim AE CDT when entering Solitude after updating animation mods',
+      'op_skill_ctd_typo',
+      new Date('2026-06-30T09:02:16Z')
+    );
+    const multilingualCrash = selectFluxoraSkillForPrompt(
+      'Mein Skyrim SE sturzt beim Laden ab; welcher Crash Logger ist installiert?',
+      'op_skill_multilingual_crash',
+      new Date('2026-06-30T09:02:17Z')
+    );
+    const symptomCause = selectFluxoraSkillForPrompt(
+      'Skyrim closes when I equip this armor, maybe a broken mesh, bad texture, or skeleton issue',
+      'op_skill_symptom_cause',
+      new Date('2026-06-30T09:02:18Z')
+    );
     const analyze = selectFluxoraSkillForPrompt(
       'Проанализируй сборку, она крашит. Нужно посмотреть README.txt и loadorder.txt',
       'op_skill_analyze',
@@ -111,8 +126,11 @@ describe('Fluxora AI skills catalog', () => {
     expect(fomod.selectedSkillId).toBe('fomod-install-assistant');
     expect(optimization.selectedSkillId).toBe('skyrimse-build-optimization');
     expect(optimization.candidateSkillIds).toContain('general-concise-response');
-    expect(stability.selectedSkillId).toBe('skyrimse-stability-diagnosis');
+    expect(stability.selectedSkillId).toBe('skyrimse-analysis');
     expect(stability.candidateSkillIds).toContain('skyrimse-default-rules');
+    expect(ctdTypo.selectedSkillId).toBe('skyrimse-analysis');
+    expect(multilingualCrash.selectedSkillId).toBe('skyrimse-analysis');
+    expect(symptomCause.selectedSkillId).toBe('skyrimse-analysis');
     expect(analyze.selectedSkillId).toBe('general-analyze');
     expect(analyze.selectedSkill?.displayName).toBe('Analyze');
     expect(analyze.selectedSkill?.allowedTools).toContain('local.read_text_file');
@@ -135,6 +153,9 @@ describe('Fluxora AI skills catalog', () => {
     );
     expect(nodes.find((node) => node.id === 'skill:missing-masters-diagnosis')).toMatchObject({
       label: 'Missing masters diagnosis'
+    });
+    expect(nodes.find((node) => node.id === 'skill:skyrimse-analysis')).toMatchObject({
+      label: 'SkyrimSE analysis'
     });
   });
 

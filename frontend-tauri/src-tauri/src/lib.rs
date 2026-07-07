@@ -15,7 +15,7 @@ use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicU32, AtomicU64, Ordering},
     Arc,
 };
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -103,6 +103,7 @@ mod process_platform {
     type Handle = *mut c_void;
 
     const INVALID_HANDLE_VALUE: Handle = -1isize as Handle;
+    const PROCESS_TERMINATE: u32 = 0x0001;
     const SYNCHRONIZE: u32 = 0x0010_0000;
     const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
     const WAIT_TIMEOUT: u32 = 0x0000_0102;
@@ -124,6 +125,7 @@ mod process_platform {
     extern "system" {
         fn OpenProcess(dw_desired_access: u32, b_inherit_handle: i32, dw_process_id: u32)
             -> Handle;
+        fn TerminateProcess(h_process: Handle, u_exit_code: u32) -> i32;
         fn WaitForSingleObject(h_handle: Handle, dw_milliseconds: u32) -> u32;
         fn CloseHandle(h_object: Handle) -> i32;
         fn CreateToolhelp32Snapshot(dw_flags: u32, th32_process_id: u32) -> Handle;
@@ -157,6 +159,22 @@ mod process_platform {
             CloseHandle(handle);
         }
         wait_result == WAIT_TIMEOUT
+    }
+
+    pub fn terminate_process(process_id: u32) -> bool {
+        if process_id == 0 {
+            return false;
+        }
+
+        let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
+        if handle.is_null() {
+            return false;
+        }
+        let terminated = unsafe { TerminateProcess(handle, 1) } != 0;
+        unsafe {
+            CloseHandle(handle);
+        }
+        terminated
     }
 
     pub fn find_process_by_names(names: &[String]) -> Option<(u32, String)> {
@@ -205,6 +223,8 @@ mod process_platform {
 
 #[cfg(not(windows))]
 mod process_platform {
+    use std::process::Command;
+
     pub fn is_process_running(process_id: u32) -> bool {
         process_id != 0
             && std::path::Path::new("/proc")
@@ -214,6 +234,16 @@ mod process_platform {
 
     pub fn find_process_by_names(_names: &[String]) -> Option<(u32, String)> {
         None
+    }
+
+    pub fn terminate_process(process_id: u32) -> bool {
+        process_id != 0
+            && Command::new("kill")
+                .arg("-TERM")
+                .arg(process_id.to_string())
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
     }
 }
 
@@ -379,18 +409,44 @@ struct BridgeProcess {
     handshake: Option<Value>,
 }
 
-#[derive(Default)]
 struct AiHostState {
     process: Mutex<AiHostProcess>,
+    active_process_id: Arc<AtomicU32>,
 }
 
-#[derive(Default)]
+impl Default for AiHostState {
+    fn default() -> Self {
+        let active_process_id = Arc::new(AtomicU32::new(0));
+        Self {
+            process: Mutex::new(AiHostProcess {
+                active_process_id: Arc::clone(&active_process_id),
+                ..AiHostProcess::default()
+            }),
+            active_process_id,
+        }
+    }
+}
+
 struct AiHostProcess {
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     stdout: Option<BufReader<ChildStdout>>,
     host_path: Option<PathBuf>,
     handshake: Option<Value>,
+    active_process_id: Arc<AtomicU32>,
+}
+
+impl Default for AiHostProcess {
+    fn default() -> Self {
+        Self {
+            child: None,
+            stdin: None,
+            stdout: None,
+            host_path: None,
+            handshake: None,
+            active_process_id: Arc::new(AtomicU32::new(0)),
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -1549,7 +1605,10 @@ fn sanitize_ai_intermediate_event(envelope: &Value, fallback_operation_id: &str)
     }
 
     let mut event = serde_json::Map::new();
-    event.insert("schema".to_string(), json!("fluxora.ai.intermediate-event.v1"));
+    event.insert(
+        "schema".to_string(),
+        json!("fluxora.ai.intermediate-event.v1"),
+    );
     event.insert("eventId".to_string(), json!(event_id));
     event.insert("runId".to_string(), json!(run_id));
     event.insert("operationId".to_string(), json!(operation_id));
@@ -2097,6 +2156,7 @@ impl AiHostProcess {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill().await;
         }
+        self.active_process_id.store(0, Ordering::SeqCst);
         self.stdin = None;
         self.stdout = None;
         self.handshake = None;
@@ -2124,6 +2184,7 @@ impl AiHostProcess {
         command.creation_flags(CREATE_NO_WINDOW);
 
         let mut child = command.spawn().map_err(|error| error.to_string())?;
+        let child_process_id = child.id().unwrap_or_default();
 
         if let Some(stderr) = child.stderr.take() {
             let app = app.clone();
@@ -2147,6 +2208,8 @@ impl AiHostProcess {
         self.child = Some(child);
         self.host_path = Some(host_path);
         self.handshake = None;
+        self.active_process_id
+            .store(child_process_id, Ordering::SeqCst);
 
         let _ = write_log(
             app,
@@ -2757,6 +2820,56 @@ async fn fluxora_ai_restart_host(
     }
 
     Ok(ai_status_payload(&app, request).await)
+}
+
+#[tauri::command]
+async fn fluxora_ai_cancel_run(
+    app: AppHandle,
+    operation_id: String,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let target_operation_id = operation_id.trim().to_string();
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(crate::operation_id(None, "ai_cancel_run")),
+    });
+    let cancel_operation_id = crate::operation_id(Some(&request), "ai_cancel_run");
+    if target_operation_id.is_empty() {
+        return Ok(json!({
+            "operationId": "",
+            "status": "notFound",
+            "accepted": false,
+            "processId": Value::Null
+        }));
+    }
+
+    let state = ai_host_state(&app);
+    let process_id = state.active_process_id.load(Ordering::SeqCst);
+    let accepted = process_id != 0 && process_platform::terminate_process(process_id);
+    if accepted {
+        state.active_process_id.store(0, Ordering::SeqCst);
+    }
+
+    let _ = write_log(
+        &app,
+        "ai-host",
+        if accepted { "warning" } else { "info" },
+        "AiChatCancel",
+        &format!(
+            "AI run cancel requested. targetOperationId={} processId={} accepted={}",
+            sanitize_log(&target_operation_id),
+            process_id,
+            accepted
+        ),
+        Some(&cancel_operation_id),
+    )
+    .await;
+
+    Ok(json!({
+        "operationId": target_operation_id,
+        "status": if accepted { "accepted" } else { "notFound" },
+        "accepted": accepted,
+        "processId": if process_id == 0 { Value::Null } else { json!(process_id) }
+    }))
 }
 
 #[tauri::command]
@@ -4786,6 +4899,7 @@ pub fn run() {
             fluxora_current_executable,
             fluxora_security_state,
             fluxora_log,
+            fluxora_ai_cancel_run,
             fluxora_ai_get_status,
             fluxora_ai_restart_host,
             fluxora_ai_list_providers,

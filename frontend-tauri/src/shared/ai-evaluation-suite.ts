@@ -47,6 +47,16 @@ export type AiEvaluationGoldenTaskId =
   | 'recover-from-failed-install'
   | 'refuse-dangerous-prompt-injection';
 
+export interface AiEvaluationMultilingualIntentFixture {
+  language: string;
+  prompt: string;
+  expectedCanonicalIntent: 'requirement-audit';
+  expectedRoute: 'nexus-api-with-search';
+  expectedAuditScope: 'full-build-requirements';
+  expectedPublicWebFetches: 0;
+  expectedNexusApiRequested: true;
+}
+
 export type AiEvaluationToolCallPhase =
   | 'planned'
   | 'blocked'
@@ -79,6 +89,7 @@ export interface AiEvaluationSuite {
   schema: typeof AI_EVALUATION_SUITE_SCHEMA;
   generatedAt: 'static-phase-17';
   goldenTasks: readonly AiEvaluationGoldenTask[];
+  multilingualIntentFixtures: readonly AiEvaluationMultilingualIntentFixture[];
   deterministicProvider: {
     providerId: 'deterministic-eval';
     defaultModelId: 'deterministic-eval-v1';
@@ -692,6 +703,135 @@ export const AI_EVALUATION_GOLDEN_TASKS: readonly AiEvaluationGoldenTask[] = [
   }
 ];
 
+export const AI_EVALUATION_MULTILINGUAL_INTENT_FIXTURES: readonly AiEvaluationMultilingualIntentFixture[] = [
+  {
+    language: 'en',
+    prompt: 'check all mods in the build for missing requirements via Nexus API',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'ru',
+    prompt: 'Проверь все моды в сборке на отсутствующие требования через Nexus API',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'uk',
+    prompt: 'Перевір усі моди у збірці на відсутні вимоги через Nexus API',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'pl',
+    prompt: 'Sprawdź wszystkie mody w buildzie pod kątem brakujących wymagań przez Nexus API',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'de',
+    prompt: 'Prüfe alle Mods im Build auf fehlende Anforderungen über Nexus API',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'es',
+    prompt: 'Comprueba todos los mods de la compilación por requisitos faltantes con Nexus API',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'fr',
+    prompt: 'Vérifie tous les mods du build pour les exigences manquantes via Nexus API',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'pt',
+    prompt: 'Verifique todos os mods da build por requisitos ausentes via Nexus API',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'tr',
+    prompt: "Build'deki tüm modları eksik gereksinimler için Nexus API ile kontrol et",
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'ar',
+    prompt: 'تحقق من جميع المودات في البناء بحثًا عن المتطلبات المفقودة عبر Nexus API',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'hi',
+    prompt: 'Nexus API से बिल्ड के सभी मॉड की गुम आवश्यकताओं की जाँच करें',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'zh',
+    prompt: '通过 Nexus API 检查构建中的所有 mod 是否有缺失要求',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'ja',
+    prompt: 'Nexus API ですべてのmodの不足している要件を確認して',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  },
+  {
+    language: 'ko',
+    prompt: 'Nexus API로 빌드의 모든 모드 누락된 요구 사항을 확인해',
+    expectedCanonicalIntent: 'requirement-audit',
+    expectedRoute: 'nexus-api-with-search',
+    expectedAuditScope: 'full-build-requirements',
+    expectedPublicWebFetches: 0,
+    expectedNexusApiRequested: true
+  }
+];
+
 export const AI_HUMAN_REVIEW_RUBRIC: readonly AiEvaluationRubricItem[] = [
   {
     id: 'correctness',
@@ -788,6 +928,7 @@ export const AI_EVALUATION_SUITE: AiEvaluationSuite = {
   schema: AI_EVALUATION_SUITE_SCHEMA,
   generatedAt: 'static-phase-17',
   goldenTasks: AI_EVALUATION_GOLDEN_TASKS,
+  multilingualIntentFixtures: AI_EVALUATION_MULTILINGUAL_INTENT_FIXTURES,
   deterministicProvider: {
     providerId: 'deterministic-eval',
     defaultModelId: 'deterministic-eval-v1',

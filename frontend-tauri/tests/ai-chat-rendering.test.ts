@@ -4,12 +4,16 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AiChatPanel,
+  AI_CHAT_RENDER_TEXT_LIMIT,
   aiVisibleRunEventsForRun,
   renderAiChatMessageContent
 } from '../src/renderer/features/ai/AiChatPanel';
 import { AI_CONTEXT_SOURCE_URL_PREFIX } from '../src/renderer/features/ai/ai-chat-security';
 import {
+  aiChatReducer,
   createAiMessage,
+  createAiRun,
+  createAiStreamEvent,
   initialAiChatState,
   type AiChatState,
   type AiMessage
@@ -286,6 +290,23 @@ describe('AI chat message rendering', () => {
     expect(html).not.toContain('<script>alert(1)</script>');
   });
 
+  it('renders a bounded preview for oversized assistant answers', () => {
+    const html = renderToStaticMarkup(
+      renderAiChatMessageContent(
+        [
+          'Начало большого анализа.',
+          'А'.repeat(AI_CHAT_RENDER_TEXT_LIMIT + 512),
+          'TAIL_MARKER_SHOULD_NOT_RENDER'
+        ].join('\n')
+      ) as ReactElement
+    );
+
+    expect(html).toContain('Начало большого анализа');
+    expect(html).toContain('Ответ очень большой');
+    expect(html).toContain('data-truncated="true"');
+    expect(html).not.toContain('TAIL_MARKER_SHOULD_NOT_RENDER');
+  });
+
   it('renders the composer as one Codex-like input surface with icon-only actions', () => {
     const markup = renderPanel({
       ...initialAiChatState,
@@ -300,6 +321,76 @@ describe('AI chat message rendering', () => {
     expect(markup).toContain('--ai-chat-input-icon');
     expect(markup).not.toContain('ai-context-ring');
     expect(markup).not.toContain('<span>Send</span>');
+  });
+
+  it('replaces the send button with the stop button while an AI run is active', () => {
+    const markup = renderPanel({
+      ...initialAiChatState,
+      activeRunId: 'run-active',
+      isOpen: true,
+      isRunning: true,
+      status: 'running'
+    });
+
+    expect(markup).toContain('aria-label="Stop AI run"');
+    expect(markup).toContain('data-running="true"');
+    expect(markup).not.toContain('aria-label="Send message"');
+  });
+
+  it('returns to the assistant reply and send button after host completion without visible progress', () => {
+    const prompt = 'Check load order';
+    const run = createAiRun(
+      initialAiChatState.activeChatId,
+      'op_ai_no_visible_progress',
+      'digest-no-visible-progress',
+      prompt.length,
+      new Date('2026-07-06T09:00:00Z')
+    );
+    const userMessage = createAiMessage(
+      'user',
+      prompt,
+      new Date('2026-07-06T09:00:00Z'),
+      run.id
+    );
+    const submitted = aiChatReducer(
+      { ...initialAiChatState, draft: prompt, isOpen: true },
+      {
+        type: 'submit-user-message',
+        message: userMessage,
+        run,
+        event: createAiStreamEvent(run, 'run-created', {
+          now: new Date('2026-07-06T09:00:00Z'),
+          status: 'thinking'
+        })
+      }
+    );
+
+    expect(renderPanel(submitted)).toContain('aria-label="Stop AI run"');
+
+    const finished = aiChatReducer(submitted, {
+      type: 'append-assistant-message',
+      message: createAiMessage(
+        'assistant',
+        'Host completed without visible progress.',
+        new Date('2026-07-06T09:00:01Z'),
+        run.id,
+        { agentStatus: 'done' }
+      ),
+      event: createAiStreamEvent(run, 'run-finished', {
+        now: new Date('2026-07-06T09:00:01Z'),
+        status: 'done'
+      }),
+      status: 'done'
+    });
+    const markup = renderPanel(finished);
+
+    expect(finished.activeRunId).toBeNull();
+    expect(finished.isRunning).toBe(false);
+    expect(markup).toContain('Host completed without visible progress.');
+    expect(markup).toContain('aria-label="Send message"');
+    expect(markup).not.toContain('aria-label="Stop AI run"');
+    expect(markup).not.toContain('Waiting for AI host progress');
+    expect(markup).not.toContain('ai-chat-progress');
   });
 
   it('renders the AI context ring before the microphone with compact request usage details', () => {
@@ -664,6 +755,62 @@ describe('AI chat message rendering', () => {
     expect(markup).not.toContain('Nexus API weather metadata');
   });
 
+  it('does not render blocked Nexus API snapshots as checked websites', () => {
+    const researchReport = createResearchReport();
+    const blockedSnapshot = {
+      ...researchReport.snapshots[0]!,
+      id: 'snapshot-nexus-api-auth-blocked',
+      title: 'Nexus API blocked response',
+      url: 'https://api.nexusmods.com/v1/games/2026-07-06t09/mods/48',
+      status: 'blocked' as const,
+      reason: 'Nexus API credential was rejected.'
+    };
+    const message = createAiMessage(
+      'assistant',
+      'Nexus API auth is unavailable.',
+      new Date('2026-07-01T08:00:01Z'),
+      'run-research-blocked-sites',
+      {
+        agentStatus: 'blocked',
+        researchReport: {
+          ...researchReport,
+          apiAvailability: {
+            state: 'unauthenticated',
+            unavailableReason: 'missing-credential',
+            lastHttpStatus: 401,
+            retryAfterSeconds: null
+          },
+          nexusInvestigation: {
+            ...researchReport.nexusInvestigation!,
+            api: {
+              state: 'unauthenticated',
+              unavailableReason: 'missing-credential',
+              lastHttpStatus: 401,
+              retryAfterSeconds: null
+            },
+            evidenceCards: []
+          },
+          snapshots: [blockedSnapshot],
+          sources: [
+            {
+              id: blockedSnapshot.id,
+              title: blockedSnapshot.title,
+              url: blockedSnapshot.url,
+              kind: 'nexus-api',
+              provider: 'fluxora-research'
+            }
+          ]
+        },
+        sources: []
+      }
+    );
+    const markup = renderPanel(stateWithMessages([message]), { showCheckedSites: true });
+
+    expect(markup).not.toContain('Проверено:');
+    expect(markup).not.toContain('api.nexusmods.com');
+    expect(sourceButtonCount(markup)).toBe(0);
+  });
+
   it('keeps research metadata hidden without internal research stages or counts', () => {
     const message = createAiMessage(
       'assistant',
@@ -810,7 +957,7 @@ describe('AI chat message rendering', () => {
     expect(markup).not.toContain('javascript:alert');
   });
 
-  it('keeps multi-model orchestration metadata out of rendered assistant messages', () => {
+  it('renders real multi-model orchestration subagents without exposing chef internals', () => {
     const planningBundle = createFluxoraAiTaskPlanningBundle(
       'check 20 mods',
       'op_ai_orchestrated',
@@ -866,11 +1013,14 @@ describe('AI chat message rendering', () => {
     const markup = renderPanel(stateWithMessages([message]));
 
     expect(markup).toContain('Chef synthesis.');
-    expect(markup).not.toContain('ai-chat-subagents');
+    expect(markup).toContain('ai-chat-subagents');
+    expect(markup).toContain('Subagents');
+    expect(markup).toContain('Compatibility worker');
+    expect(markup).toContain('Done');
+    expect(markup).toContain('gemini · gemini-2.5-flash-lite');
+    expect(markup).toContain('aria-label="Open Compatibility worker chat"');
     expect(markup).not.toContain('ai-chat-plan');
     expect(markup).not.toContain('chef-orchestrator');
-    expect(markup).not.toContain('Compatibility worker');
-    expect(markup).not.toContain('gemini-2.5-flash-lite');
     expect(markup).not.toContain('chef-dispatch-then-parallel-subagents');
   });
 });

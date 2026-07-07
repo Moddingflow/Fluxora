@@ -14,7 +14,8 @@ import {
 } from '../src/renderer/services/project-catalog-service';
 import type {
   FluxoraGameTemplate,
-  FluxoraProject
+  FluxoraProject,
+  FluxoraProjectCatalog
 } from '../src/shared/fluxora-api';
 
 const projects: FluxoraProject[] = [
@@ -90,6 +91,35 @@ describe('project catalog state', () => {
     expect(isProjectDraftStepComplete(draft, 3)).toBe(true);
   });
 
+  it('keeps default install root as the only populated field in an empty draft', () => {
+    expect(emptyProjectDraft('C:\\Fluxora Projects')).toEqual({
+      projectName: '',
+      templateId: '',
+      gamePath: '',
+      installRootDirectory: 'C:\\Fluxora Projects'
+    });
+  });
+
+  it('rejects whitespace-only required fields on every create wizard step', () => {
+    const completeDraft = {
+      ...emptyProjectDraft('C:\\Fluxora Projects'),
+      projectName: 'Skyrim Main',
+      templateId: 'skyrim-special-edition',
+      gamePath: 'C:\\Games\\Skyrim\\SkyrimSE.exe'
+    };
+
+    const cases = [
+      { stepIndex: 0, draft: { ...completeDraft, projectName: '   ' } },
+      { stepIndex: 1, draft: { ...completeDraft, templateId: '\t  ' } },
+      { stepIndex: 2, draft: { ...completeDraft, gamePath: '  \n ' } },
+      { stepIndex: 3, draft: { ...completeDraft, installRootDirectory: '\r\n ' } }
+    ];
+
+    cases.forEach(({ draft, stepIndex }) => {
+      expect(isProjectDraftStepComplete(draft, stepIndex)).toBe(false);
+    });
+  });
+
   it('formats project display details without mutating domain DTOs', () => {
     expect(projectDisplayPath(projects[0])).toBe('C:\\Fluxora Projects\\Skyrim Main');
     expect(projectCapabilitiesLabel(projects[0])).toBe('plugins, load order, VFS');
@@ -111,5 +141,27 @@ describe('project catalog state', () => {
     expect(catalog.projects).toEqual([imported]);
     expect(catalog.buildConfigsDirectory).toBe(projectCatalogFallback.buildConfigsDirectory);
     expect(catalog.defaultInstallRootDirectory).toBe(projectCatalogFallback.defaultInstallRootDirectory);
+  });
+
+  it('merges a created build without losing catalog identity fields', () => {
+    const existing = projects[0];
+    const catalog: FluxoraProjectCatalog = {
+      projects: [existing],
+      buildConfigsDirectory: 'C:\\Fluxora\\Builds',
+      defaultInstallRootDirectory: 'D:\\Fluxora Builds',
+      operationId: 'op_catalog_load'
+    };
+    const created: FluxoraProject = {
+      ...existing,
+      name: 'Skyrim Main Created',
+      projectDirectory: 'D:\\Fluxora Builds\\Skyrim Main Created'
+    };
+
+    const merged = mergeProjectIntoCatalog(catalog, created);
+
+    expect(merged.projects).toEqual([created]);
+    expect(merged.buildConfigsDirectory).toBe(catalog.buildConfigsDirectory);
+    expect(merged.defaultInstallRootDirectory).toBe(catalog.defaultInstallRootDirectory);
+    expect(merged.operationId).toBe(catalog.operationId);
   });
 });

@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  aiChatReducer,
   createAiChatThread,
   createAiMessage,
   createAiStreamEvent,
+  initialAiChatState,
   syncAiSessionToActiveChat
 } from '../src/renderer/features/ai/ai-chat-state';
 import { aiAutonomousJobQueueStorageKey } from '../src/renderer/features/ai/ai-autonomous-jobs';
@@ -11,6 +13,7 @@ import {
   aiSessionScopeKey,
   aiSessionStorageKey,
   aiResponseDiagnosticMessages,
+  compactAiSessionForStorage,
   createAiHostChatRequest,
   createAiPromptFingerprint,
   createAiResearchRequestForPrompt,
@@ -35,6 +38,7 @@ import {
 import { createFluxoraAiTaskPlanningBundle } from '../src/shared/ai-task-planner';
 import type {
   FluxoraAiIntermediateEvent,
+  FluxoraAiResearchReport,
   FluxoraApi
 } from '../src/shared/fluxora-api';
 
@@ -107,6 +111,95 @@ describe('AI chat runtime', () => {
     expect(storage.values.has(storageKey)).toBe(true);
     expect(restored.messages.map((message) => message.text)).toEqual(['check plugins']);
     expect(restored.buildLabel).toBe('Skyrim Main');
+  });
+
+  it('compacts oversized research metadata before persisting chat history', () => {
+    const storage = createMemoryStorage();
+    const scope = { buildLabel: 'Large Skyrim Build', projectId: 'large-skyrim-build' };
+    const session = createAiSessionForScope(scope, new Date('2026-07-07T09:00:00Z'));
+    const chat = session.chats[0]!;
+    const sources = Array.from({ length: 160 }, (_, index) => ({
+      id: `nexus-source-${index}`,
+      title: `Nexus source ${index}`,
+      url: `https://www.nexusmods.com/skyrimspecialedition/mods/${index}`,
+      snippet: 'source raw text '.repeat(500)
+    }));
+    const researchReport: FluxoraAiResearchReport = {
+      schema: 'fluxora.ai.research.v1',
+      generatedAt: '2026-07-07T09:00:00.000Z',
+      operationId: 'op_ai_large_requirements',
+      permissionClass: 'external-network',
+      mode: 'nexus-api-first',
+      policy: {
+        rawPromptEcho: 'should-not-persist'.repeat(1000)
+      },
+      targets: Array.from({ length: 600 }, (_, index) => ({
+        id: `target-${index}`,
+        rawApiPayload: 'target raw text '.repeat(500)
+      })),
+      snapshots: Array.from({ length: 96 }, (_, index) => ({
+        id: `snapshot-${index}`,
+        kind: 'nexus-api',
+        title: `Nexus snapshot ${index}`,
+        url: `https://api.nexusmods.com/v1/games/skyrimspecialedition/mods/${index}`,
+        capturedAt: '2026-07-07T09:00:00.000Z',
+        status: 'captured' as const,
+        summary: 'snapshot raw text '.repeat(500),
+        trust: 'untrusted-external-content' as const,
+        instructionsAllowed: false as const,
+        cache: {
+          rawBody: 'cache raw text '.repeat(500)
+        }
+      })),
+      sources,
+      issues: Array.from({ length: 80 }, (_, index) => ({
+        id: `issue-${index}`,
+        rawDetails: 'issue raw text '.repeat(500)
+      }))
+    };
+    const message = createAiMessage(
+      'assistant',
+      `Начало отчета.\n${'тяжелый ответ '.repeat(12_000)}\nКонец отчета.`,
+      new Date('2026-07-07T09:00:01Z'),
+      'run-large-requirements',
+      {
+        researchReport,
+        sources
+      }
+    );
+    const sessionWithHeavyMessage = syncAiSessionToActiveChat({
+      ...session,
+      activeChatId: chat.id,
+      chats: [
+        {
+          ...chat,
+          messages: [message],
+          updatedAt: message.createdAt
+        }
+      ],
+      messages: [message]
+    });
+
+    const compactSession = compactAiSessionForStorage(sessionWithHeavyMessage);
+    saveAiSession(storage, sessionWithHeavyMessage);
+    const storageKey = aiSessionStorageKey(aiSessionScopeKey(scope));
+    const persisted = JSON.parse(storage.values.get(storageKey) ?? '{}') as typeof compactSession;
+    const persistedMessage = persisted.messages[0];
+    const throwingStorage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('QuotaExceededError');
+      }
+    };
+
+    expect(compactSession.messages[0]?.text).toContain('[Truncated to keep Fluxora responsive.]');
+    expect(persistedMessage?.researchReport?.targets).toHaveLength(24);
+    expect(persistedMessage?.researchReport?.snapshots).toHaveLength(32);
+    expect(persistedMessage?.researchReport?.sources).toHaveLength(80);
+    expect(persistedMessage?.sources).toHaveLength(80);
+    expect(JSON.stringify(persisted)).not.toContain('should-not-persist');
+    expect(JSON.stringify(persisted)).not.toContain('cache raw text');
+    expect(() => saveAiSession(throwingStorage, sessionWithHeavyMessage)).not.toThrow();
   });
 
   it('recovers unfinished local runs after refresh instead of pretending the timer survived', () => {
@@ -226,10 +319,10 @@ describe('AI chat runtime', () => {
       allowGeminiGoogleSearch: true,
       allowPublicWebFetch: false,
       deepResearchApproved: false,
-      auditScope: 'batch-requirements',
-      maxNexusTargets: 128,
-      maxNexusInitialTargets: 128,
-      maxNexusApiRequests: 256
+      auditScope: 'full-build-requirements',
+      maxNexusTargets: 1000,
+      maxNexusInitialTargets: 1000,
+      maxNexusApiRequests: 2500
     });
 
     expect(createAiResearchRequestForPrompt('Посмотри Nexus Mods через API', 'byok')).toEqual({
@@ -262,7 +355,7 @@ describe('AI chat runtime', () => {
     vi.runAllTimers();
 
     expect(events).toEqual(['run-cancelled']);
-    expect(messages).toEqual(['Local AI run cancelled.']);
+    expect(messages).toEqual(['Остановлено']);
   });
 
   it('returns queued plan approvals for local basic build preparation runs', async () => {
@@ -359,7 +452,33 @@ describe('AI chat runtime', () => {
           includedSections: ['chat-history'],
           autoCompressionApplied: false,
           actionRequired: false,
-          countedAt: '2026-06-30T00:00:00.000Z'
+          countedAt: '2026-06-30T00:00:00.000Z',
+          trace: {
+            schema: 'fluxora.ai.context-usage-trace.v1',
+            policyDecisionsUseIntentRouter: true,
+            routingSchemas: ['fluxora.ai.intent-route.v1', 'fluxora.ai.mod-research-route.v1']
+          }
+        },
+        intentRoute: {
+          schema: 'fluxora.ai.intent-route.v1',
+          promptLanguage: 'en',
+          replyLanguage: 'en',
+          confidence: 0.94,
+          signals: [
+            {
+              kind: 'semantic-requirement',
+              value: 'requirements/dependencies',
+              confidence: 0.88,
+              source: 'multilingual-examples'
+            }
+          ],
+          canonicalIntent: 'requirement-audit',
+          scope: 'full-build-requirements',
+          explicitTargets: [],
+          nexusApiRequested: true,
+          publicWebRequested: false,
+          requiresExternalNetwork: true,
+          clarificationRequired: false
         },
         tokenUsage: {
           inputTokens: 42,
@@ -401,6 +520,8 @@ describe('AI chat runtime', () => {
           expect(message.subagentSchedule?.schema).toBe('fluxora.ai.subagent-schedule.v1');
           expect(message.selectedSkill?.schema).toBe('fluxora.ai.skill-selection.v1');
           expect(message.contextUsage?.currentContextTokens).toBe(42);
+          expect(message.contextUsage?.trace?.policyDecisionsUseIntentRouter).toBe(true);
+          expect(message.intentRoute?.canonicalIntent).toBe('requirement-audit');
           expect(message.tokenUsage?.totalTokens).toBe(49);
         }
       }
@@ -443,6 +564,161 @@ describe('AI chat runtime', () => {
         stream: true
       })
     );
+  });
+
+  it('retries a retryable AI host transport fallback once before finishing', async () => {
+    vi.useFakeTimers();
+    const session = createAiSessionForScope({ projectId: 'skyrim-main' });
+    const run = createAiRunForPrompt(session, 'op_ai_chat_retry', 'check plugins');
+    const stages: string[] = [];
+    const statuses: string[] = [];
+    const messages: string[] = [];
+    const retryableResponse = {
+      operationId: run.operationId,
+      providerId: 'local-dry-run',
+      modelId: 'local-dry-run',
+      routingPreset: 'free-demo',
+      status: 'blocked',
+      text: 'AI host is unavailable.',
+      streamChunks: [{ index: 0, text: 'AI host is unavailable.' }],
+      sources: [],
+      costEstimate: null,
+      ledgerEntry: undefined,
+      fallbackProviders: [],
+      taskPlan: null,
+      subagentSchedule: null,
+      selectedSkill: null,
+      toolCallsAllowed: false,
+      error: {
+        code: 'ai.host.unavailable',
+        message: 'AI host is unavailable.',
+        category: 'transport',
+        retryable: true,
+        capabilityId: null,
+        details: {}
+      }
+    };
+    const successfulResponse = {
+      operationId: run.operationId,
+      providerId: 'gemini',
+      modelId: 'gemini-3.1-flash-lite',
+      routingPreset: 'byok',
+      status: 'done',
+      text: 'Recovered answer.',
+      streamChunks: [{ index: 0, text: 'Recovered answer.' }],
+      sources: [],
+      costEstimate: null,
+      ledgerEntry: undefined,
+      fallbackProviders: [],
+      taskPlan: null,
+      subagentSchedule: null,
+      selectedSkill: null,
+      toolCallsAllowed: false
+    };
+    const aiApi = {
+      onRunEvent: vi.fn(() => () => undefined),
+      chatRespond: vi.fn()
+        .mockResolvedValueOnce(retryableResponse)
+        .mockResolvedValueOnce(successfulResponse)
+    } as unknown as FluxoraApi['ai'];
+
+    startHostAiRun(
+      run,
+      session,
+      'check plugins',
+      aiApi,
+      {
+        modelId: 'gemini-3.1-flash-lite',
+        routingPreset: 'byok',
+        providerId: 'gemini'
+      },
+      {
+        onEvent: () => undefined,
+        onRunEvent: (event) => stages.push(event.stage),
+        onFinish: (message, _event, status) => {
+          statuses.push(status);
+          messages.push(message.text);
+        }
+      }
+    );
+
+    await vi.runAllTimersAsync();
+
+    expect(aiApi.chatRespond).toHaveBeenCalledTimes(2);
+    expect(stages).toEqual(['prompt-preparation', 'host-retry']);
+    expect(statuses).toEqual(['done']);
+    expect(messages).toEqual(['Recovered answer.']);
+  });
+
+  it('finishes with a fallback assistant error message when the host returns no assistant text', async () => {
+    vi.useFakeTimers();
+    const session = createAiSessionForScope({ projectId: 'skyrim-main' });
+    const run = createAiRunForPrompt(session, 'op_ai_chat_empty_final', 'check plugins');
+    const events: string[] = [];
+    const messages: string[] = [];
+    const diagnostics: string[] = [];
+    const statuses: string[] = [];
+    const aiApi = {
+      onRunEvent: vi.fn(() => () => undefined),
+      chatRespond: vi.fn(async () => ({
+        operationId: run.operationId,
+        providerId: 'gemini',
+        modelId: 'gemini-3.1-flash-lite',
+        routingPreset: 'byok',
+        status: 'blocked',
+        text: '',
+        streamChunks: [],
+        sources: [],
+        costEstimate: null,
+        ledgerEntry: undefined,
+        fallbackProviders: [],
+        taskPlan: null,
+        subagentSchedule: null,
+        selectedSkill: null,
+        toolCallsAllowed: false,
+        error: {
+          code: 'ai.host.empty_final',
+          message: 'AI host completed without an assistant message.',
+          category: 'provider',
+          retryable: false,
+          capabilityId: null,
+          details: {}
+        }
+      }))
+    } as unknown as FluxoraApi['ai'];
+
+    startHostAiRun(
+      run,
+      session,
+      'check plugins',
+      aiApi,
+      {
+        modelId: 'gemini-3.1-flash-lite',
+        routingPreset: 'byok',
+        providerId: 'gemini'
+      },
+      {
+        onEvent: (event) => events.push(event.type),
+        onFinish: (message, event, status) => {
+          events.push(event.type);
+          statuses.push(status);
+          messages.push(message.text);
+          diagnostics.push(...(message.providerDiagnostics ?? []));
+        }
+      }
+    );
+
+    await vi.runAllTimersAsync();
+
+    expect(aiApi.chatRespond).toHaveBeenCalledTimes(1);
+    expect(events.at(-1)).toBe('run-finished');
+    expect(statuses).toEqual(['blocked']);
+    expect(messages).toEqual([
+      'AI provider response was unavailable. Check Settings > AI or retry later.'
+    ]);
+    expect(diagnostics).toEqual([
+      'AI provider response was unavailable. Check Settings > AI or retry later.'
+    ]);
   });
 
   it('forwards matching host intermediate events and persists them for autonomous runs', async () => {
@@ -526,9 +802,12 @@ describe('AI chat runtime', () => {
     ) ?? [];
 
     expect(aiApi.onRunEvent).toHaveBeenCalledTimes(1);
-    expect(forwarded.map((event) => event.eventId)).toEqual(['event-provider-started']);
-    expect(canonicalProgress).toHaveLength(1);
-    expect(canonicalProgress[0]).toMatchObject({
+    expect(forwarded.map((event) => event.stage)).toEqual([
+      'prompt-preparation',
+      'provider-attempt'
+    ]);
+    expect(canonicalProgress).toHaveLength(2);
+    expect(canonicalProgress[1]).toMatchObject({
       internal: false,
       stage: 'provider-attempt',
       canonicalEvent: {
@@ -744,6 +1023,93 @@ describe('AI chat runtime', () => {
     expect(messages[0]).not.toContain('changed the load order');
     expect(sourceIds).toContain('local:plugins.loadOrder');
     expect(caseStates).toEqual(['final-answer-complete']);
+  });
+
+  it('does not mark auth-blocked Nexus investigations as completed Nexus passes', async () => {
+    vi.useFakeTimers();
+    const session = createAiSessionForScope({ projectId: 'skyrim-main' });
+    const run = createAiRunForPrompt(
+      session,
+      'op_ai_nexus_auth_blocked',
+      'Проверь требования модов через Nexus API'
+    );
+    const generatedAt = new Date('2026-07-06T09:00:00Z');
+    const localInspection = createAiLocalInspection({
+      operationId: 'op_ai_nexus_auth_blocked',
+      generatedAt,
+      needMoreLocalData: false,
+      missingFields: [],
+      deterministicFindings: [],
+      hypotheses: [],
+      suspect_mods: [],
+      evidenceCards: []
+    });
+    const nexusInvestigation = createAiNexusInvestigation({
+      operationId: 'op_ai_nexus_auth_blocked',
+      generatedAt,
+      targetNexusIds: ['skyrimspecialedition:48'],
+      api: {
+        state: 'unauthenticated',
+        unavailableReason: 'missing-credential',
+        lastHttpStatus: 401,
+        retryAfterSeconds: null
+      },
+      quota: {
+        hourlyRemaining: null,
+        dailyRemaining: null,
+        resetAt: null,
+        source: 'not-provided'
+      },
+      ordinaryError: null,
+      deterministicFindings: [],
+      hypotheses: [],
+      evidenceCards: []
+    });
+    const aiApi = {
+      onRunEvent: vi.fn(() => () => undefined),
+      chatRespond: vi.fn(async () => ({
+        operationId: 'op_ai_nexus_auth_blocked',
+        providerId: 'gemini',
+        modelId: 'gemini-3.1-flash-lite',
+        routingPreset: 'byok',
+        status: 'blocked',
+        text: 'Nexus API auth is unavailable.',
+        streamChunks: [{ index: 0, text: 'Nexus API auth is unavailable.' }],
+        sources: [],
+        costEstimate: null,
+        ledgerEntry: undefined,
+        fallbackProviders: [],
+        localInspection,
+        nexusInvestigation,
+        taskPlan: null,
+        subagentSchedule: null,
+        selectedSkill: null,
+        toolCallsAllowed: false
+      }))
+    } as unknown as FluxoraApi['ai'];
+    const caseStates: string[] = [];
+
+    startHostAiRun(
+      run,
+      session,
+      'Проверь требования модов через Nexus API',
+      aiApi,
+      {
+        modelId: 'gemini-3.1-flash-lite',
+        routingPreset: 'byok',
+        providerId: 'gemini'
+      },
+      {
+        onEvent: () => undefined,
+        onFinish: (message) => {
+          caseStates.push(message.caseState?.caseState ?? '');
+        }
+      }
+    );
+
+    await vi.runAllTimersAsync();
+
+    expect(caseStates).toEqual(['local-inspection-complete']);
   });
 
   it('keeps a real provider response done when an earlier provider fallback succeeds', async () => {
@@ -995,5 +1361,115 @@ describe('AI chat runtime', () => {
     });
     expect(request.research).toBeUndefined();
     expect(aiApi.chatRespond).toHaveBeenCalledWith(request);
+  });
+
+  it('blocks progress-only host runs that finish without a visible answer', async () => {
+    vi.useFakeTimers();
+    const prompt = 'Привет';
+    const session = createAiSessionForScope(
+      { buildLabel: 'Skyrim Main', projectId: 'skyrim-main' },
+      new Date('2026-07-06T09:00:00Z')
+    );
+    let state = aiChatReducer(initialAiChatState, { type: 'restore-session', session });
+    const run = createAiRunForPrompt(
+      state.session,
+      'op_ai_empty_host_output',
+      prompt,
+      new Date('2026-07-06T09:00:01Z')
+    );
+    state = aiChatReducer(
+      { ...state, draft: prompt },
+      {
+        type: 'submit-user-message',
+        message: createAiMessage('user', prompt, new Date('2026-07-06T09:00:01Z'), run.id),
+        run,
+        event: createAiStreamEvent(run, 'run-created', {
+          now: new Date('2026-07-06T09:00:01Z'),
+          status: 'thinking'
+        })
+      }
+    );
+
+    let runEventListener: ((event: FluxoraAiIntermediateEvent) => void) | null = null;
+    const aiApi = {
+      onRunEvent: vi.fn((callback: (event: FluxoraAiIntermediateEvent) => void) => {
+        runEventListener = callback;
+        return () => {
+          runEventListener = null;
+        };
+      }),
+      chatRespond: vi.fn(async () => {
+        runEventListener?.(
+          createIntermediateEvent({
+            eventId: 'event-progress-only',
+            runId: run.id,
+            operationId: run.operationId,
+            seq: 2,
+            createdAt: '2026-07-06T09:00:02.000Z',
+            stage: 'provider-attempt',
+            message: 'Waiting for AI host progress.',
+            percent: 85
+          })
+        );
+
+        return {
+          operationId: run.operationId,
+          providerId: 'gemini',
+          modelId: 'gemini-3.1-flash-lite',
+          routingPreset: 'byok',
+          status: 'done',
+          text: '',
+          streamChunks: [],
+          sources: [],
+          costEstimate: null,
+          ledgerEntry: undefined,
+          fallbackProviders: [],
+          taskPlan: null,
+          subagentSchedule: null,
+          selectedSkill: null,
+          toolCallsAllowed: false
+        };
+      })
+    } as unknown as FluxoraApi['ai'];
+
+    startHostAiRun(
+      run,
+      state.session,
+      prompt,
+      aiApi,
+      {
+        modelId: 'gemini-3.1-flash-lite',
+        providerId: 'gemini',
+        routingPreset: 'byok'
+      },
+      {
+        onEvent: (event) => {
+          state = aiChatReducer(state, { type: 'apply-stream-event', event });
+        },
+        onRunEvent: (event) => {
+          state = aiChatReducer(state, { type: 'apply-run-event', event });
+        },
+        onFinish: (message, event, status) => {
+          state = aiChatReducer(state, {
+            type: 'append-assistant-message',
+            message,
+            event,
+            status
+          });
+        }
+      }
+    );
+
+    await vi.runAllTimersAsync();
+
+    const assistantMessages = state.messages.filter((message) => message.role === 'assistant');
+    expect(state.intermediateEvents.map((event) => event.stage)).toContain('provider-attempt');
+    expect(state.streamEvents.some((event) => event.type === 'run-finished')).toBe(true);
+    expect(state.isRunning).toBe(false);
+    expect(state.activeRunId).toBeNull();
+    expect(state.status).toBe('blocked');
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]?.agentStatus).toBe('blocked');
+    expect(assistantMessages[0]?.text.trim()).not.toBe('');
   });
 });

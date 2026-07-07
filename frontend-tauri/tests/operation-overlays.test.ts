@@ -77,6 +77,61 @@ describe('operation overlays', () => {
     expect(markup).toContain('Отменить');
   });
 
+  it('shows cancel for build creation even before native cancellation is available', () => {
+    const markup = renderOverlay(
+      overlay({
+        kind: 'build-create',
+        title: 'Creating build'
+      }),
+      false
+    );
+
+    expect(markup).toContain('Отменить');
+    expect(markup).not.toContain('Закрыть');
+  });
+
+  it('disables build creation cancel after the user has requested cancellation', () => {
+    const markup = renderOverlay(
+      overlay({
+        kind: 'build-create',
+        title: 'Creating build',
+        cancelRequested: true
+      }),
+      false
+    );
+
+    expect(markup).toContain('operation-splash__action--cancel" disabled=""');
+    expect(markup).toContain('Отменить');
+  });
+
+  it('keeps build creation cancel visible while cleaning up a created project', () => {
+    const markup = renderOverlay(
+      overlay({
+        kind: 'build-create',
+        title: 'Cleaning up build',
+        statusText: 'Removing partially created project',
+        isRunning: false,
+        canClose: true,
+        createdProject: {
+          id: 'foundation-edition',
+          name: 'Foundation Edition',
+          templateId: 'skyrim-special-edition',
+          uiTemplateId: 'skyrim',
+          gameName: 'Skyrim Special Edition',
+          gamePath: 'E:\\Steam\\Skyrim Special Edition',
+          installRootDirectory: 'E:\\Fluxora Builds',
+          projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+          configPath:
+            'C:\\Users\\Валера\\AppData\\Roaming\\Fluxora\\Builds\\Foundation Edition-9.json'
+        }
+      }),
+      false
+    );
+
+    expect(markup).toContain('Отменить');
+    expect(markup).not.toContain('Закрыть');
+  });
+
   it('does not render the rapidly changing file path during build deletion', () => {
     const markup = renderOverlay(
       overlay({

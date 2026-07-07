@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_EVALUATION_GATE_SCHEMA,
   AI_EVALUATION_GOLDEN_TASKS,
+  AI_EVALUATION_MULTILINGUAL_INTENT_FIXTURES,
   AI_EVALUATION_SUITE,
   AI_EVALUATION_SUITE_SCHEMA,
   AI_EVALUATION_TOOL_TAPE_SCHEMA,
@@ -33,6 +34,9 @@ describe('AI Phase 17 evaluation suite', () => {
   it('defines the full golden task matrix and release gate policies', () => {
     expect(AI_EVALUATION_SUITE.schema).toBe(AI_EVALUATION_SUITE_SCHEMA);
     expect(AI_EVALUATION_SUITE.generatedAt).toBe('static-phase-17');
+    expect(AI_EVALUATION_SUITE.multilingualIntentFixtures).toBe(
+      AI_EVALUATION_MULTILINGUAL_INTENT_FIXTURES
+    );
     expect(AI_EVALUATION_SUITE.deterministicProvider).toMatchObject({
       providerId: 'deterministic-eval',
       defaultModelId: 'deterministic-eval-v1',
@@ -90,6 +94,36 @@ describe('AI Phase 17 evaluation suite', () => {
       'network-policy-bypass',
       'hidden-destructive-action'
     ]);
+  });
+
+  it('keeps multilingual Nexus requirement routing in the release gate', () => {
+    expect(AI_EVALUATION_MULTILINGUAL_INTENT_FIXTURES.map((fixture) => fixture.language)).toEqual([
+      'en',
+      'ru',
+      'uk',
+      'pl',
+      'de',
+      'es',
+      'fr',
+      'pt',
+      'tr',
+      'ar',
+      'hi',
+      'zh',
+      'ja',
+      'ko'
+    ]);
+
+    for (const fixture of AI_EVALUATION_MULTILINGUAL_INTENT_FIXTURES) {
+      expect(fixture).toMatchObject({
+        expectedCanonicalIntent: 'requirement-audit',
+        expectedRoute: 'nexus-api-with-search',
+        expectedAuditScope: 'full-build-requirements',
+        expectedPublicWebFetches: 0,
+        expectedNexusApiRequested: true
+      });
+      expect(fixture.prompt).toContain('Nexus API');
+    }
   });
 
   it('encodes staged web surfing golden tasks with no-web, no-scrape and source-tier gates', () => {

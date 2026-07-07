@@ -1,6 +1,7 @@
 import {
   ChevronLeft,
   ChevronRight,
+  MessageSquare,
   Plus,
   X
 } from 'lucide-react';
@@ -22,6 +23,7 @@ import geminiIcon from '../../../../../Icons/gemini.svg';
 import type {
   FluxoraAiCitation,
   FluxoraAiContextUsage,
+  FluxoraAiModelAgentResult,
   FluxoraAiResearchSnapshot
 } from '../../../shared/fluxora-api';
 import {
@@ -30,6 +32,8 @@ import {
   AI_CHAT_PANEL_MIN_WIDTH,
   approximateAiContextUsageForDraft,
   aiStatusLabels,
+  type AiSubagentChatMetadata,
+  type AiSubagentChatStatus,
   type AiContextEstimateState,
   type AiChatState,
   type AiMessage
@@ -47,6 +51,7 @@ export interface AiChatPanelProps {
   onCloseChat: (chatId: string) => void;
   onCreateChat: () => void;
   onDraftChange: (value: string) => void;
+  onOpenSubagentChat?: (subagent: AiSubagentChatMetadata) => void;
   onOpenSource?: (url: string) => void;
   onResize: (width: number) => void;
   onSend: () => void;
@@ -74,6 +79,9 @@ const contextPercentFormat = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 0
 });
 const AI_VISIBLE_RUN_EVENT_LIMIT = 5;
+export const AI_CHAT_RENDER_TEXT_LIMIT = 32_000;
+const AI_CHAT_RENDER_BLOCK_LIMIT = 220;
+const AI_CHECKED_SITE_LIMIT = 24;
 
 const activeRunEvents = (
   activeRunId: string | null,
@@ -184,17 +192,31 @@ const snapshotToAiSource = (snapshot: FluxoraAiResearchSnapshot): FluxoraAiCitat
   trust: snapshot.trust
 });
 
+const blockedResearchSnapshotIdsForMessage = (message: AiMessage): Set<string> =>
+  new Set(
+    (message.researchReport?.snapshots ?? [])
+      .filter((snapshot) => snapshot.status !== 'captured')
+      .map((snapshot) => snapshot.id)
+  );
+
+const capturedResearchSnapshotsForMessage = (message: AiMessage): FluxoraAiResearchSnapshot[] =>
+  (message.researchReport?.snapshots ?? []).filter((snapshot) => snapshot.status === 'captured');
+
+const researchReportSourcesForMessage = (
+  message: AiMessage,
+  blockedSnapshotIds = blockedResearchSnapshotIdsForMessage(message)
+): FluxoraAiCitation[] => {
+  if (blockedSnapshotIds.size === 0) {
+    return message.researchReport?.sources ?? [];
+  }
+
+  return (message.researchReport?.sources ?? []).filter((source) => !blockedSnapshotIds.has(source.id));
+};
+
 const isInternalAiContextSource = (source: FluxoraAiCitation) =>
   source.trust === 'local-context' ||
   source.kind === 'structured-evidence-id' ||
   source.url.trim().startsWith(AI_CONTEXT_SOURCE_URL_PREFIX);
-
-const aiSourceCandidatesForMessage = (message: AiMessage): FluxoraAiCitation[] => [
-  ...(message.sources ?? []),
-  ...(message.researchReport?.sources ?? []),
-  ...evidenceCardsForMessage(message).flatMap((card) => card.citations.map(citationToAiSource)),
-  ...(message.researchReport?.snapshots ?? []).map(snapshotToAiSource)
-];
 
 interface AiCheckedSite {
   domain: string;
@@ -236,20 +258,124 @@ const checkedSiteForSource = (source: FluxoraAiCitation): AiCheckedSite | null =
 };
 
 const checkedSitesForMessage = (message: AiMessage): AiCheckedSite[] => {
+  const blockedSnapshotIds = blockedResearchSnapshotIdsForMessage(message);
   const seen = new Set<string>();
   const sites: AiCheckedSite[] = [];
 
-  for (const source of aiSourceCandidatesForMessage(message)) {
+  const addSource = (source: FluxoraAiCitation): boolean => {
+    if (sites.length >= AI_CHECKED_SITE_LIMIT) {
+      return false;
+    }
+
     const site = checkedSiteForSource(source);
     if (!site || seen.has(site.key)) {
-      continue;
+      return true;
     }
 
     seen.add(site.key);
     sites.push(site);
+    return sites.length < AI_CHECKED_SITE_LIMIT;
+  };
+
+  for (const source of message.sources ?? []) {
+    if (!addSource(source)) {
+      return sites;
+    }
+  }
+
+  for (const source of researchReportSourcesForMessage(message, blockedSnapshotIds)) {
+    if (!addSource(source)) {
+      return sites;
+    }
+  }
+
+  for (const card of evidenceCardsForMessage(message)) {
+    for (let index = 0; index < card.citations.length; index += 1) {
+      const source = citationToAiSource(card.citations[index]!, index);
+      if (blockedSnapshotIds.has(source.id)) {
+        continue;
+      }
+      if (!addSource(source)) {
+        return sites;
+      }
+    }
+  }
+
+  for (const snapshot of capturedResearchSnapshotsForMessage(message)) {
+    if (!addSource(snapshotToAiSource(snapshot))) {
+      return sites;
+    }
   }
 
   return sites;
+};
+
+const aiSubagentStatusFromHostStatus = (status: string): AiSubagentChatStatus => {
+  const normalized = status.trim().toLowerCase();
+  if (normalized.includes('approval')) {
+    return 'needs-approval';
+  }
+  if (normalized.includes('complete') || normalized === 'done' || normalized === 'succeeded') {
+    return 'done';
+  }
+  if (normalized.includes('blocked') || normalized.includes('failed') || normalized.includes('error')) {
+    return 'blocked';
+  }
+  if (normalized.includes('running') || normalized.includes('thinking') || normalized.includes('dispatch')) {
+    return 'thinking';
+  }
+  return 'queued';
+};
+
+const aiSubagentStatusLabel = (status: AiSubagentChatStatus): string => {
+  switch (status) {
+    case 'thinking':
+      return 'Thinking';
+    case 'needs-approval':
+      return 'Needs approval';
+    case 'done':
+      return 'Done';
+    case 'blocked':
+      return 'Blocked';
+    case 'queued':
+    default:
+      return 'Queued';
+  }
+};
+
+const aiSubagentMetadataForResult = (
+  message: AiMessage,
+  result: FluxoraAiModelAgentResult,
+  index: number
+): AiSubagentChatMetadata => {
+  const status = aiSubagentStatusFromHostStatus(result.status);
+  const label = result.label.trim() || result.agentId.trim() || `Subagent ${index + 1}`;
+  const errorText = result.error?.message?.trim();
+  const text = result.text.trim();
+
+  return {
+    id: `${message.orchestration?.operationId ?? message.runId ?? message.id}:${result.agentId}:${index}`,
+    operationId: message.orchestration?.operationId ?? message.runId ?? message.id,
+    parentChatId: message.id,
+    parentRunId: message.runId,
+    agentId: result.agentId,
+    label,
+    role: 'worker',
+    status,
+    summary: text || errorText || aiSubagentStatusLabel(status),
+    detailText: text || errorText || undefined,
+    providerId: result.providerId,
+    modelId: result.modelId
+  };
+};
+
+const aiSubagentRowsForMessage = (message: AiMessage): AiSubagentChatMetadata[] => {
+  const hostSubagents = message.orchestration?.subagents ?? [];
+  if (hostSubagents.length === 0) {
+    return [];
+  }
+
+  return hostSubagents.map((subagent, index) => aiSubagentMetadataForResult(message, subagent, index));
 };
 
 type AiMessageTextBlock =
@@ -262,6 +388,26 @@ const orderedListLine = /^(\d+)\.\s+(.+)$/;
 const unorderedListLine = /^[-*]\s+(.+)$/;
 const headingLine = /^(#{1,6})\s+(.+)$/;
 const ruleLine = /^-{3,}$/;
+
+const aiTextLooksRussian = (value: string): boolean => /[А-Яа-яЁё]/.test(value);
+
+const clipAiMessageTextForRender = (
+  value: string
+): { omittedCharacters: number; text: string; wasTruncated: boolean } => {
+  if (value.length <= AI_CHAT_RENDER_TEXT_LIMIT) {
+    return {
+      omittedCharacters: 0,
+      text: value,
+      wasTruncated: false
+    };
+  }
+
+  return {
+    omittedCharacters: value.length - AI_CHAT_RENDER_TEXT_LIMIT,
+    text: value.slice(0, AI_CHAT_RENDER_TEXT_LIMIT).trimEnd(),
+    wasTruncated: true
+  };
+};
 
 const normalizeAiMessageText = (value: string): string =>
   sanitizeAiChatText(value)
@@ -291,8 +437,11 @@ const renderInlineAiText = (text: string, keyPrefix: string): ReactNode[] => {
   return parts.length > 0 ? parts : [text];
 };
 
-const parseAiMessageTextBlocks = (text: string): AiMessageTextBlock[] => {
-  const lines = normalizeAiMessageText(text).split('\n');
+const parseAiMessageTextBlocks = (
+  text: string
+): { blocks: AiMessageTextBlock[]; omittedCharacters: number; wasTruncated: boolean } => {
+  const clipped = clipAiMessageTextForRender(text);
+  const lines = normalizeAiMessageText(clipped.text).split('\n');
   const blocks: AiMessageTextBlock[] = [];
   let paragraphLines: string[] = [];
   let listItems: string[] = [];
@@ -371,19 +520,35 @@ const parseAiMessageTextBlocks = (text: string): AiMessageTextBlock[] => {
   flushParagraph();
   flushList();
 
-  return blocks.length > 0
-    ? blocks
-    : [
-        {
-          key: 0,
-          kind: 'paragraph',
-          text: ''
-        }
-      ];
+  const parsedBlocks =
+    blocks.length > 0
+      ? blocks
+      : [
+          {
+            key: 0,
+            kind: 'paragraph' as const,
+            text: ''
+          }
+        ];
+  const limitedBlocks = parsedBlocks.slice(0, AI_CHAT_RENDER_BLOCK_LIMIT);
+
+  return {
+    blocks: limitedBlocks,
+    omittedCharacters: clipped.omittedCharacters,
+    wasTruncated:
+      clipped.wasTruncated || parsedBlocks.length > AI_CHAT_RENDER_BLOCK_LIMIT
+  };
 };
 
 export const renderAiChatMessageContent = (text: string): ReactNode => {
-  const blocks = parseAiMessageTextBlocks(text);
+  const { blocks, omittedCharacters, wasTruncated } = parseAiMessageTextBlocks(text);
+  const truncationText = aiTextLooksRussian(text)
+    ? `Ответ очень большой, поэтому чат показывает начало и сохраняет интерфейс отзывчивым.${
+        omittedCharacters > 0 ? ` Скрыто символов: ${contextNumberFormat.format(omittedCharacters)}.` : ''
+      }`
+    : `This answer is very large, so the chat is showing the beginning to keep the app responsive.${
+        omittedCharacters > 0 ? ` Hidden characters: ${contextNumberFormat.format(omittedCharacters)}.` : ''
+      }`;
 
   return (
     <div className="ai-chat-message__content">
@@ -420,6 +585,11 @@ export const renderAiChatMessageContent = (text: string): ReactNode => {
           </p>
         );
       })}
+      {wasTruncated ? (
+        <p className="ai-chat-message__truncation" data-truncated="true">
+          {truncationText}
+        </p>
+      ) : null}
     </div>
   );
 };
@@ -434,6 +604,7 @@ export function AiChatPanel({
   onCloseChat,
   onCreateChat,
   onDraftChange,
+  onOpenSubagentChat,
   onOpenSource,
   onResize,
   onSend,
@@ -669,6 +840,7 @@ export function AiChatPanel({
           {visibleMessages.map((message) => {
             const checkedSites =
               showCheckedSites && message.role === 'assistant' ? checkedSitesForMessage(message) : [];
+            const subagents = message.role === 'assistant' ? aiSubagentRowsForMessage(message) : [];
 
             return (
               <article className="ai-chat-message" data-role={message.role} key={message.id}>
@@ -705,6 +877,42 @@ export function AiChatPanel({
                         </button>
                       );
                     })}
+                  </div>
+                ) : null}
+                {subagents.length ? (
+                  <div className="ai-chat-subagents" aria-label="Subagents">
+                    <span className="ai-chat-subagents__label">Subagents</span>
+                    <div className="ai-chat-subagents__list">
+                      {subagents.map((subagent) => {
+                        const statusLabel = aiSubagentStatusLabel(subagent.status);
+                        const detail = [subagent.providerId, subagent.modelId].filter(Boolean).join(' · ');
+                        const safeLabel = sanitizeAiChatText(subagent.label);
+                        return (
+                          <div
+                            className="ai-chat-subagent"
+                            data-status={subagent.status}
+                            key={subagent.id}
+                          >
+                            <span className="ai-chat-subagent__status" aria-hidden="true" />
+                            <span className="ai-chat-subagent__main">
+                              <strong>{safeLabel}</strong>
+                              <small>{detail || sanitizeAiChatText(subagent.role)}</small>
+                            </span>
+                            <span className="ai-chat-subagent__state">{statusLabel}</span>
+                            <button
+                              aria-label={`Open ${safeLabel} chat`}
+                              className="ai-chat-subagent__open"
+                              disabled={!onOpenSubagentChat}
+                              title={`Open ${safeLabel} chat`}
+                              type="button"
+                              onClick={() => onOpenSubagentChat?.(subagent)}
+                            >
+                              <MessageSquare size={13} aria-hidden="true" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 ) : null}
               </article>
@@ -788,17 +996,6 @@ export function AiChatPanel({
                 </button>
               </div>
               <div className="ai-chat-input__trailing-actions">
-                {state.isRunning ? (
-                  <button
-                    aria-label="Cancel AI run"
-                    className="ai-chat-input__tool-button ai-chat-input__tool-button--danger"
-                    title="Cancel AI run"
-                    type="button"
-                    onClick={onCancel}
-                  >
-                    <AiChatInputIcon source={aiCircleStopIcon} />
-                  </button>
-                ) : null}
                 {showContextRing ? (
                   <AiContextUsageRing
                     estimateState={contextEstimateState}
@@ -815,13 +1012,15 @@ export function AiChatPanel({
                   <AiChatInputIcon source={aiMicIcon} />
                 </button>
                 <button
-                  aria-label="Send message"
+                  aria-label={state.isRunning ? 'Stop AI run' : 'Send message'}
                   className="ai-chat-send-button"
-                  disabled={!canSend}
-                  title="Send message"
-                  type="submit"
+                  data-running={state.isRunning ? 'true' : undefined}
+                  disabled={state.isRunning ? false : !canSend}
+                  title={state.isRunning ? 'Stop AI run' : 'Send message'}
+                  type={state.isRunning ? 'button' : 'submit'}
+                  onClick={state.isRunning ? onCancel : undefined}
                 >
-                  <AiChatInputIcon source={aiArrowUpIcon} />
+                  <AiChatInputIcon source={state.isRunning ? aiCircleStopIcon : aiArrowUpIcon} />
                 </button>
               </div>
             </div>

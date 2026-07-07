@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
+  CreateFluxoraProjectRequest,
   FluxoraBuildContentWatchRequest,
   FluxoraExecutable,
   FluxoraProject,
@@ -84,6 +85,58 @@ describe('Tauri bridge request timeouts', () => {
       params: { configPath },
       request,
       timeoutMs: 60_000
+    });
+  });
+
+  it('routes project creation through the typed native bridge with its operation id', async () => {
+    const createRequest: CreateFluxoraProjectRequest = {
+      projectName: 'Foundation Edition',
+      templateId: 'skyrim-special-edition',
+      gamePath: 'E:\\Steam\\Skyrim Special Edition',
+      installRootDirectory: 'E:\\Fluxora Builds'
+    };
+    const request: OperationRequest = { operationId: 'op_projects_create' };
+    const createdProject = project({
+      name: createRequest.projectName,
+      templateId: createRequest.templateId,
+      gamePath: createRequest.gamePath,
+      installRootDirectory: createRequest.installRootDirectory
+    });
+    invokeMock.mockResolvedValue(createdProject);
+
+    const api = createTauriFluxoraApi();
+    await expect(api.projects.create(createRequest, request)).resolves.toEqual(createdProject);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'projects.create',
+      params: createRequest,
+      request,
+      timeoutMs: undefined
+    });
+  });
+
+  it('preserves previewDirectory payload and operation id from the typed bridge request', async () => {
+    const request: OperationRequest = { operationId: 'op_projects_preview_directory' };
+    invokeMock.mockResolvedValue({
+      projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition'
+    });
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.projects.previewDirectory('Foundation Edition', 'E:\\Fluxora Builds', request)
+    ).resolves.toEqual({
+      projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+      operationId: 'op_projects_preview_directory'
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'projects.previewDirectory',
+      params: {
+        projectName: 'Foundation Edition',
+        installRootDirectory: 'E:\\Fluxora Builds'
+      },
+      request,
+      timeoutMs: undefined
     });
   });
 

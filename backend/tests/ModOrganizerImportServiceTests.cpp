@@ -16,6 +16,53 @@
 
 namespace fluxora::tests
 {
+    namespace
+    {
+        struct ModOrganizerImportHarness
+        {
+            Logger logger;
+            TemplateService templates;
+            ProjectService projects;
+            BuildPathSettingsService pathSettings;
+            ModOrganizerImportService importer;
+
+            ModOrganizerImportHarness()
+                : templates(logger),
+                  projects(logger, templates),
+                  pathSettings(logger),
+                  importer(logger, templates, projects, pathSettings)
+            {
+                templates.initialize();
+            }
+        };
+
+        void writeSkyrimMo2Instance(
+            const std::filesystem::path& source,
+            const std::string& selectedProfile = "Default",
+            const std::string& selectedModList = "+SkyUI\n")
+        {
+            writeTextFile(source / L"GameRoot" / L"SkyrimSE.exe", "MZ executable stub");
+            writeTextFile(source / L"GameRoot" / L"Data" / L"Skyrim.esm", "master");
+            writeTextFile(source / L"mods" / L"SkyUI" / L"interface" / L"skyui.swf", "ui");
+            writeTextFile(
+                source / L"mods" / L"SkyUI" / L"meta.ini",
+                "[General]\nname=SkyUI\nversion=1\nmodid=3863\nfileid=123\n");
+            writeTextFile(
+                source / L"profiles" / std::filesystem::path(selectedProfile) / L"modlist.txt",
+                selectedModList);
+            writeTextFile(
+                source / L"profiles" / std::filesystem::path(selectedProfile) / L"plugins.txt",
+                "*Skyrim.esm\n");
+            writeTextFile(
+                source / L"ModOrganizer.ini",
+                "[General]\n"
+                "gameName=Skyrim Special Edition\n"
+                "gamePath=GameRoot\n"
+                "selected_profile=" + selectedProfile + "\n");
+        }
+
+    }
+
     TEST(ModOrganizerImportServiceTests, AnalyzePlacesDriveRootImportsInsideFluxoraBuilds)
     {
         TempDirectory temp;
@@ -54,6 +101,26 @@ namespace fluxora::tests
         EXPECT_EQ(
             normalized(analysis.targetProjectDirectory.parent_path()),
             normalized(expectedRoot));
+    }
+
+    TEST(ModOrganizerImportServiceTests, AnalyzeUsesSelectedProfileAndCountsSeparators)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+
+        const std::filesystem::path source = temp.path() / L"MO2";
+        writeSkyrimMo2Instance(source, "Survival", "-Visuals_separator\n+SkyUI\n");
+
+        ModOrganizerImportHarness harness;
+
+        const ModOrganizerImportAnalysis analysis =
+            harness.importer.analyze(source, temp.path() / L"Imported");
+
+        EXPECT_EQ(analysis.profileName, L"Survival");
+        EXPECT_EQ(analysis.modCount, 1);
+        EXPECT_EQ(analysis.separatorCount, 1);
+        EXPECT_TRUE(analysis.canImport);
     }
 
     TEST(ModOrganizerImportServiceTests, AnalyzePlacesFolderImportsInsideFluxoraBuilds)

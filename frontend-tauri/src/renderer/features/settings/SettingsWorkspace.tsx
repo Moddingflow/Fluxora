@@ -10,10 +10,14 @@ import {
 import {
   formatLastBuildDate,
   languageOptions,
+  nexusActionLabel,
   nexusCanToggle,
   nexusConnectionSummary,
+  nexusIsVerified,
+  nexusIsVerifiedLinked,
   settingsCapabilityView,
   settingsSections,
+  type NexusAuthViewStatus,
   type SettingsSectionId
 } from '../../settings-workspace-state';
 import { TransferSettingsPanel } from '../../TransferSettingsPanel';
@@ -21,7 +25,6 @@ import { nexusModsIcon } from '../../design-system/assets';
 import { LanguageSelect } from './LanguageSelect';
 import type {
   FluxoraAppInfo,
-  FluxoraNexusModsAuthStatus,
   NativeBridgeStatus
 } from '../../../shared/fluxora-api';
 
@@ -35,7 +38,7 @@ interface SettingsWorkspaceProps {
   languageBusy: string | null;
   lastBuildDate: string;
   nexusBusy: boolean;
-  nexusStatus: FluxoraNexusModsAuthStatus | null;
+  nexusStatus: NexusAuthViewStatus | null;
   onDeveloperModeChange: (enabled: boolean) => void;
   onOpenTransfer: () => void;
   onOpenRepository: () => void;
@@ -108,9 +111,10 @@ export function SettingsWorkspace({
   const renderNexusSettings = () => {
     const accountText = nexusConnectionSummary(nexusStatus);
     const canToggleNexus = nexusCanToggle(nexusStatus, settingsCapabilities.nexusAvailable);
-    const connectionStatus = !nexusStatus
+    const actionText = nexusActionLabel(nexusStatus);
+    const connectionStatus = !nexusStatus || !nexusIsVerified(nexusStatus)
       ? 'checking'
-      : nexusStatus.isLinked
+      : nexusIsVerifiedLinked(nexusStatus)
         ? 'ready'
         : nexusStatus.isConfigured
           ? 'checking'
@@ -133,9 +137,9 @@ export function SettingsWorkspace({
               className="settings-switch"
               type="button"
               role="switch"
-              aria-checked={Boolean(nexusStatus?.isLinked)}
+              aria-checked={nexusIsVerifiedLinked(nexusStatus)}
               aria-label="Nexus Mods account"
-              title={nexusStatus?.message || accountText}
+              title={nexusStatus?.message || actionText}
               disabled={nexusBusy || !canToggleNexus}
               onClick={onToggleNexusConnection}
             >

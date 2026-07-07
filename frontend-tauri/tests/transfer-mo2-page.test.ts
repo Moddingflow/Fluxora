@@ -145,6 +145,24 @@ describe('TransferMo2Page', () => {
     expect(html).not.toContain('D:\\Fluxora Builds\\Fluxora Builds');
   });
 
+  it('marks drives as low space when the analyzed MO2 transfer cannot fit', () => {
+    const html = renderTransferPage('destination', {
+      analysis: {
+        ...baseProps.analysis!,
+        totalBytes: gib(900),
+        hasEnoughSpace: false,
+        canImport: false,
+        statusMessage: 'Недостаточно места для переноса.',
+        warningMessage: 'Выберите диск с большим объемом.'
+      }
+    });
+
+    expect(html.match(/data-space="low"/g) ?? []).toHaveLength(2);
+    expect(html).toContain('нужно 900 GB');
+    expect(html).toContain('доступно 151 GB');
+    expect(html).toContain('доступно 816 GB');
+  });
+
   it('keeps source picking scoped to the source step', () => {
     const html = renderTransferPage('source');
 
@@ -171,6 +189,22 @@ describe('TransferMo2Page', () => {
     expect(html).not.toContain('Путь к игре');
     expect(html).not.toContain('Исполняемый файл игры');
     expect(html).not.toContain('E:\\Steam\\Skyrim Special Edition');
+  });
+
+  it('blocks the final transfer action when review analysis is not importable', () => {
+    const html = renderTransferPage('review', {
+      analysis: {
+        ...baseProps.analysis!,
+        hasEnoughSpace: false,
+        canImport: false,
+        statusMessage: 'Перенос недоступен',
+        warningMessage: 'На выбранном диске недостаточно места.'
+      }
+    });
+
+    expect(html).toContain('data-status="blocked"');
+    expect(html).toContain('На выбранном диске недостаточно места.');
+    expect(html).not.toContain('Перенести');
   });
 
   it('repairs stale analysis paths that point directly at the selected drive', () => {
@@ -333,5 +367,60 @@ describe('TransferMo2Page', () => {
     expect(html).not.toContain('Открыть сборку');
     expect(html).not.toContain('Запустить сборку');
     expect(html).not.toContain('В библиотеку');
+  });
+
+  it('marks low-space destination drives before the user starts verification', () => {
+    const html = renderTransferPage('destination', {
+      analysis: {
+        ...baseProps.analysis!,
+        totalBytes: gib(500)
+      }
+    });
+
+    expect(html).toContain('data-space="low"');
+    expect(html).toContain('data-space="ok"');
+    expect(html).toContain('нужно 500 GB');
+    expect(html).toContain('доступно 151 GB');
+    expect(html).toContain('доступно 816 GB');
+  });
+
+  it('blocks the final transfer action when analysis reports an unsafe destination', () => {
+    const html = renderTransferPage('review', {
+      analysis: {
+        ...baseProps.analysis!,
+        canImport: false,
+        hasEnoughSpace: true,
+        statusMessage: 'Невозможно перенести сборку: источник и папка назначения совпадают.',
+        warningMessage: 'Выберите отдельную папку назначения.'
+      }
+    });
+
+    expect(html).toContain('Невозможно перенести сборку');
+    expect(html).toContain('Выберите отдельную папку назначения.');
+    expect(html).not.toContain('Перенести');
+    expect(html).not.toContain('transfer-footer-button--primary');
+  });
+
+  it('keeps source selection disabled while the bridge transfer capability is unavailable', () => {
+    const html = renderTransferPage('source', {
+      bridgeReady: false,
+      transferAvailable: false,
+      sourceDirectory: ''
+    });
+
+    expect(html).toContain('Выбрать папку со сборкой');
+    expect(html).toContain('disabled=""');
+    expect(html).not.toContain('Название после переноса');
+  });
+
+  it('shows a recoverable empty-drive state on the destination step', () => {
+    const html = renderTransferPage('destination', {
+      drives: [],
+      driveState: 'error'
+    });
+
+    expect(html).toContain('Диски не загрузились');
+    expect(html).toContain('Обновить список дисков');
+    expect(html).not.toContain('Локальный диск (C:)');
   });
 });

@@ -197,6 +197,79 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(ProjectServiceTests, BuildProjectDirectoryUsesSanitizedFolderNames)
+    {
+        TempDirectory temp;
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        EXPECT_EQ(
+            projects.buildProjectDirectory(installRoot, L"  Unsafe: Build?Name.  "),
+            std::filesystem::absolute(installRoot) / L"Unsafe- Build-Name");
+        EXPECT_EQ(
+            projects.buildProjectDirectory(installRoot, L" . "),
+            std::filesystem::absolute(installRoot) / L"New Build");
+    }
+
+    TEST(ProjectServiceTests, CreateProjectUsesUniqueCatalogManifestPathsForSanitizedNames)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project creation initializes the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path catalogDirectory =
+            temp.path() / L"AppData" / L"Fluxora" / L"Builds";
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        const ProjectDescriptor first = projects.createProject(ProjectCreateRequest{
+            L"Catalog:Build",
+            L"skyrimse",
+            temp.path() / L"Skyrim Special Edition" / L"SkyrimSE.exe",
+            installRoot,
+            false
+        });
+        const ProjectDescriptor second = projects.createProject(ProjectCreateRequest{
+            L"Catalog?Build",
+            L"skyrimse",
+            temp.path() / L"Skyrim Special Edition" / L"SkyrimSE.exe",
+            installRoot,
+            false
+        });
+
+        EXPECT_EQ(
+            first.projectDirectory,
+            projects.buildProjectDirectory(installRoot, L"Catalog:Build"));
+        EXPECT_EQ(
+            second.projectDirectory,
+            projects.buildProjectDirectory(installRoot, L"Catalog?Build"));
+        EXPECT_EQ(first.projectDirectory, second.projectDirectory);
+        EXPECT_EQ(
+            first.configPath,
+            std::filesystem::absolute(catalogDirectory / L"Catalog-Build.json"));
+        EXPECT_EQ(
+            second.configPath,
+            std::filesystem::absolute(catalogDirectory / L"Catalog-Build-2.json"));
+        EXPECT_NE(first.configPath, second.configPath);
+        EXPECT_TRUE(std::filesystem::is_regular_file(first.configPath));
+        EXPECT_TRUE(std::filesystem::is_regular_file(second.configPath));
+        EXPECT_NE(readTextFile(first.configPath).find("\"name\":\"Catalog:Build\""), std::string::npos);
+        EXPECT_NE(readTextFile(second.configPath).find("\"name\":\"Catalog?Build\""), std::string::npos);
+#endif
+    }
+
     TEST(ProjectServiceTests, CreateProjectCleansExistingProjectDirectory)
     {
 #ifndef _WIN32
@@ -265,6 +338,90 @@ namespace fluxora::tests
         }
 
         EXPECT_FALSE(std::filesystem::exists(installRoot));
+#endif
+    }
+
+    TEST(ProjectServiceTests, CreateProjectRollsBackMaterializedProjectDirectoryWhenManifestWriteFails)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project creation initializes the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path appDataFile = temp.path() / L"AppData";
+        writeTextFile(appDataFile, "not a directory");
+        ScopedEnvironmentVariable appData(L"APPDATA", appDataFile.wstring());
+
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        std::filesystem::create_directories(installRoot);
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        const std::filesystem::path projectDirectory =
+            projects.buildProjectDirectory(installRoot, L"Rollback Materialized Build");
+        ASSERT_FALSE(std::filesystem::exists(projectDirectory));
+
+        try
+        {
+            (void)projects.createProject(ProjectCreateRequest{
+                L"Rollback Materialized Build",
+                L"skyrimse",
+                temp.path() / L"Skyrim Special Edition" / L"SkyrimSE.exe",
+                installRoot,
+                false
+            });
+            FAIL() << "Expected project creation to fail while writing the catalog manifest.";
+        }
+        catch (const std::exception& exception)
+        {
+            EXPECT_EQ(std::string(exception.what()).find("Install root directory does not exist."), std::string::npos);
+        }
+
+        EXPECT_TRUE(std::filesystem::is_directory(installRoot));
+        EXPECT_FALSE(std::filesystem::exists(projectDirectory));
+        EXPECT_FALSE(std::filesystem::exists(
+            appDataFile / L"Fluxora" / L"Builds" / L"Rollback Materialized Build.json"));
+        EXPECT_TRUE(projects.projects().empty());
+#endif
+    }
+
+    TEST(ProjectServiceTests, CreateProjectAddsReturnedDescriptorToProjectList)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project creation initializes the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        const ProjectDescriptor project = projects.createProject(ProjectCreateRequest{
+            L"Listed Build",
+            L"skyrimse",
+            temp.path() / L"Skyrim Special Edition" / L"SkyrimSE.exe",
+            installRoot,
+            false
+        });
+
+        const std::vector<ProjectDescriptor>& createdProjects = projects.projects();
+        ASSERT_EQ(createdProjects.size(), 1U);
+        EXPECT_EQ(createdProjects[0].name, project.name);
+        EXPECT_EQ(createdProjects[0].templateId, project.templateId);
+        EXPECT_EQ(createdProjects[0].gameName, project.gameName);
+        EXPECT_EQ(createdProjects[0].gamePath, project.gamePath);
+        EXPECT_EQ(createdProjects[0].installRootDirectory, project.installRootDirectory);
+        EXPECT_EQ(createdProjects[0].projectDirectory, project.projectDirectory);
+        EXPECT_EQ(createdProjects[0].configPath, project.configPath);
+        EXPECT_EQ(createdProjects[0].fingerprint.has_value(), project.fingerprint.has_value());
 #endif
     }
 

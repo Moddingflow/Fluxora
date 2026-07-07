@@ -13,7 +13,7 @@ export const FLUXORA_BUILT_IN_SKILL_IDS = [
   'general-analyze',
   'skyrimse-default-rules',
   'skyrimse-build-optimization',
-  'skyrimse-stability-diagnosis',
+  'skyrimse-analysis',
   'skyrim-basic-build-setup',
   'nexus-compatibility-check',
   'fomod-install-assistant',
@@ -427,60 +427,104 @@ export const FLUXORA_BUILT_IN_SKILLS: readonly FluxoraSkill[] = [
     ]
   }),
   createSkill({
-    id: 'skyrimse-stability-diagnosis',
-    displayName: 'SkyrimSE stability diagnosis',
+    id: 'skyrimse-analysis',
+    displayName: 'SkyrimSE analysis',
     description:
-      'Diagnoses SkyrimSE/AE CTD, freezes, ILS, crash logs, plugin conflicts, save corruption, and stability-related compatibility issues.',
+      'Analyzes SkyrimSE/AE CTD, freezes, ILS, crash logs, suspected mod incompatibilities, save corruption, and stability-related build evidence.',
     contentSummary:
-      'Use for SkyrimSE/AE stability. Prioritize CTD/ILS root cause, crash log object/call-stack extraction, strict master checks, full-plugin limits, ReSaver save safety, overlapping mods, and current compatibility research.',
+      'Use for SkyrimSE/AE stability and build analysis. Infer intent from context across languages, reason through each relevant mod like a modder, identify crash logger/log freshness, fall back to older logs or other files, and connect user-described symptoms to scripts, assets, DLLs, saves, or compatibility issues.',
     gameScopes: ['SkyrimSE'],
     skillFileName: 'SKILL.MD',
-    sourcePath: 'FLUXORASKILLS/skills/SkyrimSE/StabilityDiagnosis/SKILL.MD',
+    sourcePath: 'FLUXORASKILLS/skills/SkyrimSE/Analysis/SKILL.MD',
     activation: {
       mode: 'triggered',
       triggers: [
+        'analyze skyrim',
+        'skyrim analysis',
         'ctd',
+        'cdt',
         'crash to desktop',
         'crash log',
+        'crash logger',
+        'crash logger sse ae vr',
+        'trainwreck',
+        'netscriptframework',
         'crash on load',
+        'crash on startup',
+        'crash entering cell',
         'infinite loading screen',
         'ils',
         'freeze',
         'hang',
         'stability',
+        'incompatibility',
+        'incompatible mods',
         'possible relevant objects',
+        'probable call stack',
         'call stack',
         'resaver',
         'fallrim tools',
         'unattached scripts',
         'undefined elements',
+        'broken mesh',
+        'bad texture',
+        'papyrus',
+        'skse dll',
         'вылет',
+        'вылетает',
+        'краш',
+        'крашит',
         'зависание',
         'бесконечная загрузка',
-        'стабильность сборки'
+        'лог краша',
+        'анализ сборки',
+        'стабильность сборки',
+        'несовместимые моды',
+        'битый меш',
+        'битая текстура',
+        'скрипты',
+        'absturz',
+        'sturzt ab',
+        'crashlog',
+        'se cierra',
+        'pantalla de carga infinita',
+        'plante au chargement'
       ],
       readPolicy: 'metadata-first-full-skill-on-trigger'
     },
     tags: [
-      'stability diagnosis',
+      'skyrim analysis',
+      'stability analysis',
       'crash diagnosis',
       'ctd',
+      'cdt',
       'ils',
       'crash log',
+      'crash logger',
       'save corruption',
       'resaver',
       'plugin conflicts',
-      'compatibility'
+      'mod incompatibility',
+      'compatibility',
+      'broken mesh',
+      'bad texture',
+      'papyrus'
     ],
     allowedTools: BUILD_READ_TOOLS,
     requiredProviderCapabilities: ['streaming', 'tool-planning', 'web-research'],
     examplePrompts: [
-      'Diagnose this Skyrim CTD crash log',
+      'Analyze this Skyrim CTD crash log',
+      'Skyrim CDT when I enter Solitude after updating animations',
       'Почему Skyrim зависает на бесконечной загрузке после обновления модов?',
-      'Find the mod conflict causing ILS in my Skyrim AE build'
+      'Find the mod conflict causing ILS in my Skyrim AE build',
+      'Mein Skyrim SE sturzt beim Laden ab; welcher Crash Logger ist installiert?'
     ],
     validationChecklist: [
-      'Crash diagnosis starts from Possible Relevant Objects, call stack, concrete plugin files, FormIDs, assets, or SKSE/DLL modules when logs are available.',
+      'Selection is based on full prompt context, including misspellings and non-English crash descriptions, not exact English trigger words only.',
+      'Crash diagnosis starts by identifying the installed crash logger and newest relevant log before falling back to stale logs or other files.',
+      'Crash diagnosis extracts Possible Relevant Objects, call stack, concrete plugin files, FormIDs, assets, scripts, or SKSE/DLL modules when logs are available.',
+      'User-described symptoms are mapped to plausible script, asset, DLL, save, generated-output, or compatibility causes.',
+      'Every relevant mod is checked for role overlap, requirements, exclusions, and patch/load-order expectations before declaring compatibility.',
       'Master dependencies and the 254 full ESM/ESP limit are checked before proposing broad changes.',
       'Old-save crashes require ReSaver/FallRim Tools checks for Unattached Scripts and Undefined Elements.',
       'Compatibility and requirement claims are verified with current sources when web research is available.'
@@ -796,22 +840,231 @@ export const validateFluxoraSkillCatalog = (
 };
 
 const normalizePrompt = (prompt: string): string =>
-  prompt.trim().toLowerCase().replace(/\s+/g, ' ');
+  prompt
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+const promptIncludesAny = (normalizedPrompt: string, needles: readonly string[]): boolean =>
+  needles.some((needle) => normalizedPrompt.includes(normalizePrompt(needle)));
+
+const tokenizePrompt = (normalizedPrompt: string): string[] =>
+  normalizedPrompt.split(/[^a-z0-9а-яё]+/i).filter(Boolean);
+
+const promptHasAnyToken = (normalizedPrompt: string, tokens: readonly string[]): boolean => {
+  const promptTokens = new Set(tokenizePrompt(normalizedPrompt));
+  return tokens.some((token) => promptTokens.has(normalizePrompt(token)));
+};
 
 const promptMentionsSkyrim = (normalizedPrompt: string): boolean =>
-  [
+  promptIncludesAny(normalizedPrompt, [
     'skyrim',
     'skyrim se',
     'skyrim ae',
-    'sse',
-    'sae',
+    'tesv',
+    'elder scrolls v',
     'скайрим',
     'skse',
-    'esp',
-    'esm',
-    'esl',
-    'bsa'
-  ].some((needle) => normalizedPrompt.includes(needle));
+    'plugins.txt',
+    'loadorder.txt',
+    'modlist.txt',
+    'mod organizer',
+    'vortex',
+    'dyndolod',
+    'nemesis',
+    'fnis',
+    'synthesis',
+    'sseedit',
+    'xedit'
+  ]) ||
+  promptHasAnyToken(normalizedPrompt, ['sse', 'sae', 'esp', 'esm', 'esl', 'bsa', 'mo2']);
+
+const SKYRIM_ANALYSIS_PROBLEM_SIGNALS = [
+  'ctd',
+  'crash',
+  'crashes',
+  'crashing',
+  'crash to desktop',
+  'game closes',
+  'closes to desktop',
+  'close to desktop',
+  'infinite loading screen',
+  'ils',
+  'freeze',
+  'freezes',
+  'hang',
+  'hangs',
+  'stability',
+  'unstable',
+  'incompatible',
+  'incompatibility',
+  'conflict',
+  'crashlog',
+  'absturz',
+  'sturzt ab',
+  'friert ein',
+  'se cierra',
+  'crashea',
+  'pantalla de carga infinita',
+  'plante',
+  'ecran de chargement',
+  'вылет',
+  'вылетает',
+  'краш',
+  'крашит',
+  'падает',
+  'закрывается',
+  'зависает',
+  'зависание',
+  'бесконечная загрузка',
+  'нестабильно',
+  'несовместим',
+  'конфликт'
+] as const;
+
+const SKYRIM_ANALYSIS_EVIDENCE_SIGNALS = [
+  'crash log',
+  'crash logger',
+  'crash logger sse ae vr',
+  'trainwreck',
+  'netscriptframework',
+  'possible relevant objects',
+  'probable call stack',
+  'call stack',
+  'stack trace',
+  'exception',
+  'formid',
+  'baseform',
+  'tesobjectrefr',
+  'skse log',
+  'papyrus log',
+  'resaver',
+  'fallrim',
+  'unattached scripts',
+  'undefined elements',
+  'лог краша',
+  'логи skse',
+  'стек вызовов',
+  'стектрейс',
+  'исключение',
+  'старый лог',
+  'свежий лог'
+] as const;
+
+const SKYRIM_ANALYSIS_CAUSE_SIGNALS = [
+  'broken mesh',
+  'bad mesh',
+  'bad texture',
+  'broken texture',
+  'mesh',
+  'texture',
+  'script',
+  'papyrus',
+  'skse dll',
+  'dll',
+  'animation',
+  'skeleton',
+  'behavior',
+  'navmesh',
+  'worldspace',
+  'cell',
+  'generated output',
+  'dyndolod',
+  'nemesis',
+  'fnis',
+  'synthesis',
+  'bashed patch',
+  'smashed patch',
+  'address library',
+  'битый меш',
+  'меш',
+  'битая текстура',
+  'текстура',
+  'скрипт',
+  'скрипты',
+  'анимац',
+  'скелет',
+  'ячейк',
+  'локац'
+] as const;
+
+const SKYRIM_ANALYSIS_SYMPTOM_SIGNALS = [
+  'on startup',
+  'on launch',
+  'loading save',
+  'load save',
+  'old save',
+  'new game',
+  'entering',
+  'enter a city',
+  'enter a cell',
+  'fast travel',
+  'open inventory',
+  'equip',
+  'combat',
+  'killmove',
+  'after updating',
+  'after adding',
+  'after removing',
+  'при запуске',
+  'при загрузке',
+  'загрузка сейва',
+  'старый сейв',
+  'новая игра',
+  'при входе',
+  'быстрое путешествие',
+  'открываю инвентарь',
+  'экипир',
+  'после обновления',
+  'после установки',
+  'после удаления'
+] as const;
+
+const skyrimAnalysisContextScore = (normalizedPrompt: string): number => {
+  const mentionsSkyrim = promptMentionsSkyrim(normalizedPrompt);
+  const hasProblem = promptIncludesAny(normalizedPrompt, SKYRIM_ANALYSIS_PROBLEM_SIGNALS);
+  const hasEvidence = promptIncludesAny(normalizedPrompt, SKYRIM_ANALYSIS_EVIDENCE_SIGNALS);
+  const hasCause = promptIncludesAny(normalizedPrompt, SKYRIM_ANALYSIS_CAUSE_SIGNALS);
+  const hasSymptom = promptIncludesAny(normalizedPrompt, SKYRIM_ANALYSIS_SYMPTOM_SIGNALS);
+  const hasCtdTypo = promptHasAnyToken(normalizedPrompt, ['cdt']);
+  const asksForSkyrimAnalysis = promptIncludesAny(normalizedPrompt, [
+    'analyze skyrim',
+    'analyse skyrim',
+    'skyrim analysis',
+    'анализ skyrim',
+    'анализ скайрим',
+    'проанализируй скайрим'
+  ]);
+
+  let score = 0;
+  if (asksForSkyrimAnalysis) {
+    score += 8;
+  }
+  if (mentionsSkyrim && (hasProblem || hasEvidence || hasCause || hasSymptom || hasCtdTypo)) {
+    score += 6;
+  }
+  if (mentionsSkyrim && hasProblem && (hasEvidence || hasCause || hasSymptom)) {
+    score += 3;
+  }
+  if (mentionsSkyrim && hasCtdTypo) {
+    score += 5;
+  }
+  if (hasEvidence && (hasProblem || hasCause)) {
+    score += 4;
+  }
+
+  return score;
+};
+
+const contextualSkillScore = (skill: FluxoraSkill, normalizedPrompt: string): number => {
+  if (skill.id === 'skyrimse-analysis') {
+    return skyrimAnalysisContextScore(normalizedPrompt);
+  }
+
+  return 0;
+};
 
 const activationScore = (skill: FluxoraSkill, normalizedPrompt: string): number => {
   if (skill.manifest.activation.mode === 'always') {
@@ -836,7 +1089,7 @@ const triggerScore = (skill: FluxoraSkill, normalizedPrompt: string): number =>
 
 const scoreSkill = (skill: FluxoraSkill, normalizedPrompt: string): number => {
   const tagScore = skill.retrieval.tags.reduce(
-    (score, tag) => score + (normalizedPrompt.includes(tag.toLowerCase()) ? 3 : 0),
+    (score, tag) => score + (normalizedPrompt.includes(normalizePrompt(tag)) ? 3 : 0),
     0
   );
   const promptScore = skill.manifest.examplePrompts.reduce((score, example) => {
@@ -844,7 +1097,13 @@ const scoreSkill = (skill: FluxoraSkill, normalizedPrompt: string): number => {
     return score + exampleWords.filter((word) => normalizedPrompt.includes(word)).length;
   }, 0);
 
-  return activationScore(skill, normalizedPrompt) + triggerScore(skill, normalizedPrompt) + tagScore + promptScore;
+  return (
+    activationScore(skill, normalizedPrompt) +
+    contextualSkillScore(skill, normalizedPrompt) +
+    triggerScore(skill, normalizedPrompt) +
+    tagScore +
+    promptScore
+  );
 };
 
 export const selectFluxoraSkillForPrompt = (
