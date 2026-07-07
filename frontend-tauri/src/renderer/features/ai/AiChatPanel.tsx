@@ -45,6 +45,7 @@ export interface AiChatPanelProps {
   hostReady?: boolean;
   providerDiagnostic?: AiProviderDiagnostic | null;
   showCheckedSites?: boolean;
+  showDeveloperDiagnostics?: boolean;
   state: AiChatState;
   onCancel: () => void;
   onClose: () => void;
@@ -118,14 +119,22 @@ function AiContextUsageRing({
   estimateState: AiContextEstimateState;
   usage: FluxoraAiContextUsage | null;
 }) {
-  const percent = usage ? Math.min(100, Math.max(0, usage.currentContextPercent)) : 0;
+  const percent = usage
+    ? Math.min(100, Math.max(0, usage.currentBudgetPercent ?? usage.currentContextPercent))
+    : 0;
+  const safeInputBudgetTokens = usage?.safeInputBudgetTokens ?? usage?.contextWindowTokens ?? 0;
+  const modelInputLimit = usage?.modelInputTokenLimit ?? usage?.contextWindowTokens ?? 0;
+  const modelOutputLimit = usage?.modelOutputTokenLimit ?? 0;
   const tooltipLines = usage
     ? [
         'Current request',
         `${contextNumberFormat.format(usage.currentContextTokens)} / ${contextNumberFormat.format(
-          usage.contextWindowTokens
-        )} tokens`,
+          safeInputBudgetTokens
+        )} budget tokens`,
         `≈ ${contextPercentFormat.format(percent)}% used`,
+        `Model: ${contextNumberFormat.format(modelInputLimit)} input${
+          modelOutputLimit > 0 ? ` / ${contextNumberFormat.format(modelOutputLimit)} output` : ''
+        }`,
         `${usage.mode} · ${usage.precision}`
       ]
     : [
@@ -318,6 +327,13 @@ const aiSubagentStatusFromHostStatus = (status: string): AiSubagentChatStatus =>
   if (normalized.includes('complete') || normalized === 'done' || normalized === 'succeeded') {
     return 'done';
   }
+  if (
+    normalized.includes('temporary') ||
+    normalized.includes('retryable') ||
+    normalized.includes('unavailable')
+  ) {
+    return 'temporary';
+  }
   if (normalized.includes('blocked') || normalized.includes('failed') || normalized.includes('error')) {
     return 'blocked';
   }
@@ -337,6 +353,8 @@ const aiSubagentStatusLabel = (status: AiSubagentChatStatus): string => {
       return 'Done';
     case 'blocked':
       return 'Blocked';
+    case 'temporary':
+      return 'Temporary';
     case 'queued':
     default:
       return 'Queued';
@@ -376,6 +394,73 @@ const aiSubagentRowsForMessage = (message: AiMessage): AiSubagentChatMetadata[] 
   }
 
   return hostSubagents.map((subagent, index) => aiSubagentMetadataForResult(message, subagent, index));
+};
+
+const aiDeveloperDiagnosticsForMessage = (message: AiMessage): string[] => {
+  const diagnostics: string[] = [];
+  const orchestrationSubagents = message.orchestration?.subagents ?? [];
+  const decision = message.orchestrationDecision;
+  const completed =
+    decision?.completedSubagentCount ??
+    message.orchestration?.completedSubagentCount ??
+    orchestrationSubagents.filter((subagent) => subagent.status === 'completed').length;
+  const attempted =
+    decision?.attemptedSubagentCount ?? message.orchestration?.attemptedSubagentCount ?? orchestrationSubagents.length;
+  const blocked =
+    decision?.blockedSubagentCount ??
+    message.orchestration?.blockedSubagentCount ??
+    orchestrationSubagents.filter((subagent) => subagent.status === 'blocked').length;
+  const retryable =
+    decision?.retryableSubagentCount ??
+    message.orchestration?.retryableSubagentCount ??
+    orchestrationSubagents.filter((subagent) => subagent.status === 'temporary' || subagent.retryable).length;
+
+  if (attempted > 0 || orchestrationSubagents.length > 0) {
+    if (
+      completed > 0 &&
+      decision?.terminalStage === 'chef-final' &&
+      (decision.completed === false || decision.contextContinuationApplied)
+    ) {
+      diagnostics.push(
+        `Subagents: ${completed} completed, final synthesis ${
+          decision.completed === false ? 'blocked/continued' : 'continued'
+        }`
+      );
+    } else {
+      const blockedText = blocked > 0 ? `, ${blocked} blocked` : '';
+      const retryableText = retryable > 0 ? `, ${retryable} temporary` : '';
+      diagnostics.push(
+        `Subagents: attempted, ${completed} completed${blockedText}${retryableText}, reason: ${
+          decision?.reason ?? message.orchestration?.status ?? 'completed'
+        }`
+      );
+    }
+  } else if (decision && decision.attempted === false) {
+    diagnostics.push(`Subagents: not used, reason: ${decision.reason}`);
+  }
+
+  const compressionApplied =
+    message.contextUsage?.autoCompressionApplied ||
+    message.orchestrationDecision?.contextCompressionApplied;
+  if (compressionApplied) {
+    const usage = message.contextUsage;
+    const percent = usage ? `${contextPercentFormat.format(usage.currentContextPercent)}%` : 'estimated';
+    const precision = usage?.precision ?? 'estimated';
+    const level = usage?.compressionLevel ?? message.orchestrationDecision?.compressionLevel;
+    diagnostics.push(
+      `Context: compressed, ${percent} ${precision}${level ? `, level ${level}` : ''}`
+    );
+  }
+  if (decision?.contextContinuationApplied || message.orchestration?.contextContinuationApplied) {
+    diagnostics.push(
+      `Context: continuation package applied${
+        decision?.terminalStage ? `, stage ${decision.terminalStage}` : ''
+      }`
+    );
+  }
+
+  diagnostics.push(...(message.providerDiagnostics ?? []));
+  return [...new Set(diagnostics)];
 };
 
 type AiMessageTextBlock =
@@ -598,6 +683,7 @@ export function AiChatPanel({
   hostReady = true,
   providerDiagnostic = null,
   showCheckedSites = false,
+  showDeveloperDiagnostics = false,
   state,
   onCancel,
   onClose,
@@ -841,6 +927,10 @@ export function AiChatPanel({
             const checkedSites =
               showCheckedSites && message.role === 'assistant' ? checkedSitesForMessage(message) : [];
             const subagents = message.role === 'assistant' ? aiSubagentRowsForMessage(message) : [];
+            const developerDiagnostics =
+              showDeveloperDiagnostics && message.role === 'assistant'
+                ? aiDeveloperDiagnosticsForMessage(message)
+                : [];
 
             return (
               <article className="ai-chat-message" data-role={message.role} key={message.id}>
@@ -851,9 +941,9 @@ export function AiChatPanel({
                   <time dateTime={message.createdAt}>{messageTime(message.createdAt)}</time>
                 </div>
                 {renderAiChatMessageContent(message.text)}
-                {message.providerDiagnostics?.length ? (
-                  <div className="ai-chat-message__diagnostics" aria-label="AI provider diagnostics" role="note">
-                    {message.providerDiagnostics.map((diagnostic) => (
+                {developerDiagnostics.length ? (
+                  <div className="ai-chat-message__diagnostics" aria-label="AI developer diagnostics" role="note">
+                    {developerDiagnostics.map((diagnostic) => (
                       <span key={diagnostic}>{sanitizeAiChatText(diagnostic)}</span>
                     ))}
                   </div>

@@ -1,6 +1,6 @@
 # Fluxora AI Security Hardening
 
-Date: 2026-07-02
+Date: 2026-07-07
 
 Phase 16 goal plus staged web-surfing release gate: make the open-source AI
 surface safe-by-default. AI output, provider responses, Nexus API/page data,
@@ -46,6 +46,7 @@ state only, Rust shell owns safe OS affordances and provider credential broker,
 | `target=_blank` safe external links | Done | AI citations render as buttons, not raw anchors; external opening is routed through the Rust shell with `https://`/`mailto:` filtering. Future anchors must use `rel="noopener noreferrer"`. |
 | Dependency audit | Done with warnings documented | `npm audit --audit-level=moderate --omit=optional` returned 0 vulnerabilities. `cargo audit` returned exit 0 while reporting allowed warnings for unmaintained/unsound transitive crates; these warnings remain tracked for release dependency review. |
 | License audit | Done for local dependency metadata | Direct npm dependencies and Rust cargo metadata exposed license metadata with no missing license fields in the local tree. Shipped notices still need regeneration/review for the exact release dependency tree. |
+| Provider-safe prompt packing, large-audit sharding and continuation | Done | `FluxoraAIHost` fetches Gemini model metadata when available, reserves output budget, packs remote prompts against provider-safe input limits and Fluxora request budgets (96k ordinary, 160k large-audit dispatch/final, 64k worker shard), compacts build context before history, runs Gemini `countTokens` before generation when credentials exist, and includes `generateContentRequest.model = "models/<model-id>"` in the token-count body. It retries stricter packages on context-limit errors and bounded retry/backoff on Gemini 429/5xx provider pressure, then switches to a fresh `fluxora.ai.context-continuation.v1` package after max compression. Full requirements audits use `fluxora.ai.large-audit-manifest.v1`; the full Nexus target list stays in host memory, while provider prompts receive compact counts, shard refs, route policy and local findings. Shards are dynamic across at most 5 worker jobs with at most 2 concurrent workers; retry-exhausted provider pressure is reported as temporary/retryable worker unavailability, not a policy block. Continuation packages include prompt, operation id, task scale, routes, compact local/research coverage, source ids/counts, completed worker summaries and limits only; they exclude raw inventories, raw history, raw provider errors, credentials, unsanitized filesystem paths and unbounded Nexus/web content. |
 | Provider terms/data-retention matrix | Done | See matrix below. |
 | User data export/delete controls | Done | AI settings exposes redacted snapshot export, active-build local chat/job clearing, and provider credential disconnect controls. |
 | Owner/legal review for privacy policy and terms | Required before public AI | Bundled legal text already describes AI providers; owner/legal review remains a release gate and must not be represented as external legal advice. |
@@ -154,7 +155,7 @@ default, validate link schemes, and keep `target=_blank` anchors on
 | Provider/source | Mode | Default status | Data sent | Retention / terms review |
 | --- | --- | --- | --- | --- |
 | Local dry run | local/offline | Enabled | No external provider data | Local only; no provider retention. |
-| Google Gemini | BYOK/economy/planner/web | OS credential or Fluxora-managed Supabase key required | Prompt plus compact approved context; optional grounded search metadata. Context preflight sends the same compact prompt package to Gemini `models.countTokens` before generation when credentials are available. Gemini 3.1 Flash-Lite is the main chat model; Gemini 2.5 Flash-Lite is reserved for web/orchestration work. | User/provider terms apply; verify retention, grounding, token-count preflight and transfer terms before public release. |
+| Google Gemini | BYOK/economy/planner/web | OS credential or Fluxora-managed Supabase key required | Prompt plus compact approved context; optional provider-side Google Search grounding metadata via Gemini `google_search`. Remote prompts are packed with Gemini model metadata and `models.countTokens` before generation when credentials are available; direct Fluxora public fetch remains separately allowlisted, SSRF-protected and credential/quota-gated. Large requirements audits send compact manifests and per-shard target packages instead of repeating the full Nexus target list. Gemini 3.1 Flash-Lite is the main chat/chef model; Gemini 2.5 Flash-Lite is reserved for web/orchestration worker calls. | User/provider terms apply; verify retention, grounding, token-count preflight and transfer terms before public release. |
 | Perplexity / paid deep research | future optional | Disabled by default | None until expensive-run/BYOK approval exists | Terms, retention, citation and cost behavior must be reviewed before enabling. |
 | Nexus API/cache | research source | API/cache first; public Nexus page fallback disabled for quota/credential failures | Nexus URLs/NXM links, official API/cache metadata summaries, rate-limit/backoff headers and blocked/quota state | Nexus terms/rate limits apply; do not send secrets to page content. Public Nexus page policy requires separate owner/legal review before enabling. |
 | Allowed non-Nexus sources | staged research source | Disabled unless policy and budget allow the staged path | Source URLs, source ids, citations, source-tier labels, compact summaries, contradiction/discard reasons | Terms, robots/access expectations, recipients and transfer behavior require owner/legal review before public release. |
@@ -172,8 +173,8 @@ Current controls and release requirements:
   typed save-file/text-file facade. `createAiSupportBundleSnapshot()` redacts
   raw prompts by default; raw prompt export is not exposed in Phase 16.
 - Context usage: `FluxoraAiContextUsage` and `FluxoraAiTokenUsage` store counts,
-  model/provider ids, modes, precision and included-section names only. They do
-  not add raw prompt package storage.
+  model/provider ids, modes, precision, compression level and included-section
+  names only. They do not add raw prompt package storage.
 - Local AI history: AI settings exposes a clear action for the active build,
   deleting the scoped chat session and autonomous-job queue storage before
   restoring an empty session.

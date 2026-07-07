@@ -1,16 +1,18 @@
 # Fluxora AI Architecture
 
-Date: 2026-06-30
+Date: 2026-07-07
 
-Status: Phase 17 evaluation suite. This document defines the
+Status: Phase 18 host-side large-task orchestration and safe context packing.
+This document defines the
 AI ownership, permission model, first capabilities, access schemes, and
 legal/privacy checklist for provider chat with compact build context,
 source-traced local context retrieval, constrained external research, visible
 task plans, approval-gated subagent scheduling, persistent job state,
 checkpointing, heartbeat/watchdog recovery, pause/cancel state, skills
 retrieval, final reports after verification or clear terminal state, the
-AI release gate used to catch prompt/model regressions, and the target staged
-mod research pipeline in `docs/ai/mod-research-pipeline.md`.
+AI release gate used to catch prompt/model regressions, automatic read-only
+large-task orchestration, provider-safe context compression, and the target
+staged mod research pipeline in `docs/ai/mod-research-pipeline.md`.
 
 ## Decision Summary
 
@@ -148,11 +150,25 @@ Context-usage preflight uses the same host-owned prompt preparation path as
 Rust shell forwards `chat.estimateContext`, and the AI host prepares the same
 system instructions, compacted history, build snapshot, context graph, research
 route/bundle, and Gemini tool declarations before estimating the next request.
-When Gemini credentials are available, the host calls `models.countTokens` with
-a `generateContentRequest`; otherwise it returns the existing `chars / 4`
-estimate. The renderer may display `FluxoraAiContextUsage` and lightweight
-draft approximation only. It must not store raw prompt packages or decide
-provider routing, compaction, blocking, cost policy, or token ledger values.
+Before any remote provider request, the host packs the prompt to the smaller of
+the provider-safe model input window and the Fluxora per-request budget. Ordinary
+chat is capped at 96k input tokens, large-audit dispatch/final packages at 160k,
+large-audit worker shards at 64k, and continuation packages stay compact.
+Packing compacts the build-context graph first, then optional research/large
+sections and older history. When Gemini credentials are available, the host calls
+`models.countTokens` with a dedicated `generateContentRequest` body whose nested
+`model` is always `models/<model-id>` and whose contents, system instruction,
+generation config and `google_search` tool declaration match generation. If the
+exact count is still at or above the request budget, or Gemini returns a
+token/context-limit error, the host retries through stricter package levels
+before `generateContent`. If generation itself returns a token/context-limit
+error, the host retries with the next stricter package and reports a sanitized
+context-limit fallback reason instead of raw provider JSON. Without credentials,
+the host returns the existing `chars / 4` estimate.
+The renderer may display `FluxoraAiContextUsage` and lightweight draft
+approximation only. It must not store raw prompt packages or decide provider
+routing, compaction, blocking, cost policy, token ledger values, or large-task
+orchestration.
 
 Phase 7 adds `fluxora.ai.research.v1` bundles. The AI host can recognize Nexus
 URLs and NXM links in the prompt, build an official Nexus API-first source plan
@@ -182,6 +198,41 @@ subagents, a maximum of 10 for large tasks, a plan-review agent, visible
 long-running progress stages, and an `ai-write-executor` policy with one
 mutation at a time per build. Proposed write or destructive actions are queued
 and approval-required; Phase 8 does not execute them.
+
+Phase 18 keeps the renderer quiet by default while making `FluxoraAIHost`
+responsible for large read-only analysis scaling. The host classifies
+`AiTaskScale` from the user prompt plus real build-context counts; explicit
+full-audit/all-requirements prompts or read-only analysis over at least 20
+mods, plugins, or Nexus targets are treated as large. Large read-only jobs can
+automatically use real worker subagents only when a remote provider credential
+is available and cost preflight approves the run. Full requirements audits use
+the host-owned `fluxora.ai.large-audit-manifest.v1` stage: the full
+`build.summary.nexusTargets` list stays in Rust host memory, provider prompts
+receive compact counts/source ids/shard references, and workers receive only
+their assigned shard. The current large-audit controller dynamically shards the
+target list across at most 5 worker jobs and runs at most 2 workers
+concurrently. The
+manifest records the 160k dispatch/final and 64k worker input budgets. The chef
+dispatch call is optional planning; if it hits a context limit, the host marks
+`dispatch-fallback` in developer metadata and runs deterministic shard workers
+anyway. Normal chat does not show orchestration diagnostics. Developer mode may
+show why subagents were or were not used and whether context compression ran.
+Real subagent rows come only from attempted `orchestration.subagents` results,
+including blocked workers, not from the planning schedule.
+
+If any Gemini chat path still hits a provider context limit after the strictest
+safe packing level, the host creates a fresh
+`fluxora.ai.context-continuation.v1` system package instead of appending more
+compressed text to the original history. The package contains only the user
+prompt, operation id, task scale, intent/research route, compact local
+inspection, compact research coverage, source ids/counts, completed worker
+summaries, and explicit continuation limits. It excludes raw inventory arrays,
+raw chat history, raw provider errors, credentials, unsanitized filesystem
+paths, and unbounded Nexus/web content. Orchestration returns
+`status=completed`, `status=partial`, or `status=blocked`; attempted and
+blocked subagents remain in `orchestration.subagents` with redacted error
+metadata so the renderer can distinguish "not used" from "attempted but
+blocked."
 
 Provider credentials are brokered by the Tauri Rust shell through the OS
 credential manager. Renderer code may request connect, disconnect, status, and
@@ -337,7 +388,7 @@ validation.
 `fluxora.ai.subagent-schedule.v1`. It contains:
 
 - `defaultSubagentLimit: 3`;
-- `maxSubagentsForLargeTasks: 10`;
+- `maxSubagentsForLargeTasks: 5`;
 - scheduled read, external-network, plan and report agents;
 - a plan review agent;
 - an `ai-write-executor` queue with `maxConcurrentMutations: 1`,
@@ -352,25 +403,31 @@ turn "prepare a basic build" into a plan with queued write proposals and a
 because all mutations remain proposed and the executor queue allows only one
 approved mutation at a time.
 
-The renderer surfaces subagents only when a host response includes
-`fluxora.ai.subagent-schedule.v1` or
-`fluxora.ai.multi-model-orchestration.v1`. Each visible subagent has a stable
-name, derived status, and a renderer-owned chat tab that opens the returned
-subagent output or schedule summary. These tabs are view state derived from the
-host DTOs; they do not grant the renderer raw filesystem, shell, provider-key,
-or hidden host access.
+The renderer treats the schedule as planning metadata. It surfaces real
+subagent rows only when a host response includes attempted
+`fluxora.ai.multi-model-orchestration.v1` subagent results, including blocked
+workers with redacted error metadata. Each visible subagent has a stable name,
+derived status, and a renderer-owned chat tab that opens the returned subagent
+output or blocked-state summary. Schedule-only entries do not create fake worker
+tabs. These tabs are view state derived from the host DTOs; they do not grant
+the renderer raw filesystem, shell, provider-key, or hidden host access.
 
-For deep read-only build analysis prompts, `FluxoraAIHost` now upgrades the
-schedule into a real `fluxora.ai.multi-model-orchestration.v1` run when the
-main Gemini model and the web/orchestration Gemini model are configured. Gemini
-3.1 Flash-Lite becomes the chef: it reads the user request and compact Fluxora
-context first, writes a dispatch plan, runs bounded Gemini 2.5 Flash-Lite
-subagents for web/orchestration work, and then produces the final synthesis
-itself. Subagent output is advisory data, not instructions, and the final chef
-answer must stay grounded in Fluxora context, `conflictEvidence`,
-`missingMasterDetails`, research citations, or explicit uncertainty. If provider
-credentials are missing or only one remote model is available, the host falls
-back honestly instead of claiming subagents ran.
+For large read-only build analysis, requirements, compatibility, or audit
+prompts, `FluxoraAIHost` now upgrades the schedule into a real
+`fluxora.ai.multi-model-orchestration.v1` run when the prompt/build scale,
+remote credentials, and cost preflight allow it. Gemini 3.1 Flash-Lite becomes
+the chef: it reads a compact dispatch package, may write a capped dispatch
+plan, runs bounded shard workers for web/orchestration work, caps worker output,
+and then produces the final synthesis from a compact final package rather than
+the full message bundle. Every chef and worker provider call is packed against
+runtime provider limits when available; for Gemini the host fetches model
+metadata and uses `countTokens` with a reserved output budget before
+`generateContent`. Subagent output is advisory data, not instructions, and the
+final chef answer must stay grounded in Fluxora context, `conflictEvidence`,
+`missingMasterDetails`, research citations, or explicit uncertainty. If the
+task is ordinary, credentials are missing, cost preflight blocks the run, or
+only one remote model is available, the host returns an
+`orchestrationDecision` reason instead of claiming subagents ran.
 
 ### Phase 9 Safe Action Catalog
 
@@ -638,6 +695,10 @@ Explicit requirement/dependency audits are the narrow exception: local missing
 masters are treated as suspect evidence to verify through Nexus API/cache, not
 as a terminal local-only answer. Public Nexus page scraping still remains
 disabled unless a separate public-web policy explicitly allows it.
+Generic public-web research uses `route=google-search-only` when Gemini
+grounding is approved: the host passes Gemini's provider-side `google_search`
+tool to generation, but `allowPublicWebFetch=false` and Fluxora does not collect
+direct URL snapshots.
 When the user asks to audit every mod or the whole build for missing
 requirements, the route switches to `auditScope=full-build-requirements`:
 Fluxora may collect official Nexus API/cache evidence from local Nexus mod ids
@@ -766,11 +827,12 @@ The host returns these artifacts for every chat run:
   orchestration/subagent token cost, credit debit, and whether the run charges
   Fluxora provider budget.
 - `contextUsage` and `tokenUsage`: next-request context pressure and provider
-  token usage. `contextUsage` reports provider/model context window, current
-  input tokens, percentage, precision, mode, level, included sections,
-  compaction/blocking hints and timestamp. `tokenUsage` records input, output,
-  total and pre-request context tokens from Gemini usage metadata or fallback
-  estimation.
+  token usage. `contextUsage` keeps `contextWindowTokens` for compatibility, and
+  also reports model input/output limits, the Fluxora safe input budget,
+  budget-percent, current input tokens, precision, mode, level, included
+  sections, compaction/blocking hints and timestamp. `tokenUsage` records input,
+  output, total and pre-request context tokens from Gemini usage metadata or
+  fallback estimation.
 - `marginTelemetry`: the local estimate for
   `gross_margin_after_ai_cost`, including gross revenue, VAT/payment/
   infrastructure reserve, AI provider cost, web/search cost, margin after AI

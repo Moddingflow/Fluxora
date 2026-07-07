@@ -1402,7 +1402,7 @@ const browserPreviewAiStatus = (rawRequest: unknown): FluxoraAiHostStatus => {
         state: 'available',
         schema: 'fluxora.ai.subagent-schedule.v1',
         defaultSubagentLimit: 3,
-        maxSubagentsForLargeTasks: 10,
+        maxSubagentsForLargeTasks: 5,
         writeActionsOnlyThroughQueue: true,
         hiddenDestructiveActions: false
       },

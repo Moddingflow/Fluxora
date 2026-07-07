@@ -19,7 +19,7 @@ export interface FluxoraAiTaskPlanningBundle {
 type TaskKind = 'compatibility-check' | 'build-preparation' | 'destructive-change' | 'general';
 
 const DEFAULT_SUBAGENT_LIMIT = 3;
-const MAX_SUBAGENTS_FOR_LARGE_TASKS = 10;
+const MAX_SUBAGENTS_FOR_LARGE_TASKS = 5;
 
 const normalizePrompt = (prompt: string): string => prompt.trim().replace(/\s+/g, ' ');
 

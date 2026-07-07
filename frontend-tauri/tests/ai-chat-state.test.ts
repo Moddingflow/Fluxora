@@ -555,9 +555,11 @@ describe('AI chat shell state', () => {
     );
     const usage = createContextUsage({
       contextWindowTokens: 1000,
+      safeInputBudgetTokens: 650,
       currentContextTokens: 600,
       currentContextPercent: 60,
-      level: 'moderate'
+      currentBudgetPercent: 92.3,
+      level: 'critical'
     });
     const submitted = aiChatReducer(initialAiChatState, {
       type: 'submit-user-message',
@@ -597,6 +599,9 @@ describe('AI chat shell state', () => {
     expect(withNewChat.chats.find((chat) => chat.id === withNewChat.activeChatId)?.contextUsage).toBeNull();
     expect(switchedBack.chats.find((chat) => chat.id === finished.activeChatId)?.contextUsage).toEqual(usage);
     expect(approximated?.currentContextTokens).toBe(602);
+    expect(approximated?.currentContextPercent).toBeCloseTo(60.2, 3);
+    expect(approximated?.currentBudgetPercent).toBeCloseTo(92.615, 3);
+    expect(approximated?.level).toBe('critical');
     expect(approximated?.precision).toBe('estimated');
     expect(approximated?.includedSections).toContain('draft-approximation');
   });

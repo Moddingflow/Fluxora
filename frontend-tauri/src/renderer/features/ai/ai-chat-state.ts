@@ -28,7 +28,13 @@ export type AiAgentStatus =
   | 'done'
   | 'blocked'
   | 'stopped';
-export type AiSubagentChatStatus = 'queued' | 'thinking' | 'needs-approval' | 'done' | 'blocked';
+export type AiSubagentChatStatus =
+  | 'queued'
+  | 'thinking'
+  | 'needs-approval'
+  | 'done'
+  | 'blocked'
+  | 'temporary';
 
 export type AiMessageRole = 'user' | 'assistant';
 
@@ -290,6 +296,8 @@ export const approximateAiContextUsageForDraft = (
     currentContextTokens,
     contextUsage.contextWindowTokens
   );
+  const safeInputBudgetTokens = contextUsage.safeInputBudgetTokens ?? contextUsage.contextWindowTokens;
+  const currentBudgetPercent = clampAiContextPercent(currentContextTokens, safeInputBudgetTokens);
   const includedSections = contextUsage.includedSections.includes('draft-approximation')
     ? contextUsage.includedSections
     : [...contextUsage.includedSections, 'draft-approximation'];
@@ -298,11 +306,12 @@ export const approximateAiContextUsageForDraft = (
     ...contextUsage,
     currentContextTokens,
     currentContextPercent,
+    currentBudgetPercent,
     precision: 'estimated',
-    level: aiContextUsageLevelForPercent(currentContextPercent),
-    mode: aiContextUsageModeForPercent(currentContextPercent),
+    level: aiContextUsageLevelForPercent(currentBudgetPercent),
+    mode: aiContextUsageModeForPercent(currentBudgetPercent),
     includedSections,
-    actionRequired: currentContextPercent >= 97
+    actionRequired: currentBudgetPercent >= 97
   };
 };
 
@@ -374,6 +383,8 @@ const aiAgentStatusFromSubagentStatus = (status: AiSubagentChatStatus): AiAgentS
       return 'done';
     case 'blocked':
       return 'blocked';
+    case 'temporary':
+      return 'running';
     case 'queued':
     default:
       return 'idle';

@@ -956,6 +956,14 @@ const providerFallbackLabel = (fallback: string): string => {
     return `${providerLabel} key was rejected`;
   }
 
+  if (reason === 'contextLimit') {
+    return `${providerLabel} context limit was reached after compression`;
+  }
+
+  if (reason === 'temporaryProvider') {
+    return `${providerLabel} is temporarily unavailable`;
+  }
+
   if (reason === 'searchToolSchemaRejected') {
     return `${providerLabel} rejected the Google Search tool schema`;
   }

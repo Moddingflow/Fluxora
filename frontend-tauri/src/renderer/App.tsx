@@ -11034,6 +11034,7 @@ export const App = () => {
             hostReady={aiHostStatus?.ready ?? false}
             providerDiagnostic={aiChatProviderDiagnostic}
             showCheckedSites={developerModeEnabled}
+            showDeveloperDiagnostics={developerModeEnabled}
             state={aiChat}
             onCancel={cancelAiChatRun}
             onClose={() => dispatchAiChat({ type: 'close' })}

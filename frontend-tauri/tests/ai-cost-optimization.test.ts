@@ -85,7 +85,7 @@ describe('AI cost optimization and unit economics contract', () => {
     expect(host).toContain('PAID_MONTHLY_WALLET_CREDITS');
     expect(host).toContain('cost_preflight_payload');
     expect(host).toContain('observe_prompt_cache');
-    expect(host).toContain('candidate_models(params, research_bundle.as_ref())');
+    expect(host).toContain('candidate_models(params, routing, research_bundle.as_ref(), &task_scale)');
     expect(host).toContain('reply_cost_summary');
     expect(host).toContain('additional_cost');
     expect(host).toContain('"orchestrationInternalCost"');

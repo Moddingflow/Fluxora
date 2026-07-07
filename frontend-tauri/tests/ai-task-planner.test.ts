@@ -39,18 +39,15 @@ describe('AI task planner and subagent scheduler', () => {
     });
     expect(subagentSchedule.schema).toBe('fluxora.ai.subagent-schedule.v1');
     expect(subagentSchedule.defaultSubagentLimit).toBe(3);
-    expect(subagentSchedule.maxSubagentsForLargeTasks).toBe(10);
-    expect(subagentSchedule.requestedSubagentCount).toBe(8);
-    expect(subagentSchedule.scheduledSubagents.map((agent) => agent.id)).toEqual(
-      expect.arrayContaining([
-        'build-state',
-        'local-inspector',
-        'nexus-research',
-        'web-research',
-        'compatibility-judge',
-        'report'
-      ])
-    );
+    expect(subagentSchedule.maxSubagentsForLargeTasks).toBe(5);
+    expect(subagentSchedule.requestedSubagentCount).toBe(5);
+    expect(subagentSchedule.scheduledSubagents.map((agent) => agent.id)).toEqual([
+      'build-state',
+      'local-inspector',
+      'nexus-research',
+      'web-research',
+      'compatibility-judge'
+    ]);
   });
 
   it('returns a basic build plan with queued approvals before any mutation', () => {

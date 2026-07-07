@@ -2489,7 +2489,7 @@ pub fn collect_ai_research_bundle(
             },
             "geminiGoogleSearch": {
                 "state": if options.allow_gemini_google_search { "enabled" } else { "disabled" },
-                "tool": "googleSearchRetrieval",
+                "tool": "google_search",
                 "citations": "groundingMetadata"
             },
             "deepResearch": {

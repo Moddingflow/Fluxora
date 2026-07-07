@@ -250,6 +250,9 @@ export interface FluxoraAiModelCapability {
   providerId: string;
   displayName: string;
   contextWindowTokens: number;
+  inputTokenLimit?: number;
+  outputTokenLimit?: number;
+  limitSource?: 'provider-metadata' | 'fluxora-fallback' | string;
   supportsTools: boolean;
   supportsWeb: boolean;
   supportsStreaming: boolean;
@@ -390,7 +393,8 @@ export type FluxoraAiModResearchRouteKind =
   | 'no-web/local-only'
   | 'missing-local-fields'
   | 'nexus-api'
-  | 'nexus-api-with-search';
+  | 'nexus-api-with-search'
+  | 'google-search-only';
 
 export interface FluxoraAiModResearchSearchBudget {
   auditScope?: 'targeted' | 'batch-requirements' | 'full-build-requirements';
@@ -402,7 +406,11 @@ export interface FluxoraAiModResearchSearchBudget {
   maxNexusApiRequests?: number;
   publicWebFetches: number;
   geminiGoogleSearch: boolean;
-  coverageMode?: 'targeted-official-api' | 'bounded-official-api-batch' | 'full-build-official-api-audit';
+  coverageMode?:
+    | 'targeted-official-api'
+    | 'bounded-official-api-batch'
+    | 'full-build-official-api-audit'
+    | 'provider-google-search-only';
   reason: string;
 }
 
@@ -494,6 +502,10 @@ export interface FluxoraAiContextUsage {
   providerId: string;
   modelId: string;
   contextWindowTokens: number;
+  safeInputBudgetTokens?: number;
+  currentBudgetPercent?: number;
+  modelInputTokenLimit?: number;
+  modelOutputTokenLimit?: number;
   currentContextTokens: number;
   currentContextPercent: number;
   precision: FluxoraAiContextUsagePrecision;
@@ -501,6 +513,7 @@ export interface FluxoraAiContextUsage {
   mode: FluxoraAiContextUsageMode;
   includedSections: string[];
   autoCompressionApplied: boolean;
+  compressionLevel?: number;
   actionRequired: boolean;
   countedAt: string;
   trace?: {
@@ -609,6 +622,7 @@ export interface FluxoraAiRoutingDecision {
 
 export interface FluxoraAiModelAgentResult {
   agentId: string;
+  contextContinuationApplied?: boolean;
   durationMs: number;
   error?: {
     message: string;
@@ -617,8 +631,39 @@ export interface FluxoraAiModelAgentResult {
   label: string;
   modelId: string;
   providerId: string;
-  status: 'completed' | 'blocked';
+  retryable?: boolean;
+  shard?: {
+    shardId: string;
+    shardIndex: number;
+    startIndex: number;
+    endIndex: number;
+    targetCount: number;
+  } | null;
+  status: 'completed' | 'blocked' | 'temporary';
   text: string;
+}
+
+export interface FluxoraAiLargeAuditManifest {
+  schema: 'fluxora.ai.large-audit-manifest.v1';
+  generatedAt: string;
+  operationId: string;
+  auditKind: string;
+  targetCount: number;
+  hostTargetCount: number;
+  coveredTargetCount: number;
+  uncoveredTargetCount: number;
+  truncated: boolean;
+  shardSize: number;
+  maxWorkerJobs: number;
+  workerConcurrency: number;
+  shardCount: number;
+  shards: Array<{
+    shardId: string;
+    shardIndex: number;
+    startIndex: number;
+    endIndex: number;
+    targetCount: number;
+  }>;
 }
 
 export interface FluxoraAiMultiModelOrchestration {
@@ -627,6 +672,9 @@ export interface FluxoraAiMultiModelOrchestration {
   operationId: string;
   mode: 'chef-first';
   strategy: string;
+  status?: 'completed' | 'partial' | 'blocked';
+  terminalStage?: 'chef-dispatch' | 'worker' | 'chef-final' | 'normal-provider' | string;
+  contextContinuationApplied?: boolean;
   chef: {
     agentId: string;
     label: string;
@@ -638,7 +686,12 @@ export interface FluxoraAiMultiModelOrchestration {
     dispatchPlan: string;
   };
   subagents: FluxoraAiModelAgentResult[];
+  largeAuditManifest?: FluxoraAiLargeAuditManifest | null;
+  developerMetadata?: Record<string, unknown> | null;
+  attemptedSubagentCount?: number;
   completedSubagentCount: number;
+  blockedSubagentCount?: number;
+  retryableSubagentCount?: number;
   policy: {
     finalAnswerByChef: true;
     subagentOutputTrustedAsInstructions: false;
@@ -653,7 +706,14 @@ export type FluxoraAiOrchestrationDecisionReason =
   | 'completed'
   | 'free-demo-disabled'
   | 'insufficient-remote-targets'
+  | 'ordinary-task'
+  | 'cost-preflight'
   | 'chef-provider-error'
+  | 'partial-worker-evidence'
+  | 'worker-context-limit'
+  | 'worker-temporary-provider-failure'
+  | 'temporary-provider-failure'
+  | 'provider-context-limit-after-continuation'
   | 'all-workers-blocked'
   | 'missing-local-context'
   | string;
@@ -665,6 +725,17 @@ export interface FluxoraAiOrchestrationDecision {
   reason: FluxoraAiOrchestrationDecisionReason;
   attempted: boolean;
   completed: boolean;
+  trigger?: string;
+  largeTask?: boolean;
+  buildItemCount?: number;
+  contextCompressionApplied?: boolean;
+  contextContinuationApplied?: boolean;
+  compressionLevel?: number;
+  completedSubagentCount?: number;
+  attemptedSubagentCount?: number;
+  blockedSubagentCount?: number;
+  retryableSubagentCount?: number;
+  terminalStage?: 'chef-dispatch' | 'worker' | 'chef-final' | 'normal-provider' | string;
 }
 
 export interface FluxoraAiCreditWalletPolicy {
@@ -933,7 +1004,7 @@ export interface FluxoraAiSubagentSchedule {
   generatedAt: string;
   operationId: string;
   defaultSubagentLimit: 3;
-  maxSubagentsForLargeTasks: 10;
+  maxSubagentsForLargeTasks: 5;
   requestedSubagentCount: number;
   scheduledSubagents: FluxoraAiSubagentDescriptor[];
   executorQueue: FluxoraAiExecutorQueuePolicy;

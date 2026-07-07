@@ -127,11 +127,15 @@ const stateWithMessages = (
   };
 };
 
-const renderPanel = (state: AiChatState, props: { showCheckedSites?: boolean } = {}) =>
+const renderPanel = (
+  state: AiChatState,
+  props: { showCheckedSites?: boolean; showDeveloperDiagnostics?: boolean } = {}
+) =>
   renderToStaticMarkup(
     React.createElement(AiChatPanel, {
       state,
       showCheckedSites: props.showCheckedSites,
+      showDeveloperDiagnostics: props.showDeveloperDiagnostics,
       onCancel: noop,
       onClose: noop,
       onCloseChat: noop,
@@ -405,8 +409,12 @@ describe('AI chat message rendering', () => {
         contextEstimateState: 'ready',
         contextUsage: createContextUsage({
           contextWindowTokens: 100,
+          safeInputBudgetTokens: 80,
+          modelInputTokenLimit: 100,
+          modelOutputTokenLimit: 64,
           currentContextTokens: 12,
-          currentContextPercent: 12
+          currentContextPercent: 12,
+          currentBudgetPercent: 15
         })
       })
     );
@@ -417,13 +425,14 @@ describe('AI chat message rendering', () => {
     expect(ringIndex).toBeLessThan(micIndex);
     expect(markup).toContain('Контекст ИИ');
     expect(markup).toContain('Current request');
-    expect(markup).toContain('12 / 100 tokens');
-    expect(markup).toContain('≈ 12% used');
+    expect(markup).toContain('12 / 80 budget tokens');
+    expect(markup).toContain('≈ 15% used');
+    expect(markup).toContain('Model: 100 input / 64 output');
     expect(markup).toContain('full · exact');
     expect(markup).toContain('data-level="normal"');
     expect(markup).toContain('data-mode="full"');
     expect(markup).toContain('data-precision="exact"');
-    expect(markup).toContain('data-percent="12.0"');
+    expect(markup).toContain('data-percent="15.0"');
   });
 
   it('shows thinking state instead of rendering partial streaming markdown', () => {
@@ -691,6 +700,277 @@ describe('AI chat message rendering', () => {
     expect(markup).not.toContain('api.nexusmods.com');
     expect(markup).not.toContain('Maintainer release notes');
     expect(markup).not.toContain('Weather Patch Nexus files');
+  });
+
+  it('shows subagent and compression diagnostics only for developers', () => {
+    const message = createAiMessage(
+      'assistant',
+      'Small answer.',
+      new Date('2026-07-07T08:00:01Z'),
+      'run-diagnostics',
+      {
+        agentStatus: 'done',
+        contextUsage: createContextUsage({
+          autoCompressionApplied: true,
+          compressionLevel: 2,
+          currentContextPercent: 87.2,
+          mode: 'compressed'
+        }),
+        orchestrationDecision: {
+          schema: 'fluxora.ai.orchestration-decision.v1',
+          generatedAt: '2026-07-07T08:00:00Z',
+          operationId: 'op_ai_diagnostics',
+          reason: 'ordinary-task',
+          attempted: false,
+          completed: false,
+          trigger: 'ordinary-task',
+          largeTask: false,
+          contextCompressionApplied: true,
+          compressionLevel: 2,
+          completedSubagentCount: 0
+        },
+        providerDiagnostics: ['Google Gemini context limit was reached after compression.']
+      }
+    );
+    const normalMarkup = renderPanel(stateWithMessages([message]));
+    const developerMarkup = renderPanel(stateWithMessages([message]), {
+      showDeveloperDiagnostics: true
+    });
+
+    expect(normalMarkup).not.toContain('ai-chat-message__diagnostics');
+    expect(normalMarkup).not.toContain('Subagents: not used');
+    expect(developerMarkup).toContain('ai-chat-message__diagnostics');
+    expect(developerMarkup).toContain('Subagents: not used, reason: ordinary-task');
+    expect(developerMarkup).toMatch(/Context: compressed, 87[,.]2% exact, level 2/);
+    expect(developerMarkup).toContain('Google Gemini context limit was reached after compression.');
+  });
+
+  it('distinguishes attempted blocked subagents from subagents not used', () => {
+    const message = createAiMessage(
+      'assistant',
+      'Fluxora could not finish the audit.',
+      new Date('2026-07-07T08:05:01Z'),
+      'run-worker-context',
+      {
+        agentStatus: 'blocked',
+        orchestration: {
+          schema: 'fluxora.ai.multi-model-orchestration.v1',
+          generatedAt: '2026-07-07T08:05:00Z',
+          operationId: 'op_worker_context',
+          mode: 'chef-first',
+          strategy: 'chef-dispatch-then-parallel-subagents-then-chef-synthesis',
+          status: 'blocked',
+          terminalStage: 'worker',
+          contextContinuationApplied: true,
+          chef: {
+            agentId: 'chef-orchestrator',
+            label: 'Chef orchestrator',
+            providerId: 'gemini',
+            modelId: 'gemini-3.1-flash-lite',
+            status: 'dispatch-completed',
+            durationMs: 20,
+            dispatchPlan: 'Check requirements.'
+          },
+          subagents: [
+            {
+              agentId: 'dependency-auditor',
+              contextContinuationApplied: true,
+              durationMs: 42,
+              error: {
+                message: 'context window exceeded',
+                statusCode: 400
+              },
+              label: 'Missing master dependency auditor',
+              modelId: 'gemini-2.5-flash-lite',
+              providerId: 'gemini',
+              status: 'blocked',
+              text: ''
+            }
+          ],
+          attemptedSubagentCount: 1,
+          completedSubagentCount: 0,
+          blockedSubagentCount: 1,
+          policy: {
+            finalAnswerByChef: true,
+            subagentOutputTrustedAsInstructions: false,
+            requiresGroundedFacts: true,
+            mutationsAllowed: false,
+            askUserOnlyIfBlocked: true
+          }
+        },
+        orchestrationDecision: {
+          schema: 'fluxora.ai.orchestration-decision.v1',
+          generatedAt: '2026-07-07T08:05:00Z',
+          operationId: 'op_worker_context',
+          reason: 'worker-context-limit',
+          attempted: true,
+          completed: false,
+          attemptedSubagentCount: 1,
+          completedSubagentCount: 0,
+          blockedSubagentCount: 1,
+          terminalStage: 'worker',
+          contextContinuationApplied: true
+        }
+      }
+    );
+
+    const markup = renderPanel(stateWithMessages([message]), { showDeveloperDiagnostics: true });
+
+    expect(markup).toContain('Subagents');
+    expect(markup).toContain('Missing master dependency auditor');
+    expect(markup).toContain('Blocked');
+    expect(markup).toContain('Subagents: attempted, 0 completed, 1 blocked, reason: worker-context-limit');
+    expect(markup).not.toContain('Subagents: not used');
+  });
+
+  it('labels retryable temporary worker failures without counting them as blocked', () => {
+    const message = createAiMessage(
+      'assistant',
+      'Fluxora could not finish all worker shards because Gemini was temporarily unavailable.',
+      new Date('2026-07-07T08:07:01Z'),
+      'run-worker-temporary',
+      {
+        agentStatus: 'blocked',
+        orchestration: {
+          schema: 'fluxora.ai.multi-model-orchestration.v1',
+          generatedAt: '2026-07-07T08:07:00Z',
+          operationId: 'op_worker_temporary',
+          mode: 'chef-first',
+          strategy: 'large-audit-manifest-then-sharded-workers-then-chef-synthesis',
+          status: 'blocked',
+          terminalStage: 'worker',
+          chef: {
+            agentId: 'chef-orchestrator',
+            label: 'Chef orchestrator',
+            providerId: 'gemini',
+            modelId: 'gemini-3.1-flash-lite',
+            status: 'dispatch-completed',
+            durationMs: 18,
+            dispatchPlan: 'Dispatch requirement shards.'
+          },
+          subagents: [
+            {
+              agentId: 'requirements-shard-001',
+              durationMs: 30,
+              error: { message: 'Gemini 503 UNAVAILABLE high demand.', statusCode: 503 },
+              label: 'Requirements shard 1/5',
+              modelId: 'gemini-2.5-flash-lite',
+              providerId: 'gemini',
+              retryable: true,
+              status: 'temporary',
+              text: ''
+            }
+          ],
+          attemptedSubagentCount: 1,
+          completedSubagentCount: 0,
+          blockedSubagentCount: 0,
+          retryableSubagentCount: 1,
+          policy: {
+            finalAnswerByChef: true,
+            subagentOutputTrustedAsInstructions: false,
+            requiresGroundedFacts: true,
+            mutationsAllowed: false,
+            askUserOnlyIfBlocked: true
+          }
+        },
+        orchestrationDecision: {
+          schema: 'fluxora.ai.orchestration-decision.v1',
+          generatedAt: '2026-07-07T08:07:00Z',
+          operationId: 'op_worker_temporary',
+          reason: 'worker-temporary-provider-failure',
+          attempted: true,
+          completed: false,
+          attemptedSubagentCount: 1,
+          completedSubagentCount: 0,
+          blockedSubagentCount: 0,
+          retryableSubagentCount: 1,
+          terminalStage: 'worker'
+        }
+      }
+    );
+
+    const markup = renderPanel(stateWithMessages([message]), { showDeveloperDiagnostics: true });
+
+    expect(markup).toContain('Requirements shard 1/5');
+    expect(markup).toContain('Temporary');
+    expect(markup).toContain(
+      'Subagents: attempted, 0 completed, 1 temporary, reason: worker-temporary-provider-failure'
+    );
+    expect(markup).not.toContain('1 blocked');
+  });
+
+  it('shows completed worker evidence when final synthesis is blocked after continuation', () => {
+    const message = createAiMessage(
+      'assistant',
+      'Fluxora preserved partial worker evidence.',
+      new Date('2026-07-07T08:10:01Z'),
+      'run-final-context',
+      {
+        agentStatus: 'blocked',
+        orchestration: {
+          schema: 'fluxora.ai.multi-model-orchestration.v1',
+          generatedAt: '2026-07-07T08:10:00Z',
+          operationId: 'op_final_context',
+          mode: 'chef-first',
+          strategy: 'chef-dispatch-then-parallel-subagents-then-chef-synthesis',
+          status: 'partial',
+          terminalStage: 'chef-final',
+          contextContinuationApplied: true,
+          chef: {
+            agentId: 'chef-orchestrator',
+            label: 'Chef orchestrator',
+            providerId: 'gemini',
+            modelId: 'gemini-3.1-flash-lite',
+            status: 'final-blocked',
+            durationMs: 22,
+            finalDurationMs: 18,
+            dispatchPlan: 'Check all requirements.'
+          },
+          subagents: [
+            {
+              agentId: 'dependency-auditor',
+              durationMs: 44,
+              error: null,
+              label: 'Missing master dependency auditor',
+              modelId: 'gemini-2.5-flash-lite',
+              providerId: 'gemini',
+              status: 'completed',
+              text: 'One dependency summary completed.'
+            }
+          ],
+          attemptedSubagentCount: 1,
+          completedSubagentCount: 1,
+          blockedSubagentCount: 0,
+          policy: {
+            finalAnswerByChef: true,
+            subagentOutputTrustedAsInstructions: false,
+            requiresGroundedFacts: true,
+            mutationsAllowed: false,
+            askUserOnlyIfBlocked: true
+          }
+        },
+        orchestrationDecision: {
+          schema: 'fluxora.ai.orchestration-decision.v1',
+          generatedAt: '2026-07-07T08:10:00Z',
+          operationId: 'op_final_context',
+          reason: 'partial-worker-evidence',
+          attempted: true,
+          completed: false,
+          attemptedSubagentCount: 1,
+          completedSubagentCount: 1,
+          blockedSubagentCount: 0,
+          terminalStage: 'chef-final',
+          contextContinuationApplied: true
+        }
+      }
+    );
+
+    const markup = renderPanel(stateWithMessages([message]), { showDeveloperDiagnostics: true });
+
+    expect(markup).toContain('Subagents: 1 completed, final synthesis blocked/continued');
+    expect(markup).toContain('Context: continuation package applied, stage chef-final');
+    expect(markup).toContain('Missing master dependency auditor');
+    expect(markup).toContain('Done');
   });
 
   it('renders deduped checked website domains for developers', () => {

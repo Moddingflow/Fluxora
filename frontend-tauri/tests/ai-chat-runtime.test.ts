@@ -6,7 +6,8 @@ import {
   createAiMessage,
   createAiStreamEvent,
   initialAiChatState,
-  syncAiSessionToActiveChat
+  syncAiSessionToActiveChat,
+  type AiMessage
 } from '../src/renderer/features/ai/ai-chat-state';
 import { aiAutonomousJobQueueStorageKey } from '../src/renderer/features/ai/ai-autonomous-jobs';
 import {
@@ -1219,6 +1220,48 @@ describe('AI chat runtime', () => {
     ).toEqual([
       'Fluxora fell back to Local dry run: Google Gemini balance or quota is unavailable.'
     ]);
+
+    expect(
+      aiResponseDiagnosticMessages({
+        operationId: 'op_ai_chat_run',
+        providerId: 'local-dry-run',
+        modelId: 'local-dry-run',
+        routingPreset: 'byok',
+        status: 'done',
+        text: 'Local fallback.',
+        streamChunks: [],
+        sources: [],
+        costEstimate: null,
+        ledgerEntry: undefined,
+        fallbackProviders: ['gemini:contextLimit'],
+        taskPlan: null,
+        subagentSchedule: null,
+        selectedSkill: null,
+        toolCallsAllowed: false
+      } as never)
+    ).toEqual([
+      'Fluxora fell back to Local dry run: Google Gemini context limit was reached after compression.'
+    ]);
+
+    expect(
+      aiResponseDiagnosticMessages({
+        operationId: 'op_ai_chat_run',
+        providerId: 'local-dry-run',
+        modelId: 'local-dry-run',
+        routingPreset: 'byok',
+        status: 'done',
+        text: 'Local fallback.',
+        streamChunks: [],
+        sources: [],
+        costEstimate: null,
+        ledgerEntry: undefined,
+        fallbackProviders: ['gemini:temporaryProvider'],
+        taskPlan: null,
+        subagentSchedule: null,
+        selectedSkill: null,
+        toolCallsAllowed: false
+      } as never)
+    ).toEqual(['Fluxora fell back to Local dry run: Google Gemini is temporarily unavailable.']);
   });
 
   it('keeps host-backed requests scoped to the active chat tab', async () => {
@@ -1471,5 +1514,155 @@ describe('AI chat runtime', () => {
     expect(assistantMessages).toHaveLength(1);
     expect(assistantMessages[0]?.agentStatus).toBe('blocked');
     expect(assistantMessages[0]?.text.trim()).not.toBe('');
+  });
+
+  it('preserves partial blocked orchestration metadata from host responses', async () => {
+    vi.useFakeTimers();
+    const prompt = 'Проверь все моды на наличие всех требований';
+    const session = createAiSessionForScope(
+      { buildLabel: 'Large Skyrim Build', projectId: 'large-skyrim-build' },
+      new Date('2026-07-07T09:00:00Z')
+    );
+    const run = createAiRunForPrompt(
+      session,
+      'op_ai_partial_orchestration',
+      prompt,
+      new Date('2026-07-07T09:00:01Z')
+    );
+    let finishedMessage: AiMessage | null = null;
+    let finishedStatus: string | null = null;
+    const aiApi = {
+      onRunEvent: vi.fn(() => () => undefined),
+      chatRespond: vi.fn(async () => ({
+        operationId: run.operationId,
+        providerId: 'gemini',
+        modelId: 'gemini-3.1-flash-lite',
+        routingPreset: 'byok',
+        status: 'blocked',
+        text: 'Fluxora preserved one worker result, but final synthesis hit the context limit.',
+        streamChunks: [],
+        sources: [],
+        costEstimate: null,
+        ledgerEntry: undefined,
+        fallbackProviders: ['gemini:contextLimit'],
+        contextUsage: {
+          schema: 'fluxora.ai.context-usage.v1',
+          operationId: run.operationId,
+          providerId: 'gemini',
+          modelId: 'gemini-3.1-flash-lite',
+          contextWindowTokens: 1_000,
+          currentContextTokens: 900,
+          currentContextPercent: 90,
+          precision: 'exact',
+          level: 'high',
+          mode: 'strict',
+          includedSections: ['system-instructions', 'context-continuation'],
+          autoCompressionApplied: true,
+          compressionLevel: 4,
+          actionRequired: false,
+          countedAt: '2026-07-07T09:00:02.000Z'
+        },
+        orchestration: {
+          schema: 'fluxora.ai.multi-model-orchestration.v1',
+          generatedAt: '2026-07-07T09:00:02.000Z',
+          operationId: run.operationId,
+          mode: 'chef-first',
+          strategy: 'chef-dispatch-then-parallel-subagents-then-chef-synthesis',
+          status: 'partial',
+          terminalStage: 'chef-final',
+          contextContinuationApplied: true,
+          chef: {
+            agentId: 'chef-orchestrator',
+            label: 'Chef orchestrator',
+            providerId: 'gemini',
+            modelId: 'gemini-3.1-flash-lite',
+            status: 'final-blocked',
+            durationMs: 12,
+            finalDurationMs: 18,
+            dispatchPlan: 'Dispatch requirement checks.'
+          },
+          subagents: [
+            {
+              agentId: 'dependency-auditor',
+              durationMs: 35,
+              error: null,
+              label: 'Missing master dependency auditor',
+              modelId: 'gemini-2.5-flash-lite',
+              providerId: 'gemini',
+              status: 'completed',
+              text: 'Worker summary retained.'
+            }
+          ],
+          attemptedSubagentCount: 1,
+          completedSubagentCount: 1,
+          blockedSubagentCount: 0,
+          policy: {
+            finalAnswerByChef: true,
+            subagentOutputTrustedAsInstructions: false,
+            requiresGroundedFacts: true,
+            mutationsAllowed: false,
+            askUserOnlyIfBlocked: true
+          }
+        },
+        orchestrationDecision: {
+          schema: 'fluxora.ai.orchestration-decision.v1',
+          generatedAt: '2026-07-07T09:00:02.000Z',
+          operationId: run.operationId,
+          reason: 'partial-worker-evidence',
+          attempted: true,
+          completed: false,
+          attemptedSubagentCount: 1,
+          completedSubagentCount: 1,
+          blockedSubagentCount: 0,
+          terminalStage: 'chef-final',
+          contextContinuationApplied: true
+        },
+        taskPlan: null,
+        subagentSchedule: null,
+        selectedSkill: null,
+        toolCallsAllowed: false,
+        error: {
+          code: 'ai.provider.fallback',
+          message: 'final synthesis hit context limit',
+          category: 'transport',
+          retryable: false,
+          capabilityId: null
+        }
+      }))
+    } as unknown as FluxoraApi['ai'];
+
+    startHostAiRun(
+      run,
+      session,
+      prompt,
+      aiApi,
+      {
+        modelId: 'gemini-3.1-flash-lite',
+        providerId: 'gemini',
+        routingPreset: 'byok'
+      },
+      {
+        onEvent: () => undefined,
+        onRunEvent: () => undefined,
+        onFinish: (message, _event, status) => {
+          finishedMessage = message;
+          finishedStatus = status;
+        }
+      }
+    );
+
+    await vi.runAllTimersAsync();
+
+    expect(finishedStatus).toBe('blocked');
+    expect(finishedMessage).not.toBeNull();
+    const message = finishedMessage as unknown as AiMessage;
+    expect(message.orchestration?.status).toBe('partial');
+    expect(message.orchestration?.subagents[0]?.text).toBe('Worker summary retained.');
+    expect(message.orchestrationDecision?.reason).toBe('partial-worker-evidence');
+    expect(message.orchestrationDecision?.contextContinuationApplied).toBe(true);
+    expect(message.contextUsage?.compressionLevel).toBe(4);
+    expect(message.providerDiagnostics).toEqual([
+      'AI provider response was unavailable. Check Settings > AI or retry later.'
+    ]);
   });
 });
