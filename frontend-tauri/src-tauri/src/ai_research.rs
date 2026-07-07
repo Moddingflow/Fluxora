@@ -24,28 +24,31 @@ const FULL_BUILD_NEXUS_TARGETS: usize = 1_000;
 const FULL_BUILD_NEXUS_API_REQUESTS: usize = 2_500;
 const MAX_NEXUS_TARGETS: usize = FULL_BUILD_NEXUS_TARGETS;
 const MAX_NEXUS_API_REQUESTS: usize = FULL_BUILD_NEXUS_API_REQUESTS;
-const NEXUS_REQUIREMENTS_PAGE_SIZE: usize = 100;
 const MAX_NON_NEXUS_WEB_QUERIES: usize = 3;
 const MAX_NON_NEXUS_WEB_PAGES: usize = 8;
 const NEXUS_GRAPHQL_REQUIREMENTS_QUERY: &str = r#"
-query FluxoraModRequirements($gameId: ID!, $modId: ID!, $count: Int!) {
+query FluxoraModRequirements($gameId: ID!, $modId: ID!) {
   mod(gameId: $gameId, modId: $modId) {
     id
     gameId
     modId
     name
     version
+    summary
+    description
     legacyModRequirementsEnabled
-    nexusRequirements(count: $count) {
-      totalCount
-      nodes {
-        externalRequirement
-        gameId
-        id
-        modId
-        modName
-        notes
-        url
+    modRequirements {
+      nexusRequirements {
+        totalCount
+        nodes {
+          externalRequirement
+          gameId
+          id
+          modId
+          modName
+          notes
+          url
+        }
       }
     }
   }
@@ -1107,6 +1110,7 @@ fn summarize_json_body(body: &str) -> String {
         let mut parts = Vec::new();
         for key in [
             "requirements",
+            "modRequirements",
             "dependencies",
             "name",
             "version",
@@ -1116,7 +1120,7 @@ fn summarize_json_body(body: &str) -> String {
             "uploaded_time",
             "category_name",
         ] {
-            if let Some(value) = parsed.get(key) {
+            if let Some(value) = nested_data_value(&parsed, key) {
                 if let Some(text) = value.as_str() {
                     if !text.trim().is_empty() {
                         parts.push(format!("{key}: {}", text.trim()));
@@ -1544,6 +1548,171 @@ fn nexus_game_id_from_body(body: &Value) -> Option<String> {
         .or_else(|| string_value_from(nested_data_value(body, "gameId")))
 }
 
+fn graphql_error_messages(body: &Value) -> Vec<String> {
+    body.get("errors")
+        .and_then(Value::as_array)
+        .map(|errors| {
+            errors
+                .iter()
+                .filter_map(|error| error.get("message").and_then(Value::as_str))
+                .map(|message| message.chars().take(200).collect::<String>())
+                .take(4)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn nexus_requirement_page(body: &Value) -> Option<&Value> {
+    nested_data_value(body, "modRequirements")
+        .and_then(|requirements| requirements.get("nexusRequirements"))
+        .or_else(|| nested_data_value(body, "nexusRequirements"))
+}
+
+fn compact_requirement_nodes(page: &Value) -> Vec<Value> {
+    page.get("nodes")
+        .and_then(Value::as_array)
+        .map(|nodes| {
+            nodes
+                .iter()
+                .take(40)
+                .map(|node| {
+                    json!({
+                        "externalRequirement": node.get("externalRequirement"),
+                        "gameId": node.get("gameId"),
+                        "modId": node.get("modId"),
+                        "modName": node.get("modName"),
+                        "notes": string_value_from(node.get("notes"))
+                            .map(|notes| notes.chars().take(200).collect::<String>()),
+                        "url": node.get("url")
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+const DESCRIPTION_REQUIREMENT_MARKERS: &[&str] = &[
+    "requirement",
+    "require",
+    "depends on",
+    "dependenc",
+    "prerequisite",
+    "script extender",
+    "skse",
+    "f4se",
+    "sfse",
+    "nvse",
+    "obse",
+    "требован",
+    "требует",
+    "зависим",
+    "необходим",
+    "вимага",
+    "залежн",
+    "anforder",
+    "benötigt",
+    "abhäng",
+    "voraussetz",
+    "requisito",
+    "requiere",
+    "necesita",
+    "exigence",
+    "requiert",
+    "nécessite",
+    "dépend",
+    "requer",
+    "wymaga",
+    "zależ",
+    "gereksin",
+    "gerektirir",
+    "متطلبات",
+    "يتطلب",
+    "आवश्यक",
+    "必要",
+    "要求",
+    "依赖",
+    "依存",
+    "要件",
+    "필요",
+    "요구",
+];
+
+fn strip_markup(text: &str) -> String {
+    let mut cleaned = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(character) = chars.next() {
+        match character {
+            '[' => {
+                let mut tag = String::new();
+                let mut closed = false;
+                while let Some(next) = chars.next() {
+                    if next == ']' {
+                        closed = true;
+                        break;
+                    }
+                    tag.push(next);
+                    if tag.chars().count() > 64 {
+                        break;
+                    }
+                }
+                if !closed {
+                    cleaned.push('[');
+                    cleaned.push_str(&tag);
+                }
+                cleaned.push(' ');
+            }
+            '<' => {
+                for next in chars.by_ref() {
+                    if next == '>' {
+                        break;
+                    }
+                }
+                cleaned.push(' ');
+            }
+            _ => cleaned.push(character),
+        }
+    }
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn description_requirement_excerpt(description: &str) -> Option<String> {
+    let cleaned = strip_markup(description);
+    let words: Vec<&str> = cleaned.split_whitespace().collect();
+    if words.is_empty() {
+        return None;
+    }
+    let mut windows: Vec<(usize, usize)> = Vec::new();
+    for (index, word) in words.iter().enumerate() {
+        let lower = word.to_lowercase();
+        if DESCRIPTION_REQUIREMENT_MARKERS
+            .iter()
+            .any(|marker| lower.contains(marker))
+        {
+            let start = index.saturating_sub(12);
+            let end = (index + 28).min(words.len());
+            if let Some(last) = windows.last_mut() {
+                if start <= last.1 {
+                    last.1 = end.max(last.1);
+                    continue;
+                }
+            }
+            if windows.len() >= 4 {
+                break;
+            }
+            windows.push((start, end));
+        }
+    }
+    if windows.is_empty() {
+        return None;
+    }
+    let excerpt = windows
+        .iter()
+        .map(|(start, end)| words[*start..*end].join(" "))
+        .collect::<Vec<_>>()
+        .join(" … ");
+    Some(excerpt.chars().take(1600).collect())
+}
+
 fn nexus_facts_from_body(kind: &str, body: &Value) -> Value {
     let game_id = nexus_game_id_from_body(body);
     let name = string_value_from(nested_data_value(body, "name"));
@@ -1558,14 +1727,31 @@ fn nexus_facts_from_body(kind: &str, body: &Value) -> Value {
     };
     let v3_mod_file_version_id = if kind == "file-version" { v3_id } else { None };
 
-    json!({
+    let mut facts = json!({
         "gameId": game_id,
         "legacyModRequirementsEnabled": legacy_mod_requirements_enabled,
         "name": name,
         "version": version,
         "v3ModId": v3_mod_id,
         "v3ModFileVersionId": v3_mod_file_version_id
-    })
+    });
+
+    let graphql_errors = graphql_error_messages(body);
+    if !graphql_errors.is_empty() {
+        facts["graphqlErrorCount"] = json!(graphql_errors.len());
+        facts["graphqlErrors"] = json!(graphql_errors);
+    }
+    if let Some(page) = nexus_requirement_page(body) {
+        facts["requirementTotalCount"] = page.get("totalCount").cloned().unwrap_or(Value::Null);
+        facts["requirements"] = json!(compact_requirement_nodes(page));
+    }
+    if let Some(description) = string_value_from(nested_data_value(body, "description")) {
+        if let Some(excerpt) = description_requirement_excerpt(&description) {
+            facts["descriptionRequirementExcerpt"] = json!(excerpt);
+        }
+    }
+
+    facts
 }
 
 fn string_fact(snapshot: &Value, key: &str) -> Option<String> {
@@ -2090,7 +2276,6 @@ fn graphql_mod_requirements_body(target: &NexusResearchTarget) -> Option<Value> 
     Some(json!({
         "query": NEXUS_GRAPHQL_REQUIREMENTS_QUERY,
         "variables": {
-            "count": NEXUS_REQUIREMENTS_PAGE_SIZE,
             "gameId": game_id,
             "modId": target.mod_id
         }
@@ -2214,6 +2399,7 @@ pub fn collect_ai_research_bundle(
     let mut nexus_stopped = false;
     let mut target_index = 0usize;
     let mut api_request_count = 0usize;
+    let mut graphql_error_reported = false;
 
     if targets.is_empty() {
         issues.push(json!({
@@ -2284,8 +2470,35 @@ pub fn collect_ai_research_bundle(
                 if snapshot.get("status").and_then(Value::as_str) == Some("captured") {
                     let target_id = nexus_target_id(&target);
                     targets_with_captured_snapshots.insert(target_id.clone());
-                    if matches!(request.kind, "requirements" | "file-dependencies") {
+                    let facts = snapshot.get("facts");
+                    let graphql_failed = facts
+                        .and_then(|facts| facts.get("graphqlErrorCount"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                        > 0;
+                    let has_structured_requirements = facts
+                        .map(|facts| facts.get("requirements").is_some())
+                        .unwrap_or(false);
+                    let has_description_requirements = facts
+                        .and_then(|facts| facts.get("descriptionRequirementExcerpt"))
+                        .and_then(Value::as_str)
+                        .map(|excerpt| !excerpt.trim().is_empty())
+                        .unwrap_or(false);
+                    if (matches!(request.kind, "requirements" | "file-dependencies")
+                        && !graphql_failed)
+                        || has_structured_requirements
+                        || has_description_requirements
+                    {
                         targets_with_requirement_evidence.insert(target_id);
+                    }
+                    if graphql_failed && request.kind == "requirements" && !graphql_error_reported
+                    {
+                        graphql_error_reported = true;
+                        issues.push(json!({
+                            "code": "research.nexus-graphql-error",
+                            "severity": "warning",
+                            "message": "Nexus GraphQL requirements query returned schema/field errors; treat structured requirements as unavailable for the affected mods and analyze the official API mod description (facts.descriptionRequirementExcerpt) for requirements instead of refusing."
+                        }));
                     }
                 }
                 for related in related_targets_from_snapshot(&snapshot) {
@@ -2936,6 +3149,100 @@ mod tests {
     }
 
     #[test]
+    fn graphql_requirements_query_matches_live_nexus_schema() {
+        assert!(NEXUS_GRAPHQL_REQUIREMENTS_QUERY.contains("modRequirements {"));
+        assert!(NEXUS_GRAPHQL_REQUIREMENTS_QUERY.contains("nexusRequirements {"));
+        assert!(!NEXUS_GRAPHQL_REQUIREMENTS_QUERY.contains("nexusRequirements(count"));
+
+        let mut target =
+            parse_nexus_public_url("https://www.nexusmods.com/skyrimspecialedition/mods/19080")
+                .expect("target");
+        target.game_id = Some("1704".to_string());
+        let body = graphql_mod_requirements_body(&target).expect("graphql body");
+        assert_eq!(body["variables"]["gameId"], "1704");
+        assert_eq!(body["variables"]["modId"], "19080");
+        assert!(body["variables"].get("count").is_none());
+    }
+
+    #[test]
+    fn graphql_schema_errors_become_facts_instead_of_requirement_evidence() {
+        let body = json!({
+            "errors": [{
+                "message": "Field 'nexusRequirements' doesn't exist on type 'Mod'",
+                "extensions": { "code": "undefinedField" }
+            }]
+        });
+
+        let facts = nexus_facts_from_body("requirements", &body);
+
+        assert_eq!(facts["graphqlErrorCount"], 1);
+        assert!(facts["graphqlErrors"][0]
+            .as_str()
+            .unwrap()
+            .contains("doesn't exist"));
+        assert!(facts.get("requirements").is_none());
+    }
+
+    #[test]
+    fn graphql_requirement_nodes_become_structured_facts() {
+        let body = json!({
+            "data": {
+                "mod": {
+                    "gameId": 1704,
+                    "modId": 12604,
+                    "name": "SkyUI",
+                    "modRequirements": {
+                        "nexusRequirements": {
+                            "totalCount": 1,
+                            "nodes": [{
+                                "externalRequirement": false,
+                                "modId": "30379",
+                                "modName": "Skyrim Script Extender (SKSE64)",
+                                "notes": "",
+                                "url": ""
+                            }]
+                        }
+                    }
+                }
+            }
+        });
+
+        let facts = nexus_facts_from_body("requirements", &body);
+
+        assert_eq!(facts["requirementTotalCount"], 1);
+        assert_eq!(
+            facts["requirements"][0]["modName"],
+            "Skyrim Script Extender (SKSE64)"
+        );
+        assert!(facts.get("graphqlErrorCount").is_none());
+    }
+
+    #[test]
+    fn mod_description_yields_bounded_requirement_excerpt() {
+        let description = format!(
+            "[center][size=5][b]ABOUT[/b][/size][/center]{}<br />[center][color=#ff0000][b]REQUIREMENTS[/b][/color][/center]<br />The [url=http://skse64.silverlock.org/]Skyrim Script Extender (SKSE64)[/url] is [b]REQUIRED[/b] to run this mod.{}",
+            " lore ".repeat(200),
+            " extra ".repeat(200)
+        );
+
+        let facts = nexus_facts_from_body("metadata", &json!({ "description": description }));
+
+        let excerpt = facts["descriptionRequirementExcerpt"]
+            .as_str()
+            .expect("requirement excerpt");
+        assert!(excerpt.contains("REQUIREMENTS"));
+        assert!(excerpt.contains("Skyrim Script Extender"));
+        assert!(!excerpt.contains("[url="));
+        assert!(excerpt.chars().count() <= 1_600);
+
+        let no_requirements =
+            nexus_facts_from_body("metadata", &json!({ "description": "Just a texture pack." }));
+        assert!(no_requirements
+            .get("descriptionRequirementExcerpt")
+            .is_none());
+    }
+
+    #[test]
     fn missing_api_key_stops_nexus_investigation_without_public_page_fetch() {
         let _lock = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
         let _nexusmods_key = EnvVarGuard::remove("NEXUSMODS_API_KEY");
@@ -3216,7 +3523,7 @@ mod tests {
                     ("X-RL-Hourly-Remaining", "98"),
                     ("X-RL-Daily-Remaining", "998"),
                 ],
-                r#"{"data":{"mod":{"gameId":"1704","modId":"123","name":"RaceMenu","nexusRequirements":{"totalCount":1,"nodes":[{"gameId":"1704","modId":"321","modName":"Required Framework"}]}}}}"#,
+                r#"{"data":{"mod":{"gameId":"1704","modId":"123","name":"RaceMenu","modRequirements":{"nexusRequirements":{"totalCount":1,"nodes":[{"gameId":"1704","modId":"321","modName":"Required Framework"}]}}}}}"#,
             ),
             http_json_response(
                 "200 OK",

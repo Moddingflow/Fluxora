@@ -292,15 +292,8 @@ describe('AI chat runtime', () => {
     expect(createAiPromptFingerprint(prompt).length).toBe(prompt.length);
   });
 
-  it('enables constrained Nexus research policy only for Nexus prompts', () => {
-    expect(createAiResearchRequestForPrompt('check plugins', 'free-demo')).toBeUndefined();
-
-    const request = createAiResearchRequestForPrompt(
-      'Check compatibility for https://www.nexusmods.com/skyrimspecialedition/mods/123',
-      'byok'
-    );
-
-    expect(request).toEqual({
+  it('always permits research and grounding, leaving routing to the host intent route', () => {
+    const permissiveRequest = {
       enabled: true,
       mode: 'nexus-api-first',
       allowAuthenticatedPages: false,
@@ -308,33 +301,28 @@ describe('AI chat runtime', () => {
       allowGeminiGoogleSearch: true,
       allowPublicWebFetch: false,
       deepResearchApproved: false
-    });
+    };
 
+    // Language- and keyword-independent: the renderer never gates research on
+    // prompt text; the host canonical intent route decides scope and budgets.
+    expect(createAiResearchRequestForPrompt('check plugins', 'free-demo')).toEqual(
+      permissiveRequest
+    );
+    expect(
+      createAiResearchRequestForPrompt(
+        'Check compatibility for https://www.nexusmods.com/skyrimspecialedition/mods/123',
+        'byok'
+      )
+    ).toEqual(permissiveRequest);
     expect(
       createAiResearchRequestForPrompt('Проверь все моды на отсутствующие требования', 'byok')
-    ).toEqual({
-      enabled: true,
-      mode: 'nexus-api-first',
-      allowAuthenticatedPages: false,
-      allowBrowserSandbox: false,
-      allowGeminiGoogleSearch: true,
-      allowPublicWebFetch: false,
-      deepResearchApproved: false,
-      auditScope: 'full-build-requirements',
-      maxNexusTargets: 1000,
-      maxNexusInitialTargets: 1000,
-      maxNexusApiRequests: 2500
-    });
-
-    expect(createAiResearchRequestForPrompt('Посмотри Nexus Mods через API', 'byok')).toEqual({
-      enabled: true,
-      mode: 'nexus-api-first',
-      allowAuthenticatedPages: false,
-      allowBrowserSandbox: false,
-      allowGeminiGoogleSearch: true,
-      allowPublicWebFetch: false,
-      deepResearchApproved: false
-    });
+    ).toEqual(permissiveRequest);
+    expect(createAiResearchRequestForPrompt('Prüfe die Anforderungen aller Mods', 'byok')).toEqual(
+      permissiveRequest
+    );
+    expect(createAiResearchRequestForPrompt('检查所有模组的要求', 'byok')).toEqual(
+      permissiveRequest
+    );
   });
 
   it('can cancel the local fake run before the placeholder stream finishes', () => {
@@ -1402,7 +1390,10 @@ describe('AI chat runtime', () => {
       role: 'user',
       text: 'check plugins'
     });
-    expect(request.research).toBeUndefined();
+    expect(request.research).toMatchObject({
+      enabled: true,
+      allowGeminiGoogleSearch: true
+    });
     expect(aiApi.chatRespond).toHaveBeenCalledWith(request);
   });
 

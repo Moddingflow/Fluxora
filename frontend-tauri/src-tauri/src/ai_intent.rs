@@ -54,6 +54,16 @@ impl AiIntentRoute {
         )
     }
 
+    pub fn is_read_only_analysis(&self) -> bool {
+        matches!(
+            self.canonical_intent.as_str(),
+            "nexus-api-research"
+                | "requirement-audit"
+                | "compatibility-check"
+                | "local-build-diagnosis"
+        )
+    }
+
     pub fn has_explicit_nexus_target(&self) -> bool {
         self.explicit_targets.iter().any(|target| {
             target
@@ -686,8 +696,11 @@ pub fn route_ai_intent(
         "targeted"
     };
 
+    // The renderer sends permissive research params for every prompt, so their
+    // presence is not a user signal; only an explicit Nexus target is
+    // deterministic.
     let confidence = confidence_for(
-        has_explicit_nexus_target || research_enabled_param(params).is_some(),
+        has_explicit_nexus_target,
         requirement,
         full_scope,
         compatibility,

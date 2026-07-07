@@ -160,6 +160,16 @@ test.beforeEach(async ({ page }) => {
           version: '0.0.0-test'
         })
       },
+      apiLimits: {
+        list: async (operation: any) => {
+          calls.push({ method: 'apiLimits.list', payload: { operation } });
+          return {
+            generatedAtUtc: '2026-07-07T10:00:00Z',
+            operationId: operation?.operationId ?? 'op_api_limits',
+            providers: []
+          };
+        }
+      },
       archives: {
         install: async () => ({}),
         installFomod: async () => ({})

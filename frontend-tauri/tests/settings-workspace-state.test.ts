@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   capabilityStateLabel,
+  apiLimitProviderSummary,
   createCheckingNexusAuthStatus,
   createInstantNexusAuthStatus,
   createVerifiedNexusAuthStatus,
+  formatApiLimitReset,
+  formatApiLimitUsage,
   formatTransferBytes,
   currentPlatformSupport,
   developerModeStorageKey,
@@ -36,6 +39,7 @@ import {
 } from '../src/renderer/settings-workspace-state';
 import type {
   FluxoraAppInfo,
+  FluxoraApiLimitProvider,
   FluxoraModOrganizerImportAnalysis,
   FluxoraNexusModsAuthStatus,
   FluxoraProject,
@@ -176,6 +180,25 @@ const nexusStatus: FluxoraNexusModsAuthStatus = {
   operationId: 'op_nexus'
 };
 
+const apiLimitProvider: FluxoraApiLimitProvider = {
+  id: 'example-api',
+  label: 'Example API',
+  state: 'available',
+  message: 'Updated from API response headers.',
+  updatedAtUtc: '2026-07-07T10:00:00Z',
+  windows: [
+    {
+      id: 'hourly',
+      label: 'Hourly',
+      period: '1 hour',
+      limit: 500,
+      remaining: 421,
+      resetAtUtc: '2026-07-07T11:00:00Z',
+      resetRaw: '1783422000'
+    }
+  ]
+};
+
 const transferredProject: FluxoraProject = {
   id: 'mo2-import',
   name: 'MO2 Import',
@@ -300,6 +323,41 @@ describe('settings workspace state', () => {
     expect(nexusActionLabel(checkingStatus)).toBe('Checking Nexus Mods');
     expect(nexusCanToggle(checkingStatus, true)).toBe(false);
     expect(nexusIsVerifiedLinked(checkingStatus)).toBe(false);
+  });
+
+  it('formats API limit providers from reported quota windows only', () => {
+    expect(apiLimitProviderSummary(apiLimitProvider)).toBe('Updated from API response headers.');
+    expect(formatApiLimitUsage(apiLimitProvider.windows[0])).toBe('421 / 500');
+    expect(formatApiLimitReset(apiLimitProvider.windows[0])).toBe('Reset 11:00 UTC');
+    expect(
+      formatApiLimitReset({
+        ...apiLimitProvider.windows[0],
+        resetAtUtc: '',
+        resetRaw: '60'
+      })
+    ).toBe('Reset in 1m');
+    expect(
+      formatApiLimitReset({
+        ...apiLimitProvider.windows[0],
+        resetAtUtc: '',
+        resetRaw: '3660'
+      })
+    ).toBe('Reset in 1h 1m');
+    expect(
+      apiLimitProviderSummary({
+        ...apiLimitProvider,
+        state: 'not-provided',
+        message: '',
+        windows: []
+      })
+    ).toBe('Rate-limit headers were not returned');
+    expect(
+      formatApiLimitUsage({
+        ...apiLimitProvider.windows[0],
+        limit: null,
+        remaining: null
+      })
+    ).toBe('Not reported');
   });
 
   it('loads Nexus account status from an instant cache-safe fallback', () => {

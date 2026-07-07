@@ -7329,6 +7329,12 @@ body.row-reorder-active * {
   padding: 16px;
 }
 
+.settings-service-row--api-limit {
+  grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1.2fr);
+  min-height: 68px;
+  padding: 13px 16px;
+}
+
 .settings-service-row--transfer .settings-service-copy {
   gap: 0;
 }
@@ -7398,6 +7404,10 @@ body.row-reorder-active * {
   color: var(--accent);
 }
 
+.settings-service-icon--api {
+  color: var(--accent);
+}
+
 .settings-service-row--connection .settings-service-icon--nexus img {
   width: 28px;
   height: 30px;
@@ -7451,6 +7461,59 @@ body.row-reorder-active * {
 .settings-service-row > .primary-button {
   min-width: 118px;
   flex: 0 0 auto;
+}
+
+.settings-api-limit-windows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(112px, 1fr));
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+}
+
+.settings-api-limit-windows div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.settings-api-limit-windows dt,
+.settings-api-limit-windows dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.settings-api-limit-windows dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.settings-api-limit-windows dd {
+  display: grid;
+  gap: 2px;
+}
+
+.settings-api-limit-windows dd span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.settings-api-limit-windows dd small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-transfer-button {

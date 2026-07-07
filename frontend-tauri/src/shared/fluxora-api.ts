@@ -32,6 +32,7 @@ export const FluxoraIpcChannels = {
   aiRestartHost: 'fluxora:ai:restart-host',
   aiRunEvent: 'fluxora:ai:run-event',
   aiTestProvider: 'fluxora:ai:test-provider',
+  apiLimitsList: 'fluxora:api-limits:list',
   appGetInfo: 'fluxora:app:get-info',
   bridgeGetLanguage: 'fluxora:bridge:get-language',
   bridgeGetStatus: 'fluxora:bridge:get-status',
@@ -1848,6 +1849,38 @@ export interface FluxoraNexusModsAuthStatus {
   operationId: string;
 }
 
+export type FluxoraApiLimitProviderState =
+  | 'available'
+  | 'rate-limited'
+  | 'unlinked'
+  | 'unavailable'
+  | 'not-provided';
+
+export interface FluxoraApiRateLimitWindow {
+  id: string;
+  label: string;
+  period: string;
+  limit: number | null;
+  remaining: number | null;
+  resetAtUtc: string;
+  resetRaw: string;
+}
+
+export interface FluxoraApiLimitProvider {
+  id: string;
+  label: string;
+  state: FluxoraApiLimitProviderState;
+  message: string;
+  updatedAtUtc: string;
+  windows: FluxoraApiRateLimitWindow[];
+}
+
+export interface FluxoraApiLimitStatus {
+  generatedAtUtc: string;
+  providers: FluxoraApiLimitProvider[];
+  operationId: string;
+}
+
 export interface FluxoraModOrganizerImportAnalysis {
   sourceDirectory: string;
   destinationRootDirectory: string;
@@ -2071,6 +2104,9 @@ export type FluxoraFileDropEvent =
 export interface FluxoraApi {
   app: {
     getInfo: () => Promise<FluxoraAppInfo>;
+  };
+  apiLimits: {
+    list: (request?: OperationRequest) => Promise<FluxoraApiLimitStatus>;
   };
   publicApi: FluxoraPublicApiClient;
   ai: {

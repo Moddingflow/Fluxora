@@ -144,6 +144,36 @@ describe('Fluxora AI skills catalog', () => {
     expect(unknown.policy.skillCanGrantNewTools).toBe(false);
   });
 
+  it('keeps requirement prompts on the requirements skill instead of missing masters', () => {
+    const prompts = [
+      'Check the requirements and dependencies for the mods in my build',
+      'Проверь требования и зависимости модов в сборке',
+      'Prüfe die Anforderungen und Abhängigkeiten der Mods',
+      '检查这些模组的要求和依赖'
+    ];
+
+    prompts.forEach((prompt, index) => {
+      const selection = selectFluxoraSkillForPrompt(
+        prompt,
+        `op_skill_requirements_${index}`,
+        new Date('2026-07-07T09:00:00Z')
+      );
+
+      expect(selection.selectedSkillId).toBe('nexus-compatibility-check');
+      expect(selection.candidateSkillIds).not.toContain('missing-masters-diagnosis');
+    });
+  });
+
+  it('still selects missing masters when the prompt explicitly asks about masters', () => {
+    const explicit = selectFluxoraSkillForPrompt(
+      'Which plugin dependencies point at a missing master in this build?',
+      'op_skill_explicit_masters',
+      new Date('2026-07-07T09:01:00Z')
+    );
+
+    expect(explicit.selectedSkillId).toBe('missing-masters-diagnosis');
+  });
+
   it('projects built-in skills as Skill context graph nodes', () => {
     const nodes = createFluxoraSkillContextNodes();
 

@@ -5,6 +5,8 @@
 
 #include <gtest/gtest.h>
 
+#include <map>
+
 #ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
 namespace fluxora::test_hooks
 {
@@ -27,12 +29,16 @@ namespace fluxora::test_hooks
     std::wstring defaultNexusRedirectUriForTest();
     std::wstring nexusClientIdNameForTest();
     std::wstring nexusRedirectUriNameForTest();
+    std::wstring nexusApiLimitProbePathForTest();
     std::wstring nexusClientSecretNameForTest();
     std::wstring resolvedNexusClientIdForTest();
     std::wstring resolvedNexusRedirectUriForTest();
     std::wstring extractSupabaseCredentialValueForTest(const std::wstring& json);
     std::wstring resolvedNexusClientSecretForTest();
     std::wstring protectNexusSecretForTest(const std::wstring& value);
+    ApiLimitProvider nexusApiLimitProviderFromHeadersForTest(
+        const std::map<std::wstring, std::wstring>& headers,
+        unsigned long statusCode);
 }
 #endif
 
@@ -230,6 +236,66 @@ namespace fluxora::tests
         EXPECT_TRUE(header.headerValue.empty());
 
         settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, ApiLimitsUseNexusRateLimitResponseHeaders)
+    {
+        const ApiLimitProvider provider = nexus_auth_test_hooks::nexusApiLimitProviderFromHeadersForTest(
+            {
+                {L"X-RL-Hourly-Limit", L"500"},
+                {L"X-RL-Hourly-Remaining", L"421"},
+                {L"X-RL-Hourly-Reset", L"1783468800"},
+                {L"X-RL-Daily-Limit", L"20000"},
+                {L"X-RL-Daily-Remaining", L"19876"},
+                {L"X-RL-Daily-Reset", L"1783468800"},
+            },
+            200);
+
+        ASSERT_EQ(provider.windows.size(), 2U);
+        EXPECT_EQ(provider.id, L"nexusmods");
+        EXPECT_EQ(provider.state, L"available");
+        EXPECT_EQ(provider.windows[0].id, L"hourly");
+        EXPECT_EQ(provider.windows[0].limit, 500);
+        EXPECT_EQ(provider.windows[0].remaining, 421);
+        EXPECT_EQ(provider.windows[0].resetAtUtc, L"2026-07-08T00:00:00Z");
+        EXPECT_EQ(provider.windows[1].id, L"daily");
+        EXPECT_EQ(provider.windows[1].limit, 20000);
+        EXPECT_EQ(provider.windows[1].remaining, 19876);
+    }
+
+    TEST(NexusModsAuthServiceTests, ApiLimitsUseStandardRateLimitHeadersCaseInsensitively)
+    {
+        const ApiLimitProvider provider = nexus_auth_test_hooks::nexusApiLimitProviderFromHeadersForTest(
+            {
+                {L"x-ratelimit-limit", L"120;w=60"},
+                {L"x-ratelimit-remaining", L"118"},
+                {L"ratelimit-reset", L"60"},
+            },
+            200);
+
+        ASSERT_EQ(provider.windows.size(), 1U);
+        EXPECT_EQ(provider.state, L"available");
+        EXPECT_EQ(provider.windows[0].id, L"current");
+        EXPECT_EQ(provider.windows[0].label, L"Current");
+        EXPECT_EQ(provider.windows[0].limit, 120);
+        EXPECT_EQ(provider.windows[0].remaining, 118);
+        EXPECT_EQ(provider.windows[0].resetRaw, L"60");
+    }
+
+    TEST(NexusModsAuthServiceTests, ApiLimitsDoNotInventMissingHeaders)
+    {
+        const ApiLimitProvider provider =
+            nexus_auth_test_hooks::nexusApiLimitProviderFromHeadersForTest({}, 200);
+
+        EXPECT_EQ(provider.state, L"not-provided");
+        EXPECT_TRUE(provider.windows.empty());
+        EXPECT_NE(provider.message.find(L"did not include rate-limit headers"), std::wstring::npos);
+    }
+
+    TEST(NexusModsAuthServiceTests, ApiLimitsProbeQuotaBearingEndpoint)
+    {
+        EXPECT_EQ(nexus_auth_test_hooks::nexusApiLimitProbePathForTest(), L"/v1/colourschemes.json");
+        EXPECT_NE(nexus_auth_test_hooks::nexusApiLimitProbePathForTest(), L"/v1/users/validate.json");
     }
 
     TEST(NexusModsAuthServiceTests, DefaultRedirectUriUsesRegisteredLoopbackCallback)

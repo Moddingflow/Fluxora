@@ -3,11 +3,39 @@
 #include "FluxoraCore/Services/IService.hpp"
 
 #include <string>
+#include <vector>
 
 namespace fluxora
 {
     class AppSettingsService;
     class Logger;
+
+    struct ApiRateLimitWindow
+    {
+        std::wstring id;
+        std::wstring label;
+        std::wstring period;
+        long long limit{-1};
+        long long remaining{-1};
+        std::wstring resetAtUtc;
+        std::wstring resetRaw;
+    };
+
+    struct ApiLimitProvider
+    {
+        std::wstring id;
+        std::wstring label;
+        std::wstring state;
+        std::wstring message;
+        std::wstring updatedAtUtc;
+        std::vector<ApiRateLimitWindow> windows;
+    };
+
+    struct ApiLimitStatus
+    {
+        std::wstring generatedAtUtc;
+        std::vector<ApiLimitProvider> providers;
+    };
 
     struct NexusModsAuthStatus
     {
@@ -40,6 +68,7 @@ namespace fluxora
 
         [[nodiscard]] NexusModsAuthStatus status() const;
         [[nodiscard]] NexusModsApiAuthHeader apiAuthHeader();
+        [[nodiscard]] ApiLimitStatus apiLimits();
         NexusModsAuthStatus connect();
         NexusModsAuthStatus connectWithApiKey(std::wstring_view apiKey);
         NexusModsAuthStatus disconnect();

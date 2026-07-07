@@ -8,7 +8,11 @@ import { describe, expect, it } from 'vitest';
 import { SettingsWorkspace } from '../src/renderer/features/settings/SettingsWorkspace';
 import { createCheckingNexusAuthStatus } from '../src/renderer/settings-workspace-state';
 import { TransferSettingsPanel } from '../src/renderer/TransferSettingsPanel';
-import type { FluxoraAppInfo, FluxoraNexusModsAuthStatus } from '../src/shared/fluxora-api';
+import type {
+  FluxoraApiLimitProvider,
+  FluxoraAppInfo,
+  FluxoraNexusModsAuthStatus
+} from '../src/shared/fluxora-api';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,6 +51,8 @@ const appInfo: FluxoraAppInfo = {
 };
 
 const baseSettingsWorkspaceProps: SettingsWorkspaceProps = {
+  apiLimitProviders: [],
+  apiLimitsBusy: false,
   appInfo,
   bridgeStatus: null,
   developerModeEnabled: false,
@@ -83,6 +89,34 @@ const cachedNativeNexusStatus: FluxoraNexusModsAuthStatus = {
   operationId: 'op_cached_nexus'
 };
 const cachedNexusStatus = createCheckingNexusAuthStatus(cachedNativeNexusStatus, 'op_cached_nexus');
+
+const exampleApiLimitProvider: FluxoraApiLimitProvider = {
+  id: 'example-api',
+  label: 'Example API',
+  state: 'available',
+  message: 'Updated from API response headers.',
+  updatedAtUtc: '2026-07-07T10:00:00Z',
+  windows: [
+    {
+      id: 'hourly',
+      label: 'Hourly',
+      period: '1 hour',
+      limit: 500,
+      remaining: 421,
+      resetAtUtc: '2026-07-07T11:00:00Z',
+      resetRaw: '1783422000'
+    },
+    {
+      id: 'daily',
+      label: 'Daily',
+      period: '24 hours',
+      limit: 20000,
+      remaining: 19876,
+      resetAtUtc: '2026-07-08T00:00:00Z',
+      resetRaw: '1783468800'
+    }
+  ]
+};
 
 const renderSettingsWorkspace = (
   overrides: Partial<SettingsWorkspaceProps> = {}
@@ -127,6 +161,7 @@ describe('settings redesign', () => {
     expect(settingsWorkspace).not.toContain('Connections, languages, and build transfer.');
     expect(settingsWorkspace).toContain('className="settings-connections-list"');
     expect(settingsWorkspace).toContain('settings-service-row--connection');
+    expect(settingsWorkspace).toContain('settings-service-row--api-limit');
     expect(settingsWorkspace).toContain('<LanguageSelect');
     expect(settingsWorkspace).not.toContain('<AiSettingsPanel');
     expect(languageSelect).toContain('settings-language-row');
@@ -171,6 +206,7 @@ describe('settings redesign', () => {
     expect(settingsWorkspace).not.toContain('Refresh status');
     expect(app).toContain('window.fluxora.settings.setLanguage');
     expect(app).toContain('window.fluxora.nexus.getAuthStatus');
+    expect(app).toContain('window.fluxora.apiLimits.list');
     expect(app).toContain('window.fluxora.nexus.connect');
     expect(app).toContain('window.fluxora.nexus.disconnect');
     expect(app).toContain('loadCachedNexusAuthStatus(window.localStorage)');
@@ -197,6 +233,8 @@ describe('settings redesign', () => {
     expect(styles).toContain('.settings-connections-list');
     expect(styles).toContain('width: 100%;');
     expect(styles).toContain('.settings-service-row--connection');
+    expect(styles).toContain('.settings-service-row--api-limit');
+    expect(styles).toContain('.settings-api-limit-windows');
     expect(styles).toContain('min-height: 74px;');
     expect(styles).toContain('.settings-language-row');
     expect(styles).toContain('*::-webkit-scrollbar-button:vertical:start:decrement');
@@ -274,5 +312,19 @@ describe('settings redesign', () => {
     expect(html).not.toContain('Status not loaded');
     expect(html).not.toContain('Loading settings');
     expect(html).not.toContain('Refresh status');
+  });
+
+  it('renders API limits from generic provider windows', () => {
+    const html = renderSettingsWorkspace({
+      section: 'connections',
+      apiLimitProviders: [exampleApiLimitProvider]
+    });
+
+    expect(html).toContain('Example API');
+    expect(html).toContain('Updated from API response headers.');
+    expect(html).toContain('421 / 500');
+    expect(html).toContain('19,876 / 20,000');
+    expect(html).toContain('Reset 11:00 UTC');
+    expect(html).toContain('settings-service-row--api-limit');
   });
 });

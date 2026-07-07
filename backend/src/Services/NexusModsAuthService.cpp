@@ -55,6 +55,7 @@ namespace fluxora
         constexpr std::wstring_view tokenPath = L"/oauth/token";
         constexpr std::wstring_view publicApiHost = L"api.nexusmods.com";
         constexpr std::wstring_view validateApiKeyPath = L"/v1/users/validate.json";
+        constexpr std::wstring_view apiLimitProbePath = L"/v1/colourschemes.json";
         constexpr int callbackTimeoutSeconds = 120;
         constexpr int callbackClientReadTimeoutMilliseconds = 3000;
         constexpr int supabaseCredentialTimeoutMilliseconds = 4000;
@@ -132,6 +133,13 @@ namespace fluxora
             std::wstring userId;
         };
 
+        struct HttpResponse
+        {
+            unsigned long statusCode{0};
+            std::string body;
+            std::map<std::wstring, std::wstring> headers;
+        };
+
         std::wstring readEnvironment(std::wstring_view name)
         {
 #ifdef _WIN32
@@ -167,6 +175,63 @@ namespace fluxora
             }
 
             return std::wstring(first, last);
+        }
+
+#ifdef _WIN32
+        std::wstring queryResponseHeader(HINTERNET request, std::wstring_view name)
+        {
+            const std::wstring headerName(name);
+            DWORD valueSize = 0;
+            WinHttpQueryHeaders(
+                request,
+                WINHTTP_QUERY_CUSTOM,
+                headerName.c_str(),
+                WINHTTP_NO_OUTPUT_BUFFER,
+                &valueSize,
+                WINHTTP_NO_HEADER_INDEX);
+            if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || valueSize == 0)
+            {
+                return {};
+            }
+
+            std::wstring value(valueSize / sizeof(wchar_t), L'\0');
+            if (!WinHttpQueryHeaders(
+                    request,
+                    WINHTTP_QUERY_CUSTOM,
+                    headerName.c_str(),
+                    value.data(),
+                    &valueSize,
+                    WINHTTP_NO_HEADER_INDEX))
+            {
+                return {};
+            }
+
+            value.resize(valueSize / sizeof(wchar_t));
+            if (!value.empty() && value.back() == L'\0')
+            {
+                value.pop_back();
+            }
+            return trimWhitespace(std::move(value));
+        }
+#endif
+
+        long long parseRateLimitNumber(std::wstring_view value)
+        {
+            const std::wstring trimmed = trimWhitespace(std::wstring(value));
+            if (trimmed.empty())
+            {
+                return -1;
+            }
+
+            try
+            {
+                const long long parsed = std::stoll(trimmed);
+                return parsed >= 0 ? parsed : -1;
+            }
+            catch (const std::exception&)
+            {
+                return -1;
+            }
         }
 
         std::wstring readTrimmedEnvironment(std::wstring_view name)
@@ -1528,7 +1593,10 @@ namespace fluxora
             return message;
         }
 
-        std::string getNexusPublicApi(std::wstring_view pathAndQuery, std::wstring_view apiKey)
+        HttpResponse getNexusPublicApiResponse(
+            std::wstring_view pathAndQuery,
+            std::wstring_view authHeaderName,
+            std::wstring_view authHeaderValue)
         {
 #ifdef _WIN32
             HINTERNET session = WinHttpOpen(
@@ -1573,8 +1641,11 @@ namespace fluxora
             std::wstring headers =
                 L"Accept: application/json\r\n"
                 L"Application-Name: Fluxora\r\n"
-                L"Application-Version: 0.1.0\r\n"
-                L"apikey: " + std::wstring(apiKey) + L"\r\n";
+                L"Application-Version: 0.1.0\r\n";
+            if (!authHeaderName.empty() && !authHeaderValue.empty())
+            {
+                headers += std::wstring(authHeaderName) + L": " + std::wstring(authHeaderValue) + L"\r\n";
+            }
 
             const BOOL sent = WinHttpSendRequest(
                 request,
@@ -1602,6 +1673,36 @@ namespace fluxora
                 &statusCodeSize,
                 WINHTTP_NO_HEADER_INDEX);
 
+            std::map<std::wstring, std::wstring> responseHeaders;
+            for (std::wstring_view headerName : {
+                     L"X-RL-Hourly-Limit",
+                     L"X-RL-Hourly-Remaining",
+                     L"X-RL-Hourly-Reset",
+                     L"X-RL-Daily-Limit",
+                     L"X-RL-Daily-Remaining",
+                     L"X-RL-Daily-Reset",
+                     L"X-RateLimit-Limit",
+                     L"X-RateLimit-Remaining",
+                     L"X-RateLimit-Reset",
+                     L"X-Rate-Limit",
+                     L"X-Rate-Limit-Remaining",
+                     L"X-Rate-Limit-Reset",
+                     L"RateLimit-Limit",
+                     L"RateLimit-Remaining",
+                     L"RateLimit-Reset",
+                     L"Rate-Limit",
+                     L"Rate-Limit-Remaining",
+                     L"Rate-Limit-Reset",
+                     L"Retry-After",
+                 })
+            {
+                std::wstring value = queryResponseHeader(request, headerName);
+                if (!value.empty())
+                {
+                    responseHeaders.emplace(std::wstring(headerName), std::move(value));
+                }
+            }
+
             std::string responseBody;
             DWORD available = 0;
             while (WinHttpQueryDataAvailable(request, &available) && available > 0)
@@ -1620,17 +1721,24 @@ namespace fluxora
             WinHttpCloseHandle(connection);
             WinHttpCloseHandle(session);
 
-            if (statusCode < 200 || statusCode >= 300)
-            {
-                throw std::runtime_error(buildNexusApiValidationError(statusCode, responseBody));
-            }
-
-            return responseBody;
+            return HttpResponse{statusCode, std::move(responseBody), std::move(responseHeaders)};
 #else
             (void)pathAndQuery;
-            (void)apiKey;
-            throw std::runtime_error("NexusMods API key validation is currently implemented for Windows builds.");
+            (void)authHeaderName;
+            (void)authHeaderValue;
+            throw std::runtime_error("NexusMods API requests are currently implemented for Windows builds.");
 #endif
+        }
+
+        std::string getNexusPublicApi(std::wstring_view pathAndQuery, std::wstring_view apiKey)
+        {
+            const HttpResponse response = getNexusPublicApiResponse(pathAndQuery, L"apikey", apiKey);
+            if (response.statusCode < 200 || response.statusCode >= 300)
+            {
+                throw std::runtime_error(buildNexusApiValidationError(response.statusCode, response.body));
+            }
+
+            return response.body;
         }
 
         ApiKeyUser validateNexusApiKey(std::wstring apiKey)
@@ -2008,6 +2116,37 @@ namespace fluxora
             return stream.str();
         }
 
+        std::wstring formatUtcTimestamp(std::time_t time)
+        {
+            std::tm utc{};
+#ifdef _WIN32
+            gmtime_s(&utc, &time);
+#else
+            gmtime_r(&time, &utc);
+#endif
+
+            std::wstringstream stream;
+            stream << std::put_time(&utc, L"%Y-%m-%dT%H:%M:%SZ");
+            return stream.str();
+        }
+
+        std::wstring nowUtcIso()
+        {
+            return formatUtcTimestamp(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
+        }
+
+        std::wstring rateLimitResetAtUtc(std::wstring_view value)
+        {
+            const std::wstring trimmed = trimWhitespace(std::wstring(value));
+            const long long epochSeconds = parseRateLimitNumber(trimmed);
+            if (epochSeconds <= 1000000000)
+            {
+                return {};
+            }
+
+            return formatUtcTimestamp(static_cast<std::time_t>(epochSeconds));
+        }
+
         std::optional<std::chrono::system_clock::time_point> parseUtcExpiry(std::wstring_view value)
         {
             const std::wstring trimmed = trimWhitespace(std::wstring(value));
@@ -2048,6 +2187,143 @@ namespace fluxora
 
             constexpr auto refreshSkew = std::chrono::minutes(2);
             return *expiresAt <= std::chrono::system_clock::now() + refreshSkew;
+        }
+
+        std::optional<std::wstring> responseHeaderValue(
+            const std::map<std::wstring, std::wstring>& headers,
+            std::initializer_list<std::wstring_view> names)
+        {
+            for (std::wstring_view name : names)
+            {
+                const auto exact = headers.find(std::wstring(name));
+                if (exact != headers.end())
+                {
+                    return exact->second;
+                }
+
+                const std::wstring normalizedName = toLower(std::wstring(name));
+                for (const auto& [headerName, value] : headers)
+                {
+                    if (toLower(headerName) == normalizedName)
+                    {
+                        return value;
+                    }
+                }
+            }
+
+            return std::nullopt;
+        }
+
+        ApiRateLimitWindow buildRateLimitWindow(
+            std::wstring id,
+            std::wstring label,
+            std::wstring period,
+            const std::map<std::wstring, std::wstring>& headers,
+            std::initializer_list<std::wstring_view> limitHeaders,
+            std::initializer_list<std::wstring_view> remainingHeaders,
+            std::initializer_list<std::wstring_view> resetHeaders)
+        {
+            const std::optional<std::wstring> limit = responseHeaderValue(headers, limitHeaders);
+            const std::optional<std::wstring> remaining = responseHeaderValue(headers, remainingHeaders);
+            const std::optional<std::wstring> reset = responseHeaderValue(headers, resetHeaders);
+            ApiRateLimitWindow window;
+            window.id = std::move(id);
+            window.label = std::move(label);
+            window.period = std::move(period);
+            window.limit = limit.has_value() ? parseRateLimitNumber(*limit) : -1;
+            window.remaining = remaining.has_value() ? parseRateLimitNumber(*remaining) : -1;
+            if (reset.has_value())
+            {
+                window.resetRaw = *reset;
+                window.resetAtUtc = rateLimitResetAtUtc(*reset);
+            }
+            return window;
+        }
+
+        bool hasRateLimitValue(const ApiRateLimitWindow& window)
+        {
+            return window.limit >= 0 || window.remaining >= 0 || !window.resetRaw.empty();
+        }
+
+        std::vector<ApiRateLimitWindow> nexusRateLimitWindowsFromHeaders(
+            const std::map<std::wstring, std::wstring>& headers)
+        {
+            std::vector<ApiRateLimitWindow> windows;
+            ApiRateLimitWindow hourly = buildRateLimitWindow(
+                L"hourly",
+                L"Hourly",
+                L"1 hour",
+                headers,
+                {L"X-RL-Hourly-Limit"},
+                {L"X-RL-Hourly-Remaining"},
+                {L"X-RL-Hourly-Reset"});
+            if (hasRateLimitValue(hourly))
+            {
+                windows.push_back(std::move(hourly));
+            }
+
+            ApiRateLimitWindow daily = buildRateLimitWindow(
+                L"daily",
+                L"Daily",
+                L"24 hours",
+                headers,
+                {L"X-RL-Daily-Limit"},
+                {L"X-RL-Daily-Remaining"},
+                {L"X-RL-Daily-Reset"});
+            if (hasRateLimitValue(daily))
+            {
+                windows.push_back(std::move(daily));
+            }
+
+            if (windows.empty())
+            {
+                ApiRateLimitWindow current = buildRateLimitWindow(
+                    L"current",
+                    L"Current",
+                    L"Current window",
+                    headers,
+                    {L"X-RateLimit-Limit", L"X-Rate-Limit", L"RateLimit-Limit", L"Rate-Limit"},
+                    {
+                        L"X-RateLimit-Remaining",
+                        L"X-Rate-Limit-Remaining",
+                        L"RateLimit-Remaining",
+                        L"Rate-Limit-Remaining",
+                    },
+                    {L"X-RateLimit-Reset", L"X-Rate-Limit-Reset", L"RateLimit-Reset", L"Rate-Limit-Reset"});
+                if (hasRateLimitValue(current))
+                {
+                    windows.push_back(std::move(current));
+                }
+            }
+
+            return windows;
+        }
+
+        ApiLimitProvider buildNexusApiLimitProviderFromHeaders(
+            const std::map<std::wstring, std::wstring>& headers,
+            unsigned long statusCode,
+            std::wstring updatedAtUtc)
+        {
+            ApiLimitProvider provider;
+            provider.id = L"nexusmods";
+            provider.label = L"Nexus Mods API";
+            provider.updatedAtUtc = std::move(updatedAtUtc);
+            provider.windows = nexusRateLimitWindowsFromHeaders(headers);
+
+            if (provider.windows.empty())
+            {
+                provider.state = statusCode >= 200 && statusCode < 300 ? L"not-provided" : L"unavailable";
+                provider.message = statusCode >= 200 && statusCode < 300
+                    ? L"API response did not include rate-limit headers."
+                    : L"API response did not include rate-limit headers (HTTP " + std::to_wstring(statusCode) + L").";
+                return provider;
+            }
+
+            provider.state = statusCode == 429 ? L"rate-limited" : L"available";
+            provider.message = statusCode == 429
+                ? L"Rate limit reached; values are from Nexus API response headers."
+                : L"Updated from Nexus API response headers.";
+            return provider;
         }
 
         NexusModsAuthStatus buildStatus(const OAuthConfig& config, const NexusModsStoredAuth& auth)
@@ -2136,6 +2412,11 @@ namespace fluxora
             return std::wstring(nexusRedirectUriName);
         }
 
+        std::wstring nexusApiLimitProbePathForTest()
+        {
+            return std::wstring(apiLimitProbePath);
+        }
+
         std::wstring nexusClientSecretNameForTest()
         {
             return std::wstring(nexusClientSecretName);
@@ -2164,6 +2445,13 @@ namespace fluxora
         std::wstring protectNexusSecretForTest(const std::wstring& value)
         {
             return protectSecret(value);
+        }
+
+        ApiLimitProvider nexusApiLimitProviderFromHeadersForTest(
+            const std::map<std::wstring, std::wstring>& headers,
+            unsigned long statusCode)
+        {
+            return buildNexusApiLimitProviderFromHeaders(headers, statusCode, L"2026-07-07T00:00:00Z");
         }
     }
 #endif
@@ -2301,6 +2589,48 @@ namespace fluxora
         }
 
         return unavailable(L"NexusMods authentication token is unavailable. Reconnect NexusMods in settings.");
+    }
+
+    ApiLimitStatus NexusModsAuthService::apiLimits()
+    {
+        ApiLimitStatus status;
+        status.generatedAtUtc = nowUtcIso();
+
+        ApiLimitProvider provider;
+        provider.id = L"nexusmods";
+        provider.label = L"Nexus Mods API";
+        provider.updatedAtUtc = status.generatedAtUtc;
+
+        const NexusModsApiAuthHeader authHeader = apiAuthHeader();
+        if (!authHeader.isAvailable)
+        {
+            provider.state = L"unlinked";
+            provider.message = authHeader.message.empty()
+                ? L"Nexus Mods account is not linked."
+                : authHeader.message;
+            status.providers.push_back(std::move(provider));
+            return status;
+        }
+
+        try
+        {
+            const HttpResponse response = getNexusPublicApiResponse(
+                apiLimitProbePath,
+                authHeader.headerName,
+                authHeader.headerValue);
+            provider = buildNexusApiLimitProviderFromHeaders(
+                response.headers,
+                response.statusCode,
+                status.generatedAtUtc);
+        }
+        catch (const std::exception& exception)
+        {
+            provider.state = L"unavailable";
+            provider.message = fromUtf8(exception.what());
+        }
+
+        status.providers.push_back(std::move(provider));
+        return status;
     }
 
     NexusModsAuthStatus NexusModsAuthService::connect()

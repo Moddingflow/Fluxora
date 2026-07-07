@@ -930,6 +930,64 @@ namespace
         return writer.str();
     }
 
+    void writeNullableNumber(fluxora::JsonWriter& writer, std::wstring_view name, long long value)
+    {
+        writer.key(name);
+        if (value >= 0)
+        {
+            writer.numberValue(std::to_wstring(value));
+        }
+        else
+        {
+            writer.nullValue();
+        }
+    }
+
+    void writeApiRateLimitWindow(fluxora::JsonWriter& writer, const fluxora::ApiRateLimitWindow& window)
+    {
+        writer.beginObject();
+        writer.field(L"id", window.id);
+        writer.field(L"label", window.label);
+        writer.field(L"period", window.period);
+        writeNullableNumber(writer, L"limit", window.limit);
+        writeNullableNumber(writer, L"remaining", window.remaining);
+        writer.field(L"resetAtUtc", window.resetAtUtc);
+        writer.field(L"resetRaw", window.resetRaw);
+        writer.endObject();
+    }
+
+    void writeApiLimitProvider(fluxora::JsonWriter& writer, const fluxora::ApiLimitProvider& provider)
+    {
+        writer.beginObject();
+        writer.field(L"id", provider.id);
+        writer.field(L"label", provider.label);
+        writer.field(L"state", provider.state);
+        writer.field(L"message", provider.message);
+        writer.field(L"updatedAtUtc", provider.updatedAtUtc);
+        writer.key(L"windows").beginArray();
+        for (const auto& window : provider.windows)
+        {
+            writeApiRateLimitWindow(writer, window);
+        }
+        writer.endArray();
+        writer.endObject();
+    }
+
+    std::wstring serializeApiLimitStatus(const fluxora::ApiLimitStatus& status)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"generatedAtUtc", status.generatedAtUtc);
+        writer.key(L"providers").beginArray();
+        for (const auto& provider : status.providers)
+        {
+            writeApiLimitProvider(writer, provider);
+        }
+        writer.endArray();
+        writer.endObject();
+        return writer.str();
+    }
+
     void writeDownloadEntry(fluxora::JsonWriter& writer, const fluxora::DownloadEntry& download)
     {
         writer.beginObject();
@@ -3251,6 +3309,19 @@ extern "C"
         try
         {
             const std::wstring json = serializeNexusModsApiAuthHeader(core().nexusModsAuth().apiAuthHeader());
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_api_limit_status(wchar_t* jsonBuffer, int jsonBufferLength)
+    {
+        try
+        {
+            const std::wstring json = serializeApiLimitStatus(core().nexusModsAuth().apiLimits());
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)

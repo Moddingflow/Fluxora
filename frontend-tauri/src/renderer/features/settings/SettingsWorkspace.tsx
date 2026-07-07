@@ -1,6 +1,7 @@
 import {
   Code2,
   ExternalLink,
+  Gauge,
   Languages,
   Link2,
   RefreshCw,
@@ -8,6 +9,9 @@ import {
 } from 'lucide-react';
 
 import {
+  apiLimitProviderSummary,
+  formatApiLimitReset,
+  formatApiLimitUsage,
   formatLastBuildDate,
   languageOptions,
   nexusActionLabel,
@@ -24,6 +28,7 @@ import { TransferSettingsPanel } from '../../TransferSettingsPanel';
 import { nexusModsIcon } from '../../design-system/assets';
 import { LanguageSelect } from './LanguageSelect';
 import type {
+  FluxoraApiLimitProvider,
   FluxoraAppInfo,
   NativeBridgeStatus
 } from '../../../shared/fluxora-api';
@@ -31,6 +36,8 @@ import type {
 type SettingsCapabilities = ReturnType<typeof settingsCapabilityView>;
 
 interface SettingsWorkspaceProps {
+  apiLimitProviders: FluxoraApiLimitProvider[];
+  apiLimitsBusy: boolean;
   appInfo: FluxoraAppInfo | null;
   bridgeStatus: NativeBridgeStatus | null;
   developerModeEnabled: boolean;
@@ -51,6 +58,8 @@ interface SettingsWorkspaceProps {
 }
 
 export function SettingsWorkspace({
+  apiLimitProviders,
+  apiLimitsBusy,
   appInfo,
   bridgeStatus,
   developerModeEnabled,
@@ -146,6 +155,49 @@ export function SettingsWorkspace({
               <span aria-hidden="true" />
             </button>
           </div>
+          {apiLimitsBusy && apiLimitProviders.length === 0 ? (
+            <div className="settings-service-row settings-service-row--api-limit" data-status="checking">
+              <div className="settings-service-main">
+                <span className="settings-service-icon settings-service-icon--api" aria-hidden="true">
+                  <Gauge size={20} />
+                </span>
+                <span className="settings-service-copy">
+                  <strong>API limits</strong>
+                  <span>Checking response headers</span>
+                </span>
+              </div>
+            </div>
+          ) : null}
+          {apiLimitProviders.map((provider) => (
+            <div
+              key={provider.id}
+              className="settings-service-row settings-service-row--api-limit"
+              data-status={provider.state}
+            >
+              <div className="settings-service-main">
+                <span className="settings-service-icon settings-service-icon--api" aria-hidden="true">
+                  <Gauge size={20} />
+                </span>
+                <span className="settings-service-copy">
+                  <strong>{provider.label}</strong>
+                  <span>{apiLimitProviderSummary(provider)}</span>
+                </span>
+              </div>
+              {provider.windows.length > 0 ? (
+                <dl className="settings-api-limit-windows" aria-label={`${provider.label} rate limits`}>
+                  {provider.windows.map((limitWindow) => (
+                    <div key={limitWindow.id}>
+                      <dt>{limitWindow.label}</dt>
+                      <dd>
+                        <span>{formatApiLimitUsage(limitWindow)}</span>
+                        <small>{formatApiLimitReset(limitWindow)}</small>
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : null}
+            </div>
+          ))}
         </div>
       </div>
     );

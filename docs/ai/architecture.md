@@ -201,11 +201,19 @@ and approval-required; Phase 8 does not execute them.
 
 Phase 18 keeps the renderer quiet by default while making `FluxoraAIHost`
 responsible for large read-only analysis scaling. The host classifies
-`AiTaskScale` from the user prompt plus real build-context counts; explicit
+`AiTaskScale` from the language-independent canonical intent route plus real
+build-context counts (prompt keywords remain a fallback); explicit
 full-audit/all-requirements prompts or read-only analysis over at least 20
-mods, plugins, or Nexus targets are treated as large. Large read-only jobs can
-automatically use real worker subagents only when a remote provider credential
-is available and cost preflight approves the run. Full requirements audits use
+mods, plugins, or Nexus targets are treated as large, and read-only analysis
+over 5–19 items is a medium tier. Worker fan-out follows the tier: simple
+prompts use no workers, medium tasks use up to 2 role workers, large tasks use
+up to 3 role workers, and only large full-build audits shard across at most 5
+worker jobs. Gemini 3.1 Flash-Lite acts as the chef/orchestrator and Gemini 2.5
+Flash-Lite is reused across distinct worker roles/shards, so no two workers
+receive identical work. Temporary 503/UNAVAILABLE/high-demand worker failures
+get one bounded retry and otherwise stay retryable partial results. Read-only
+jobs can automatically use real worker subagents only when a remote provider
+credential is available and cost preflight approves the run. Full requirements audits use
 the host-owned `fluxora.ai.large-audit-manifest.v1` stage: the full
 `build.summary.nexusTargets` list stays in Rust host memory, provider prompts
 receive compact counts/source ids/shard references, and workers receive only
@@ -633,7 +641,16 @@ Each `FluxoraSkill` has trigger metadata, a game scope, a markdown skill body,
 and a descriptor with allowed tools, required provider capabilities, example
 prompts, validation checklist, and security notes. Agents read trigger metadata
 first and load the full `SKILL.MD` body only after an `always`,
-`default-for-game`, or prompt trigger matches. The allowed tools must already
+`default-for-game`, or prompt trigger matches. `FluxoraAIHost` enforces this at
+runtime: it selects the skill before the provider call using the
+language-independent canonical intent route, reads the triggered skill's
+`SKILL.MD` from `Fluxora AI/Skills` (packaged) or `FLUXORASKILLS/skills` (dev;
+`FLUXORA_AI_SKILLS_DIR` overrides both) bounded to 12k characters, and injects
+it as a system message together with the always-on concise-response skill.
+Skill text is instructions data only; it cannot grant tools or approvals. A
+requirement-audit intent selects the requirements/compatibility skill and must
+not drift into missing-masters diagnosis unless local missing-master findings
+prove the requirement issue. The allowed tools must already
 exist in `fluxora.ai.safe-action-catalog.v1`; a skill cannot create a new tool,
 lower a permission class, approve a write, or bypass C++ core validation. The
 selected skill is visible in the chat message and in the task plan through
@@ -695,18 +712,27 @@ Explicit requirement/dependency audits are the narrow exception: local missing
 masters are treated as suspect evidence to verify through Nexus API/cache, not
 as a terminal local-only answer. Public Nexus page scraping still remains
 disabled unless a separate public-web policy explicitly allows it.
-Generic public-web research uses `route=google-search-only` when Gemini
-grounding is approved: the host passes Gemini's provider-side `google_search`
+Generic public-web research uses `route=google-search-only`: Gemini
+provider-side `google_search` grounding is enabled by default (the model
+supports it natively) and can only be switched off by an explicit
+`allowGeminiGoogleSearch=false` request; the host passes the `google_search`
 tool to generation, but `allowPublicWebFetch=false` and Fluxora does not collect
-direct URL snapshots.
+direct URL snapshots. The renderer never gates research on prompt keywords: it
+always sends a permissive research request and the host derives scope and
+budgets from the multilingual canonical intent route.
 When the user asks to audit every mod or the whole build for missing
 requirements, the route switches to `auditScope=full-build-requirements`:
 Fluxora may collect official Nexus API/cache evidence from local Nexus mod ids
-up to the daily Nexus request budget, including GraphQL legacy requirements and
-v3 file-version dependency evidence when a file-version id is known. The report
-must include exact checked/target/remaining coverage and stop on credential,
-quota, 429, retry-after or availability failures instead of claiming that Nexus
-API research is forbidden or that all mods were checked.
+up to the daily Nexus request budget, including GraphQL requirements
+(`mod.modRequirements.nexusRequirements` in the live v2 schema) and
+v3 file-version dependency evidence when a file-version id is known. GraphQL
+bodies with `errors` are captured but never count as requirement evidence; the
+research bundle then falls back to the official API mod `description`, exposing
+a bounded multilingual `descriptionRequirementExcerpt` fact that the model must
+analyze for requirements instead of refusing with an API-schema complaint. The
+report must include exact checked/target/remaining coverage and stop on
+credential, quota, 429, retry-after or availability failures instead of
+claiming that Nexus API research is forbidden or that all mods were checked.
 
 Intent routing is represented separately as `fluxora.ai.intent-route.v1`.
 `FluxoraAIHost` derives this canonical DTO before the mod-research route so
@@ -714,8 +740,9 @@ policy decisions are language-independent and do not depend on renderer keyword
 checks. The DTO records `promptLanguage`, `replyLanguage`, confidence, signals,
 canonical intent, scope, explicit targets, Nexus API/public-web flags, external
 network need, and clarification state. Deterministic signals such as Nexus URLs,
-`nxm://`, explicit `gameDomain:modId`, tool ids, local Nexus metadata, and
-research params win first; multilingual semantic examples or a low-cost
+`nxm://`, explicit `gameDomain:modId`, tool ids, and local Nexus metadata win
+first (research params are always sent by the renderer and are not treated as a
+user signal); multilingual semantic examples or a low-cost
 structured classifier may classify requirements, compatibility, public-web,
 local diagnosis, mutation, or unknown intents after that. Embeddings may
 optimize matching only through the existing context graph `context_embeddings`

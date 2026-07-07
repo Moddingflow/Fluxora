@@ -32,6 +32,7 @@ import type {
   FluxoraAiProviderConnectionResult,
   FluxoraAiProviderDescriptor,
   FluxoraAiProviderTestResult,
+  FluxoraApiLimitStatus,
   FluxoraBuildContentChangedEvent,
   FluxoraBuildContentWatchRequest,
   FluxoraBuildContentWatchResult,
@@ -136,6 +137,10 @@ const listenTyped = <T>(
 export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   app: {
     getInfo: () => invokeTyped<FluxoraAppInfo>(ipc, FluxoraIpcChannels.appGetInfo)
+  },
+  apiLimits: {
+    list: (request?: OperationRequest) =>
+      invokeTyped<FluxoraApiLimitStatus>(ipc, FluxoraIpcChannels.apiLimitsList, request)
   },
   publicApi: createModdingflowPublicApiDogfoodClient(),
   ai: {
@@ -1734,6 +1739,15 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.aiRestartHost:
         return browserPreviewAiStatus(args[0]);
 
+      case FluxoraIpcChannels.apiLimitsList: {
+        const request = requestWithOperationId(args[0], 'api_limits_list');
+        return {
+          generatedAtUtc: '',
+          providers: [],
+          operationId: operationIdOf(request, 'api_limits_list')
+        } satisfies FluxoraApiLimitStatus;
+      }
+
       case FluxoraIpcChannels.aiChatRespond:
         return browserPreviewAiChatResponse(args[0]);
 
@@ -2363,6 +2377,7 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.bridgeGetLanguage:
       case FluxoraIpcChannels.settingsGetTheme:
       case FluxoraIpcChannels.templatesList:
+      case FluxoraIpcChannels.apiLimitsList:
       case FluxoraIpcChannels.nexusGetAuthStatus:
       case FluxoraIpcChannels.nexusConnect:
       case FluxoraIpcChannels.nexusDisconnect: {
@@ -2370,6 +2385,7 @@ const createTauriInvoker = (): IpcInvoker => ({
           [FluxoraIpcChannels.bridgeGetLanguage]: ['settings.getLanguage', 'bridge_language_get'],
           [FluxoraIpcChannels.settingsGetTheme]: ['settings.getTheme', 'settings_theme_get'],
           [FluxoraIpcChannels.templatesList]: ['templates.list', 'templates_list'],
+          [FluxoraIpcChannels.apiLimitsList]: ['apiLimits.list', 'api_limits_list'],
           [FluxoraIpcChannels.nexusGetAuthStatus]: ['nexus.getAuthStatus', 'nexus_status'],
           [FluxoraIpcChannels.nexusConnect]: ['nexus.connect', 'nexus_connect'],
           [FluxoraIpcChannels.nexusDisconnect]: ['nexus.disconnect', 'nexus_disconnect']

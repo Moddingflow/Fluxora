@@ -273,6 +273,7 @@ import { createVirtualWindow } from './ui-performance';
 import type {
   FluxoraAppInfo,
   FluxoraAiHostStatus,
+  FluxoraApiLimitProvider,
   FluxoraContentLayoutPreview,
   FluxoraDownloadEntry,
   FluxoraExecutable,
@@ -907,6 +908,8 @@ export const App = () => {
     loadCachedNexusAuthStatus(window.localStorage)
   );
   const [nexusBusy, setNexusBusy] = useState(false);
+  const [apiLimitProviders, setApiLimitProviders] = useState<FluxoraApiLimitProvider[]>([]);
+  const [apiLimitsBusy, setApiLimitsBusy] = useState(false);
   const nxmAutoRegistrationAttemptedRef = useRef(false);
   const pendingInboundNxmEventRef = useRef<FluxoraNxmInboundLinksCaptured | null>(null);
   const [transferSourceDirectory, setTransferSourceDirectory] = useState('');
@@ -1430,6 +1433,9 @@ export const App = () => {
   const rememberNexusStatus = (status: FluxoraNexusModsAuthStatus) => {
     setNexusStatus(createVerifiedNexusAuthStatus(status));
     saveCachedNexusAuthStatus(window.localStorage, status);
+  };
+  const rememberApiLimitProviders = (providers: FluxoraApiLimitProvider[]) => {
+    setApiLimitProviders(providers);
   };
   const markNexusStatusChecking = () => {
     setNexusStatus((currentStatus) => createCheckingNexusAuthStatus(currentStatus));
@@ -4479,14 +4485,19 @@ export const App = () => {
     const handleOnline = () => {
       const operationId = createRendererOperationId('nexus_online_retry');
       markNexusStatusChecking();
-      void window.fluxora.nexus.getAuthStatus({ operationId }).then(
-        (nextNexusStatus) => {
+      setApiLimitsBusy(true);
+      void Promise.all([
+        window.fluxora.nexus.getAuthStatus({ operationId }),
+        window.fluxora.apiLimits.list({ operationId })
+      ]).then(
+        ([nextNexusStatus, nextApiLimits]) => {
           rememberNexusStatus(nextNexusStatus);
+          rememberApiLimitProviders(nextApiLimits.providers);
         },
         () => {
           markNexusStatusChecking();
         }
-      );
+      ).finally(() => setApiLimitsBusy(false));
     };
 
     window.addEventListener('online', handleOnline);
@@ -6266,11 +6277,13 @@ export const App = () => {
 
     const operationId = createRendererOperationId('settings_load');
     setMessage(null);
+    setApiLimitsBusy(true);
 
     try {
-      const [nextStatus, nextNexusStatus] = await Promise.all([
+      const [nextStatus, nextNexusStatus, nextApiLimits] = await Promise.all([
         window.fluxora.bridge.getStatus({ operationId }),
-        window.fluxora.nexus.getAuthStatus({ operationId })
+        window.fluxora.nexus.getAuthStatus({ operationId }),
+        window.fluxora.apiLimits.list({ operationId })
       ]);
       const nextThemeMode = normalizeThemeMode(nextStatus.theme);
       setBridgeStatus({
@@ -6280,9 +6293,12 @@ export const App = () => {
       });
       setThemeMode(nextThemeMode);
       rememberNexusStatus(nextNexusStatus);
+      rememberApiLimitProviders(nextApiLimits.providers);
     } catch (error) {
       markNexusStatusChecking();
       setMessage(errorMessage(error));
+    } finally {
+      setApiLimitsBusy(false);
     }
   };
 
@@ -6294,18 +6310,22 @@ export const App = () => {
     const shouldDisconnect = nexusIsVerifiedLinked(nexusStatus);
     const operationId = createRendererOperationId(shouldDisconnect ? 'nexus_disconnect' : 'nexus_connect');
     setNexusBusy(true);
+    setApiLimitsBusy(true);
     setMessage(null);
 
     try {
       const status = shouldDisconnect
         ? await window.fluxora.nexus.disconnect({ operationId })
         : await window.fluxora.nexus.connect({ operationId });
+      const nextApiLimits = await window.fluxora.apiLimits.list({ operationId });
       rememberNexusStatus(status);
+      rememberApiLimitProviders(nextApiLimits.providers);
       setMessage(status.message || (status.isLinked ? 'Nexus Mods connected.' : 'Nexus Mods disconnected.'));
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
       setNexusBusy(false);
+      setApiLimitsBusy(false);
     }
   };
 
@@ -10436,6 +10456,8 @@ export const App = () => {
 
   const renderSettingsWorkspace = () => (
     <SettingsWorkspace
+      apiLimitProviders={apiLimitProviders}
+      apiLimitsBusy={apiLimitsBusy}
       appInfo={appInfo}
       bridgeStatus={bridgeStatus}
       developerModeEnabled={developerModeEnabled}

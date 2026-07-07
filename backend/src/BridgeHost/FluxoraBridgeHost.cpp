@@ -1817,6 +1817,16 @@ namespace
             });
     }
 
+    std::wstring payloadApiLimits()
+    {
+        return payloadFromCoreJson(
+            L"core.apiLimitsFailed",
+            [](wchar_t* buffer, int length)
+            {
+                return fluxora_get_api_limit_status(buffer, length);
+            });
+    }
+
     std::wstring payloadConnectNexus()
     {
         return payloadFromCoreJson(
@@ -2493,6 +2503,10 @@ namespace
         if (request.method == L"nexus.getApiAuthHeader")
         {
             return payloadNexusApiAuthHeader();
+        }
+        if (request.method == L"apiLimits.list")
+        {
+            return payloadApiLimits();
         }
         if (request.method == L"nexus.connect")
         {

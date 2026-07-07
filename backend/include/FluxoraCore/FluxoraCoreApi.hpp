@@ -210,6 +210,16 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    // Returns a renderer-safe API quota snapshot:
+    //   { "generatedAtUtc", "providers": [
+    //       { "id", "label", "state", "message", "updatedAtUtc", "windows": [
+    //           { "id", "label", "period", "limit", "remaining", "resetAtUtc", "resetRaw" }
+    //       ] }
+    //     ] }
+    FLUXORA_CORE_API int fluxora_get_api_limit_status(
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     // Starts the official Nexus Mods OAuth2 Authorization Code + PKCE flow for
     // public desktop applications. The core opens the system browser, listens
     // for the registered localhost callback, exchanges the code for tokens, and

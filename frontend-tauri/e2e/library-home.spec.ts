@@ -475,6 +475,41 @@ test.beforeEach(async ({ page }) => {
       redirectUri: 'http://127.0.0.1/callback',
       userId: nexusLinked ? 'playwright' : ''
     });
+    const apiLimitStatus = () => ({
+      generatedAtUtc: '2026-07-07T10:00:00Z',
+      operationId: 'op_api_limits',
+      providers: [
+        {
+          id: 'playwright-api',
+          label: 'Playwright API',
+          state: nexusLinked ? 'available' : 'unlinked',
+          message: nexusLinked ? 'Updated from API response headers.' : 'Account not linked.',
+          updatedAtUtc: '2026-07-07T10:00:00Z',
+          windows: nexusLinked
+            ? [
+                {
+                  id: 'hourly',
+                  label: 'Hourly',
+                  period: '1 hour',
+                  limit: 500,
+                  remaining: 421,
+                  resetAtUtc: '2026-07-07T11:00:00Z',
+                  resetRaw: '1783422000'
+                },
+                {
+                  id: 'daily',
+                  label: 'Daily',
+                  period: '24 hours',
+                  limit: 20000,
+                  remaining: 19876,
+                  resetAtUtc: '2026-07-08T00:00:00Z',
+                  resetRaw: '1783468800'
+                }
+              ]
+            : []
+        }
+      ]
+    });
 
     (window as any).__fluxoraCalls = calls;
     (window as any).fluxora = {
@@ -486,6 +521,12 @@ test.beforeEach(async ({ page }) => {
           platform: 'win32',
           version: '0.0.0-test'
         })
+      },
+      apiLimits: {
+        list: async (operation: any) => {
+          calls.push({ method: 'apiLimits.list', payload: { operation } });
+          return apiLimitStatus();
+        }
       },
       archives: {
         install: async (request: any, operation: any) => {
@@ -1599,7 +1640,7 @@ test('renders Settings Nexus status instantly while native auth status is delaye
   await page.goto(`${baseUrl}/?window=settings`);
 
   await expect(page.locator('.titlebar__brand-name')).toHaveText('Settings');
-  await expect(page.getByText('Linked - Cached Playwright user')).toBeVisible();
+  await expect(page.getByText('Checking - last linked as Cached Playwright user')).toBeVisible();
   await expect(page.getByText('Status not loaded')).toHaveCount(0);
   await expect(page.getByText('Loading settings')).toHaveCount(0);
   await expect(page.locator('.mod-busy-strip')).toHaveCount(0);
@@ -1647,6 +1688,9 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
     )
     .toContain('nexus.connect');
   await expect(page.getByText('Linked - Playwright user')).toBeVisible();
+  await expect(page.getByText('Playwright API')).toBeVisible();
+  await expect(page.getByText('421 / 500')).toBeVisible();
+  await expect(page.getByText('19,876 / 20,000')).toBeVisible();
 
   await page.getByRole('button', { name: /Languages/ }).click();
   await expect(page.getByText('Choose the renderer language.')).toHaveCount(0);

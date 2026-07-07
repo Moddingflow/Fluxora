@@ -783,80 +783,15 @@ const createAiRuntimeIntermediateEvent = (
   };
 };
 
-const promptNeedsExternalResearch = (prompt: string): boolean => {
-  const normalized = prompt.trim().toLowerCase();
-  const asksForRequirements =
-    normalized.includes('dependency') ||
-    normalized.includes('dependencies') ||
-    normalized.includes('requirement') ||
-    normalized.includes('requirements') ||
-    normalized.includes('required mods') ||
-    normalized.includes('\u0437\u0430\u0432\u0438\u0441\u0438\u043c') ||
-    normalized.includes('\u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d');
-  const asksForNexusApi =
-    normalized.includes('nexus') &&
-    (normalized.includes('api') ||
-      normalized.includes('\u0430\u043f\u0438') ||
-      normalized.includes('\u0441\u0432\u0435\u0440') ||
-      normalized.includes('\u043f\u0440\u043e\u0432\u0435\u0440') ||
-      normalized.includes('\u043f\u043e\u0441\u043c\u043e\u0442\u0440\u0438'));
-  return (
-    normalized.includes('nexusmods.com') ||
-    normalized.includes('nxm://') ||
-    asksForRequirements ||
-    asksForNexusApi ||
-    (normalized.includes('nexus') &&
-      (normalized.includes('compat') ||
-        normalized.includes('research') ||
-        normalized.includes('check') ||
-        normalized.includes('dependency') ||
-        normalized.includes('dependencies') ||
-        normalized.includes('requirement') ||
-        normalized.includes('requirements') ||
-        normalized.includes('\u0441\u043e\u0432\u043c\u0435\u0441\u0442') ||
-        normalized.includes('\u0437\u0430\u0432\u0438\u0441\u0438\u043c') ||
-        normalized.includes('\u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d') ||
-        normalized.includes('\u043f\u0440\u043e\u0432\u0435\u0440')))
-  );
-};
-
-const promptNeedsBatchRequirementAudit = (prompt: string): boolean => {
-  const normalized = prompt.trim().toLowerCase();
-  const asksForRequirements =
-    normalized.includes('dependency') ||
-    normalized.includes('dependencies') ||
-    normalized.includes('requirement') ||
-    normalized.includes('requirements') ||
-    normalized.includes('required mods') ||
-    normalized.includes('\u0437\u0430\u0432\u0438\u0441\u0438\u043c') ||
-    normalized.includes('\u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d') ||
-    normalized.includes('\u043d\u0443\u0436\u043d\u044b\u0435 \u043c\u043e\u0434\u044b') ||
-    normalized.includes('\u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0449\u0438\u0435 \u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d\u0438\u044f') ||
-    normalized.includes('\u043d\u0435\u0434\u043e\u0441\u0442\u0430\u044e\u0449\u0438\u0435 \u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d\u0438\u044f');
-  const asksForFullScope =
-    normalized.includes('all mods') ||
-    normalized.includes('every mod') ||
-    normalized.includes('whole build') ||
-    normalized.includes('entire build') ||
-    normalized.includes('full audit') ||
-    normalized.includes('\u0432\u0441\u0435 \u043c\u043e\u0434') ||
-    normalized.includes('\u043a\u0430\u0436\u0434') ||
-    normalized.includes('\u0432\u0441\u044e \u0441\u0431\u043e\u0440') ||
-    normalized.includes('\u0432\u0441\u044f \u0441\u0431\u043e\u0440') ||
-    normalized.includes('\u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e');
-
-  return asksForRequirements && asksForFullScope;
-};
-
 export const createAiResearchRequestForPrompt = (
-  prompt: string,
+  _prompt: string,
   _routingPreset: FluxoraAiRoutingPreset
 ): FluxoraAiResearchRequest | undefined => {
-  if (!promptNeedsExternalResearch(prompt)) {
-    return undefined;
-  }
-
-  const request: FluxoraAiResearchRequest = {
+  // The renderer never decides research policy from prompt keywords: the host
+  // routes every prompt through the multilingual canonical intent route and
+  // recomputes scope/budgets itself. The renderer only signals that research
+  // and provider-side Gemini Google Search grounding are permitted.
+  return {
     enabled: true,
     mode: 'nexus-api-first',
     allowAuthenticatedPages: false,
@@ -865,18 +800,6 @@ export const createAiResearchRequestForPrompt = (
     allowPublicWebFetch: false,
     deepResearchApproved: false
   };
-
-  if (promptNeedsBatchRequirementAudit(prompt)) {
-    return {
-      ...request,
-      auditScope: 'full-build-requirements',
-      maxNexusTargets: 1000,
-      maxNexusInitialTargets: 1000,
-      maxNexusApiRequests: 2500
-    };
-  }
-
-  return request;
 };
 
 export const createAiSupportBundleSnapshot = (

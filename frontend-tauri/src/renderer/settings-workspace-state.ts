@@ -1,4 +1,6 @@
 import type {
+  FluxoraApiLimitProvider,
+  FluxoraApiRateLimitWindow,
   FluxoraAppInfo,
   FluxoraPlatformSupport,
   FluxoraModOrganizerImportAnalysis,
@@ -360,6 +362,72 @@ export const nexusCanToggle = (
   Boolean(status) &&
   nexusIsVerified(status) &&
   (Boolean(status?.isLinked) || Boolean(status?.isConfigured));
+
+export const apiLimitProviderSummary = (provider: FluxoraApiLimitProvider): string => {
+  if (provider.windows.length > 0) {
+    return provider.message || 'Updated from API response headers';
+  }
+
+  switch (provider.state) {
+    case 'unlinked':
+      return provider.message || 'Account not linked';
+    case 'not-provided':
+      return provider.message || 'Rate-limit headers were not returned';
+    case 'rate-limited':
+      return provider.message || 'Rate limit reached';
+    case 'unavailable':
+      return provider.message || 'API limits unavailable';
+    case 'available':
+    default:
+      return provider.message || 'API limits available';
+  }
+};
+
+export const formatApiLimitUsage = (limitWindow: FluxoraApiRateLimitWindow): string => {
+  const { limit, remaining } = limitWindow;
+  if (typeof remaining === 'number' && typeof limit === 'number') {
+    return `${remaining.toLocaleString()} / ${limit.toLocaleString()}`;
+  }
+  if (typeof remaining === 'number') {
+    return `${remaining.toLocaleString()} remaining`;
+  }
+  if (typeof limit === 'number') {
+    return `${limit.toLocaleString()} limit`;
+  }
+  return 'Not reported';
+};
+
+export const formatApiLimitReset = (limitWindow: FluxoraApiRateLimitWindow): string => {
+  const raw = (limitWindow.resetAtUtc || limitWindow.resetRaw).trim();
+  if (!raw) {
+    return 'Reset not reported';
+  }
+
+  if (!limitWindow.resetAtUtc && /^\d+$/.test(raw)) {
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds) && seconds < 1_000_000_000) {
+      if (seconds < 60) {
+        return `Reset in ${seconds}s`;
+      }
+
+      const minutes = Math.ceil(seconds / 60);
+      if (minutes < 60) {
+        return `Reset in ${minutes}m`;
+      }
+
+      const hours = Math.floor(minutes / 60);
+      const remainingMinutes = minutes % 60;
+      return remainingMinutes > 0 ? `Reset in ${hours}h ${remainingMinutes}m` : `Reset in ${hours}h`;
+    }
+  }
+
+  const date = new Date(raw);
+  if (!Number.isNaN(date.getTime())) {
+    return `Reset ${formatUtcPart(date.getUTCHours())}:${formatUtcPart(date.getUTCMinutes())} UTC`;
+  }
+
+  return `Reset ${raw}`;
+};
 
 export const transferSettingsSummary = (
   progress: FluxoraModOrganizerImportProgress | null,
