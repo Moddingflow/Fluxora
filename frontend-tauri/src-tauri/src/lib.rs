@@ -4248,6 +4248,7 @@ async fn fluxora_open_settings_window(app: AppHandle) -> Result<(), String> {
     .resizable(true)
     .decorations(false)
     .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
+    .center()
     .build()
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -4294,6 +4295,7 @@ async fn fluxora_open_build_settings_window(
         .resizable(true)
         .decorations(false)
         .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
+        .center()
         .build()
         .map_err(|error| error.to_string())?;
     Ok(())
@@ -4350,6 +4352,7 @@ async fn fluxora_open_mod_details_window(
         .resizable(true)
         .decorations(false)
         .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
+        .center()
         .build()
         .map_err(|error| error.to_string())?;
     Ok(())
@@ -4416,6 +4419,7 @@ async fn fluxora_open_text_editor_window(
         .resizable(true)
         .decorations(false)
         .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
+        .center()
         .build()
         .map_err(|error| error.to_string())?;
     Ok(())
@@ -4490,6 +4494,7 @@ async fn fluxora_open_file_preview_window(
         .resizable(true)
         .decorations(false)
         .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
+        .center()
         .build()
         .map_err(|error| error.to_string())?;
     Ok(())

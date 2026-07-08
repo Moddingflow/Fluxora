@@ -15,6 +15,9 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 const readText = (...segments: string[]): string =>
   fs.readFileSync(path.join(repoRoot, ...segments), 'utf8');
 
+const readJson = <T,>(...segments: string[]): T =>
+  JSON.parse(readText(...segments)) as T;
+
 const draft = {
   projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
   gameExecutablePath: 'E:\\Fluxora Builds\\Foundation Edition\\Stock Game\\SkyrimSE.exe',
@@ -60,8 +63,21 @@ describe('build settings window', () => {
     const sharedApi = readText('frontend-tauri', 'src', 'shared', 'fluxora-api.ts');
     const facade = readText('frontend-tauri', 'src', 'tauri', 'fluxora-api.ts');
     const rustShell = readText('frontend-tauri', 'src-tauri', 'src', 'lib.rs');
+    const tauriConfig = readJson<{
+      app: {
+        windows: Array<{
+          label?: string;
+          maximized?: boolean;
+        }>;
+      };
+    }>('frontend-tauri', 'src-tauri', 'tauri.conf.json');
     const capabilities = readText('frontend-tauri', 'src-tauri', 'capabilities', 'main.json');
+    const dynamicWindowBuilderCount = rustShell.match(/WebviewWindowBuilder::new/g)?.length ?? 0;
+    const centeredWindowBuilderCount = rustShell.match(/\.center\(\)/g)?.length ?? 0;
 
+    expect(tauriConfig.app.windows).toEqual(
+      expect.arrayContaining([expect.objectContaining({ label: 'main', maximized: true })])
+    );
     expect(app).toContain("const isBuildSettingsWindow = windowMode === 'build-settings';");
     expect(app).toContain("return `Settings · ${selectedProject?.name ?? (buildSettingsInitialName || 'Build')}`;");
     expect(app).toContain('window.fluxora.windowControls.openBuildSettings(');
@@ -74,6 +90,8 @@ describe('build settings window', () => {
     expect(facade).toContain("invoke('fluxora_build_settings_paths_saved'");
     expect(rustShell).toContain('BUILD_SETTINGS_WINDOW_LABEL_PREFIX');
     expect(rustShell).toContain('Settings \\u{00B7}');
+    expect(rustShell).toContain('WebviewUrl::App("/?window=settings".into()),');
+    expect(centeredWindowBuilderCount).toBe(dynamicWindowBuilderCount);
     expect(capabilities).toContain('"build-settings:*"');
   });
 });

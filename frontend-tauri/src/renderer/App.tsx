@@ -943,6 +943,7 @@ export const App = () => {
   const [transferResult, setTransferResult] = useState<FluxoraProject | null>(null);
   const [transferError, setTransferError] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const chromePlatform = appInfo?.platform ?? bridgeStatus?.capabilities?.platform ?? 'unknown';
   const [createStep, setCreateStep] = useState(0);
   const [draft, setDraft] = useState<ProjectDraft>(emptyProjectDraft());
   const [previewDirectory, setPreviewDirectory] = useState('');
@@ -4862,6 +4863,10 @@ export const App = () => {
   }, [themeMode]);
 
   useEffect(() => {
+    document.documentElement.dataset.platform = chromePlatform;
+  }, [chromePlatform]);
+
+  useEffect(() => {
     activeAiRunRef.current?.handle?.dispose();
     activeAiRunRef.current = null;
     dispatchAiChat({
@@ -8502,7 +8507,6 @@ export const App = () => {
       <div className="mod-row plugin-row mod-row--head" role="row">
         <span role="columnheader">Order</span>
         <span role="columnheader">Plugin</span>
-        <span role="columnheader">Type</span>
         <span role="columnheader">Source</span>
         <span role="columnheader">Статус</span>
       </div>
@@ -8530,7 +8534,6 @@ export const App = () => {
                 />
               </div>
             </div>
-            <span className="workspace-skeleton workspace-skeleton--badge" role="cell" />
             <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
             <span className="workspace-skeleton workspace-skeleton--status" role="cell" />
           </div>
@@ -8574,7 +8577,6 @@ export const App = () => {
         <div className="mod-row plugin-row mod-row--head" role="row">
           <span role="columnheader">Order</span>
           <span role="columnheader">Plugin</span>
-          <span role="columnheader">Type</span>
           <span role="columnheader">Source</span>
           <span role="columnheader">Статус</span>
         </div>
@@ -8752,17 +8754,6 @@ export const App = () => {
                     </span>
                   </div>
                 </div>
-                <span role="cell">
-                  {item.isSeparator ? null : (
-                    <span
-                      className="plugin-type-badge"
-                      data-master={item.isMaster}
-                      data-light={item.isLight}
-                    >
-                      {pluginTypeLabel(item)}
-                    </span>
-                  )}
-                </span>
                 <span role="cell">{item.isSeparator ? '' : item.sourceMod || 'game data'}</span>
                 <span className="plugin-status-cell" role="cell">
                   {hasMissingMasters ? (
@@ -9181,37 +9172,6 @@ export const App = () => {
     );
   };
 
-  const renderRightPanePluginDetails = () => (
-    <section className="right-pane-detail-card" aria-label="Selected plugin detail">
-      <div>
-        <span>Selected plugin</span>
-        <strong>{selectedPluginItem ? pluginItemTitle(selectedPluginItem) : 'None'}</strong>
-      </div>
-      <dl>
-        <div>
-          <dt>Status</dt>
-          <dd>{pluginStatusText(selectedPluginItem)}</dd>
-        </div>
-        <div>
-          <dt>Type</dt>
-          <dd>{pluginTypeLabel(selectedPluginItem)}</dd>
-        </div>
-        <div>
-          <dt>Source</dt>
-          <dd>{selectedPluginItem?.isPlugin ? selectedPluginItem.sourceMod || 'game data' : 'none'}</dd>
-        </div>
-        <div>
-          <dt>Missing masters</dt>
-          <dd>
-            {selectedPluginItem?.isPlugin && selectedPluginItem.missingMasters.length > 0
-              ? selectedPluginItem.missingMasters.join(', ')
-              : 'none'}
-          </dd>
-        </div>
-      </dl>
-    </section>
-  );
-
   const renderRightPanePathTree = (
     rows: Array<{ id: string; label: string; value: string; level?: number }>
   ) => (
@@ -9558,7 +9518,6 @@ export const App = () => {
       ) : (
         renderPluginRows()
       )}
-      {renderRightPanePluginDetails()}
     </div>
   );
 

@@ -1070,8 +1070,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/lib.rs": {
-    "mtime": 1783322406.7866204,
-    "ast_hash": "c943c100c258dd39257361400f0f8373",
+    "mtime": 1783502196.5299945,
+    "ast_hash": "9cd4b097492ecee0767395e868f48657",
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/main.rs": {
@@ -1080,13 +1080,13 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/tauri.conf.json": {
-    "mtime": 1782341049.755371,
-    "ast_hash": "891fde703f95f208be47e0fa92245903",
+    "mtime": 1783502196.5289931,
+    "ast_hash": "51f5dd1948f504c06271f3ab4101ac72",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
-    "mtime": 1783501045.5124495,
-    "ast_hash": "811abe2217a6c0ee9faf4bea6a5016f7",
+    "mtime": 1783504130.0822687,
+    "ast_hash": "ed73e06ca574e2ace0366689c00df354",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferMo2Page.tsx": {
@@ -1639,11 +1639,6 @@
     "ast_hash": "baea861a8be9aadd3e664b50543c4e9a",
     "semantic_hash": ""
   },
-  "frontend-tauri/tests/chrome-titlebar.test.tsx": {
-    "mtime": 1782770419.600484,
-    "ast_hash": "0dba27f61ede5395caac8e7058199082",
-    "semantic_hash": ""
-  },
   "frontend-tauri/e2e/library-home.spec.ts": {
     "mtime": 1783500148.9746,
     "ast_hash": "973ecdeb4a56a34acfdcb6ef1dba8911",
@@ -1670,8 +1665,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/right-pane-redesign.test.ts": {
-    "mtime": 1783080093.79001,
-    "ast_hash": "e52cc86f2d0061ba8351f4a16394430d",
+    "mtime": 1783504235.7308092,
+    "ast_hash": "ed6f5f86359e8e5f149d6c604ef30776",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/settings-redesign.test.ts": {
@@ -1830,8 +1825,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/build-settings-window.test.ts": {
-    "mtime": 1782730782.3697288,
-    "ast_hash": "c2a601ad1c0682f73d5c6f439dd8dc5f",
+    "mtime": 1783502214.7779832,
+    "ast_hash": "0552e54822c5609bbc54d82a41960b03",
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/Services/GrassCacheService.hpp": {
@@ -4537,6 +4532,11 @@
   "frontend-tauri/tests/deletion-confirmation-dialog.test.ts": {
     "mtime": 1783501061.1340508,
     "ast_hash": "eeebd97ac3ff97a1a73df999c6179c64",
+    "semantic_hash": ""
+  },
+  "frontend-tauri/tests/chrome-titlebar.test.ts": {
+    "mtime": 1783503051.7158675,
+    "ast_hash": "e779c85437cb3222b6e166d426385bb1",
     "semantic_hash": ""
   }
 }

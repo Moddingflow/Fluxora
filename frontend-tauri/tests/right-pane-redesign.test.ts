@@ -23,7 +23,9 @@ describe('right pane redesign', () => {
     expect(app).toContain('renderDataRightPane');
     expect(app).toContain('renderDownloadsRightPane');
     expect(app).toContain('renderBuildRightPane');
-    expect(app).toContain('className="right-pane-detail-card"');
+    expect(app).not.toContain('renderRightPanePluginDetails');
+    expect(app).not.toContain('aria-label="Selected plugin detail"');
+    expect(app).toContain('className="right-pane-section"');
     expect(app).toContain('className="right-pane-path-tree"');
     expect(app).toContain('aria-label="Selected mod data tree"');
     expect(app).not.toContain('aria-label="Plugin commands"');
@@ -50,7 +52,7 @@ describe('right pane redesign', () => {
     expect(app).not.toContain('@tauri-apps/api');
   });
 
-  it('keeps the plugin table free of noisy state and action columns', () => {
+  it('keeps the plugin table free of noisy type, state and action columns', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const pluginTableHeader =
       app.match(/aria-label="Plugin load order"[\s\S]*?<div\s+className="mod-table__body"/)?.[0] ??
@@ -58,9 +60,9 @@ describe('right pane redesign', () => {
 
     expect(pluginTableHeader).toContain('<span role="columnheader">Order</span>');
     expect(pluginTableHeader).toContain('<span role="columnheader">Plugin</span>');
-    expect(pluginTableHeader).toContain('<span role="columnheader">Type</span>');
     expect(pluginTableHeader).toContain('<span role="columnheader">Source</span>');
     expect(pluginTableHeader).toContain('<span role="columnheader">Статус</span>');
+    expect(pluginTableHeader).not.toContain('<span role="columnheader">Type</span>');
     expect(pluginTableHeader).not.toContain('<span role="columnheader">State</span>');
     expect(pluginTableHeader).not.toContain('<span role="columnheader">Actions</span>');
   });
@@ -72,9 +74,10 @@ describe('right pane redesign', () => {
     expect(styles).toContain('.right-pane-content--data');
     expect(styles).toContain('.right-pane-content--build');
     expect(styles).toContain('.plugin-hex-index');
-    expect(styles).toContain('.plugin-type-badge[data-master="true"]');
-    expect(styles).toContain('.build-pane--right .plugin-row > :nth-child(4)');
-    expect(styles).toContain('.right-pane-detail-card');
+    expect(styles).not.toContain('.plugin-type-badge');
+    expect(styles).toContain('.build-pane--right .plugin-row > :nth-child(3)');
+    expect(styles).not.toContain('.right-pane-detail-card');
+    expect(styles).toContain('.right-pane-section');
     expect(styles).toContain('.right-pane-path-row code');
     expect(styles).toContain('.right-pane-section--fluxpack .fluxpack-panel');
   });
