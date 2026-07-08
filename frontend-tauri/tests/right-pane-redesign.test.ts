@@ -67,6 +67,28 @@ describe('right pane redesign', () => {
     expect(pluginTableHeader).not.toContain('<span role="columnheader">Actions</span>');
   });
 
+  it('moves Skyrim plugin slot counts into the search-row info popover', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+
+    expect(app).toContain("import infoCircleIcon from '../../../Icons/info-circle.svg';");
+    expect(app).toContain('className="plugins-pane-toolbar"');
+    expect(app).toContain('showPluginMissingMastersStatus ? (');
+    expect(app).toContain('aria-label="Skyrim plugin slot information"');
+    expect(app).toContain('Кол-во плагинов (включенных)');
+    expect(app).toContain('Кол-во лёгких плагинов');
+    expect(app).toContain('{enabledPluginSlotCounts.light} / 4096');
+    expect(app).toContain('Кол-во тяжёлых плагинов');
+    expect(app).toContain('{enabledPluginSlotCounts.heavy} / 256');
+    expect(app).toMatch(/if \(id === 'plugins'\) \{\s+return null;/);
+    expect(app).not.toContain('return String(pluginCount);');
+    expect(app).not.toContain('enabled · ${filteredPluginItems.length} visible');
+
+    expect(styles).toContain('.plugins-pane-toolbar');
+    expect(styles).toContain('.plugins-info-trigger:hover .plugins-info-popover');
+    expect(styles).toContain('.plugins-info-popover__row');
+  });
+
   it('keeps the compact right pane styling aligned with the build-page UI-kit', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
 

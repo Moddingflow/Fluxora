@@ -1063,7 +1063,23 @@ namespace
         const fluxora::JsonValue& params = requiredParamsObject(request);
         const std::wstring configPath = requiredStringField(params, L"configPath");
         const std::wstring outputPath = requiredStringField(params, L"outputPath");
-        const bool includeGeneratedAssets = requiredBooleanField(params, L"includeGeneratedAssets");
+        const fluxora::JsonValue* includeGeneratedAssetsField =
+            findObjectField(params, L"includeGeneratedAssets");
+        if (includeGeneratedAssetsField != nullptr &&
+            !includeGeneratedAssetsField->isNull() &&
+            includeGeneratedAssetsField->type() != fluxora::JsonValue::Type::Boolean)
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"includeGeneratedAssets must be a boolean.",
+                ErrorCategory::Validation,
+                false
+            };
+        }
+        const bool includeGeneratedAssets =
+            includeGeneratedAssetsField != nullptr &&
+            includeGeneratedAssetsField->type() == fluxora::JsonValue::Type::Boolean &&
+            includeGeneratedAssetsField->asBoolean();
         return payloadFromCoreJson(
             L"core.fluxPackExportFailed",
             [&configPath, &outputPath, includeGeneratedAssets](wchar_t* buffer, int length)

@@ -216,6 +216,144 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(FluxPackServiceTests, ExportProjectEmbedsLocalModsWithoutDirectLinksAndInstallRestoresThem)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "FluxPack export uses Windows instance metadata in this build.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path project = installRoot / L"FluxPack Embedded Build";
+        const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
+        const std::filesystem::path config = temp.path() / L"configs" / L"FluxPack Embedded Build.json";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path profiles = project / L"profiles";
+        const std::filesystem::path downloads = project / L"downloads";
+        const std::filesystem::path overwrite = project / L"overwrite";
+        const std::filesystem::path localPatch = mods / L"Local Nexus Patch";
+
+        writeTextFile(game / L"SkyrimSE.exe", "MZ");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(localPatch / L"Data" / L"LocalPatch.esp", "embedded-local");
+        writeTextFile(profiles / L"Default" / L"plugins.txt", "*LocalPatch.esp\n");
+        std::filesystem::create_directories(downloads);
+        std::filesystem::create_directories(overwrite);
+        writeTextFile(
+            config,
+            std::string("{")
+            + "\"schemaVersion\":\"1\","
+            + "\"name\":\"FluxPack Embedded Build\","
+            + "\"templateId\":\"skyrimse\","
+            + "\"gameName\":\"Skyrim Special Edition\","
+            + "\"gamePath\":\"" + toUtf8(game.generic_wstring()) + "\","
+            + "\"installRoot\":\"" + toUtf8(installRoot.generic_wstring()) + "\","
+            + "\"projectDirectory\":\"" + toUtf8(project.generic_wstring()) + "\","
+            + "\"dataDirectory\":\"Data\","
+            + "\"nexusDomain\":\"skyrimspecialedition\","
+            + "\"defaultProfile\":\"Default\""
+            + "}");
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadService downloadService(logger, settings, pathSettings);
+        downloadService.initialize();
+        const BuildPathSettings savedPaths = pathSettings.saveForConfig(
+            config,
+            BuildPathSettings{
+                game,
+                mods,
+                profiles,
+                downloads,
+                overwrite
+            });
+        EXPECT_EQ(normalized(savedPaths.modsDirectory), normalized(mods));
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{
+                    localPatch,
+                    L"Local Nexus Patch",
+                    L"1.0",
+                    true,
+                    ModSourceRecord{
+                        L"nexus",
+                        L"skyrimspecialedition",
+                        L"999",
+                        L"",
+                        L"",
+                        {},
+                        L"1.0"
+                    }
+                }
+            });
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {ProfileOrderImportItemRecord{L"mod", L"Local Nexus Patch", {}}});
+
+        FluxPackService service(logger, projects, downloadService, pathSettings);
+        service.initialize();
+
+        const std::filesystem::path output = temp.path() / L"Embedded.fluxpack";
+        const FluxPackSummary exported = service.exportProject(FluxPackExportRequest{
+            config,
+            output,
+            false
+        });
+
+        EXPECT_EQ(exported.sourceArchiveCount, 0U);
+        EXPECT_EQ(exported.customPatchCount, 1U);
+        const std::string manifest = readTextFile(output);
+        EXPECT_NE(manifest.find("\"customPatches\""), std::string::npos);
+        EXPECT_NE(manifest.find("\"embedsContent\":true"), std::string::npos);
+        EXPECT_NE(manifest.find("\"contentBase64\""), std::string::npos);
+        EXPECT_NE(manifest.find("LocalPatch.esp"), std::string::npos);
+        EXPECT_EQ(manifest.find("\"requiresDownload\":true"), std::string::npos);
+
+        std::vector<FluxPackInstallProgress> progress;
+        const FluxPackInstallResult installed = service.installFluxPack(FluxPackInstallRequest{
+            output,
+            temp.path() / L"Installed",
+            [&progress](const FluxPackInstallProgress& update)
+            {
+                progress.push_back(update);
+            }
+        });
+
+        const std::filesystem::path restoredFile =
+            installed.projectDirectory / L"mods" / L"Local Nexus Patch" / L"Data" / L"LocalPatch.esp";
+        ASSERT_TRUE(std::filesystem::is_regular_file(restoredFile));
+        EXPECT_EQ(readTextFile(restoredFile), "embedded-local");
+        const std::vector<InstalledModRecord> installedMods =
+            InstanceMetadataStore::listInstalledMods(installed.projectDirectory, installed.projectDirectory / L"mods");
+        ASSERT_EQ(installedMods.size(), 1U);
+        EXPECT_EQ(installedMods.front().folderName, L"Local Nexus Patch");
+        EXPECT_TRUE(installedMods.front().isLocal);
+        EXPECT_EQ(installedMods.front().state, L"installed");
+        EXPECT_FALSE(progress.empty());
+
+        service.shutdown();
+        downloadService.shutdown();
+        projects.shutdown();
+        templates.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+#endif
+    }
+
     TEST(FluxPackServiceTests, InstallFluxPackCreatesProjectAndAppliesEmbeddedConfigs)
     {
 #ifndef _WIN32

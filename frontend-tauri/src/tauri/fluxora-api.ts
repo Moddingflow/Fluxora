@@ -116,6 +116,20 @@ const invokeTyped = async <T>(
   return (await ipc.invoke(channel, ...args)) as T;
 };
 
+const fluxPackExportRequestParams = (rawRequest: unknown): Record<string, unknown> => {
+  const request =
+    rawRequest && typeof rawRequest === 'object'
+      ? (rawRequest as Partial<Record<keyof FluxoraFluxPackExportRequest, unknown>>)
+      : {};
+  const stringParam = (value: unknown): string => (typeof value === 'string' ? value : '');
+
+  return {
+    configPath: stringParam(request.configPath),
+    outputPath: stringParam(request.outputPath),
+    includeGeneratedAssets: request.includeGeneratedAssets === true
+  };
+};
+
 const listenTyped = <T>(
   ipc: IpcInvoker,
   channel: FluxoraIpcChannel,
@@ -1049,7 +1063,7 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
       invokeTyped<FluxoraFluxPackSummary>(
         ipc,
         FluxoraIpcChannels.fluxPackExport,
-        request,
+        fluxPackExportRequestParams(request),
         operation
       ),
     inspect: (fluxPackPath: string, request?: OperationRequest) =>
@@ -2512,7 +2526,7 @@ const createTauriInvoker = (): IpcInvoker => ({
         const request = requestWithOperationId(args[1], 'fluxpack_export');
         const data = await bridgeRequest<Record<string, unknown>>(
           'fluxPack.export',
-          args[0] as Record<string, unknown>,
+          fluxPackExportRequestParams(args[0]),
           request
         );
         return withOperationId(data, request, 'fluxpack_export');

@@ -23,6 +23,7 @@ The following SVG assets are original Lucide icons downloaded from
 - `folder-open.svg`
 - `folder-tree.svg`
 - `git-compare-arrows.svg`
+- `hard-drive-download.svg`
 - `package-plus.svg`
 - `play.svg`
 - `toggle-left.svg`
@@ -54,6 +55,17 @@ missing-master status indicator:
 
 Bootstrap Icons are distributed under the MIT license and support commercial
 use. The copied license text is stored in `BOOTSTRAP-ICONS-LICENSE.txt`.
+
+# Tabler plugin info icon
+
+The following SVG asset is the original Tabler Icons SVG downloaded from
+`tabler/tabler-icons` tag `v3.44.0` and is used by the Skyrim plugin-count
+information popover:
+
+- `info-circle.svg`
+
+Tabler Icons are distributed under the MIT license and support commercial use.
+The copied license text is stored in `TABLER-ICONS-LICENSE.txt`.
 
 # Material Design conflict icons
 

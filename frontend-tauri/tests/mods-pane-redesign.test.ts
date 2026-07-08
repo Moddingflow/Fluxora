@@ -66,6 +66,36 @@ describe('mods pane redesign', () => {
     expect(app).not.toContain("'Disabling all plugins'");
   });
 
+  it('packages and installs the build from the mods search-row three-dot menu', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+
+    expect(app).toContain('className="mods-pane-toolbar"');
+    expect(app).toContain('className="pane-menu-trigger"');
+    expect(app).toContain('data-row-context-menu-trigger="true"');
+    expect(app).toContain('aria-haspopup="menu"');
+    expect(app).toContain('aria-expanded={Boolean(modsToolbarMenuPosition)}');
+    expect(app).toContain('<MoreHorizontal size={15} aria-hidden="true" />');
+    expect(app).toMatch(
+      /className="pane-menu-trigger"[\s\S]*?rowContextMenuPositionFromAnchor\(\s*event\.currentTarget\.getBoundingClientRect\(\)\s*\)/
+    );
+    expect(app).toContain('aria-label="Действия со сборкой"');
+    expect(app).toContain('<span>Упаковать</span>');
+    expect(app).toContain('<span>Установить</span>');
+    expect(app).toMatch(/const packageBuildDisabled =\s*\n\s*!selectedProject \|\|\s*\n\s*!buildHeaderCapabilities\.packageAvailable \|\|\s*\n\s*Boolean\(operationOverlay\?\.isRunning\)/);
+    expect(app).toMatch(/renderModsToolbarMenu[\s\S]*?void packageFluxPack\(\);[\s\S]*?void installFluxPack\(\);/);
+    expect(app).toContain("import menuHardDriveDownloadIcon from '../../../Icons/hard-drive-download.svg';");
+
+    expect(app).not.toContain('mod-list-row__menu-trigger');
+    expect(app).not.toContain('packageBuildMenuItem');
+
+    expect(styles).toContain('.mods-pane-toolbar {');
+    expect(styles).toContain('.mods-pane-toolbar > .pane-search {');
+    expect(styles).toContain('.pane-menu-trigger {');
+    expect(styles).toContain('.pane-menu-trigger[aria-expanded="true"]');
+    expect(styles).not.toContain('.mod-list-row__menu-trigger');
+  });
+
   it('keeps the table surface visually aligned with the build-page UI-kit', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
     const iconsReadme = readText('Icons', 'README.md');

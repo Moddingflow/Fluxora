@@ -3365,9 +3365,145 @@ input::placeholder {
   box-shadow: none;
 }
 
+.plugins-pane-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plugins-pane-toolbar > .pane-search {
+  width: min(267px, calc(100% - 40px));
+}
+
+.plugins-info-trigger {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: var(--surface-soft);
+  cursor: help;
+}
+
+.plugins-info-trigger:hover,
+.plugins-info-trigger:focus-visible {
+  border-color: var(--flx-accent-hover);
+  color: var(--text);
+  background: var(--flx-panel-hover);
+  outline: none;
+}
+
+.plugins-info-trigger .asset-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.plugins-info-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 75;
+  display: grid;
+  gap: 8px;
+  min-width: 248px;
+  max-width: min(280px, calc(100vw - 24px));
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  background: var(--surface-strong);
+  box-shadow: var(--shadow-popup);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition:
+    opacity var(--motion-fast),
+    transform var(--motion-fast);
+}
+
+.plugins-info-trigger:hover .plugins-info-popover,
+.plugins-info-trigger:focus-visible .plugins-info-popover,
+.plugins-info-trigger:focus-within .plugins-info-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.plugins-info-popover__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+
+.plugins-info-popover__row > span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.plugins-info-popover__row > strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .build-pane > .pane-search {
   width: min(267px, calc(100% - 24px));
   margin: 6px 12px;
+}
+
+.mods-pane-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  margin: 6px 12px;
+}
+
+.mods-pane-toolbar > .pane-search {
+  width: min(267px, calc(100% - 40px));
+}
+
+.pane-menu-trigger {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: var(--surface-soft);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.pane-menu-trigger:hover:not(:disabled),
+.pane-menu-trigger:focus-visible,
+.pane-menu-trigger[aria-expanded="true"] {
+  color: var(--text);
+  border-color: var(--flx-line-hover);
+  background: rgba(var(--flx-accent-rgb), 0.13);
+  outline: none;
+}
+
+.pane-menu-trigger:disabled {
+  color: var(--subtle);
+  cursor: not-allowed;
 }
 
 .build-pane .mod-busy-strip {
@@ -3404,15 +3540,6 @@ input::placeholder {
 .build-pane--mods .mod-list__head {
   padding-right: 16px;
   padding-left: 16px;
-}
-
-.mods-pane-toolbar {
-  justify-self: end;
-}
-
-.mods-pane-toolbar .tool-button {
-  min-height: 30px;
-  padding: 0 10px;
 }
 
 .build-pane--plugins .plugin-row {

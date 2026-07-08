@@ -42,10 +42,12 @@ import menuChevronUpIcon from '../../../Icons/chevron-up.svg';
 import menuCircleCheckIcon from '../../../Icons/circle-check.svg';
 import menuCircleXIcon from '../../../Icons/circle-x.svg';
 import menuFolderOpenIcon from '../../../Icons/folder-open.svg';
+import menuHardDriveDownloadIcon from '../../../Icons/hard-drive-download.svg';
 import menuPackagePlusIcon from '../../../Icons/package-plus.svg';
 import menuPlayIcon from '../../../Icons/play.svg';
 import modDetailsFilesIcon from '../../../Icons/folder-tree.svg';
 import modDetailsConflictsIcon from '../../../Icons/git-compare-arrows.svg';
+import infoCircleIcon from '../../../Icons/info-circle.svg';
 import menuToggleLeftIcon from '../../../Icons/toggle-left.svg';
 import menuToggleRightIcon from '../../../Icons/toggle-right.svg';
 import menuTrashIcon from '../../../Icons/trash-2.svg';
@@ -957,6 +959,8 @@ export const App = () => {
   const [modsBusyLabel, setModsBusyLabel] = useState<string | null>(null);
   const [modMenuOrderId, setModMenuOrderId] = useState<string | null>(null);
   const [modMenuPosition, setModMenuPosition] = useState<RowContextMenuPosition | null>(null);
+  const [modsToolbarMenuPosition, setModsToolbarMenuPosition] =
+    useState<RowContextMenuPosition | null>(null);
   const [modListScrollTop, setModListScrollTop] = useState(0);
   const [draggedModOrderId, setDraggedModOrderId] = useState<string | null>(null);
   const [modDropTarget, setModDropTarget] = useState<RowDropTargetState | null>(null);
@@ -1318,16 +1322,28 @@ export const App = () => {
     [executablesWorkspace.items, executablesWorkspace.selectedId]
   );
 
-  const enabledPluginCount = useMemo(
-    () =>
-      pluginsWorkspace.items.filter((item) => item.isPlugin && item.isEnabled).length,
-    [pluginsWorkspace.items]
-  );
+  const enabledPluginSlotCounts = useMemo(() => {
+    const counts = {
+      enabled: 0,
+      heavy: 0,
+      light: 0
+    };
 
-  const pluginCount = useMemo(
-    () => pluginsWorkspace.items.filter((item) => item.isPlugin).length,
-    [pluginsWorkspace.items]
-  );
+    pluginsWorkspace.items.forEach((item) => {
+      if (!item.isPlugin || !item.isEnabled) {
+        return;
+      }
+
+      counts.enabled += 1;
+      if (item.isLight) {
+        counts.light += 1;
+      } else {
+        counts.heavy += 1;
+      }
+    });
+
+    return counts;
+  }, [pluginsWorkspace.items]);
 
   const selectedProjectRuntimeSummary = useMemo<ProjectRuntimeSummary>(() => {
     const modEntries =
@@ -5031,7 +5047,7 @@ export const App = () => {
   }, [downloadMenuId]);
 
   useEffect(() => {
-    if (!modMenuOrderId && !pluginMenuOrderId && !downloadMenuId) {
+    if (!modMenuOrderId && !pluginMenuOrderId && !downloadMenuId && !modsToolbarMenuPosition) {
       return;
     }
 
@@ -5039,6 +5055,7 @@ export const App = () => {
       setModMenuOrderId(null);
       setPluginMenuOrderId(null);
       setDownloadMenuId(null);
+      setModsToolbarMenuPosition(null);
     };
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -5071,7 +5088,7 @@ export const App = () => {
       window.removeEventListener('resize', closeRowContextMenus);
       window.removeEventListener('scroll', closeRowContextMenus, true);
     };
-  }, [downloadMenuId, modMenuOrderId, pluginMenuOrderId]);
+  }, [downloadMenuId, modMenuOrderId, modsToolbarMenuPosition, pluginMenuOrderId]);
 
   useEffect(() => {
     if (
@@ -6231,7 +6248,8 @@ export const App = () => {
       return;
     }
 
-    const includeGeneratedAssets = window.confirm('Include generated assets in the FluxPack manifest?');
+    const includeGeneratedAssets =
+      window.confirm('Include generated assets in the FluxPack manifest?') === true;
     const operationId = createRendererOperationId('fluxpack_export');
     beginOperationOverlay({
       operationId,
@@ -7720,6 +7738,61 @@ export const App = () => {
             <span>{hasMultipleSelectedModDeletions ? 'Delete mods' : 'Delete mod'}</span>
           </button>
         )}
+      </div>,
+      document.body
+    );
+  };
+
+  const renderModsToolbarMenu = () => {
+    if (!modsToolbarMenuPosition) {
+      return null;
+    }
+
+    const packageBuildDisabled =
+      !selectedProject ||
+      !buildHeaderCapabilities.packageAvailable ||
+      Boolean(operationOverlay?.isRunning);
+    const installFluxPackDisabled = !bridgeStatus?.ready || Boolean(operationOverlay?.isRunning);
+
+    return createPortal(
+      <div
+        className="mod-row-menu mod-row-menu--context"
+        role="menu"
+        aria-label="Действия со сборкой"
+        data-row-context-menu-surface="true"
+        style={{
+          left: modsToolbarMenuPosition.left,
+          top: modsToolbarMenuPosition.top,
+          maxHeight: modsToolbarMenuPosition.maxHeight
+        }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          role="menuitem"
+          title={buildHeaderCapabilities.packageReason || 'Экспортировать сборку в FluxPack'}
+          disabled={packageBuildDisabled}
+          onClick={() => {
+            setModsToolbarMenuPosition(null);
+            void packageFluxPack();
+          }}
+        >
+          <MenuIcon source={menuPackagePlusIcon} />
+          <span>Упаковать</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          title="Установить сборку из файла FluxPack"
+          disabled={installFluxPackDisabled}
+          onClick={() => {
+            setModsToolbarMenuPosition(null);
+            void installFluxPack();
+          }}
+        >
+          <MenuIcon source={menuHardDriveDownloadIcon} />
+          <span>Установить</span>
+        </button>
       </div>,
       document.body
     );
@@ -9443,7 +9516,7 @@ export const App = () => {
 
   const rightPaneTabCount = (id: RightPaneId): string | null => {
     if (id === 'plugins') {
-      return String(pluginCount);
+      return null;
     }
 
     if (id === 'downloads') {
@@ -9457,9 +9530,9 @@ export const App = () => {
     return fluxPackSummary ? '1' : null;
   };
 
-  const rightPaneSummary = (): string => {
+  const rightPaneSummary = (): string | null => {
     if (activeRightPane === 'plugins') {
-      return `${enabledPluginCount} enabled · ${filteredPluginItems.length} visible`;
+      return null;
     }
 
     if (activeRightPane === 'downloads') {
@@ -9481,22 +9554,52 @@ export const App = () => {
       role="tabpanel"
       aria-label="Плагины"
     >
-      <label className="pane-search">
-        <Search size={15} aria-hidden="true" />
-        <input
-          value={pluginsWorkspace.searchText}
-          onChange={(event) => {
-            dispatchPluginsWorkspace({
-              type: 'search-changed',
-              searchText: event.target.value
-            });
-            setPluginListScrollTop(0);
-          }}
-          placeholder="Search plugins"
-          aria-label="Search plugins"
-          disabled={!pluginCapabilities.bridgeAvailable || !pluginCapabilities.projectSupported}
-        />
-      </label>
+      <div className="plugins-pane-toolbar">
+        <label className="pane-search">
+          <Search size={15} aria-hidden="true" />
+          <input
+            value={pluginsWorkspace.searchText}
+            onChange={(event) => {
+              dispatchPluginsWorkspace({
+                type: 'search-changed',
+                searchText: event.target.value
+              });
+              setPluginListScrollTop(0);
+            }}
+            placeholder="Search plugins"
+            aria-label="Search plugins"
+            disabled={!pluginCapabilities.bridgeAvailable || !pluginCapabilities.projectSupported}
+          />
+        </label>
+        {showPluginMissingMastersStatus ? (
+          <button
+            className="plugins-info-trigger"
+            type="button"
+            aria-label="Skyrim plugin slot information"
+            aria-describedby="skyrim-plugin-info-popover"
+          >
+            <AssetIcon source={infoCircleIcon} />
+            <span
+              className="plugins-info-popover"
+              id="skyrim-plugin-info-popover"
+              role="tooltip"
+            >
+              <span className="plugins-info-popover__row">
+                <span>Кол-во плагинов (включенных)</span>
+                <strong>{enabledPluginSlotCounts.enabled}</strong>
+              </span>
+              <span className="plugins-info-popover__row">
+                <span>Кол-во лёгких плагинов</span>
+                <strong>{enabledPluginSlotCounts.light} / 4096</strong>
+              </span>
+              <span className="plugins-info-popover__row">
+                <span>Кол-во тяжёлых плагинов</span>
+                <strong>{enabledPluginSlotCounts.heavy} / 256</strong>
+              </span>
+            </span>
+          </button>
+        ) : null}
+      </div>
       {pluginsBusyLabel ? (
         <div className="mod-busy-strip" role="status">
           <RefreshCw size={15} aria-hidden="true" />
@@ -10758,6 +10861,8 @@ export const App = () => {
       );
     }
 
+    const activeRightPaneSummary = rightPaneSummary();
+
     return (
       <section className="build-page" aria-label="Selected build">
         <BuildDetailHeader
@@ -10801,21 +10906,49 @@ export const App = () => {
                 </span>
               </div>
             </header>
-            <label className="pane-search">
-              <Search size={15} aria-hidden="true" />
-              <input
-                value={modsWorkspace.searchText}
-                onChange={(event) => {
-                  dispatchModsWorkspace({
-                    type: 'search-changed',
-                    searchText: event.target.value
-                  });
-                  setModListScrollTop(0);
+            <div className="mods-pane-toolbar">
+              <label className="pane-search">
+                <Search size={15} aria-hidden="true" />
+                <input
+                  value={modsWorkspace.searchText}
+                  onChange={(event) => {
+                    dispatchModsWorkspace({
+                      type: 'search-changed',
+                      searchText: event.target.value
+                    });
+                    setModListScrollTop(0);
+                  }}
+                  placeholder="Search mods"
+                  aria-label="Search mods"
+                />
+              </label>
+              <button
+                className="pane-menu-trigger"
+                type="button"
+                data-row-context-menu-trigger="true"
+                aria-haspopup="menu"
+                aria-expanded={Boolean(modsToolbarMenuPosition)}
+                aria-label="Действия со сборкой"
+                title="Действия со сборкой"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (modsToolbarMenuPosition) {
+                    setModsToolbarMenuPosition(null);
+                    return;
+                  }
+
+                  setModMenuOrderId(null);
+                  setModsToolbarMenuPosition(
+                    rowContextMenuPositionFromAnchor(
+                      event.currentTarget.getBoundingClientRect()
+                    )
+                  );
                 }}
-                placeholder="Search mods"
-                aria-label="Search mods"
-              />
-            </label>
+              >
+                <MoreHorizontal size={15} aria-hidden="true" />
+              </button>
+              {renderModsToolbarMenu()}
+            </div>
             {modsBusyLabel ? (
               <div className="mod-busy-strip" role="status">
                 <RefreshCw size={15} aria-hidden="true" />
@@ -10832,7 +10965,7 @@ export const App = () => {
             <header className="build-pane__header build-pane__header--tabs">
               <div>
                 <h3>{rightPaneTabs.find((tab) => tab.id === activeRightPane)?.label}</h3>
-                <span>{rightPaneSummary()}</span>
+                {activeRightPaneSummary ? <span>{activeRightPaneSummary}</span> : null}
               </div>
 
               <div className="right-pane-tabs" role="tablist" aria-label="Right pane tabs">

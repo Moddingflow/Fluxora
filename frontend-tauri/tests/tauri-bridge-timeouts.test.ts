@@ -225,6 +225,49 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('normalizes FluxPack export flags before they reach the native bridge', async () => {
+    const request: OperationRequest = { operationId: 'op_fluxpack_export' };
+    invokeMock.mockResolvedValue({
+      buildName: 'Foundation Edition',
+      customConfigCount: 0,
+      customPatchCount: 0,
+      formatVersion: 1,
+      generatedAssetCount: 0,
+      generatedAssetsIncluded: false,
+      installPlanAvailable: true,
+      installStepCount: 1,
+      manifestBytes: 128,
+      outputPath: 'E:\\Exports\\Foundation.fluxpack',
+      sourceArchiveCount: 0
+    });
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.fluxPack.export(
+        {
+          configPath: 'C:\\Fluxora\\Builds\\Foundation.json',
+          outputPath: 'E:\\Exports\\Foundation.fluxpack',
+          includeGeneratedAssets: null as unknown as boolean
+        },
+        request
+      )
+    ).resolves.toMatchObject({
+      buildName: 'Foundation Edition',
+      operationId: 'op_fluxpack_export'
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'fluxPack.export',
+      params: {
+        configPath: 'C:\\Fluxora\\Builds\\Foundation.json',
+        outputPath: 'E:\\Exports\\Foundation.fluxpack',
+        includeGeneratedAssets: false
+      },
+      request,
+      timeoutMs: undefined
+    });
+  });
+
   it('keeps NGIO grass cache generation on a long-running typed bridge request', async () => {
     const request: OperationRequest = { operationId: 'op_grass_cache' };
     invokeMock.mockResolvedValue({

@@ -81,7 +81,9 @@ namespace fluxora
             std::wstring sha256;
             std::uintmax_t size{0};
             std::wstring textContent;
+            std::wstring contentBase64;
             bool embedsText{false};
+            bool embedsContent{false};
         };
 
         struct FluxPackSourceReference
@@ -104,6 +106,25 @@ namespace fluxora
             bool embedsText{false};
         };
 
+        struct FluxPackEmbeddedFileReference
+        {
+            std::wstring relativePath;
+            std::wstring sha256;
+            std::uintmax_t size{0};
+            std::wstring contentBase64;
+            bool embedsContent{false};
+        };
+
+        struct FluxPackEmbeddedModReference
+        {
+            std::wstring folderName;
+            std::wstring displayName;
+            std::wstring version;
+            bool enabled{true};
+            ModSourceRecord source;
+            std::vector<FluxPackEmbeddedFileReference> files;
+        };
+
         struct FluxPackProfileOrderReference
         {
             std::wstring kind;
@@ -120,6 +141,8 @@ namespace fluxora
             std::filesystem::path projectDirectoryHint;
             std::wstring defaultProfile;
             std::vector<FluxPackSourceReference> sourceArchives;
+            std::vector<FluxPackEmbeddedModReference> generatedAssets;
+            std::vector<FluxPackEmbeddedModReference> customPatches;
             std::vector<FluxPackConfigReference> customConfigs;
             std::vector<FluxPackProfileOrderReference> profileOrder;
         };
@@ -243,6 +266,106 @@ namespace fluxora
             return std::string(
                 std::istreambuf_iterator<char>(file),
                 std::istreambuf_iterator<char>());
+        }
+
+        std::wstring base64Encode(std::string_view bytes)
+        {
+            static constexpr wchar_t table[] =
+                L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+            std::wstring output;
+            output.reserve(((bytes.size() + 2) / 3) * 4);
+
+            for (std::size_t index = 0; index < bytes.size(); index += 3)
+            {
+                const std::uint32_t first = static_cast<unsigned char>(bytes[index]);
+                const std::uint32_t second =
+                    index + 1 < bytes.size() ? static_cast<unsigned char>(bytes[index + 1]) : 0;
+                const std::uint32_t third =
+                    index + 2 < bytes.size() ? static_cast<unsigned char>(bytes[index + 2]) : 0;
+                const std::uint32_t packed = (first << 16) | (second << 8) | third;
+
+                output.push_back(table[(packed >> 18) & 0x3f]);
+                output.push_back(table[(packed >> 12) & 0x3f]);
+                output.push_back(index + 1 < bytes.size() ? table[(packed >> 6) & 0x3f] : L'=');
+                output.push_back(index + 2 < bytes.size() ? table[packed & 0x3f] : L'=');
+            }
+
+            return output;
+        }
+
+        int base64Value(wchar_t ch)
+        {
+            if (ch >= L'A' && ch <= L'Z')
+            {
+                return static_cast<int>(ch - L'A');
+            }
+            if (ch >= L'a' && ch <= L'z')
+            {
+                return 26 + static_cast<int>(ch - L'a');
+            }
+            if (ch >= L'0' && ch <= L'9')
+            {
+                return 52 + static_cast<int>(ch - L'0');
+            }
+            if (ch == L'+')
+            {
+                return 62;
+            }
+            if (ch == L'/')
+            {
+                return 63;
+            }
+            return -1;
+        }
+
+        std::string base64Decode(std::wstring_view value)
+        {
+            std::string output;
+            std::uint32_t buffer = 0;
+            int bits = 0;
+
+            for (wchar_t ch : value)
+            {
+                if (std::iswspace(ch))
+                {
+                    continue;
+                }
+                if (ch == L'=')
+                {
+                    break;
+                }
+
+                const int decoded = base64Value(ch);
+                if (decoded < 0)
+                {
+                    throw std::invalid_argument("Embedded FluxPack file payload is not valid base64.");
+                }
+
+                buffer = (buffer << 6) | static_cast<std::uint32_t>(decoded);
+                bits += 6;
+                if (bits >= 8)
+                {
+                    bits -= 8;
+                    output.push_back(static_cast<char>((buffer >> bits) & 0xff));
+                }
+            }
+
+            return output;
+        }
+
+        void writeBinaryFile(const std::filesystem::path& path, std::string_view content)
+        {
+            std::ofstream file(path, std::ios::out | std::ios::trunc | std::ios::binary);
+            if (!file)
+            {
+                throw std::runtime_error("Embedded FluxPack file could not be created.");
+            }
+            file.write(content.data(), static_cast<std::streamsize>(content.size()));
+            if (!file)
+            {
+                throw std::runtime_error("Embedded FluxPack file could not be written.");
+            }
         }
 
         std::wstring nowUtcText()
@@ -657,16 +780,33 @@ namespace fluxora
         bool sourceHasRemoteIdentity(const ModSourceRecord& source)
         {
             const std::wstring provider = toLower(source.provider);
-            return provider == L"nexus" ||
-                provider == L"github" ||
+            const std::wstring url = toLower(source.url);
+            const bool hasNexusFileIdentity =
+                !source.gameDomain.empty() &&
+                !source.remoteModId.empty() &&
+                !source.remoteFileId.empty();
+            const bool hasNxmUrl = url.rfind(L"nxm://", 0) == 0;
+            const bool isNexusLike =
+                provider == L"nexus" ||
+                hasNxmUrl ||
+                url.find(L"nexusmods.com") != std::wstring::npos;
+            if (isNexusLike)
+            {
+                return hasNxmUrl ||
+                    hasNexusFileIdentity ||
+                    url.find(L"/files/") != std::wstring::npos;
+            }
+
+            const bool hasProvider = provider == L"github" ||
                 provider == L"mega" ||
                 provider == L"moddingflow" ||
                 provider == L"modding-flow" ||
                 provider == L"modernflow" ||
-                provider == L"modern-flow" ||
-                !source.url.empty() ||
-                !source.remoteModId.empty() ||
-                !source.remoteFileId.empty();
+                provider == L"modern-flow";
+
+            return (hasProvider && !source.url.empty()) ||
+                (!source.url.empty() && !hasNxmUrl) ||
+                (!source.remoteModId.empty() && !source.remoteFileId.empty());
         }
 
         bool sourceMatches(const DownloadMetadata& metadata, const ModSourceRecord& source)
@@ -860,7 +1000,8 @@ namespace fluxora
         FileManifestEntry buildFileManifestEntry(
             const std::filesystem::path& path,
             const std::filesystem::path& projectDirectory,
-            bool embedText)
+            bool embedText,
+            bool embedContent)
         {
             std::error_code sizeError;
             const std::uintmax_t size = std::filesystem::file_size(path, sizeError);
@@ -870,6 +1011,8 @@ namespace fluxora
                 sha256File(path),
                 sizeError ? 0 : size,
                 {},
+                {},
+                false,
                 false
             };
 
@@ -887,6 +1030,12 @@ namespace fluxora
                 }
             }
 
+            if (embedContent)
+            {
+                entry.contentBase64 = base64Encode(readTextFile(path));
+                entry.embedsContent = true;
+            }
+
             return entry;
         }
 
@@ -894,7 +1043,8 @@ namespace fluxora
             const std::filesystem::path& root,
             const std::filesystem::path& projectDirectory,
             bool configOnly,
-            bool embedText)
+            bool embedText,
+            bool embedContent)
         {
             std::vector<FileManifestEntry> files;
             std::error_code error;
@@ -926,7 +1076,11 @@ namespace fluxora
                     continue;
                 }
 
-                files.push_back(buildFileManifestEntry(entry.path(), projectDirectory, embedText));
+                files.push_back(buildFileManifestEntry(
+                    entry.path(),
+                    projectDirectory,
+                    embedText,
+                    embedContent));
             }
 
             std::sort(files.begin(), files.end(), [](const FileManifestEntry& left, const FileManifestEntry& right)
@@ -973,6 +1127,11 @@ namespace fluxora
             {
                 writer.field(L"text", file.textContent);
             }
+            writer.field(L"embedsContent", file.embedsContent);
+            if (file.embedsContent)
+            {
+                writer.field(L"contentBase64", file.contentBase64);
+            }
             writer.endObject();
         }
 
@@ -990,6 +1149,7 @@ namespace fluxora
             JsonWriter& writer,
             const PackModReference& reference,
             bool includeFileManifest,
+            bool embedFileContent,
             bool requiresDownload,
             const std::filesystem::path& projectDirectory)
         {
@@ -1029,7 +1189,12 @@ namespace fluxora
             if (includeFileManifest)
             {
                 writer.key(L"files");
-                writeFileEntries(writer, scanFiles(mod.path, projectDirectory, false, false));
+                writeFileEntries(writer, scanFiles(
+                    mod.path,
+                    projectDirectory,
+                    false,
+                    false,
+                    embedFileContent));
             }
             writer.endObject();
         }
@@ -1038,13 +1203,20 @@ namespace fluxora
             JsonWriter& writer,
             const std::vector<PackModReference>& references,
             bool includeFileManifest,
+            bool embedFileContent,
             bool requiresDownload,
             const std::filesystem::path& projectDirectory)
         {
             writer.beginArray();
             for (const PackModReference& reference : references)
             {
-                writeModReference(writer, reference, includeFileManifest, requiresDownload, projectDirectory);
+                writeModReference(
+                    writer,
+                    reference,
+                    includeFileManifest,
+                    embedFileContent,
+                    requiresDownload,
+                    projectDirectory);
             }
             writer.endArray();
         }
@@ -1163,11 +1335,17 @@ namespace fluxora
             writer.endObject();
 
             writer.key(L"sourceArchives");
-            writeModReferences(writer, sourceArchives, false, true, project.project.projectDirectory);
+            writeModReferences(writer, sourceArchives, false, false, true, project.project.projectDirectory);
             writer.key(L"generatedAssets");
-            writeModReferences(writer, generatedAssets, includeGeneratedAssets, false, project.project.projectDirectory);
+            writeModReferences(
+                writer,
+                generatedAssets,
+                includeGeneratedAssets,
+                includeGeneratedAssets,
+                false,
+                project.project.projectDirectory);
             writer.key(L"customPatches");
-            writeModReferences(writer, customPatches, true, false, project.project.projectDirectory);
+            writeModReferences(writer, customPatches, true, true, false, project.project.projectDirectory);
             writer.key(L"customConfigs");
             writeFileEntries(writer, customConfigs);
             writer.key(L"installPlan");
@@ -1231,19 +1409,6 @@ namespace fluxora
             }
 
             return toLower(std::wstring(value.substr(0, prefix.size()))) == toLower(std::wstring(prefix));
-        }
-
-        std::wstring trimWhitespace(std::wstring value)
-        {
-            while (!value.empty() && std::iswspace(value.front()))
-            {
-                value.erase(value.begin());
-            }
-            while (!value.empty() && std::iswspace(value.back()))
-            {
-                value.pop_back();
-            }
-            return value;
         }
 
         bool containsIgnoreCase(std::wstring_view value, std::wstring_view needle)
@@ -1365,37 +1530,6 @@ namespace fluxora
             return {};
         }
 
-        std::wstring fluxPackDownloadFailureStatus(const std::vector<DownloadEntry>& downloaded)
-        {
-            if (downloaded.empty())
-            {
-                return L"Загрузка не стартовала";
-            }
-
-            std::wstring status = trimWhitespace(downloaded.front().status);
-            if (status.empty())
-            {
-                return L"Загрузка не стартовала";
-            }
-
-            constexpr std::wstring_view waitingPrefix = L"Ожидает загрузки";
-            if (startsWithIgnoreCase(status, waitingPrefix))
-            {
-                std::wstring details = trimWhitespace(status.substr(waitingPrefix.size()));
-                if (!details.empty() && (details.front() == L':' || details.front() == L'-'))
-                {
-                    details.erase(details.begin());
-                    details = trimWhitespace(std::move(details));
-                }
-
-                return details.empty()
-                    ? L"Загрузка не стартовала"
-                    : L"Ошибка загрузки: " + details;
-            }
-
-            return status;
-        }
-
         std::vector<FluxPackSourceReference> readSourceReferences(const JsonValue& root)
         {
             const JsonValue* value = root.find(L"sourceArchives");
@@ -1424,6 +1558,71 @@ namespace fluxora
                 if (const JsonValue* source = item.find(L"source"); source != nullptr)
                 {
                     reference.source = readModSourceRecord(*source);
+                }
+
+                references.push_back(std::move(reference));
+            }
+
+            return references;
+        }
+
+        std::vector<FluxPackEmbeddedFileReference> readEmbeddedFileReferences(const JsonValue& value)
+        {
+            if (!value.isArray())
+            {
+                return {};
+            }
+
+            std::vector<FluxPackEmbeddedFileReference> files;
+            for (const JsonValue& item : value.asArray())
+            {
+                if (!item.isObject())
+                {
+                    continue;
+                }
+
+                files.push_back(FluxPackEmbeddedFileReference{
+                    readStringOrDefault(item, L"relativePath"),
+                    readHashValueOrDefault(item, L"hash"),
+                    readUnsignedOrDefault(item, L"size"),
+                    readStringOrDefault(item, L"contentBase64"),
+                    readBoolOrDefault(item, L"embedsContent", false)
+                });
+            }
+
+            return files;
+        }
+
+        std::vector<FluxPackEmbeddedModReference> readEmbeddedModReferences(
+            const JsonValue& root,
+            std::wstring_view field)
+        {
+            const JsonValue* value = root.find(field);
+            if (value == nullptr || !value->isArray())
+            {
+                return {};
+            }
+
+            std::vector<FluxPackEmbeddedModReference> references;
+            for (const JsonValue& item : value->asArray())
+            {
+                if (!item.isObject())
+                {
+                    continue;
+                }
+
+                FluxPackEmbeddedModReference reference;
+                reference.folderName = readStringOrDefault(item, L"folderName");
+                reference.displayName = readStringOrDefault(item, L"displayName", reference.folderName);
+                reference.version = readStringOrDefault(item, L"version");
+                reference.enabled = readBoolOrDefault(item, L"enabled", true);
+                if (const JsonValue* source = item.find(L"source"); source != nullptr)
+                {
+                    reference.source = readModSourceRecord(*source);
+                }
+                if (const JsonValue* files = item.find(L"files"); files != nullptr)
+                {
+                    reference.files = readEmbeddedFileReferences(*files);
                 }
 
                 references.push_back(std::move(reference));
@@ -1527,6 +1726,8 @@ namespace fluxora
             }
 
             manifest.sourceArchives = readSourceReferences(root);
+            manifest.generatedAssets = readEmbeddedModReferences(root, L"generatedAssets");
+            manifest.customPatches = readEmbeddedModReferences(root, L"customPatches");
             manifest.customConfigs = readCustomConfigReferences(root);
             manifest.profileOrder = readProfileOrderReferences(root);
             return manifest;
@@ -2059,6 +2260,108 @@ namespace fluxora
             return applied;
         }
 
+        std::uintmax_t applyEmbeddedMods(
+            const std::filesystem::path& projectDirectory,
+            const std::vector<FluxPackEmbeddedModReference>& mods,
+            Logger& logger,
+            bool markAsPatch)
+        {
+            const PathSafetyService safety;
+            std::vector<InstalledModImportRecord> imports;
+            imports.reserve(mods.size());
+
+            for (const FluxPackEmbeddedModReference& mod : mods)
+            {
+                const std::optional<std::filesystem::path> folderName = safeArchiveFileName(mod.folderName);
+                if (!folderName.has_value())
+                {
+                    logger.writeOperation(
+                        LogLevel::Warning,
+                        "FluxPack",
+                        "Skipped embedded mod with unsafe folder name: " + toUtf8(mod.folderName));
+                    continue;
+                }
+
+                const std::filesystem::path modDirectory =
+                    projectDirectory / L"mods" / folderName.value();
+                bool restoredAnyFile = false;
+                for (const FluxPackEmbeddedFileReference& file : mod.files)
+                {
+                    if (!file.embedsContent || file.contentBase64.empty())
+                    {
+                        continue;
+                    }
+
+                    const std::optional<std::filesystem::path> relative = safeRelativePath(file.relativePath);
+                    if (!relative.has_value())
+                    {
+                        logger.writeOperation(
+                            LogLevel::Warning,
+                            "FluxPack",
+                            "Skipped unsafe embedded mod file path: " + toUtf8(file.relativePath));
+                        continue;
+                    }
+
+                    const std::filesystem::path target = projectDirectory / relative.value();
+                    if (!isSameOrInsidePath(target, modDirectory))
+                    {
+                        logger.writeOperation(
+                            LogLevel::Warning,
+                            "FluxPack",
+                            "Skipped embedded mod file outside its mod folder: " + toUtf8(file.relativePath));
+                        continue;
+                    }
+
+                    safety.validateWritePath(projectDirectory, target)
+                        .throwIfUnsafe("Embedded FluxPack mod file path is unsafe");
+                    std::filesystem::create_directories(target.parent_path());
+
+                    const std::string content = base64Decode(file.contentBase64);
+                    if (file.size > 0 && content.size() != file.size)
+                    {
+                        throw std::runtime_error("Embedded FluxPack mod file size does not match the manifest.");
+                    }
+
+                    writeBinaryFile(target, content);
+                    if (!file.sha256.empty())
+                    {
+                        const std::wstring actualHash = sha256File(target);
+                        if (!equalsIgnoreCase(file.sha256, actualHash))
+                        {
+                            throw std::runtime_error("Embedded FluxPack mod file hash does not match the manifest.");
+                        }
+                    }
+                    restoredAnyFile = true;
+                }
+
+                if (!restoredAnyFile)
+                {
+                    continue;
+                }
+
+                InstalledModImportRecord import;
+                import.modDirectory = modDirectory;
+                import.displayName = mod.displayName.empty() ? mod.folderName : mod.displayName;
+                import.version = mod.version;
+                import.isEnabled = mod.enabled;
+                import.source = mod.source;
+                import.isLocal = true;
+                import.isPatch = markAsPatch;
+                imports.push_back(std::move(import));
+            }
+
+            if (!imports.empty())
+            {
+                InstanceMetadataStore::registerInstalledMods(projectDirectory, imports);
+                logger.writeOperation(
+                    LogLevel::Info,
+                    "FluxPack",
+                    "FluxPack restored embedded local mods. count=" + std::to_string(imports.size()));
+            }
+
+            return imports.size();
+        }
+
         std::uintmax_t applyProfileOrder(
             const std::filesystem::path& projectDirectory,
             std::wstring_view profileName,
@@ -2230,10 +2533,10 @@ namespace fluxora
 
         std::vector<FileManifestEntry> customConfigs;
         std::vector<FileManifestEntry> profileConfigs =
-            scanFiles(paths.profilesDirectory, project.project.projectDirectory, true, true);
+            scanFiles(paths.profilesDirectory, project.project.projectDirectory, true, true, false);
         customConfigs.insert(customConfigs.end(), profileConfigs.begin(), profileConfigs.end());
         std::vector<FileManifestEntry> overwriteConfigs =
-            scanFiles(paths.overwriteDirectory, project.project.projectDirectory, true, true);
+            scanFiles(paths.overwriteDirectory, project.project.projectDirectory, true, true, false);
         customConfigs.insert(customConfigs.end(), overwriteConfigs.begin(), overwriteConfigs.end());
 
         const std::filesystem::path rootModOrganizerIni =
@@ -2243,7 +2546,8 @@ namespace fluxora
             customConfigs.push_back(buildFileManifestEntry(
                 rootModOrganizerIni,
                 project.project.projectDirectory,
-                true));
+                true,
+                false));
         }
 
         std::sort(customConfigs.begin(), customConfigs.end(), [](const FileManifestEntry& left, const FileManifestEntry& right)
@@ -2591,47 +2895,26 @@ namespace fluxora
                         continue;
                     }
 
-                    std::vector<DownloadEntry> downloaded = downloads_.captureNxmLinks(project.projectDirectory, {nxmLink});
-                    if (downloaded.empty() || !downloaded.front().canInstall)
-                    {
-                        ++provider.failed;
-                        ++result.failedSourceCount;
-                        provider.statusText = fluxPackDownloadFailureStatus(downloaded);
-                        logger_.writeOperation(
-                            LogLevel::Warning,
-                            "FluxPack",
-                            "FluxPack source download did not produce an installable archive. provider=\"" +
-                                toUtf8(provider.id) +
-                                "\", mod=\"" + toUtf8(installName) +
-                                "\", status=\"" + toUtf8(provider.statusText) + "\"");
-                        if (!downloaded.empty() && !downloaded.front().localPath.empty())
-                        {
-                            try
-                            {
-                                downloads_.deleteDownload(project.projectDirectory, downloaded.front().localPath);
-                            }
-                            catch (const std::exception& cleanupException)
-                            {
-                                logger_.writeOperation(
-                                    LogLevel::Warning,
-                                    "FluxPack",
-                                    "FluxPack failed source placeholder cleanup failed. path=\"" +
-                                        pathForLog(downloaded.front().localPath) +
-                                        "\", reason=\"" + cleanupException.what() + "\"");
-                            }
-                        }
-                        publishInstallProgress(
-                            request.progress,
-                            providers,
-                            L"sources",
-                            L"Ошибка загрузки",
-                            installName,
-                            provider.statusText,
-                            sourceInstallOverallPercent(providers));
-                        continue;
-                    }
-
-                    entry = downloaded.front();
+                    ++provider.failed;
+                    ++result.failedSourceCount;
+                    provider.statusText =
+                        L"Ошибка загрузки: автоматическая загрузка FluxPack источников требует локальный архив";
+                    logger_.writeOperation(
+                        LogLevel::Warning,
+                        "FluxPack",
+                        "FluxPack source was not queued for asynchronous Nexus download during install. provider=\"" +
+                            toUtf8(provider.id) +
+                            "\", mod=\"" + toUtf8(installName) +
+                            "\", nxmLink=\"" + toUtf8(nxmLink) + "\"");
+                    publishInstallProgress(
+                        request.progress,
+                        providers,
+                        L"sources",
+                        L"Ошибка загрузки",
+                        installName,
+                        provider.statusText,
+                        sourceInstallOverallPercent(providers));
+                    continue;
                 }
                 provider.statusText = L"Устанавливаем";
                 publishInstallProgress(
@@ -2703,6 +2986,18 @@ namespace fluxora
                     sourceInstallOverallPercent(providers));
             }
         }
+
+        publishInstallProgress(
+            request.progress,
+            providers,
+            L"embedded",
+            L"Восстанавливаем локальные файлы",
+            project.name,
+            L"Пишем embedded mods из FluxPack",
+            76);
+
+        applyEmbeddedMods(project.projectDirectory, manifest.customPatches, logger_, true);
+        applyEmbeddedMods(project.projectDirectory, manifest.generatedAssets, logger_, false);
 
         publishInstallProgress(
             request.progress,

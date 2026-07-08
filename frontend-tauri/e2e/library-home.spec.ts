@@ -599,7 +599,10 @@ test.beforeEach(async ({ page }) => {
         pickExecutable: async () => ({ canceled: true }),
         pickFluxPack: async () => ({ canceled: true }),
         pickFolder: async () => ({ canceled: true }),
-        saveFluxPack: async () => ({ canceled: false, path: 'D:\\Fluxora\\Exports\\skyrim.fluxpack' })
+        saveFluxPack: async (defaultFileName: any, title: any) => {
+          calls.push({ method: 'dialogs.saveFluxPack', payload: { defaultFileName, title } });
+          return { canceled: false, path: 'D:\\Fluxora\\Exports\\skyrim.fluxpack' };
+        }
       },
       fileDrop: {
         onDragDrop: async () => () => undefined
@@ -1328,6 +1331,108 @@ test('runs build header package, check and launch actions through the facade', a
       )
     )
     .toContain('fluxPack.export');
+});
+
+test('packages the build from the mods search-row three-dot menu', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
+  const trigger = modsPane.getByRole('button', { name: 'Действия со сборкой' });
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+
+  const menu = page.getByRole('menu', { name: 'Действия со сборкой' });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'Установить' })).toBeEnabled();
+  const packageItem = menu.getByRole('menuitem', { name: 'Упаковать' });
+  await expect(packageItem).toBeEnabled();
+  await packageItem.click();
+
+  await expect(page.getByRole('status', { name: 'Packaging FluxPack' })).toBeVisible();
+  await expect(
+    page.getByRole('progressbar', { name: 'Packaging FluxPack progress' })
+  ).toBeVisible();
+  await expect.poll(() => callMethods(page)).toContain('dialogs.saveFluxPack');
+  await expect.poll(() => callMethods(page)).toContain('fluxPack.export');
+
+  const exportPayload = (await latestCallPayload(page, 'fluxPack.export')) as {
+    request?: { configPath?: string; outputPath?: string };
+  } | null;
+  expect(exportPayload?.request?.outputPath).toBe('D:\\Fluxora\\Exports\\skyrim.fluxpack');
+  expect(exportPayload?.request?.configPath).toBe('D:\\Fluxora\\Configs\\skyrim-main.json');
+
+  await menu.waitFor({ state: 'detached' });
+});
+
+test('installs a packaged FluxPack from the mods search-row three-dot menu', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  await page.evaluate(() => {
+    const facade = (window as any).fluxora;
+    const calls = (window as any).__fluxoraCalls as Array<{ method: string; payload?: unknown }>;
+
+    facade.dialogs.pickFluxPack = async (initialDirectory: any) => {
+      calls.push({ method: 'dialogs.pickFluxPack', payload: { initialDirectory } });
+      return { canceled: false, path: 'D:\\Fluxora\\Exports\\skyrim.fluxpack' };
+    };
+    facade.dialogs.pickFolder = async (title: any, initialDirectory: any) => {
+      calls.push({ method: 'dialogs.pickFolder', payload: { initialDirectory, title } });
+      return { canceled: false, path: 'D:\\Fluxora\\Builds' };
+    };
+    facade.fluxPack.install = async (request: any, operation: any) => {
+      calls.push({ method: 'fluxPack.install', payload: { operation, request } });
+      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 120)));
+      return {
+        appliedConfigCount: 1,
+        appliedProfileOrderItemCount: 12,
+        buildName: 'Skyrim graphics overhaul',
+        configPath: 'D:\\Fluxora\\Configs\\skyrim-main.json',
+        failedSourceCount: 0,
+        hasWarnings: false,
+        installedSourceCount: 4,
+        operationId: operation?.operationId ?? 'op_fluxpack_install',
+        pendingSourceCount: 0,
+        projectDirectory: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul',
+        summary: {
+          buildName: 'Skyrim graphics overhaul',
+          customConfigCount: 1,
+          customPatchCount: 0,
+          formatVersion: 1,
+          generatedAssetCount: 2,
+          generatedAssetsIncluded: true,
+          installPlanAvailable: true,
+          installStepCount: 3,
+          manifestBytes: 2048,
+          outputPath: 'D:\\Fluxora\\Exports\\skyrim.fluxpack',
+          sourceArchiveCount: 4
+        },
+        totalSourceCount: 4
+      };
+    };
+  });
+
+  const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
+  await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
+
+  const menu = page.getByRole('menu', { name: 'Действия со сборкой' });
+  await expect(menu).toBeVisible();
+  const installItem = menu.getByRole('menuitem', { name: 'Установить' });
+  await expect(installItem).toBeEnabled();
+  await installItem.click();
+
+  await expect(page.getByRole('status', { name: 'Installing FluxPack' })).toBeVisible();
+  await expect.poll(() => callMethods(page)).toContain('dialogs.pickFluxPack');
+  await expect.poll(() => callMethods(page)).toContain('dialogs.pickFolder');
+  await expect.poll(() => callMethods(page)).toContain('fluxPack.install');
+
+  const installPayload = (await latestCallPayload(page, 'fluxPack.install')) as {
+    request?: { fluxPackPath?: string; installRootDirectory?: string };
+  } | null;
+  expect(installPayload?.request?.fluxPackPath).toBe('D:\\Fluxora\\Exports\\skyrim.fluxpack');
+  expect(installPayload?.request?.installRootDirectory).toBe('D:\\Fluxora\\Builds');
+
+  await expect.poll(() => callMethods(page)).toContain('projects.openConfig');
+  await menu.waitFor({ state: 'detached' });
 });
 
 test('uses the redesigned mods pane for real mod list operations', async ({ page }) => {

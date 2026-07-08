@@ -126,8 +126,8 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
-    // Writes a manifest-only FluxPack recipe. Source archives are referenced by
-    // provider/link/hash metadata; original archives are not embedded.
+    // Writes a FluxPack recipe. Direct remote/source archives are referenced by
+    // provider/link/hash metadata; local mods without direct links are embedded.
     FLUXORA_CORE_API int fluxora_export_fluxpack(
         const wchar_t* configPath,
         const wchar_t* outputPath,
