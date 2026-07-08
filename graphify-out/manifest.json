@@ -1250,8 +1250,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/transfer-mo2-page.test.ts": {
-    "mtime": 1783322663.8081617,
-    "ast_hash": "8c110a71553ae56c78714fcf9776bdf0",
+    "mtime": 1783501728.0642774,
+    "ast_hash": "23d65b7b79318e1334d095a1469442bf",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/ui-performance.test.ts": {
@@ -1625,8 +1625,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/design-primitives.test.ts": {
-    "mtime": 1782888317.951107,
-    "ast_hash": "6aa4d6b63d36c3db5fe6ef463e8d47d3",
+    "mtime": 1783501728.0642774,
+    "ast_hash": "8b4ac30593d94ec1e6684f7c4620b71e",
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/chrome-titlebar.spec.ts": {
@@ -1680,8 +1680,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/operations/OperationOverlay.tsx": {
-    "mtime": 1782886719.8901896,
-    "ast_hash": "93cfe580c69b398a1f48f19016c896e1",
+    "mtime": 1783501694.3511965,
+    "ast_hash": "df0e279bc7d870ce39e418bb6a5b9a7c",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/install/InstallDialog.tsx": {
@@ -1810,8 +1810,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/operation-overlays.test.ts": {
-    "mtime": 1783322724.1152854,
-    "ast_hash": "7868a9ca671738d6cb313d9fc0daa5c5",
+    "mtime": 1783501728.0632737,
+    "ast_hash": "3f6fb43d988cd417ec3bd2ba1e2f2e57",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/overwrite-clear-splash.test.ts": {

@@ -304,6 +304,22 @@ describe('TransferMo2Page', () => {
     expect(html).not.toContain('Оригинальная папка MO2 не изменяется');
   });
 
+  it('centers the transfer progress bar with the percent next to it', () => {
+    const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+    const meterRule =
+      styles.match(/\.transfer-operation-meter\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+    const percentRule =
+      styles.match(/\.transfer-operation-meter strong\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+
+    expect(meterRule).toContain(
+      'grid-template-columns: minmax(0, 1fr) minmax(260px, 420px) minmax(0, 1fr);'
+    );
+    expect(meterRule).toContain('column-gap: 8px;');
+    expect(styles).toContain('.transfer-operation-meter .flx-progress');
+    expect(percentRule).toContain('font-size: 32.5px;');
+    expect(percentRule).toContain('font-weight: 800;');
+  });
+
   it('enables cancel cleanup while a cancellable transfer is running', () => {
     const html = renderTransferPage('review', {
       isRunning: true,

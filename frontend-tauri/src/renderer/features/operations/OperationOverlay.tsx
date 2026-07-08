@@ -142,8 +142,8 @@ export const OperationOverlay = ({
         <div className="operation-progress">
           <ProgressBar
             aria-label={`${overlay.title} progress`}
+            className={`operation-progress__bar${isIndeterminate ? '' : ' operation-progress__bar--percent'}`}
             indeterminate={isIndeterminate}
-            label="Progress"
             value={percent}
             valueLabel={progressLabel}
           />

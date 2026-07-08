@@ -54,6 +54,7 @@ describe('operation overlays', () => {
     expect(markup).toContain('role="status"');
     expect(markup).toContain('flx-facet-spinner');
     expect(markup).toContain('flx-progress');
+    expect(markup).toContain('operation-progress__bar operation-progress__bar--percent');
     expect(markup).toContain('aria-valuenow="44"');
     expect(markup).toContain('Отменить');
   });
@@ -183,8 +184,16 @@ describe('operation overlays', () => {
     );
   });
 
-  it('keeps the mod deletion splash progress bar at the standard loading width', () => {
+  it('centers deletion splash progress bars with a large nearby percent counter', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+    const primitiveStyles = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'design-system',
+      'primitives',
+      'primitives.css'
+    );
     const loadingSplashRule =
       styles.match(/\.operation-overlay\.flx-loading-splash\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
 
@@ -192,6 +201,29 @@ describe('operation overlays', () => {
     expect(loadingSplashRule).toContain('align-items: center;');
     expect(loadingSplashRule).toContain('justify-content: center;');
     expect(styles).toContain('.operation-overlay--download-delete .flx-loading-splash__panel');
+    expect(styles).toContain('max-width: 580px;');
+    expect(primitiveStyles).toContain(
+      'grid-template-columns: minmax(0, 1fr) minmax(260px, 360px) minmax(0, 1fr);'
+    );
+    expect(primitiveStyles).toContain('.flx-loading-splash__progress .flx-progress');
+    expect(primitiveStyles).toContain('font-size: 32.5px;');
+    expect(primitiveStyles).toContain('font-weight: 800;');
+  });
+
+  it('centers regular operation progress bars with the percent next to the bar', () => {
+    const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+    const progressRule = styles.match(/\.operation-progress__bar\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+    const percentRule =
+      styles.match(/\.operation-progress__bar--percent \.flx-progress__meta > strong\s*\{[\s\S]*?\n\}/)?.[0] ??
+      '';
+
+    expect(progressRule).toContain(
+      'grid-template-columns: minmax(0, 1fr) minmax(280px, 520px) minmax(0, 1fr);'
+    );
+    expect(progressRule).toContain('column-gap: 8px;');
+    expect(styles).toContain('.operation-progress__bar .flx-progress__track');
+    expect(percentRule).toContain('font-size: 32.5px;');
+    expect(percentRule).toContain('font-weight: 800;');
   });
 
   it('renders user-safe error states as alerts', () => {

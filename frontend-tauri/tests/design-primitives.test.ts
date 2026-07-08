@@ -189,6 +189,20 @@ describe('redesign primitives', () => {
     expect(splash).toContain('47%');
     expect(splash).toContain('Отмена');
     expect(splash).toContain('flx-loading-splash__progress');
+
+    const primitiveCss = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'design-system',
+      'primitives',
+      'primitives.css'
+    );
+    expect(primitiveCss).toContain(
+      'grid-template-columns: minmax(0, 1fr) minmax(260px, 360px) minmax(0, 1fr);'
+    );
+    expect(primitiveCss).toContain('font-size: 32.5px;');
+    expect(primitiveCss).toContain('font-weight: 800;');
   });
 
   it('renders the custom select as a renderer-only combobox shell', () => {

@@ -3852,7 +3852,7 @@ input::placeholder {
 
 .operation-overlay--mod-delete .flx-loading-splash__panel,
 .operation-overlay--download-delete .flx-loading-splash__panel {
-  max-width: 430px;
+  max-width: 580px;
 }
 
 .operation-overlay__panel {
@@ -3967,31 +3967,55 @@ input::placeholder {
 
 .operation-progress {
   display: grid;
-  gap: 14px;
+  justify-items: center;
+  gap: 12px;
   min-width: 0;
   padding: 0;
 }
 
-.operation-progress__header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 24px;
-  min-width: 0;
+.operation-progress__bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 520px) minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  width: 100%;
 }
 
-.operation-progress__header span {
+.operation-progress__bar .flx-progress__meta {
+  display: contents;
+}
+
+.operation-progress__bar .flx-progress__meta > span {
+  display: none;
+}
+
+.operation-progress__bar .flx-progress__track {
+  grid-column: 2;
+  grid-row: 1;
+  width: 100%;
+}
+
+.operation-progress__bar .flx-progress__meta > strong {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+  justify-self: start;
+  min-width: 0;
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
-  letter-spacing: 0;
-  text-transform: uppercase;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.operation-progress__header strong {
+.operation-progress__bar--percent .flx-progress__meta > strong {
   color: var(--accent);
-  font-size: 56px;
-  line-height: 0.92;
+  font-family: var(--font-mono);
+  font-size: 32.5px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .operation-splash__step {
@@ -4053,8 +4077,12 @@ input::placeholder {
     font-size: 28px;
   }
 
-  .operation-progress__header strong {
-    font-size: 44px;
+  .operation-progress__bar {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 1fr) minmax(0, 1fr);
+  }
+
+  .operation-progress__bar--percent .flx-progress__meta > strong {
+    font-size: 32.5px;
   }
 }
 
@@ -8916,15 +8944,29 @@ body.row-reorder-active * {
 
 .transfer-operation-meter {
   display: grid;
-  gap: 10px;
-  width: 100%;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 420px) minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  width: min(620px, 100%);
 }
 
 .transfer-operation-meter strong {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: start;
+  min-width: 0;
   color: var(--accent);
-  font-size: 42px;
-  line-height: 0.95;
-  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 32.5px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: left;
+}
+
+.transfer-operation-meter .flx-progress {
+  grid-column: 2;
+  grid-row: 1;
+  width: 100%;
 }
 
 @keyframes transferProgressGloss {
