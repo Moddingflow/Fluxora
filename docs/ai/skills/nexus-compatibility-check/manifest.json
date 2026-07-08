@@ -4,7 +4,7 @@
   "displayName": "Nexus compatibility check",
   "version": "0.1.0",
   "origin": "built-in",
-  "description": "Checks Nexus and build context for compatibility, dependencies, and stale claims.",
+  "description": "Checks Nexus and build context for compatibility and stale claims.",
   "allowedTools": [
     "projects.openConfig",
     "buildPaths.get",
@@ -18,7 +18,7 @@
   "requiredProviderCapabilities": ["streaming", "web-research"],
   "examplePrompts": [
     "Check compatibility for these Nexus mods",
-    "Verify dependencies for this mod page"
+    "Verify compatibility claims for this mod page"
   ],
   "validationChecklist": [
     "Local build state and Nexus status are cited separately.",

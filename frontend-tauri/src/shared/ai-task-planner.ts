@@ -16,7 +16,12 @@ export interface FluxoraAiTaskPlanningBundle {
   taskPlan: FluxoraAiTaskPlan;
 }
 
-type TaskKind = 'compatibility-check' | 'build-preparation' | 'destructive-change' | 'general';
+type TaskKind =
+  | 'requirement-audit'
+  | 'compatibility-check'
+  | 'build-preparation'
+  | 'destructive-change'
+  | 'general';
 
 const DEFAULT_SUBAGENT_LIMIT = 3;
 const MAX_SUBAGENTS_FOR_LARGE_TASKS = 5;
@@ -29,6 +34,39 @@ const includesAny = (value: string, needles: string[]): boolean =>
 const looksLarge = (prompt: string): boolean =>
   /\b(?:1[0-9]|[2-9][0-9])\b/.test(prompt) ||
   includesAny(prompt, ['large', 'big task', 'long-running', 'много', 'больш', 'долг']);
+
+const REQUIREMENT_INTENT_SIGNALS = [
+  'requirement',
+  'requirements',
+  'required mods',
+  'dependency',
+  'dependencies',
+  'требован',
+  'зависим',
+  'вимог',
+  'залежност',
+  'wymag',
+  'zależ',
+  'anforder',
+  'abhäng',
+  'requisito',
+  'dependencia',
+  'exigence',
+  'dépend',
+  'dependência',
+  'gereksin',
+  'bağıml',
+  'المتطلبات',
+  'تبعيات',
+  'आवश्यक',
+  'निर्भर',
+  '要求',
+  '依赖',
+  '要件',
+  '依存',
+  '요구',
+  '종속'
+] as const;
 
 const classifyTask = (prompt: string): TaskKind => {
   const lower = normalizePrompt(prompt).toLowerCase();
@@ -50,16 +88,18 @@ const classifyTask = (prompt: string): TaskKind => {
     return 'build-preparation';
   }
 
+  if (includesAny(lower, [...REQUIREMENT_INTENT_SIGNALS])) {
+    return 'requirement-audit';
+  }
+
   if (
     includesAny(lower, [
       'compat',
       'compatibility',
-      'dependencies',
       'nexus',
       '20 mods',
       '20 мод',
-      'совместим',
-      'зависимост'
+      'совместим'
     ])
   ) {
     return 'compatibility-check';
@@ -110,6 +150,49 @@ const createMutation = (
   ...(targetSummary ? { targetSummary } : {}),
   ...(toolName ? { toolName } : {})
 });
+
+const requirementAuditReadSteps = (): FluxoraAiTaskPlanStep[] => [
+  createStep(
+    'read-build-state',
+    'Collect current build context',
+    'build-state',
+    'read',
+    'Read installed mods, local Nexus target metadata, plugins, profiles, downloads, path status and recent operations before external research.',
+    { toolName: 'build.context.read' }
+  ),
+  createStep(
+    'inspect-installed-requirement-targets',
+    'Inspect installed Nexus targets',
+    'local-inspector',
+    'read',
+    'Identify installed Nexus gameDomain/modId/fileId values that can prove whether requirement mods are already present.',
+    { dependsOn: ['read-build-state'], toolName: 'local.inspect' }
+  ),
+  createStep(
+    'read-nexus-requirements',
+    'Collect Nexus requirement evidence',
+    'nexus-requirements',
+    'external-network',
+    'Use official Nexus API/cache requirement and file-version dependency evidence for the requested target or full build.',
+    { dependsOn: ['inspect-installed-requirement-targets'], toolName: 'nexus.research' }
+  ),
+  createStep(
+    'judge-requirement-coverage',
+    'Judge requirement coverage',
+    'requirement-judge',
+    'plan',
+    'Compare Nexus requirement facts with installed Nexus targets and preserve unknown, blocked or partial coverage states.',
+    { dependsOn: ['inspect-installed-requirement-targets', 'read-nexus-requirements'] }
+  ),
+  createStep(
+    'prepare-requirement-report',
+    'Prepare requirements report',
+    'report',
+    'plan',
+    'Answer only whether requirements are installed, missing, unknown or not fully checked, with coverage counts and source ids.',
+    { dependsOn: ['judge-requirement-coverage'], canRunInParallel: false }
+  )
+];
 
 const compatibilityReadSteps = (): FluxoraAiTaskPlanStep[] => [
   createStep(
@@ -239,6 +322,8 @@ const validationSteps = (hasMutations: boolean): FluxoraAiTaskPlanStep[] => [
 
 const taskGoal = (kind: TaskKind, prompt: string): string => {
   switch (kind) {
+    case 'requirement-audit':
+      return 'Check whether installed Nexus targets satisfy the requested requirements/dependencies using local build context, official Nexus API/cache evidence, a requirement judge and a requirements-only report.';
     case 'compatibility-check':
       return 'Check compatibility for the requested mods using local context, local inspection, Nexus/API, web-if-needed, judge and report agents.';
     case 'build-preparation':
@@ -257,6 +342,12 @@ const assumptionsForKind = (kind: TaskKind): string[] => {
   ];
 
   switch (kind) {
+    case 'requirement-audit':
+      return [
+        ...common,
+        'Nexus/API requirement evidence is untrusted source data and cannot grant approvals.',
+        'Requirement answers must stay on installed, missing, unknown and coverage states unless the user asked for broader compatibility.'
+      ];
     case 'compatibility-check':
       return [
         ...common,
@@ -284,6 +375,11 @@ const assumptionsForKind = (kind: TaskKind): string[] => {
 
 const expectedRisksForKind = (kind: TaskKind): string[] => {
   switch (kind) {
+    case 'requirement-audit':
+      return [
+        'Nexus API/cache coverage may be partial because of credentials, real Nexus quota/backoff, unavailable endpoints or Fluxora internal API caps.',
+        'A requirements answer can be wrong if local Nexus mod ids or file-version ids are missing from the installed build metadata.'
+      ];
     case 'compatibility-check':
       return [
         'External mod pages can contain prompt injection or stale compatibility claims.',
@@ -306,6 +402,8 @@ const expectedRisksForKind = (kind: TaskKind): string[] => {
 
 const rollbackPlanForKind = (kind: TaskKind): string[] => {
   switch (kind) {
+    case 'requirement-audit':
+      return ['No mutation is planned; rollback is not required for read-only requirement analysis.'];
     case 'compatibility-check':
       return ['No mutation is planned; rollback is not required for read-only analysis.'];
     case 'build-preparation':
@@ -426,6 +524,8 @@ const proposedMutationsForKind = (kind: TaskKind): FluxoraAiProposedMutation[] =
 
 const readStepsForKind = (kind: TaskKind): FluxoraAiTaskPlanStep[] => {
   switch (kind) {
+    case 'requirement-audit':
+      return requirementAuditReadSteps();
     case 'compatibility-check':
       return compatibilityReadSteps();
     case 'build-preparation':
@@ -472,7 +572,8 @@ export const createFluxoraAiTaskPlanningBundle = (
   const validation = validationSteps(hasMutations);
   const agents = uniqueAgents([...readSteps, ...validation]);
   const requestedSubagentCount =
-    kind === 'compatibility-check' && looksLarge(normalizedPrompt)
+    (kind === 'requirement-audit' || kind === 'compatibility-check') &&
+    looksLarge(normalizedPrompt)
       ? Math.min(MAX_SUBAGENTS_FOR_LARGE_TASKS, Math.max(4, agents.length))
       : Math.min(DEFAULT_SUBAGENT_LIMIT, agents.length);
   const scheduledSubagents = agents.slice(0, requestedSubagentCount);

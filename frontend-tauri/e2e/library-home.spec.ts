@@ -631,7 +631,10 @@ test.beforeEach(async ({ page }) => {
           return installPreview;
         },
         cancel: async () => ({}),
-        delete: async () => ({}),
+        delete: async (projectDirectory: any, downloadPath: any, operation: any) => {
+          calls.push({ method: 'downloads.delete', payload: { downloadPath, operation, projectDirectory } });
+          return {};
+        },
         importFile: async (projectDirectory: any, archivePath: any, operation: any) => {
           calls.push({ method: 'downloads.importFile', payload: { archivePath, operation, projectDirectory } });
           return downloadRows[0];
@@ -729,7 +732,10 @@ test.beforeEach(async ({ page }) => {
           });
           return modRows;
         },
-        deleteInstalled: async () => ({}),
+        deleteInstalled: async (projectDirectory: any, modId: any, operation: any) => {
+          calls.push({ method: 'mods.deleteInstalled', payload: { modId, operation, projectDirectory } });
+          return {};
+        },
         deleteSeparator: async () => [],
         getFileTree: async () => [
           {
@@ -878,7 +884,10 @@ test.beforeEach(async ({ page }) => {
             projectDirectory: `${request.installRootDirectory}\\${request.projectName}`
           };
         },
-        delete: async () => ({ operationId: 'op_delete' }),
+        delete: async (configPath: any, operation: any) => {
+          calls.push({ method: 'projects.delete', payload: { configPath, operation } });
+          return { operationId: 'op_delete' };
+        },
         list: async () => ({
           buildConfigsDirectory: 'D:\\Fluxora\\Configs',
           defaultInstallRootDirectory: 'D:\\Fluxora\\Builds',
@@ -985,6 +994,107 @@ const openSkyrimBuild = async (page: Page) => {
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
 };
 
+const rowContextMenuScrollbarState = async (menu: Locator) =>
+  menu.evaluate((node) => {
+    const element = node as HTMLElement;
+    const style = window.getComputedStyle(element);
+    const borderX = parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
+    const borderY = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+
+    return {
+      horizontalScrollbarGutter: Math.max(
+        0,
+        Math.round(element.offsetHeight - element.clientHeight - borderY)
+      ),
+      overflowX: style.overflowX,
+      overflowY: style.overflowY,
+      scrollHeightDelta: element.scrollHeight - element.clientHeight,
+      scrollWidthDelta: element.scrollWidth - element.clientWidth,
+      verticalScrollbarGutter: Math.max(
+        0,
+        Math.round(element.offsetWidth - element.clientWidth - borderX)
+      )
+    };
+  });
+
+const expectRowContextMenuWithoutScrollbar = async (menu: Locator) => {
+  await expect(menu).toBeVisible();
+
+  const state = await rowContextMenuScrollbarState(menu);
+  expect(state.overflowX).toBe('visible');
+  expect(state.overflowY).toBe('visible');
+  expect(state.verticalScrollbarGutter).toBeLessThanOrEqual(1);
+  expect(state.horizontalScrollbarGutter).toBeLessThanOrEqual(1);
+  expect(state.scrollHeightDelta).toBeLessThanOrEqual(1);
+  expect(state.scrollWidthDelta).toBeLessThanOrEqual(1);
+};
+
+test('renders mod and download popup menus without scrollbars', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const modRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  await modRow.click({ button: 'right' });
+  const modMenu = page.getByRole('menu', { name: 'Unofficial Patch actions' });
+  await expect(modMenu.getByRole('menuitem', { name: 'Open folder' })).toBeVisible();
+  await expectRowContextMenuWithoutScrollbar(modMenu);
+  await page.keyboard.press('Escape');
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  const downloadRow = rightPane.getByRole('row', { name: /SkyUI/ });
+  await downloadRow.click({ button: 'right' });
+  const downloadMenu = page.getByRole('menu', { name: 'SkyUI actions' });
+  await expect(downloadMenu.getByRole('menuitem', { name: 'Install' })).toBeVisible();
+  await expect(downloadMenu.getByRole('menuitem', { name: 'Show in folder' })).toBeVisible();
+  await expect(downloadMenu.getByRole('menuitem', { name: 'Delete', exact: true })).toBeVisible();
+  await expectRowContextMenuWithoutScrollbar(downloadMenu);
+});
+
+test('asks for in-app confirmation before deleting mods, builds and downloaded files', async ({
+  page
+}) => {
+  await openSkyrimBuild(page);
+
+  const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+  await modRow.focus();
+  await page.keyboard.press('Shift+F10');
+  await page.getByRole('menuitem', { name: 'Delete mod' }).click();
+
+  const modDialog = page.getByRole('dialog', { name: 'Удаление мода' });
+  await expect(modDialog).toBeVisible();
+  await expect(modDialog.getByText('SkyUI', { exact: true })).toBeVisible();
+  expect(await callMethods(page)).not.toContain('mods.deleteInstalled');
+  await modDialog.getByRole('button', { name: 'Удалить' }).click();
+  await expect.poll(() => callMethods(page)).toContain('mods.deleteInstalled');
+  await expect(page.locator('.operation-overlay')).toHaveCount(0);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  const downloadRow = rightPane.getByRole('row', { name: /SkyUI/ });
+  await downloadRow.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
+
+  const downloadDialog = page.getByRole('dialog', { name: 'Удаление файла' });
+  await expect(downloadDialog).toBeVisible();
+  await expect(downloadDialog.getByText('SkyUI', { exact: true })).toBeVisible();
+  expect(await callMethods(page)).not.toContain('downloads.delete');
+  await downloadDialog.getByRole('button', { name: 'Закрыть окно удаления' }).click();
+  await expect(downloadDialog).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  const buildOption = page.getByRole('option', { name: /Skyrim graphics overhaul/ });
+  await buildOption.hover();
+  await page.getByRole('button', { name: 'Skyrim graphics overhaul actions' }).click();
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
+
+  const buildDialog = page.getByRole('dialog', { name: 'Удаление сборки' });
+  await expect(buildDialog).toBeVisible();
+  await expect(buildDialog.getByText('Skyrim graphics overhaul', { exact: true })).toBeVisible();
+  expect(await callMethods(page)).not.toContain('projects.delete');
+  await buildDialog.getByRole('button', { name: 'Закрыть окно удаления' }).click();
+  await expect(buildDialog).toHaveCount(0);
+});
+
 test('hides open-in-explorer actions for multi-selected mod and plugin rows', async ({ page }) => {
   await openSkyrimBuild(page);
 
@@ -1059,6 +1169,14 @@ const latestCallPayload = async (page: Page, method: string) =>
         .__fluxoraCalls ?? [];
     return calls.filter((call) => call.method === methodName).at(-1)?.payload ?? null;
   }, method);
+
+const callMethods = async (page: Page) =>
+  page.evaluate(() =>
+    (
+      (window as typeof window & { __fluxoraCalls?: Array<{ method: string; payload?: unknown }> })
+        .__fluxoraCalls ?? []
+    ).map((call) => call.method)
+  );
 
 const rightPaneTransientSnapshot = async (page: Page) =>
   page.locator('.build-pane[aria-label="Right pane"]').evaluate((pane) => {

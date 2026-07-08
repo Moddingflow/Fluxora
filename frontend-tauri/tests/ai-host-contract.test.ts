@@ -200,7 +200,7 @@ describe('FluxoraAIHost MVP contract', () => {
     });
     await expect(api.ai.listSkills()).resolves.toMatchObject({
       schema: 'fluxora.ai.skills.v1',
-      builtInSkillCount: 12,
+      builtInSkillCount: 13,
       userSkillPolicy: {
         localOnlyByDefault: true,
         executableScriptsAllowed: false,
@@ -625,7 +625,7 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(aiHost).toContain('research_params_for_route');
     expect(aiHost).toContain('"modResearchRoute": mod_research_route');
     expect(aiHost).toContain('use the provided Nexus API/cache research bundle as allowed external evidence');
-    expect(aiHost).toContain('public Nexus page scraping remains disabled');
+    expect(aiHost).toContain('Direct public URL snapshots and public Nexus page scraping are separate route capabilities');
     expect(aiHost).toContain('Official Nexus API/cache research supplied by Fluxora is allowed when nexusAllowed=true');
     expect(aiHost).toContain('nexus_api_policy_refusal_correction');
     expect(aiHost).toContain('direct-fetch state, Gemini grounding state');
@@ -649,9 +649,12 @@ describe('FluxoraAIHost MVP contract', () => {
     expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["maxSearchQueries"], 2);');
     expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["nexusApiRequests"], 2);');
     expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["publicWebFetches"], 0);');
+    expect(aiHost).toContain('fn explicit_nexus_target_keeps_gemini_grounding_enabled()');
+    expect(aiHost).toContain('fn local_nexus_targets_keep_full_build_grounding_enabled()');
+    expect(aiHost).toContain('fn gemini_generate_content_body_enables_google_search_for_web_models()');
     expect(aiHost).toContain('fn requirement_audit_with_missing_masters_still_collects_nexus_research()');
     expect(aiHost).toContain('assert_eq!(route.payload["auditScope"], "full-build-requirements");');
-    expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["nexusApiRequests"], 2500);');
+    expect(aiHost).toContain('assert_eq!(route.payload["searchBudget"]["nexusApiRequests"], 7500);');
     expect(aiHost).toContain('assert_eq!(routed_params["research"]["maxNexusTargets"], 1000);');
     expect(aiHost).toContain('fn nexus_api_policy_refusal_is_corrected_to_target_limit()');
     expect(aiHost).toContain('fn nexus_api_policy_refusal_corrects_external_search_wording()');

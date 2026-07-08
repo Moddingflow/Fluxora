@@ -266,6 +266,35 @@ const compactAiUnknownRecordForStorage = (record: Record<string, unknown>): Reco
       })
   );
 
+const compactAiJsonValueForStorage = (value: unknown, depth = 0): unknown => {
+  if (typeof value === 'string') {
+    return truncateAiRuntimeText(value, AI_SESSION_STORED_SMALL_TEXT_LIMIT);
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const limit = depth >= 2 ? 12 : 24;
+    return value
+      .slice(0, limit)
+      .map((item) => compactAiJsonValueForStorage(item, depth + 1))
+      .filter((item) => item !== undefined);
+  }
+  if (value && typeof value === 'object') {
+    const limit = depth >= 2 ? 10 : 16;
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, limit)
+        .map(([key, item]) => [
+          truncateAiRuntimeText(key, 160),
+          compactAiJsonValueForStorage(item, depth + 1)
+        ])
+        .filter(([, item]) => item !== undefined)
+    );
+  }
+  return undefined;
+};
+
 const compactAiResearchSnapshotForStorage = (
   snapshot: FluxoraAiResearchSnapshot
 ): FluxoraAiResearchSnapshot => {
@@ -283,11 +312,28 @@ const compactAiResearchSnapshotForStorage = (
   if (snapshot.summary) {
     compact.summary = truncateAiRuntimeText(snapshot.summary, AI_SESSION_STORED_SMALL_TEXT_LIMIT);
   }
+  if (snapshot.requestKind) {
+    compact.requestKind = truncateAiRuntimeText(
+      snapshot.requestKind,
+      AI_SESSION_STORED_SMALL_TEXT_LIMIT
+    );
+  }
   if (snapshot.reason) {
     compact.reason = truncateAiRuntimeText(snapshot.reason, AI_SESSION_STORED_SMALL_TEXT_LIMIT);
   }
   if (snapshot.httpStatus !== undefined) {
     compact.httpStatus = snapshot.httpStatus;
+  }
+  if (snapshot.request) {
+    compact.request = compactAiJsonValueForStorage(snapshot.request) as Record<string, unknown>;
+  }
+  if (snapshot.facts) {
+    compact.facts = compactAiJsonValueForStorage(snapshot.facts) as Record<string, unknown>;
+  }
+  if (snapshot.relatedTargets) {
+    compact.relatedTargets = compactAiRuntimeArray(snapshot.relatedTargets, 24).map((target) =>
+      compactAiJsonValueForStorage(target) as Record<string, unknown>
+    );
   }
 
   return compact;
@@ -368,6 +414,9 @@ const compactAiResearchReportForStorage = (
         compactAiEvidenceCardForStorage
       )
     };
+  }
+  if (report.coverage) {
+    compact.coverage = compactAiJsonValueForStorage(report.coverage) as typeof report.coverage;
   }
   if (report.webQueryPlan) {
     compact.webQueryPlan = {

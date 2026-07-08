@@ -1272,6 +1272,21 @@ describe('AI read-only build tools', () => {
     ).toContain('tool.page-sampled');
 
     const buildSummary = snapshot.tools.find((tool) => tool.toolName === 'build.summary')?.output as {
+      installedModExclusionIndex?: {
+        guidance: string;
+        items: Array<{
+          enabled: boolean;
+          id: string;
+          name: string;
+          nexus?: { fileId?: string; gameDomain: string; modId: string };
+          normalizedName: string;
+          version: string;
+        }>;
+        maxItems: number;
+        purpose: 'recommendation-duplicate-guard';
+        totalCount: number;
+        truncated: boolean;
+      };
       nexusTargets?: {
         items: Array<{ fileId?: string; gameDomain: string; modId: string; name: string }>;
         maxTargets: number;
@@ -1291,6 +1306,30 @@ describe('AI read-only build tools', () => {
       modId: '1609',
       name: 'Large Mod 609'
     });
+    expect(buildSummary.installedModExclusionIndex).toMatchObject({
+      maxItems: 1000,
+      purpose: 'recommendation-duplicate-guard',
+      totalCount: 610,
+      truncated: false
+    });
+    expect(buildSummary.installedModExclusionIndex?.guidance).toContain('Do not recommend');
+    expect(buildSummary.installedModExclusionIndex?.items).toHaveLength(610);
+    expect(buildSummary.installedModExclusionIndex?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'Large Mod 609',
+          normalizedName: 'large mod 609',
+          nexus: expect.objectContaining({
+            fileId: '2609',
+            gameDomain: 'skyrimspecialedition',
+            modId: '1609'
+          })
+        })
+      ])
+    );
+    expect(serializeAiBuildContextSnapshot(snapshot)).toContain(
+      '"purpose": "recommendation-duplicate-guard"'
+    );
 
     const explicitLargePage = await runAiBuildTool(
       api,

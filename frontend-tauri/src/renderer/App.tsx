@@ -99,6 +99,11 @@ import {
 import { BuildPathsInspector } from './features/build/BuildPathsInspector';
 import { BuildSettingsWorkspace } from './features/build/BuildSettingsWorkspace';
 import { BuildDetailHeader } from './features/build/BuildDetailHeader';
+import {
+  DeletionConfirmationDialog,
+  deletionSubjectLabel,
+  type DeletionConfirmationKind
+} from './features/deletion/DeletionConfirmationDialog';
 import { MissingMastersStatus } from './features/plugins/MissingMastersStatus';
 import {
   InstallDialog,
@@ -427,6 +432,13 @@ interface ActiveAiRunControl {
   handle: AiLocalRunHandle | null;
   operationId: string;
   runId: string;
+}
+
+interface DeletionConfirmationRequest {
+  kind: DeletionConfirmationKind;
+  itemName: string;
+  itemCount?: number;
+  onConfirm: () => Promise<void>;
 }
 
 type MenuIconStyle = CSSProperties & { '--menu-icon': string };
@@ -1018,6 +1030,8 @@ export const App = () => {
   const [fluxPackInstallResult, setFluxPackInstallResult] =
     useState<FluxoraFluxPackInstallResult | null>(null);
   const [operationOverlay, setOperationOverlay] = useState<OperationOverlayState | null>(null);
+  const [deletionConfirmation, setDeletionConfirmation] =
+    useState<DeletionConfirmationRequest | null>(null);
   const [grassCacheConfirmationOpen, setGrassCacheConfirmationOpen] = useState(false);
   const createCancelRequestsRef = useRef<Set<string>>(new Set());
   const refreshInFlightRef = useRef(false);
@@ -1171,6 +1185,14 @@ export const App = () => {
     ]
   );
 
+  const selectedModDeletionItems = useMemo(
+    () =>
+      modsWorkspace.items.filter(
+        (item) => item.isMod && modsWorkspace.selectedOrderIds.has(item.orderId)
+      ),
+    [modsWorkspace.items, modsWorkspace.selectedOrderIds]
+  );
+
   const modDetailsConflictEntries = useMemo(() => {
     const entries = Object.values(fileTreeCache)
       .flat()
@@ -1236,9 +1258,22 @@ export const App = () => {
     [downloadsWorkspace.items, deferredDownloadSearchText]
   );
 
+  const selectableDownloadIds = useMemo(
+    () => filteredDownloadItems.map((entry) => entry.id),
+    [filteredDownloadItems]
+  );
+
   const selectedDownloadItem = useMemo(
     () => selectedDownloadEntry(downloadsWorkspace.items, downloadsWorkspace.selectedId),
     [downloadsWorkspace.items, downloadsWorkspace.selectedId]
+  );
+
+  const selectedDownloadDeletionEntries = useMemo(
+    () =>
+      downloadsWorkspace.items.filter(
+        (entry) => entry.canDelete && downloadsWorkspace.selectedIds.has(entry.id)
+      ),
+    [downloadsWorkspace.items, downloadsWorkspace.selectedIds]
   );
 
   const selectedProjectDefaultProfileName = useMemo(
@@ -2024,6 +2059,37 @@ export const App = () => {
     );
   };
 
+  const modDeletionItemsFor = (item: FluxoraModOrderItem): FluxoraModOrderItem[] => {
+    if (!item.isMod) {
+      return [];
+    }
+
+    if (!modsWorkspace.selectedOrderIds.has(item.orderId)) {
+      return [item];
+    }
+
+    return selectedModDeletionItems.length > 1 ? selectedModDeletionItems : [item];
+  };
+
+  const requestDeleteInstalledMod = (item: FluxoraModOrderItem) => {
+    if (!selectedProject || !item.isMod) {
+      return;
+    }
+
+    const targets = modDeletionItemsFor(item);
+    if (targets.length === 0) {
+      return;
+    }
+
+    const deletedModTitle = modItemTitle(targets[0] ?? item);
+    setDeletionConfirmation({
+      kind: 'mod',
+      itemName: deletedModTitle,
+      itemCount: targets.length,
+      onConfirm: () => deleteInstalledMods(targets)
+    });
+  };
+
   const deleteInstalledMod = async (item: FluxoraModOrderItem) => {
     if (!selectedProject || !item.isMod) {
       return;
@@ -2031,10 +2097,6 @@ export const App = () => {
 
     const project = selectedProject;
     const deletedModTitle = modItemTitle(item);
-
-    if (!window.confirm(`Удалить установленный мод "${deletedModTitle}"?`)) {
-      return;
-    }
 
     const operationId = createRendererOperationId('mods_delete');
     beginOperationOverlay({
@@ -2056,6 +2118,75 @@ export const App = () => {
           ? {
               ...current,
               statusText: 'Обновляем список модов',
+              percent: Math.max(current.percent ?? 0, 84)
+            }
+          : current
+      );
+      await loadModsWorkspace(project, {
+        resetScroll: false,
+        showBusy: false,
+        showLoading: false
+      });
+      if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
+        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+      }
+      closeOperationOverlay(operationId);
+    } catch (error) {
+      const nextMessage = errorMessage(error);
+      setMessage(nextMessage);
+      failOperationOverlay(operationId, nextMessage);
+    }
+  };
+
+  const deleteInstalledMods = async (items: FluxoraModOrderItem[]) => {
+    const targets = items.filter((item) => item.isMod);
+    if (!selectedProject || targets.length === 0) {
+      return;
+    }
+
+    if (targets.length === 1) {
+      await deleteInstalledMod(targets[0]!);
+      return;
+    }
+
+    const project = selectedProject;
+    const operationId = createRendererOperationId('mods_delete_bulk');
+    const targetLabel = deletionSubjectLabel('mod', '', targets.length);
+    beginOperationOverlay({
+      operationId,
+      kind: 'mod-delete',
+      title: 'Удаляем моды',
+      statusText: 'Удаляем файлы модов',
+      currentItem: targetLabel,
+      percent: 8
+    });
+    setMessage(null);
+
+    try {
+      for (let index = 0; index < targets.length; index += 1) {
+        const item = targets[index]!;
+        const currentPercent = Math.min(82, 8 + Math.round((index / targets.length) * 72));
+        setOperationOverlay((current) =>
+          current && current.operationId === operationId
+            ? {
+                ...current,
+                currentItem: modItemTitle(item),
+                statusText: `Удаляем мод ${index + 1} из ${targets.length}`,
+                percent: Math.max(current.percent ?? 0, currentPercent)
+              }
+            : current
+        );
+        await window.fluxora.mods.deleteInstalled(project.projectDirectory, item.id, {
+          operationId
+        });
+      }
+
+      setOperationOverlay((current) =>
+        current && current.operationId === operationId
+          ? {
+              ...current,
+              statusText: 'Обновляем список модов',
+              currentItem: targetLabel,
               percent: Math.max(current.percent ?? 0, 84)
             }
           : current
@@ -2912,6 +3043,72 @@ export const App = () => {
         rowContextMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
       );
       setPluginMenuOrderId(item.orderId);
+    }
+  };
+
+  const handleDownloadRowSelection = (
+    event: ReactMouseEvent<HTMLElement>,
+    entry: FluxoraDownloadEntry
+  ) => {
+    const canUseMultiSelection = selectableDownloadIds.includes(entry.id);
+    const usesToggle = isSelectionToggleModifier(event);
+
+    if (event.shiftKey && canUseMultiSelection) {
+      dispatchDownloadsWorkspace({
+        type: 'selection-range-selected',
+        id: entry.id,
+        orderedIds: selectableDownloadIds,
+        additive: usesToggle
+      });
+    } else if (usesToggle && canUseMultiSelection) {
+      dispatchDownloadsWorkspace({
+        type: 'selection-toggled',
+        id: entry.id,
+        orderedIds: selectableDownloadIds
+      });
+    } else {
+      dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
+    }
+
+    setDownloadMenuId(null);
+  };
+
+  const handleDownloadRowKeyDown = (
+    event: ReactKeyboardEvent<HTMLElement>,
+    entry: FluxoraDownloadEntry
+  ) => {
+    if (event.currentTarget !== event.target) {
+      return;
+    }
+
+    if (isSelectAllShortcut(event) && selectableDownloadIds.length > 0) {
+      event.preventDefault();
+      dispatchDownloadsWorkspace({
+        type: 'all-selected',
+        orderedIds: selectableDownloadIds
+      });
+      setDownloadMenuId(null);
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
+      setDownloadMenuId(null);
+    }
+
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault();
+      if (!downloadsWorkspace.selectedIds.has(entry.id)) {
+        dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
+      }
+      setDownloadMenuPosition(
+        rowContextMenuPositionFromAnchor(
+          event.currentTarget.getBoundingClientRect(),
+          downloadRowMenuEstimatedHeight(entry)
+        )
+      );
+      setDownloadMenuId(entry.id);
     }
   };
 
@@ -4005,6 +4202,37 @@ export const App = () => {
     await startInstallFlow(source);
   };
 
+  const downloadDeletionEntriesFor = (entry: FluxoraDownloadEntry): FluxoraDownloadEntry[] => {
+    if (!entry.canDelete) {
+      return [];
+    }
+
+    if (!downloadsWorkspace.selectedIds.has(entry.id)) {
+      return [entry];
+    }
+
+    return selectedDownloadDeletionEntries.length > 1 ? selectedDownloadDeletionEntries : [entry];
+  };
+
+  const requestDeleteDownload = (entry: FluxoraDownloadEntry) => {
+    if (!selectedProject || !entry.canDelete) {
+      return;
+    }
+
+    const targets = downloadDeletionEntriesFor(entry);
+    if (targets.length === 0) {
+      return;
+    }
+
+    const deletedDownloadTitle = downloadTitle(targets[0] ?? entry);
+    setDeletionConfirmation({
+      kind: 'download',
+      itemName: deletedDownloadTitle,
+      itemCount: targets.length,
+      onConfirm: () => deleteDownloads(targets)
+    });
+  };
+
   const deleteDownload = async (entry: FluxoraDownloadEntry) => {
     if (!selectedProject || !entry.canDelete) {
       return;
@@ -4012,10 +4240,6 @@ export const App = () => {
 
     const project = selectedProject;
     const deletedDownloadTitle = downloadTitle(entry);
-
-    if (!window.confirm(`Удалить файл из загрузок "${deletedDownloadTitle}"?`)) {
-      return;
-    }
 
     const operationId = createRendererOperationId('downloads_delete');
     beginOperationOverlay({
@@ -4038,6 +4262,71 @@ export const App = () => {
           ? {
               ...current,
               statusText: 'Обновляем список загрузок',
+              percent: Math.max(current.percent ?? 0, 84)
+            }
+          : current
+      );
+      await loadDownloadsWorkspace(project);
+      closeOperationOverlay(operationId);
+    } catch (error) {
+      const nextMessage = errorMessage(error);
+      setMessage(nextMessage);
+      failOperationOverlay(operationId, nextMessage);
+    } finally {
+      setDownloadsBusyLabel(null);
+    }
+  };
+
+  const deleteDownloads = async (entries: FluxoraDownloadEntry[]) => {
+    const targets = entries.filter((entry) => entry.canDelete);
+    if (!selectedProject || targets.length === 0) {
+      return;
+    }
+
+    if (targets.length === 1) {
+      await deleteDownload(targets[0]!);
+      return;
+    }
+
+    const project = selectedProject;
+    const operationId = createRendererOperationId('downloads_delete_bulk');
+    const targetLabel = deletionSubjectLabel('download', '', targets.length);
+    beginOperationOverlay({
+      operationId,
+      kind: 'download-delete',
+      title: 'Удаляем файлы',
+      statusText: 'Удаляем файлы из загрузок',
+      currentItem: targetLabel,
+      percent: 8
+    });
+    setDownloadsBusyLabel('Deleting downloads');
+    setMessage(null);
+
+    try {
+      for (let index = 0; index < targets.length; index += 1) {
+        const entry = targets[index]!;
+        const currentPercent = Math.min(82, 8 + Math.round((index / targets.length) * 72));
+        setOperationOverlay((current) =>
+          current && current.operationId === operationId
+            ? {
+                ...current,
+                currentItem: downloadTitle(entry),
+                statusText: `Удаляем файл ${index + 1} из ${targets.length}`,
+                percent: Math.max(current.percent ?? 0, currentPercent)
+              }
+            : current
+        );
+        await window.fluxora.downloads.delete(project.projectDirectory, downloadPath(entry), {
+          operationId
+        });
+      }
+
+      setOperationOverlay((current) =>
+        current && current.operationId === operationId
+          ? {
+              ...current,
+              statusText: 'Обновляем список загрузок',
+              currentItem: targetLabel,
               percent: Math.max(current.percent ?? 0, 84)
             }
           : current
@@ -5700,11 +5989,15 @@ export const App = () => {
     }
   };
 
-  const deleteProject = async (project: FluxoraProject) => {
-    if (!window.confirm(`Delete build "${project.name}"?`)) {
-      return;
-    }
+  const requestDeleteProject = (project: FluxoraProject) => {
+    setDeletionConfirmation({
+      kind: 'build',
+      itemName: project.name,
+      onConfirm: () => deleteProject(project)
+    });
+  };
 
+  const deleteProject = async (project: FluxoraProject) => {
     const operationId = createRendererOperationId('projects_delete');
     beginOperationOverlay({
       operationId,
@@ -6933,7 +7226,7 @@ export const App = () => {
           role="menuitem"
           onClick={() => {
             setProjectMenuId(null);
-            void deleteProject(project);
+            requestDeleteProject(project);
           }}
         >
           <Trash2 size={15} aria-hidden="true" />
@@ -7276,6 +7569,8 @@ export const App = () => {
 
     const isCollapsed =
       item.isSeparator && modsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
+    const modDeleteTargets = modDeletionItemsFor(item);
+    const hasMultipleSelectedModDeletions = modDeleteTargets.length > 1;
     const modSeparatorOrderIds = item.isSeparator
       ? modsWorkspace.items.filter((candidate) => candidate.isSeparator).map((candidate) => candidate.orderId)
       : [];
@@ -7413,11 +7708,11 @@ export const App = () => {
             role="menuitem"
             onClick={() => {
               setModMenuOrderId(null);
-              void deleteInstalledMod(item);
+              requestDeleteInstalledMod(item);
             }}
           >
             <MenuIcon source={menuTrashIcon} />
-            <span>Delete mod</span>
+            <span>{hasMultipleSelectedModDeletions ? 'Delete mods' : 'Delete mod'}</span>
           </button>
         )}
       </div>,
@@ -8600,6 +8895,9 @@ export const App = () => {
       return null;
     }
 
+    const downloadDeleteTargets = downloadDeletionEntriesFor(entry);
+    const hasMultipleSelectedDownloadDeletions = downloadDeleteTargets.length > 1;
+
     return createPortal(
       <div
         className="mod-row-menu mod-row-menu--context"
@@ -8668,14 +8966,14 @@ export const App = () => {
           className="mod-row-menu__danger"
           type="button"
           role="menuitem"
-          disabled={!entry.canDelete || Boolean(downloadsBusyLabel)}
+          disabled={downloadDeleteTargets.length === 0 || Boolean(downloadsBusyLabel)}
           onClick={() => {
             setDownloadMenuId(null);
-            void deleteDownload(entry);
+            requestDeleteDownload(entry);
           }}
         >
           <MenuIcon source={menuTrashIcon} />
-          Delete
+          {hasMultipleSelectedDownloadDeletions ? 'Delete files' : 'Delete'}
         </button>
       </div>,
       document.body
@@ -8817,7 +9115,7 @@ export const App = () => {
             <div style={{ height: visibleDownloadWindow.topSpacer }} aria-hidden="true" />
           ) : null}
           {visibleDownloadWindow.items.map((entry) => {
-            const isSelected = entry.id === downloadsWorkspace.selectedId;
+            const isSelected = downloadsWorkspace.selectedIds.has(entry.id);
             const isMenuOpen = entry.id === downloadMenuId;
             const status = downloadStatusView(entry);
 
@@ -8830,9 +9128,9 @@ export const App = () => {
                 data-ready={entry.canInstall}
                 data-menu-open={isMenuOpen}
                 key={entry.id}
-                onClick={() => {
-                  dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
-                  setDownloadMenuId(null);
+                aria-selected={isSelected}
+                onClick={(event) => {
+                  handleDownloadRowSelection(event, entry);
                 }}
                 onDoubleClick={() => {
                   dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
@@ -8842,7 +9140,9 @@ export const App = () => {
                 }}
                 onContextMenu={(event) => {
                   event.preventDefault();
-                  dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
+                  if (!downloadsWorkspace.selectedIds.has(entry.id)) {
+                    dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
+                  }
                   setDownloadMenuPosition(
                     rowContextMenuPositionFromPointer(
                       event.clientX,
@@ -8853,27 +9153,7 @@ export const App = () => {
                   setDownloadMenuId(entry.id);
                 }}
                 onKeyDown={(event) => {
-                  if (event.currentTarget !== event.target) {
-                    return;
-                  }
-
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
-                    setDownloadMenuId(null);
-                  }
-
-                  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-                    event.preventDefault();
-                    dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
-                    setDownloadMenuPosition(
-                      rowContextMenuPositionFromAnchor(
-                        event.currentTarget.getBoundingClientRect(),
-                        downloadRowMenuEstimatedHeight(entry)
-                      )
-                    );
-                    setDownloadMenuId(entry.id);
-                  }
+                  handleDownloadRowKeyDown(event, entry);
                 }}
               >
                 <div className="mod-row__main" role="cell">
@@ -9395,6 +9675,35 @@ export const App = () => {
       onSubmitInstallOptions={() => void submitInstallOptions()}
     />
   );
+
+  const closeDeletionConfirmation = () => setDeletionConfirmation(null);
+
+  const confirmDeletion = async () => {
+    const request = deletionConfirmation;
+    if (!request) {
+      return;
+    }
+
+    setDeletionConfirmation(null);
+
+    try {
+      await request.onConfirm();
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const renderDeletionConfirmation = () =>
+    deletionConfirmation ? (
+      <DeletionConfirmationDialog
+        itemCount={deletionConfirmation.itemCount}
+        itemName={deletionConfirmation.itemName}
+        kind={deletionConfirmation.kind}
+        onCancel={closeDeletionConfirmation}
+        onConfirm={() => void confirmDeletion()}
+      />
+    ) : null;
+
   const renderDownloadsWorkspace = () => {
     if (!selectedProject) {
       return (
@@ -11040,6 +11349,7 @@ export const App = () => {
                   ? renderPlaceholder()
                   : null}
                 {renderInstallDialog()}
+                {renderDeletionConfirmation()}
                 {renderGrassCacheConfirmation()}
                 {renderOperationOverlay()}
                 {renderOverwriteClearSplash()}

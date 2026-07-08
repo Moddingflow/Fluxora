@@ -874,6 +874,7 @@ export interface FluxoraAiContextBundle {
 export interface FluxoraAiResearchSnapshot {
   id: string;
   kind: string;
+  requestKind?: string;
   title: string;
   url: string;
   capturedAt: string;
@@ -881,6 +882,8 @@ export interface FluxoraAiResearchSnapshot {
   summary?: string;
   reason?: string;
   httpStatus?: number;
+  request?: Record<string, unknown>;
+  facts?: Record<string, unknown>;
   rateLimit?: Record<string, string | null>;
   credentialSource?: string;
   cache?: Record<string, unknown>;
@@ -888,6 +891,29 @@ export interface FluxoraAiResearchSnapshot {
   trust: 'untrusted-external-content';
   instructionsAllowed: false;
   promptInjectionFilter?: Record<string, unknown>;
+}
+
+export interface FluxoraAiResearchCoverage {
+  auditScope?: 'targeted' | 'batch-requirements' | 'full-build-requirements' | string;
+  mode?: string;
+  targetCount?: number;
+  targetAttemptCount?: number;
+  checkedTargetCount?: number;
+  targetsWithAnyCapturedSnapshot?: number;
+  targetsWithRequirementEvidence?: number;
+  remainingTargetCount?: number;
+  targetCap?: number;
+  targetCapReached?: boolean;
+  apiRequestsAttempted?: number;
+  apiRequestCap?: number;
+  apiRequestCapKind?: string;
+  apiRequestCapReached?: boolean;
+  nexusQuotaOrBackoffReached?: boolean;
+  capturedSnapshots?: number;
+  continuationRequired?: boolean;
+  fullCoverage?: boolean;
+  claimCompleteAllowed?: boolean;
+  [key: string]: unknown;
 }
 
 export interface FluxoraAiResearchReport {
@@ -901,6 +927,7 @@ export interface FluxoraAiResearchReport {
   apiAvailability?: FluxoraAiModResearchNexusApiStatus;
   apiQuotaState?: FluxoraAiModResearchNexusQuotaState;
   nexusInvestigation?: FluxoraAiNexusInvestigation;
+  coverage?: FluxoraAiResearchCoverage;
   webQueryPlan?: FluxoraAiWebQueryPlan;
   nextBestNonNexusQueries?: string[];
   snapshots: FluxoraAiResearchSnapshot[];

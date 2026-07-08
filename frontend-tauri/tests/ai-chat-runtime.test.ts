@@ -134,24 +134,63 @@ describe('AI chat runtime', () => {
       policy: {
         rawPromptEcho: 'should-not-persist'.repeat(1000)
       },
+      coverage: {
+        auditScope: 'full-build-requirements',
+        targetCount: 600,
+        checkedTargetCount: 24,
+        targetsWithRequirementEvidence: 1,
+        remainingTargetCount: 576,
+        claimCompleteAllowed: false
+      },
       targets: Array.from({ length: 600 }, (_, index) => ({
         id: `target-${index}`,
         rawApiPayload: 'target raw text '.repeat(500)
       })),
-      snapshots: Array.from({ length: 96 }, (_, index) => ({
-        id: `snapshot-${index}`,
-        kind: 'nexus-api',
-        title: `Nexus snapshot ${index}`,
-        url: `https://api.nexusmods.com/v1/games/skyrimspecialedition/mods/${index}`,
-        capturedAt: '2026-07-07T09:00:00.000Z',
-        status: 'captured' as const,
-        summary: 'snapshot raw text '.repeat(500),
-        trust: 'untrusted-external-content' as const,
-        instructionsAllowed: false as const,
-        cache: {
-          rawBody: 'cache raw text '.repeat(500)
+      snapshots: Array.from({ length: 96 }, (_, index) => {
+        const snapshot = {
+          id: `snapshot-${index}`,
+          kind: 'nexus-api',
+          title: `Nexus snapshot ${index}`,
+          url: `https://api.nexusmods.com/v1/games/skyrimspecialedition/mods/${index}`,
+          capturedAt: '2026-07-07T09:00:00.000Z',
+          status: 'captured' as const,
+          summary: 'snapshot raw text '.repeat(500),
+          trust: 'untrusted-external-content' as const,
+          instructionsAllowed: false as const,
+          cache: {
+            rawBody: 'cache raw text '.repeat(500)
+          }
+        };
+        if (index === 0) {
+          return {
+            ...snapshot,
+            requestKind: 'requirements',
+            request: {
+              variables: {
+                modId: '1'
+              }
+            },
+            facts: {
+              requirementTotalCount: 1,
+              requirements: [
+                {
+                  modName: 'Address Library',
+                  modId: '32444',
+                  externalRequirement: false
+                }
+              ]
+            },
+            relatedTargets: [
+              {
+                gameDomain: 'skyrimspecialedition',
+                modId: '32444',
+                modName: 'Address Library'
+              }
+            ]
+          };
         }
-      })),
+        return snapshot;
+      }),
       sources,
       issues: Array.from({ length: 80 }, (_, index) => ({
         id: `issue-${index}`,
@@ -197,6 +236,23 @@ describe('AI chat runtime', () => {
     expect(persistedMessage?.researchReport?.targets).toHaveLength(24);
     expect(persistedMessage?.researchReport?.snapshots).toHaveLength(32);
     expect(persistedMessage?.researchReport?.sources).toHaveLength(80);
+    expect(persistedMessage?.researchReport?.coverage?.targetCount).toBe(600);
+    expect(persistedMessage?.researchReport?.coverage?.claimCompleteAllowed).toBe(false);
+    expect(persistedMessage?.researchReport?.snapshots[0]?.requestKind).toBe('requirements');
+    expect(
+      persistedMessage?.researchReport?.snapshots[0]?.facts?.requirements
+    ).toEqual([
+      {
+        modName: 'Address Library',
+        modId: '32444',
+        externalRequirement: false
+      }
+    ]);
+    expect(persistedMessage?.researchReport?.snapshots[0]?.request).toEqual({
+      variables: {
+        modId: '1'
+      }
+    });
     expect(persistedMessage?.sources).toHaveLength(80);
     expect(JSON.stringify(persisted)).not.toContain('should-not-persist');
     expect(JSON.stringify(persisted)).not.toContain('cache raw text');

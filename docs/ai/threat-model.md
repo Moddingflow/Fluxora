@@ -267,6 +267,10 @@ Mitigations:
 - For non-Nexus research, prefer official/maintainer docs, GitHub
   releases/issues, script extender docs, LOOT/libloot docs or metadata, and
   curated modding knowledge bases/forums where access is allowed.
+- Gemini provider-side Google Search grounding may accompany both generic
+  public-web prompts and Nexus-targeted research routes when the selected model
+  supports web; treat returned grounding links as citations, not as permission
+  changes or direct Fluxora browser/fetch access.
 - Pass only evidence cards between research stages. Do not pass raw HTML, raw
   page bodies, whole forum threads, or provider browser transcripts to the
   judge/final responder.

@@ -1,0 +1,87 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it } from 'vitest';
+
+import {
+  DeletionConfirmationDialog,
+  type DeletionConfirmationKind
+} from '../src/renderer/features/deletion/DeletionConfirmationDialog';
+
+const noop = () => undefined;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, '..', '..');
+
+const readText = (...segments: string[]): string =>
+  fs.readFileSync(path.join(repoRoot, ...segments), 'utf8');
+
+const renderDialog = (
+  kind: DeletionConfirmationKind,
+  itemName = 'SkyUI 5.2',
+  itemCount?: number
+) =>
+  renderToStaticMarkup(
+    React.createElement(DeletionConfirmationDialog, {
+      itemCount,
+      itemName,
+      kind,
+      onCancel: noop,
+      onConfirm: noop
+    })
+  );
+
+describe('deletion confirmation dialog', () => {
+  it('adapts the title for mods, builds and downloaded files', () => {
+    expect(renderDialog('mod')).toContain('Удаление мода');
+    expect(renderDialog('build', 'Skyrim graphics overhaul')).toContain('Удаление сборки');
+    expect(renderDialog('download', 'Texture Pack.7z')).toContain('Удаление файла');
+  });
+
+  it('renders the requested chrome, item name and delete action', () => {
+    const markup = renderDialog('mod');
+
+    expect(markup).toContain('role="dialog"');
+    expect(markup).toContain('aria-modal="true"');
+    expect(markup).toContain('delete-confirmation-dialog__icon');
+    expect(markup).toContain('Закрыть окно удаления');
+    expect(markup).toContain('SkyUI 5.2');
+    expect(markup).toContain('Удалить');
+  });
+
+  it('uses Russian count labels for bulk mod and download deletion', () => {
+    expect(renderDialog('mod', 'SkyUI 5.2', 5)).toContain('5 модов');
+    expect(renderDialog('mod', 'SkyUI 5.2', 10)).toContain('10 модов');
+    expect(renderDialog('download', 'Texture Pack.7z', 2)).toContain('2 файла');
+    expect(renderDialog('download', 'Texture Pack.7z', 5)).toContain('5 файлов');
+  });
+
+  it('routes destructive mod, build and download actions through the in-app confirmation', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+
+    expect(app).toContain('<DeletionConfirmationDialog');
+    expect(app).toContain('itemCount={deletionConfirmation.itemCount}');
+    expect(app).toContain('requestDeleteInstalledMod(item)');
+    expect(app).toContain('requestDeleteProject(project)');
+    expect(app).toContain('requestDeleteDownload(entry)');
+    expect(app).toContain('itemCount: targets.length');
+    expect(app).toContain('onConfirm: () => deleteInstalledMods(targets)');
+    expect(app).toContain('onConfirm: () => deleteDownloads(targets)');
+    expect(app).toContain("kind: 'mod'");
+    expect(app).toContain("kind: 'build'");
+    expect(app).toContain("kind: 'download'");
+    expect(app).not.toContain('window.confirm(`Удалить установленный мод');
+    expect(app).not.toContain('window.confirm(`Удалить файл из загрузок');
+    expect(app).not.toContain('window.confirm(`Delete build');
+  });
+
+  it('uses the compact titlebar-style dialog surface and icon mask', () => {
+    const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+
+    expect(styles).toContain('.delete-confirmation-dialog__title');
+    expect(styles).toContain('mask: var(--delete-confirmation-icon) center / contain no-repeat;');
+    expect(styles).toContain('.delete-confirmation-dialog__actions .danger-button');
+  });
+});

@@ -14,7 +14,7 @@ import { createFluxoraApi, type IpcInvoker } from '../src/tauri/fluxora-api';
 describe('Fluxora AI skills catalog', () => {
   it('defines the Phase 14 FluxoraSkill format and all built-in skills', () => {
     expect(FLUXORA_SKILL_CATALOG.schema).toBe(FLUXORA_SKILL_CATALOG_SCHEMA);
-    expect(FLUXORA_SKILL_CATALOG.builtInSkillCount).toBe(12);
+    expect(FLUXORA_SKILL_CATALOG.builtInSkillCount).toBe(13);
     expect(FLUXORA_SKILL_CATALOG.skills.map((skill) => skill.id)).toEqual(
       FLUXORA_BUILT_IN_SKILL_IDS
     );
@@ -64,7 +64,7 @@ describe('Fluxora AI skills catalog', () => {
 
   it('selects skills through context-graph-style prompt retrieval', () => {
     const compatibility = selectFluxoraSkillForPrompt(
-      'Проверь Nexus compatibility and dependencies for these mods',
+      'Проверь Nexus compatibility and patch/load order claims for these mods',
       'op_skill_compat',
       new Date('2026-06-30T09:00:00Z')
     );
@@ -144,7 +144,7 @@ describe('Fluxora AI skills catalog', () => {
     expect(unknown.policy.skillCanGrantNewTools).toBe(false);
   });
 
-  it('keeps requirement prompts on the requirements skill instead of missing masters', () => {
+  it('keeps requirement prompts on the requirements skill instead of compatibility or missing masters', () => {
     const prompts = [
       'Check the requirements and dependencies for the mods in my build',
       'Проверь требования и зависимости модов в сборке',
@@ -159,8 +159,10 @@ describe('Fluxora AI skills catalog', () => {
         new Date('2026-07-07T09:00:00Z')
       );
 
-      expect(selection.selectedSkillId).toBe('nexus-compatibility-check');
+      expect(selection.selectedSkillId).toBe('nexus-requirements-audit');
+      expect(selection.selectedSkill?.displayName).toBe('Nexus requirements audit');
       expect(selection.candidateSkillIds).not.toContain('missing-masters-diagnosis');
+      expect(selection.candidateSkillIds).not.toContain('nexus-compatibility-check');
     });
   });
 
@@ -186,6 +188,9 @@ describe('Fluxora AI skills catalog', () => {
     });
     expect(nodes.find((node) => node.id === 'skill:skyrimse-analysis')).toMatchObject({
       label: 'SkyrimSE analysis'
+    });
+    expect(nodes.find((node) => node.id === 'skill:nexus-requirements-audit')).toMatchObject({
+      label: 'Nexus requirements audit'
     });
   });
 

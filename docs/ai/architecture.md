@@ -297,7 +297,7 @@ is:
 | Read downloads | `read` | C++ core via bridge | Uses existing download DTOs. No import, delete, resume, cancel, or install. |
 | Read operation status/logs | `read` | Tauri shell and bridge events | Uses cached progress events and safe app-log tailing. No arbitrary file access. |
 | Read Nexus status | `read` | C++ core via bridge | Status only. No token disclosure. No connect/disconnect in the first slice. |
-| Nexus/web research | `external-network` | AI host over allowlisted fetch/provider grounding | Nexus API/cache-first, public Nexus page fallback disabled, Gemini Google Search grounding when enabled, source snapshots and citations only. No write tools. |
+| Nexus/web research | `external-network` | AI host over allowlisted fetch/provider grounding | Nexus API/cache-first, public Nexus page fallback disabled, Gemini Google Search grounding when enabled even for Nexus-targeted routes, direct source snapshots only when the route explicitly allows them. No write tools. |
 
 Write/destructive execution, credential setup UI, voice, public billing enforcement, and
 approved action execution are future phases. They are
@@ -345,6 +345,9 @@ mod is selected, profiles, downloads, operation status, recent operation logs,
 Nexus auth status, and a bounded `local.filesystemSnapshot` result. File trees,
 local filesystem metadata, downloads, profiles, and logs stay compact; the
 inventory lists are complete snapshots rather than 80-item samples.
+`build.summary.installedModExclusionIndex` is a compact complete installed-mod
+do-not-recommend list used by recommendation prompts to avoid suggesting mods
+already present in the current build.
 When an Analyze diagnostic prompt triggers `local.read_text_file`, the snapshot
 may also include a small `fluxora.ai.local-read-text-file.v1` bundle with
 `content_preview`, `bytes_read`, `truncated`, and `path` fields for allowlisted
@@ -648,9 +651,9 @@ language-independent canonical intent route, reads the triggered skill's
 `FLUXORA_AI_SKILLS_DIR` overrides both) bounded to 12k characters, and injects
 it as a system message together with the always-on concise-response skill.
 Skill text is instructions data only; it cannot grant tools or approvals. A
-requirement-audit intent selects the requirements/compatibility skill and must
-not drift into missing-masters diagnosis unless local missing-master findings
-prove the requirement issue. The allowed tools must already
+requirement-audit intent selects `nexus-requirements-audit` and must not drift
+into compatibility or missing-masters diagnosis unless the user asked for those
+topics or local missing-master findings prove the requirement issue. The allowed tools must already
 exist in `fluxora.ai.safe-action-catalog.v1`; a skill cannot create a new tool,
 lower a permission class, approve a write, or bypass C++ core validation. The
 selected skill is visible in the chat message and in the task plan through
@@ -662,7 +665,9 @@ The first built-in skills are:
 - GENERAL Analyze for build/crash/log diagnostics with gated bounded text previews;
 - SkyrimSE/AE default safety and load-order rules;
 - SkyrimSE/AE build optimization;
+- SkyrimSE analysis;
 - Skyrim basic build setup;
+- Nexus requirements audit;
 - Nexus compatibility check;
 - FOMOD install assistant;
 - load-order cleanup;
@@ -712,18 +717,20 @@ Explicit requirement/dependency audits are the narrow exception: local missing
 masters are treated as suspect evidence to verify through Nexus API/cache, not
 as a terminal local-only answer. Public Nexus page scraping still remains
 disabled unless a separate public-web policy explicitly allows it.
-Generic public-web research uses `route=google-search-only`: Gemini
-provider-side `google_search` grounding is enabled by default (the model
-supports it natively) and can only be switched off by an explicit
-`allowGeminiGoogleSearch=false` request; the host passes the `google_search`
-tool to generation, but `allowPublicWebFetch=false` and Fluxora does not collect
-direct URL snapshots. The renderer never gates research on prompt keywords: it
-always sends a permissive research request and the host derives scope and
-budgets from the multilingual canonical intent route.
+Gemini provider-side `google_search` grounding is enabled by default whenever
+the route allows external research and the selected Gemini model supports web,
+including explicit Nexus URL/NXM targets and local `build.summary.nexusTargets`.
+It can only be switched off by an explicit `allowGeminiGoogleSearch=false`
+request. Generic public-web research still uses `route=google-search-only`; the
+host passes the `google_search` tool to generation, while direct Fluxora URL
+snapshots remain a separate route capability. The renderer never gates research
+on prompt keywords: it always sends a permissive research request and the host
+derives scope and budgets from the multilingual canonical intent route.
 When the user asks to audit every mod or the whole build for missing
 requirements, the route switches to `auditScope=full-build-requirements`:
 Fluxora may collect official Nexus API/cache evidence from local Nexus mod ids
-up to the daily Nexus request budget, including GraphQL requirements
+up to the smaller live Nexus quota/backoff boundary or Fluxora's high
+full-build internal safety cap of 7,500 requests, including GraphQL requirements
 (`mod.modRequirements.nexusRequirements` in the live v2 schema) and
 v3 file-version dependency evidence when a file-version id is known. GraphQL
 bodies with `errors` are captured but never count as requirement evidence; the
@@ -731,8 +738,16 @@ research bundle then falls back to the official API mod `description`, exposing
 a bounded multilingual `descriptionRequirementExcerpt` fact that the model must
 analyze for requirements instead of refusing with an API-schema complaint. The
 report must include exact checked/target/remaining coverage and stop on
-credential, quota, 429, retry-after or availability failures instead of
-claiming that Nexus API research is forbidden or that all mods were checked.
+credential, quota, 429, retry-after, availability failures, or the internal
+API safety cap instead of claiming that Nexus API research is forbidden, that
+the internal cap is Nexus daily quota exhaustion, or that all mods were checked.
+For large full-build audits, the host passes compact requirement evidence
+dictionaries to shard workers, final synthesis, and context-continuation
+packages. These dictionaries preserve source ids, request kind, compact facts,
+related Nexus targets, coverage, API state, and real quota/backoff state without
+repeating the full target list or raw API bodies. Requirements answers must stay
+on installed, missing, unknown, partial coverage, and blockers unless the user
+explicitly requested compatibility or another neighboring topic.
 
 Intent routing is represented separately as `fluxora.ai.intent-route.v1`.
 `FluxoraAIHost` derives this canonical DTO before the mod-research route so
@@ -950,8 +965,8 @@ in-app disclosure must answer these questions for German/EU expectations:
   the host, Gemini Google Search grounding citations, source ids, snapshot
   summaries, rate-limit/backoff metadata, and blocked-source reasons. The target
   staged mod research pipeline must not include public Nexus page summaries as
-  a fallback for missing API credentials, exhausted quota, `429`, or configured
-  API limits. Public Nexus pages require a separate explicit public-source
+  a fallback for missing API credentials, exhausted quota, `429`, or Fluxora
+  internal API safety caps. Public Nexus pages require a separate explicit public-source
   policy after owner/legal review. Raw page bodies, provider keys, Nexus tokens,
   authenticated private pages, arbitrary file contents, and browser cookies are
   not included by default.

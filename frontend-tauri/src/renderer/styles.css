@@ -5373,7 +5373,7 @@ body.row-reorder-active * {
   z-index: 200;
   width: max-content;
   max-width: calc(100vw - 16px);
-  overflow-y: auto;
+  overflow: visible;
 }
 
 .mod-row-menu button {
@@ -6802,6 +6802,103 @@ body.row-reorder-active * {
   justify-content: flex-end;
   gap: 10px;
   min-width: 0;
+}
+
+.delete-confirmation-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 16;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(var(--flx-bg-rgb), 0.76);
+}
+
+.delete-confirmation-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, auto) auto;
+  width: min(420px, 100%);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.delete-confirmation-dialog__header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 46px;
+  padding: 0 8px 0 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--flx-panel-soft);
+}
+
+.delete-confirmation-dialog__title {
+  position: absolute;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 96px);
+  min-width: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.delete-confirmation-dialog__icon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  background: currentColor;
+  mask: var(--delete-confirmation-icon) center / contain no-repeat;
+  -webkit-mask: var(--delete-confirmation-icon) center / contain no-repeat;
+}
+
+.delete-confirmation-dialog__title strong {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delete-confirmation-dialog__body {
+  display: grid;
+  min-width: 0;
+  padding: 22px;
+}
+
+.delete-confirmation-dialog__body strong {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.delete-confirmation-dialog__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 58px;
+  padding: 13px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--flx-panel-soft);
+}
+
+.delete-confirmation-dialog__actions .danger-button {
+  min-width: 96px;
 }
 
 .install-dialog-body {
@@ -9578,6 +9675,10 @@ body.row-reorder-active * {
 }
 
 :root[data-theme="light"] .install-modal-backdrop {
+  background: rgba(231, 237, 228, 0.76);
+}
+
+:root[data-theme="light"] .delete-confirmation-backdrop {
   background: rgba(231, 237, 228, 0.76);
 }
 

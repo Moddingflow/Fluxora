@@ -64,6 +64,11 @@ const items: FluxoraDownloadEntry[] = [
   })
 ];
 
+const selectedIds = (
+  state: { selectedIds: ReadonlySet<string> },
+  ids: readonly string[] = items.map((entry) => entry.id)
+): string[] => ids.filter((id) => state.selectedIds.has(id));
+
 const readyBridge: NativeBridgeStatus = {
   ready: true,
   operationId: 'op_test',
@@ -116,7 +121,35 @@ describe('download workspace state', () => {
     );
 
     expect(loaded.selectedId).toBe('paused');
+    expect([...loaded.selectedIds]).toEqual(['paused']);
     expect(selectedDownloadEntry(items, 'missing')?.id).toBe('skyui');
+  });
+
+  it('tracks ctrl, shift and select-all selection across visible downloads', () => {
+    const ids = items.map((entry) => entry.id);
+    let state = downloadWorkspaceReducer(emptyDownloadWorkspaceState(), {
+      type: 'items-loaded',
+      items
+    });
+
+    state = downloadWorkspaceReducer(state, { type: 'selected', id: 'paused' });
+    state = downloadWorkspaceReducer(state, {
+      type: 'selection-range-selected',
+      id: 'active',
+      orderedIds: ids,
+      additive: false
+    });
+    expect(selectedIds(state)).toEqual(['paused', 'active']);
+
+    state = downloadWorkspaceReducer(state, {
+      type: 'selection-toggled',
+      id: 'paused',
+      orderedIds: ids
+    });
+    expect(selectedIds(state)).toEqual(['active']);
+
+    state = downloadWorkspaceReducer(state, { type: 'all-selected', orderedIds: ids });
+    expect(selectedIds(state)).toEqual(['skyui', 'paused', 'active']);
   });
 
   it('detects active download rows for live progress refreshes', () => {

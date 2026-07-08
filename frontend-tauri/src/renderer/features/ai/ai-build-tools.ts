@@ -126,6 +126,24 @@ interface CompactNexusResearchTargets {
   truncated: boolean;
 }
 
+interface CompactInstalledModExclusionItem {
+  enabled: boolean;
+  id: string;
+  name: string;
+  nexus?: CompactNexusIdentity;
+  normalizedName: string;
+  version: string;
+}
+
+interface CompactInstalledModExclusionIndex {
+  guidance: string;
+  items: CompactInstalledModExclusionItem[];
+  maxItems: number;
+  purpose: 'recommendation-duplicate-guard';
+  totalCount: number;
+  truncated: boolean;
+}
+
 interface CompactInstalledMod {
   conflictStatus: string;
   enabled: boolean;
@@ -465,6 +483,7 @@ const AI_BUILD_CONTEXT_TOOL_SEMANTICS: Record<AiReadOnlyBuildToolName, string> =
 const DEFAULT_TOOL_PAGE_LIMIT = 20;
 const MAX_TOOL_PAGE_LIMIT = 80;
 const MAX_NEXUS_RESEARCH_TARGETS_IN_CONTEXT = 1000;
+const MAX_INSTALLED_MOD_EXCLUSION_INDEX_IN_CONTEXT = 1000;
 const MAX_CONFLICT_EVIDENCE_MODS = 24;
 const MAX_CONFLICT_EVIDENCE_DEPTH = 2;
 const MAX_CONFLICT_EVIDENCE_DIRECTORIES_PER_MOD = 40;
@@ -862,6 +881,39 @@ const compactNexusResearchTargets = (
     maxTargets: MAX_NEXUS_RESEARCH_TARGETS_IN_CONTEXT,
     totalCount: targets.length,
     truncated: targets.length > MAX_NEXUS_RESEARCH_TARGETS_IN_CONTEXT
+  };
+};
+
+const normalizeInstalledModRecommendationName = (name: string): string =>
+  name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9а-яё]+/giu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const compactInstalledModExclusionIndex = (
+  mods: FluxoraInstalledMod[]
+): CompactInstalledModExclusionIndex => {
+  const items = mods
+    .map((mod): CompactInstalledModExclusionItem => ({
+      enabled: mod.isEnabled,
+      id: mod.id,
+      name: mod.name,
+      nexus: compactNexusIdentity(mod),
+      normalizedName: normalizeInstalledModRecommendationName(mod.name),
+      version: mod.version
+    }))
+    .sort((left, right) => left.normalizedName.localeCompare(right.normalizedName));
+
+  return {
+    guidance:
+      'Before recommending a mod, compare the candidate name and Nexus gameDomain/modId/fileId against this full installed-mod exclusion index. Do not recommend an item that is already installed; if unsure, say it may already be present.',
+    items: items.slice(0, MAX_INSTALLED_MOD_EXCLUSION_INDEX_IN_CONTEXT),
+    maxItems: MAX_INSTALLED_MOD_EXCLUSION_INDEX_IN_CONTEXT,
+    purpose: 'recommendation-duplicate-guard',
+    totalCount: items.length,
+    truncated: items.length > MAX_INSTALLED_MOD_EXCLUSION_INDEX_IN_CONTEXT
   };
 };
 
@@ -2556,6 +2608,7 @@ const runBuildSummaryTool = async (
   const nexusStatus = settledValue<FluxoraNexusModsAuthStatus | null>(nexus, null);
   const operationStatus = settledValue<FluxoraOperationsStatus | null>(operations, null);
   const nexusResearchTargets = compactNexusResearchTargets(installedMods);
+  const installedModExclusionIndex = compactInstalledModExclusionIndex(installedMods);
   const toolIssues = [
     ...issuesFromMods(installedMods),
     ...issuesFromPlugins(pluginOrder),
@@ -2618,6 +2671,7 @@ const runBuildSummaryTool = async (
       },
       nexusLinked: nexusStatus?.isLinked ?? false,
       nexusTargets: nexusResearchTargets,
+      installedModExclusionIndex,
       pathsConfigured: {
         downloads: Boolean(project.paths?.downloadsDirectory),
         game: Boolean(project.paths?.gameDirectory || project.gamePath),

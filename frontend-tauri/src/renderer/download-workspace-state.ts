@@ -3,12 +3,25 @@ import type {
   FluxoraProject,
   NativeBridgeStatus
 } from '../shared/fluxora-api';
+import {
+  emptyOrderSelectionState,
+  pruneOrderSelection,
+  selectAllOrderItems,
+  selectOrderItem,
+  selectOrderItemRange,
+  toggleOrderItemSelection,
+  type OrderSelectionState
+} from './order-selection-state';
 
 export type DownloadWorkspaceLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface DownloadWorkspaceState {
   items: FluxoraDownloadEntry[];
   selectedId: string | null;
+  selectedIds: ReadonlySet<string>;
+  selectionAnchorId: string | null;
+  rangeExcludedIds: ReadonlySet<string>;
+  rangeBaseIds: ReadonlySet<string>;
   searchText: string;
   loadState: DownloadWorkspaceLoadState;
   errorMessage: string | null;
@@ -19,7 +32,15 @@ export type DownloadWorkspaceAction =
   | { type: 'load-failed'; message: string; silent?: boolean }
   | { type: 'items-loaded'; items: FluxoraDownloadEntry[] }
   | { type: 'search-changed'; searchText: string }
-  | { type: 'selected'; id: string | null };
+  | { type: 'selected'; id: string | null }
+  | { type: 'selection-toggled'; id: string; orderedIds: readonly string[] }
+  | {
+      type: 'selection-range-selected';
+      id: string;
+      orderedIds: readonly string[];
+      additive: boolean;
+    }
+  | { type: 'all-selected'; orderedIds: readonly string[] };
 
 export interface DownloadCapabilityView {
   bridgeAvailable: boolean;
@@ -36,10 +57,31 @@ export interface DownloadStatusView {
 
 export const emptyDownloadWorkspaceState = (): DownloadWorkspaceState => ({
   items: [],
-  selectedId: null,
+  ...downloadSelectionFromOrderSelection(emptyOrderSelectionState()),
   searchText: '',
   loadState: 'idle',
   errorMessage: null
+});
+
+const downloadSelectionFromOrderSelection = (
+  selection: OrderSelectionState
+): Pick<
+  DownloadWorkspaceState,
+  'selectedId' | 'selectedIds' | 'selectionAnchorId' | 'rangeExcludedIds' | 'rangeBaseIds'
+> => ({
+  selectedId: selection.selectedOrderId,
+  selectedIds: selection.selectedOrderIds,
+  selectionAnchorId: selection.selectionAnchorOrderId,
+  rangeExcludedIds: selection.rangeExcludedOrderIds,
+  rangeBaseIds: selection.rangeBaseOrderIds
+});
+
+const orderSelectionFromDownloadState = (state: DownloadWorkspaceState): OrderSelectionState => ({
+  selectedOrderId: state.selectedId,
+  selectedOrderIds: state.selectedIds,
+  selectionAnchorOrderId: state.selectionAnchorId,
+  rangeExcludedOrderIds: state.rangeExcludedIds,
+  rangeBaseOrderIds: state.rangeBaseIds
 });
 
 const archiveExtensionPattern =
@@ -263,10 +305,16 @@ export const downloadWorkspaceReducer = (
       };
     case 'items-loaded': {
       const selected = selectedDownloadEntry(action.items, state.selectedId);
+      const orderedIds = action.items.map((entry) => entry.id);
+      const selection = pruneOrderSelection(
+        orderSelectionFromDownloadState(state),
+        orderedIds,
+        selected?.id ?? null
+      );
       return {
         ...state,
         items: action.items,
-        selectedId: selected?.id ?? null,
+        ...downloadSelectionFromOrderSelection(selection),
         loadState: 'ready',
         errorMessage: null
       };
@@ -279,7 +327,39 @@ export const downloadWorkspaceReducer = (
     case 'selected':
       return {
         ...state,
-        selectedId: action.id
+        ...downloadSelectionFromOrderSelection(
+          selectOrderItem(orderSelectionFromDownloadState(state), action.id)
+        )
+      };
+    case 'selection-toggled':
+      return {
+        ...state,
+        ...downloadSelectionFromOrderSelection(
+          toggleOrderItemSelection(
+            orderSelectionFromDownloadState(state),
+            action.id,
+            action.orderedIds
+          )
+        )
+      };
+    case 'selection-range-selected':
+      return {
+        ...state,
+        ...downloadSelectionFromOrderSelection(
+          selectOrderItemRange(
+            orderSelectionFromDownloadState(state),
+            action.id,
+            action.orderedIds,
+            { additive: action.additive }
+          )
+        )
+      };
+    case 'all-selected':
+      return {
+        ...state,
+        ...downloadSelectionFromOrderSelection(
+          selectAllOrderItems(orderSelectionFromDownloadState(state), action.orderedIds)
+        )
       };
     default:
       return state;

@@ -5,7 +5,7 @@ import { createFluxoraAiTaskPlanningBundle } from '../src/shared/ai-task-planner
 describe('AI task planner and subagent scheduler', () => {
   it('splits a 20-mod compatibility check into local-first research, judge and report agents', () => {
     const { subagentSchedule, taskPlan } = createFluxoraAiTaskPlanningBundle(
-      'Проверь совместимость этих 20 модов с Nexus dependencies',
+      'Проверь совместимость этих 20 модов с Nexus compatibility notes',
       'op_ai_plan_compat',
       new Date('2026-06-30T08:00:00Z')
     );
@@ -47,6 +47,42 @@ describe('AI task planner and subagent scheduler', () => {
       'nexus-research',
       'web-research',
       'compatibility-judge'
+    ]);
+  });
+
+  it('splits a large requirements audit into local targets, Nexus requirements, judge and report agents', () => {
+    const { subagentSchedule, taskPlan } = createFluxoraAiTaskPlanningBundle(
+      'Проверь все требования и dependencies для большой сборки',
+      'op_ai_plan_requirements',
+      new Date('2026-07-07T08:00:00Z')
+    );
+
+    expect(taskPlan.goal).toContain('installed Nexus targets satisfy');
+    expect(taskPlan.selectedSkill?.selectedSkillId).toBe('nexus-requirements-audit');
+    expect(taskPlan.selectedSkill?.selectedSkill?.displayName).toBe('Nexus requirements audit');
+    expect(taskPlan.proposedMutations).toEqual([]);
+    expect(taskPlan.readSteps.map((step) => step.agentId)).toEqual([
+      'build-state',
+      'local-inspector',
+      'nexus-requirements',
+      'requirement-judge',
+      'report'
+    ]);
+    expect(taskPlan.readSteps.find((step) => step.id === 'read-nexus-requirements')).toMatchObject({
+      dependsOn: ['inspect-installed-requirement-targets'],
+      toolName: 'nexus.research'
+    });
+    expect(taskPlan.readSteps.find((step) => step.agentId === 'web-research')).toBeUndefined();
+    expect(taskPlan.assumptions.join('\n')).toContain(
+      'Requirement answers must stay on installed, missing, unknown and coverage states'
+    );
+    expect(subagentSchedule.requestedSubagentCount).toBe(5);
+    expect(subagentSchedule.scheduledSubagents.map((agent) => agent.id)).toEqual([
+      'build-state',
+      'local-inspector',
+      'nexus-requirements',
+      'requirement-judge',
+      'report'
     ]);
   });
 
