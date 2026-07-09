@@ -89,6 +89,7 @@ describe('library home redesign', () => {
     expect(markup).toContain('248 mods · 32.4 GB');
     expect(markup).toContain('aria-label="Skyrim graphics overhaul actions"');
     expect(markup).toContain('New build');
+    expect(markup).toContain('stroke-width="2.35"');
   });
 
   it('renders the selected build summary without plugin counts or clipped accent badges', () => {

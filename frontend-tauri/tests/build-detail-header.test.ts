@@ -94,6 +94,7 @@ describe('build detail header redesign', () => {
     expect(markup).toContain('flx-custom-select');
     expect(markup).not.toContain('<select');
     expect(markup).toContain('Launch');
+    expect(markup).toContain('stroke-width="2.35"');
   });
 
   it('surfaces capability reasons when a visible header action is unsupported', () => {

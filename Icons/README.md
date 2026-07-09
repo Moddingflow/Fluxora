@@ -10,10 +10,11 @@ These SVG country flag emoji assets are original Twemoji SVG files from
 They replace the temporary hand-authored SVG flags that were previously stored
 under `frontend-tauri/src/renderer/assets/images/`.
 
-# Lucide context menu icons
+# Lucide UI and context menu icons
 
 The following SVG assets are original Lucide icons downloaded from
-`lucide-icons/lucide` tag `1.21.0` and are used by the Tauri mod context menu:
+`lucide-icons/lucide` tag `1.21.0` and are used by the Tauri UI and mod
+context menus:
 
 - `chevron-down.svg`
 - `chevron-up.svg`
@@ -24,8 +25,10 @@ The following SVG assets are original Lucide icons downloaded from
 - `folder-tree.svg`
 - `git-compare-arrows.svg`
 - `hard-drive-download.svg`
+- `open.svg` (from `external-link.svg`)
 - `package-plus.svg`
 - `play.svg`
+- `plus.svg`
 - `toggle-left.svg`
 - `toggle-right.svg`
 - `triangle-alert.svg`

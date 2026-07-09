@@ -47,6 +47,7 @@ interface LibraryHomeProps {
 }
 
 const hiddenStatValues = new Set(['', '-', 'Not tracked']);
+const primaryActionIcon = { size: 16, strokeWidth: 2.35 } as const;
 
 const hasStatValue = (value: string): boolean => !hiddenStatValues.has(value.trim());
 
@@ -140,7 +141,7 @@ export function LibraryHome({
           <Button
             disabled={isNewBuildDisabled}
             fullWidth
-            iconLeft={<Icon name="plus" size={15} />}
+            iconLeft={<Icon name="plus" {...primaryActionIcon} />}
             onClick={onNewBuild}
           >
             New build
@@ -159,7 +160,7 @@ export function LibraryHome({
               </div>
               <Button
                 disabled={isNewBuildDisabled}
-                iconLeft={<Icon name="open" size={15} />}
+                iconLeft={<Icon name="open" {...primaryActionIcon} />}
                 onClick={onOpenSelectedProject}
               >
                 Open
@@ -198,7 +199,7 @@ export function LibraryHome({
             action={
               <Button
                 disabled={isNewBuildDisabled}
-                iconLeft={<Icon name="plus" size={15} />}
+                iconLeft={<Icon name="plus" {...primaryActionIcon} />}
                 onClick={onNewBuild}
               >
                 New build
@@ -278,7 +279,7 @@ function LibraryProjectRows({
           projects.length === 0 ? (
             <Button
               disabled={isNewBuildDisabled}
-              iconLeft={<Icon name="plus" size={15} />}
+              iconLeft={<Icon name="plus" {...primaryActionIcon} />}
               onClick={onNewBuild}
               size="sm"
             >

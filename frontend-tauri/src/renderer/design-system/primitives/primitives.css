@@ -49,9 +49,12 @@
 }
 
 .flx-button[data-variant="primary"] {
-  border-color: var(--accent-hover);
+  border-color: transparent;
   color: var(--on-accent);
   background: var(--accent);
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  font-weight: 800;
 }
 
 .flx-button[data-variant="secondary"] {
@@ -74,8 +77,13 @@
 
 .flx-button:not(:disabled):hover[data-variant="primary"],
 .flx-button:not(:disabled):focus-visible[data-variant="primary"] {
-  border-color: var(--flx-accent-bright);
+  border-color: transparent;
   background: var(--accent-hover);
+}
+
+.flx-button[data-size="sm"][data-variant="primary"],
+.flx-button[data-size="xs"][data-variant="primary"] {
+  font-size: var(--fs-sm);
 }
 
 .flx-button:not(:disabled):hover[data-variant="secondary"],
@@ -95,13 +103,6 @@
 .flx-button:not(:disabled):focus-visible[data-variant="danger"] {
   border-color: var(--flx-error);
   background: var(--flx-error-solid);
-}
-
-.flx-button:not(:disabled):active,
-.flx-icon-button:not(:disabled):active,
-.flx-switch:not(:disabled):active,
-.flx-nav-item:not(:disabled):active {
-  transform: translateY(1px);
 }
 
 .flx-button__icon,

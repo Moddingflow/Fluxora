@@ -77,6 +77,9 @@ describe('redesign primitives', () => {
 
   it('keeps icon-only controls labeled and icons on currentColor', () => {
     const iconMarkup = renderToStaticMarkup(React.createElement(Icon, { name: 'settings' }));
+    const playMarkup = renderToStaticMarkup(
+      React.createElement(Icon, { name: 'play', size: 16, strokeWidth: 2.35 })
+    );
     const buttonMarkup = renderToStaticMarkup(
       React.createElement(
         IconButton,
@@ -86,9 +89,30 @@ describe('redesign primitives', () => {
     );
 
     expect(iconMarkup).toContain('stroke="currentColor"');
+    expect(playMarkup).toContain('stroke-width="2.35"');
+    expect(playMarkup).toContain('M5 5a2 2 0 0 1 3.008-1.728');
     expect(buttonMarkup).toContain('aria-label="Open settings"');
     expect(buttonMarkup).toContain('title="Open settings"');
     expect(buttonMarkup).toContain('data-variant="boxed"');
+  });
+
+  it('keeps primary buttons bold, font-aligned and free of decorative outlines', () => {
+    const primitiveCss = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'design-system',
+      'primitives',
+      'primitives.css'
+    );
+
+    expect(primitiveCss).toContain('.flx-button[data-variant="primary"]');
+    expect(primitiveCss).toContain('border-color: transparent;');
+    expect(primitiveCss).toContain('font-family: var(--font-sans);');
+    expect(primitiveCss).toContain('font-size: var(--fs-base);');
+    expect(primitiveCss).toContain('font-weight: 800;');
+    expect(primitiveCss).toContain('.flx-button[data-size="sm"][data-variant="primary"]');
+    expect(primitiveCss).toContain('font-size: var(--fs-sm);');
   });
 
   it('preserves accessibility contracts for feedback and selection primitives', () => {
@@ -239,9 +263,16 @@ describe('redesign primitives', () => {
     );
 
     expect(styles).toContain('@import "./design-system/primitives/primitives.css";');
+    expect(styles).not.toContain('button:not(:disabled):active');
+    expect(styles).not.toContain('.phase-tile:active');
+    expect(styles).not.toContain('.archive-tree-row:active');
     expect(primitiveCss).toContain('.flx-button');
     expect(primitiveCss).toContain('.flx-icon-button');
     expect(primitiveCss).toContain('stroke: currentColor;');
+    expect(primitiveCss).not.toContain('.flx-button:not(:disabled):active');
+    expect(primitiveCss).not.toContain('.flx-icon-button:not(:disabled):active');
+    expect(primitiveCss).not.toContain('.flx-switch:not(:disabled):active');
+    expect(primitiveCss).not.toContain('.flx-nav-item:not(:disabled):active');
     expect(primitiveCss).not.toContain('.flx-tabs__tab:not(:disabled):active');
     expect(primitiveCss).toContain('.flx-loading-splash__cancel');
     expect(primitiveCss).toContain('@keyframes flx-splash-message-in');

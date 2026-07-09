@@ -34,12 +34,10 @@ describe('build settings window', () => {
   it('renders build paths inside the Settings left-nav shell', () => {
     const markup = renderToStaticMarkup(
       React.createElement(BuildSettingsWorkspace, {
-        busyLabel: null,
+        busyLabel: 'Loading build paths',
         draft,
         error: null,
-        isLoading: false,
         projectName: 'Foundation Edition',
-        projectReady: true,
         onBrowseDirectory: noop,
         onBrowseGameExecutable: noop,
         onChange: noop,
@@ -55,6 +53,9 @@ describe('build settings window', () => {
     expect(markup).toContain('Project directory');
     expect(markup).toContain('Game executable');
     expect(markup).toContain('Mods directory');
+    expect(markup).not.toContain('Build not found');
+    expect(markup).not.toContain('Loading build settings');
+    expect(markup).not.toContain('Loading build paths');
     expect(markup).not.toContain('Build settings</p>');
   });
 
@@ -81,9 +82,15 @@ describe('build settings window', () => {
     expect(app).toContain("const isBuildSettingsWindow = windowMode === 'build-settings';");
     expect(app).toContain("return `Settings · ${selectedProject?.name ?? (buildSettingsInitialName || 'Build')}`;");
     expect(app).toContain('window.fluxora.windowControls.openBuildSettings(');
+    expect(app).toContain('writeBuildSettingsBootstrap({');
+    expect(app).toContain('readBuildSettingsBootstrap(buildSettingsProjectId ??');
+    expect(app).toContain('initialBuildSettingsBootstrap?.project ? [initialBuildSettingsBootstrap.project] : []');
     expect(app).toContain('<BuildSettingsWorkspace');
     expect(app).toContain('window.fluxora.buildSettings.notifyPathsSaved(nextProject)');
     expect(app).toContain('window.fluxora.buildSettings.onPathsSaved((project) => {');
+    expect(app).not.toContain("setBuildPathsBusyLabel('Loading build paths')");
+    expect(app).not.toContain('Loading build settings');
+    expect(app).not.toContain('Build not found');
     expect(sharedApi).toContain("windowOpenBuildSettings: 'fluxora:window:open-build-settings'");
     expect(sharedApi).toContain("buildSettingsPathsSaved: 'fluxora:build-settings:paths-saved'");
     expect(facade).toContain("invoke('fluxora_open_build_settings_window'");

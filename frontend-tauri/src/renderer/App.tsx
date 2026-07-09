@@ -543,6 +543,64 @@ const readModDetailsBootstrap = (key: string): FluxoraModDetailsBootstrap | null
   }
 };
 
+interface BuildSettingsBootstrap {
+  key: string;
+  draft: BuildPathDraft;
+  executables: FluxoraExecutable[];
+  project: FluxoraProject;
+}
+
+const buildSettingsBootstrapStoragePrefix = 'fluxora.build-settings.bootstrap.';
+
+const buildSettingsBootstrapStorageKey = (key: string): string =>
+  `${buildSettingsBootstrapStoragePrefix}${encodeURIComponent(key)}`;
+
+const writeBuildSettingsBootstrap = (bootstrap: BuildSettingsBootstrap): void => {
+  try {
+    window.localStorage.setItem(
+      buildSettingsBootstrapStorageKey(bootstrap.key),
+      JSON.stringify(bootstrap)
+    );
+  } catch {
+    // Bootstrap is an optimization. The window can still load through the bridge.
+  }
+};
+
+const readBuildSettingsBootstrap = (key: string): BuildSettingsBootstrap | null => {
+  if (!key) {
+    return null;
+  }
+
+  const storageKey = buildSettingsBootstrapStorageKey(key);
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    window.localStorage.removeItem(storageKey);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<BuildSettingsBootstrap>;
+    const project = parsed.project as Partial<FluxoraProject> | undefined;
+    const draft = parsed.draft as Partial<BuildPathDraft> | undefined;
+    return parsed &&
+      parsed.key === key &&
+      project &&
+      typeof project.configPath === 'string' &&
+      draft &&
+      typeof draft.projectDirectory === 'string'
+      ? {
+          key,
+          draft: draft as BuildPathDraft,
+          executables: Array.isArray(parsed.executables) ? parsed.executables : [],
+          project: project as FluxoraProject
+        }
+      : null;
+  } catch {
+    window.localStorage.removeItem(storageKey);
+    return null;
+  }
+};
+
 const effectiveFileTreeSourceLabel = (entry: FluxoraEffectiveFileTreeEntry): string => {
   if (entry.sourceKind === 'game') {
     return 'Game';
@@ -967,6 +1025,10 @@ export const App = () => {
     isFilePreviewWindow;
   const buildSettingsProjectId = windowParameters.get('project');
   const buildSettingsInitialName = windowParameters.get('name')?.trim() ?? '';
+  const initialBuildSettingsBootstrap = useMemo(
+    () => (isBuildSettingsWindow ? readBuildSettingsBootstrap(buildSettingsProjectId ?? '') : null),
+    [buildSettingsProjectId, isBuildSettingsWindow]
+  );
   const modDetailsProjectId = windowParameters.get('project');
   const modDetailsModId = windowParameters.get('mod')?.trim() ?? '';
   const modDetailsInitialName = windowParameters.get('name')?.trim() ?? '';
@@ -997,9 +1059,13 @@ export const App = () => {
   const [securityState, setSecurityState] = useState<FluxoraSecurityState | null>(null);
   const [bridgeStatus, setBridgeStatus] = useState<NativeBridgeStatus | null>(null);
   const [catalog, setCatalog] = useState(projectCatalogFallback);
-  const [projects, setProjects] = useState<FluxoraProject[]>([]);
+  const [projects, setProjects] = useState<FluxoraProject[]>(() =>
+    initialBuildSettingsBootstrap?.project ? [initialBuildSettingsBootstrap.project] : []
+  );
   const [templates, setTemplates] = useState<FluxoraGameTemplate[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() =>
+    isBuildSettingsWindow ? buildSettingsProjectId : null
+  );
   const [projectMenuId, setProjectMenuId] = useState<string | null>(null);
   const [projectMenuPosition, setProjectMenuPosition] = useState<ProjectMenuPosition | null>(null);
   const [catalogState, setCatalogState] = useState<CatalogState>('idle');
@@ -1175,10 +1241,16 @@ export const App = () => {
   const [installDialog, setInstallDialog] = useState<InstallDialogState | null>(null);
   const installAnalysisPromiseRef = useRef<Promise<InstallAnalysisResult> | null>(null);
   const [isBuildPathsOpen, setIsBuildPathsOpen] = useState(false);
-  const [buildPathDraft, setBuildPathDraft] = useState<BuildPathDraft>(
-    emptyBuildPathDraft(null)
+  const [buildPathDraft, setBuildPathDraft] = useState<BuildPathDraft>(() =>
+    initialBuildSettingsBootstrap?.draft ??
+    emptyBuildPathDraft(initialBuildSettingsBootstrap?.project ?? null)
   );
-  const [buildPathExecutables, setBuildPathExecutables] = useState<FluxoraExecutable[]>([]);
+  const [buildPathExecutables, setBuildPathExecutables] = useState<FluxoraExecutable[]>(
+    () =>
+      initialBuildSettingsBootstrap?.executables ??
+      initialBuildSettingsBootstrap?.project.executables ??
+      []
+  );
   const [buildPathsBusyLabel, setBuildPathsBusyLabel] = useState<string | null>(null);
   const [buildPathsError, setBuildPathsError] = useState<string | null>(null);
   const [fluxPackSummary, setFluxPackSummary] = useState<FluxoraFluxPackSummary | null>(null);
@@ -1204,6 +1276,7 @@ export const App = () => {
   const pendingPluginEnableStatesByOrderIdRef =
     useRef<Map<string, PendingPluginEnableSave>>(new Map());
   const suppressNextRowClickRef = useRef(false);
+  const buildPathDraftDirtyRef = useRef(false);
   const buildSettingsLoadedProjectRef = useRef<string | null>(null);
   const [isTransferPageOpen, setIsTransferPageOpen] = useState(false);
 
@@ -6099,8 +6172,9 @@ export const App = () => {
   }, [operationOverlay?.operationId]);
 
   useEffect(() => {
+    buildPathDraftDirtyRef.current = false;
     setBuildPathDraft(emptyBuildPathDraft(selectedProject));
-    setBuildPathExecutables([]);
+    setBuildPathExecutables(selectedProject?.executables ?? []);
     setBuildPathsError(null);
     setFluxPackSummary(null);
     setFluxPackInstallResult(null);
@@ -6644,24 +6718,26 @@ export const App = () => {
     }
 
     const operationId = createRendererOperationId('build_paths_get');
-    setBuildPathsBusyLabel('Loading build paths');
     setBuildPathsError(null);
     setMessage(null);
+    setIsBuildPathsOpen(true);
 
     try {
       const [settings, executables] = await Promise.all([
         window.fluxora.buildPaths.get(project.configPath, { operationId }),
         window.fluxora.executables.list(project.configPath, { operationId })
       ]);
-      setBuildPathDraft(draftFromBuildPathSettings(project, settings, executables));
-      setBuildPathExecutables(executables);
-      setIsBuildPathsOpen(true);
+      if (!buildPathDraftDirtyRef.current) {
+        setBuildPathDraft(draftFromBuildPathSettings(project, settings, executables));
+        setBuildPathExecutables(executables);
+      }
     } catch (error) {
       const nextMessage = errorMessage(error);
-      setBuildPathDraft(emptyBuildPathDraft(project));
+      if (!buildPathDraftDirtyRef.current) {
+        setBuildPathDraft(emptyBuildPathDraft(project));
+      }
       setBuildPathsError(nextMessage);
       setMessage(nextMessage);
-      setIsBuildPathsOpen(true);
     } finally {
       setBuildPathsBusyLabel(null);
     }
@@ -6674,6 +6750,18 @@ export const App = () => {
 
     if (!isBuildSettingsWindow) {
       try {
+        writeBuildSettingsBootstrap({
+          key: selectedProject.configPath,
+          draft:
+            buildPathDraft.projectDirectory === selectedProject.projectDirectory
+              ? buildPathDraft
+              : emptyBuildPathDraft(selectedProject),
+          executables:
+            buildPathExecutables.length > 0
+              ? buildPathExecutables
+              : (selectedProject.executables ?? []),
+          project: selectedProject
+        });
         await window.fluxora.windowControls.openBuildSettings(
           selectedProject.configPath,
           selectedProject.name
@@ -6701,6 +6789,7 @@ export const App = () => {
   };
 
   const updateBuildPathDraft = (patch: Partial<BuildPathDraft>) => {
+    buildPathDraftDirtyRef.current = true;
     setBuildPathDraft((current) => ({
       ...current,
       ...patch
@@ -6784,6 +6873,7 @@ export const App = () => {
       setProjects((current) => upsertProject(current, nextProject));
       setBuildPathDraft(draftFromBuildPathSettings(nextProject, saved, savedExecutables));
       setBuildPathExecutables(savedExecutables);
+      buildPathDraftDirtyRef.current = false;
       setMessage('Build paths saved.');
       if (isBuildSettingsWindow) {
         await window.fluxora.buildSettings.notifyPathsSaved(nextProject);
@@ -10075,12 +10165,6 @@ export const App = () => {
               <span>{buildPathsError}</span>
             </div>
           ) : null}
-          {buildPathsBusyLabel ? (
-            <div className="mod-busy-strip" role="status">
-              <RefreshCw size={15} aria-hidden="true" />
-              <span>{buildPathsBusyLabel}</span>
-            </div>
-          ) : null}
         </section>
 
         <section className="right-pane-section">
@@ -11177,9 +11261,7 @@ export const App = () => {
       busyLabel={buildPathsBusyLabel}
       draft={buildPathDraft}
       error={buildPathsError}
-      isLoading={catalogState === 'loading' || Boolean(buildPathsBusyLabel)}
       projectName={selectedProject?.name ?? (buildSettingsInitialName || 'Build')}
-      projectReady={Boolean(selectedProject)}
       onBrowseDirectory={(title, field) => void browseBuildPathDirectory(title, field)}
       onBrowseGameExecutable={() => void browseBuildGameExecutable()}
       onChange={updateBuildPathDraft}
