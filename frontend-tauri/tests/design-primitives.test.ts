@@ -115,6 +115,29 @@ describe('redesign primitives', () => {
     expect(primitiveCss).toContain('font-size: var(--fs-sm);');
   });
 
+  it('lets plain inputs use the full text column and preserves icon input layout', () => {
+    const inputMarkup = renderToStaticMarkup(React.createElement(Input, { value: 'Plain' }));
+    const iconInputMarkup = renderToStaticMarkup(
+      React.createElement(Input, {
+        leadingIcon: React.createElement(Icon, { name: 'settings' }),
+        value: 'With icon'
+      })
+    );
+    const primitiveCss = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'design-system',
+      'primitives',
+      'primitives.css'
+    );
+
+    expect(inputMarkup).not.toContain('data-has-leading-icon');
+    expect(iconInputMarkup).toContain('data-has-leading-icon="true"');
+    expect(primitiveCss).toMatch(/\.flx-input\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*\}/);
+    expect(primitiveCss).toMatch(/\.flx-input\[data-has-leading-icon="true"\]\s*\{[^}]*grid-template-columns: auto minmax\(0, 1fr\);[^}]*\}/);
+  });
+
   it('preserves accessibility contracts for feedback and selection primitives', () => {
     const tabs = renderToStaticMarkup(
       React.createElement(Tabs, {

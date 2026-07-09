@@ -82,8 +82,9 @@ describe('right pane redesign', () => {
     const watcher =
       app.match(/return window\.fluxora\.buildContent\.onChanged\(\(event\) => \{[\s\S]*?\}\);\s+\}, \[/)?.[0] ??
       '';
-    const dataTabCount =
-      app.match(/if \(id === 'data'\) \{[\s\S]*?return fluxPackSummary/)?.[0] ?? '';
+    const rightPaneTabsHeader =
+      app.match(/<header className="build-pane__header build-pane__header--tabs">[\s\S]*?<\/header>/)?.[0] ??
+      '';
     const retryBlock =
       app.match(/onClick=\{\(\) =>\s+void loadEffectiveFileTree[\s\S]*?Повторить/)?.[0] ??
       '';
@@ -107,7 +108,12 @@ describe('right pane redesign', () => {
     expect(watcher).not.toContain('setEffectiveFileTreeSnapshot(null);');
     expect(loadTree).not.toContain("setExpandedEffectiveFileTree((current) => ({ ...current, '': true, Data: true }))");
     expect(app).not.toContain('prepareWorkspaceIndexes(opened.projectDirectory');
-    expect(dataTabCount).toContain('effectiveFileTreeSnapshot.totalFileCountKnown !== false');
+    expect(app).not.toContain('const rightPaneTabCount');
+    expect(app).not.toContain('const rightPaneSummary');
+    expect(rightPaneTabsHeader).toContain('data-active-index={activeRightPaneTabIndex}');
+    expect(rightPaneTabsHeader).not.toContain('<h3>');
+    expect(rightPaneTabsHeader).not.toContain('activeRightPaneSummary');
+    expect(rightPaneTabsHeader).not.toContain('<strong>{count}</strong>');
     expect(retryBlock).toContain('force: true');
     expect(retryBlock).toContain('requestKey: effectiveFileTreeRequestKey');
     expect(retryBlock).not.toContain("requestKey: `${effectiveFileTreeRequestKey}\\nretry`");
@@ -166,7 +172,7 @@ describe('right pane redesign', () => {
     expect(app).toContain('{enabledPluginSlotCounts.light} / 4096');
     expect(app).toContain('Кол-во тяжёлых плагинов');
     expect(app).toContain('{enabledPluginSlotCounts.heavy} / 256');
-    expect(app).toMatch(/if \(id === 'plugins'\) \{\s+return null;/);
+    expect(app).not.toContain('rightPaneTabCount');
     expect(app).not.toContain('return String(pluginCount);');
     expect(app).not.toContain('enabled · ${filteredPluginItems.length} visible');
 
@@ -178,8 +184,14 @@ describe('right pane redesign', () => {
   it('keeps the compact right pane styling aligned with the build-page UI-kit', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
 
-    expect(styles).toContain('grid-auto-columns: minmax(0, 1fr);');
-    expect(styles).toContain('grid-auto-flow: column;');
+    expect(styles).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));');
+    expect(styles).toContain('.right-pane-tabs::before');
+    expect(styles).toContain('.right-pane-tabs[data-active-index="1"]::before');
+    expect(styles).toContain('transform: translateX(calc(100% + 4px));');
+    expect(styles).toContain('.right-pane-tabs button[data-active="true"]');
+    expect(styles).toContain('color: #fff;');
+    expect(styles).not.toContain('.right-pane-tabs strong');
+    expect(styles).toContain('@keyframes rightPaneContentIn');
     expect(styles).toContain('.right-pane-content--plugins');
     expect(styles).toContain('.right-pane-content--data');
     expect(styles).toContain('height: 100%;');

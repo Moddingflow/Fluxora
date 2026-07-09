@@ -36,6 +36,8 @@ namespace fluxora
 {
     namespace
     {
+        constexpr std::size_t maxModFolderNameLength = 255;
+
         struct NexusLatestFile
         {
             std::wstring version;
@@ -138,6 +140,11 @@ namespace fluxora
             if (name.empty())
             {
                 throw std::invalid_argument("Mod name is required.");
+            }
+
+            if (name.size() > maxModFolderNameLength)
+            {
+                throw std::invalid_argument("Mod name is too long.");
             }
 
             if (containsInvalidFileNameCharacter(name))

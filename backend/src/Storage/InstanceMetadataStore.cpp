@@ -295,6 +295,7 @@ namespace fluxora
         constexpr std::wstring_view fallbackProfileName = L"Default";
         constexpr std::wstring_view profileOrderModKind = L"mod";
         constexpr std::wstring_view profileOrderSeparatorKind = L"separator";
+        constexpr std::size_t maxProfileOrderSeparatorTitleLength = 255;
         constexpr std::wstring_view profilePluginOrderPluginKind = L"plugin";
         constexpr std::wstring_view profilePluginOrderSeparatorKind = L"separator";
         constexpr std::wstring_view modInventoryRevisionKey = L"mod_inventory_revision";
@@ -3633,6 +3634,10 @@ namespace fluxora
         if (normalizedTitle.empty())
         {
             throw std::invalid_argument("Separator title is required.");
+        }
+        if (normalizedTitle.size() > maxProfileOrderSeparatorTitleLength)
+        {
+            throw std::invalid_argument("Separator title is too long.");
         }
 
         Database database = openInstanceDatabase(projectDirectory);

@@ -176,7 +176,6 @@
 .flx-input,
 .flx-select {
   display: inline-grid;
-  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: var(--space-2);
   height: var(--input-h);
@@ -190,6 +189,14 @@
     border-color var(--motion-fast),
     box-shadow var(--motion-fast),
     opacity var(--motion-fast);
+}
+
+.flx-input {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.flx-input[data-has-leading-icon="true"] {
+  grid-template-columns: auto minmax(0, 1fr);
 }
 
 .flx-select {

@@ -43,8 +43,10 @@ import menuCircleCheckIcon from '../../../Icons/circle-check.svg';
 import menuCircleXIcon from '../../../Icons/circle-x.svg';
 import menuFolderOpenIcon from '../../../Icons/folder-open.svg';
 import menuHardDriveDownloadIcon from '../../../Icons/hard-drive-download.svg';
+import menuLayersIcon from '../../../Icons/layers.svg';
 import menuPackagePlusIcon from '../../../Icons/package-plus.svg';
 import menuPlayIcon from '../../../Icons/play.svg';
+import menuPlusIcon from '../../../Icons/plus.svg';
 import modDetailsFilesIcon from '../../../Icons/folder-tree.svg';
 import modDetailsConflictsIcon from '../../../Icons/git-compare-arrows.svg';
 import infoCircleIcon from '../../../Icons/info-circle.svg';
@@ -111,6 +113,12 @@ import {
   InstallDialog,
   type InstallDialogState
 } from './features/install/InstallDialog';
+import {
+  MOD_CREATION_NAME_MAX_LENGTH,
+  ModCreationDialog,
+  type ModCreationDialogKind,
+  type ModCreationDialogState
+} from './features/mods/ModCreationDialog';
 import {
   OperationOverlay,
   type OperationOverlayState
@@ -1142,6 +1150,7 @@ export const App = () => {
   const [modMenuPosition, setModMenuPosition] = useState<RowContextMenuPosition | null>(null);
   const [modsToolbarMenuPosition, setModsToolbarMenuPosition] =
     useState<RowContextMenuPosition | null>(null);
+  const [modCreationDialog, setModCreationDialog] = useState<ModCreationDialogState | null>(null);
   const [modListScrollTop, setModListScrollTop] = useState(0);
   const [draggedModOrderId, setDraggedModOrderId] = useState<string | null>(null);
   const [modDropTarget, setModDropTarget] = useState<RowDropTargetState | null>(null);
@@ -2529,21 +2538,45 @@ export const App = () => {
     trackModOrderSave(save);
   };
 
-  const createModSeparator = async () => {
+  const openModCreationDialog = (kind: ModCreationDialogKind) => {
     if (!selectedProject) {
       return;
     }
 
-    const title = window.prompt('Separator title')?.trim();
+    setModMenuOrderId(null);
+    setModsToolbarMenuPosition(null);
+    setModCreationDialog({
+      kind,
+      name: '',
+      validationMessage: null
+    });
+  };
+
+  const updateModCreationDialogName = (name: string) => {
+    const limitedName = name.slice(0, MOD_CREATION_NAME_MAX_LENGTH);
+    setModCreationDialog((current) =>
+      current ? { ...current, name: limitedName, validationMessage: null } : current
+    );
+  };
+
+  const validateModSeparatorTitle = (title: string) => {
     if (!title) {
+      return 'Введите название разделителя.';
+    }
+
+    if (title.length > MOD_CREATION_NAME_MAX_LENGTH) {
+      return `Название должно быть не длиннее ${MOD_CREATION_NAME_MAX_LENGTH} символов.`;
+    }
+
+    return '';
+  };
+
+  const createModSeparator = async (title: string) => {
+    if (!selectedProject) {
       return;
     }
 
-    const selectedIndex = selectedModItem
-      ? modsWorkspace.items.findIndex((item) => item.orderId === selectedModItem.orderId)
-      : -1;
-    const targetIndex = selectedIndex >= 0 ? selectedIndex + 1 : modsWorkspace.items.length;
-
+    const targetIndex = modsWorkspace.items.length;
     await runModMutation('Creating separator', (operationId) =>
       window.fluxora.mods.createSeparator(
         selectedProject.projectDirectory,
@@ -2611,13 +2644,8 @@ export const App = () => {
     }
   };
 
-  const createEmptyMod = async () => {
+  const createEmptyMod = async (modName: string) => {
     if (!selectedProject) {
-      return;
-    }
-
-    const modName = window.prompt('New mod name')?.trim();
-    if (!modName) {
       return;
     }
 
@@ -2626,6 +2654,42 @@ export const App = () => {
         operationId
       })
     );
+  };
+
+  const submitModCreationDialog = async () => {
+    if (!modCreationDialog) {
+      return;
+    }
+
+    if (!selectedProject) {
+      setModCreationDialog(null);
+      return;
+    }
+
+    const name =
+      modCreationDialog.kind === 'empty-mod'
+        ? normalizeInstallModName(modCreationDialog.name)
+        : modCreationDialog.name.trim();
+    const validationMessage =
+      modCreationDialog.kind === 'empty-mod'
+        ? validateInstallModName(name)
+        : validateModSeparatorTitle(name);
+
+    if (validationMessage) {
+      setModCreationDialog((current) =>
+        current ? { ...current, validationMessage } : current
+      );
+      return;
+    }
+
+    setModCreationDialog(null);
+
+    if (modCreationDialog.kind === 'empty-mod') {
+      await createEmptyMod(name);
+      return;
+    }
+
+    await createModSeparator(name);
   };
 
   const modDeletionItemsFor = (item: FluxoraModOrderItem): FluxoraModOrderItem[] => {
@@ -8424,6 +8488,11 @@ export const App = () => {
       !buildHeaderCapabilities.packageAvailable ||
       Boolean(operationOverlay?.isRunning);
     const installFluxPackDisabled = !bridgeStatus?.ready || Boolean(operationOverlay?.isRunning);
+    const modCreationDisabled =
+      !selectedProject ||
+      !bridgeStatus?.ready ||
+      Boolean(modsBusyLabel) ||
+      Boolean(operationOverlay?.isRunning);
 
     return createPortal(
       <div
@@ -8438,6 +8507,26 @@ export const App = () => {
         }}
         onClick={(event) => event.stopPropagation()}
       >
+        <button
+          type="button"
+          role="menuitem"
+          title="Создать разделитель внизу списка модов"
+          disabled={modCreationDisabled}
+          onClick={() => openModCreationDialog('separator')}
+        >
+          <MenuIcon source={menuLayersIcon} />
+          <span>Создать разделитель</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          title="Создать пустой мод"
+          disabled={modCreationDisabled}
+          onClick={() => openModCreationDialog('empty-mod')}
+        >
+          <MenuIcon source={menuPlusIcon} />
+          <span>Создать пустой мод</span>
+        </button>
         <button
           type="button"
           role="menuitem"
@@ -10068,6 +10157,7 @@ export const App = () => {
 
     return (
       <div
+        key="data"
         className="right-pane-content right-pane-content--data"
         role="tabpanel"
         aria-label="Данные"
@@ -10130,6 +10220,7 @@ export const App = () => {
 
     return (
       <div
+        key="build"
         className="right-pane-content right-pane-content--build"
         role="tabpanel"
         aria-label="Сборка"
@@ -10260,44 +10351,9 @@ export const App = () => {
     );
   };
 
-  const rightPaneTabCount = (id: RightPaneId): string | null => {
-    if (id === 'plugins') {
-      return null;
-    }
-
-    if (id === 'downloads') {
-      return String(downloadsWorkspace.items.length);
-    }
-
-    if (id === 'data') {
-      return effectiveFileTreeState === 'ready' &&
-        effectiveFileTreeSnapshot &&
-        effectiveFileTreeSnapshot.totalFileCountKnown !== false
-        ? String(effectiveFileTreeSnapshot.totalFileCount)
-        : null;
-    }
-
-    return fluxPackSummary ? '1' : null;
-  };
-
-  const rightPaneSummary = (): string | null => {
-    if (activeRightPane === 'plugins') {
-      return null;
-    }
-
-    if (activeRightPane === 'downloads') {
-      return `${downloadsWorkspace.items.length} files · ${filteredDownloadItems.length} visible`;
-    }
-
-    if (activeRightPane === 'data') {
-      return null;
-    }
-
-    return fluxPackSummary ? 'FluxPack summary ready' : 'Paths, executable and FluxPack actions';
-  };
-
   const renderPluginsRightPane = () => (
     <div
+      key="plugins"
       className="right-pane-content right-pane-content--plugins"
       role="tabpanel"
       aria-label="Плагины"
@@ -10374,6 +10430,7 @@ export const App = () => {
 
   const renderDownloadsRightPane = () => (
     <div
+      key="downloads"
       className="right-pane-content right-pane-content--downloads"
       role="tabpanel"
       aria-label="Загрузки"
@@ -10483,6 +10540,15 @@ export const App = () => {
       onPatch={setInstallDialogPatch}
       onResolveExistingMod={(mode) => void submitInstallOptions(mode)}
       onSubmitInstallOptions={() => void submitInstallOptions()}
+    />
+  );
+
+  const renderModCreationDialog = () => (
+    <ModCreationDialog
+      state={modCreationDialog}
+      onCancel={() => setModCreationDialog(null)}
+      onNameChange={updateModCreationDialogName}
+      onSubmit={() => void submitModCreationDialog()}
     />
   );
 
@@ -11607,7 +11673,7 @@ export const App = () => {
       );
     }
 
-    const activeRightPaneSummary = rightPaneSummary();
+    const activeRightPaneTabIndex = rightPaneTabs.findIndex((tab) => tab.id === activeRightPane);
 
     return (
       <section className="build-page" aria-label="Selected build">
@@ -11709,30 +11775,25 @@ export const App = () => {
             aria-label="Right pane"
           >
             <header className="build-pane__header build-pane__header--tabs">
-              <div>
-                <h3>{rightPaneTabs.find((tab) => tab.id === activeRightPane)?.label}</h3>
-                {activeRightPaneSummary ? <span>{activeRightPaneSummary}</span> : null}
-              </div>
-
-              <div className="right-pane-tabs" role="tablist" aria-label="Right pane tabs">
-                {rightPaneTabs.map(({ id, label, icon: Icon }) => {
-                  const count = rightPaneTabCount(id);
-
-                  return (
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={activeRightPane === id}
-                      data-active={activeRightPane === id}
-                      key={id}
-                      onClick={() => activateRightPane(id)}
-                    >
-                      <Icon size={15} aria-hidden="true" />
-                      <span>{label}</span>
-                      {count ? <strong>{count}</strong> : null}
-                    </button>
-                  );
-                })}
+              <div
+                className="right-pane-tabs"
+                role="tablist"
+                aria-label="Right pane tabs"
+                data-active-index={activeRightPaneTabIndex}
+              >
+                {rightPaneTabs.map(({ id, label, icon: Icon }) => (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeRightPane === id}
+                    data-active={activeRightPane === id}
+                    key={id}
+                    onClick={() => activateRightPane(id)}
+                  >
+                    <Icon size={15} aria-hidden="true" />
+                    <span>{label}</span>
+                  </button>
+                ))}
               </div>
             </header>
 
@@ -12187,6 +12248,7 @@ export const App = () => {
                   ? renderPlaceholder()
                   : null}
                 {renderInstallDialog()}
+                {renderModCreationDialog()}
                 {renderDeletionConfirmation()}
                 {renderGrassCacheConfirmation()}
                 {renderOperationOverlay()}

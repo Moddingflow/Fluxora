@@ -75,8 +75,16 @@ describe('mods pane redesign', () => {
     expect(app).not.toContain("'Disabling all plugins'");
   });
 
-  it('packages and installs the build from the mods search-row three-dot menu', () => {
+  it('creates mods, creates separators, packages and installs from the mods three-dot menu', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const dialog = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'mods',
+      'ModCreationDialog.tsx'
+    );
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
 
     expect(app).toContain('className="mods-pane-toolbar"');
@@ -89,6 +97,13 @@ describe('mods pane redesign', () => {
       /className="pane-menu-trigger"[\s\S]*?rowContextMenuPositionFromAnchor\(\s*event\.currentTarget\.getBoundingClientRect\(\)\s*\)/
     );
     expect(app).toContain('aria-label="Действия со сборкой"');
+    expect(app).toContain('<span>Создать разделитель</span>');
+    expect(app).toContain('<span>Создать пустой мод</span>');
+    expect(app).toContain("openModCreationDialog('separator')");
+    expect(app).toContain("openModCreationDialog('empty-mod')");
+    expect(app).toContain('const targetIndex = modsWorkspace.items.length;');
+    expect(app).toContain('<ModCreationDialog');
+    expect(app).not.toContain("window.prompt('New mod name')");
     expect(app).toContain('<span>Упаковать</span>');
     expect(app).toContain('<span>Установить</span>');
     expect(app).toMatch(/const packageBuildDisabled =\s*\n\s*!selectedProject \|\|\s*\n\s*!buildHeaderCapabilities\.packageAvailable \|\|\s*\n\s*Boolean\(operationOverlay\?\.isRunning\)/);
@@ -102,7 +117,20 @@ describe('mods pane redesign', () => {
     expect(styles).toContain('.mods-pane-toolbar > .pane-search {');
     expect(styles).toContain('.pane-menu-trigger {');
     expect(styles).toContain('.pane-menu-trigger[aria-expanded="true"]');
+    expect(styles).toContain('.mod-create-dialog {');
+    expect(styles).toContain('.mod-create-dialog__field');
     expect(styles).not.toContain('.mod-list-row__menu-trigger');
+
+    const modCreateDialogStyles = styles.match(/\.mod-create-dialog \{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(modCreateDialogStyles).not.toContain('box-shadow');
+    expect(styles).toMatch(/\.mod-create-dialog \.flx-input:focus-within \{\s*box-shadow: none;\s*\}/);
+
+    expect(dialog).toContain("title: 'Создать разделитель'");
+    expect(dialog).toContain("title: 'Создать пустой мод'");
+    expect(dialog).toContain('MOD_CREATION_NAME_MAX_LENGTH = 255');
+    expect(dialog).toContain('maxLength={MOD_CREATION_NAME_MAX_LENGTH}');
+    expect(dialog).toContain('<Button disabled={!state.name.trim()} size="sm" type="submit">');
+    expect(dialog).toContain('OK');
   });
 
   it('keeps the table surface visually aligned with the build-page UI-kit', () => {
@@ -133,6 +161,8 @@ describe('mods pane redesign', () => {
     expect(styles).toContain('height: 48px;');
     expect(styles).toContain('.mod-separator-cell');
     expect(styles).toContain('.mod-separator-toggle-button');
+    expect(styles).toMatch(/\.mod-separator-cell\s*\{[^}]*justify-content: center;[^}]*\}/);
+    expect(styles).toMatch(/\.mod-separator-title\s*\{[^}]*text-align: center;[^}]*\}/);
     expect(styles).toContain('.mod-overwrite-state-cell');
     expect(styles).toContain('.mod-list-row[data-conflict-highlight="overwrites"]');
     expect(styles).toContain('.mod-list-row:not(.mod-list-row--separator)[data-conflict-highlight="overwrites"]::before');

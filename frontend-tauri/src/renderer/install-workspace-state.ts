@@ -94,6 +94,8 @@ const reservedDeviceNames = new Set([
   'LPT9'
 ]);
 
+export const INSTALL_MOD_NAME_MAX_LENGTH = 255;
+
 export const normalizeInstallModName = (value: string): string =>
   value.trim().replace(/^[.\s]+|[.\s]+$/g, '');
 
@@ -101,6 +103,10 @@ export const validateInstallModName = (value: string): string => {
   const name = normalizeInstallModName(value);
   if (!name) {
     return 'Enter a mod name.';
+  }
+
+  if (name.length > INSTALL_MOD_NAME_MAX_LENGTH) {
+    return `The name must be ${INSTALL_MOD_NAME_MAX_LENGTH} characters or fewer.`;
   }
 
   if (/[<>:"/\\|?*\u0000-\u001f]/.test(name)) {

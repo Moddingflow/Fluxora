@@ -28,6 +28,7 @@ export function Input({
     <span
       className={cx('flx-input', containerClassName)}
       data-full-width={fullWidth || undefined}
+      data-has-leading-icon={leadingIcon ? 'true' : undefined}
       data-invalid={invalid || undefined}
     >
       {leadingIcon ? <span className="flx-input__icon">{leadingIcon}</span> : null}

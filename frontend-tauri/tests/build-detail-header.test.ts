@@ -118,8 +118,9 @@ describe('build detail header redesign', () => {
 
     expect(styles).toContain('grid-template-areas:');
     expect(styles).toContain('"back title controls"');
-    expect(styles).toContain('min-height: 64px;');
-    expect(styles).toContain('height: 34px;');
+    expect(styles).toContain('--build-header-control-size: 40px;');
+    expect(styles).toContain('min-height: 82px;');
+    expect(styles).toContain('height: var(--build-header-control-size);');
     expect(styles).toContain('.build-select--executable');
     expect(styles).toContain('.build-select .flx-custom-select');
     expect(styles).toContain('.flx-custom-select__menu');

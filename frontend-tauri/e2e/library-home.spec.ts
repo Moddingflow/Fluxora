@@ -1703,6 +1703,26 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await expect(modOrderTable.getByRole('columnheader', { name: 'Версия' })).toBeVisible();
   await expect(modOrderTable.getByRole('columnheader', { name: 'Latest' })).toBeVisible();
   await expect(modOrderTable.getByRole('columnheader', { name: 'Статус' })).toBeVisible();
+
+  const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
+  await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
+  await page.getByRole('menuitem', { name: 'Создать разделитель' }).click();
+  const creationDialog = page.getByRole('dialog', { name: 'Создать разделитель' });
+  await expect(creationDialog).toBeVisible();
+  const separatorTitleInput = creationDialog.getByLabel('Название разделителя');
+  await expect(separatorTitleInput).toHaveAttribute('maxLength', '255');
+  const titleInputWidthRatio = await separatorTitleInput.evaluate((input) => {
+    const wrapper = input.closest('.flx-input');
+    if (!wrapper) {
+      return 0;
+    }
+
+    return input.getBoundingClientRect().width / wrapper.getBoundingClientRect().width;
+  });
+  expect(titleInputWidthRatio).toBeGreaterThan(0.8);
+  await page.keyboard.press('Escape');
+  await expect(creationDialog).toBeHidden();
+
   const separatorRow = page.getByRole('row', { name: /Core fixes separator/ });
   await expect(separatorRow).toBeVisible();
   await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'none');
@@ -1905,10 +1925,20 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   await page.getByRole('button', { name: 'Open', exact: true }).click();
 
   const rightPane = page.getByLabel('Right pane');
-  await expect(rightPane.getByRole('tab', { name: /Плагины/ })).toBeVisible();
-  await expect(rightPane.getByRole('tab', { name: /Данные/ })).toBeVisible();
-  await expect(rightPane.getByRole('tab', { name: /Загрузки/ })).toBeVisible();
+  const rightPaneTabs = rightPane.locator('.right-pane-tabs');
+  await expect(rightPane.getByRole('tab', { name: 'Плагины', exact: true })).toBeVisible();
+  await expect(rightPane.getByRole('tab', { name: 'Данные', exact: true })).toBeVisible();
+  await expect(rightPane.getByRole('tab', { name: 'Загрузки', exact: true })).toBeVisible();
   await expect(rightPane.getByRole('tab', { name: /Сборка/ })).toHaveCount(0);
+  await expect(rightPaneTabs.locator('strong')).toHaveCount(0);
+  await expect(rightPaneTabs).toHaveAttribute('data-active-index', '0');
+  await expect
+    .poll(() =>
+      rightPane
+        .getByRole('tab', { name: 'Плагины', exact: true })
+        .evaluate((element) => getComputedStyle(element).color)
+    )
+    .toBe('rgb(255, 255, 255)');
   const rightPaneTabWidths = await rightPane.locator('.right-pane-tabs button').evaluateAll((tabs) =>
     tabs.map((tab) => Math.round((tab as HTMLElement).getBoundingClientRect().width))
   );
@@ -1921,6 +1951,14 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   await expect(page.getByRole('row', { name: /Skyrim.esm/ })).toBeVisible();
   await expect(rightPane.getByText('00')).toBeVisible();
   await expect(rightPane.locator('.plugin-type-badge')).toHaveCount(0);
+
+  await rightPane.getByRole('tab', { name: 'Загрузки', exact: true }).click();
+  await expect(rightPaneTabs).toHaveAttribute('data-active-index', '2');
+  await expect(rightPane.getByRole('tab', { name: 'Загрузки', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  );
+  await rightPane.getByRole('tab', { name: 'Плагины', exact: true }).click();
 
   const pluginSeparatorRow = page.getByRole('row', { name: /Late patches separator/ });
   await pluginSeparatorRow.focus();

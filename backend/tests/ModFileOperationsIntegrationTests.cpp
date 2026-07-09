@@ -720,6 +720,24 @@ namespace fluxora::tests
         EXPECT_EQ(order[1].name, L"Nemesis Output");
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, CreateEmptyModRejectsOverlongWindowsFolderName)
+    {
+        const std::wstring overlongName(256, L'A');
+
+        EXPECT_THROW(
+            (void)mods_.createEmptyMod(project_, overlongName),
+            std::invalid_argument);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, CreateModSeparatorRejectsOverlongTitle)
+    {
+        const std::wstring overlongTitle(256, L'S');
+
+        EXPECT_THROW(
+            (void)profileOrder_.createModSeparator(project_, L"Default", overlongTitle, 0),
+            std::invalid_argument);
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, ListInstalledModsReflectsManualFolderAddsAndDeletes)
     {
         const std::filesystem::path manualMod = modsDirectory() / L"Manual Drop";
