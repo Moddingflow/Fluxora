@@ -529,6 +529,11 @@ namespace
                 L"checkUpdates",
                 L"clearOverwrite",
                 L"getFileTree",
+                L"getEffectiveFileTree",
+                L"getEffectiveFileTreeRoot",
+                L"getEffectiveFileTreeChildren",
+                L"getModDetailsSummary",
+                L"getModConflictTree",
                 L"listPreviewVariants",
                 L"readPreviewAsset",
                 L"readTextFile",
@@ -1058,6 +1063,23 @@ namespace
             });
     }
 
+    std::wstring payloadPrepareWorkspaceIndexes(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        return payloadFromCoreJson(
+            L"core.workspaceIndexPrepareFailed",
+            [&projectDirectory, &profileName](wchar_t* buffer, int length)
+            {
+                return fluxora_prepare_workspace_indexes(
+                    projectDirectory.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadExportFluxPack(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -1546,6 +1568,109 @@ namespace
                     projectDirectory.c_str(),
                     modPath.c_str(),
                     relativeDirectory.empty() ? nullptr : relativeDirectory.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadGetModConflictTree(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring modPath = requiredStringField(params, L"modPath");
+        const std::wstring cursor = optionalStringField(&params, L"cursor");
+        const int limit = optionalIntField(params, L"limit", 200);
+        return payloadFromCoreJson(
+            L"core.modConflictTreeFailed",
+            [&projectDirectory, &modPath, &cursor, limit](wchar_t* buffer, int length)
+            {
+                return fluxora_get_mod_conflict_tree(
+                    projectDirectory.c_str(),
+                    modPath.c_str(),
+                    cursor.empty() ? nullptr : cursor.c_str(),
+                    limit,
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadGetModDetailsSummary(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        const std::wstring modPath = requiredStringField(params, L"modPath");
+        return payloadFromCoreJson(
+            L"core.modDetailsSummaryFailed",
+            [&projectDirectory, &profileName, &modPath](wchar_t* buffer, int length)
+            {
+                return fluxora_get_mod_details_summary(
+                    projectDirectory.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    modPath.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadGetEffectiveFileTree(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        return payloadFromCoreJson(
+            L"core.effectiveFileTreeFailed",
+            [&projectDirectory, &profileName](wchar_t* buffer, int length)
+            {
+                return fluxora_get_effective_file_tree(
+                    projectDirectory.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadGetEffectiveFileTreeRoot(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        const int limit = optionalIntField(params, L"limit", 250);
+        return payloadFromCoreJson(
+            L"core.effectiveFileTreeRootFailed",
+            [&projectDirectory, &profileName, limit](wchar_t* buffer, int length)
+            {
+                return fluxora_get_effective_file_tree_root(
+                    projectDirectory.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    limit,
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadGetEffectiveFileTreeChildren(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        const std::wstring revision = requiredStringField(params, L"revision");
+        const std::wstring relativeDirectory = optionalStringField(&params, L"relativeDirectory");
+        const std::wstring cursor = optionalStringField(&params, L"cursor");
+        const int limit = optionalIntField(params, L"limit", 250);
+        return payloadFromCoreJson(
+            L"core.effectiveFileTreeChildrenFailed",
+            [&projectDirectory, &profileName, &revision, &relativeDirectory, &cursor, limit](
+                wchar_t* buffer,
+                int length)
+            {
+                return fluxora_get_effective_file_tree_children(
+                    projectDirectory.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    revision.c_str(),
+                    relativeDirectory.empty() ? nullptr : relativeDirectory.c_str(),
+                    cursor.empty() ? nullptr : cursor.c_str(),
+                    limit,
                     buffer,
                     length);
             });
@@ -2356,6 +2481,10 @@ namespace
         {
             return payloadSaveBuildPathSettings(request);
         }
+        if (request.method == L"build.prepareWorkspaceIndexes")
+        {
+            return payloadPrepareWorkspaceIndexes(request);
+        }
         if (request.method == L"fluxPack.export")
         {
             return payloadExportFluxPack(request);
@@ -2459,6 +2588,26 @@ namespace
         if (request.method == L"mods.getFileTree")
         {
             return payloadGetModFileTree(request);
+        }
+        if (request.method == L"mods.getModConflictTree")
+        {
+            return payloadGetModConflictTree(request);
+        }
+        if (request.method == L"mods.getModDetailsSummary")
+        {
+            return payloadGetModDetailsSummary(request);
+        }
+        if (request.method == L"mods.getEffectiveFileTree")
+        {
+            return payloadGetEffectiveFileTree(request);
+        }
+        if (request.method == L"mods.getEffectiveFileTreeRoot")
+        {
+            return payloadGetEffectiveFileTreeRoot(request);
+        }
+        if (request.method == L"mods.getEffectiveFileTreeChildren")
+        {
+            return payloadGetEffectiveFileTreeChildren(request);
         }
         if (request.method == L"mods.listPreviewVariants")
         {

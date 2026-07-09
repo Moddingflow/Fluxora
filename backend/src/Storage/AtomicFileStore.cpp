@@ -81,9 +81,18 @@ namespace fluxora
                 throw std::runtime_error("Failed to open state file for validation.");
             }
 
-            return std::string(
-                std::istreambuf_iterator<char>(file),
-                std::istreambuf_iterator<char>());
+            file.seekg(0, std::ios::end);
+            const std::streamoff size = file.tellg();
+            if (size <= 0)
+            {
+                return {};
+            }
+
+            file.seekg(0, std::ios::beg);
+            std::string content(static_cast<std::size_t>(size), '\0');
+            file.read(content.data(), static_cast<std::streamsize>(size));
+            content.resize(static_cast<std::size_t>(file.gcount()));
+            return content;
         }
 
         bool isContinuationByte(unsigned char byte) noexcept

@@ -48,11 +48,12 @@ Phase 5 extends the first bridge slice to cover the build catalog and creation e
 
 Phase 6 extends `fluxora.bridge.v1` to the installed-mod workspace:
 
-- Native host routes `mods.listInstalled`, `mods.getOrder`, `mods.createSeparator`, `mods.deleteSeparator`, `mods.moveOrderItem`, `mods.deleteInstalled`, `mods.createEmpty`, `mods.setEnabled`, `mods.setAllEnabled`, `mods.checkUpdates`, `mods.clearOverwrite`, `mods.getFileTree`, `mods.listPreviewVariants` and `mods.readPreviewAsset` to existing C++ C ABI functions.
+- Native host routes `mods.listInstalled`, `mods.getOrder`, `mods.createSeparator`, `mods.deleteSeparator`, `mods.moveOrderItem`, `mods.deleteInstalled`, `mods.createEmpty`, `mods.setEnabled`, `mods.setAllEnabled`, `mods.checkUpdates`, `mods.clearOverwrite`, `mods.getFileTree`, `mods.getEffectiveFileTree`, `mods.getEffectiveFileTreeRoot`, `mods.getEffectiveFileTreeChildren`, `mods.getModDetailsSummary`, `mods.getModConflictTree`, `mods.listPreviewVariants` and `mods.readPreviewAsset` to existing C++ C ABI functions.
 - Tauri Rust shell/facade expose typed `window.fluxora.mods.*` calls only; renderer still has no Node.js, filesystem or raw command access.
 - Renderer owns local mod search, selection, row action menus, scroll windowing and expanded file-tree state.
 - C++ core remains the owner of installed mod records, profile order, enabled state, separator persistence, update checks, file tree indexing and filesystem mutations.
 - Selected-mod file tree is lazy by `relativeDirectory` so large mods do not require one unbounded payload.
+- Effective game-root Data pages are lazy on cold cache: `mods.getEffectiveFileTreeRoot` and `mods.getEffectiveFileTreeChildren` return shallow bounded pages without preparing a full recursive index. Full `mods.getEffectiveFileTree` and `build.prepareWorkspaceIndexes` remain explicit heavy index operations with a long bridge timeout and are not run during build open.
 
 ## Phase 7 Plugins/Load Order MVP
 
@@ -158,6 +159,7 @@ Implemented MVP methods:
 - `projects.delete`
 - `buildPaths.get`
 - `buildPaths.save`
+- `build.prepareWorkspaceIndexes`
 - `fluxPack.export`
 - `fluxPack.inspect`
 - `fluxPack.install`
@@ -174,6 +176,11 @@ Implemented MVP methods:
 - `mods.checkUpdates`
 - `mods.clearOverwrite`
 - `mods.getFileTree`
+- `mods.getEffectiveFileTree`
+- `mods.getEffectiveFileTreeRoot`
+- `mods.getEffectiveFileTreeChildren`
+- `mods.getModDetailsSummary`
+- `mods.getModConflictTree`
 - `mods.listPreviewVariants`
 - `mods.readPreviewAsset`
 - `plugins.list`
@@ -732,6 +739,11 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `mods.checkUpdates`
 - `mods.clearOverwrite`
 - `mods.getFileTree`
+- `mods.getEffectiveFileTree`
+- `mods.getEffectiveFileTreeRoot`
+- `mods.getEffectiveFileTreeChildren`
+- `mods.getModDetailsSummary`
+- `mods.getModConflictTree`
 - `mods.listPreviewVariants`
 - `mods.readPreviewAsset`
 - `grassCache.generate`

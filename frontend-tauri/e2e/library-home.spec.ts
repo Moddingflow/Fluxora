@@ -511,7 +511,18 @@ test.beforeEach(async ({ page }) => {
       ]
     });
 
+    const buildContentChangedCallbacks = new Set<(event: any) => void>();
     (window as any).__fluxoraCalls = calls;
+    (window as any).__emitFluxoraBuildContentChanged = (event: any = {}) => {
+      const payload = {
+        eventId: `evt_test_build_content_${Date.now()}`,
+        projectDirectory: skyrimProject.projectDirectory,
+        ...event
+      };
+      for (const callback of buildContentChangedCallbacks) {
+        callback(payload);
+      }
+    };
     (window as any).fluxora = {
       app: {
         getInfo: async () => ({
@@ -572,6 +583,21 @@ test.beforeEach(async ({ page }) => {
         setLanguage: async () => ({ language: 'en-us', operationId: 'op_language' }),
         shutdown: async () => ({ accepted: true, operationId: 'op_shutdown' })
       },
+      build: {
+        prepareWorkspaceIndexes: async (projectDirectory: any, profileName: any, operation: any) => {
+          calls.push({
+            method: 'build.prepareWorkspaceIndexes',
+            payload: { operation, profileName, projectDirectory }
+          });
+          return {
+            cacheHit: true,
+            profileName: profileName || 'Default',
+            revision: 'playwright-effective-tree-1',
+            totalEntryCount: 6,
+            totalFileCount: 4
+          };
+        }
+      },
       buildPaths: {
         get: async () => ({
           downloadsDirectory: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\downloads',
@@ -608,7 +634,12 @@ test.beforeEach(async ({ page }) => {
         onDragDrop: async () => () => undefined
       },
       buildContent: {
-        onChanged: () => () => undefined,
+        onChanged: (callback: any) => {
+          buildContentChangedCallbacks.add(callback);
+          return () => {
+            buildContentChangedCallbacks.delete(callback);
+          };
+        },
         unwatch: async (operation: any) => ({
           accepted: true,
           operationId: operation?.operationId ?? 'op_build_content_unwatch'
@@ -751,6 +782,225 @@ test.beforeEach(async ({ page }) => {
             conflictOwners: []
           }
         ],
+        getEffectiveFileTree: async (projectDirectory: any, profileName: any, operation: any) => {
+          calls.push({
+            method: 'mods.getEffectiveFileTree',
+            payload: { operation, profileName, projectDirectory }
+          });
+          return {
+            profileName: profileName || 'Default',
+            revision: 'playwright-effective-tree-1',
+            totalFileCount: 4,
+            totalFileCountKnown: true,
+            entries: [
+              {
+                name: 'Game Root',
+                relativePath: '',
+                parentPath: '',
+                isDirectory: true,
+                hasChildren: true,
+                size: 0,
+                virtualPath: '',
+                sourceKind: 'virtual',
+                sourceName: 'Game Root',
+                sourcePath: ''
+              },
+              {
+                name: 'Data',
+                relativePath: 'Data',
+                parentPath: '',
+                isDirectory: true,
+                hasChildren: true,
+                size: 0,
+                virtualPath: 'Data',
+                sourceKind: 'virtual',
+                sourceName: 'Merged',
+                sourcePath: ''
+              },
+              {
+                name: 'SkyrimSE.exe',
+                relativePath: 'SkyrimSE.exe',
+                parentPath: '',
+                isDirectory: false,
+                hasChildren: false,
+                size: 1024,
+                virtualPath: 'SkyrimSE.exe',
+                sourceKind: 'game',
+                sourceName: 'Game',
+                sourcePath: 'D:\\Steam\\Skyrim Special Edition\\SkyrimSE.exe'
+              },
+              {
+                name: 'Skyrim.esm',
+                relativePath: 'Data\\Skyrim.esm',
+                parentPath: 'Data',
+                isDirectory: false,
+                hasChildren: false,
+                size: 128,
+                virtualPath: 'Data\\Skyrim.esm',
+                sourceKind: 'game',
+                sourceName: 'Game',
+                sourcePath: 'D:\\Steam\\Skyrim Special Edition\\Data\\Skyrim.esm'
+              },
+              {
+                name: 'SkyUI.esp',
+                relativePath: 'Data\\SkyUI.esp',
+                parentPath: 'Data',
+                isDirectory: false,
+                hasChildren: false,
+                size: 256,
+                virtualPath: 'Data\\SkyUI.esp',
+                sourceKind: 'mod',
+                sourceName: 'SkyUI',
+                sourcePath: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI\\Data\\SkyUI.esp'
+              },
+              {
+                name: 'shared.dds',
+                relativePath: 'Data\\textures\\shared.dds',
+                parentPath: 'Data\\textures',
+                isDirectory: false,
+                hasChildren: false,
+                size: 64,
+                virtualPath: 'Data\\textures\\shared.dds',
+                sourceKind: 'overwrite',
+                sourceName: 'Overwrite',
+                sourcePath: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\overwrite\\textures\\shared.dds'
+              },
+              {
+                name: 'textures',
+                relativePath: 'Data\\textures',
+                parentPath: 'Data',
+                isDirectory: true,
+                hasChildren: true,
+                size: 0,
+                virtualPath: 'Data\\textures',
+                sourceKind: 'virtual',
+                sourceName: 'Merged',
+                sourcePath: ''
+              }
+            ]
+          };
+        },
+        getEffectiveFileTreeRoot: async (
+          projectDirectory: any,
+          profileName: any,
+          limit: any,
+          operation: any
+        ) => {
+          calls.push({
+            method: 'mods.getEffectiveFileTreeRoot',
+            payload: { limit, operation, profileName, projectDirectory }
+          });
+          return {
+            profileName: profileName || 'Default',
+            revision: 'playwright-effective-tree-1',
+            parentPath: '',
+            totalFileCount: 4,
+            totalFileCountKnown: false,
+            totalChildCount: 2,
+            limit,
+            nextCursor: '',
+            entries: [
+              {
+                name: 'Game Root',
+                relativePath: '',
+                parentPath: '',
+                isDirectory: true,
+                hasChildren: true,
+                size: 0,
+                virtualPath: '',
+                sourceKind: 'virtual',
+                sourceName: 'Game Root',
+                sourcePath: ''
+              },
+              {
+                name: 'Data',
+                relativePath: 'Data',
+                parentPath: '',
+                isDirectory: true,
+                hasChildren: true,
+                size: 0,
+                virtualPath: 'Data',
+                sourceKind: 'virtual',
+                sourceName: 'Merged',
+                sourcePath: ''
+              },
+              {
+                name: 'SkyrimSE.exe',
+                relativePath: 'SkyrimSE.exe',
+                parentPath: '',
+                isDirectory: false,
+                hasChildren: false,
+                size: 1024,
+                virtualPath: 'SkyrimSE.exe',
+                sourceKind: 'game',
+                sourceName: 'Game',
+                sourcePath: 'D:\\Steam\\Skyrim Special Edition\\SkyrimSE.exe'
+              }
+            ]
+          };
+        },
+        getEffectiveFileTreeChildren: async (
+          projectDirectory: any,
+          profileName: any,
+          revision: any,
+          relativeDirectory: any,
+          cursor: any,
+          limit: any,
+          operation: any
+        ) => {
+          calls.push({
+            method: 'mods.getEffectiveFileTreeChildren',
+            payload: { cursor, limit, operation, profileName, projectDirectory, relativeDirectory, revision }
+          });
+          return {
+            profileName: profileName || 'Default',
+            revision: 'playwright-effective-tree-1',
+            parentPath: relativeDirectory,
+            totalFileCount: 4,
+            totalFileCountKnown: false,
+            totalChildCount: 3,
+            limit,
+            nextCursor: '',
+            entries: [
+              {
+                name: 'Skyrim.esm',
+                relativePath: 'Data\\Skyrim.esm',
+                parentPath: 'Data',
+                isDirectory: false,
+                hasChildren: false,
+                size: 128,
+                virtualPath: 'Data\\Skyrim.esm',
+                sourceKind: 'game',
+                sourceName: 'Game',
+                sourcePath: 'D:\\Steam\\Skyrim Special Edition\\Data\\Skyrim.esm'
+              },
+              {
+                name: 'SkyUI.esp',
+                relativePath: 'Data\\SkyUI.esp',
+                parentPath: 'Data',
+                isDirectory: false,
+                hasChildren: false,
+                size: 256,
+                virtualPath: 'Data\\SkyUI.esp',
+                sourceKind: 'mod',
+                sourceName: 'SkyUI',
+                sourcePath: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI\\Data\\SkyUI.esp'
+              },
+              {
+                name: 'textures',
+                relativePath: 'Data\\textures',
+                parentPath: 'Data',
+                isDirectory: true,
+                hasChildren: true,
+                size: 0,
+                virtualPath: 'Data\\textures',
+                sourceKind: 'virtual',
+                sourceName: 'Merged',
+                sourcePath: ''
+              }
+            ]
+          };
+        },
         listPreviewVariants: async () => [
           {
             modPath: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Low Model',
@@ -1452,22 +1702,27 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'none');
   await expect(separatorRow).toHaveAttribute('data-conflict-status', '');
   await expect(separatorRow.locator('.mod-separator-status .flx-status-dot')).toHaveCount(0);
+  await expect(separatorRow.locator('.mod-separator-status .mod-separator-count')).toHaveText('2 mods');
+  await expect(separatorRow.locator('.mod-separator-cell .mod-separator-count')).toHaveCount(0);
+  await expect(separatorRow.locator('.mod-separator-line')).toHaveCount(0);
   await page.getByRole('button', { name: 'Collapse Core fixes' }).click();
   await expect(separatorRow).toHaveAttribute('data-collapsed', 'true');
-  await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'mixed');
-  await expect(separatorRow).toHaveAttribute('data-conflict-status', 'overwrites overwritten');
+  await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'none');
+  await expect(separatorRow).toHaveAttribute('data-conflict-status', '');
   await expect(separatorRow.locator('.mod-separator-cell .flx-status-dot')).toHaveCount(0);
-  await expect(separatorRow.locator('.mod-separator-status .flx-status-dot')).toHaveCount(2);
+  await expect(separatorRow.locator('.mod-separator-status .flx-status-dot')).toHaveCount(0);
   await expect
     .poll(() => separatorRow.evaluate((row) => window.getComputedStyle(row, '::before').content))
     .toBe('none');
-  await expect(separatorRow.getByRole('img', { name: 'Перезаписывает', exact: true })).toBeVisible();
-  await expect(separatorRow.getByRole('img', { name: 'Перезаписывается', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Expand Core fixes' }).click();
   await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'none');
   await expect(separatorRow).toHaveAttribute('data-conflict-status', '');
   await expect(separatorRow.locator('.mod-separator-status .flx-status-dot')).toHaveCount(0);
-  await expect(page.getByRole('row', { name: /Unofficial Patch mod/ })).toBeVisible();
+  const nestedModRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  await expect(nestedModRow).toBeVisible();
+  await expect
+    .poll(() => nestedModRow.evaluate((row) => window.getComputedStyle(row, '::before').content))
+    .toBe('none');
   await expect(page.getByRole('img', { name: /Overwrites 4 files/ })).toBeVisible();
   const overwriteRow = page.getByRole('row', {
     name: /Skyrim graphics overhaul .* Output files folder overwrite folder/
@@ -1638,6 +1893,10 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   await expect(rightPane.getByRole('tab', { name: /Данные/ })).toBeVisible();
   await expect(rightPane.getByRole('tab', { name: /Загрузки/ })).toBeVisible();
   await expect(rightPane.getByRole('tab', { name: /Сборка/ })).toHaveCount(0);
+  const rightPaneTabWidths = await rightPane.locator('.right-pane-tabs button').evaluateAll((tabs) =>
+    tabs.map((tab) => Math.round((tab as HTMLElement).getBoundingClientRect().width))
+  );
+  expect(new Set(rightPaneTabWidths).size).toBe(1);
 
   const pluginsTable = page.getByRole('table', { name: 'Plugin load order' });
   await expect(pluginsTable).toBeVisible();
@@ -1645,7 +1904,7 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   await expect(pluginsTable.getByRole('columnheader', { name: 'Статус' })).toBeVisible();
   await expect(page.getByRole('row', { name: /Skyrim.esm/ })).toBeVisible();
   await expect(rightPane.getByText('00')).toBeVisible();
-  await expect(rightPane.locator('.plugin-type-badge', { hasText: 'master' }).first()).toBeVisible();
+  await expect(rightPane.locator('.plugin-type-badge')).toHaveCount(0);
 
   const pluginSeparatorRow = page.getByRole('row', { name: /Late patches separator/ });
   await pluginSeparatorRow.focus();
@@ -1665,7 +1924,9 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   });
   await expect(separatorWarning).toBeVisible();
   await separatorWarning.hover();
-  await expect(page.getByRole('tooltip')).toContainText('Aardvark.esm');
+  await expect(page.getByRole('tooltip', { name: 'Отсутствующие мастер-файлы' })).toContainText(
+    'Aardvark.esm'
+  );
   await page.getByRole('button', { name: 'Expand Late patches' }).click();
   await expect(pluginSeparatorRow).toHaveAttribute('data-missing-masters', 'false');
 
@@ -1673,7 +1934,7 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   const warning = pluginRow.getByRole('button', { name: /Отсутствуют мастер-файлы/ });
   await expect(warning).toBeVisible();
   await warning.hover();
-  const tooltip = page.getByRole('tooltip');
+  const tooltip = page.getByRole('tooltip', { name: 'Отсутствующие мастер-файлы' });
   await expect(tooltip).toContainText('Отсутствующие мастер-файлы');
   await expect(tooltip.locator('li').first()).toHaveText('Aardvark.esm');
   await expect(tooltip).toContainText('Update.esm');
@@ -1712,11 +1973,30 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
     )
     .toBe(shellCallsBeforePluginReveal.openPath);
 
-  await page.getByRole('row', { name: /Unofficial Patch mod/ }).click();
   await rightPane.getByRole('tab', { name: /Данные/ }).click();
-  await expect(rightPane.getByText('Build folders')).toBeVisible();
-  await expect(rightPane.getByText('Selected mod data')).toBeVisible();
-  await expect(rightPane.getByText('scripts')).toBeVisible();
+  await expect(rightPane.getByText('Project paths and selected mod files')).toHaveCount(0);
+  await expect(rightPane.getByText('Selected mod data')).toHaveCount(0);
+  await expect(rightPane.getByText('Loading tree', { exact: true })).toHaveCount(0);
+  await expect(rightPane.locator('.right-pane-path-list')).toHaveCount(0);
+  const effectiveTree = rightPane.getByRole('tree', { name: 'Effective game root' });
+  await expect(effectiveTree).toBeVisible();
+  await expect(effectiveTree.getByRole('treeitem', { name: /Game Root/ })).toBeVisible();
+  await expect(effectiveTree.getByRole('treeitem', { name: /^Collapse Data\b/ })).toHaveAttribute(
+    'aria-expanded',
+    'true'
+  );
+  await expect(effectiveTree.getByRole('treeitem', { name: /Data\\SkyUI\.esp/ })).toContainText(
+    'SkyUI'
+  );
+  await expect(effectiveTree.getByRole('treeitem', { name: /Data\\textures/ })).toBeVisible();
+  await expect(rightPane.getByRole('button', { name: 'Open Mods' })).toHaveCount(0);
+  await expect(rightPane.getByRole('button', { name: 'Edit Mods' })).toHaveCount(0);
+  await effectiveTree.getByRole('button', { name: 'Open Data\\SkyUI.esp' }).click();
+  await expect
+    .poll(() => latestCallPayload(page, 'shell.openPath'))
+    .toMatchObject({
+      path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI\\Data\\SkyUI.esp'
+    });
 
   await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
   const downloadsTable = rightPane.getByRole('table', { name: 'Downloads' });
@@ -1734,8 +2014,101 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
         (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
           ?.map((call) => call.method)
       )
-    )
+  )
     .toEqual(expect.arrayContaining(['downloads.importFile', 'nxm.importInboundDownloads']));
+});
+
+test('does not auto-loop failed effective Data tree loads', async ({ page }) => {
+  await page.goto(baseUrl);
+
+  await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
+  await page.getByRole('button', { name: 'Open', exact: true }).click();
+
+  await page.evaluate(() => {
+    let attempts = 0;
+    const api = (window as any).fluxora;
+    api.mods.getEffectiveFileTreeRoot = async (
+      projectDirectory: string,
+      profileName: string,
+      limit: number,
+      operation: unknown
+    ) => {
+      attempts += 1;
+      (window as any).__failedEffectiveTreeAttempts = attempts;
+      (window as any).__fluxoraCalls.push({
+        method: 'mods.getEffectiveFileTreeRoot',
+        payload: { limit, operation, profileName, projectDirectory }
+      });
+      throw new Error('simulated effective tree timeout');
+    };
+  });
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Данные/ }).click();
+  await expect(rightPane.getByRole('button', { name: 'Повторить' })).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__failedEffectiveTreeAttempts ?? 0))
+    .toBe(1);
+
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => (window as any).__failedEffectiveTreeAttempts ?? 0)).toBe(1);
+
+  await rightPane.getByRole('button', { name: 'Повторить' }).click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__failedEffectiveTreeAttempts ?? 0))
+    .toBe(2);
+
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => (window as any).__failedEffectiveTreeAttempts ?? 0)).toBe(2);
+});
+
+test('keeps the loaded effective Data tree stable across same-revision refresh events', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Данные/ }).click();
+
+  const effectiveTree = rightPane.getByRole('tree', { name: 'Effective game root' });
+  const dataFolder = effectiveTree.getByRole('treeitem', { name: /^Collapse Data\b/ });
+  const skyUiFile = effectiveTree.getByRole('treeitem', { name: /Data\\SkyUI\.esp/ });
+
+  await expect(dataFolder).toHaveAttribute('aria-expanded', 'true');
+  await expect(skyUiFile).toBeVisible();
+
+  const callCountsBeforeRefresh = await page.evaluate(() => {
+    const calls = (window as any).__fluxoraCalls as Array<{ method: string }>;
+    return {
+      root: calls.filter((call) => call.method === 'mods.getEffectiveFileTreeRoot').length,
+      children: calls.filter((call) => call.method === 'mods.getEffectiveFileTreeChildren').length
+    };
+  });
+
+  await page.evaluate(() => (window as any).__emitFluxoraBuildContentChanged());
+
+  await expect(dataFolder).toHaveAttribute('aria-expanded', 'true');
+  await expect(skyUiFile).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const calls = (window as any).__fluxoraCalls as Array<{ method: string }>;
+        return calls.filter((call) => call.method === 'mods.getEffectiveFileTreeRoot').length;
+      })
+    )
+    .toBe(callCountsBeforeRefresh.root + 1);
+
+  await page.waitForTimeout(400);
+  const callCountsAfterRefresh = await page.evaluate(() => {
+    const calls = (window as any).__fluxoraCalls as Array<{ method: string }>;
+    return {
+      root: calls.filter((call) => call.method === 'mods.getEffectiveFileTreeRoot').length,
+      children: calls.filter((call) => call.method === 'mods.getEffectiveFileTreeChildren').length
+    };
+  });
+
+  expect(callCountsAfterRefresh).toEqual({
+    root: callCountsBeforeRefresh.root + 1,
+    children: callCountsBeforeRefresh.children
+  });
 });
 
 test('drags plugin rows without selecting text', async ({ page }) => {

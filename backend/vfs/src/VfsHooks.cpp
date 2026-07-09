@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cwctype>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -492,38 +493,59 @@ namespace fluxora::vfs
             std::wstring rel;
         };
 
+        // Case-insensitive comparison against an already-lowercased string,
+        // without allocating a lowered copy of `value`.
+        bool matchesLowered(std::wstring_view value, std::wstring_view lowered)
+        {
+            if (value.size() != lowered.size())
+            {
+                return false;
+            }
+
+            for (std::size_t index = 0; index < value.size(); ++index)
+            {
+                if (static_cast<wchar_t>(std::towlower(value[index])) != lowered[index])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         // True when `dosPath` is a mount target or lives inside it; `match.rel` is
-        // filled with the remainder ("" for the target directory itself).
+        // filled with the remainder ("" for the target directory itself). Runs on
+        // every hooked file operation, so it avoids allocations until a mount
+        // actually matches.
         bool underMountedTarget(const std::wstring& dosPath, TargetMatch& match)
         {
-            std::wstring lower = VfsTree::toLower(dosPath);
-            while (!lower.empty() && (lower.back() == L'\\' || lower.back() == L'/'))
+            std::wstring_view path(dosPath);
+            while (!path.empty() && (path.back() == L'\\' || path.back() == L'/'))
             {
-                lower.pop_back();
+                path.remove_suffix(1);
             }
 
             for (std::size_t index = 0; index < g_mounts.size(); ++index)
             {
                 const std::wstring& targetLower = g_mounts[index].targetLower;
-                if (lower == targetLower)
+                if (matchesLowered(path, targetLower))
                 {
                     match.mountIndex = index;
                     match.rel.clear();
                     return true;
                 }
 
-                if (lower.size() > targetLower.size() + 1 &&
-                    lower.compare(0, targetLower.size(), targetLower) == 0 &&
-                    lower[targetLower.size()] == L'\\')
+                if (path.size() > targetLower.size() + 1 &&
+                    path[targetLower.size()] == L'\\' &&
+                    matchesLowered(path.substr(0, targetLower.size()), targetLower))
                 {
-                    const std::wstring relLower = lower.substr(targetLower.size() + 1);
-                    if (isExcludedRelativePath(g_mounts[index], relLower))
+                    const std::wstring rel(path.substr(targetLower.size() + 1));
+                    if (isExcludedRelativePath(g_mounts[index], VfsTree::toLower(rel)))
                     {
                         continue;
                     }
 
                     match.mountIndex = index;
-                    match.rel = dosPath.substr(targetLower.size() + 1);
+                    match.rel = rel;
                     return true;
                 }
             }

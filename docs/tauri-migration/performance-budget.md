@@ -19,6 +19,8 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
 | Mods/plugins/downloads list DOM | render visible rows plus overscan, not the full collection | `createVirtualWindow` unit tests and App usage |
 | Archive placement tree DOM | render visible rows plus overscan, not the full placement preview | `createVirtualWindow` usage in install details |
 | Mod file tree | load directories incrementally and avoid rendering unopened children | existing lazy `mods.getFileTree` directory loading |
+| Effective Data tree | load visible root/child pages through bounded lazy bridge calls; full index warmup is explicit and not part of build open | `mods.getEffectiveFileTreeRoot` plus `mods.getEffectiveFileTreeChildren` |
+| Mod details conflicts | load indexed conflict pages, not recursive renderer directory fanout | `mods.getModConflictTree` |
 | Row paint cost | stable row heights, `content-visibility`, no layout-shifting hover states | CSS system rules |
 | Motion | transform/opacity-oriented micro-interactions, reduced motion fallback | CSS system rules |
 | Long-running operations | progress/status overlay, async bridge calls, renderer remains interactive | existing operation overlays plus smoke tests |

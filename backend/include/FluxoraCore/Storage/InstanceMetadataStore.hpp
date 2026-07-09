@@ -97,6 +97,17 @@ namespace fluxora
         std::vector<std::wstring> conflictOwners;
     };
 
+    struct ModConflictTreePage
+    {
+        std::filesystem::path modPath;
+        int totalOverwrites{0};
+        int totalOverwritten{0};
+        int limit{0};
+        std::wstring nextCursor;
+        std::vector<ModFileTreeEntry> overwrites;
+        std::vector<ModFileTreeEntry> overwritten;
+    };
+
     struct ProfileOrderItemRecord
     {
         std::wstring id;
@@ -305,6 +316,13 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modPath,
             std::wstring_view relativeDirectory,
+            const std::filesystem::path& modsDirectory = {});
+
+        [[nodiscard]] static ModConflictTreePage listModConflictTree(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modPath,
+            std::wstring_view cursor,
+            int limit,
             const std::filesystem::path& modsDirectory = {});
     };
 }

@@ -125,6 +125,11 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modPath,
             std::wstring_view relativeDirectory) const;
+        [[nodiscard]] ModConflictTreePage listModConflictTree(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modPath,
+            std::wstring_view cursor,
+            int limit) const;
         [[nodiscard]] ModTextFileDocument readModTextFile(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modPath,

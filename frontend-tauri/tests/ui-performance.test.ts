@@ -47,4 +47,26 @@ describe('renderer UI performance helpers', () => {
       bottomSpacer: 0
     });
   });
+
+  it('keeps large effective file tree row windows bounded', () => {
+    const rows = Array.from({ length: 10_000 }, (_, index) => ({
+      entry: {
+        relativePath: `Data\\textures\\bulk\\texture-${index}.dds`
+      },
+      level: 4
+    }));
+
+    const window = createVirtualWindow(rows, 32 * 6000, {
+      rowHeight: 32,
+      visibleRows: 38,
+      overscanRows: 10
+    });
+
+    expect(window.startIndex).toBe(5990);
+    expect(window.endIndex).toBe(6048);
+    expect(window.items).toHaveLength(58);
+    expect(window.items[0].entry.relativePath).toBe('Data\\textures\\bulk\\texture-5990.dds');
+    expect(window.topSpacer).toBe(5990 * 32);
+    expect(window.bottomSpacer).toBe((10_000 - 6048) * 32);
+  });
 });

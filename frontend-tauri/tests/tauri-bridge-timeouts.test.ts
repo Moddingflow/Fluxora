@@ -225,6 +225,204 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('routes effective game-root file tree snapshots through the typed native bridge', async () => {
+    const request: OperationRequest = { operationId: 'op_effective_tree' };
+    invokeMock.mockResolvedValue({
+      profileName: 'Default',
+      revision: 'rev-1',
+      totalFileCount: 2,
+      totalFileCountKnown: true,
+      entries: [
+        {
+          name: 'Game Root',
+          relativePath: '',
+          parentPath: '',
+          isDirectory: true,
+          hasChildren: true,
+          size: 0,
+          virtualPath: '',
+          sourceKind: 'virtual',
+          sourceName: 'Game Root',
+          sourcePath: ''
+        }
+      ]
+    });
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.mods.getEffectiveFileTree(project().projectDirectory, 'Default', request)
+    ).resolves.toMatchObject({
+      profileName: 'Default',
+      totalFileCount: 2,
+      totalFileCountKnown: true
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'mods.getEffectiveFileTree',
+      params: {
+        projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+        profileName: 'Default'
+      },
+      request,
+      timeoutMs: 120_000
+    });
+  });
+
+  it('routes bounded effective game-root root and child pages through the typed native bridge', async () => {
+    const request: OperationRequest = { operationId: 'op_effective_tree_page' };
+    invokeMock
+      .mockResolvedValueOnce({
+        profileName: 'Default',
+        revision: 'rev-1',
+        parentPath: '',
+        totalFileCount: 2,
+        totalFileCountKnown: false,
+        totalChildCount: 1,
+        limit: 250,
+        nextCursor: null,
+        entries: []
+      })
+      .mockResolvedValueOnce({
+        profileName: 'Default',
+        revision: 'rev-1',
+        parentPath: 'Data',
+        totalFileCount: 2,
+        totalFileCountKnown: false,
+        totalChildCount: 1,
+        limit: 100,
+        nextCursor: null,
+        entries: []
+      });
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.mods.getEffectiveFileTreeRoot(project().projectDirectory, 'Default', 250, request)
+    ).resolves.toMatchObject({ totalFileCountKnown: false });
+    await expect(
+      api.mods.getEffectiveFileTreeChildren(
+        project().projectDirectory,
+        'Default',
+        'rev-1',
+        'Data',
+        '100',
+        100,
+        request
+      )
+    ).resolves.toMatchObject({ totalFileCountKnown: false });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'fluxora_bridge_request', {
+      method: 'mods.getEffectiveFileTreeRoot',
+      params: {
+        projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+        profileName: 'Default',
+        limit: 250
+      },
+      request,
+      timeoutMs: undefined
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'fluxora_bridge_request', {
+      method: 'mods.getEffectiveFileTreeChildren',
+      params: {
+        projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+        profileName: 'Default',
+        revision: 'rev-1',
+        relativeDirectory: 'Data',
+        cursor: '100',
+        limit: 100
+      },
+      request,
+      timeoutMs: undefined
+    });
+  });
+
+  it('routes workspace index warmup through the build bridge surface', async () => {
+    const request: OperationRequest = { operationId: 'op_prepare_indexes' };
+    invokeMock.mockResolvedValue({
+      profileName: 'Default',
+      revision: 'rev-1',
+      totalFileCount: 12,
+      totalEntryCount: 20,
+      cacheHit: false
+    });
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.build.prepareWorkspaceIndexes(project().projectDirectory, 'Default', request)
+    ).resolves.toMatchObject({ totalFileCount: 12 });
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'build.prepareWorkspaceIndexes',
+      params: {
+        projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+        profileName: 'Default'
+      },
+      request,
+      timeoutMs: 120_000
+    });
+  });
+
+  it('routes mod details summary and conflict pages without recursive file-tree fanout', async () => {
+    const request: OperationRequest = { operationId: 'op_mod_details' };
+    invokeMock
+      .mockResolvedValueOnce({
+        id: 'E:\\Fluxora Builds\\Foundation Edition\\mods\\SkyUI',
+        orderId: 'mod_skyui',
+        kind: 'mod',
+        order: 1,
+        isSeparator: false,
+        isMod: true,
+        modUuid: 'skyui',
+        separatorTitle: '',
+        name: 'SkyUI'
+      })
+      .mockResolvedValueOnce({
+        modPath: 'E:\\Fluxora Builds\\Foundation Edition\\mods\\SkyUI',
+        totalOverwrites: 1,
+        totalOverwritten: 0,
+        limit: 200,
+        nextCursor: null,
+        overwrites: [],
+        overwritten: []
+      });
+
+    const api = createTauriFluxoraApi();
+    await api.mods.getModDetailsSummary(
+      project().projectDirectory,
+      'Default',
+      'E:\\Fluxora Builds\\Foundation Edition\\mods\\SkyUI',
+      request
+    );
+    await api.mods.getModConflictTree(
+      project().projectDirectory,
+      'E:\\Fluxora Builds\\Foundation Edition\\mods\\SkyUI',
+      undefined,
+      200,
+      request
+    );
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'fluxora_bridge_request', {
+      method: 'mods.getModDetailsSummary',
+      params: {
+        projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+        profileName: 'Default',
+        modPath: 'E:\\Fluxora Builds\\Foundation Edition\\mods\\SkyUI'
+      },
+      request,
+      timeoutMs: undefined
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'fluxora_bridge_request', {
+      method: 'mods.getModConflictTree',
+      params: {
+        projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+        modPath: 'E:\\Fluxora Builds\\Foundation Edition\\mods\\SkyUI',
+        cursor: '',
+        limit: 200
+      },
+      request,
+      timeoutMs: undefined
+    });
+  });
+
   it('normalizes FluxPack export flags before they reach the native bridge', async () => {
     const request: OperationRequest = { operationId: 'op_fluxpack_export' };
     invokeMock.mockResolvedValue({

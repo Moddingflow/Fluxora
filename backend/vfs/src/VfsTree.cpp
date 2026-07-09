@@ -103,7 +103,19 @@ namespace fluxora::vfs
 
     bool VfsTree::equalsIgnoreCase(const std::wstring& a, const std::wstring& b)
     {
-        return a.size() == b.size() && toLower(a) == toLower(b);
+        if (a.size() != b.size())
+        {
+            return false;
+        }
+
+        for (std::size_t index = 0; index < a.size(); ++index)
+        {
+            if (std::towlower(a[index]) != std::towlower(b[index]))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     bool VfsTree::wildcardMatch(std::wstring_view name, std::wstring_view pattern)

@@ -2807,6 +2807,7 @@ namespace fluxora
             }
 
             std::string body;
+            std::vector<char> buffer;
             while (true)
             {
                 DWORD available{};
@@ -2819,14 +2820,16 @@ namespace fluxora
                     break;
                 }
 
-                std::string buffer(available, '\0');
+                if (buffer.size() < available)
+                {
+                    buffer.resize(available);
+                }
                 DWORD read{};
                 if (!WinHttpReadData(request, buffer.data(), available, &read))
                 {
                     break;
                 }
-                buffer.resize(read);
-                body += buffer;
+                body.append(buffer.data(), read);
             }
 
             WinHttpCloseHandle(request);
@@ -3075,8 +3078,18 @@ namespace fluxora
                 writeMetadata(progressPath, pausedMetadata);
                 removeDownloadProgressSidecar(progressPath);
             };
-            const auto throwIfCanceled = [&]()
+            // The cancel marker lives on disk, so each check costs a filesystem
+            // stat; throttle the polls instead of paying one per received chunk.
+            auto lastCancellationCheck = std::chrono::steady_clock::now();
+            const auto throwIfCanceled = [&](bool force = false)
             {
+                constexpr auto cancellationPollInterval = std::chrono::milliseconds(200);
+                const auto now = std::chrono::steady_clock::now();
+                if (!force && now - lastCancellationCheck < cancellationPollInterval)
+                {
+                    return;
+                }
+                lastCancellationCheck = now;
                 if (isDownloadCancellationRequested(progressPath))
                 {
                     file.close();
@@ -3087,6 +3100,7 @@ namespace fluxora
                 }
             };
 
+            std::vector<char> buffer;
             while (true)
             {
                 throwIfCanceled();
@@ -3105,9 +3119,11 @@ namespace fluxora
                     break;
                 }
 
-                std::string buffer(available, '\0');
+                if (buffer.size() < available)
+                {
+                    buffer.resize(available);
+                }
                 DWORD read{};
-                throwIfCanceled();
                 if (!WinHttpReadData(request, buffer.data(), available, &read))
                 {
                     writeProgressUpdate(DownloadProgressWriteMode::DurableCheckpoint);
@@ -3121,7 +3137,6 @@ namespace fluxora
                     break;
                 }
 
-                throwIfCanceled();
                 file.write(buffer.data(), static_cast<std::streamsize>(read));
                 if (!file)
                 {
@@ -3144,7 +3159,7 @@ namespace fluxora
                 }
             }
 
-            throwIfCanceled();
+            throwIfCanceled(/*force=*/true);
             file.close();
             if (!file)
             {

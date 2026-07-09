@@ -38,6 +38,7 @@ export const FluxoraIpcChannels = {
   bridgeGetStatus: 'fluxora:bridge:get-status',
   bridgeSetLanguage: 'fluxora:bridge:set-language',
   bridgeShutdown: 'fluxora:bridge:shutdown',
+  buildPrepareWorkspaceIndexes: 'fluxora:build:prepare-workspace-indexes',
   buildPathsGet: 'fluxora:build-paths:get',
   buildPathsSave: 'fluxora:build-paths:save',
   dialogPickBuildConfig: 'fluxora:dialog:pick-build-config',
@@ -77,7 +78,12 @@ export const FluxoraIpcChannels = {
   modsCreateSeparator: 'fluxora:mods:create-separator',
   modsDeleteInstalled: 'fluxora:mods:delete-installed',
   modsDeleteSeparator: 'fluxora:mods:delete-separator',
+  modsGetEffectiveFileTree: 'fluxora:mods:get-effective-file-tree',
+  modsGetEffectiveFileTreeChildren: 'fluxora:mods:get-effective-file-tree-children',
+  modsGetEffectiveFileTreeRoot: 'fluxora:mods:get-effective-file-tree-root',
   modsGetFileTree: 'fluxora:mods:get-file-tree',
+  modsGetModConflictTree: 'fluxora:mods:get-mod-conflict-tree',
+  modsGetModDetailsSummary: 'fluxora:mods:get-mod-details-summary',
   modsGetOrder: 'fluxora:mods:get-order',
   modsListPreviewVariants: 'fluxora:mods:list-preview-variants',
   modsListInstalled: 'fluxora:mods:list-installed',
@@ -1531,6 +1537,72 @@ export interface FluxoraModFileTreeEntry {
   conflictOwners: string[];
 }
 
+export interface FluxoraModConflictTreePage {
+  modPath: string;
+  totalOverwrites: number;
+  totalOverwritten: number;
+  limit: number;
+  nextCursor?: string | null;
+  overwrites: FluxoraModFileTreeEntry[];
+  overwritten: FluxoraModFileTreeEntry[];
+}
+
+export type FluxoraEffectiveFileTreeSourceKind = 'game' | 'mod' | 'overwrite' | 'virtual';
+
+export interface FluxoraEffectiveFileTreeEntry {
+  name: string;
+  relativePath: string;
+  parentPath: string;
+  isDirectory: boolean;
+  hasChildren: boolean;
+  size: number;
+  virtualPath: string;
+  sourceKind: FluxoraEffectiveFileTreeSourceKind;
+  sourceName: string;
+  sourcePath: string;
+}
+
+export interface FluxoraEffectiveFileTreeSnapshot {
+  profileName: string;
+  revision: string;
+  totalFileCount: number;
+  totalFileCountKnown?: boolean;
+  entries: FluxoraEffectiveFileTreeEntry[];
+}
+
+export interface FluxoraEffectiveFileTreePage {
+  profileName: string;
+  revision: string;
+  parentPath: string;
+  totalFileCount: number;
+  totalFileCountKnown?: boolean;
+  totalChildCount: number;
+  limit: number;
+  nextCursor?: string | null;
+  entries: FluxoraEffectiveFileTreeEntry[];
+}
+
+export interface FluxoraWorkspaceIndexWarmupResult {
+  profileName: string;
+  revision: string;
+  totalFileCount: number;
+  totalEntryCount: number;
+  cacheHit: boolean;
+}
+
+export interface FluxoraModDetailsBootstrap {
+  key: string;
+  projectId: string;
+  projectName: string;
+  projectDirectory: string;
+  configPath: string;
+  profileName?: string;
+  modPath: string;
+  item: FluxoraModOrderItem;
+  rootFileTree?: FluxoraModFileTreeEntry[];
+  createdAt: number;
+}
+
 export type FluxoraPreviewAssetKind = 'nif' | 'texture';
 
 export interface FluxoraPreviewVariant {
@@ -2207,6 +2279,13 @@ export interface FluxoraApi {
   fileDrop: {
     onDragDrop: (callback: (event: FluxoraFileDropEvent) => void) => Promise<() => void>;
   };
+  build: {
+    prepareWorkspaceIndexes: (
+      projectDirectory: string,
+      profileName?: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraWorkspaceIndexWarmupResult>;
+  };
   buildContent: {
     watch: (
       watchRequest: FluxoraBuildContentWatchRequest,
@@ -2285,6 +2364,39 @@ export interface FluxoraApi {
       relativeDirectory?: string,
       request?: OperationRequest
     ) => Promise<FluxoraModFileTreeEntry[]>;
+    getModConflictTree: (
+      projectDirectory: string,
+      modPath: string,
+      cursor?: string,
+      limit?: number,
+      request?: OperationRequest
+    ) => Promise<FluxoraModConflictTreePage>;
+    getModDetailsSummary: (
+      projectDirectory: string,
+      profileName: string | undefined,
+      modPath: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraModOrderItem>;
+    getEffectiveFileTree: (
+      projectDirectory: string,
+      profileName?: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraEffectiveFileTreeSnapshot>;
+    getEffectiveFileTreeRoot: (
+      projectDirectory: string,
+      profileName?: string,
+      limit?: number,
+      request?: OperationRequest
+    ) => Promise<FluxoraEffectiveFileTreePage>;
+    getEffectiveFileTreeChildren: (
+      projectDirectory: string,
+      profileName: string | undefined,
+      revision: string,
+      relativeDirectory: string,
+      cursor?: string,
+      limit?: number,
+      request?: OperationRequest
+    ) => Promise<FluxoraEffectiveFileTreePage>;
     listPreviewVariants: (
       projectDirectory: string,
       profileName: string,
@@ -2662,7 +2774,8 @@ export interface FluxoraApi {
       configPath: string,
       modPath: string,
       modName: string,
-      profileName?: string
+      profileName?: string,
+      bootstrapKey?: string
     ) => Promise<void>;
     openSettings: () => Promise<void>;
     openTextEditor: (

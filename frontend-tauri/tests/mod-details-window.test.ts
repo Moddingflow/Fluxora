@@ -21,14 +21,26 @@ describe('mod details window', () => {
     expect(app).toContain("const isModDetailsWindow = windowMode === 'mod-details';");
     expect(app).toContain('void openModDetailsWindow(item);');
     expect(app).toContain('window.fluxora.windowControls.openModDetails(');
+    expect(app).toContain('writeModDetailsBootstrap({');
+    expect(app).toContain('modDetailsBootstrapKey');
+    expect(app).toContain('.getModDetailsSummary(projectDirectory');
+    expect(app).toContain('window.fluxora.mods.getModConflictTree');
     expect(app).toContain('role="tablist" aria-label="Mod details sections"');
+    expect(app).toContain('modOrderItemMatchesLookup(item, modDetailsModId)');
     expect(app).toContain('Файлы');
     expect(app).toContain('Конфликты');
     expect(app).toContain('Перезаписывает:');
     expect(app).toContain('Перезаписывается:');
+    expect(app).not.toContain('const scanDirectory = async');
+    expect(app).not.toMatch(/Loading mod(?!s)/);
     expect(sharedApi).toContain("windowOpenModDetails: 'fluxora:window:open-mod-details'");
+    expect(sharedApi).toContain('FluxoraModDetailsBootstrap');
+    expect(sharedApi).toContain('getModConflictTree: (');
+    expect(sharedApi).toContain('getModDetailsSummary: (');
     expect(facade).toContain("invoke('fluxora_open_mod_details_window'");
+    expect(facade).toContain('bootstrapKey');
     expect(rustShell).toContain('MOD_DETAILS_WINDOW_LABEL_PREFIX');
+    expect(rustShell).toContain('&bootstrap=');
     expect(rustShell).toContain('Mod \\u{00B7}');
     expect(capabilities).toContain('"mod-details:*"');
   });
@@ -128,7 +140,7 @@ describe('mod details window', () => {
 
     expect(app).toContain("const isFilePreviewWindow = windowMode === 'file-preview';");
     expect(app).toContain('previewKindForFile(entry.name)');
-    expect(app).toContain('onDoubleClick={() => void openFilePreviewForFile(entry)}');
+    expect(app).toContain('onClick={() => void openFilePreviewForFile(entry)}');
     expect(app).toContain('window.fluxora.windowControls.openFilePreview(');
     expect(app).toContain('<FilePreviewWorkspace');
     expect(registry).toContain("title: '.nif Preview'");

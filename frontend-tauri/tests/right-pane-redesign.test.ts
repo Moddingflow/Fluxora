@@ -26,10 +26,91 @@ describe('right pane redesign', () => {
     expect(app).not.toContain('renderRightPanePluginDetails');
     expect(app).not.toContain('aria-label="Selected plugin detail"');
     expect(app).toContain('className="right-pane-section"');
-    expect(app).toContain('className="right-pane-path-tree"');
-    expect(app).toContain('aria-label="Selected mod data tree"');
+    expect(app).toContain('className="right-pane-data-tree file-tree"');
+    expect(app).toContain('aria-label="Effective game root"');
+    expect(app).toContain('visibleEffectiveFileTreeWindow.items.map(renderEffectiveFileTreeRow)');
+    expect(app).toContain('renderEffectiveFileTreeSkeletonRows');
+    expect(app).not.toContain('Project paths and selected mod files');
+    expect(app).not.toContain('Selected mod data');
+    expect(app).not.toContain('renderRightPaneDataPathRows');
+    expect(app).not.toContain('RightPaneDataPathRow');
+    expect(app).not.toContain('className="right-pane-path-tree"');
     expect(app).not.toContain('aria-label="Plugin commands"');
     expect(app).not.toContain('Selected download');
+  });
+
+  it('renders the data pane from the effective game-root tree without selected-mod copy or loading text', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const dataPane =
+      app.match(/const renderDataRightPane = \(\) => \{[\s\S]*?const renderBuildRightPane/)?.[0] ??
+      '';
+
+    expect(app).toContain('window.fluxora.mods.getEffectiveFileTreeRoot');
+    expect(app).toContain('window.fluxora.mods.getEffectiveFileTreeChildren');
+    expect(app).toContain("const [expandedEffectiveFileTree");
+    expect(app).toContain("Data: true");
+    expect(app).toContain("const buildWorkspaceVisible = activeRoute === 'build' || activeRoute === 'workspace';");
+    expect(app).toContain("const dataTreeVisible = buildWorkspaceVisible && activeRightPane === 'data';");
+    expect(app).toContain('requestKey: effectiveFileTreeRequestKey');
+    expect(dataPane).toContain('role="tree"');
+    expect(dataPane).toContain('aria-label="Effective game root"');
+    expect(app).toContain('effectiveFileTreeSourceLabel(entry)');
+    expect(app).toContain('openEffectiveFileTreeEntry(entry)');
+    expect(app).toContain('createVirtualWindow(effectiveFileTreeRows');
+    expect(dataPane).toContain('aria-busy={showInitialSkeleton || effectiveFileTreeState ===');
+    expect(dataPane).toContain('renderEffectiveFileTreeSkeletonRows()');
+    expect(dataPane).toContain('Данные недоступны.');
+    expect(dataPane).toContain('Нет файлов в дереве.');
+    expect(dataPane).not.toContain('selectedModItem');
+    expect(dataPane).not.toContain('loadModFileTree');
+    expect(dataPane).not.toContain('right-pane-path-list');
+    expect(app).not.toContain('effectiveFileTreeRows.map(renderEffectiveFileTreeRow)');
+    expect(dataPane).not.toContain('Loading tree');
+    expect(dataPane).not.toContain("['Project'");
+    expect(dataPane).not.toContain('Open Mods');
+    expect(dataPane).not.toContain('Edit Mods');
+  });
+
+  it('keeps effective tree loading lazy, non-looping and free of unknown count badges', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const loadTree =
+      app.match(/const loadEffectiveFileTree = async \([\s\S]*?const runModMutation/)?.[0] ??
+      '';
+    const effect =
+      app.match(/const dataTreeVisible = buildWorkspaceVisible[\s\S]*?selectedProjectProfileName\s+\]\);/)?.[0] ??
+      '';
+    const watcher =
+      app.match(/return window\.fluxora\.buildContent\.onChanged\(\(event\) => \{[\s\S]*?\}\);\s+\}, \[/)?.[0] ??
+      '';
+    const dataTabCount =
+      app.match(/if \(id === 'data'\) \{[\s\S]*?return fluxPackSummary/)?.[0] ?? '';
+    const retryBlock =
+      app.match(/onClick=\{\(\) =>\s+void loadEffectiveFileTree[\s\S]*?Повторить/)?.[0] ??
+      '';
+
+    expect(loadTree).toContain('effectiveFileTreeFailedRequestKeyRef.current === requestKey');
+    expect(loadTree).toContain('effectiveFileTreeInFlightRequestKeyRef.current === requestKey');
+    expect(loadTree).not.toContain('!options.force && effectiveFileTreeInFlightRequestKeyRef.current === requestKey');
+    expect(loadTree).toContain('previousSnapshot?.revision === page.revision');
+    expect(loadTree).toContain('mergeEffectiveFileTreePage(previousSnapshot, page)');
+    expect(app).toContain('if (entry.parentPath === pageParentPath)');
+    expect(app).toContain('effectiveFileTreeLoadingChildrenRef.current.has(childKey)');
+    expect(loadTree).toContain('!dataTreeVisible && !canRefreshHiddenSnapshot');
+    expect(effect).toContain('if (!dataTreeVisible && !canRefreshExistingTree)');
+    expect(effect).toContain('effectiveFileTreeSnapshotRef.current !== null');
+    expect(watcher).toContain('effectiveFileTreeCacheRef.current = {};');
+    expect(watcher).toContain('effectiveFileTreeFailedRequestKeyRef.current = null;');
+    expect(watcher).toContain('effectiveFileTreeLoadingChildrenRef.current.clear();');
+    expect(watcher).toContain('activeRightPane === \'data\' || effectiveFileTreeSnapshotRef.current');
+    expect(watcher).toContain('requestKey: effectiveFileTreeRequestKey');
+    expect(watcher).not.toContain('build-content-changed');
+    expect(watcher).not.toContain('setEffectiveFileTreeSnapshot(null);');
+    expect(loadTree).not.toContain("setExpandedEffectiveFileTree((current) => ({ ...current, '': true, Data: true }))");
+    expect(app).not.toContain('prepareWorkspaceIndexes(opened.projectDirectory');
+    expect(dataTabCount).toContain('effectiveFileTreeSnapshot.totalFileCountKnown !== false');
+    expect(retryBlock).toContain('force: true');
+    expect(retryBlock).toContain('requestKey: effectiveFileTreeRequestKey');
+    expect(retryBlock).not.toContain("requestKey: `${effectiveFileTreeRequestKey}\\nretry`");
   });
 
   it('keeps right pane actions routed through the typed facade and existing helpers', () => {
@@ -43,6 +124,11 @@ describe('right pane redesign', () => {
     expect(app).toContain('window.fluxora.downloads.install');
     expect(app).toContain('window.fluxora.archives.install');
     expect(app).toContain('window.fluxora.nxm.importInboundDownloads');
+    expect(app).toContain('window.fluxora.shell.openPath');
+    expect(app).toContain('window.fluxora.mods.getEffectiveFileTreeRoot');
+    expect(app).toContain('window.fluxora.windowControls.openTextEditor');
+    expect(app).toContain('window.fluxora.windowControls.openFilePreview');
+    expect(app).toContain('onClick={() => void openBuildPathSettings()}');
     expect(app).toContain('onDoubleClick={() => {');
     expect(app).toContain('window.fluxora.buildPaths.get');
     expect(app).toContain('window.fluxora.executables.launch');
@@ -92,16 +178,31 @@ describe('right pane redesign', () => {
   it('keeps the compact right pane styling aligned with the build-page UI-kit', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
 
+    expect(styles).toContain('grid-auto-columns: minmax(0, 1fr);');
+    expect(styles).toContain('grid-auto-flow: column;');
     expect(styles).toContain('.right-pane-content--plugins');
     expect(styles).toContain('.right-pane-content--data');
+    expect(styles).toContain('height: 100%;');
     expect(styles).toContain('.right-pane-content--build');
     expect(styles).toContain('.plugin-hex-index');
     expect(styles).not.toContain('.plugin-type-badge');
     expect(styles).toContain('.build-pane--right .plugin-row > :nth-child(3)');
     expect(styles).not.toContain('.right-pane-detail-card');
     expect(styles).toContain('.right-pane-section');
-    expect(styles).toContain('.right-pane-path-row code');
+    expect(styles).toContain('.right-pane-data-tree');
+    expect(styles).toContain('.right-pane-data-row--skeleton');
+    expect(styles).toContain('.right-pane-data-row code');
+    expect(styles).toContain('.right-pane-data-row__source');
+    expect(styles).toContain('.file-tree-row__action');
+    expect(styles).not.toContain('.right-pane-section--tree');
+    expect(styles).not.toContain('.right-pane-path-row code');
     expect(styles).toContain('.right-pane-section--fluxpack .fluxpack-panel');
+
+    const dataTreeBlock =
+      styles.match(/\.right-pane-data-tree \{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(dataTreeBlock).not.toContain('border:');
+    expect(dataTreeBlock).not.toContain('background:');
+    expect(dataTreeBlock).not.toContain('border-radius:');
   });
 
   it('uses table-shaped skeleton rows while downloads are loading', () => {

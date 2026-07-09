@@ -56,6 +56,9 @@ import type {
   FluxoraMo2TransferHandoff,
   FluxoraModOrganizerImportRequest,
   FluxoraTransferDriveOption,
+  FluxoraEffectiveFileTreePage,
+  FluxoraEffectiveFileTreeSnapshot,
+  FluxoraModConflictTreePage,
   FluxoraModFileTreeEntry,
   FluxoraModMutationResult,
   FluxoraModOrderItem,
@@ -75,6 +78,7 @@ import type {
   FluxoraProjectCatalog,
   FluxoraProjectDirectoryPreview,
   FluxoraRecentOperationLogs,
+  FluxoraWorkspaceIndexWarmupResult,
   NativeBridgeLanguageResult,
   NativeBridgeCapabilities,
   NativeBridgeThemeResult,
@@ -304,6 +308,20 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   fileDrop: {
     onDragDrop: (callback: (event: FluxoraFileDropEvent) => void) => listenToFileDrop(callback)
   },
+  build: {
+    prepareWorkspaceIndexes: (
+      projectDirectory: string,
+      profileName?: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraWorkspaceIndexWarmupResult>(
+        ipc,
+        FluxoraIpcChannels.buildPrepareWorkspaceIndexes,
+        projectDirectory,
+        profileName,
+        request
+      )
+  },
   buildContent: {
     watch: (watchRequest: FluxoraBuildContentWatchRequest, request?: OperationRequest) =>
       invokeTyped<FluxoraBuildContentWatchResult>(
@@ -459,6 +477,82 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         projectDirectory,
         modPath,
         relativeDirectory,
+        request
+      ),
+    getModConflictTree: (
+      projectDirectory: string,
+      modPath: string,
+      cursor?: string,
+      limit?: number,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraModConflictTreePage>(
+        ipc,
+        FluxoraIpcChannels.modsGetModConflictTree,
+        projectDirectory,
+        modPath,
+        cursor,
+        limit,
+        request
+      ),
+    getModDetailsSummary: (
+      projectDirectory: string,
+      profileName: string | undefined,
+      modPath: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraModOrderItem>(
+        ipc,
+        FluxoraIpcChannels.modsGetModDetailsSummary,
+        projectDirectory,
+        profileName,
+        modPath,
+        request
+      ),
+    getEffectiveFileTree: (
+      projectDirectory: string,
+      profileName?: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraEffectiveFileTreeSnapshot>(
+        ipc,
+        FluxoraIpcChannels.modsGetEffectiveFileTree,
+        projectDirectory,
+        profileName,
+        request
+      ),
+    getEffectiveFileTreeRoot: (
+      projectDirectory: string,
+      profileName?: string,
+      limit?: number,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraEffectiveFileTreePage>(
+        ipc,
+        FluxoraIpcChannels.modsGetEffectiveFileTreeRoot,
+        projectDirectory,
+        profileName,
+        limit,
+        request
+      ),
+    getEffectiveFileTreeChildren: (
+      projectDirectory: string,
+      profileName: string | undefined,
+      revision: string,
+      relativeDirectory: string,
+      cursor?: string,
+      limit?: number,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraEffectiveFileTreePage>(
+        ipc,
+        FluxoraIpcChannels.modsGetEffectiveFileTreeChildren,
+        projectDirectory,
+        profileName,
+        revision,
+        relativeDirectory,
+        cursor,
+        limit,
         request
       ),
     listPreviewVariants: (
@@ -1222,7 +1316,8 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
       configPath: string,
       modPath: string,
       modName: string,
-      profileName?: string
+      profileName?: string,
+      bootstrapKey?: string
     ) =>
       invokeTyped<void>(
         ipc,
@@ -1230,7 +1325,8 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         configPath,
         modPath,
         modName,
-        profileName
+        profileName,
+        bootstrapKey
       ),
     openFilePreview: (
       configPath: string,
@@ -1284,6 +1380,7 @@ const projectsListTimeoutMs = 30_000;
 const projectOpenConfigTimeoutMs = 60_000;
 const executablesListTimeoutMs = 30_000;
 const executablesLaunchTimeoutMs = 2 * 60 * 1000;
+const effectiveFileTreeIndexTimeoutMs = 2 * 60 * 1000;
 const transferImportTimeoutMs = 2 * 60 * 60 * 1000;
 const grassCacheGenerationTimeoutMs = 6 * 60 * 60 * 1000;
 const nexusDownloadTimeoutMs = 6 * 60 * 60 * 1000;
@@ -2327,7 +2424,8 @@ const createTauriInvoker = (): IpcInvoker => ({
           configPath: optionalString(args[0]),
           modPath: optionalString(args[1]),
           modName: optionalString(args[2]),
-          profileName: optionalString(args[3])
+          profileName: optionalString(args[3]),
+          bootstrapKey: optionalString(args[4])
         });
 
       case FluxoraIpcChannels.windowOpenFilePreview:
@@ -2522,6 +2620,14 @@ const createTauriInvoker = (): IpcInvoker => ({
         return withOperationId(data, request, 'build_paths_save');
       }
 
+      case FluxoraIpcChannels.buildPrepareWorkspaceIndexes:
+        return bridgeRequest(
+          'build.prepareWorkspaceIndexes',
+          { projectDirectory: args[0], profileName: optionalString(args[1]) },
+          requestWithOperationId(args[2], 'build_prepare_workspace_indexes'),
+          effectiveFileTreeIndexTimeoutMs
+        );
+
       case FluxoraIpcChannels.fluxPackExport: {
         const request = requestWithOperationId(args[1], 'fluxpack_export');
         const data = await bridgeRequest<Record<string, unknown>>(
@@ -2593,6 +2699,58 @@ const createTauriInvoker = (): IpcInvoker => ({
       }
       case FluxoraIpcChannels.modsGetFileTree:
         return bridgeRequest('mods.getFileTree', { projectDirectory: args[0], modPath: args[1], relativeDirectory: optionalString(args[2]) }, requestWithOperationId(args[3], 'mods_get_file_tree'));
+
+      case FluxoraIpcChannels.modsGetModConflictTree:
+        return bridgeRequest(
+          'mods.getModConflictTree',
+          {
+            projectDirectory: args[0],
+            modPath: args[1],
+            cursor: optionalString(args[2]),
+            limit: args[3]
+          },
+          requestWithOperationId(args[4], 'mods_get_mod_conflict_tree')
+        );
+
+      case FluxoraIpcChannels.modsGetModDetailsSummary:
+        return bridgeRequest(
+          'mods.getModDetailsSummary',
+          {
+            projectDirectory: args[0],
+            profileName: optionalString(args[1]),
+            modPath: args[2]
+          },
+          requestWithOperationId(args[3], 'mods_get_mod_details_summary')
+        );
+
+      case FluxoraIpcChannels.modsGetEffectiveFileTree:
+        return bridgeRequest(
+          'mods.getEffectiveFileTree',
+          { projectDirectory: args[0], profileName: optionalString(args[1]) },
+          requestWithOperationId(args[2], 'mods_get_effective_file_tree'),
+          effectiveFileTreeIndexTimeoutMs
+        );
+
+      case FluxoraIpcChannels.modsGetEffectiveFileTreeRoot:
+        return bridgeRequest(
+          'mods.getEffectiveFileTreeRoot',
+          { projectDirectory: args[0], profileName: optionalString(args[1]), limit: args[2] },
+          requestWithOperationId(args[3], 'mods_get_effective_file_tree_root')
+        );
+
+      case FluxoraIpcChannels.modsGetEffectiveFileTreeChildren:
+        return bridgeRequest(
+          'mods.getEffectiveFileTreeChildren',
+          {
+            projectDirectory: args[0],
+            profileName: optionalString(args[1]),
+            revision: args[2],
+            relativeDirectory: optionalString(args[3]),
+            cursor: optionalString(args[4]),
+            limit: args[5]
+          },
+          requestWithOperationId(args[6], 'mods_get_effective_file_tree_children')
+        );
 
       case FluxoraIpcChannels.modsListPreviewVariants:
         return bridgeRequest(

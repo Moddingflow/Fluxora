@@ -156,6 +156,7 @@ import {
   modItemTitle,
   modLatestVersionText,
   modOverwriteView,
+  modOrderItemMatchesLookup,
   modRowConflictHighlight,
   modSeparatorChildCount,
   modStatusText,
@@ -296,6 +297,11 @@ import type {
   FluxoraModOrganizerImportAnalysis,
   FluxoraModOrganizerImportProgress,
   FluxoraMo2TransferHandoff,
+  FluxoraEffectiveFileTreePage,
+  FluxoraEffectiveFileTreeEntry,
+  FluxoraEffectiveFileTreeSnapshot,
+  FluxoraModConflictTreePage,
+  FluxoraModDetailsBootstrap,
   FluxoraModFileTreeEntry,
   FluxoraModOrderItem,
   FluxoraNexusModsAuthStatus,
@@ -390,6 +396,11 @@ type RowReorderKind = 'mod' | 'plugin';
 type RowDropPlacement = 'before' | 'after';
 type ModDetailsTabId = 'files' | 'conflicts';
 
+interface EffectiveFileTreeRow {
+  entry: FluxoraEffectiveFileTreeEntry;
+  level: number;
+}
+
 interface RowDropTargetState {
   orderId: string;
   placement: RowDropPlacement;
@@ -449,6 +460,103 @@ type ModConflictMarkerStyle = CSSProperties & {
   '--conflict-marker-top': string;
   '--conflict-marker-offset': string;
 };
+
+const effectiveFileTreeCacheKey = (projectDirectory: string, profileName: string): string =>
+  `${projectDirectory}\n${profileName || 'Default'}`;
+
+const effectiveFileTreeRevisionCacheKey = (
+  projectDirectory: string,
+  profileName: string,
+  revision: string
+): string => `${effectiveFileTreeCacheKey(projectDirectory, profileName)}\n${revision}`;
+
+const effectiveFileTreeSnapshotFromPage = (
+  page: FluxoraEffectiveFileTreePage
+): FluxoraEffectiveFileTreeSnapshot => ({
+  profileName: page.profileName,
+  revision: page.revision,
+  totalFileCount: page.totalFileCount,
+  totalFileCountKnown: page.totalFileCountKnown ?? true,
+  entries: page.entries
+});
+
+const mergeEffectiveFileTreePage = (
+  current: FluxoraEffectiveFileTreeSnapshot | null,
+  page: FluxoraEffectiveFileTreePage
+): FluxoraEffectiveFileTreeSnapshot => {
+  const byPath = new Map<string, FluxoraEffectiveFileTreeEntry>();
+  const pageParentPath = page.parentPath ?? '';
+  for (const entry of current?.entries ?? []) {
+    if (entry.parentPath === pageParentPath) {
+      continue;
+    }
+    byPath.set(entry.relativePath, entry);
+  }
+  for (const entry of page.entries) {
+    byPath.set(entry.relativePath, entry);
+  }
+
+  return {
+    profileName: page.profileName,
+    revision: page.revision,
+    totalFileCount: page.totalFileCount,
+    totalFileCountKnown: page.totalFileCountKnown ?? true,
+    entries: [...byPath.values()]
+  };
+};
+
+const modDetailsBootstrapStoragePrefix = 'fluxora.mod-details.bootstrap.';
+
+const modDetailsBootstrapStorageKey = (key: string): string =>
+  `${modDetailsBootstrapStoragePrefix}${key}`;
+
+const writeModDetailsBootstrap = (bootstrap: FluxoraModDetailsBootstrap): void => {
+  try {
+    window.localStorage.setItem(
+      modDetailsBootstrapStorageKey(bootstrap.key),
+      JSON.stringify(bootstrap)
+    );
+  } catch {
+    // Bootstrap is an optimization. The window can still load through the bridge.
+  }
+};
+
+const readModDetailsBootstrap = (key: string): FluxoraModDetailsBootstrap | null => {
+  if (!key) {
+    return null;
+  }
+
+  const storageKey = modDetailsBootstrapStorageKey(key);
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    window.localStorage.removeItem(storageKey);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<FluxoraModDetailsBootstrap>;
+    return parsed && typeof parsed.key === 'string' && parsed.item ? parsed as FluxoraModDetailsBootstrap : null;
+  } catch {
+    window.localStorage.removeItem(storageKey);
+    return null;
+  }
+};
+
+const effectiveFileTreeSourceLabel = (entry: FluxoraEffectiveFileTreeEntry): string => {
+  if (entry.sourceKind === 'game') {
+    return 'Game';
+  }
+  if (entry.sourceKind === 'overwrite') {
+    return 'Overwrite';
+  }
+  if (entry.sourceKind === 'mod') {
+    return entry.sourceName;
+  }
+  return '';
+};
+
+const effectiveVirtualPathLabel = (entry: FluxoraEffectiveFileTreeEntry): string =>
+  entry.virtualPath || entry.relativePath || 'Game root';
 
 const modConflictMarkerLabels: Record<ModConflictMarkerState, string> = {
   overwrites: 'Перезаписывает',
@@ -569,6 +677,7 @@ const pluginVisibleRows = 28;
 const pluginOverscanRows = 8;
 const modLoadingSkeletonRows = Array.from({ length: 10 }, (_, index) => index);
 const pluginLoadingSkeletonRows = Array.from({ length: 10 }, (_, index) => index);
+const effectiveFileTreeSkeletonRows = Array.from({ length: 14 }, (_, index) => index);
 const loadingSkeletonWidths = ['72%', '58%', '66%', '48%', '62%'] as const;
 const downloadRowHeight = 48;
 const downloadVisibleRows = 28;
@@ -861,6 +970,11 @@ export const App = () => {
   const modDetailsModId = windowParameters.get('mod')?.trim() ?? '';
   const modDetailsInitialName = windowParameters.get('name')?.trim() ?? '';
   const modDetailsProfileName = windowParameters.get('profile')?.trim() ?? '';
+  const modDetailsBootstrapKey = windowParameters.get('bootstrap')?.trim() ?? '';
+  const initialModDetailsBootstrap = useMemo(
+    () => (isModDetailsWindow ? readModDetailsBootstrap(modDetailsBootstrapKey) : null),
+    [isModDetailsWindow, modDetailsBootstrapKey]
+  );
   const textEditorProjectId = windowParameters.get('project');
   const textEditorModId = windowParameters.get('mod')?.trim() ?? '';
   const textEditorInitialPath = windowParameters.get('path')?.trim() ?? '';
@@ -964,16 +1078,51 @@ export const App = () => {
   const [modListScrollTop, setModListScrollTop] = useState(0);
   const [draggedModOrderId, setDraggedModOrderId] = useState<string | null>(null);
   const [modDropTarget, setModDropTarget] = useState<RowDropTargetState | null>(null);
-  const [fileTreeCache, setFileTreeCache] = useState<Record<string, FluxoraModFileTreeEntry[]>>({});
+  const [fileTreeCache, setFileTreeCache] = useState<Record<string, FluxoraModFileTreeEntry[]>>(
+    () => {
+      if (initialModDetailsBootstrap?.rootFileTree) {
+        return { '': initialModDetailsBootstrap.rootFileTree };
+      }
+
+      return {} as Record<string, FluxoraModFileTreeEntry[]>;
+    }
+  );
   const [expandedFileTree, setExpandedFileTree] = useState<Record<string, boolean>>({});
   const [fileTreeState, setFileTreeState] = useState<'idle' | 'loading' | 'ready' | 'error'>(
     'idle'
   );
   const [fileTreeLoadingPath, setFileTreeLoadingPath] = useState<string | null>(null);
+  const [effectiveFileTreeSnapshot, setEffectiveFileTreeSnapshot] =
+    useState<FluxoraEffectiveFileTreeSnapshot | null>(null);
+  const effectiveFileTreeSnapshotRef = useRef<FluxoraEffectiveFileTreeSnapshot | null>(null);
+  const effectiveFileTreeCacheRef = useRef<Record<string, FluxoraEffectiveFileTreeSnapshot>>({});
+  const effectiveFileTreeInFlightRequestKeyRef = useRef<string | null>(null);
+  const effectiveFileTreeLoadedRequestKeyRef = useRef<string | null>(null);
+  const effectiveFileTreeFailedRequestKeyRef = useRef<string | null>(null);
+  const effectiveFileTreeRequestSequenceRef = useRef(0);
+  const effectiveFileTreeLoadingChildrenRef = useRef<Set<string>>(new Set());
+  const [effectiveFileTreeState, setEffectiveFileTreeState] = useState<
+    'idle' | 'refreshing' | 'ready' | 'error'
+  >('idle');
+  const [effectiveFileTreeError, setEffectiveFileTreeError] = useState<string | null>(null);
+  const [effectiveFileTreeLoadingChildren, setEffectiveFileTreeLoadingChildren] = useState<
+    Record<string, boolean>
+  >({});
+  const [expandedEffectiveFileTree, setExpandedEffectiveFileTree] = useState<Record<string, boolean>>({
+    '': true,
+    Data: true
+  });
+  const [effectiveFileTreeScrollTop, setEffectiveFileTreeScrollTop] = useState(0);
+  const [modDetailsSummary, setModDetailsSummary] = useState<FluxoraModOrderItem | null>(
+    () => initialModDetailsBootstrap?.item ?? null
+  );
+  const [modDetailsConflictPage, setModDetailsConflictPage] =
+    useState<FluxoraModConflictTreePage | null>(null);
   const [modDetailsTab, setModDetailsTab] = useState<ModDetailsTabId>('files');
   const [modDetailsConflictScanState, setModDetailsConflictScanState] = useState<
     'idle' | 'loading' | 'ready' | 'error'
   >('idle');
+  effectiveFileTreeSnapshotRef.current = effectiveFileTreeSnapshot;
   const [pluginsWorkspace, dispatchPluginsWorkspace] = useReducer(
     pluginWorkspaceReducer,
     undefined,
@@ -1199,21 +1348,11 @@ export const App = () => {
   );
 
   const modDetailsConflictEntries = useMemo(() => {
-    const entries = Object.values(fileTreeCache)
-      .flat()
-      .filter((entry) => !entry.isDirectory && hasConflict(entry));
-
     return {
-      overwrites: entries.filter((entry) => {
-        const state = entry.conflictState.toLocaleLowerCase();
-        return state === 'overwrites' || state === 'conflict';
-      }),
-      overwritten: entries.filter((entry) => {
-        const state = entry.conflictState.toLocaleLowerCase();
-        return state === 'overwritten' || state === 'conflict';
-      })
+      overwrites: modDetailsConflictPage?.overwrites ?? [],
+      overwritten: modDetailsConflictPage?.overwritten ?? []
     };
-  }, [fileTreeCache]);
+  }, [modDetailsConflictPage]);
 
   const totalModCount = useMemo(
     () => modsWorkspace.items.filter((item) => item.isMod).length,
@@ -1306,6 +1445,62 @@ export const App = () => {
       : isModDetailsWindow && modDetailsProfileName
       ? modDetailsProfileName
       : selectedProjectProfileName;
+
+  const buildPathRevisionKey = useMemo(
+    () =>
+      [
+        selectedProject?.projectDirectory ?? '',
+        selectedProject?.paths?.gameDirectory ?? selectedProject?.gamePath ?? '',
+        selectedProject?.paths?.modsDirectory ?? '',
+        selectedProject?.paths?.profilesDirectory ?? '',
+        selectedProject?.paths?.overwriteDirectory ?? ''
+      ].join('\n'),
+    [
+      selectedProject?.gamePath,
+      selectedProject?.paths?.gameDirectory,
+      selectedProject?.paths?.modsDirectory,
+      selectedProject?.paths?.overwriteDirectory,
+      selectedProject?.paths?.profilesDirectory,
+      selectedProject?.projectDirectory
+    ]
+  );
+
+  const modOrderRevisionKey = useMemo(
+    () =>
+      modsWorkspace.items
+        .map((item) =>
+          [
+            item.orderId,
+            item.id,
+            item.order,
+            item.name,
+            item.isEnabled ? '1' : '0',
+            item.fileCount,
+            item.overwrittenFileCount,
+            item.overwritingFileCount
+          ].join(':')
+        )
+        .join('|'),
+    [modsWorkspace.items]
+  );
+
+  const effectiveFileTreeRequestKey = useMemo(
+    () =>
+      selectedProject
+        ? [
+            selectedProject.projectDirectory,
+            selectedProjectProfileName,
+            buildPathRevisionKey,
+            modOrderRevisionKey
+          ].join('\n')
+        : '',
+    [
+      buildPathRevisionKey,
+      modOrderRevisionKey,
+      selectedProject,
+      selectedProjectProfileName
+    ]
+  );
 
   const filteredProfileItems = useMemo(
     () => filterProfileNames(profilesWorkspace.items, deferredProfileSearchText),
@@ -1552,6 +1747,65 @@ export const App = () => {
     });
   }, [filteredDownloadItems, downloadListScrollTop]);
 
+  const effectiveFileTreeChildren = useMemo(() => {
+    const children = new Map<string, FluxoraEffectiveFileTreeEntry[]>();
+    for (const entry of effectiveFileTreeSnapshot?.entries ?? []) {
+      if (!entry.relativePath) {
+        continue;
+      }
+
+      const siblings = children.get(entry.parentPath) ?? [];
+      siblings.push(entry);
+      children.set(entry.parentPath, siblings);
+    }
+
+    for (const siblings of children.values()) {
+      siblings.sort((left, right) => {
+        if (left.isDirectory !== right.isDirectory) {
+          return left.isDirectory ? -1 : 1;
+        }
+        return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
+      });
+    }
+
+    return children;
+  }, [effectiveFileTreeSnapshot?.entries]);
+
+  const effectiveFileTreeRows = useMemo<EffectiveFileTreeRow[]>(() => {
+    const entries = effectiveFileTreeSnapshot?.entries ?? [];
+    const rootEntry = entries.find((entry) => !entry.relativePath) ?? null;
+    const rows: EffectiveFileTreeRow[] = [];
+
+    const appendChildren = (parentPath: string, level: number) => {
+      const children = effectiveFileTreeChildren.get(parentPath) ?? [];
+      for (const entry of children) {
+        rows.push({ entry, level });
+        if (entry.isDirectory && expandedEffectiveFileTree[entry.relativePath]) {
+          appendChildren(entry.relativePath, level + 1);
+        }
+      }
+    };
+
+    if (rootEntry) {
+      rows.push({ entry: rootEntry, level: 1 });
+      if (expandedEffectiveFileTree['']) {
+        appendChildren('', 2);
+      }
+      return rows;
+    }
+
+    appendChildren('', 1);
+    return rows;
+  }, [effectiveFileTreeChildren, effectiveFileTreeSnapshot?.entries, expandedEffectiveFileTree]);
+
+  const visibleEffectiveFileTreeWindow = useMemo(() => {
+    return createVirtualWindow(effectiveFileTreeRows, effectiveFileTreeScrollTop, {
+      rowHeight: 32,
+      visibleRows: 38,
+      overscanRows: 10
+    });
+  }, [effectiveFileTreeRows, effectiveFileTreeScrollTop]);
+
   const activeLabel = useMemo(
     () => navItems.find((item) => item.id === activeRoute)?.label ?? 'Home',
     [activeRoute]
@@ -1650,7 +1904,9 @@ export const App = () => {
     relativeDirectory = '',
     item: FluxoraModOrderItem | null = selectedModItem
   ) => {
-    if (!selectedProject || !item?.isMod) {
+    const projectDirectory =
+      selectedProject?.projectDirectory ?? initialModDetailsBootstrap?.projectDirectory ?? '';
+    if (!projectDirectory || !item?.isMod) {
       return;
     }
 
@@ -1660,7 +1916,7 @@ export const App = () => {
 
     try {
       const entries = await window.fluxora.mods.getFileTree(
-        selectedProject.projectDirectory,
+        projectDirectory,
         item.id,
         relativeDirectory,
         { operationId }
@@ -1672,6 +1928,187 @@ export const App = () => {
       setMessage(errorMessage(error));
     } finally {
       setFileTreeLoadingPath(null);
+    }
+  };
+
+  const loadEffectiveFileTreeChildren = async (
+    entry: FluxoraEffectiveFileTreeEntry,
+    snapshotOverride: FluxoraEffectiveFileTreeSnapshot | null = effectiveFileTreeSnapshot
+  ) => {
+    if (!selectedProject || !bridgeStatus?.ready || !entry.isDirectory || !entry.hasChildren) {
+      return;
+    }
+
+    const snapshot = snapshotOverride;
+    if (!snapshot?.revision) {
+      return;
+    }
+
+    const hasLoadedChildren = snapshot.entries.some(
+      (candidate) => candidate.parentPath === entry.relativePath && candidate.relativePath
+    );
+    if (hasLoadedChildren) {
+      return;
+    }
+
+    const childKey = entry.relativePath || '__root__';
+    if (effectiveFileTreeLoadingChildrenRef.current.has(childKey)) {
+      return;
+    }
+
+    const operationId = createRendererOperationId('mods_effective_file_tree_children');
+    effectiveFileTreeLoadingChildrenRef.current.add(childKey);
+    setEffectiveFileTreeLoadingChildren((current) => ({ ...current, [childKey]: true }));
+    setEffectiveFileTreeError(null);
+
+    try {
+      const page = await window.fluxora.mods.getEffectiveFileTreeChildren(
+        selectedProject.projectDirectory,
+        snapshot.profileName,
+        snapshot.revision,
+        entry.relativePath,
+        undefined,
+        250,
+        { operationId }
+      );
+      setEffectiveFileTreeSnapshot((current) => {
+        if (current?.revision && current.revision !== page.revision) {
+          return current;
+        }
+
+        const nextSnapshot = mergeEffectiveFileTreePage(current ?? snapshot, page);
+        effectiveFileTreeCacheRef.current[
+          effectiveFileTreeCacheKey(selectedProject.projectDirectory, nextSnapshot.profileName)
+        ] = nextSnapshot;
+        effectiveFileTreeCacheRef.current[
+          effectiveFileTreeRevisionCacheKey(
+            selectedProject.projectDirectory,
+            nextSnapshot.profileName,
+            nextSnapshot.revision
+          )
+        ] = nextSnapshot;
+        effectiveFileTreeSnapshotRef.current = nextSnapshot;
+        return nextSnapshot;
+      });
+      setEffectiveFileTreeState('ready');
+    } catch (error) {
+      setEffectiveFileTreeState((current) =>
+        effectiveFileTreeSnapshotRef.current ? current : 'error'
+      );
+      setEffectiveFileTreeError(errorMessage(error));
+      setMessage(errorMessage(error));
+    } finally {
+      effectiveFileTreeLoadingChildrenRef.current.delete(childKey);
+      setEffectiveFileTreeLoadingChildren((current) => {
+        const next = { ...current };
+        delete next[childKey];
+        return next;
+      });
+    }
+  };
+
+  const loadEffectiveFileTree = async (
+    project = selectedProject,
+    profileName = selectedProjectProfileName,
+    options: { force?: boolean; requestKey?: string } = {}
+  ) => {
+    if (!project || !bridgeStatus?.ready) {
+      return;
+    }
+
+    const cacheKey = effectiveFileTreeCacheKey(project.projectDirectory, profileName);
+    const requestKey = options.requestKey ?? cacheKey;
+    const cachedSnapshot = effectiveFileTreeCacheRef.current[cacheKey];
+    const currentSnapshot = effectiveFileTreeSnapshotRef.current;
+    const dataTreeVisible =
+      (activeRoute === 'build' || activeRoute === 'workspace') && activeRightPane === 'data';
+    const canRefreshHiddenSnapshot = Boolean(currentSnapshot || cachedSnapshot);
+    if (!dataTreeVisible && !canRefreshHiddenSnapshot) {
+      return;
+    }
+
+    if (cachedSnapshot) {
+      setEffectiveFileTreeSnapshot(cachedSnapshot);
+      setEffectiveFileTreeState('ready');
+      setEffectiveFileTreeError(null);
+      if (!options.force && effectiveFileTreeLoadedRequestKeyRef.current === requestKey) {
+        return;
+      }
+    } else if (!currentSnapshot) {
+      setEffectiveFileTreeState('refreshing');
+    }
+
+    if (effectiveFileTreeInFlightRequestKeyRef.current === requestKey) {
+      return;
+    }
+
+    if (!options.force && effectiveFileTreeFailedRequestKeyRef.current === requestKey) {
+      return;
+    }
+
+    effectiveFileTreeInFlightRequestKeyRef.current = requestKey;
+    const requestSequence = effectiveFileTreeRequestSequenceRef.current + 1;
+    effectiveFileTreeRequestSequenceRef.current = requestSequence;
+    const operationId = createRendererOperationId('mods_effective_file_tree');
+    try {
+      const page = await window.fluxora.mods.getEffectiveFileTreeRoot(
+        project.projectDirectory,
+        profileName,
+        250,
+        { operationId }
+      );
+      if (effectiveFileTreeRequestSequenceRef.current !== requestSequence) {
+        return;
+      }
+
+      const previousSnapshot =
+        effectiveFileTreeCacheRef.current[cacheKey] ?? effectiveFileTreeSnapshotRef.current;
+      const snapshot =
+        previousSnapshot?.revision === page.revision
+          ? mergeEffectiveFileTreePage(previousSnapshot, page)
+          : effectiveFileTreeSnapshotFromPage(page);
+      effectiveFileTreeCacheRef.current[cacheKey] = snapshot;
+      effectiveFileTreeCacheRef.current[
+        effectiveFileTreeRevisionCacheKey(project.projectDirectory, profileName, snapshot.revision)
+      ] = snapshot;
+      effectiveFileTreeSnapshotRef.current = snapshot;
+      setEffectiveFileTreeSnapshot(snapshot);
+      setEffectiveFileTreeState('ready');
+      setEffectiveFileTreeError(null);
+      effectiveFileTreeLoadedRequestKeyRef.current = requestKey;
+      if (effectiveFileTreeFailedRequestKeyRef.current === requestKey) {
+        effectiveFileTreeFailedRequestKeyRef.current = null;
+      }
+      const dataEntry = snapshot.entries.find((entry) => entry.relativePath === 'Data');
+      setExpandedEffectiveFileTree((current) => {
+        const next = { ...current };
+        let changed = false;
+        if (next[''] === undefined) {
+          next[''] = true;
+          changed = true;
+        }
+        if (dataEntry && next[dataEntry.relativePath] === undefined) {
+          next[dataEntry.relativePath] = true;
+          changed = true;
+        }
+        return changed ? next : current;
+      });
+      if (dataEntry?.hasChildren) {
+        void loadEffectiveFileTreeChildren(dataEntry, snapshot);
+      }
+    } catch (error) {
+      effectiveFileTreeFailedRequestKeyRef.current = requestKey;
+      setEffectiveFileTreeState((current) =>
+        effectiveFileTreeSnapshotRef.current || cachedSnapshot || current === 'ready'
+          ? 'ready'
+          : 'error'
+      );
+      setEffectiveFileTreeError(errorMessage(error));
+      setMessage(errorMessage(error));
+    } finally {
+      if (effectiveFileTreeInFlightRequestKeyRef.current === requestKey) {
+        effectiveFileTreeInFlightRequestKeyRef.current = null;
+      }
     }
   };
 
@@ -2259,11 +2696,25 @@ export const App = () => {
     }
 
     try {
+      const bootstrapKey = createRendererOperationId('mod_details_bootstrap');
+      writeModDetailsBootstrap({
+        key: bootstrapKey,
+        projectId: selectedProject.id,
+        projectName: selectedProject.name,
+        projectDirectory: selectedProject.projectDirectory,
+        configPath: selectedProject.configPath,
+        profileName: modWorkspaceProfileName,
+        modPath: item.id,
+        item,
+        rootFileTree: fileTreeCache[''],
+        createdAt: Date.now()
+      });
       await window.fluxora.windowControls.openModDetails(
         selectedProject.configPath,
         item.id,
         modItemTitle(item),
-        modWorkspaceProfileName
+        modWorkspaceProfileName,
+        bootstrapKey
       );
     } catch (error) {
       setMessage(errorMessage(error));
@@ -2311,6 +2762,10 @@ export const App = () => {
     try {
       await window.fluxora.mods.clearOverwrite(selectedProject.projectDirectory, {
         operationId
+      });
+      void loadEffectiveFileTree(selectedProject, selectedProjectProfileName, {
+        force: true,
+        requestKey: effectiveFileTreeRequestKey
       });
       setOverwriteClearSplash((current) =>
         current?.operationId === operationId ? { ...current, progress: 100 } : current
@@ -2412,42 +2867,24 @@ export const App = () => {
   };
 
   const loadModDetailsConflictTree = async (item: FluxoraModOrderItem | null = selectedModItem) => {
-    if (!selectedProject || !item?.isMod) {
+    const projectDirectory =
+      selectedProject?.projectDirectory ?? initialModDetailsBootstrap?.projectDirectory ?? '';
+    if (!projectDirectory || !item?.isMod) {
       return;
     }
 
     const operationId = createRendererOperationId('mods_conflict_tree');
-    const nextCache: Record<string, FluxoraModFileTreeEntry[]> = {};
-    const visited = new Set<string>();
-
-    const scanDirectory = async (relativeDirectory: string): Promise<void> => {
-      if (visited.has(relativeDirectory)) {
-        return;
-      }
-
-      visited.add(relativeDirectory);
-      const entries =
-        fileTreeCache[relativeDirectory] ??
-        (await window.fluxora.mods.getFileTree(
-          selectedProject.projectDirectory,
-          item.id,
-          relativeDirectory,
-          { operationId }
-        ));
-      nextCache[relativeDirectory] = entries;
-
-      await Promise.all(
-        entries
-          .filter((entry) => entry.isDirectory && entry.hasChildren)
-          .map((entry) => scanDirectory(entry.relativePath))
-      );
-    };
 
     setModDetailsConflictScanState('loading');
     try {
-      await scanDirectory('');
-      setFileTreeCache((current) => ({ ...current, ...nextCache }));
-      setFileTreeState('ready');
+      const page = await window.fluxora.mods.getModConflictTree(
+        projectDirectory,
+        item.id,
+        undefined,
+        200,
+        { operationId }
+      );
+      setModDetailsConflictPage(page);
       setModDetailsConflictScanState('ready');
     } catch (error) {
       setModDetailsConflictScanState('error');
@@ -5156,11 +5593,7 @@ export const App = () => {
 
     const targetMod =
       modsWorkspace.items.find(
-        (item) =>
-          item.isMod &&
-          (item.id === modDetailsModId ||
-            item.orderId === modDetailsModId ||
-            item.name === modDetailsModId)
+        (item) => item.isMod && modOrderItemMatchesLookup(item, modDetailsModId)
       ) ?? null;
 
     if (targetMod && modsWorkspace.selectedOrderId !== targetMod.orderId) {
@@ -5172,6 +5605,56 @@ export const App = () => {
     modsWorkspace.items,
     modsWorkspace.loadState,
     modsWorkspace.selectedOrderId
+  ]);
+
+  useEffect(() => {
+    if (!isModDetailsWindow || !selectedModItem?.isMod) {
+      return;
+    }
+
+    setModDetailsSummary(selectedModItem);
+  }, [isModDetailsWindow, selectedModItem?.id, selectedModItem?.orderId]);
+
+  useEffect(() => {
+    if (!isModDetailsWindow || !bridgeStatus?.ready || !modDetailsModId) {
+      return;
+    }
+
+    const projectDirectory =
+      selectedProject?.projectDirectory ?? initialModDetailsBootstrap?.projectDirectory ?? '';
+    if (!projectDirectory) {
+      return;
+    }
+
+    let isCurrent = true;
+    const operationId = createRendererOperationId('mods_details_summary');
+    void window.fluxora.mods
+      .getModDetailsSummary(projectDirectory, selectedProjectProfileName, modDetailsModId, {
+        operationId
+      })
+      .then(
+        (summary) => {
+          if (isCurrent) {
+            setModDetailsSummary(summary);
+          }
+        },
+        (error) => {
+          if (isCurrent && !modDetailsSummary) {
+            setMessage(errorMessage(error));
+          }
+        }
+      );
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [
+    bridgeStatus?.ready,
+    initialModDetailsBootstrap?.projectDirectory,
+    isModDetailsWindow,
+    modDetailsModId,
+    selectedProject?.projectDirectory,
+    selectedProjectProfileName
   ]);
 
   useEffect(() => {
@@ -5328,6 +5811,11 @@ export const App = () => {
         return;
       }
 
+      effectiveFileTreeCacheRef.current = {};
+      effectiveFileTreeFailedRequestKeyRef.current = null;
+      setEffectiveFileTreeError(null);
+      setEffectiveFileTreeLoadingChildren({});
+      effectiveFileTreeLoadingChildrenRef.current.clear();
       void loadModsWorkspace(selectedProject, {
         operationId: createRendererOperationId('build_content_mods_changed'),
         resetScroll: false,
@@ -5342,8 +5830,20 @@ export const App = () => {
         showLoading: false,
         profileName: selectedProjectProfileName
       });
+      if (
+        (activeRoute === 'build' || activeRoute === 'workspace') &&
+        (activeRightPane === 'data' || effectiveFileTreeSnapshotRef.current)
+      ) {
+        void loadEffectiveFileTree(selectedProject, selectedProjectProfileName, {
+          force: true,
+          requestKey: effectiveFileTreeRequestKey
+        });
+      }
     });
   }, [
+    activeRightPane,
+    activeRoute,
+    effectiveFileTreeRequestKey,
     isSecondaryWindow,
     selectedProject?.projectDirectory,
     selectedProjectProfileName
@@ -5629,33 +6129,101 @@ export const App = () => {
   }, [selectedExecutableItem?.id]);
 
   useEffect(() => {
-    setFileTreeCache({});
+    const fileTreeItem =
+      selectedModItem?.isMod
+        ? selectedModItem
+        : isModDetailsWindow && modDetailsSummary?.isMod
+          ? modDetailsSummary
+          : null;
+    setFileTreeCache(
+      isModDetailsWindow &&
+        initialModDetailsBootstrap?.rootFileTree &&
+        fileTreeItem?.id === initialModDetailsBootstrap.modPath
+        ? { '': initialModDetailsBootstrap.rootFileTree }
+        : {}
+    );
     setExpandedFileTree({});
     setModDetailsConflictScanState('idle');
+    setModDetailsConflictPage(null);
 
-    if ((activeRoute !== 'build' && activeRoute !== 'mods') || !selectedModItem?.isMod) {
+    if ((activeRoute !== 'build' && activeRoute !== 'mods') || !fileTreeItem?.isMod) {
       setFileTreeState('idle');
       return;
     }
 
-    void loadModFileTree('', selectedModItem);
-  }, [activeRoute, selectedModItem?.orderId, selectedModItem?.id]);
+    void loadModFileTree('', fileTreeItem);
+  }, [
+    activeRoute,
+    initialModDetailsBootstrap?.modPath,
+    initialModDetailsBootstrap?.rootFileTree,
+    isModDetailsWindow,
+    modDetailsSummary?.id,
+    modDetailsSummary?.orderId,
+    selectedModItem?.orderId,
+    selectedModItem?.id
+  ]);
 
   useEffect(() => {
+    const buildWorkspaceVisible = activeRoute === 'build' || activeRoute === 'workspace';
+    const dataTreeVisible = buildWorkspaceVisible && activeRightPane === 'data';
+    const canRefreshExistingTree = effectiveFileTreeSnapshotRef.current !== null;
+    if (!selectedProject || !bridgeStatus?.ready || !buildWorkspaceVisible) {
+      if (!selectedProject) {
+        effectiveFileTreeSnapshotRef.current = null;
+        setEffectiveFileTreeSnapshot(null);
+        setEffectiveFileTreeState('idle');
+        setEffectiveFileTreeError(null);
+        setEffectiveFileTreeLoadingChildren({});
+        effectiveFileTreeLoadingChildrenRef.current.clear();
+        effectiveFileTreeInFlightRequestKeyRef.current = null;
+        effectiveFileTreeLoadedRequestKeyRef.current = null;
+        effectiveFileTreeFailedRequestKeyRef.current = null;
+        effectiveFileTreeRequestSequenceRef.current += 1;
+      }
+      return;
+    }
+
+    if (!dataTreeVisible && !canRefreshExistingTree) {
+      return;
+    }
+
+    void loadEffectiveFileTree(selectedProject, selectedProjectProfileName, {
+      requestKey: effectiveFileTreeRequestKey
+    });
+  }, [
+    activeRightPane,
+    activeRoute,
+    bridgeStatus?.ready,
+    buildPathRevisionKey,
+    effectiveFileTreeRequestKey,
+    modOrderRevisionKey,
+    selectedProject,
+    selectedProjectProfileName
+  ]);
+
+  useEffect(() => {
+    const conflictItem =
+      selectedModItem?.isMod
+        ? selectedModItem
+        : isModDetailsWindow && modDetailsSummary?.isMod
+          ? modDetailsSummary
+          : null;
     if (
       !isModDetailsWindow ||
       modDetailsTab !== 'conflicts' ||
       modDetailsConflictScanState !== 'idle' ||
-      !selectedModItem?.isMod
+      !conflictItem?.isMod
     ) {
       return;
     }
 
-    void loadModDetailsConflictTree(selectedModItem);
+    void loadModDetailsConflictTree(conflictItem);
   }, [
     isModDetailsWindow,
     modDetailsConflictScanState,
     modDetailsTab,
+    modDetailsSummary?.id,
+    modDetailsSummary?.orderId,
     selectedModItem?.orderId,
     selectedModItem?.id
   ]);
@@ -6054,6 +6622,34 @@ export const App = () => {
     const result = await window.fluxora.shell.openPath(project.projectDirectory);
     if (!result.ok) {
       setMessage(result.message ?? 'Project directory could not be opened.');
+    }
+  };
+
+  const toggleEffectiveFileTreeDirectory = async (entry: FluxoraEffectiveFileTreeEntry) => {
+    if (!entry.isDirectory || !entry.hasChildren) {
+      return;
+    }
+
+    const isExpanded = Boolean(expandedEffectiveFileTree[entry.relativePath]);
+    setExpandedEffectiveFileTree((current) => ({
+      ...current,
+      [entry.relativePath]: !isExpanded
+    }));
+
+    if (!isExpanded) {
+      await loadEffectiveFileTreeChildren(entry);
+    }
+  };
+
+  const openEffectiveFileTreeEntry = async (entry: FluxoraEffectiveFileTreeEntry) => {
+    if (!entry.sourcePath) {
+      await toggleEffectiveFileTreeDirectory(entry);
+      return;
+    }
+
+    const result = await window.fluxora.shell.openPath(entry.sourcePath);
+    if (!result.ok) {
+      setMessage(result.message ?? `${effectiveVirtualPathLabel(entry)} could not be opened.`);
     }
   };
 
@@ -8018,7 +8614,7 @@ export const App = () => {
                   <>
                     <div className="mod-separator-cell" role="cell">
                       <button
-                        className="separator-toggle-button"
+                        className="separator-toggle-button mod-separator-toggle-button"
                         type="button"
                         title={isCollapsed ? 'Expand separator' : 'Collapse separator'}
                         aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${modItemTitle(item)}`}
@@ -8033,19 +8629,17 @@ export const App = () => {
                         }}
                       >
                         {isCollapsed ? (
-                          <ChevronRight size={15} aria-hidden="true" />
+                          <ChevronRight size={18} aria-hidden="true" />
                         ) : (
-                          <ChevronDown size={15} aria-hidden="true" />
+                          <ChevronDown size={18} aria-hidden="true" />
                         )}
                       </button>
-                      <span className="mod-separator-line" aria-hidden="true" />
                       <strong className="mod-separator-title">{modItemTitle(item)}</strong>
+                    </div>
+                    <span className="mod-list-row__status mod-separator-status" role="cell">
                       <span className="mod-separator-count">
                         {separatorModCount} {separatorModCount === 1 ? 'mod' : 'mods'}
                       </span>
-                      <span className="mod-separator-line" aria-hidden="true" />
-                    </div>
-                    <span className="mod-list-row__status mod-separator-status" role="cell">
                       <ModConflictMarkers
                         className="mod-separator-conflicts"
                         states={visibleConflictMarkerStates}
@@ -8133,6 +8727,8 @@ export const App = () => {
       const isExpanded = Boolean(expandedFileTree[entry.relativePath]);
       const isLoading = fileTreeLoadingPath === entry.relativePath;
       const previewKind = entry.isDirectory ? null : previewKindForFile(entry.name);
+      const canEditFile = !entry.isDirectory && isTextEditorFileName(entry.name);
+      const canPreviewFile = !entry.isDirectory && previewKind !== null;
       const row = (
         <div
           className="file-tree-row"
@@ -8160,15 +8756,24 @@ export const App = () => {
               <File size={15} aria-hidden="true" />
             )}
           </button>
-          {entry.isDirectory || (!isTextEditorFileName(entry.name) && !previewKind) ? (
+          {entry.isDirectory && entry.hasChildren ? (
+            <button
+              className="file-tree-file-link file-tree-file-link--folder"
+              type="button"
+              onClick={() => void toggleFileTreeDirectory(entry)}
+              title={isExpanded ? `Close ${entry.name}` : `Open ${entry.name}`}
+            >
+              {entry.name}
+            </button>
+          ) : entry.isDirectory || (!canEditFile && !canPreviewFile) ? (
             <span>{entry.name}</span>
-          ) : previewKind ? (
+          ) : canPreviewFile ? (
             <button
               className="file-tree-file-link file-tree-file-link--preview"
               data-preview-kind={previewKind.kind}
               type="button"
-              onDoubleClick={() => void openFilePreviewForFile(entry)}
-              title={`Preview ${entry.name}`}
+              onClick={() => void openFilePreviewForFile(entry)}
+              title={`Open ${entry.name}`}
             >
               {entry.name}
             </button>
@@ -8182,7 +8787,30 @@ export const App = () => {
               {entry.name}
             </button>
           )}
-          <strong>{isLoading ? 'Loading' : formatFileSize(entry.size)}</strong>
+          <span className="file-tree-row__meta">
+            <strong>{isLoading ? 'Loading' : formatFileSize(entry.size)}</strong>
+            {canEditFile ? (
+              <button
+                className="icon-button file-tree-row__action"
+                type="button"
+                title={`Edit ${entry.name}`}
+                aria-label={`Edit ${entry.name}`}
+                onClick={() => void openTextEditorForFile(entry)}
+              >
+                <Pencil size={14} aria-hidden="true" />
+              </button>
+            ) : canPreviewFile ? (
+              <button
+                className="icon-button file-tree-row__action"
+                type="button"
+                title={`Open ${entry.name}`}
+                aria-label={`Open ${entry.name}`}
+                onClick={() => void openFilePreviewForFile(entry)}
+              >
+                <ExternalLink size={14} aria-hidden="true" />
+              </button>
+            ) : null}
+          </span>
         </div>
       );
 
@@ -8287,19 +8915,25 @@ export const App = () => {
   };
 
   const renderModDetailsWindow = () => {
-    const modItem = selectedModItem?.isMod ? selectedModItem : null;
+    const modItem =
+      selectedModItem?.isMod
+        ? selectedModItem
+        : modDetailsSummary?.isMod
+          ? modDetailsSummary
+          : null;
     const modReady = modItem !== null;
     const modTitle = modItem ? modItemTitle(modItem) : modDetailsInitialName || 'Mod';
     const overwrite = modItem ? modOverwriteView(modItem) : null;
     const fileCount = modItem ? modItem.fileCount : 0;
     const overwritesCount = modItem ? modItem.overwritingFileCount : 0;
     const overwrittenCount = modItem ? modItem.overwrittenFileCount : 0;
+    const projectTitle = selectedProject?.name ?? initialModDetailsBootstrap?.projectName ?? 'Build';
 
     return (
       <section className="mod-details-window" aria-label="Mod details">
         <header className="mod-details-header">
           <div className="mod-details-title">
-            <span>{selectedProject?.name ?? 'Build'}</span>
+            <span>{projectTitle}</span>
             <h2>{modTitle}</h2>
           </div>
           <dl className="mod-details-facts" aria-label="Mod summary">
@@ -8317,7 +8951,7 @@ export const App = () => {
             </div>
             <div>
               <dt>Status</dt>
-              <dd>{overwrite?.label || modStatusText(selectedModItem)}</dd>
+              <dd>{overwrite?.label || modStatusText(modItem)}</dd>
             </div>
           </dl>
         </header>
@@ -8346,9 +8980,7 @@ export const App = () => {
           {modDetailsTab === 'files' ? (
             <div className="file-tree mod-details-file-tree" role="tree" aria-label="Mod file tree">
               {!modReady ? (
-                <span className="file-tree-empty">
-                  {modsWorkspace.loadState === 'loading' ? 'Loading mod' : 'Mod unavailable.'}
-                </span>
+                <span className="file-tree-empty">Mod unavailable.</span>
               ) : fileTreeState === 'loading' ? (
                 <span className="file-tree-empty">Loading tree</span>
               ) : fileTreeState === 'error' ? (
@@ -9245,71 +9877,119 @@ export const App = () => {
     );
   };
 
-  const renderRightPanePathTree = (
-    rows: Array<{ id: string; label: string; value: string; level?: number }>
-  ) => (
-    <div className="right-pane-path-tree" role="tree" aria-label="Build data folders">
-      {rows.map((row) => (
-        <div
-          className="right-pane-path-row"
-          key={row.id}
-          role="treeitem"
-          aria-level={row.level ?? 1}
-          style={{ paddingLeft: `${10 + ((row.level ?? 1) - 1) * 16}px` }}
+  const renderEffectiveFileTreeRow = ({ entry, level }: EffectiveFileTreeRow) => {
+    const isExpanded = Boolean(expandedEffectiveFileTree[entry.relativePath]);
+    const sourceLabel = effectiveFileTreeSourceLabel(entry);
+    const canOpen = Boolean(entry.sourcePath);
+    const rowName = entry.name || 'Game Root';
+
+    return (
+      <div
+        className="right-pane-data-row"
+        data-kind={entry.isDirectory ? 'directory' : 'file'}
+        data-source-kind={entry.sourceKind}
+        key={entry.relativePath || 'root'}
+        role="treeitem"
+        aria-expanded={entry.isDirectory && entry.hasChildren ? isExpanded : undefined}
+        aria-level={level}
+        style={{ paddingLeft: `${6 + (level - 1) * 16}px` }}
+        onDoubleClick={() => {
+          if (entry.isDirectory && entry.hasChildren) {
+            void toggleEffectiveFileTreeDirectory(entry);
+            return;
+          }
+          if (canOpen) {
+            void openEffectiveFileTreeEntry(entry);
+          }
+        }}
+      >
+        <button
+          className="icon-button right-pane-data-row__toggle"
+          type="button"
+          title={isExpanded ? 'Collapse' : 'Expand'}
+          aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${rowName}`}
+          disabled={!entry.isDirectory || !entry.hasChildren}
+          onClick={() => void toggleEffectiveFileTreeDirectory(entry)}
         >
+          {isExpanded ? (
+            <ChevronDown size={13} aria-hidden="true" />
+          ) : (
+            <ChevronRight size={13} aria-hidden="true" />
+          )}
+        </button>
+        {entry.isDirectory ? (
           <FolderOpen size={15} aria-hidden="true" />
-          <span>{row.label}</span>
-          <code title={row.value}>{row.value || 'not configured'}</code>
+        ) : (
+          <File size={15} aria-hidden="true" />
+        )}
+        <span className="right-pane-data-row__label" title={effectiveVirtualPathLabel(entry)}>
+          {rowName}
+        </span>
+        <code title={entry.virtualPath}>{effectiveVirtualPathLabel(entry)}</code>
+        <span className="right-pane-data-row__source" title={sourceLabel}>
+          {sourceLabel}
+        </span>
+        {canOpen ? (
+          <span className="right-pane-data-row__actions">
+            <button
+              className="icon-button"
+              type="button"
+              title={`Open ${effectiveVirtualPathLabel(entry)}`}
+              aria-label={`Open ${effectiveVirtualPathLabel(entry)}`}
+              onClick={() => void openEffectiveFileTreeEntry(entry)}
+            >
+              <ExternalLink size={14} aria-hidden="true" />
+            </button>
+          </span>
+        ) : (
+          <span className="right-pane-data-row__actions" aria-hidden="true" />
+        )}
+      </div>
+    );
+  };
+
+  const renderEffectiveFileTreeSkeletonRows = () => (
+    <>
+      <span className="sr-only" role="status">
+        Loading data
+      </span>
+      {effectiveFileTreeSkeletonRows.map((index) => (
+        <div
+          aria-hidden="true"
+          className="right-pane-data-row right-pane-data-row--skeleton"
+          key={`effective-tree-skeleton-${index}`}
+          role="treeitem"
+          style={{ paddingLeft: `${6 + (index % 4) * 16}px` }}
+        >
+          <span className="workspace-skeleton workspace-skeleton--toggle" />
+          <span className="workspace-skeleton workspace-skeleton--toggle" />
+          <span
+            className="workspace-skeleton workspace-skeleton--title"
+            style={{ width: skeletonWidth(index) }}
+          />
+          <span
+            className="workspace-skeleton workspace-skeleton--cell"
+            style={{ width: skeletonWidth(index, 2) }}
+          />
+          <span
+            className="workspace-skeleton workspace-skeleton--badge"
+            style={{ width: skeletonWidth(index, 3) }}
+          />
+          <span className="workspace-skeleton workspace-skeleton--action" />
         </div>
       ))}
-    </div>
+    </>
   );
 
   const renderDataRightPane = () => {
-    const pathRows = [
-      {
-        id: 'project',
-        label: 'Project',
-        value: selectedProject?.projectDirectory ?? '',
-        level: 1
-      },
-      {
-        id: 'game',
-        label: 'Game',
-        value: selectedProject?.paths?.gameDirectory ?? selectedProject?.gamePath ?? '',
-        level: 2
-      },
-      {
-        id: 'mods',
-        label: 'Mods',
-        value: selectedProject?.paths?.modsDirectory ?? '',
-        level: 2
-      },
-      {
-        id: 'profiles',
-        label: 'Profiles',
-        value: selectedProject?.paths?.profilesDirectory ?? '',
-        level: 2
-      },
-      {
-        id: 'downloads',
-        label: 'Downloads',
-        value: selectedProject?.paths?.downloadsDirectory ?? '',
-        level: 2
-      },
-      {
-        id: 'overwrite',
-        label: 'Overwrite',
-        value: selectedProject?.paths?.overwriteDirectory ?? '',
-        level: 2
-      },
-      {
-        id: 'config',
-        label: 'Config',
-        value: selectedProject?.configPath ?? '',
-        level: 1
-      }
-    ];
+    const showInitialSkeleton =
+      (effectiveFileTreeState === 'idle' || effectiveFileTreeState === 'refreshing') &&
+      effectiveFileTreeRows.length === 0;
+    const showUnavailable = effectiveFileTreeState === 'error';
+    const showEmpty =
+      effectiveFileTreeState === 'ready' &&
+      effectiveFileTreeSnapshot !== null &&
+      effectiveFileTreeRows.length === 0;
 
     return (
       <div
@@ -9317,49 +9997,46 @@ export const App = () => {
         role="tabpanel"
         aria-label="Данные"
       >
-        <section className="right-pane-section">
-          <header>
-            <FolderTree size={16} aria-hidden="true" />
-            <div>
-              <strong>Build folders</strong>
-              <span>Read-only paths from the project DTO.</span>
-            </div>
-          </header>
-          {renderRightPanePathTree(pathRows)}
-        </section>
-
-        <section className="right-pane-section right-pane-section--tree">
-          <header>
-            <FolderTree size={16} aria-hidden="true" />
-            <div>
-              <strong>Selected mod data</strong>
-              <span>{selectedModItem?.isMod ? modItemTitle(selectedModItem) : 'Select a mod row.'}</span>
-            </div>
-            {selectedModItem?.isMod ? (
+        <div
+          className="right-pane-data-tree file-tree"
+          role="tree"
+          aria-label="Effective game root"
+          aria-busy={showInitialSkeleton || effectiveFileTreeState === 'refreshing'}
+          data-state={effectiveFileTreeState}
+          onScroll={(event) => setEffectiveFileTreeScrollTop(event.currentTarget.scrollTop)}
+        >
+          {showInitialSkeleton ? (
+            renderEffectiveFileTreeSkeletonRows()
+          ) : showUnavailable ? (
+            <div className="file-tree-empty file-tree-empty--actionable">
+              <span>{effectiveFileTreeError || 'Данные недоступны.'}</span>
               <button
-                className="icon-button"
+                className="secondary-button"
                 type="button"
-                title="Reload selected mod file tree"
-                onClick={() => void loadModFileTree('', selectedModItem)}
+                onClick={() =>
+                  void loadEffectiveFileTree(selectedProject, selectedProjectProfileName, {
+                    force: true,
+                    requestKey: effectiveFileTreeRequestKey
+                  })
+                }
               >
-                <RefreshCw size={15} aria-hidden="true" />
+                Повторить
               </button>
-            ) : null}
-          </header>
-          <div className="file-tree right-pane-file-tree" role="tree" aria-label="Selected mod data tree">
-            {!selectedModItem?.isMod ? (
-              <span className="file-tree-empty">Select an installed mod to inspect indexed files.</span>
-            ) : fileTreeState === 'loading' ? (
-              <span className="file-tree-empty">Loading tree</span>
-            ) : fileTreeState === 'error' ? (
-              <span className="file-tree-empty">File tree unavailable.</span>
-            ) : (fileTreeCache[''] ?? []).length === 0 ? (
-              <span className="file-tree-empty">No files indexed yet.</span>
-            ) : (
-              renderFileTreeEntries()
-            )}
-          </div>
-        </section>
+            </div>
+          ) : showEmpty ? (
+            <span className="file-tree-empty">Нет файлов в дереве.</span>
+          ) : (
+            <>
+              {visibleEffectiveFileTreeWindow.topSpacer > 0 ? (
+                <div style={{ height: visibleEffectiveFileTreeWindow.topSpacer }} aria-hidden="true" />
+              ) : null}
+              {visibleEffectiveFileTreeWindow.items.map(renderEffectiveFileTreeRow)}
+              {visibleEffectiveFileTreeWindow.bottomSpacer > 0 ? (
+                <div style={{ height: visibleEffectiveFileTreeWindow.bottomSpacer }} aria-hidden="true" />
+              ) : null}
+            </>
+          )}
+        </div>
       </div>
     );
   };
@@ -9524,7 +10201,11 @@ export const App = () => {
     }
 
     if (id === 'data') {
-      return selectedModItem?.isMod ? String(selectedModItem.fileCount) : null;
+      return effectiveFileTreeState === 'ready' &&
+        effectiveFileTreeSnapshot &&
+        effectiveFileTreeSnapshot.totalFileCountKnown !== false
+        ? String(effectiveFileTreeSnapshot.totalFileCount)
+        : null;
     }
 
     return fluxPackSummary ? '1' : null;
@@ -9540,9 +10221,7 @@ export const App = () => {
     }
 
     if (activeRightPane === 'data') {
-      return selectedModItem?.isMod
-        ? `${selectedModItem.fileCount} indexed files`
-        : 'Project paths and selected mod files';
+      return null;
     }
 
     return fluxPackSummary ? 'FluxPack summary ready' : 'Paths, executable and FluxPack actions';

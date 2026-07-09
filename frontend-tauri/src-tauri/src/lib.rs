@@ -4308,6 +4308,7 @@ async fn fluxora_open_mod_details_window(
     mod_path: String,
     mod_name: String,
     profile_name: Option<String>,
+    bootstrap_key: Option<String>,
 ) -> Result<(), String> {
     let config_path = config_path.trim();
     if config_path.is_empty() {
@@ -4326,6 +4327,11 @@ async fn fluxora_open_mod_details_window(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("");
+    let bootstrap_key = bootstrap_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
     let label = format!(
         "{MOD_DETAILS_WINDOW_LABEL_PREFIX}:{}",
         stable_label_suffix(&format!("{config_path}\u{0}{mod_path}\u{0}{profile_name}"))
@@ -4337,13 +4343,17 @@ async fn fluxora_open_mod_details_window(
         return Ok(());
     }
 
-    let url = format!(
+    let mut url = format!(
         "/?window=mod-details&project={}&mod={}&name={}&profile={}",
         encode_query_component(config_path),
         encode_query_component(mod_path),
         encode_query_component(mod_title),
         encode_query_component(profile_name)
     );
+    if !bootstrap_key.is_empty() {
+        url.push_str("&bootstrap=");
+        url.push_str(&encode_query_component(bootstrap_key));
+    }
 
     WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()))
         .title(format!("Mod \u{00B7} {mod_title}"))

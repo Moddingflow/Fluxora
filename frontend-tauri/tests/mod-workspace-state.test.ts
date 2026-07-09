@@ -13,6 +13,7 @@ import {
   modConflictMarkerStatesForHighlight,
   modItemConflictHighlight,
   modLatestVersionText,
+  modOrderItemMatchesLookup,
   modStatusText,
   modOverwriteView,
   modRowConflictHighlight,
@@ -139,6 +140,19 @@ describe('mod workspace state', () => {
     expect(loaded.selectedOrderId).toBe('mod_smoothcam');
     expect([...loaded.selectedOrderIds]).toEqual(['mod_smoothcam']);
     expect(selectedModOrderItem(items, 'missing')?.orderId).toBe('mod_skyui');
+  });
+
+  it('matches mod detail lookup values across path separators, ids and names', () => {
+    const skyui = modItem('mod_skyui', 'SkyUI', 1, {
+      id: 'C:\\Builds\\Skyrim\\mods\\SkyUI',
+      modUuid: 'uuid-skyui'
+    });
+
+    expect(modOrderItemMatchesLookup(skyui, 'c:/builds/skyrim/mods/skyui')).toBe(true);
+    expect(modOrderItemMatchesLookup(skyui, 'MOD_SKYUI')).toBe(true);
+    expect(modOrderItemMatchesLookup(skyui, 'uuid-skyui')).toBe(true);
+    expect(modOrderItemMatchesLookup(skyui, 'SkyUI')).toBe(true);
+    expect(modOrderItemMatchesLookup(skyui, 'SmoothCam')).toBe(false);
   });
 
   it('keeps existing rows available while a refresh load is running', () => {

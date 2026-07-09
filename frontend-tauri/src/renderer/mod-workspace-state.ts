@@ -514,6 +514,27 @@ export const selectedModOrderItem = (
   return visibleItems.find((item) => item.isMod) ?? visibleItems[0] ?? null;
 };
 
+const normalizeModLookupValue = (value: string | null | undefined): string =>
+  (value ?? '')
+    .trim()
+    .replace(/\//g, '\\')
+    .replace(/\\+/g, '\\')
+    .toLocaleLowerCase();
+
+export const modOrderItemMatchesLookup = (
+  item: FluxoraModOrderItem,
+  lookup: string | null | undefined
+): boolean => {
+  const normalizedLookup = normalizeModLookupValue(lookup);
+  if (!normalizedLookup) {
+    return false;
+  }
+
+  return [item.id, item.orderId, item.modUuid, item.name]
+    .map(normalizeModLookupValue)
+    .some((candidate) => candidate === normalizedLookup);
+};
+
 export const filterModOrderItems = (
   items: FluxoraModOrderItem[],
   searchText: string

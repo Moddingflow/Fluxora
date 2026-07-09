@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -265,6 +266,16 @@ namespace fluxora
     {
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
+
+    ModConflictTreePage InstanceMetadataStore::listModConflictTree(
+        const std::filesystem::path&,
+        const std::filesystem::path&,
+        std::wstring_view,
+        int,
+        const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
 }
 
 #else
@@ -373,9 +384,18 @@ namespace fluxora
                 throw std::runtime_error("Failed to open metadata manifest.");
             }
 
-            return std::string(
-                std::istreambuf_iterator<char>(file),
-                std::istreambuf_iterator<char>());
+            file.seekg(0, std::ios::end);
+            const std::streamoff size = file.tellg();
+            if (size <= 0)
+            {
+                return {};
+            }
+
+            file.seekg(0, std::ios::beg);
+            std::string content(static_cast<std::size_t>(size), '\0');
+            file.read(content.data(), static_cast<std::streamsize>(size));
+            content.resize(static_cast<std::size_t>(file.gcount()));
+            return content;
         }
 
         void recoverMetadataManifest(const std::filesystem::path& path)
@@ -4640,6 +4660,131 @@ namespace fluxora
         }
 
         return entries;
+    }
+
+    ModConflictTreePage InstanceMetadataStore::listModConflictTree(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modPath,
+        std::wstring_view cursor,
+        int limit,
+        const std::filesystem::path& modsRoot)
+    {
+        if (projectDirectory.empty() || modPath.empty())
+        {
+            throw std::invalid_argument("Project directory and mod path are required.");
+        }
+
+        const auto normalizeLimit = [](int requested)
+        {
+            if (requested <= 0)
+            {
+                return 200;
+            }
+
+            return (std::min)(requested, 1000);
+        };
+        const auto parseCursor = [](std::wstring_view value)
+        {
+            if (value.empty())
+            {
+                return 0;
+            }
+
+            try
+            {
+                const unsigned long parsed = std::stoul(std::wstring(value));
+                if (parsed > static_cast<unsigned long>((std::numeric_limits<int>::max)()))
+                {
+                    throw std::out_of_range("cursor");
+                }
+                return static_cast<int>(parsed);
+            }
+            catch (const std::exception&)
+            {
+                throw std::invalid_argument("Mod conflict tree cursor is invalid.");
+            }
+        };
+
+        Database database = openInstanceDatabase(projectDirectory);
+        const std::filesystem::path resolvedModsRoot = modsRoot.empty() ? modPath.parent_path() : modsRoot;
+        InstalledModRecord record =
+            readRecordByFolder(database, projectDirectory, modPath.filename().wstring(), resolvedModsRoot);
+        ensureFileCachePrepared(database, record);
+
+        const ConflictOwnerGroups ownersByPath = conflictOwnersForCachedModFiles(database, record.id);
+        Statement statement = database.prepare(
+            "SELECT name, relative_path, size, path_key "
+            "FROM mod_files "
+            "WHERE mod_id = ? AND kind = 'file' "
+            "ORDER BY relative_path COLLATE NOCASE;");
+        statement.bindInt64(1, record.id);
+
+        const int start = parseCursor(cursor);
+        const int pageLimit = normalizeLimit(limit);
+        ModConflictTreePage page;
+        page.modPath = record.path;
+        page.limit = pageLimit;
+
+        const auto pushIfVisible = [start, pageLimit](
+            std::vector<ModFileTreeEntry>& target,
+            int total,
+            const ModFileTreeEntry& entry)
+        {
+            if (total <= start)
+            {
+                return;
+            }
+
+            if (static_cast<int>(target.size()) < pageLimit)
+            {
+                target.push_back(entry);
+            }
+        };
+
+        while (statement.stepRow())
+        {
+            const std::wstring pathKeyValue = statement.columnText(3);
+            const auto owners = ownersByPath.find(pathKeyValue);
+            if (owners == ownersByPath.end())
+            {
+                continue;
+            }
+
+            const std::wstring state = conflictStateForOwners(owners->second, record.id);
+            if (state.empty() || state == L"none")
+            {
+                continue;
+            }
+
+            ModFileTreeEntry entry{
+                statement.columnText(0),
+                statement.columnText(1),
+                false,
+                false,
+                static_cast<std::uintmax_t>(statement.columnInt64(2) < 0 ? 0 : statement.columnInt64(2)),
+                state,
+                ownerNames(owners->second)
+            };
+
+            if (state == L"overwrites" || state == L"conflict")
+            {
+                ++page.totalOverwrites;
+                pushIfVisible(page.overwrites, page.totalOverwrites, entry);
+            }
+            if (state == L"overwritten" || state == L"conflict")
+            {
+                ++page.totalOverwritten;
+                pushIfVisible(page.overwritten, page.totalOverwritten, entry);
+            }
+        }
+
+        const int largestTotal = (std::max)(page.totalOverwrites, page.totalOverwritten);
+        if (start + pageLimit < largestTotal)
+        {
+            page.nextCursor = std::to_wstring(start + pageLimit);
+        }
+
+        return page;
     }
 }
 

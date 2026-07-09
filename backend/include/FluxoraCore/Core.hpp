@@ -12,6 +12,7 @@ namespace fluxora
     class ProfileOrderService;
     class ProfileService;
     class DownloadService;
+    class EffectiveFileTreeService;
     class ExecutableService;
     class ExecutableIconService;
     class FluxPackService;
@@ -45,6 +46,7 @@ namespace fluxora
         [[nodiscard]] ProfileOrderService& profileOrder() noexcept;
         [[nodiscard]] ProfileService& profiles() noexcept;
         [[nodiscard]] DownloadService& downloads() noexcept;
+        [[nodiscard]] EffectiveFileTreeService& effectiveFileTree() noexcept;
         [[nodiscard]] ExecutableService& executables() noexcept;
         [[nodiscard]] ExecutableIconService& executableIcons() noexcept;
         [[nodiscard]] FluxPackService& fluxPacks() noexcept;
@@ -66,6 +68,7 @@ namespace fluxora
         std::unique_ptr<ProfileOrderService> profileOrder_;
         std::unique_ptr<ProfileService> profiles_;
         std::unique_ptr<DownloadService> downloads_;
+        std::unique_ptr<EffectiveFileTreeService> effectiveFileTree_;
         std::unique_ptr<ExecutableIconService> executableIcons_;
         std::unique_ptr<ExecutableService> executables_;
         std::unique_ptr<NexusModsAuthService> nexusModsAuth_;

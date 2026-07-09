@@ -41,6 +41,9 @@ describe('build refresh loading', () => {
 
   it('refreshes mods and plugins from filesystem watcher events without loading chrome', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const watcher =
+      app.match(/return window\.fluxora\.buildContent\.onChanged\(\(event\) => \{[\s\S]*?\}\);\s+\}, \[/)?.[0] ??
+      '';
 
     expect(app).toMatch(/window\.fluxora\.buildContent\s*\.\s*watch/);
     expect(app).not.toContain('modsDirectory: selectedProject.projectDirectory');
@@ -53,5 +56,7 @@ describe('build refresh loading', () => {
     expect(app).toContain('showBusy: false');
     expect(app).toContain('showLoading: false');
     expect(app).toContain('resetScroll: false');
+    expect(watcher).toContain('effectiveFileTreeCacheRef.current = {};');
+    expect(watcher).not.toContain('setEffectiveFileTreeSnapshot(null);');
   });
 });

@@ -1587,6 +1587,20 @@ namespace fluxora
             pathSettings_.modsDirectory(projectDirectory));
     }
 
+    ModConflictTreePage ModService::listModConflictTree(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modPath,
+        std::wstring_view cursor,
+        int limit) const
+    {
+        return InstanceMetadataStore::listModConflictTree(
+            projectDirectory,
+            modPath,
+            cursor,
+            limit,
+            pathSettings_.modsDirectory(projectDirectory));
+    }
+
     ModTextFileDocument ModService::readModTextFile(
         const std::filesystem::path& projectDirectory,
         const std::filesystem::path& modPath,

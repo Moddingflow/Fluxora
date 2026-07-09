@@ -13,6 +13,9 @@ const readText = (...segments: string[]): string =>
 const fileExists = (...segments: string[]): boolean =>
   fs.existsSync(path.join(repoRoot, ...segments));
 
+const fileSize = (...segments: string[]): number =>
+  fs.statSync(path.join(repoRoot, ...segments)).size;
+
 describe('redesign foundations', () => {
   it('keeps Tauri styles on the local redesign token entrypoint', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
@@ -28,10 +31,44 @@ describe('redesign foundations', () => {
     expect(styles).toContain('@import "./design-system/tokens/foundations.css";');
     expect(styles).not.toContain('fonts.googleapis.com');
     expect(styles).not.toContain('fonts.gstatic.com');
+    expect(tokens).toContain('@font-face');
+    expect(tokens).toContain('font-family: "IBM Plex Sans";');
+    expect(tokens).toContain('font-family: "IBM Plex Mono";');
+    expect(tokens).toContain('../../assets/fonts/ibm-plex/IBMPlexSans-Regular.woff2');
+    expect(tokens).toContain('../../assets/fonts/ibm-plex/IBMPlexMono-Regular.woff2');
     expect(tokens).toContain('--flx-accent: #edb848;');
     expect(tokens).toContain('--flx-accent-rgb: 237, 184, 72;');
     expect(tokens).toContain('--focus-ring: rgba(var(--flx-accent-hover-rgb), 0.72);');
     expect(tokens).not.toContain('--accent-blue');
+  });
+
+  it('bundles commercial-safe IBM Plex UI fonts locally', () => {
+    for (const requiredFontAsset of [
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexSans-Regular.woff2'],
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexSans-Medium.woff2'],
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexSans-SemiBold.woff2'],
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexSans-Bold.woff2'],
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexMono-Regular.woff2'],
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexMono-Medium.woff2'],
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexMono-SemiBold.woff2'],
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexMono-Bold.woff2']
+    ]) {
+      expect(fileExists(...requiredFontAsset), requiredFontAsset.join('/')).toBe(true);
+      expect(fileSize(...requiredFontAsset), requiredFontAsset.join('/')).toBeGreaterThan(40_000);
+    }
+
+    const license = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'assets',
+      'fonts',
+      'ibm-plex',
+      'LICENSE.txt'
+    );
+
+    expect(license).toContain('SIL OPEN FONT LICENSE Version 1.1');
+    expect(license).toContain('redistributed and/or sold with any software');
   });
 
   it('bundles redesign brand, content and icon assets locally', () => {

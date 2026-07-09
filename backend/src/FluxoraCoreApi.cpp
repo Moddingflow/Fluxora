@@ -8,6 +8,7 @@
 #include "FluxoraCore/Services/AppSettingsService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
+#include "FluxoraCore/Services/EffectiveFileTreeService.hpp"
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
 #include "FluxoraCore/Services/ExecutableService.hpp"
 #include "FluxoraCore/Services/FluxPackService.hpp"
@@ -1490,6 +1491,125 @@ namespace
             writeModFileTreeEntry(writer, entry);
         }
         writer.endArray();
+        return writer.str();
+    }
+
+    std::wstring serializeModConflictTree(const fluxora::ModConflictTreePage& page)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"modPath", page.modPath.wstring());
+        writer.field(L"totalOverwrites", page.totalOverwrites);
+        writer.field(L"totalOverwritten", page.totalOverwritten);
+        writer.field(L"limit", page.limit);
+        if (page.nextCursor.empty())
+        {
+            writer.key(L"nextCursor").nullValue();
+        }
+        else
+        {
+            writer.field(L"nextCursor", page.nextCursor);
+        }
+        writer.key(L"overwrites").beginArray();
+        for (const auto& entry : page.overwrites)
+        {
+            writeModFileTreeEntry(writer, entry);
+        }
+        writer.endArray();
+        writer.key(L"overwritten").beginArray();
+        for (const auto& entry : page.overwritten)
+        {
+            writeModFileTreeEntry(writer, entry);
+        }
+        writer.endArray();
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeModDetailsSummary(const fluxora::ProfileModOrderItem& item)
+    {
+        fluxora::JsonWriter writer;
+        writeProfileModOrderItem(writer, item);
+        return writer.str();
+    }
+
+    void writeEffectiveFileTreeEntry(
+        fluxora::JsonWriter& writer,
+        const fluxora::EffectiveFileTreeEntry& entry)
+    {
+        writer.beginObject();
+        writer.field(L"name", entry.name);
+        writer.field(L"relativePath", entry.relativePath);
+        writer.field(L"parentPath", entry.parentPath);
+        writer.field(L"isDirectory", entry.isDirectory);
+        writer.field(L"hasChildren", entry.hasChildren);
+        writer.field(L"size", entry.size);
+        writer.field(L"virtualPath", entry.virtualPath);
+        writer.field(L"sourceKind", entry.sourceKind);
+        writer.field(L"sourceName", entry.sourceName);
+        writer.field(L"sourcePath", entry.sourcePath.wstring());
+        writer.endObject();
+    }
+
+    std::wstring serializeEffectiveFileTree(
+        const fluxora::EffectiveFileTreeSnapshot& snapshot)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"profileName", snapshot.profileName);
+        writer.field(L"revision", snapshot.revision);
+        writer.field(L"totalFileCount", snapshot.totalFileCount);
+        writer.field(L"totalFileCountKnown", snapshot.totalFileCountKnown);
+        writer.key(L"entries").beginArray();
+        for (const auto& entry : snapshot.entries)
+        {
+            writeEffectiveFileTreeEntry(writer, entry);
+        }
+        writer.endArray();
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeEffectiveFileTreePage(const fluxora::EffectiveFileTreePage& page)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"profileName", page.profileName);
+        writer.field(L"revision", page.revision);
+        writer.field(L"parentPath", page.parentPath);
+        writer.field(L"totalFileCount", page.totalFileCount);
+        writer.field(L"totalFileCountKnown", page.totalFileCountKnown);
+        writer.field(L"totalChildCount", page.totalChildCount);
+        writer.field(L"limit", page.limit);
+        if (page.nextCursor.empty())
+        {
+            writer.key(L"nextCursor").nullValue();
+        }
+        else
+        {
+            writer.field(L"nextCursor", page.nextCursor);
+        }
+        writer.key(L"entries").beginArray();
+        for (const auto& entry : page.entries)
+        {
+            writeEffectiveFileTreeEntry(writer, entry);
+        }
+        writer.endArray();
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeEffectiveFileTreeWarmup(
+        const fluxora::EffectiveFileTreeIndexWarmupResult& result)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"profileName", result.profileName);
+        writer.field(L"revision", result.revision);
+        writer.field(L"totalFileCount", result.totalFileCount);
+        writer.field(L"totalEntryCount", result.totalEntryCount);
+        writer.field(L"cacheHit", result.cacheHit);
+        writer.endObject();
         return writer.str();
     }
 
@@ -4051,6 +4171,221 @@ extern "C"
                     std::filesystem::path(projectDirectory),
                     std::filesystem::path(modPath),
                     isBlank(relativeDirectory) ? L"" : std::wstring_view(relativeDirectory)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_mod_conflict_tree(
+        const wchar_t* projectDirectory,
+        const wchar_t* modPath,
+        const wchar_t* cursor,
+        int limit,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(modPath))
+            {
+                lastError = L"Project directory and mod path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeModConflictTree(
+                core().mods().listModConflictTree(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(modPath),
+                    isBlank(cursor) ? L"" : std::wstring_view(cursor),
+                    limit));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_mod_details_summary(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* modPath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(modPath))
+            {
+                lastError = L"Project directory and mod path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const auto normalizedPathKey = [](const std::filesystem::path& path)
+            {
+                std::filesystem::path normalized = path.lexically_normal();
+                std::wstring value = normalized.wstring();
+                std::replace(value.begin(), value.end(), L'/', L'\\');
+                std::transform(
+                    value.begin(),
+                    value.end(),
+                    value.begin(),
+                    [](wchar_t character)
+                    {
+                        return static_cast<wchar_t>(std::towlower(character));
+                    });
+                return value;
+            };
+
+            const std::filesystem::path requested(modPath);
+            const std::wstring requestedKey = normalizedPathKey(requested);
+            const std::vector<fluxora::ProfileModOrderItem> order =
+                core().profileOrder().listCachedModOrder(
+                    std::filesystem::path(projectDirectory),
+                    isBlank(profileName) ? L"" : std::wstring_view(profileName));
+
+            const auto match = std::find_if(
+                order.begin(),
+                order.end(),
+                [&requested, &requestedKey, &normalizedPathKey](const fluxora::ProfileModOrderItem& item)
+                {
+                    if (item.kind != L"mod")
+                    {
+                        return false;
+                    }
+
+                    if (normalizedPathKey(item.id) == requestedKey)
+                    {
+                        return true;
+                    }
+
+                    return item.id.filename().wstring() == requested.filename().wstring();
+                });
+
+            if (match == order.end())
+            {
+                lastError = L"Mod details summary was not found.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeModDetailsSummary(*match);
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_prepare_workspace_indexes(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeEffectiveFileTreeWarmup(
+                core().effectiveFileTree().prepareWorkspaceIndexes(
+                    std::filesystem::path(projectDirectory),
+                    isBlank(profileName) ? L"" : std::wstring_view(profileName)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_effective_file_tree(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeEffectiveFileTree(
+                core().effectiveFileTree().snapshot(
+                    std::filesystem::path(projectDirectory),
+                    isBlank(profileName) ? L"" : std::wstring_view(profileName)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_effective_file_tree_root(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        int limit,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeEffectiveFileTreePage(
+                core().effectiveFileTree().root(
+                    std::filesystem::path(projectDirectory),
+                    isBlank(profileName) ? L"" : std::wstring_view(profileName),
+                    limit));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_effective_file_tree_children(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* revision,
+        const wchar_t* relativeDirectory,
+        const wchar_t* cursor,
+        int limit,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(revision))
+            {
+                lastError = L"Project directory and revision are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeEffectiveFileTreePage(
+                core().effectiveFileTree().children(
+                    std::filesystem::path(projectDirectory),
+                    isBlank(profileName) ? L"" : std::wstring_view(profileName),
+                    std::wstring_view(revision),
+                    isBlank(relativeDirectory) ? L"" : std::wstring_view(relativeDirectory),
+                    isBlank(cursor) ? L"" : std::wstring_view(cursor),
+                    limit));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)

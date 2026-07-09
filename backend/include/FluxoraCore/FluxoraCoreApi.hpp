@@ -379,6 +379,50 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_get_mod_conflict_tree(
+        const wchar_t* projectDirectory,
+        const wchar_t* modPath,
+        const wchar_t* cursor,
+        int limit,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_get_mod_details_summary(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* modPath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_prepare_workspace_indexes(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_get_effective_file_tree(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_get_effective_file_tree_root(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        int limit,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_get_effective_file_tree_children(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* revision,
+        const wchar_t* relativeDirectory,
+        const wchar_t* cursor,
+        int limit,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_list_mod_preview_variants(
         const wchar_t* projectDirectory,
         const wchar_t* profileName,

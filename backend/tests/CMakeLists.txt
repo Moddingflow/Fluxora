@@ -19,6 +19,7 @@ add_executable(FluxoraCoreTests
     BuildPathSettingsServiceTests.cpp
     ContentLayoutServiceTests.cpp
     DownloadServiceTests.cpp
+    EffectiveFileTreeServiceTests.cpp
     ExecutableServiceTests.cpp
     GameDetectionHealthServiceTests.cpp
     GameDefinitionLoaderTests.cpp
@@ -57,6 +58,7 @@ add_executable(FluxoraCoreTests
     ../src/GameSupport/ProjectFingerprint.cpp
     ../src/GameSupport/SkyrimSpecialEditionSupport.cpp
     ../src/Services/DownloadService.cpp
+    ../src/Services/EffectiveFileTreeService.cpp
     ../src/Services/ExecutableIconService.cpp
     ../src/Services/ExecutableService.cpp
     ../src/Services/FomodInstallerService.cpp
@@ -78,6 +80,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/ProjectService.cpp
     ../src/Services/TemplateService.cpp
     ../src/Services/VfsContentPlacementAnalyzer.cpp
+    ../src/Services/VfsMountPlan.cpp
     ../src/Storage/AtomicFileStore.cpp
     ../src/Storage/InstanceMetadataStore.cpp
     ../src/Storage/ProjectStateTransaction.cpp

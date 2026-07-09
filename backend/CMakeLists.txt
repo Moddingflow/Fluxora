@@ -123,6 +123,7 @@ add_library(FluxoraCore SHARED
     src/Services/HookService.cpp
     src/Services/ContentLayoutService.cpp
     src/Services/DownloadService.cpp
+    src/Services/EffectiveFileTreeService.cpp
     src/Services/ExecutableIconService.cpp
     src/Services/ExecutableService.cpp
     src/Services/FomodInstallerService.cpp
@@ -144,6 +145,7 @@ add_library(FluxoraCore SHARED
     src/Services/ProjectService.cpp
     src/Services/TemplateService.cpp
     src/Services/VfsContentPlacementAnalyzer.cpp
+    src/Services/VfsMountPlan.cpp
     src/Services/VirtualFileSystemService.cpp
     src/Storage/AtomicFileStore.cpp
     src/Storage/InstanceMetadataStore.cpp
