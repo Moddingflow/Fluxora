@@ -1425,8 +1425,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/design-foundations.test.ts": {
-    "mtime": 1783584836.9503467,
-    "ast_hash": "db7d6814345b54cc4213f3ab24caff5e",
+    "mtime": 1783588059.4152434,
+    "ast_hash": "24496f41b0ba334ca5e19118282063f2",
     "semantic_hash": ""
   },
   "docs/tauri-migration/redesign-renderer-architecture.md": {
@@ -4652,6 +4652,16 @@
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-plugins-right-pane-1280x720.png": {
     "mtime": 1783584454.12703,
     "ast_hash": "07131c341470ee7a7564ad2b2482f43c",
+    "semantic_hash": ""
+  },
+  "frontend-tauri/src/renderer/assets/fonts/geist/LICENSE.txt": {
+    "mtime": 499162500.0,
+    "ast_hash": "6bc8ee5e488d62bd62df7d879b70477f",
+    "semantic_hash": ""
+  },
+  "frontend-tauri/src/renderer/assets/fonts/geist/README.md": {
+    "mtime": 1783588032.4906497,
+    "ast_hash": "392a924ad0cc226101ad98406abe5b08",
     "semantic_hash": ""
   }
 }

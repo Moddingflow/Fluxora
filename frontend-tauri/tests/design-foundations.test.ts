@@ -31,30 +31,40 @@ describe('redesign foundations', () => {
     expect(styles).toContain('@import "./design-system/tokens/foundations.css";');
     expect(styles).not.toContain('fonts.googleapis.com');
     expect(styles).not.toContain('fonts.gstatic.com');
+    expect(styles).toMatch(/body\s*{[\s\S]*font-size: 12px;/);
     expect(tokens).toContain('@font-face');
-    expect(tokens).toContain('font-family: "IBM Plex Sans";');
+    expect(tokens).toContain('font-family: "Geist";');
     expect(tokens).toContain('font-family: "IBM Plex Mono";');
-    expect(tokens).toContain('../../assets/fonts/ibm-plex/IBMPlexSans-Regular.woff2');
+    expect(tokens).toContain('../../assets/fonts/geist/geist-latin-wght-normal.woff2');
+    expect(tokens).toContain('../../assets/fonts/geist/geist-latin-ext-wght-normal.woff2');
+    expect(tokens).toContain('../../assets/fonts/geist/geist-cyrillic-wght-normal.woff2');
+    expect(tokens).toContain('../../assets/fonts/geist/geist-cyrillic-ext-wght-normal.woff2');
+    expect(tokens).toContain('../../assets/fonts/geist/geist-vietnamese-wght-normal.woff2');
     expect(tokens).toContain('../../assets/fonts/ibm-plex/IBMPlexMono-Regular.woff2');
+    expect(tokens).toContain('--font-sans: "Geist", "Noto Sans", "Segoe UI Variable"');
+    expect(tokens).not.toContain('font-family: "Inter";');
+    expect(tokens).not.toContain('font-family: "Source Sans 3";');
+    expect(tokens).not.toContain('font-family: "Noto Sans UI";');
     expect(tokens).toContain('--flx-accent: #edb848;');
     expect(tokens).toContain('--flx-accent-rgb: 237, 184, 72;');
     expect(tokens).toContain('--focus-ring: rgba(var(--flx-accent-hover-rgb), 0.72);');
     expect(tokens).not.toContain('--accent-blue');
   });
 
-  it('bundles commercial-safe IBM Plex UI fonts locally', () => {
+  it('bundles commercial-safe Geist UI fonts locally', () => {
     for (const requiredFontAsset of [
-      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexSans-Regular.woff2'],
-      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexSans-Medium.woff2'],
-      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexSans-SemiBold.woff2'],
-      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexSans-Bold.woff2'],
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'geist', 'geist-latin-wght-normal.woff2'],
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'geist', 'geist-latin-wght-italic.woff2'],
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'geist', 'geist-latin-ext-wght-normal.woff2'],
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'geist', 'geist-cyrillic-wght-normal.woff2'],
+      ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'geist', 'geist-cyrillic-ext-wght-normal.woff2'],
       ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexMono-Regular.woff2'],
       ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexMono-Medium.woff2'],
       ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexMono-SemiBold.woff2'],
       ['frontend-tauri', 'src', 'renderer', 'assets', 'fonts', 'ibm-plex', 'IBMPlexMono-Bold.woff2']
     ]) {
       expect(fileExists(...requiredFontAsset), requiredFontAsset.join('/')).toBe(true);
-      expect(fileSize(...requiredFontAsset), requiredFontAsset.join('/')).toBeGreaterThan(40_000);
+      expect(fileSize(...requiredFontAsset), requiredFontAsset.join('/')).toBeGreaterThan(1_000);
     }
 
     const license = readText(
@@ -63,7 +73,7 @@ describe('redesign foundations', () => {
       'renderer',
       'assets',
       'fonts',
-      'ibm-plex',
+      'geist',
       'LICENSE.txt'
     );
 
