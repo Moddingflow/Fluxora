@@ -149,18 +149,21 @@ describe('operation overlays', () => {
     expect(markup).not.toContain('mods\\Tomato\\textures\\architecture\\column01.dds');
   });
 
-  it('renders mod deletion as the full loading splash with percent feedback', () => {
-    const markup = renderOverlay(
-      overlay({ kind: 'mod-delete', title: 'Удаляем мод', percent: 37 })
+  it('keeps mod deletion out of operation overlay kinds', () => {
+    const overlaySource = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'operations',
+      'OperationOverlay.tsx'
     );
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const modDeleteKind = ['mod', 'delete'].join('-');
 
-    expect(markup).toContain('flx-loading-splash');
-    expect(markup).toContain('operation-overlay--mod-delete');
-    expect(markup).toContain('Удаляем мод');
-    expect(markup).toContain('37%');
-    expect(markup).toContain('aria-valuenow="37"');
-    expect(markup).not.toContain('operation-overlay__panel');
-    expect(markup).not.toContain('Deleting mod');
+    expect(overlaySource).not.toContain(`'${modDeleteKind}'`);
+    expect(app).not.toContain(`kind: '${modDeleteKind}'`);
+    expect(overlaySource).toContain("overlay.kind === 'download-delete'");
   });
 
   it('renders download deletion through the same full loading splash pattern', () => {

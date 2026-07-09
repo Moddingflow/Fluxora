@@ -37,9 +37,15 @@ describe('mods pane redesign', () => {
     expect(app).not.toContain('modConflictHighlightFromMarkerStates');
     expect(app).not.toContain('mergeModConflictMarkerStates');
     expect(app).not.toContain('const statusMarkers = item.isSeparator');
+    expect(app).not.toContain("kind: 'mod-delete'");
+    expect(app).not.toContain("runModMutation('Deleting separator'");
     expect(app).toContain('window.fluxora.mods.setEnabled');
     expect(app).toContain('window.fluxora.mods.moveOrderItem');
     expect(app).toContain('window.fluxora.mods.createSeparator');
+    expect(app).toContain("createRendererOperationId('mods_delete_separator')");
+    expect(app).toContain('removeDeletedModItems([item]);');
+    expect(app).toContain('removeDeletedModItems(targets);');
+    expect(app).toContain('await refreshAfterModDeletion(project);');
     expect(app).toMatch(
       /await window\.fluxora\.mods\.setEnabled[\s\S]*await loadModsWorkspace\(project, backgroundReorderLoadOptions\);/
     );

@@ -133,6 +133,11 @@ export const modItemTitle = (item: FluxoraModOrderItem): string =>
       ? item.separatorTitle || 'Separator'
       : item.name || item.id;
 
+export const removeModOrderItems = (
+  items: readonly FluxoraModOrderItem[],
+  orderIds: ReadonlySet<string>
+): FluxoraModOrderItem[] => items.filter((item) => !orderIds.has(item.orderId));
+
 export type ModOverwriteState = 'none' | 'overwrites' | 'overwritten' | 'mixed' | 'fully-overwritten';
 export type ModConflictMarkerState = 'overwrites' | 'overwritten' | 'fully-overwritten';
 export type ModConflictHighlight = 'none' | 'overwrites' | 'overwritten' | 'mixed';

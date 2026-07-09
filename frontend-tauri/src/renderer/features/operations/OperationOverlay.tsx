@@ -7,7 +7,6 @@ export type OperationOverlayKind =
   | 'build-create'
   | 'build-delete'
   | 'download-delete'
-  | 'mod-delete'
   | 'fluxpack-export'
   | 'fluxpack-install'
   | 'grass-cache';
@@ -75,19 +74,15 @@ export const OperationOverlay = ({
   const cancelDisabled = overlay.cancelRequested && overlay.isRunning;
   const showClose = overlay.canClose && !showCancel;
 
-  const isDeletionSplash =
-    tone === 'running' && (overlay.kind === 'download-delete' || overlay.kind === 'mod-delete');
+  const isDeletionSplash = tone === 'running' && overlay.kind === 'download-delete';
 
   if (isDeletionSplash) {
-    const deletionDetail =
-      overlay.kind === 'download-delete' ? 'Удаление файла из загрузок' : 'Удаление мода';
-
     return (
       <LoadingSplash
         aria-label={overlay.title}
         className={`operation-overlay operation-overlay--loading-splash operation-overlay--${overlay.kind}`}
         data-state={tone}
-        detail={deletionDetail}
+        detail="Удаление файла из загрузок"
         messages={[overlay.title]}
         open
         progress={percent}

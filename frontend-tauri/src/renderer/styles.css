@@ -4011,7 +4011,6 @@ input::placeholder {
   -webkit-backdrop-filter: blur(10px) saturate(0.9);
 }
 
-.operation-overlay--mod-delete .flx-loading-splash__panel,
 .operation-overlay--download-delete .flx-loading-splash__panel {
   max-width: 580px;
 }

@@ -164,6 +164,7 @@ import {
   modVersionText,
   modWorkspaceReducer,
   reorderModOrderItems,
+  removeModOrderItems,
   selectedModOrderItem,
   targetIndexForDrop,
   visibleModOrderItems,
@@ -2486,14 +2487,55 @@ export const App = () => {
       return;
     }
 
-    await runModMutation('Deleting separator', (operationId) =>
-      window.fluxora.mods.deleteSeparator(
-        selectedProject.projectDirectory,
+    const project = selectedProject;
+    const previousItems = modsWorkspace.items;
+    const removedOrderIds = new Set([item.orderId]);
+    const operationId = createRendererOperationId('mods_delete_separator');
+
+    setMessage(null);
+    dispatchModsWorkspace({
+      type: 'items-loaded',
+      items: removeModOrderItems(previousItems, removedOrderIds)
+    });
+
+    try {
+      await window.fluxora.mods.deleteSeparator(
+        project.projectDirectory,
         modWorkspaceProfileName,
         item.orderId,
         { operationId }
-      )
-    );
+      );
+      await loadModsWorkspace(project, backgroundReorderLoadOptions);
+    } catch (error) {
+      dispatchModsWorkspace({ type: 'items-loaded', items: previousItems });
+      setMessage(`Could not delete separator: ${errorMessage(error)}`);
+    }
+  };
+
+  const removeDeletedModItems = (items: FluxoraModOrderItem[]) => {
+    const removedOrderIds = new Set(items.map((mod) => mod.orderId));
+    const removedModIds = new Set(items.map((mod) => mod.id));
+
+    dispatchModsWorkspace({
+      type: 'items-loaded',
+      items: removeModOrderItems(modsWorkspace.items, removedOrderIds)
+    });
+    setInstalledMods((current) => current.filter((mod) => !removedModIds.has(mod.id)));
+  };
+
+  const restoreDeletedModItems = (
+    previousItems: FluxoraModOrderItem[],
+    previousInstalledMods: FluxoraInstalledMod[]
+  ) => {
+    dispatchModsWorkspace({ type: 'items-loaded', items: previousItems });
+    setInstalledMods(previousInstalledMods);
+  };
+
+  const refreshAfterModDeletion = async (project: FluxoraProject) => {
+    await loadModsWorkspace(project, backgroundReorderLoadOptions);
+    if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
+      await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+    }
   };
 
   const createEmptyMod = async () => {
@@ -2550,45 +2592,23 @@ export const App = () => {
     }
 
     const project = selectedProject;
+    const previousItems = modsWorkspace.items;
+    const previousInstalledMods = installedMods;
     const deletedModTitle = modItemTitle(item);
 
     const operationId = createRendererOperationId('mods_delete');
-    beginOperationOverlay({
-      operationId,
-      kind: 'mod-delete',
-      title: 'Удаляем мод',
-      statusText: 'Удаляем файлы мода',
-      currentItem: deletedModTitle,
-      percent: 8
-    });
     setMessage(null);
+    removeDeletedModItems([item]);
 
     try {
       await window.fluxora.mods.deleteInstalled(project.projectDirectory, item.id, {
         operationId
       });
-      setOperationOverlay((current) =>
-        current && current.operationId === operationId
-          ? {
-              ...current,
-              statusText: 'Обновляем список модов',
-              percent: Math.max(current.percent ?? 0, 84)
-            }
-          : current
-      );
-      await loadModsWorkspace(project, {
-        resetScroll: false,
-        showBusy: false,
-        showLoading: false
-      });
-      if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
-        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
-      }
-      closeOperationOverlay(operationId);
+      await refreshAfterModDeletion(project);
     } catch (error) {
       const nextMessage = errorMessage(error);
-      setMessage(nextMessage);
-      failOperationOverlay(operationId, nextMessage);
+      restoreDeletedModItems(previousItems, previousInstalledMods);
+      setMessage(`Could not delete ${deletedModTitle}: ${nextMessage}`);
     }
   };
 
@@ -2605,59 +2625,24 @@ export const App = () => {
 
     const project = selectedProject;
     const operationId = createRendererOperationId('mods_delete_bulk');
-    const targetLabel = deletionSubjectLabel('mod', '', targets.length);
-    beginOperationOverlay({
-      operationId,
-      kind: 'mod-delete',
-      title: 'Удаляем моды',
-      statusText: 'Удаляем файлы модов',
-      currentItem: targetLabel,
-      percent: 8
-    });
+    const previousItems = modsWorkspace.items;
+    const previousInstalledMods = installedMods;
     setMessage(null);
+    removeDeletedModItems(targets);
 
     try {
       for (let index = 0; index < targets.length; index += 1) {
         const item = targets[index]!;
-        const currentPercent = Math.min(82, 8 + Math.round((index / targets.length) * 72));
-        setOperationOverlay((current) =>
-          current && current.operationId === operationId
-            ? {
-                ...current,
-                currentItem: modItemTitle(item),
-                statusText: `Удаляем мод ${index + 1} из ${targets.length}`,
-                percent: Math.max(current.percent ?? 0, currentPercent)
-              }
-            : current
-        );
         await window.fluxora.mods.deleteInstalled(project.projectDirectory, item.id, {
           operationId
         });
       }
 
-      setOperationOverlay((current) =>
-        current && current.operationId === operationId
-          ? {
-              ...current,
-              statusText: 'Обновляем список модов',
-              currentItem: targetLabel,
-              percent: Math.max(current.percent ?? 0, 84)
-            }
-          : current
-      );
-      await loadModsWorkspace(project, {
-        resetScroll: false,
-        showBusy: false,
-        showLoading: false
-      });
-      if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
-        await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
-      }
-      closeOperationOverlay(operationId);
+      await refreshAfterModDeletion(project);
     } catch (error) {
       const nextMessage = errorMessage(error);
-      setMessage(nextMessage);
-      failOperationOverlay(operationId, nextMessage);
+      restoreDeletedModItems(previousItems, previousInstalledMods);
+      setMessage(`Could not delete mods: ${nextMessage}`);
     }
   };
 

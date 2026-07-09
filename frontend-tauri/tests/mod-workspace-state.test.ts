@@ -17,6 +17,7 @@ import {
   modStatusText,
   modOverwriteView,
   modRowConflictHighlight,
+  removeModOrderItems,
   reorderModOrderItems,
   modSeparatorConflictMarkerStates,
   modSeparatorChildCount,
@@ -140,6 +141,15 @@ describe('mod workspace state', () => {
     expect(loaded.selectedOrderId).toBe('mod_smoothcam');
     expect([...loaded.selectedOrderIds]).toEqual(['mod_smoothcam']);
     expect(selectedModOrderItem(items, 'missing')?.orderId).toBe('mod_skyui');
+  });
+
+  it('removes deleted mods and separators from the order before the silent refresh finishes', () => {
+    const withoutDeletedRows = removeModOrderItems(
+      items,
+      new Set(['sep_visuals', 'mod_smoothcam'])
+    );
+
+    expect(withoutDeletedRows.map((item) => item.orderId)).toEqual(['mod_skyui']);
   });
 
   it('matches mod detail lookup values across path separators, ids and names', () => {

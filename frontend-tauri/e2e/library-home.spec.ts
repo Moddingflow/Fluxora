@@ -770,7 +770,13 @@ test.beforeEach(async ({ page }) => {
           calls.push({ method: 'mods.deleteInstalled', payload: { modId, operation, projectDirectory } });
           return {};
         },
-        deleteSeparator: async () => [],
+        deleteSeparator: async (projectDirectory: any, profileName: any, orderId: any, operation: any) => {
+          calls.push({
+            method: 'mods.deleteSeparator',
+            payload: { operation, orderId, profileName, projectDirectory }
+          });
+          return [];
+        },
         getFileTree: async () => [
           {
             name: 'scripts',
@@ -1758,7 +1764,17 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await expect(page.getByRole('menuitem', { name: 'Свернуть все' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Развернуть все' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Delete separator' })).toBeVisible();
-  await page.keyboard.press('Escape');
+  await page.getByRole('menuitem', { name: 'Delete separator' }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.map((call) => call.method)
+      )
+    )
+    .toContain('mods.deleteSeparator');
+  await expect(page.getByText('Loading mods', { exact: true })).toHaveCount(0);
+  await expect(page.locator('.operation-overlay--mod-delete')).toHaveCount(0);
 
   await overwriteRow.focus();
   await page.keyboard.press('Shift+F10');
