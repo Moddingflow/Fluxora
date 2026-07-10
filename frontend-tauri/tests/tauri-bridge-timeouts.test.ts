@@ -115,6 +115,22 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('gives recursive project deletion a long file-mutation timeout', async () => {
+    const configPath = 'C:\\Users\\Валера\\AppData\\Roaming\\Fluxora\\Builds\\Foundation Edition-9.json';
+    const request: OperationRequest = { operationId: 'op_projects_delete' };
+    invokeMock.mockResolvedValue({ accepted: true });
+
+    const api = createTauriFluxoraApi();
+    await api.projects.delete(configPath, request);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'projects.delete',
+      params: { configPath },
+      request,
+      timeoutMs: 7_200_000
+    });
+  });
+
   it('preserves previewDirectory payload and operation id from the typed bridge request', async () => {
     const request: OperationRequest = { operationId: 'op_projects_preview_directory' };
     invokeMock.mockResolvedValue({
@@ -207,7 +223,7 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
-  it('routes overwrite clearing through the typed native bridge', async () => {
+  it('gives overwrite cleanup a long file-mutation timeout', async () => {
     const request: OperationRequest = { operationId: 'op_clear_overwrite' };
     invokeMock.mockResolvedValue({ accepted: true });
 
@@ -221,7 +237,24 @@ describe('Tauri bridge request timeouts', () => {
       method: 'mods.clearOverwrite',
       params: { projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition' },
       request,
-      timeoutMs: undefined
+      timeoutMs: 7_200_000
+    });
+  });
+
+  it('gives installed-mod deletion a long file-mutation timeout', async () => {
+    const request: OperationRequest = { operationId: 'op_mods_delete_installed' };
+    const projectDirectory = project().projectDirectory;
+    const modPath = 'E:\\Fluxora Builds\\Foundation Edition\\mods\\Large Mod';
+    invokeMock.mockResolvedValue({ accepted: true });
+
+    const api = createTauriFluxoraApi();
+    await api.mods.deleteInstalled(projectDirectory, modPath, request);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'mods.deleteInstalled',
+      params: { projectDirectory, modPath },
+      request,
+      timeoutMs: 7_200_000
     });
   });
 
@@ -423,7 +456,7 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
-  it('normalizes FluxPack export flags before they reach the native bridge', async () => {
+  it('normalizes FluxPack export flags and keeps packaging on a long timeout', async () => {
     const request: OperationRequest = { operationId: 'op_fluxpack_export' };
     invokeMock.mockResolvedValue({
       buildName: 'Foundation Edition',
@@ -462,7 +495,7 @@ describe('Tauri bridge request timeouts', () => {
         includeGeneratedAssets: false
       },
       request,
-      timeoutMs: undefined
+      timeoutMs: 7_200_000
     });
   });
 
@@ -551,6 +584,47 @@ describe('Tauri bridge request timeouts', () => {
       params: { projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition' },
       request: importRequest,
       timeoutMs: 21_600_000
+    });
+  });
+
+  it('gives local download imports a long file-mutation timeout', async () => {
+    const request: OperationRequest = { operationId: 'op_downloads_import_file' };
+    const projectDirectory = project().projectDirectory;
+    const sourcePath = 'E:\\Incoming Mods\\large-mod.7z';
+    invokeMock.mockResolvedValue({ path: 'E:\\Fluxora Builds\\Foundation Edition\\downloads\\large-mod.7z' });
+
+    const api = createTauriFluxoraApi();
+    await api.downloads.importFile(projectDirectory, sourcePath, request);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'downloads.importFile',
+      params: { projectDirectory, sourcePath },
+      request,
+      timeoutMs: 7_200_000
+    });
+  });
+
+  it('keeps archive extraction and mod installation on a long file-mutation timeout', async () => {
+    const request: OperationRequest = { operationId: 'op_downloads_install' };
+    const installRequest = {
+      projectDirectory: project().projectDirectory,
+      downloadPath: 'E:\\Fluxora Builds\\Foundation Edition\\downloads\\large-mod.7z',
+      modName: 'Large Mod'
+    };
+    invokeMock.mockResolvedValue({ id: 'large-mod', name: 'Large Mod' });
+
+    const api = createTauriFluxoraApi();
+    await api.downloads.install(installRequest, request);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'downloads.install',
+      params: {
+        ...installRequest,
+        existingModMode: 0,
+        placementOverridesJson: ''
+      },
+      request,
+      timeoutMs: 7_200_000
     });
   });
 

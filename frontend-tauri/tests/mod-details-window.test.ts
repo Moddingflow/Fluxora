@@ -143,6 +143,11 @@ describe('mod details window', () => {
     expect(app).toContain('onClick={() => void openFilePreviewForFile(entry)}');
     expect(app).toContain('window.fluxora.windowControls.openFilePreview(');
     expect(app).toContain('<FilePreviewWorkspace');
+    expect(app).toContain("import('./features/file-preview/FilePreviewWorkspace')");
+    expect(app).toContain('<Suspense');
+    expect(app).not.toContain(
+      "import { FilePreviewWorkspace } from './features/file-preview/FilePreviewWorkspace';"
+    );
     expect(registry).toContain("title: '.nif Preview'");
     expect(registry).toContain("extension: '.nif'");
     expect(registry).toContain('cuboid.svg');

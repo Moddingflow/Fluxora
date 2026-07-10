@@ -3,6 +3,7 @@
 #include "FluxoraCore/Services/TemplateService.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
+#include "FluxoraCore/Support/JsonWriter.hpp"
 #include "TestFilesystem.hpp"
 
 #include <gtest/gtest.h>
@@ -103,6 +104,29 @@ namespace fluxora::tests
                 "\"defaultProfile\":\"Default\""
                 "}";
         }
+
+        void writeProjectRenameRecoveryMarker(
+            const std::filesystem::path& markerPath,
+            const std::filesystem::path& previousManifestPath,
+            const std::filesystem::path& renamedManifestPath,
+            const std::filesystem::path& previousProjectDirectory,
+            const std::filesystem::path& renamedProjectDirectory)
+        {
+            JsonWriter writer;
+            writer.beginObject();
+            writer.field(L"schemaVersion", 1);
+            writer.field(L"operation", L"project-rename");
+            writer.field(L"previousManifestPath", std::filesystem::absolute(previousManifestPath).wstring());
+            writer.field(L"renamedManifestPath", std::filesystem::absolute(renamedManifestPath).wstring());
+            writer.field(
+                L"previousProjectDirectory",
+                std::filesystem::absolute(previousProjectDirectory).wstring());
+            writer.field(
+                L"renamedProjectDirectory",
+                std::filesystem::absolute(renamedProjectDirectory).wstring());
+            writer.endObject();
+            writeTextFile(markerPath, toUtf8(writer.str()));
+        }
     }
 
     TEST(ProjectServiceTests, CreateSkyrimProjectSeedsProfileAndManifestFromSupportRules)
@@ -200,6 +224,7 @@ namespace fluxora::tests
     TEST(ProjectServiceTests, BuildProjectDirectoryUsesSanitizedFolderNames)
     {
         TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
         const std::filesystem::path installRoot = temp.path() / L"Builds";
 
         Logger logger;
@@ -214,9 +239,33 @@ namespace fluxora::tests
         EXPECT_EQ(
             projects.buildProjectDirectory(installRoot, L" . "),
             std::filesystem::absolute(installRoot) / L"New Build");
+        EXPECT_EQ(
+            projects.buildProjectDirectory(installRoot, L"NUL.txt"),
+            std::filesystem::absolute(installRoot) / L"_NUL.txt");
+        EXPECT_EQ(
+            projects.buildProjectDirectory(installRoot, L"com1"),
+            std::filesystem::absolute(installRoot) / L"_com1");
+        EXPECT_EQ(
+            projects.buildProjectDirectory(installRoot, L"COM\u00B9"),
+            std::filesystem::absolute(installRoot) / L"_COM\u00B9");
+        EXPECT_EQ(
+            projects.buildProjectDirectory(installRoot, L"com\u00B2.txt"),
+            std::filesystem::absolute(installRoot) / L"_com\u00B2.txt");
+        EXPECT_EQ(
+            projects.buildProjectDirectory(installRoot, L"CoM\u00B3"),
+            std::filesystem::absolute(installRoot) / L"_CoM\u00B3");
+        EXPECT_EQ(
+            projects.buildProjectDirectory(installRoot, L"LPT\u00B9"),
+            std::filesystem::absolute(installRoot) / L"_LPT\u00B9");
+        EXPECT_EQ(
+            projects.buildProjectDirectory(installRoot, L"lpt\u00B2.log"),
+            std::filesystem::absolute(installRoot) / L"_lpt\u00B2.log");
+        EXPECT_EQ(
+            projects.buildProjectDirectory(installRoot, L"LpT\u00B3"),
+            std::filesystem::absolute(installRoot) / L"_LpT\u00B3");
     }
 
-    TEST(ProjectServiceTests, CreateProjectUsesUniqueCatalogManifestPathsForSanitizedNames)
+    TEST(ProjectServiceTests, CreateProjectKeepsSanitizedNameCollisionsInSeparateDirectories)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Project creation initializes the Windows instance metadata store.";
@@ -234,6 +283,8 @@ namespace fluxora::tests
         ProjectService projects(logger, templates);
         projects.initialize();
 
+        const std::filesystem::path firstPreview =
+            projects.buildProjectDirectory(installRoot, L"Catalog:Build");
         const ProjectDescriptor first = projects.createProject(ProjectCreateRequest{
             L"Catalog:Build",
             L"skyrimse",
@@ -241,6 +292,10 @@ namespace fluxora::tests
             installRoot,
             false
         });
+        const std::filesystem::path firstSentinel = first.projectDirectory / L"first-build.txt";
+        writeTextFile(firstSentinel, "first build must survive");
+        const std::filesystem::path secondPreview =
+            projects.buildProjectDirectory(installRoot, L"Catalog?Build");
         const ProjectDescriptor second = projects.createProject(ProjectCreateRequest{
             L"Catalog?Build",
             L"skyrimse",
@@ -251,11 +306,14 @@ namespace fluxora::tests
 
         EXPECT_EQ(
             first.projectDirectory,
-            projects.buildProjectDirectory(installRoot, L"Catalog:Build"));
+            firstPreview);
         EXPECT_EQ(
             second.projectDirectory,
-            projects.buildProjectDirectory(installRoot, L"Catalog?Build"));
-        EXPECT_EQ(first.projectDirectory, second.projectDirectory);
+            secondPreview);
+        EXPECT_EQ(secondPreview, std::filesystem::absolute(installRoot / L"Catalog-Build-2"));
+        EXPECT_NE(first.projectDirectory, second.projectDirectory);
+        EXPECT_TRUE(std::filesystem::is_regular_file(firstSentinel));
+        EXPECT_EQ(readTextFile(firstSentinel), "first build must survive");
         EXPECT_EQ(
             first.configPath,
             std::filesystem::absolute(catalogDirectory / L"Catalog-Build.json"));
@@ -270,7 +328,7 @@ namespace fluxora::tests
 #endif
     }
 
-    TEST(ProjectServiceTests, CreateProjectCleansExistingProjectDirectory)
+    TEST(ProjectServiceTests, CreateProjectPreservesUnrelatedDirectoriesAndAdvancesSuffix)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Project creation initializes the Windows instance metadata store.";
@@ -279,9 +337,12 @@ namespace fluxora::tests
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
 
         const std::filesystem::path installRoot = temp.path() / L"Builds";
-        const std::filesystem::path staleFile = installRoot / L"Clean Root Build" / L"stale.txt";
-        writeTextFile(staleFile, "old build artifact");
-        ASSERT_TRUE(std::filesystem::exists(staleFile));
+        const std::filesystem::path firstSentinel =
+            installRoot / L"Clean Root Build" / L"keep-first.txt";
+        const std::filesystem::path secondSentinel =
+            installRoot / L"Clean Root Build-2" / L"keep-second.txt";
+        writeTextFile(firstSentinel, "unrelated first directory");
+        writeTextFile(secondSentinel, "unrelated second directory");
 
         Logger logger;
         TemplateService templates(logger);
@@ -297,8 +358,16 @@ namespace fluxora::tests
             false
         });
 
+        EXPECT_EQ(
+            project.projectDirectory,
+            std::filesystem::absolute(installRoot / L"Clean Root Build-3"));
+        EXPECT_EQ(
+            project.configPath,
+            std::filesystem::absolute(
+                temp.path() / L"AppData" / L"Fluxora" / L"Builds" / L"Clean Root Build-3.json"));
+        EXPECT_EQ(readTextFile(firstSentinel), "unrelated first directory");
+        EXPECT_EQ(readTextFile(secondSentinel), "unrelated second directory");
         EXPECT_TRUE(std::filesystem::is_directory(project.projectDirectory));
-        EXPECT_FALSE(std::filesystem::exists(staleFile));
 #endif
     }
 
@@ -422,6 +491,264 @@ namespace fluxora::tests
         EXPECT_EQ(createdProjects[0].projectDirectory, project.projectDirectory);
         EXPECT_EQ(createdProjects[0].configPath, project.configPath);
         EXPECT_EQ(createdProjects[0].fingerprint.has_value(), project.fingerprint.has_value());
+#endif
+    }
+
+    TEST(ProjectServiceTests, RenameProjectRollsBackWhenOldManifestCannotBeRemoved)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project rename rollback uses a Windows delete-sharing failure.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path catalogDirectory =
+            temp.path() / L"AppData" / L"Fluxora" / L"Builds";
+        const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        const ProjectDescriptor original = projects.createProject(ProjectCreateRequest{
+            L"Original Build",
+            L"skyrimse",
+            game,
+            installRoot
+        });
+        const std::filesystem::path sentinel = original.projectDirectory / L"keep.txt";
+        writeTextFile(sentinel, "keep original build");
+        const std::string originalManifest = readTextFile(original.configPath);
+
+        const HANDLE manifestLock = CreateFileW(
+            original.configPath.c_str(),
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+        ASSERT_NE(manifestLock, INVALID_HANDLE_VALUE);
+
+        EXPECT_THROW(
+            (void)projects.renameProject(original.configPath, L"Renamed Build"),
+            std::filesystem::filesystem_error);
+        CloseHandle(manifestLock);
+
+        const std::filesystem::path renamedDirectory = installRoot / L"Renamed Build";
+        const std::filesystem::path renamedManifest = catalogDirectory / L"Renamed Build.json";
+        EXPECT_TRUE(std::filesystem::is_directory(original.projectDirectory));
+        EXPECT_TRUE(std::filesystem::is_regular_file(sentinel));
+        EXPECT_EQ(readTextFile(sentinel), "keep original build");
+        EXPECT_FALSE(std::filesystem::exists(renamedDirectory));
+        EXPECT_TRUE(std::filesystem::is_regular_file(original.configPath));
+        EXPECT_EQ(readTextFile(original.configPath), originalManifest);
+        EXPECT_FALSE(std::filesystem::exists(renamedManifest));
+#endif
+    }
+
+    TEST(ProjectServiceTests, StartupRollsBackRenameInterruptedAfterPublishingNewManifest)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project catalog recovery uses the Windows app-data location.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path catalogDirectory =
+            temp.path() / L"AppData" / L"Fluxora" / L"Builds";
+        const std::filesystem::path previousDirectory = installRoot / L"Original Build";
+        const std::filesystem::path renamedDirectory = installRoot / L"Renamed Build";
+        const std::filesystem::path previousManifest = catalogDirectory / L"Original Build.json";
+        const std::filesystem::path renamedManifest = catalogDirectory / L"Renamed Build.json";
+        const std::filesystem::path marker =
+            catalogDirectory / L".fluxora-project-rename-test.json";
+
+        writeTextFile(previousDirectory / L"keep.txt", "previous build");
+        writeTextFile(
+            previousManifest,
+            catalogProjectManifest("Original Build", previousDirectory, installRoot));
+        writeTextFile(
+            renamedManifest,
+            catalogProjectManifest("Renamed Build", renamedDirectory, installRoot));
+        writeProjectRenameRecoveryMarker(
+            marker,
+            previousManifest,
+            renamedManifest,
+            previousDirectory,
+            renamedDirectory);
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        EXPECT_TRUE(std::filesystem::is_directory(previousDirectory));
+        EXPECT_FALSE(std::filesystem::exists(renamedDirectory));
+        EXPECT_TRUE(std::filesystem::is_regular_file(previousManifest));
+        EXPECT_FALSE(std::filesystem::exists(renamedManifest));
+        EXPECT_FALSE(std::filesystem::exists(marker));
+        EXPECT_EQ(readTextFile(previousDirectory / L"keep.txt"), "previous build");
+
+        const std::vector<ProjectOpenResult> catalog =
+            projects.listProjectConfigSummaries(catalogDirectory);
+        ASSERT_EQ(catalog.size(), 1U);
+        EXPECT_EQ(catalog.front().project.name, L"Original Build");
+        EXPECT_EQ(catalog.front().project.projectDirectory, previousDirectory);
+#endif
+    }
+
+    TEST(ProjectServiceTests, StartupCompletesRenameInterruptedAfterMovingProjectDirectory)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project catalog recovery uses the Windows app-data location.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path catalogDirectory =
+            temp.path() / L"AppData" / L"Fluxora" / L"Builds";
+        const std::filesystem::path previousDirectory = installRoot / L"Original Build";
+        const std::filesystem::path renamedDirectory = installRoot / L"Renamed Build";
+        const std::filesystem::path previousManifest = catalogDirectory / L"Original Build.json";
+        const std::filesystem::path renamedManifest = catalogDirectory / L"Renamed Build.json";
+        const std::filesystem::path marker =
+            catalogDirectory / L".fluxora-project-rename-test.json";
+
+        writeTextFile(renamedDirectory / L"keep.txt", "renamed build");
+        writeTextFile(
+            previousManifest,
+            catalogProjectManifest("Original Build", previousDirectory, installRoot));
+        writeTextFile(
+            renamedManifest,
+            catalogProjectManifest("Renamed Build", renamedDirectory, installRoot));
+        writeProjectRenameRecoveryMarker(
+            marker,
+            previousManifest,
+            renamedManifest,
+            previousDirectory,
+            renamedDirectory);
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        EXPECT_FALSE(std::filesystem::exists(previousDirectory));
+        EXPECT_TRUE(std::filesystem::is_directory(renamedDirectory));
+        EXPECT_FALSE(std::filesystem::exists(previousManifest));
+        EXPECT_TRUE(std::filesystem::is_regular_file(renamedManifest));
+        EXPECT_FALSE(std::filesystem::exists(marker));
+        EXPECT_EQ(readTextFile(renamedDirectory / L"keep.txt"), "renamed build");
+
+        const std::vector<ProjectOpenResult> catalog =
+            projects.listProjectConfigSummaries(catalogDirectory);
+        ASSERT_EQ(catalog.size(), 1U);
+        EXPECT_EQ(catalog.front().project.name, L"Renamed Build");
+        EXPECT_EQ(catalog.front().project.projectDirectory, renamedDirectory);
+#endif
+    }
+
+    TEST(ProjectServiceTests, StartupDefersRenameRecoveryForMismatchedCatalogManifest)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project catalog recovery uses the Windows app-data location.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path catalogDirectory =
+            temp.path() / L"AppData" / L"Fluxora" / L"Builds";
+        const std::filesystem::path previousDirectory = installRoot / L"Original Build";
+        const std::filesystem::path renamedDirectory = installRoot / L"Renamed Build";
+        const std::filesystem::path unrelatedDirectory = installRoot / L"Unrelated Build";
+        const std::filesystem::path previousManifest = catalogDirectory / L"Original Build.json";
+        const std::filesystem::path renamedManifest = catalogDirectory / L"Renamed Build.json";
+        const std::filesystem::path marker =
+            catalogDirectory / L".fluxora-project-rename-test.json";
+
+        writeTextFile(previousDirectory / L"keep.txt", "previous build");
+        writeTextFile(unrelatedDirectory / L"keep.txt", "unrelated build");
+        writeTextFile(
+            previousManifest,
+            catalogProjectManifest("Original Build", previousDirectory, installRoot));
+        const std::string unrelatedManifestContent =
+            catalogProjectManifest("Unrelated Build", unrelatedDirectory, installRoot);
+        writeTextFile(renamedManifest, unrelatedManifestContent);
+        writeProjectRenameRecoveryMarker(
+            marker,
+            previousManifest,
+            renamedManifest,
+            previousDirectory,
+            renamedDirectory);
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        EXPECT_TRUE(std::filesystem::is_regular_file(previousManifest));
+        EXPECT_TRUE(std::filesystem::is_regular_file(renamedManifest));
+        EXPECT_EQ(readTextFile(renamedManifest), unrelatedManifestContent);
+        EXPECT_TRUE(std::filesystem::is_regular_file(marker));
+
+        const std::vector<ProjectOpenResult> catalog =
+            projects.listProjectConfigSummaries(catalogDirectory);
+        ASSERT_EQ(catalog.size(), 2U);
+#endif
+    }
+
+    TEST(ProjectServiceTests, RenameProjectKeepsManifestAndDirectorySuffixesAligned)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Project creation initializes the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path catalogDirectory =
+            temp.path() / L"AppData" / L"Fluxora" / L"Builds";
+        const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        const ProjectDescriptor original = projects.createProject(ProjectCreateRequest{
+            L"Original Build",
+            L"skyrimse",
+            game,
+            installRoot
+        });
+
+        const std::filesystem::path occupiedDirectory = installRoot / L"Target";
+        const std::filesystem::path occupiedManifest = catalogDirectory / L"Target-2.json";
+        writeTextFile(occupiedDirectory / L"keep.txt", "unrelated directory");
+        writeTextFile(occupiedManifest, "{\"sentinel\":true}");
+
+        const ProjectOpenResult renamed = projects.renameProject(original.configPath, L"Target");
+
+        EXPECT_EQ(renamed.project.projectDirectory, installRoot / L"Target-3");
+        EXPECT_EQ(renamed.project.configPath, catalogDirectory / L"Target-3.json");
+        EXPECT_EQ(readTextFile(occupiedDirectory / L"keep.txt"), "unrelated directory");
+        EXPECT_EQ(readTextFile(occupiedManifest), "{\"sentinel\":true}");
+        EXPECT_FALSE(std::filesystem::exists(original.projectDirectory));
 #endif
     }
 

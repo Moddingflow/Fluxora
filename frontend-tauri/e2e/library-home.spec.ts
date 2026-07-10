@@ -681,9 +681,12 @@ test.beforeEach(async ({ page }) => {
           calls.push({ method: 'downloads.installFomod', payload: { operation, request } });
           return { name: request.modName, operationId: operation?.operationId ?? 'op_download_fomod' };
         },
-        list: async () => {
+        list: async (projectDirectory: any) => {
           await waitForDownloadsList();
-          return downloadRows;
+          const path = String(projectDirectory);
+          return path.includes('Playwright build') || path.includes('Fallout test lab')
+            ? []
+            : downloadRows;
         },
         watchFolder: async (projectDirectory: any, downloadsDirectory: any, operation: any) => {
           calls.push({
@@ -704,7 +707,12 @@ test.beforeEach(async ({ page }) => {
         launch: async (configPath: any, executableId: any, profileName: any, operation: any) => {
           calls.push({ method: 'executables.launch', payload: { configPath, executableId, operation, profileName } });
           await waitForOperationPaint();
-          return { displayName: 'SKSE', operationId: 'op_launch' };
+          return {
+            displayName: 'SKSE',
+            launchTrackingKind: 'direct',
+            operationId: 'op_launch',
+            processId: 4_242
+          };
         },
         list: async () => [
           {
@@ -1047,8 +1055,16 @@ test.beforeEach(async ({ page }) => {
             contentBase64: btoa(`Gamebryo File Format, Version 20.2.0.7\nNiNode NiTriShape NiTriShapeData BSLightingShaderProperty BSShaderTextureSet NiAlphaProperty\nFLUXORA_STATIC_MESH_JSON:${fixture}`)
           };
         },
-        getOrder: async () => modRows,
-        listInstalled: async () => modRows.filter((item) => item.isMod),
+        getOrder: async (projectDirectory: any) =>
+          String(projectDirectory).includes('Playwright build') ||
+          String(projectDirectory).includes('Fallout test lab')
+            ? []
+            : modRows,
+        listInstalled: async (projectDirectory: any) =>
+          String(projectDirectory).includes('Playwright build') ||
+          String(projectDirectory).includes('Fallout test lab')
+            ? []
+            : modRows.filter((item) => item.isMod),
         moveOrderItem: async (projectDirectory: any, profileName: any, orderId: any, targetIndex: any, operation: any) => {
           calls.push({
             method: 'mods.moveOrderItem',
@@ -1121,6 +1137,29 @@ test.beforeEach(async ({ page }) => {
             payload: { isEnabled, operation, profileName, projectDirectory, templateId }
           });
           return pluginRows;
+        }
+      },
+      processes: {
+        waitForLaunchReady: async (launch: any, operation: any) => {
+          calls.push({ method: 'processes.waitForLaunchReady', payload: { launch, operation } });
+          return {
+            operationId: operation?.operationId ?? 'op_launch_ready',
+            processId: launch.processId,
+            processName: launch.processName || 'SKSE',
+            state: 'running',
+            trackedKind: launch.launchTrackingKind || 'direct'
+          };
+        },
+        waitForExit: async (processId: any, operation: any) => {
+          calls.push({ method: 'processes.waitForExit', payload: { operation, processId } });
+          await waitForOperationPaint();
+          return {
+            operationId: operation?.operationId ?? 'op_launch_exit',
+            processId,
+            processName: 'SKSE',
+            state: 'exited',
+            trackedKind: 'direct'
+          };
         }
       },
       profiles: {
@@ -1246,11 +1285,20 @@ const visualReviewSizes = [
   { width: 2560, height: 1080 }
 ] as const;
 
+const clickSkyrimBuildOpenButton = async (page: Page) => {
+  await page.getByRole('button', { name: 'Open Skyrim graphics overhaul' }).click();
+};
+
+const clickSkyrimBuildSelectButton = async (page: Page) => {
+  await page.getByRole('button', { name: 'Select Skyrim graphics overhaul' }).click();
+};
+
 const openSkyrimBuild = async (page: Page) => {
   await page.goto(baseUrl);
-  await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
-  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Отмена', exact: true })).toBeHidden();
 };
 
 const rowContextMenuScrollbarState = async (menu: Locator) =>
@@ -1341,8 +1389,7 @@ test('asks for in-app confirmation before deleting mods, builds and downloaded f
   await expect(downloadDialog).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Home' }).click();
-  const buildOption = page.getByRole('option', { name: /Skyrim graphics overhaul/ });
-  await buildOption.hover();
+  await page.getByRole('button', { name: 'Select Skyrim graphics overhaul' }).hover();
   await page.getByRole('button', { name: 'Skyrim graphics overhaul actions' }).click();
   await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
 
@@ -1500,10 +1547,10 @@ test('selects, opens and creates builds from the redesigned library home', async
   await expect(page.getByText('2 builds')).toBeVisible();
   await expect(page.getByText('Choose a build')).toBeVisible();
 
-  await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
+  await clickSkyrimBuildSelectButton(page);
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await clickSkyrimBuildOpenButton(page);
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -1538,21 +1585,288 @@ test('selects, opens and creates builds from the redesigned library home', async
     });
   await expect(page.getByRole('heading', { name: 'Playwright build' })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Select Skyrim graphics overhaul' }).click();
+  const skyrimSummary = page.getByRole('article', { name: 'Skyrim graphics overhaul summary' });
+  await expect(skyrimSummary.getByText('248', { exact: true })).toBeVisible();
 });
 
-test('runs build header package, check and launch actions through the facade', async ({ page }) => {
+test('does not open a build when its row actions are double-clicked', async ({ page }) => {
   await page.goto(baseUrl);
 
-  await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
-  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  const callsBefore = await page.evaluate(
+    () =>
+      (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls?.filter(
+        (call) => call.method === 'projects.openConfig'
+      ).length ?? 0
+  );
+
+  await page.getByRole('button', { name: 'Skyrim graphics overhaul actions' }).dblclick();
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls?.filter(
+            (call) => call.method === 'projects.openConfig'
+          ).length ?? 0
+      )
+    )
+    .toBe(callsBefore);
+
+  await page.getByRole('button', { name: 'Select Skyrim graphics overhaul' }).dblclick();
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls?.filter(
+            (call) => call.method === 'projects.openConfig'
+          ).length ?? 0
+      )
+    )
+    .toBe(callsBefore + 1);
+
+  await page.goto(baseUrl);
+  await clickSkyrimBuildSelectButton(page);
+  const callsBeforeOpenButton = await page.evaluate(
+    () =>
+      (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls?.filter(
+        (call) => call.method === 'projects.openConfig'
+      ).length ?? 0
+  );
+  await page.getByRole('button', { name: 'Open Skyrim graphics overhaul' }).dblclick();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls?.filter(
+            (call) => call.method === 'projects.openConfig'
+          ).length ?? 0
+      )
+    )
+    .toBe(callsBeforeOpenButton + 1);
+});
+
+test('uses semantic build lists with visible keyboard focus', async ({ page }) => {
+  await page.goto(baseUrl);
+
+  const buildList = page.getByRole('list', { name: 'Fluxora builds' });
+  await expect(buildList.getByRole('listitem')).toHaveCount(2);
+
+  const selectButton = page.getByRole('button', { name: 'Select Skyrim graphics overhaul' });
+  await page.getByRole('textbox', { name: 'Search builds' }).focus();
+  await page.keyboard.press('Tab');
+  await expect(selectButton).toBeFocused();
+  expect(await elementFocusIndicator(selectButton)).toMatchObject({ hasIndicator: true });
+
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+});
+
+test('keeps runtime metrics scoped to the build that loaded them', async ({ page }) => {
+  await openSkyrimBuild(page);
+  await page.getByRole('button', { name: 'Home' }).click();
+
+  await page.getByRole('button', { name: 'Select Fallout test lab' }).click();
+
+  const falloutSummary = page.getByRole('article', { name: 'Fallout test lab summary' });
+  await expect(falloutSummary).toBeVisible();
+  await expect(falloutSummary.getByText('64', { exact: true })).toBeVisible();
+});
+
+test('restores the previous workspace after cancelling a build open', async ({ page }) => {
+  await openSkyrimBuild(page);
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.evaluate(() => {
+    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
+      2_500;
+  });
+
+  await page.getByRole('button', { name: 'Open Fallout test lab' }).click();
+  await page.getByRole('button', { name: 'Отмена', exact: true }).click();
+  const newBuildButton = page.getByRole('button', { name: 'New build' }).first();
+  await expect(newBuildButton).toBeDisabled();
+  await page.evaluate(() => {
+    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
+      0;
+  });
+
+  const skyrimSummary = page.getByRole('article', { name: 'Skyrim graphics overhaul summary' });
+  await expect(skyrimSummary).toBeVisible();
+  await expect(skyrimSummary.getByText('2', { exact: true })).toBeVisible();
+  await expect(newBuildButton).toBeEnabled();
+});
+
+test('restores the active non-default profile after cancelling a build open', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: any }>;
+      fluxora: any;
+    };
+    const getOrder = scope.fluxora.mods.getOrder;
+    scope.fluxora.profiles.list = async () => ['Default', 'Testing'];
+    scope.fluxora.mods.getOrder = async (
+      projectDirectory: string,
+      profileName: string,
+      operation: unknown
+    ) => {
+      scope.__fluxoraCalls?.push({
+        method: 'test.mods.getOrder',
+        payload: { operation, profileName, projectDirectory }
+      });
+      return getOrder(projectDirectory, profileName, operation);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  const profileSelect = page.getByRole('combobox', { name: 'Profile' });
+  await profileSelect.click();
+  await page.getByRole('option', { name: 'Testing' }).click();
+  await expect(profileSelect).toContainText('Testing');
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+      __fluxoraDownloadsListDelayMs?: number;
+    };
+    scope.__fluxoraCalls?.splice(0);
+    scope.__fluxoraDownloadsListDelayMs = 2_500;
+  });
+
+  await page.getByRole('button', { name: 'Open Fallout test lab' }).click();
+  await page.getByRole('button', { name: 'Отмена', exact: true }).click();
+  await page.evaluate(() => {
+    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
+      0;
+  });
+  await expect(page.getByRole('button', { name: 'New build' }).first()).toBeEnabled();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const calls = (window as typeof window & {
+          __fluxoraCalls?: Array<{ method: string; payload?: any }>;
+        }).__fluxoraCalls;
+        return calls
+          ?.filter(
+            (call) =>
+              call.method === 'test.mods.getOrder' &&
+              String(call.payload?.projectDirectory).includes('Skyrim graphics overhaul')
+          )
+          .at(-1)?.payload?.profileName;
+      })
+    )
+    .toBe('Testing');
+});
+
+test('ignores a stale store response after another build opens', async ({ page }) => {
+  await openSkyrimBuild(page);
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
+  await page.evaluate(() => {
+    const facade = (window as typeof window & { fluxora: any }).fluxora;
+    const listDownloads = facade.downloads.list;
+    let delayNextSkyrimLoad = true;
+    facade.downloads.list = async (projectDirectory: string, ...args: unknown[]) => {
+      if (delayNextSkyrimLoad && projectDirectory.includes('Skyrim graphics overhaul')) {
+        delayNextSkyrimLoad = false;
+        await new Promise((resolve) => setTimeout(resolve, 1_200));
+      }
+      return listDownloads(projectDirectory, ...args);
+    };
+  });
+
+  await rightPane.getByRole('button', { name: 'Refresh downloads' }).click();
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Open Fallout test lab' }).click();
+  await expect(page.getByRole('heading', { name: 'Fallout test lab' })).toBeVisible();
+  await page.waitForTimeout(1_400);
+  const falloutRightPane = page.getByLabel('Right pane');
+  await expect(falloutRightPane.getByRole('row', { name: /SkyUI/ })).toHaveCount(0);
+  await expect(falloutRightPane.getByRole('button', { name: 'Refresh downloads' })).toBeEnabled();
+});
+
+test('ignores refresh shortcuts while a build is opening', async ({ page }) => {
+  await openSkyrimBuild(page);
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.evaluate(() => {
+    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
+      900;
+  });
+
+  await page.getByRole('button', { name: 'Open Fallout test lab' }).click();
+  await expect(page.getByRole('button', { name: 'Отмена', exact: true })).toBeVisible();
+  await page.keyboard.press('Control+R');
+  await page.evaluate(() => {
+    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
+      0;
+  });
+
+  await expect(page.getByRole('heading', { name: 'Fallout test lab' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Отмена', exact: true })).toBeHidden();
+});
+
+test('does not attach partial workspace data after a failed build open', async ({ page }) => {
+  await openSkyrimBuild(page);
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.evaluate(() => {
+    const facade = (window as typeof window & { fluxora: any }).fluxora;
+    const listInstalled = facade.mods.listInstalled;
+    facade.mods.listInstalled = async (projectDirectory: string, ...args: unknown[]) => {
+      if (projectDirectory.includes('Fallout test lab')) {
+        throw new Error('Simulated Fallout workspace failure');
+      }
+      return listInstalled(projectDirectory, ...args);
+    };
+  });
+
+  await page.getByRole('button', { name: 'Open Fallout test lab' }).click();
+
+  const skyrimSummary = page.getByRole('article', { name: 'Skyrim graphics overhaul summary' });
+  await expect(skyrimSummary).toBeVisible();
+  await expect(skyrimSummary.getByText('2', { exact: true })).toBeVisible();
+});
+
+test('restores the previous workspace when plugin loading fails', async ({ page }) => {
+  await openSkyrimBuild(page);
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.evaluate(() => {
+    const facade = (window as typeof window & { fluxora: any }).fluxora;
+    const listPlugins = facade.plugins.list;
+    facade.plugins.list = async (projectDirectory: string, ...args: unknown[]) => {
+      if (projectDirectory.includes('Fallout test lab')) {
+        throw new Error('Simulated Fallout plugin failure');
+      }
+      return listPlugins(projectDirectory, ...args);
+    };
+  });
+
+  await page.getByRole('button', { name: 'Open Fallout test lab' }).click();
+
+  const skyrimSummary = page.getByRole('article', { name: 'Skyrim graphics overhaul summary' });
+  await expect(skyrimSummary).toBeVisible();
+  await expect(skyrimSummary.getByText('2', { exact: true })).toBeVisible();
+});
+
+test('runs build package, check and launch actions through the facade', async ({ page }) => {
+  await page.goto(baseUrl);
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
 
   const buildHeader = page.getByLabel('Build header');
   await expect(buildHeader).toBeVisible();
-  await expect(buildHeader.getByRole('button', { name: 'Package' })).toBeEnabled();
-  await expect(buildHeader.getByRole('button', { name: 'Check' })).toBeEnabled();
   await expect(buildHeader.getByRole('button', { name: 'Launch' })).toBeEnabled();
 
-  await buildHeader.getByRole('button', { name: 'Check' }).click();
+  const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
+  const actionsTrigger = modsPane.getByRole('button', { name: 'Действия со сборкой' });
+  await actionsTrigger.click();
+  let actionsMenu = page.getByRole('menu', { name: 'Действия со сборкой' });
+  await actionsMenu.getByRole('menuitem', { name: 'Проверить обновления' }).click();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -1563,7 +1877,7 @@ test('runs build header package, check and launch actions through the facade', a
     .toContain('mods.checkUpdates');
 
   await buildHeader.getByRole('button', { name: 'Launch' }).click();
-  await expect(page.getByText('Launching SKSE')).toBeVisible();
+  await expect(page.getByText('Процесс запускается', { exact: true })).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -1572,9 +1886,19 @@ test('runs build header package, check and launch actions through the facade', a
       )
     )
     .toContain('executables.launch');
-  await expect(page.getByText('Launching SKSE')).toBeHidden();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.map((call) => call.method)
+      )
+    )
+    .toContain('processes.waitForExit');
+  await expect(page.getByText('Процесс запускается', { exact: true })).toBeHidden();
 
-  await buildHeader.getByRole('button', { name: 'Package' }).click();
+  await actionsTrigger.click();
+  actionsMenu = page.getByRole('menu', { name: 'Действия со сборкой' });
+  await actionsMenu.getByRole('menuitem', { name: 'Упаковать' }).click();
   await expect(page.getByRole('status', { name: 'Packaging FluxPack' })).toBeVisible();
   await expect(
     page.getByRole('progressbar', { name: 'Packaging FluxPack progress' })
@@ -1694,8 +2018,8 @@ test('installs a packaged FluxPack from the mods search-row three-dot menu', asy
 test('uses the redesigned mods pane for real mod list operations', async ({ page }) => {
   await page.goto(baseUrl);
 
-  await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
-  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
 
   const modOrderTable = page.getByRole('table', { name: 'Mod order' });
   await expect(modOrderTable).toBeVisible();
@@ -1855,8 +2179,8 @@ test('drags mod order rows with pointer placement feedback', async ({ page }) =>
 test('keeps downloads rows visible during delayed refresh', async ({ page }) => {
   await page.goto(baseUrl);
 
-  await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
-  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
   await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
@@ -1921,8 +2245,8 @@ test('clears plugin row drop indicators before switching right pane tabs', async
 test('uses the redesigned right pane tabs for plugins, data and downloads', async ({ page }) => {
   await page.goto(baseUrl);
 
-  await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
-  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
   const rightPaneTabs = rightPane.locator('.right-pane-tabs');
@@ -2075,8 +2399,8 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
 test('does not auto-loop failed effective Data tree loads', async ({ page }) => {
   await page.goto(baseUrl);
 
-  await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
-  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
 
   await page.evaluate(() => {
     let attempts = 0;
@@ -2186,8 +2510,8 @@ test('drags plugin rows without selecting text', async ({ page }) => {
 test('uses the redesigned install dialogs for downloads and FOMOD archives', async ({ page }) => {
   await page.goto(baseUrl);
 
-  await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
-  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
 
   const rightPane = page.getByLabel('Right pane');
   await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
@@ -2508,7 +2832,12 @@ test('captures phase 13 visual acceptance surfaces across desktop sizes', async 
     await page.evaluate(() => {
       (window as typeof window & { __fluxoraOperationDelayMs?: number }).__fluxoraOperationDelayMs = 900;
     });
-    await page.getByLabel('Build header').getByRole('button', { name: 'Package' }).click();
+    const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
+    await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
+    await page
+      .getByRole('menu', { name: 'Действия со сборкой' })
+      .getByRole('menuitem', { name: 'Упаковать' })
+      .click();
     await expect(page.getByRole('status', { name: 'Packaging FluxPack' })).toBeVisible();
     await expect(page.getByRole('progressbar', { name: 'Packaging FluxPack progress' })).toBeVisible();
     await capturePhase13Screenshot(page, testInfo, 'operation-overlay', size);
@@ -2554,8 +2883,8 @@ test('captures mods pane visual review sizes', async ({ page }, testInfo) => {
   for (const size of visualReviewSizes) {
     await page.setViewportSize(size);
     await page.goto(baseUrl);
-    await page.getByRole('option', { name: /Skyrim graphics overhaul/ }).click();
-    await page.getByRole('button', { name: 'Open', exact: true }).click();
+    await clickSkyrimBuildSelectButton(page);
+    await clickSkyrimBuildOpenButton(page);
 
     const workbench = page.locator('.build-workbench');
     await expect(page.getByRole('table', { name: 'Mod order' })).toBeVisible();

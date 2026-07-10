@@ -81,6 +81,8 @@ import type {
   FluxoraWorkspaceIndexWarmupResult,
   NativeBridgeLanguageResult,
   NativeBridgeCapabilities,
+  NativeBridgeError,
+  NativeBridgeInvokeError,
   NativeBridgeThemeResult,
   NativeBridgeStatus,
   OperationRequest,
@@ -1372,7 +1374,8 @@ interface RuntimePaths {
 
 type EventUnlisten = () => void;
 
-const eventUnlisteners = new Map<string, Promise<EventUnlisten>>();
+const eventUnlisteners = new Map<number, Promise<EventUnlisten>>();
+let nextEventListenerToken = 1;
 const legacyShellState = ['elec', 'tron-main'].join('');
 const legacyRuntimePattern = new RegExp(['Elec', 'tron'].join(''), 'gi');
 const legacyPackagerPattern = new RegExp(['Fo', 'rge'].join(''), 'gi');
@@ -1381,6 +1384,7 @@ const projectOpenConfigTimeoutMs = 60_000;
 const executablesListTimeoutMs = 30_000;
 const executablesLaunchTimeoutMs = 2 * 60 * 1000;
 const effectiveFileTreeIndexTimeoutMs = 2 * 60 * 1000;
+const fileMutationTimeoutMs = 2 * 60 * 60 * 1000;
 const transferImportTimeoutMs = 2 * 60 * 60 * 1000;
 const grassCacheGenerationTimeoutMs = 6 * 60 * 60 * 1000;
 const nexusDownloadTimeoutMs = 6 * 60 * 60 * 1000;
@@ -1404,18 +1408,159 @@ const operationIdOf = (request: OperationRequest, scope: string): string =>
 const optionalString = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : '';
 
+export const FLUXORA_BRIDGE_ERROR_SCHEMA = 'fluxora.tauri.bridge-error.v1' as const;
+
+const nativeBridgeErrorCategories = new Set<NativeBridgeError['category']>([
+  'validation',
+  'core',
+  'capability',
+  'notFound',
+  'conflict',
+  'cancelled',
+  'transport',
+  'internal'
+]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+export class FluxoraBridgeError extends Error implements NativeBridgeInvokeError {
+  readonly schema = FLUXORA_BRIDGE_ERROR_SCHEMA;
+  readonly code: string;
+  readonly category: NativeBridgeError['category'];
+  readonly retryable: boolean;
+  readonly capabilityId: string | null;
+  readonly details: Record<string, unknown>;
+  readonly method: string;
+  readonly operationId: string;
+
+  constructor(error: NativeBridgeInvokeError) {
+    super(error.message);
+    this.name = 'FluxoraBridgeError';
+    this.code = error.code;
+    this.category = error.category;
+    this.retryable = error.retryable;
+    this.capabilityId = error.capabilityId ?? null;
+    this.details = error.details ?? {};
+    this.method = error.method;
+    this.operationId = error.operationId;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+const rejectedErrorText = (rejection: unknown): string => {
+  if (typeof rejection === 'string') {
+    return rejection;
+  }
+  if (rejection instanceof Error) {
+    return rejection.message;
+  }
+  if (isRecord(rejection) && typeof rejection.message === 'string') {
+    return rejection.message;
+  }
+  return '';
+};
+
+const parseBridgeInvokeError = (rejection: unknown): NativeBridgeInvokeError | null => {
+  let payload: unknown = rejection;
+  if (!isRecord(payload) || payload.schema !== FLUXORA_BRIDGE_ERROR_SCHEMA) {
+    const serialized = rejectedErrorText(rejection);
+    if (!serialized) {
+      return null;
+    }
+    try {
+      payload = JSON.parse(serialized) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
+  if (!isRecord(payload) || payload.schema !== FLUXORA_BRIDGE_ERROR_SCHEMA) {
+    return null;
+  }
+  const nativeError = payload.error;
+  if (!isRecord(nativeError)) {
+    return null;
+  }
+
+  const category = nativeError.category;
+  const capabilityId = nativeError.capabilityId;
+  const details = nativeError.details;
+  if (
+    typeof nativeError.code !== 'string' ||
+    typeof nativeError.message !== 'string' ||
+    typeof category !== 'string' ||
+    !nativeBridgeErrorCategories.has(category as NativeBridgeError['category']) ||
+    typeof nativeError.retryable !== 'boolean' ||
+    (capabilityId !== undefined && capabilityId !== null && typeof capabilityId !== 'string') ||
+    (details !== undefined && !isRecord(details)) ||
+    typeof payload.method !== 'string' ||
+    typeof payload.operationId !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    schema: FLUXORA_BRIDGE_ERROR_SCHEMA,
+    code: nativeError.code,
+    message: nativeError.message || 'Native bridge request failed.',
+    category: category as NativeBridgeError['category'],
+    retryable: nativeError.retryable,
+    capabilityId: capabilityId ?? null,
+    details: details ?? {},
+    method: payload.method,
+    operationId: payload.operationId
+  };
+};
+
+const legacyBridgeErrorMessage = (rejection: unknown): string => {
+  const message = rejectedErrorText(rejection).replace(/[\r\n\t]+/g, ' ').trim();
+  if (!message || message.startsWith('{') || message.startsWith('[')) {
+    return 'Native bridge request failed.';
+  }
+  return message.slice(0, 1_000);
+};
+
+const bridgeErrorFromInvokeRejection = (
+  rejection: unknown,
+  method: string,
+  operationId: string
+): FluxoraBridgeError => {
+  const nativeError = parseBridgeInvokeError(rejection);
+  if (nativeError) {
+    return new FluxoraBridgeError(nativeError);
+  }
+
+  return new FluxoraBridgeError({
+    schema: FLUXORA_BRIDGE_ERROR_SCHEMA,
+    code: 'bridge.requestFailed',
+    message: legacyBridgeErrorMessage(rejection),
+    category: 'transport',
+    retryable: false,
+    capabilityId: null,
+    details: {},
+    method,
+    operationId
+  });
+};
+
 const bridgeRequest = async <T>(
   method: string,
   params: Record<string, unknown>,
   request: OperationRequest,
   timeoutMs?: number
-): Promise<T> =>
-  invoke<T>('fluxora_bridge_request', {
-    method,
-    params,
-    request,
-    timeoutMs
-  });
+): Promise<T> => {
+  try {
+    return await invoke<T>('fluxora_bridge_request', {
+      method,
+      params,
+      request,
+      timeoutMs
+    });
+  } catch (error) {
+    throw bridgeErrorFromInvokeRejection(error, method, request.operationId ?? '');
+  }
+};
 
 const runtimePaths = (): Promise<RuntimePaths> => invoke<RuntimePaths>('fluxora_runtime_paths');
 
@@ -2595,7 +2740,8 @@ const createTauriInvoker = (): IpcInvoker => ({
         const data = await bridgeRequest<Record<string, unknown>>(
           'projects.delete',
           { configPath: args[0] },
-          request
+          request,
+          fileMutationTimeoutMs
         );
         return withOperationId(data, request, 'projects_delete');
       }
@@ -2633,7 +2779,8 @@ const createTauriInvoker = (): IpcInvoker => ({
         const data = await bridgeRequest<Record<string, unknown>>(
           'fluxPack.export',
           fluxPackExportRequestParams(args[0]),
-          request
+          request,
+          fileMutationTimeoutMs
         );
         return withOperationId(data, request, 'fluxpack_export');
       }
@@ -2653,7 +2800,8 @@ const createTauriInvoker = (): IpcInvoker => ({
         const data = await bridgeRequest<FluxoraFluxPackInstallResult>(
           'fluxPack.install',
           args[0] as Record<string, unknown>,
-          request
+          request,
+          fileMutationTimeoutMs
         );
         const operationId = operationIdOf(request, 'fluxpack_install');
         return {
@@ -2693,7 +2841,8 @@ const createTauriInvoker = (): IpcInvoker => ({
         const data = await bridgeRequest<Record<string, unknown>>(
           'mods.clearOverwrite',
           { projectDirectory: args[0] },
-          request
+          request,
+          fileMutationTimeoutMs
         );
         return withOperationId(data, request, 'mods_clear_overwrite');
       }
@@ -2832,10 +2981,15 @@ const createTauriInvoker = (): IpcInvoker => ({
               ? ['mods.setEnabled', { projectDirectory: args[0], modPath: args[1], isEnabled: args[2] }, args[3], 'mods_set_enabled']
               : ['mods.setAllEnabled', { projectDirectory: args[0], isEnabled: args[1] }, args[2], 'mods_set_all_enabled'];
         const request = requestWithOperationId(mutation[2], mutation[3] as string);
+        const timeoutMs =
+          channel === FluxoraIpcChannels.modsDeleteInstalled
+            ? fileMutationTimeoutMs
+            : undefined;
         const data = await bridgeRequest<Record<string, unknown>>(
           mutation[0] as string,
           mutation[1] as Record<string, unknown>,
-          request
+          request,
+          timeoutMs
         );
         return withOperationId(data, request, mutation[3] as string);
       }
@@ -3001,7 +3155,12 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.downloadsList:
         return bridgeRequest('downloads.list', { projectDirectory: args[0] }, requestWithOperationId(args[1], 'downloads_list'));
       case FluxoraIpcChannels.downloadsImportFile:
-        return bridgeRequest('downloads.importFile', { projectDirectory: args[0], sourcePath: args[1] }, requestWithOperationId(args[2], 'downloads_import_file'));
+        return bridgeRequest(
+          'downloads.importFile',
+          { projectDirectory: args[0], sourcePath: args[1] },
+          requestWithOperationId(args[2], 'downloads_import_file'),
+          fileMutationTimeoutMs
+        );
       case FluxoraIpcChannels.downloadsResume:
         return bridgeRequest('downloads.resume', { projectDirectory: args[0], downloadPath: args[1] }, requestWithOperationId(args[2], 'downloads_resume'));
       case FluxoraIpcChannels.downloadsAnalyzeFomod:
@@ -3058,7 +3217,12 @@ const createTauriInvoker = (): IpcInvoker => ({
         const method = isArchive
           ? isFomod ? 'archives.installFomod' : 'archives.install'
           : isFomod ? 'downloads.installFomod' : 'downloads.install';
-        const data = await bridgeRequest<Record<string, unknown>>(method, params, request);
+        const data = await bridgeRequest<Record<string, unknown>>(
+          method,
+          params,
+          request,
+          fileMutationTimeoutMs
+        );
         return withOperationId(data, request, scope);
       }
 
@@ -3067,7 +3231,8 @@ const createTauriInvoker = (): IpcInvoker => ({
     }
   },
   on: (channel: FluxoraIpcChannel, listener: (...args: unknown[]) => void) => {
-    const key = `${channel}:${eventUnlisteners.size}`;
+    const key = nextEventListenerToken;
+    nextEventListenerToken += 1;
     const unlisten = listen(channel, (event) => {
       listener(undefined, event.payload);
     });
@@ -3078,8 +3243,8 @@ const createTauriInvoker = (): IpcInvoker => ({
     });
   },
   removeListener: (_channel: FluxoraIpcChannel, listener: (...args: unknown[]) => void) => {
-    const key = (listener as { __fluxoraTauriEventKey?: string }).__fluxoraTauriEventKey;
-    if (!key) {
+    const key = (listener as { __fluxoraTauriEventKey?: number }).__fluxoraTauriEventKey;
+    if (key === undefined) {
       return;
     }
     const unlisten = eventUnlisteners.get(key);

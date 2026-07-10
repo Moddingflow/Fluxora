@@ -415,7 +415,7 @@ fn trim_url_token(token: &str) -> String {
                     '<' | '>' | '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'
                 )
         })
-        .trim_end_matches(|character: char| matches!(character, '.' | ',' | ')' | ']' | '}'))
+        .trim_end_matches(['.', ',', ')', ']', '}'])
         .to_string()
 }
 
@@ -489,14 +489,7 @@ fn safe_nexus_numeric_id(value: &str) -> Option<String> {
     {
         return None;
     }
-    if normalized
-        .parse::<u64>()
-        .ok()
-        .filter(|value| *value > 0)
-        .is_none()
-    {
-        return None;
-    }
+    normalized.parse::<u64>().ok().filter(|value| *value > 0)?;
     Some(normalized.to_string())
 }
 
@@ -811,11 +804,9 @@ fn collect_targets_from_value(
                 }
             }
         }
-        Value::String(value) => {
-            if parse_bare_strings {
-                if let Some(target) = parse_explicit_nexus_id(value, source) {
-                    push_target(targets, seen, target, max_targets);
-                }
+        Value::String(value) if parse_bare_strings => {
+            if let Some(target) = parse_explicit_nexus_id(value, source) {
+                push_target(targets, seen, target, max_targets);
             }
         }
         _ => {}
@@ -1645,7 +1636,7 @@ fn strip_markup(text: &str) -> String {
             '[' => {
                 let mut tag = String::new();
                 let mut closed = false;
-                while let Some(next) = chars.next() {
+                for next in chars.by_ref() {
                     if next == ']' {
                         closed = true;
                         break;
@@ -2848,14 +2839,16 @@ mod tests {
         response
     }
 
-    fn spawn_nexus_api_fixture_with_requests(
-        responses: Vec<String>,
-    ) -> (
+    type NexusApiFixtureWithRequests = (
         String,
         Arc<AtomicUsize>,
         Arc<Mutex<Vec<String>>>,
         thread::JoinHandle<()>,
-    ) {
+    );
+
+    fn spawn_nexus_api_fixture_with_requests(
+        responses: Vec<String>,
+    ) -> NexusApiFixtureWithRequests {
         let listener = TcpListener::bind("127.0.0.1:0").expect("test listener");
         let address = listener.local_addr().expect("listener address");
         let request_count = Arc::new(AtomicUsize::new(0));

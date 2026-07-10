@@ -481,7 +481,7 @@ test('imports a Mod Organizer 2 build through the transfer wizard', async ({ pag
 
   await page.getByRole('button', { name: 'Перенести', exact: true }).click();
 
-  await expect(page.getByRole('option', { name: /Dragonborn Ascendant/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Select Dragonborn Ascendant' })).toBeVisible();
   await expect(page.getByRole('article', { name: 'Dragonborn Ascendant summary' })).toBeVisible();
   await expect(page.getByText('Fluxora Builds\\Dragonborn Ascendant')).toBeVisible();
 

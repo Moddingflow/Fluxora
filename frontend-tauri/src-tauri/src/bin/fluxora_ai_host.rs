@@ -1154,6 +1154,17 @@ struct AiIntermediateEventEmitter<'a> {
     seq: u64,
 }
 
+struct AiEventMetadata {
+    percent: Option<f64>,
+    payload: Option<Value>,
+}
+
+impl AiEventMetadata {
+    fn new(percent: Option<f64>, payload: Option<Value>) -> Self {
+        Self { percent, payload }
+    }
+}
+
 impl<'a> AiIntermediateEventEmitter<'a> {
     fn new(stdout: &'a mut dyn Write, params: &Value, operation_id: &str) -> Self {
         Self {
@@ -1171,8 +1182,7 @@ impl<'a> AiIntermediateEventEmitter<'a> {
         visibility: &str,
         stage: &str,
         message: &str,
-        percent: Option<f64>,
-        payload: Option<Value>,
+        metadata: AiEventMetadata,
     ) {
         self.seq = self.seq.saturating_add(1);
         let event_id = format!(
@@ -1194,10 +1204,10 @@ impl<'a> AiIntermediateEventEmitter<'a> {
             "stage": stage,
             "message": message
         });
-        if let Some(percent) = percent {
+        if let Some(percent) = metadata.percent {
             event["percent"] = json!(percent.clamp(0.0, 100.0));
         }
-        if let Some(payload) = payload {
+        if let Some(payload) = metadata.payload {
             event["payload"] = payload;
         }
 
@@ -1222,13 +1232,10 @@ fn emit_chat_event(
     visibility: &str,
     stage: &str,
     message: &str,
-    percent: Option<f64>,
-    payload: Option<Value>,
+    metadata: AiEventMetadata,
 ) {
     if let Some(emitter) = event_emitter.as_deref_mut() {
-        emitter.emit(
-            event_type, level, visibility, stage, message, percent, payload,
-        );
+        emitter.emit(event_type, level, visibility, stage, message, metadata);
     }
 }
 
@@ -1248,8 +1255,7 @@ fn emit_response_finalization(
         "user",
         "response-finalization",
         message,
-        Some(92.0),
-        Some(json!({ "kind": "response-finalization" })),
+        AiEventMetadata::new(Some(92.0), Some(json!({ "kind": "response-finalization" }))),
     );
 }
 
@@ -1486,7 +1492,7 @@ fn response_chunks(text: &str) -> Vec<Value> {
 }
 
 fn estimated_tokens(text: &str) -> u64 {
-    std::cmp::max(1, (text.chars().count() as u64 + 3) / 4)
+    (text.chars().count() as u64).div_ceil(4).max(1)
 }
 
 fn prompt_contains_any(prompt: &str, needles: &[&str]) -> bool {
@@ -2683,16 +2689,28 @@ fn local_inspection_source_type(tool_name: &str) -> &'static str {
     }
 }
 
-fn local_inspection_card(
-    operation_id: &str,
-    source_id: &str,
-    tool_name: &str,
-    claim: &str,
-    relevant_mods: &[String],
+struct LocalInspectionCardInput<'a> {
+    operation_id: &'a str,
+    source_id: &'a str,
+    tool_name: &'a str,
+    claim: &'a str,
+    relevant_mods: &'a [String],
     confidence: f64,
-    evidence_strength: &str,
-    contradiction_risk: &str,
-) -> Value {
+    evidence_strength: &'a str,
+    contradiction_risk: &'a str,
+}
+
+fn local_inspection_card(input: LocalInspectionCardInput<'_>) -> Value {
+    let LocalInspectionCardInput {
+        operation_id,
+        source_id,
+        tool_name,
+        claim,
+        relevant_mods,
+        confidence,
+        evidence_strength,
+        contradiction_risk,
+    } = input;
     json!({
         "schema": "fluxora.ai.evidence-card.v1",
         "generatedAt": now_iso_like(),
@@ -2782,19 +2800,33 @@ fn local_inspection_has_id(items: &[Value], id: &str) -> bool {
         .any(|item| item.get("id").and_then(Value::as_str) == Some(id))
 }
 
-fn local_inspection_push_finding(
-    findings: &mut Vec<Value>,
-    cards: &mut Vec<Value>,
-    suspects: &mut Vec<Value>,
-    operation_id: &str,
+struct LocalInspectionFindingInput<'a> {
+    operation_id: &'a str,
     id: String,
     claim: String,
     relevant_mods: Vec<String>,
     source_ids: Vec<String>,
     confidence: f64,
-    tool_name: &str,
-    suspect_reason: &str,
+    tool_name: &'a str,
+    suspect_reason: &'a str,
+}
+
+fn local_inspection_push_finding(
+    findings: &mut Vec<Value>,
+    cards: &mut Vec<Value>,
+    suspects: &mut Vec<Value>,
+    input: LocalInspectionFindingInput<'_>,
 ) {
+    let LocalInspectionFindingInput {
+        operation_id,
+        id,
+        claim,
+        relevant_mods,
+        source_ids,
+        confidence,
+        tool_name,
+        suspect_reason,
+    } = input;
     if !local_inspection_has_id(findings, &id) {
         findings.push(json!({
             "id": id,
@@ -2809,16 +2841,16 @@ fn local_inspection_push_finding(
     for source_id in source_ids {
         local_inspection_push_card(
             cards,
-            local_inspection_card(
+            local_inspection_card(LocalInspectionCardInput {
                 operation_id,
-                &source_id,
+                source_id: &source_id,
                 tool_name,
-                &claim,
-                &relevant_mods,
+                claim: &claim,
+                relevant_mods: &relevant_mods,
                 confidence,
-                "direct",
-                "low",
-            ),
+                evidence_strength: "direct",
+                contradiction_risk: "low",
+            }),
         );
     }
     for relevant_mod in &relevant_mods {
@@ -2832,20 +2864,35 @@ fn local_inspection_push_finding(
     }
 }
 
-fn local_inspection_push_hypothesis(
-    hypotheses: &mut Vec<Value>,
-    cards: &mut Vec<Value>,
-    suspects: &mut Vec<Value>,
-    operation_id: &str,
+struct LocalInspectionHypothesisInput<'a> {
+    operation_id: &'a str,
     id: String,
     claim: String,
     relevant_mods: Vec<String>,
     source_ids: Vec<String>,
     confidence: f64,
-    falsifiable_by: &str,
-    tool_name: &str,
-    suspect_reason: &str,
+    falsifiable_by: &'a str,
+    tool_name: &'a str,
+    suspect_reason: &'a str,
+}
+
+fn local_inspection_push_hypothesis(
+    hypotheses: &mut Vec<Value>,
+    cards: &mut Vec<Value>,
+    suspects: &mut Vec<Value>,
+    input: LocalInspectionHypothesisInput<'_>,
 ) {
+    let LocalInspectionHypothesisInput {
+        operation_id,
+        id,
+        claim,
+        relevant_mods,
+        source_ids,
+        confidence,
+        falsifiable_by,
+        tool_name,
+        suspect_reason,
+    } = input;
     if !local_inspection_has_id(hypotheses, &id) {
         hypotheses.push(json!({
             "id": id,
@@ -2860,16 +2907,16 @@ fn local_inspection_push_hypothesis(
     for source_id in source_ids {
         local_inspection_push_card(
             cards,
-            local_inspection_card(
+            local_inspection_card(LocalInspectionCardInput {
                 operation_id,
-                &source_id,
+                source_id: &source_id,
                 tool_name,
-                &claim,
-                &relevant_mods,
+                claim: &claim,
+                relevant_mods: &relevant_mods,
                 confidence,
-                "indirect",
-                "medium",
-            ),
+                evidence_strength: "indirect",
+                contradiction_risk: "medium",
+            }),
         );
     }
     for relevant_mod in &relevant_mods {
@@ -3026,21 +3073,23 @@ fn build_local_inspection_for_prompt(
                         &mut deterministic_findings,
                         &mut evidence_cards,
                         &mut suspect_mods,
-                        operation_id,
-                        local_inspection_id(
-                            "finding-missing-master",
-                            &[plugin.clone(), missing.join(" ")],
-                        ),
-                        claim,
-                        vec![source_mod],
-                        local_inspection_tool_source_ids(
-                            "plugins.loadOrder",
+                        LocalInspectionFindingInput {
                             operation_id,
-                            context_bundle,
-                        ),
-                        0.96,
-                        "plugins.loadOrder",
-                        "missing-master",
+                            id: local_inspection_id(
+                                "finding-missing-master",
+                                &[plugin.clone(), missing.join(" ")],
+                            ),
+                            claim,
+                            relevant_mods: vec![source_mod],
+                            source_ids: local_inspection_tool_source_ids(
+                                "plugins.loadOrder",
+                                operation_id,
+                                context_bundle,
+                            ),
+                            confidence: 0.96,
+                            tool_name: "plugins.loadOrder",
+                            suspect_reason: "missing-master",
+                        },
                     );
                 }
             }
@@ -3069,21 +3118,23 @@ fn build_local_inspection_for_prompt(
                         &mut deterministic_findings,
                         &mut evidence_cards,
                         &mut suspect_mods,
-                        operation_id,
-                        local_inspection_id(
-                            "finding-missing-master",
-                            &[plugin.clone(), missing.join(" ")],
-                        ),
-                        claim,
-                        vec![source_mod],
-                        local_inspection_tool_source_ids(
-                            "local.check_plugins",
+                        LocalInspectionFindingInput {
                             operation_id,
-                            context_bundle,
-                        ),
-                        0.96,
-                        "local.check_plugins",
-                        "missing-master",
+                            id: local_inspection_id(
+                                "finding-missing-master",
+                                &[plugin.clone(), missing.join(" ")],
+                            ),
+                            claim,
+                            relevant_mods: vec![source_mod],
+                            source_ids: local_inspection_tool_source_ids(
+                                "local.check_plugins",
+                                operation_id,
+                                context_bundle,
+                            ),
+                            confidence: 0.96,
+                            tool_name: "local.check_plugins",
+                            suspect_reason: "missing-master",
+                        },
                     );
                 }
             }
@@ -3115,17 +3166,23 @@ fn build_local_inspection_for_prompt(
                     &mut deterministic_findings,
                     &mut evidence_cards,
                     &mut suspect_mods,
-                    operation_id,
-                    local_inspection_id(
-                        "finding-missing-master",
-                        &[plugin.clone(), missing.join(" ")],
-                    ),
-                    claim,
-                    vec![source_mod],
-                    local_inspection_tool_source_ids("build.summary", operation_id, context_bundle),
-                    0.96,
-                    "build.summary",
-                    "missing-master",
+                    LocalInspectionFindingInput {
+                        operation_id,
+                        id: local_inspection_id(
+                            "finding-missing-master",
+                            &[plugin.clone(), missing.join(" ")],
+                        ),
+                        claim,
+                        relevant_mods: vec![source_mod],
+                        source_ids: local_inspection_tool_source_ids(
+                            "build.summary",
+                            operation_id,
+                            context_bundle,
+                        ),
+                        confidence: 0.96,
+                        tool_name: "build.summary",
+                        suspect_reason: "missing-master",
+                    },
                 );
             }
         }
@@ -3169,14 +3226,20 @@ fn build_local_inspection_for_prompt(
                     &mut deterministic_findings,
                     &mut evidence_cards,
                     &mut suspect_mods,
-                    operation_id,
-                    local_inspection_id("finding-file-conflict", &owners),
-                    claim,
-                    owners,
-                    local_inspection_tool_source_ids("build.summary", operation_id, context_bundle),
-                    0.82,
-                    "build.summary",
-                    "concrete-file-owner-conflict",
+                    LocalInspectionFindingInput {
+                        operation_id,
+                        id: local_inspection_id("finding-file-conflict", &owners),
+                        claim,
+                        relevant_mods: owners,
+                        source_ids: local_inspection_tool_source_ids(
+                            "build.summary",
+                            operation_id,
+                            context_bundle,
+                        ),
+                        confidence: 0.82,
+                        tool_name: "build.summary",
+                        suspect_reason: "concrete-file-owner-conflict",
+                    },
                 );
             }
         }
@@ -3210,18 +3273,20 @@ fn build_local_inspection_for_prompt(
                     &mut deterministic_findings,
                     &mut evidence_cards,
                     &mut suspect_mods,
-                    operation_id,
-                    local_inspection_id("finding-file-conflict", &owners),
-                    claim,
-                    owners,
-                    local_inspection_tool_source_ids(
-                        "local.filesystemSnapshot",
+                    LocalInspectionFindingInput {
                         operation_id,
-                        context_bundle,
-                    ),
-                    0.82,
-                    "local.filesystemSnapshot",
-                    "concrete-file-owner-conflict",
+                        id: local_inspection_id("finding-file-conflict", &owners),
+                        claim,
+                        relevant_mods: owners,
+                        source_ids: local_inspection_tool_source_ids(
+                            "local.filesystemSnapshot",
+                            operation_id,
+                            context_bundle,
+                        ),
+                        confidence: 0.82,
+                        tool_name: "local.filesystemSnapshot",
+                        suspect_reason: "concrete-file-owner-conflict",
+                    },
                 );
             }
         }
@@ -3250,18 +3315,23 @@ fn build_local_inspection_for_prompt(
                         &mut deterministic_findings,
                         &mut evidence_cards,
                         &mut suspect_mods,
-                        operation_id,
-                        local_inspection_id("finding-failed-operation", &[claim.clone()]),
-                        claim,
-                        vec![label],
-                        local_inspection_tool_source_ids(
-                            "downloads.list",
+                        LocalInspectionFindingInput {
                             operation_id,
-                            context_bundle,
-                        ),
-                        0.9,
-                        "downloads.list",
-                        "failed-download-install-or-operation",
+                            id: local_inspection_id(
+                                "finding-failed-operation",
+                                std::slice::from_ref(&claim),
+                            ),
+                            claim,
+                            relevant_mods: vec![label],
+                            source_ids: local_inspection_tool_source_ids(
+                                "downloads.list",
+                                operation_id,
+                                context_bundle,
+                            ),
+                            confidence: 0.9,
+                            tool_name: "downloads.list",
+                            suspect_reason: "failed-download-install-or-operation",
+                        },
                     );
                 }
             }
@@ -3291,18 +3361,23 @@ fn build_local_inspection_for_prompt(
                             &mut deterministic_findings,
                             &mut evidence_cards,
                             &mut suspect_mods,
-                            operation_id,
-                            local_inspection_id("finding-failed-operation", &[claim.clone()]),
-                            claim,
-                            vec![label],
-                            local_inspection_tool_source_ids(
-                                "operations.status",
+                            LocalInspectionFindingInput {
                                 operation_id,
-                                context_bundle,
-                            ),
-                            0.9,
-                            "operations.status",
-                            "failed-download-install-or-operation",
+                                id: local_inspection_id(
+                                    "finding-failed-operation",
+                                    std::slice::from_ref(&claim),
+                                ),
+                                claim,
+                                relevant_mods: vec![label],
+                                source_ids: local_inspection_tool_source_ids(
+                                    "operations.status",
+                                    operation_id,
+                                    context_bundle,
+                                ),
+                                confidence: 0.9,
+                                tool_name: "operations.status",
+                                suspect_reason: "failed-download-install-or-operation",
+                            },
                         );
                     }
                 }
@@ -3330,18 +3405,23 @@ fn build_local_inspection_for_prompt(
                         &mut deterministic_findings,
                         &mut evidence_cards,
                         &mut suspect_mods,
-                        operation_id,
-                        local_inspection_id("finding-failed-operation", &[claim.clone()]),
-                        claim,
-                        Vec::new(),
-                        local_inspection_tool_source_ids(
-                            "operations.recentLogs",
+                        LocalInspectionFindingInput {
                             operation_id,
-                            context_bundle,
-                        ),
-                        0.86,
-                        "operations.recentLogs",
-                        "failed-download-install-or-operation",
+                            id: local_inspection_id(
+                                "finding-failed-operation",
+                                std::slice::from_ref(&claim),
+                            ),
+                            claim,
+                            relevant_mods: Vec::new(),
+                            source_ids: local_inspection_tool_source_ids(
+                                "operations.recentLogs",
+                                operation_id,
+                                context_bundle,
+                            ),
+                            confidence: 0.86,
+                            tool_name: "operations.recentLogs",
+                            suspect_reason: "failed-download-install-or-operation",
+                        },
                     );
                 }
             }
@@ -3380,22 +3460,28 @@ fn build_local_inspection_for_prompt(
                         name, conflicting, overwritten, overwriting
                     );
                         local_inspection_push_hypothesis(
-                        &mut hypotheses,
-                        &mut evidence_cards,
-                        &mut suspect_mods,
-                        operation_id,
-                        local_inspection_id(
-                            "hypothesis-aggregate-overwrite",
-                            &[name.clone()],
-                        ),
-                        claim,
-                        vec![name],
-                        local_inspection_tool_source_ids(tool_name, operation_id, context_bundle),
-                        if risk == "high" { 0.58 } else { 0.44 },
-                        "Collect bounded conflictEvidence or mods.fileTree conflictOwners for the affected mod before naming an exact mod-to-mod conflict.",
-                        tool_name,
-                        "aggregate-overwrite-counts-only",
-                    );
+                            &mut hypotheses,
+                            &mut evidence_cards,
+                            &mut suspect_mods,
+                            LocalInspectionHypothesisInput {
+                                operation_id,
+                                id: local_inspection_id(
+                                    "hypothesis-aggregate-overwrite",
+                                    std::slice::from_ref(&name),
+                                ),
+                                claim,
+                                relevant_mods: vec![name],
+                                source_ids: local_inspection_tool_source_ids(
+                                    tool_name,
+                                    operation_id,
+                                    context_bundle,
+                                ),
+                                confidence: if risk == "high" { 0.58 } else { 0.44 },
+                                falsifiable_by: "Collect bounded conflictEvidence or mods.fileTree conflictOwners for the affected mod before naming an exact mod-to-mod conflict.",
+                                tool_name,
+                                suspect_reason: "aggregate-overwrite-counts-only",
+                            },
+                        );
                     }
                 }
             }
@@ -3431,23 +3517,25 @@ fn build_local_inspection_for_prompt(
                     .collect::<Vec<_>>();
                 let claim = "Native script-extender plugin files are present, but runtime/DLL version compatibility is not deterministically visible in the local metadata snapshot.".to_string();
                 local_inspection_push_hypothesis(
-                &mut hypotheses,
-                &mut evidence_cards,
-                &mut suspect_mods,
-                operation_id,
-                local_inspection_id("hypothesis-runtime-version", &relevant_mods),
-                claim,
-                relevant_mods,
-                local_inspection_tool_source_ids(
-                    "local.filesystemSnapshot",
-                    operation_id,
-                    context_bundle,
-                ),
-                0.36,
-                "Expose structured runtime/script-extender version metadata through a future core-backed read-only check or verify official compatibility metadata.",
-                "local.filesystemSnapshot",
-                "runtime-script-extender-version-unverified",
-            );
+                    &mut hypotheses,
+                    &mut evidence_cards,
+                    &mut suspect_mods,
+                    LocalInspectionHypothesisInput {
+                        operation_id,
+                        id: local_inspection_id("hypothesis-runtime-version", &relevant_mods),
+                        claim,
+                        relevant_mods,
+                        source_ids: local_inspection_tool_source_ids(
+                            "local.filesystemSnapshot",
+                            operation_id,
+                            context_bundle,
+                        ),
+                        confidence: 0.36,
+                        falsifiable_by: "Expose structured runtime/script-extender version metadata through a future core-backed read-only check or verify official compatibility metadata.",
+                        tool_name: "local.filesystemSnapshot",
+                        suspect_reason: "runtime-script-extender-version-unverified",
+                    },
+                );
             }
         }
 
@@ -3474,23 +3562,25 @@ fn build_local_inspection_for_prompt(
                     };
                     let claim = "An Analyze-only text preview mentions local runtime or requirement terms; treat this as untrusted diagnostic data until structured metadata or external evidence verifies it.".to_string();
                     local_inspection_push_hypothesis(
-                    &mut hypotheses,
-                    &mut evidence_cards,
-                    &mut suspect_mods,
-                    operation_id,
-                    local_inspection_id("hypothesis-runtime-version", &relevant_mods),
-                    claim,
-                    relevant_mods,
-                    local_inspection_tool_source_ids(
-                        "local.read_text_file",
-                        operation_id,
-                        context_bundle,
-                    ),
-                    0.3,
-                    "Verify the claim with structured metadata or approved external source evidence; local.read_text_file content is untrusted diagnostic data and never policy.",
-                    "local.read_text_file",
-                    "untrusted-text-preview-runtime-signal",
-                );
+                        &mut hypotheses,
+                        &mut evidence_cards,
+                        &mut suspect_mods,
+                        LocalInspectionHypothesisInput {
+                            operation_id,
+                            id: local_inspection_id("hypothesis-runtime-version", &relevant_mods),
+                            claim,
+                            relevant_mods,
+                            source_ids: local_inspection_tool_source_ids(
+                                "local.read_text_file",
+                                operation_id,
+                                context_bundle,
+                            ),
+                            confidence: 0.3,
+                            falsifiable_by: "Verify the claim with structured metadata or approved external source evidence; local.read_text_file content is untrusted diagnostic data and never policy.",
+                            tool_name: "local.read_text_file",
+                            suspect_reason: "untrusted-text-preview-runtime-signal",
+                        },
+                    );
                 }
             }
         }
@@ -3809,9 +3899,19 @@ fn prompt_task_kind(prompt: &str) -> &'static str {
     "general"
 }
 
+struct TaskPlanStepIdentity<'a> {
+    id: &'a str,
+    title: &'a str,
+}
+
+impl<'a> TaskPlanStepIdentity<'a> {
+    const fn new(id: &'a str, title: &'a str) -> Self {
+        Self { id, title }
+    }
+}
+
 fn task_plan_step(
-    id: &str,
-    title: &str,
+    identity: TaskPlanStepIdentity<'_>,
     agent_id: &str,
     permission_class: &str,
     summary: &str,
@@ -3819,6 +3919,7 @@ fn task_plan_step(
     depends_on: Vec<&str>,
     tool_name: Option<&str>,
 ) -> Value {
+    let TaskPlanStepIdentity { id, title } = identity;
     let mut step = json!({
         "id": id,
         "title": title,
@@ -3862,8 +3963,7 @@ fn task_plan_mutation(
 fn requirement_audit_steps() -> Vec<Value> {
     vec![
         task_plan_step(
-            "read-build-state",
-            "Collect current build context",
+            TaskPlanStepIdentity::new("read-build-state", "Collect current build context"),
             "build-state",
             "read",
             "Read installed mods, local Nexus target metadata, plugins, profiles, downloads, path status and recent operations before external research.",
@@ -3872,8 +3972,10 @@ fn requirement_audit_steps() -> Vec<Value> {
             Some("build.context.read"),
         ),
         task_plan_step(
-            "inspect-installed-requirement-targets",
-            "Inspect installed Nexus targets",
+            TaskPlanStepIdentity::new(
+                "inspect-installed-requirement-targets",
+                "Inspect installed Nexus targets",
+            ),
             "local-inspector",
             "read",
             "Identify installed Nexus gameDomain/modId/fileId values that can prove whether requirement mods are already present.",
@@ -3882,8 +3984,10 @@ fn requirement_audit_steps() -> Vec<Value> {
             Some("local.inspect"),
         ),
         task_plan_step(
-            "read-nexus-requirements",
-            "Collect Nexus requirement evidence",
+            TaskPlanStepIdentity::new(
+                "read-nexus-requirements",
+                "Collect Nexus requirement evidence",
+            ),
             "nexus-requirements",
             "external-network",
             "Use official Nexus API/cache requirement and file-version dependency evidence for the requested target or full build.",
@@ -3892,8 +3996,10 @@ fn requirement_audit_steps() -> Vec<Value> {
             Some("nexus.research"),
         ),
         task_plan_step(
-            "judge-requirement-coverage",
-            "Judge requirement coverage",
+            TaskPlanStepIdentity::new(
+                "judge-requirement-coverage",
+                "Judge requirement coverage",
+            ),
             "requirement-judge",
             "plan",
             "Compare Nexus requirement facts with installed Nexus targets and preserve unknown, blocked or partial coverage states.",
@@ -3902,8 +4008,10 @@ fn requirement_audit_steps() -> Vec<Value> {
             None,
         ),
         task_plan_step(
-            "prepare-requirement-report",
-            "Prepare requirements report",
+            TaskPlanStepIdentity::new(
+                "prepare-requirement-report",
+                "Prepare requirements report",
+            ),
             "report",
             "plan",
             "Answer only whether requirements are installed, missing, unknown or not fully checked, with coverage counts and source ids.",
@@ -3917,8 +4025,7 @@ fn requirement_audit_steps() -> Vec<Value> {
 fn compatibility_steps() -> Vec<Value> {
     vec![
         task_plan_step(
-            "read-build-state",
-            "Collect current build context",
+            TaskPlanStepIdentity::new("read-build-state", "Collect current build context"),
             "build-state",
             "read",
             "Read installed mods, plugins, downloads, profiles, operations, path status and recent logs before external research.",
@@ -3927,8 +4034,10 @@ fn compatibility_steps() -> Vec<Value> {
             Some("build.context.read"),
         ),
         task_plan_step(
-            "inspect-local-evidence",
-            "Inspect local compatibility evidence",
+            TaskPlanStepIdentity::new(
+                "inspect-local-evidence",
+                "Inspect local compatibility evidence",
+            ),
             "local-inspector",
             "read",
             "Check missing masters, failed operations, disabled dependencies, selected build state, bridge/path config, failed downloads/installs and concrete file-conflict evidence.",
@@ -3937,8 +4046,10 @@ fn compatibility_steps() -> Vec<Value> {
             Some("local.inspect"),
         ),
         task_plan_step(
-            "read-nexus-sources",
-            "Investigate Nexus/API sources only if local evidence is insufficient",
+            TaskPlanStepIdentity::new(
+                "read-nexus-sources",
+                "Investigate Nexus/API sources only if local evidence is insufficient",
+            ),
             "nexus-research",
             "external-network",
             "Use Nexus API/cache after the AI host route decides external verification is needed.",
@@ -3947,8 +4058,10 @@ fn compatibility_steps() -> Vec<Value> {
             Some("nexus.research"),
         ),
         task_plan_step(
-            "read-web-sources",
-            "Collect non-Nexus web sources only if still needed",
+            TaskPlanStepIdentity::new(
+                "read-web-sources",
+                "Collect non-Nexus web sources only if still needed",
+            ),
             "web-research",
             "external-network",
             "Use allowlisted non-Nexus web/search only after local and Nexus/API evidence cannot answer the question under policy.",
@@ -3957,8 +4070,10 @@ fn compatibility_steps() -> Vec<Value> {
             Some("web.research"),
         ),
         task_plan_step(
-            "judge-compatibility",
-            "Judge local and external evidence",
+            TaskPlanStepIdentity::new(
+                "judge-compatibility",
+                "Judge local and external evidence",
+            ),
             "compatibility-judge",
             "plan",
             "Compare local findings, Nexus/API facts and any approved web evidence without mutating the build.",
@@ -3971,8 +4086,7 @@ fn compatibility_steps() -> Vec<Value> {
             None,
         ),
         task_plan_step(
-            "prepare-report",
-            "Prepare cited compatibility report",
+            TaskPlanStepIdentity::new("prepare-report", "Prepare cited compatibility report"),
             "report",
             "plan",
             "Summarize findings, cite sources and separate confirmed facts from assumptions.",
@@ -3986,8 +4100,10 @@ fn compatibility_steps() -> Vec<Value> {
 fn build_preparation_steps() -> Vec<Value> {
     vec![
         task_plan_step(
-            "read-build-templates",
-            "Read project and template state",
+            TaskPlanStepIdentity::new(
+                "read-build-templates",
+                "Read project and template state",
+            ),
             "build-state",
             "read",
             "Collect available templates, selected project state and profile/download summaries.",
@@ -3996,8 +4112,7 @@ fn build_preparation_steps() -> Vec<Value> {
             Some("build.context.read"),
         ),
         task_plan_step(
-            "draft-build-actions",
-            "Draft basic build actions",
+            TaskPlanStepIdentity::new("draft-build-actions", "Draft basic build actions"),
             "action-planner",
             "plan",
             "Convert the requested setup into explicit Fluxora actions that require approval before execution.",
@@ -4006,8 +4121,10 @@ fn build_preparation_steps() -> Vec<Value> {
             None,
         ),
         task_plan_step(
-            "review-plan-safety",
-            "Review plan safety and permissions",
+            TaskPlanStepIdentity::new(
+                "review-plan-safety",
+                "Review plan safety and permissions",
+            ),
             "safety-review",
             "plan",
             "Check that proposed writes stay queued, visible and non-destructive unless the user explicitly approved them.",
@@ -4021,8 +4138,7 @@ fn build_preparation_steps() -> Vec<Value> {
 fn general_steps() -> Vec<Value> {
     vec![
         task_plan_step(
-            "route-intent",
-            "Classify Fluxora intent",
+            TaskPlanStepIdentity::new("route-intent", "Classify Fluxora intent"),
             "intent-router",
             "plan",
             "Decide whether the request is chat-only, read-only analysis, planning, or blocked.",
@@ -4031,8 +4147,7 @@ fn general_steps() -> Vec<Value> {
             None,
         ),
         task_plan_step(
-            "read-local-context",
-            "Collect compact local context",
+            TaskPlanStepIdentity::new("read-local-context", "Collect compact local context"),
             "build-state",
             "read",
             "Use only allowlisted read-only Fluxora context tools.",
@@ -4041,8 +4156,7 @@ fn general_steps() -> Vec<Value> {
             Some("build.context.read"),
         ),
         task_plan_step(
-            "prepare-answer",
-            "Prepare verified answer",
+            TaskPlanStepIdentity::new("prepare-answer", "Prepare verified answer"),
             "report",
             "plan",
             "Return a final answer only after the read and planning checks complete.",
@@ -4056,8 +4170,7 @@ fn general_steps() -> Vec<Value> {
 fn validation_steps(has_mutations: bool) -> Vec<Value> {
     vec![
         task_plan_step(
-            "review-task-plan",
-            "Plan review",
+            TaskPlanStepIdentity::new("review-task-plan", "Plan review"),
             "plan-review",
             "plan",
             if has_mutations {
@@ -4070,8 +4183,7 @@ fn validation_steps(has_mutations: bool) -> Vec<Value> {
             None,
         ),
         task_plan_step(
-            "verify-result",
-            "Verification gate",
+            TaskPlanStepIdentity::new("verify-result", "Verification gate"),
             "verification",
             "read",
             if has_mutations {
@@ -4940,7 +5052,7 @@ fn task_planning_bundle(
     let requested_count = if matches!(kind, "requirement-audit" | "compatibility-check")
         && task_scale.scale.is_large()
     {
-        std::cmp::min(10, std::cmp::max(4, agents.len()))
+        agents.len().clamp(4, 10)
     } else {
         std::cmp::min(3, agents.len())
     };
@@ -5009,19 +5121,34 @@ fn task_planning_bundle(
     (task_plan, subagent_schedule, selected_skill, has_mutations)
 }
 
-fn cost_payload(
-    operation_id: &str,
-    provider: &ProviderDescriptor,
-    model: &ModelDescriptor,
-    routing_preset: &str,
+struct CostPayloadInput<'a> {
+    operation_id: &'a str,
+    provider: &'a ProviderDescriptor,
+    model: &'a ModelDescriptor,
+    routing_preset: &'a str,
     prompt_tokens: u64,
     completion_tokens: u64,
     actual_tokens: Option<(u64, u64)>,
-    prompt_cache: &PromptCacheObservation,
-    cost_preflight: &Value,
-    research_report: Option<&Value>,
+    prompt_cache: &'a PromptCacheObservation,
+    cost_preflight: &'a Value,
+    research_report: Option<&'a Value>,
     additional_cost: RunCostSummary,
-) -> CostComputation {
+}
+
+fn cost_payload(input: CostPayloadInput<'_>) -> CostComputation {
+    let CostPayloadInput {
+        operation_id,
+        provider,
+        model,
+        routing_preset,
+        prompt_tokens,
+        completion_tokens,
+        actual_tokens,
+        prompt_cache,
+        cost_preflight,
+        research_report,
+        additional_cost,
+    } = input;
     let cache_hit = prompt_cache.status == "hit";
     let estimated_input_tokens = if cache_hit { 0 } else { prompt_tokens };
     let cache_read_tokens = prompt_cache.read_tokens;
@@ -5147,8 +5274,8 @@ fn sources_from_reply(raw_sources: Vec<Value>, prompt: &str) -> Vec<Value> {
         .map(|(index, url)| {
             json!({
                 "id": format!("user-url-{}", index + 1),
-                "title": url.trim_end_matches(|character: char| matches!(character, '.' | ',' | ')' | ']')),
-                "url": url.trim_end_matches(|character: char| matches!(character, '.' | ',' | ')' | ']')),
+                "title": url.trim_end_matches(['.', ',', ')', ']']),
+                "url": url.trim_end_matches(['.', ',', ')', ']']),
                 "provider": "user-prompt",
                 "snippet": "User-provided URL referenced in the chat answer."
             })
@@ -5277,9 +5404,7 @@ fn nexus_api_policy_refusal_correction(
         return None;
     }
     let report = research_report?;
-    if report.get("nexusInvestigation").is_none() {
-        return None;
-    }
+    report.get("nexusInvestigation")?;
 
     let target_count = report_u64_at(report, &["coverage", "targetCount"])
         .max(report_array_len_at(report, &["targets"]));
@@ -6658,21 +6783,38 @@ fn source_blocked_event_message(
     "Provider-side web grounding is disabled for this route or model; direct URL snapshots require an explicit route capability.".to_string()
 }
 
-fn orchestration_decision_payload(
-    operation_id: &str,
-    reason: &str,
+struct OrchestrationDecisionInput<'a> {
+    operation_id: &'a str,
+    reason: &'a str,
     attempted: bool,
     completed: bool,
-    task_scale: &AiTaskScaleDecision,
+    task_scale: &'a AiTaskScaleDecision,
     context_compression_applied: bool,
     compression_level: u8,
     completed_subagent_count: u64,
     attempted_subagent_count: u64,
     blocked_subagent_count: u64,
     retryable_subagent_count: u64,
-    terminal_stage: Option<&str>,
+    terminal_stage: Option<&'a str>,
     context_continuation_applied: bool,
-) -> Value {
+}
+
+fn orchestration_decision_payload(input: OrchestrationDecisionInput<'_>) -> Value {
+    let OrchestrationDecisionInput {
+        operation_id,
+        reason,
+        attempted,
+        completed,
+        task_scale,
+        context_compression_applied,
+        compression_level,
+        completed_subagent_count,
+        attempted_subagent_count,
+        blocked_subagent_count,
+        retryable_subagent_count,
+        terminal_stage,
+        context_continuation_applied,
+    } = input;
     let mut payload = json!({
         "schema": "fluxora.ai.orchestration-decision.v1",
         "generatedAt": now_iso_like(),
@@ -7326,7 +7468,7 @@ fn large_audit_dynamic_shard_size(target_count: usize) -> usize {
     if target_count == 0 {
         return 0;
     }
-    ((target_count + LARGE_AUDIT_MAX_WORKER_JOBS - 1) / LARGE_AUDIT_MAX_WORKER_JOBS).max(1)
+    target_count.div_ceil(LARGE_AUDIT_MAX_WORKER_JOBS).max(1)
 }
 
 fn compact_build_summary_for_large_audit(summary: &Value, total_count: usize) -> Value {
@@ -7385,17 +7527,30 @@ fn large_audit_shard_reference(shard: &LargeAuditShard) -> Value {
     })
 }
 
-fn build_large_audit_manifest(
-    operation_id: &str,
-    task_scale: &AiTaskScaleDecision,
-    prompt: &str,
-    local_snapshot: Option<&Value>,
-    context_bundle: Option<&Value>,
-    local_inspection: &Value,
-    intent_route: &Value,
-    mod_research_route: &Value,
-    research_report: Option<&Value>,
-) -> Option<LargeAuditManifest> {
+struct LargeAuditManifestInput<'a> {
+    operation_id: &'a str,
+    task_scale: &'a AiTaskScaleDecision,
+    prompt: &'a str,
+    local_snapshot: Option<&'a Value>,
+    context_bundle: Option<&'a Value>,
+    local_inspection: &'a Value,
+    intent_route: &'a Value,
+    mod_research_route: &'a Value,
+    research_report: Option<&'a Value>,
+}
+
+fn build_large_audit_manifest(input: LargeAuditManifestInput<'_>) -> Option<LargeAuditManifest> {
+    let LargeAuditManifestInput {
+        operation_id,
+        task_scale,
+        prompt,
+        local_snapshot,
+        context_bundle,
+        local_inspection,
+        intent_route,
+        mod_research_route,
+        research_report,
+    } = input;
     if !task_scale.scale.is_large()
         || !(read_only_analysis_from_intent_payload(intent_route)
             || prompt_is_read_only_analysis(&prompt.to_lowercase()))
@@ -8030,20 +8185,36 @@ fn orchestration_terminal_reply(
     }
 }
 
-fn orchestration_payload(
-    operation_id: &str,
-    chef: &AgentTarget,
-    chef_status: &str,
+struct OrchestrationPayloadInput<'a> {
+    operation_id: &'a str,
+    chef: &'a AgentTarget,
+    chef_status: &'a str,
     dispatch_duration_ms: u128,
-    dispatch_plan: &str,
+    dispatch_plan: &'a str,
     final_duration_ms: Option<u128>,
-    worker_results: &[AgentRunResult],
+    worker_results: &'a [AgentRunResult],
     status: OrchestratedChatStatus,
     terminal_stage: &'static str,
     context_continuation_applied: bool,
-    large_audit_manifest: Option<&LargeAuditManifest>,
+    large_audit_manifest: Option<&'a LargeAuditManifest>,
     developer_metadata: Option<Value>,
-) -> Value {
+}
+
+fn orchestration_payload(input: OrchestrationPayloadInput<'_>) -> Value {
+    let OrchestrationPayloadInput {
+        operation_id,
+        chef,
+        chef_status,
+        dispatch_duration_ms,
+        dispatch_plan,
+        final_duration_ms,
+        worker_results,
+        status,
+        terminal_stage,
+        context_continuation_applied,
+        large_audit_manifest,
+        developer_metadata,
+    } = input;
     let attempted_subagent_count = worker_results.len() as u64;
     let completed_subagent_count = worker_results
         .iter()
@@ -8116,14 +8287,16 @@ fn emit_context_continuation_event(
         "developer",
         "context-continuation",
         "Provider context limit reached; retrying with a compact continuation package.",
-        Some(percent),
-        Some(json!({
-            "kind": "context-continuation",
-            "data": {
-                "stage": stage,
-                "schema": "fluxora.ai.context-continuation.v1"
-            }
-        })),
+        AiEventMetadata::new(
+            Some(percent),
+            Some(json!({
+                "kind": "context-continuation",
+                "data": {
+                    "stage": stage,
+                    "schema": "fluxora.ai.context-continuation.v1"
+                }
+            })),
+        ),
     );
 }
 
@@ -8147,15 +8320,17 @@ fn emit_worker_result_events(
             } else {
                 "Subagent worker blocked."
             },
-            Some(64.0),
-            Some(json!({
-                "kind": "orchestration-worker",
-                "data": {
-                    "agentId": result.agent_id,
-                    "status": result.status,
-                    "contextContinuationApplied": result.context_continuation_applied
-                }
-            })),
+            AiEventMetadata::new(
+                Some(64.0),
+                Some(json!({
+                    "kind": "orchestration-worker",
+                    "data": {
+                        "agentId": result.agent_id,
+                        "status": result.status,
+                        "contextContinuationApplied": result.context_continuation_applied
+                    }
+                })),
+            ),
         );
         if result.context_continuation_applied {
             emit_context_continuation_event(event_emitter, "worker", 64.0);
@@ -8163,17 +8338,31 @@ fn emit_worker_result_events(
     }
 }
 
-fn run_orchestrated_chat(
-    candidates: &[&'static ModelDescriptor],
-    messages: &[Value],
-    prompt: &str,
-    operation_id: &str,
+struct OrchestratedChatInput<'a> {
+    candidates: &'a [&'static ModelDescriptor],
+    messages: &'a [Value],
+    prompt: &'a str,
+    operation_id: &'a str,
     gemini_google_search_enabled: bool,
     max_role_workers: usize,
-    large_audit_manifest: Option<&LargeAuditManifest>,
-    continuation_context: &ContextContinuationContext,
+    large_audit_manifest: Option<&'a LargeAuditManifest>,
+    continuation_context: &'a ContextContinuationContext,
+}
+
+fn run_orchestrated_chat(
+    input: OrchestratedChatInput<'_>,
     event_emitter: &mut Option<&mut AiIntermediateEventEmitter<'_>>,
 ) -> OrchestratedChatReply {
+    let OrchestratedChatInput {
+        candidates,
+        messages,
+        prompt,
+        operation_id,
+        gemini_google_search_enabled,
+        max_role_workers,
+        large_audit_manifest,
+        continuation_context,
+    } = input;
     let Some((chef, workers)) = choose_orchestration_targets(candidates, max_role_workers) else {
         let model = candidates
             .first()
@@ -8191,20 +8380,20 @@ fn run_orchestrated_chat(
             credential: String::new(),
         };
         let reason = "insufficient-remote-targets".to_string();
-        let orchestration = orchestration_payload(
+        let orchestration = orchestration_payload(OrchestrationPayloadInput {
             operation_id,
-            &chef,
-            "dispatch-blocked",
-            0,
-            "",
-            None,
-            &[],
-            OrchestratedChatStatus::Blocked,
-            "chef-dispatch",
-            false,
+            chef: &chef,
+            chef_status: "dispatch-blocked",
+            dispatch_duration_ms: 0,
+            dispatch_plan: "",
+            final_duration_ms: None,
+            worker_results: &[],
+            status: OrchestratedChatStatus::Blocked,
+            terminal_stage: "chef-dispatch",
+            context_continuation_applied: false,
             large_audit_manifest,
-            None,
-        );
+            developer_metadata: None,
+        });
         return OrchestratedChatReply {
             additional_cost: RunCostSummary::default(),
             attempted_subagent_count: 0,
@@ -8243,19 +8432,19 @@ fn run_orchestrated_chat(
         gemini_google_search_enabled && chef.model.supports_web,
     ) {
         let reason = "provider-request-shape".to_string();
-        let orchestration = orchestration_payload(
+        let orchestration = orchestration_payload(OrchestrationPayloadInput {
             operation_id,
-            &chef,
-            "dispatch-blocked",
-            dispatch_started_at.elapsed().as_millis(),
-            "",
-            None,
-            &[],
-            OrchestratedChatStatus::Blocked,
-            "chef-dispatch",
-            false,
+            chef: &chef,
+            chef_status: "dispatch-blocked",
+            dispatch_duration_ms: dispatch_started_at.elapsed().as_millis(),
+            dispatch_plan: "",
+            final_duration_ms: None,
+            worker_results: &[],
+            status: OrchestratedChatStatus::Blocked,
+            terminal_stage: "chef-dispatch",
+            context_continuation_applied: false,
             large_audit_manifest,
-            Some(json!({
+            developer_metadata: Some(json!({
                 "dispatchStatus": "dispatch-blocked",
                 "dispatchFailureReason": reason,
                 "dispatchError": {
@@ -8263,7 +8452,7 @@ fn run_orchestrated_chat(
                     "statusCode": error.status_code
                 }
             })),
-        );
+        });
         return OrchestratedChatReply {
             additional_cost: RunCostSummary::default(),
             attempted_subagent_count: 0,
@@ -8319,13 +8508,15 @@ fn run_orchestrated_chat(
                 "developer",
                 "chef-dispatch",
                 "Chef dispatch completed.",
-                Some(58.0),
-                Some(json!({
-                    "kind": "chef-dispatch",
-                    "data": {
-                        "contextContinuationApplied": outcome.context_continuation_applied
-                    }
-                })),
+                AiEventMetadata::new(
+                    Some(58.0),
+                    Some(json!({
+                        "kind": "chef-dispatch",
+                        "data": {
+                            "contextContinuationApplied": outcome.context_continuation_applied
+                        }
+                    })),
+                ),
             );
             additional_cost.add(reply_cost_summary(
                 chef.model,
@@ -8366,38 +8557,40 @@ fn run_orchestrated_chat(
                     "developer",
                     "chef-dispatch",
                     "Chef dispatch hit a context limit; using deterministic shard dispatch.",
-                    Some(58.0),
-                    Some(json!({
-                        "kind": "chef-dispatch",
-                        "data": {
-                            "status": "dispatch-fallback",
-                            "reason": "chef-dispatch-context-limit"
-                        }
-                    })),
+                    AiEventMetadata::new(
+                        Some(58.0),
+                        Some(json!({
+                            "kind": "chef-dispatch",
+                            "data": {
+                                "status": "dispatch-fallback",
+                                "reason": "chef-dispatch-context-limit"
+                            }
+                        })),
+                    ),
                 );
                 deterministic_large_audit_dispatch_plan(large_audit_manifest)
             } else {
                 let fallback_reason = provider_fallback_reason(&failure.error)
                     .unwrap_or_else(|| "providerError".to_string());
                 let context_continuation_applied = failure.context_continuation_applied;
-                let orchestration = orchestration_payload(
+                let orchestration = orchestration_payload(OrchestrationPayloadInput {
                     operation_id,
-                    &chef,
-                    "dispatch-blocked",
-                    dispatch_started_at.elapsed().as_millis(),
-                    "",
-                    None,
-                    &[],
-                    OrchestratedChatStatus::Blocked,
-                    "chef-dispatch",
+                    chef: &chef,
+                    chef_status: "dispatch-blocked",
+                    dispatch_duration_ms: dispatch_started_at.elapsed().as_millis(),
+                    dispatch_plan: "",
+                    final_duration_ms: None,
+                    worker_results: &[],
+                    status: OrchestratedChatStatus::Blocked,
+                    terminal_stage: "chef-dispatch",
                     context_continuation_applied,
                     large_audit_manifest,
-                    Some(json!({
+                    developer_metadata: Some(json!({
                         "dispatchStatus": "dispatch-blocked",
                         "dispatchFailureReason": reason,
                         "dispatchContextContinuationApplied": context_continuation_applied
                     })),
-                );
+                });
                 return OrchestratedChatReply {
                     additional_cost: RunCostSummary::default(),
                     attempted_subagent_count: 0,
@@ -8446,19 +8639,19 @@ fn run_orchestrated_chat(
             gemini_google_search_enabled && first_job.target.model.supports_web,
         ) {
             let reason = "provider-request-shape".to_string();
-            let orchestration = orchestration_payload(
+            let orchestration = orchestration_payload(OrchestrationPayloadInput {
                 operation_id,
-                &chef,
-                dispatch_status,
+                chef: &chef,
+                chef_status: dispatch_status,
                 dispatch_duration_ms,
-                &chef_plan_text,
-                None,
-                &[],
-                OrchestratedChatStatus::Blocked,
-                "worker",
-                dispatch_context_continuation_applied,
+                dispatch_plan: &chef_plan_text,
+                final_duration_ms: None,
+                worker_results: &[],
+                status: OrchestratedChatStatus::Blocked,
+                terminal_stage: "worker",
+                context_continuation_applied: dispatch_context_continuation_applied,
                 large_audit_manifest,
-                developer_metadata_with(
+                developer_metadata: developer_metadata_with(
                     dispatch_developer_metadata.clone(),
                     "workerGateFailureReason",
                     json!(reason),
@@ -8470,7 +8663,7 @@ fn run_orchestrated_chat(
                     });
                     metadata
                 }),
-            );
+            });
             return OrchestratedChatReply {
                 additional_cost,
                 attempted_subagent_count: 0,
@@ -8538,20 +8731,20 @@ fn run_orchestrated_chat(
 
     if completed_workers == 0 {
         let reason = worker_block_reason(&worker_results);
-        let orchestration = orchestration_payload(
+        let orchestration = orchestration_payload(OrchestrationPayloadInput {
             operation_id,
-            &chef,
-            dispatch_status,
+            chef: &chef,
+            chef_status: dispatch_status,
             dispatch_duration_ms,
-            &chef_plan_text,
-            None,
-            &worker_results,
-            OrchestratedChatStatus::Blocked,
-            "worker",
+            dispatch_plan: &chef_plan_text,
+            final_duration_ms: None,
+            worker_results: &worker_results,
+            status: OrchestratedChatStatus::Blocked,
+            terminal_stage: "worker",
             context_continuation_applied,
             large_audit_manifest,
-            dispatch_developer_metadata.clone(),
-        );
+            developer_metadata: dispatch_developer_metadata.clone(),
+        });
         return OrchestratedChatReply {
             additional_cost,
             attempted_subagent_count,
@@ -8585,20 +8778,20 @@ fn run_orchestrated_chat(
     } else {
         OrchestratedChatStatus::Completed
     };
-    let preliminary_orchestration = orchestration_payload(
+    let preliminary_orchestration = orchestration_payload(OrchestrationPayloadInput {
         operation_id,
-        &chef,
-        dispatch_status,
+        chef: &chef,
+        chef_status: dispatch_status,
         dispatch_duration_ms,
-        &chef_plan_text,
-        None,
-        &worker_results,
-        preliminary_status,
-        "chef-final",
+        dispatch_plan: &chef_plan_text,
+        final_duration_ms: None,
+        worker_results: &worker_results,
+        status: preliminary_status,
+        terminal_stage: "chef-final",
         context_continuation_applied,
         large_audit_manifest,
-        dispatch_developer_metadata.clone(),
-    );
+        developer_metadata: dispatch_developer_metadata.clone(),
+    });
     let final_continuation_context = context_continuation_for_stage(
         continuation_context,
         "chef-final",
@@ -8647,24 +8840,24 @@ fn run_orchestrated_chat(
             } else {
                 OrchestratedChatStatus::Blocked
             };
-            let orchestration = orchestration_payload(
+            let orchestration = orchestration_payload(OrchestrationPayloadInput {
                 operation_id,
-                &chef,
-                "final-blocked",
+                chef: &chef,
+                chef_status: "final-blocked",
                 dispatch_duration_ms,
-                &chef_plan_text,
-                Some(final_started_at.elapsed().as_millis()),
-                &worker_results,
+                dispatch_plan: &chef_plan_text,
+                final_duration_ms: Some(final_started_at.elapsed().as_millis()),
+                worker_results: &worker_results,
                 status,
-                "chef-final",
+                terminal_stage: "chef-final",
                 context_continuation_applied,
                 large_audit_manifest,
-                developer_metadata_with(
+                developer_metadata: developer_metadata_with(
                     dispatch_developer_metadata.clone(),
                     "finalFailureReason",
                     json!(developer_reason),
                 ),
-            );
+            });
             return OrchestratedChatReply {
                 additional_cost,
                 attempted_subagent_count,
@@ -8717,20 +8910,20 @@ fn run_orchestrated_chat(
     } else {
         "completed".to_string()
     };
-    let orchestration = orchestration_payload(
+    let orchestration = orchestration_payload(OrchestrationPayloadInput {
         operation_id,
-        &chef,
-        "final-completed",
+        chef: &chef,
+        chef_status: "final-completed",
         dispatch_duration_ms,
-        &chef_plan_text,
-        Some(final_started_at.elapsed().as_millis()),
-        &worker_results,
+        dispatch_plan: &chef_plan_text,
+        final_duration_ms: Some(final_started_at.elapsed().as_millis()),
+        worker_results: &worker_results,
         status,
-        "chef-final",
+        terminal_stage: "chef-final",
         context_continuation_applied,
         large_audit_manifest,
-        dispatch_developer_metadata.clone(),
-    );
+        developer_metadata: dispatch_developer_metadata.clone(),
+    });
 
     OrchestratedChatReply {
         additional_cost,
@@ -9315,17 +9508,17 @@ fn prepare_chat_prompt_package(
     let research_report = research_bundle
         .as_ref()
         .map(|research| research.report.clone());
-    let large_audit_manifest = build_large_audit_manifest(
+    let large_audit_manifest = build_large_audit_manifest(LargeAuditManifestInput {
         operation_id,
-        &task_scale,
-        &prompt,
-        local_snapshot.as_ref(),
-        context_bundle.as_ref(),
-        &local_inspection,
-        &intent_route_payload,
-        &mod_research_route.payload,
-        research_report.as_ref(),
-    );
+        task_scale: &task_scale,
+        prompt: &prompt,
+        local_snapshot: local_snapshot.as_ref(),
+        context_bundle: context_bundle.as_ref(),
+        local_inspection: &local_inspection,
+        intent_route: &intent_route_payload,
+        mod_research_route: &mod_research_route.payload,
+        research_report: research_report.as_ref(),
+    });
 
     ChatPromptPackage {
         candidates,
@@ -9421,34 +9614,50 @@ fn context_usage_payload(
     precision: &str,
     package: &ChatPromptPackage,
 ) -> Value {
-    context_usage_payload_from_sections(
+    let included_sections = context_usage_included_sections(package);
+    context_usage_payload_from_sections(ContextUsagePayloadInput {
         operation_id,
         provider,
         model,
         current_context_tokens,
         precision,
-        package.safe_input_budget_tokens,
-        package.model_runtime_limits,
-        &context_usage_included_sections(package),
-        package.auto_compression_applied,
-        package.compression_level,
-        Some(&package.intent_route),
-    )
+        safe_input_budget_tokens: package.safe_input_budget_tokens,
+        model_runtime_limits: package.model_runtime_limits,
+        included_sections: &included_sections,
+        auto_compression_applied: package.auto_compression_applied,
+        compression_level: package.compression_level,
+        intent_route: Some(&package.intent_route),
+    })
 }
 
-fn context_usage_payload_from_sections(
-    operation_id: &str,
-    provider: &ProviderDescriptor,
-    model: &ModelDescriptor,
+struct ContextUsagePayloadInput<'a> {
+    operation_id: &'a str,
+    provider: &'a ProviderDescriptor,
+    model: &'a ModelDescriptor,
     current_context_tokens: u64,
-    precision: &str,
+    precision: &'a str,
     safe_input_budget_tokens: u64,
     model_runtime_limits: ModelRuntimeLimits,
-    included_sections: &[&str],
+    included_sections: &'a [&'a str],
     auto_compression_applied: bool,
     compression_level: u8,
-    intent_route: Option<&Value>,
-) -> Value {
+    intent_route: Option<&'a Value>,
+}
+
+fn context_usage_payload_from_sections(input: ContextUsagePayloadInput<'_>) -> Value {
+    let ContextUsagePayloadInput {
+        operation_id,
+        provider,
+        model,
+        current_context_tokens,
+        precision,
+        safe_input_budget_tokens,
+        model_runtime_limits,
+        included_sections,
+        auto_compression_applied,
+        compression_level,
+        intent_route,
+    } = input;
     let context_percent =
         ((current_context_tokens as f64 / model.context_window_tokens as f64) * 100.0).min(100.0);
     let budget_percent = ((current_context_tokens as f64 / safe_input_budget_tokens.max(1) as f64)
@@ -9552,9 +9761,11 @@ fn chat_response_with_events(
         "user",
         "prompt-preparation",
         "Preparing prompt and build context.",
-        Some(5.0),
-        Some(
-            json!({ "kind": "prompt-preparation", "data": { "hasRunId": params.get("runId").and_then(Value::as_str).is_some() } }),
+        AiEventMetadata::new(
+            Some(5.0),
+            Some(
+                json!({ "kind": "prompt-preparation", "data": { "hasRunId": params.get("runId").and_then(Value::as_str).is_some() } }),
+            ),
         ),
     );
     let package = prepare_chat_prompt_package(
@@ -9571,8 +9782,10 @@ fn chat_response_with_events(
         "developer",
         "host-heartbeat",
         "AI host is preparing the run.",
-        Some(10.0),
-        Some(json!({ "kind": "heartbeat", "data": { "source": "FluxoraAIHost" } })),
+        AiEventMetadata::new(
+            Some(10.0),
+            Some(json!({ "kind": "heartbeat", "data": { "source": "FluxoraAIHost" } })),
+        ),
     );
     let context_usage_sections = context_usage_included_sections(&package);
     let mut auto_compression_applied = package.auto_compression_applied;
@@ -9612,14 +9825,16 @@ fn chat_response_with_events(
         "user",
         "local-inspection",
         "Local build context inspected.",
-        Some(24.0),
-        Some(json!({
-            "kind": "local-inspection",
-            "data": {
-                "hasContextGraph": context_bundle.is_some(),
-                "route": route_name
-            }
-        })),
+        AiEventMetadata::new(
+            Some(24.0),
+            Some(json!({
+                "kind": "local-inspection",
+                "data": {
+                    "hasContextGraph": context_bundle.is_some(),
+                    "route": route_name
+                }
+            })),
+        ),
     );
     emit_chat_event(
         &mut event_emitter,
@@ -9636,14 +9851,16 @@ fn chat_response_with_events(
         } else {
             "Research route is local-only for this request."
         },
-        Some(32.0),
-        Some(json!({
-            "kind": "research-route",
-            "data": {
-                "route": route_name,
-                "externalResearchAllowed": external_research_allowed
-            }
-        })),
+        AiEventMetadata::new(
+            Some(32.0),
+            Some(json!({
+                "kind": "research-route",
+                "data": {
+                    "route": route_name,
+                    "externalResearchAllowed": external_research_allowed
+                }
+            })),
+        ),
     );
     if let Some(report) = research_report.as_ref() {
         let snapshots = report
@@ -9667,14 +9884,16 @@ fn chat_response_with_events(
                 "user",
                 "source-capture",
                 "Captured redacted Nexus or web source summaries.",
-                Some(42.0),
-                Some(json!({
-                    "kind": "source-capture",
-                    "data": {
-                        "capturedCount": captured_count,
-                        "blockedCount": blocked_count
-                    }
-                })),
+                AiEventMetadata::new(
+                    Some(42.0),
+                    Some(json!({
+                        "kind": "source-capture",
+                        "data": {
+                            "capturedCount": captured_count,
+                            "blockedCount": blocked_count
+                        }
+                    })),
+                ),
             );
         }
         if blocked_count > 0 {
@@ -9685,15 +9904,17 @@ fn chat_response_with_events(
                 "user",
                 "source-blocked",
                 &source_blocked_event_message(Some(report), gemini_google_search_enabled),
-                Some(44.0),
-                Some(json!({
-                    "kind": "source-blocked",
-                    "data": {
-                        "capturedCount": captured_count,
-                        "blockedCount": blocked_count,
-                        "geminiGroundingEnabled": gemini_google_search_enabled
-                    }
-                })),
+                AiEventMetadata::new(
+                    Some(44.0),
+                    Some(json!({
+                        "kind": "source-blocked",
+                        "data": {
+                            "capturedCount": captured_count,
+                            "blockedCount": blocked_count,
+                            "geminiGroundingEnabled": gemini_google_search_enabled
+                        }
+                    })),
+                ),
             );
         }
     }
@@ -9756,87 +9977,87 @@ fn chat_response_with_events(
         terminal_stage: "normal-provider",
     };
     let mut orchestration_decision = if routing == "free-demo" {
-        orchestration_decision_payload(
+        orchestration_decision_payload(OrchestrationDecisionInput {
             operation_id,
-            "free-demo-disabled",
-            false,
-            false,
-            &task_scale,
-            auto_compression_applied,
+            reason: "free-demo-disabled",
+            attempted: false,
+            completed: false,
+            task_scale: &task_scale,
+            context_compression_applied: auto_compression_applied,
             compression_level,
-            0,
-            0,
-            0,
-            0,
-            None,
-            false,
-        )
+            completed_subagent_count: 0,
+            attempted_subagent_count: 0,
+            blocked_subagent_count: 0,
+            retryable_subagent_count: 0,
+            terminal_stage: None,
+            context_continuation_applied: false,
+        })
     } else if !orchestration_needed {
-        orchestration_decision_payload(
+        orchestration_decision_payload(OrchestrationDecisionInput {
             operation_id,
-            "ordinary-task",
-            false,
-            false,
-            &task_scale,
-            auto_compression_applied,
+            reason: "ordinary-task",
+            attempted: false,
+            completed: false,
+            task_scale: &task_scale,
+            context_compression_applied: auto_compression_applied,
             compression_level,
-            0,
-            0,
-            0,
-            0,
-            None,
-            false,
-        )
+            completed_subagent_count: 0,
+            attempted_subagent_count: 0,
+            blocked_subagent_count: 0,
+            retryable_subagent_count: 0,
+            terminal_stage: None,
+            context_continuation_applied: false,
+        })
     } else if !orchestration_can_attempt {
-        orchestration_decision_payload(
+        orchestration_decision_payload(OrchestrationDecisionInput {
             operation_id,
-            "insufficient-remote-targets",
-            false,
-            false,
-            &task_scale,
-            auto_compression_applied,
+            reason: "insufficient-remote-targets",
+            attempted: false,
+            completed: false,
+            task_scale: &task_scale,
+            context_compression_applied: auto_compression_applied,
             compression_level,
-            0,
-            0,
-            0,
-            0,
-            None,
-            false,
-        )
+            completed_subagent_count: 0,
+            attempted_subagent_count: 0,
+            blocked_subagent_count: 0,
+            retryable_subagent_count: 0,
+            terminal_stage: None,
+            context_continuation_applied: false,
+        })
     } else {
-        orchestration_decision_payload(
+        orchestration_decision_payload(OrchestrationDecisionInput {
             operation_id,
-            "started",
-            true,
-            false,
-            &task_scale,
-            auto_compression_applied,
+            reason: "started",
+            attempted: true,
+            completed: false,
+            task_scale: &task_scale,
+            context_compression_applied: auto_compression_applied,
             compression_level,
-            0,
-            0,
-            0,
-            0,
-            Some("chef-dispatch"),
-            false,
-        )
+            completed_subagent_count: 0,
+            attempted_subagent_count: 0,
+            blocked_subagent_count: 0,
+            retryable_subagent_count: 0,
+            terminal_stage: Some("chef-dispatch"),
+            context_continuation_applied: false,
+        })
     };
 
     if preflight_decision != "allowed" {
-        orchestration_decision = orchestration_decision_payload(
+        orchestration_decision = orchestration_decision_payload(OrchestrationDecisionInput {
             operation_id,
-            "cost-preflight",
-            false,
-            false,
-            &task_scale,
-            auto_compression_applied,
+            reason: "cost-preflight",
+            attempted: false,
+            completed: false,
+            task_scale: &task_scale,
+            context_compression_applied: auto_compression_applied,
             compression_level,
-            0,
-            0,
-            0,
-            0,
-            None,
-            false,
-        );
+            completed_subagent_count: 0,
+            attempted_subagent_count: 0,
+            blocked_subagent_count: 0,
+            retryable_subagent_count: 0,
+            terminal_stage: None,
+            context_continuation_applied: false,
+        });
         emit_chat_event(
             &mut event_emitter,
             if preflight_decision == "blocked" {
@@ -9856,13 +10077,15 @@ fn chat_response_with_events(
             } else {
                 "Cost preflight needs approval before the provider call."
             },
-            Some(48.0),
-            Some(json!({
-                "kind": "cost-preflight",
-                "data": {
-                    "decision": preflight_decision
-                }
-            })),
+            AiEventMetadata::new(
+                Some(48.0),
+                Some(json!({
+                    "kind": "cost-preflight",
+                    "data": {
+                        "decision": preflight_decision
+                    }
+                })),
+            ),
         );
         emit_response_finalization(
             &mut event_emitter,
@@ -9880,14 +10103,14 @@ fn chat_response_with_events(
         } else {
             "Cost preflight needs expensive-run approval before any provider call. Choose Economy mode, Full mode, or BYOK."
         };
-        return chat_response_payload(
+        return chat_response_payload(ChatResponsePayloadInput {
             operation_id,
             provider,
             model,
-            &candidates,
-            routing,
+            candidates: &candidates,
+            routing_preset: routing,
             run_size,
-            ProviderChatReply {
+            reply: ProviderChatReply {
                 text: decision_text.to_string(),
                 prompt_tokens: None,
                 completion_tokens: None,
@@ -9895,30 +10118,30 @@ fn chat_response_with_events(
                 sources: Vec::new(),
             },
             fallback_providers,
-            &prompt,
+            prompt: &prompt,
             prompt_token_estimate,
-            &prompt_cache_observation,
-            &cost_preflight,
-            context_bundle.as_ref(),
-            &intent_route,
-            research_report_ref,
-            &mod_research_route,
-            &local_inspection,
-            &context_usage_sections,
+            prompt_cache: &prompt_cache_observation,
+            cost_preflight: &cost_preflight,
+            context_bundle: context_bundle.as_ref(),
+            intent_route: &intent_route,
+            research_report: research_report_ref,
+            mod_research_route: &mod_research_route,
+            local_inspection: &local_inspection,
+            context_usage_sections: &context_usage_sections,
             auto_compression_applied,
             compression_level,
-            &task_scale,
-            None,
-            Some(orchestration_decision.clone()),
-            RunCostSummary::default(),
-            None,
-            Some(if preflight_decision == "blocked" {
+            task_scale: &task_scale,
+            orchestration: None,
+            orchestration_decision: Some(orchestration_decision.clone()),
+            additional_cost: RunCostSummary::default(),
+            error: None,
+            forced_status: Some(if preflight_decision == "blocked" {
                 "blocked"
             } else {
                 "needs-approval"
             }),
             current_month_spent,
-        );
+        });
     }
 
     if orchestration_can_attempt {
@@ -9929,38 +10152,42 @@ fn chat_response_with_events(
             "user",
             "orchestration",
             "Starting multi-model orchestration.",
-            Some(52.0),
-            Some(json!({ "kind": "orchestration", "data": { "mode": "chef-first" } })),
+            AiEventMetadata::new(
+                Some(52.0),
+                Some(json!({ "kind": "orchestration", "data": { "mode": "chef-first" } })),
+            ),
         );
         let orchestrated = run_orchestrated_chat(
-            &candidates,
-            &messages,
-            &prompt,
-            operation_id,
-            gemini_google_search_enabled,
-            task_scale.scale.max_role_workers(),
-            large_audit_manifest.as_ref(),
-            &continuation_context,
+            OrchestratedChatInput {
+                candidates: &candidates,
+                messages: &messages,
+                prompt: &prompt,
+                operation_id,
+                gemini_google_search_enabled,
+                max_role_workers: task_scale.scale.max_role_workers(),
+                large_audit_manifest: large_audit_manifest.as_ref(),
+                continuation_context: &continuation_context,
+            },
             &mut event_emitter,
         );
         fallback_providers.extend(orchestrated.fallback_providers.clone());
         auto_compression_applied = auto_compression_applied || orchestrated.compression_applied;
         compression_level = compression_level.max(orchestrated.compression_level);
-        orchestration_decision = orchestration_decision_payload(
+        orchestration_decision = orchestration_decision_payload(OrchestrationDecisionInput {
             operation_id,
-            &orchestrated.reason,
-            true,
-            orchestrated.status == OrchestratedChatStatus::Completed,
-            &task_scale,
-            auto_compression_applied,
+            reason: &orchestrated.reason,
+            attempted: true,
+            completed: orchestrated.status == OrchestratedChatStatus::Completed,
+            task_scale: &task_scale,
+            context_compression_applied: auto_compression_applied,
             compression_level,
-            orchestrated.completed_subagent_count,
-            orchestrated.attempted_subagent_count,
-            orchestrated.blocked_subagent_count,
-            orchestrated.retryable_subagent_count,
-            Some(orchestrated.terminal_stage),
-            orchestrated.context_continuation_applied,
-        );
+            completed_subagent_count: orchestrated.completed_subagent_count,
+            attempted_subagent_count: orchestrated.attempted_subagent_count,
+            blocked_subagent_count: orchestrated.blocked_subagent_count,
+            retryable_subagent_count: orchestrated.retryable_subagent_count,
+            terminal_stage: Some(orchestrated.terminal_stage),
+            context_continuation_applied: orchestrated.context_continuation_applied,
+        });
         let orchestration_level = if orchestrated.forced_status == Some("blocked") {
             "error"
         } else if orchestrated.status == OrchestratedChatStatus::Partial {
@@ -9981,19 +10208,21 @@ fn chat_response_with_events(
             } else {
                 "Multi-model orchestration completed."
             },
-            Some(78.0),
-            Some(json!({
-                "kind": "orchestration",
-                "data": {
-                    "status": orchestrated.status.as_str(),
-                    "reason": orchestrated.reason,
-                    "terminalStage": orchestrated.terminal_stage,
-                    "completedSubagentCount": orchestrated.completed_subagent_count,
-                    "attemptedSubagentCount": orchestrated.attempted_subagent_count,
-                    "blockedSubagentCount": orchestrated.blocked_subagent_count,
-                    "contextContinuationApplied": orchestrated.context_continuation_applied
-                }
-            })),
+            AiEventMetadata::new(
+                Some(78.0),
+                Some(json!({
+                    "kind": "orchestration",
+                    "data": {
+                        "status": orchestrated.status.as_str(),
+                        "reason": orchestrated.reason,
+                        "terminalStage": orchestrated.terminal_stage,
+                        "completedSubagentCount": orchestrated.completed_subagent_count,
+                        "attemptedSubagentCount": orchestrated.attempted_subagent_count,
+                        "blockedSubagentCount": orchestrated.blocked_subagent_count,
+                        "contextContinuationApplied": orchestrated.context_continuation_applied
+                    }
+                })),
+            ),
         );
         emit_response_finalization(
             &mut event_emitter,
@@ -10004,35 +10233,35 @@ fn chat_response_with_events(
             },
             "Finalizing the AI response.",
         );
-        return chat_response_payload(
+        return chat_response_payload(ChatResponsePayloadInput {
             operation_id,
-            orchestrated.provider,
-            orchestrated.model,
-            &candidates,
-            routing,
+            provider: orchestrated.provider,
+            model: orchestrated.model,
+            candidates: &candidates,
+            routing_preset: routing,
             run_size,
-            orchestrated.reply,
+            reply: orchestrated.reply,
             fallback_providers,
-            &prompt,
+            prompt: &prompt,
             prompt_token_estimate,
-            &prompt_cache_observation,
-            &cost_preflight,
-            context_bundle.as_ref(),
-            &intent_route,
-            research_report_ref,
-            &mod_research_route,
-            &local_inspection,
-            &context_usage_sections,
+            prompt_cache: &prompt_cache_observation,
+            cost_preflight: &cost_preflight,
+            context_bundle: context_bundle.as_ref(),
+            intent_route: &intent_route,
+            research_report: research_report_ref,
+            mod_research_route: &mod_research_route,
+            local_inspection: &local_inspection,
+            context_usage_sections: &context_usage_sections,
             auto_compression_applied,
             compression_level,
-            &task_scale,
-            Some(orchestrated.orchestration),
-            Some(orchestration_decision.clone()),
-            orchestrated.additional_cost,
-            None,
-            orchestrated.forced_status,
+            task_scale: &task_scale,
+            orchestration: Some(orchestrated.orchestration),
+            orchestration_decision: Some(orchestration_decision.clone()),
+            additional_cost: orchestrated.additional_cost,
+            error: None,
+            forced_status: orchestrated.forced_status,
             current_month_spent,
-        );
+        });
     }
 
     for model in candidates.iter().copied() {
@@ -10048,14 +10277,16 @@ fn chat_response_with_events(
                 "user",
                 "provider-attempt",
                 "Using the local AI fallback.",
-                Some(58.0),
-                Some(json!({
-                    "kind": "provider-attempt",
-                    "data": {
-                        "providerId": provider.id,
-                        "modelId": model.id
-                    }
-                })),
+                AiEventMetadata::new(
+                    Some(58.0),
+                    Some(json!({
+                        "kind": "provider-attempt",
+                        "data": {
+                            "providerId": provider.id,
+                            "modelId": model.id
+                        }
+                    })),
+                ),
             );
             let reply = local_reply(&prompt, &fallback_providers);
             emit_chat_event(
@@ -10069,15 +10300,17 @@ fn chat_response_with_events(
                 "user",
                 "provider-attempt",
                 "Local AI fallback completed.",
-                Some(82.0),
-                Some(json!({
-                    "kind": "provider-attempt",
-                    "data": {
-                        "providerId": provider.id,
-                        "modelId": model.id,
-                        "fallbackCount": fallback_providers.len()
-                    }
-                })),
+                AiEventMetadata::new(
+                    Some(82.0),
+                    Some(json!({
+                        "kind": "provider-attempt",
+                        "data": {
+                            "providerId": provider.id,
+                            "modelId": model.id,
+                            "fallbackCount": fallback_providers.len()
+                        }
+                    })),
+                ),
             );
             emit_response_finalization(
                 &mut event_emitter,
@@ -10088,35 +10321,35 @@ fn chat_response_with_events(
                 },
                 "Finalizing the AI response.",
             );
-            return chat_response_payload(
+            return chat_response_payload(ChatResponsePayloadInput {
                 operation_id,
                 provider,
                 model,
-                &candidates,
-                routing,
+                candidates: &candidates,
+                routing_preset: routing,
                 run_size,
                 reply,
                 fallback_providers,
-                &prompt,
+                prompt: &prompt,
                 prompt_token_estimate,
-                &prompt_cache_observation,
-                &cost_preflight,
-                context_bundle.as_ref(),
-                &intent_route,
-                research_report_ref,
-                &mod_research_route,
-                &local_inspection,
-                &context_usage_sections,
+                prompt_cache: &prompt_cache_observation,
+                cost_preflight: &cost_preflight,
+                context_bundle: context_bundle.as_ref(),
+                intent_route: &intent_route,
+                research_report: research_report_ref,
+                mod_research_route: &mod_research_route,
+                local_inspection: &local_inspection,
+                context_usage_sections: &context_usage_sections,
                 auto_compression_applied,
                 compression_level,
-                &task_scale,
-                None,
-                Some(orchestration_decision.clone()),
-                RunCostSummary::default(),
-                None,
-                None,
+                task_scale: &task_scale,
+                orchestration: None,
+                orchestration_decision: Some(orchestration_decision.clone()),
+                additional_cost: RunCostSummary::default(),
+                error: None,
+                forced_status: None,
                 current_month_spent,
-            );
+            });
         }
 
         let credentials = provider_credential_candidates(provider);
@@ -10127,14 +10360,16 @@ fn chat_response_with_events(
             "user",
             "provider-attempt",
             "Trying the configured AI provider.",
-            Some(58.0),
-            Some(json!({
-                "kind": "provider-attempt",
-                "data": {
-                    "providerId": provider.id,
-                    "modelId": model.id
-                }
-            })),
+            AiEventMetadata::new(
+                Some(58.0),
+                Some(json!({
+                    "kind": "provider-attempt",
+                    "data": {
+                        "providerId": provider.id,
+                        "modelId": model.id
+                    }
+                })),
+            ),
         );
         if credentials.is_empty() {
             fallback_providers.push(format!("{}:missingCredential", provider.id));
@@ -10145,14 +10380,16 @@ fn chat_response_with_events(
                 "user",
                 "provider-fallback",
                 "Configured AI provider was skipped because credentials are missing.",
-                Some(62.0),
-                Some(json!({
-                    "kind": "provider-fallback",
-                    "data": {
-                        "providerId": provider.id,
-                        "reason": "missingCredential"
-                    }
-                })),
+                AiEventMetadata::new(
+                    Some(62.0),
+                    Some(json!({
+                        "kind": "provider-fallback",
+                        "data": {
+                            "providerId": provider.id,
+                            "reason": "missingCredential"
+                        }
+                    })),
+                ),
             );
             continue;
         };
@@ -10170,14 +10407,16 @@ fn chat_response_with_events(
                 "user",
                 "provider-fallback",
                 "Configured AI provider returned a retryable status; trying fallback.",
-                Some(64.0),
-                Some(json!({
-                    "kind": "provider-fallback",
-                    "data": {
-                        "providerId": provider.id,
-                        "reason": "retryable-status"
-                    }
-                })),
+                AiEventMetadata::new(
+                    Some(64.0),
+                    Some(json!({
+                        "kind": "provider-fallback",
+                        "data": {
+                            "providerId": provider.id,
+                            "reason": "retryable-status"
+                        }
+                    })),
+                ),
             );
             continue;
         }
@@ -10215,21 +10454,22 @@ fn chat_response_with_events(
                             .and_then(Value::as_str)
                             .unwrap_or("ordinary-task")
                             .to_string();
-                        orchestration_decision = orchestration_decision_payload(
-                            operation_id,
-                            &existing_reason,
-                            false,
-                            false,
-                            &task_scale,
-                            auto_compression_applied,
-                            compression_level,
-                            0,
-                            0,
-                            0,
-                            0,
-                            Some("normal-provider"),
-                            true,
-                        );
+                        orchestration_decision =
+                            orchestration_decision_payload(OrchestrationDecisionInput {
+                                operation_id,
+                                reason: &existing_reason,
+                                attempted: false,
+                                completed: false,
+                                task_scale: &task_scale,
+                                context_compression_applied: auto_compression_applied,
+                                compression_level,
+                                completed_subagent_count: 0,
+                                attempted_subagent_count: 0,
+                                blocked_subagent_count: 0,
+                                retryable_subagent_count: 0,
+                                terminal_stage: Some("normal-provider"),
+                                context_continuation_applied: true,
+                            });
                     }
                     emit_chat_event(
                         &mut event_emitter,
@@ -10238,49 +10478,51 @@ fn chat_response_with_events(
                         "user",
                         "provider-attempt",
                         "Configured AI provider completed the response.",
-                        Some(82.0),
-                        Some(json!({
-                            "kind": "provider-attempt",
-                            "data": {
-                                "providerId": provider.id,
-                                "modelId": model.id
-                            }
-                        })),
+                        AiEventMetadata::new(
+                            Some(82.0),
+                            Some(json!({
+                                "kind": "provider-attempt",
+                                "data": {
+                                    "providerId": provider.id,
+                                    "modelId": model.id
+                                }
+                            })),
+                        ),
                     );
                     emit_response_finalization(
                         &mut event_emitter,
                         "info",
                         "Finalizing the AI response.",
                     );
-                    return chat_response_payload(
+                    return chat_response_payload(ChatResponsePayloadInput {
                         operation_id,
                         provider,
                         model,
-                        &candidates,
-                        routing,
+                        candidates: &candidates,
+                        routing_preset: routing,
                         run_size,
-                        outcome.reply,
+                        reply: outcome.reply,
                         fallback_providers,
-                        &prompt,
+                        prompt: &prompt,
                         prompt_token_estimate,
-                        &prompt_cache_observation,
-                        &cost_preflight,
-                        context_bundle.as_ref(),
-                        &intent_route,
-                        research_report_ref,
-                        &mod_research_route,
-                        &local_inspection,
-                        &context_usage_sections,
+                        prompt_cache: &prompt_cache_observation,
+                        cost_preflight: &cost_preflight,
+                        context_bundle: context_bundle.as_ref(),
+                        intent_route: &intent_route,
+                        research_report: research_report_ref,
+                        mod_research_route: &mod_research_route,
+                        local_inspection: &local_inspection,
+                        context_usage_sections: &context_usage_sections,
                         auto_compression_applied,
                         compression_level,
-                        &task_scale,
-                        None,
-                        Some(orchestration_decision.clone()),
-                        RunCostSummary::default(),
-                        None,
-                        None,
+                        task_scale: &task_scale,
+                        orchestration: None,
+                        orchestration_decision: Some(orchestration_decision.clone()),
+                        additional_cost: RunCostSummary::default(),
+                        error: None,
+                        forced_status: None,
                         current_month_spent,
-                    );
+                    });
                 }
                 Err(failure) => {
                     auto_compression_applied = auto_compression_applied
@@ -10296,21 +10538,22 @@ fn chat_response_with_events(
                             "normal-provider",
                             70.0,
                         );
-                        orchestration_decision = orchestration_decision_payload(
-                            operation_id,
-                            "provider-context-limit-after-continuation",
-                            false,
-                            false,
-                            &task_scale,
-                            auto_compression_applied,
-                            compression_level,
-                            0,
-                            0,
-                            0,
-                            0,
-                            Some("normal-provider"),
-                            true,
-                        );
+                        orchestration_decision =
+                            orchestration_decision_payload(OrchestrationDecisionInput {
+                                operation_id,
+                                reason: "provider-context-limit-after-continuation",
+                                attempted: false,
+                                completed: false,
+                                task_scale: &task_scale,
+                                context_compression_applied: auto_compression_applied,
+                                compression_level,
+                                completed_subagent_count: 0,
+                                attempted_subagent_count: 0,
+                                blocked_subagent_count: 0,
+                                retryable_subagent_count: 0,
+                                terminal_stage: Some("normal-provider"),
+                                context_continuation_applied: true,
+                            });
                     }
                     let fallback_reason = if context_limit_after_continuation {
                         Some("contextLimit".to_string())
@@ -10327,14 +10570,16 @@ fn chat_response_with_events(
                             "user",
                             "provider-fallback",
                             "Configured AI provider asked Fluxora to try a fallback route.",
-                            Some(66.0),
-                            Some(json!({
-                                "kind": "provider-fallback",
-                                "data": {
-                                    "providerId": provider.id,
-                                    "reason": provider_fallback_reason_tag.as_deref().unwrap_or("fallback")
-                                }
-                            })),
+                            AiEventMetadata::new(
+                                Some(66.0),
+                                Some(json!({
+                                    "kind": "provider-fallback",
+                                    "data": {
+                                        "providerId": provider.id,
+                                        "reason": provider_fallback_reason_tag.as_deref().unwrap_or("fallback")
+                                    }
+                                })),
+                            ),
                         );
                         continue;
                     }
@@ -10346,13 +10591,15 @@ fn chat_response_with_events(
                         "user",
                         "provider-attempt",
                         "Configured AI provider failed before producing a safe response.",
-                        Some(68.0),
-                        Some(json!({
-                            "kind": "provider-error",
-                            "data": {
-                                "providerId": provider.id
-                            }
-                        })),
+                        AiEventMetadata::new(
+                            Some(68.0),
+                            Some(json!({
+                                "kind": "provider-error",
+                                "data": {
+                                    "providerId": provider.id
+                                }
+                            })),
+                        ),
                     );
                     final_error = Some(failure.error);
                     provider_had_non_fallback_error = true;
@@ -10391,15 +10638,17 @@ fn chat_response_with_events(
         "user",
         "provider-attempt",
         "Using local fallback after provider routing did not complete.",
-        Some(76.0),
-        Some(json!({
-            "kind": "provider-attempt",
-            "data": {
-                "providerId": terminal_provider.id,
-                "modelId": terminal_model.id,
-                "fallbackCount": fallback_providers.len()
-            }
-        })),
+        AiEventMetadata::new(
+            Some(76.0),
+            Some(json!({
+                "kind": "provider-attempt",
+                "data": {
+                    "providerId": terminal_provider.id,
+                    "modelId": terminal_model.id,
+                    "fallbackCount": fallback_providers.len()
+                }
+            })),
+        ),
     );
     emit_chat_event(
         &mut event_emitter,
@@ -10420,14 +10669,16 @@ fn chat_response_with_events(
         } else {
             "Local fallback completed after provider routing."
         },
-        Some(84.0),
-        Some(json!({
-            "kind": "provider-fallback",
-            "data": {
-                "providerId": terminal_provider.id,
-                "fallbackCount": fallback_providers.len()
-            }
-        })),
+        AiEventMetadata::new(
+            Some(84.0),
+            Some(json!({
+                "kind": "provider-fallback",
+                "data": {
+                    "providerId": terminal_provider.id,
+                    "fallbackCount": fallback_providers.len()
+                }
+            })),
+        ),
     );
     emit_response_finalization(
         &mut event_emitter,
@@ -10438,70 +10689,101 @@ fn chat_response_with_events(
         },
         "Finalizing the AI run terminal state.",
     );
-    chat_response_payload(
+    chat_response_payload(ChatResponsePayloadInput {
         operation_id,
-        terminal_provider,
-        terminal_model,
-        &candidates,
-        routing,
+        provider: terminal_provider,
+        model: terminal_model,
+        candidates: &candidates,
+        routing_preset: routing,
         run_size,
         reply,
         fallback_providers,
-        &prompt,
+        prompt: &prompt,
         prompt_token_estimate,
-        &prompt_cache_observation,
-        &cost_preflight,
-        context_bundle.as_ref(),
-        &intent_route,
-        research_report_ref,
-        &mod_research_route,
-        &local_inspection,
-        &context_usage_sections,
+        prompt_cache: &prompt_cache_observation,
+        cost_preflight: &cost_preflight,
+        context_bundle: context_bundle.as_ref(),
+        intent_route: &intent_route,
+        research_report: research_report_ref,
+        mod_research_route: &mod_research_route,
+        local_inspection: &local_inspection,
+        context_usage_sections: &context_usage_sections,
         auto_compression_applied,
         compression_level,
-        &task_scale,
-        None,
-        Some(orchestration_decision.clone()),
-        RunCostSummary::default(),
-        final_error,
-        if allow_local_terminal {
+        task_scale: &task_scale,
+        orchestration: None,
+        orchestration_decision: Some(orchestration_decision.clone()),
+        additional_cost: RunCostSummary::default(),
+        error: final_error,
+        forced_status: if allow_local_terminal {
             None
         } else {
             Some("blocked")
         },
         current_month_spent,
-    )
+    })
 }
 
-fn chat_response_payload(
-    operation_id: &str,
-    provider: &ProviderDescriptor,
-    model: &ModelDescriptor,
-    candidates: &[&ModelDescriptor],
-    routing_preset: &str,
-    run_size: &str,
+struct ChatResponsePayloadInput<'a> {
+    operation_id: &'a str,
+    provider: &'a ProviderDescriptor,
+    model: &'a ModelDescriptor,
+    candidates: &'a [&'a ModelDescriptor],
+    routing_preset: &'a str,
+    run_size: &'a str,
     reply: ProviderChatReply,
     fallback_providers: Vec<String>,
-    prompt: &str,
+    prompt: &'a str,
     prompt_token_estimate: u64,
-    prompt_cache: &PromptCacheObservation,
-    cost_preflight: &Value,
-    context_bundle: Option<&Value>,
-    intent_route: &Value,
-    research_report: Option<&Value>,
-    mod_research_route: &Value,
-    local_inspection: &Value,
-    context_usage_sections: &[&str],
+    prompt_cache: &'a PromptCacheObservation,
+    cost_preflight: &'a Value,
+    context_bundle: Option<&'a Value>,
+    intent_route: &'a Value,
+    research_report: Option<&'a Value>,
+    mod_research_route: &'a Value,
+    local_inspection: &'a Value,
+    context_usage_sections: &'a [&'a str],
     auto_compression_applied: bool,
     compression_level: u8,
-    task_scale: &AiTaskScaleDecision,
+    task_scale: &'a AiTaskScaleDecision,
     orchestration: Option<Value>,
     orchestration_decision: Option<Value>,
     additional_cost: RunCostSummary,
     error: Option<ProviderChatError>,
-    forced_status: Option<&str>,
+    forced_status: Option<&'a str>,
     current_month_spent: f64,
-) -> Value {
+}
+
+fn chat_response_payload(input: ChatResponsePayloadInput<'_>) -> Value {
+    let ChatResponsePayloadInput {
+        operation_id,
+        provider,
+        model,
+        candidates,
+        routing_preset,
+        run_size,
+        reply,
+        fallback_providers,
+        prompt,
+        prompt_token_estimate,
+        prompt_cache,
+        cost_preflight,
+        context_bundle,
+        intent_route,
+        research_report,
+        mod_research_route,
+        local_inspection,
+        context_usage_sections,
+        auto_compression_applied,
+        compression_level,
+        task_scale,
+        orchestration,
+        orchestration_decision,
+        additional_cost,
+        error,
+        forced_status,
+        current_month_spent,
+    } = input;
     let response_text =
         nexus_api_policy_refusal_correction(&reply.text, mod_research_route, research_report)
             .unwrap_or_else(|| reply.text.clone());
@@ -10523,23 +10805,23 @@ fn chat_response_payload(
         model_runtime_limits,
         fluxora_request_input_budget_for_scale(task_scale),
     );
-    let context_usage = context_usage_payload_from_sections(
+    let context_usage = context_usage_payload_from_sections(ContextUsagePayloadInput {
         operation_id,
         provider,
         model,
-        prompt_tokens,
-        if reply.prompt_tokens.is_some() {
+        current_context_tokens: prompt_tokens,
+        precision: if reply.prompt_tokens.is_some() {
             "exact"
         } else {
             "estimated"
         },
         safe_input_budget_tokens,
         model_runtime_limits,
-        context_usage_sections,
+        included_sections: context_usage_sections,
         auto_compression_applied,
         compression_level,
-        Some(intent_route),
-    );
+        intent_route: Some(intent_route),
+    });
     let token_usage = json!({
         "inputTokens": prompt_tokens,
         "outputTokens": completion_tokens,
@@ -10548,7 +10830,7 @@ fn chat_response_payload(
         "source": usage_source
     });
     let actual_tokens = reply.prompt_tokens.zip(reply.completion_tokens);
-    let cost = cost_payload(
+    let cost = cost_payload(CostPayloadInput {
         operation_id,
         provider,
         model,
@@ -10560,7 +10842,7 @@ fn chat_response_payload(
         cost_preflight,
         research_report,
         additional_cost,
-    );
+    });
     let mut sources = sources_from_reply(reply.sources, prompt);
     let mut source_ids: HashSet<String> = sources
         .iter()
@@ -11239,26 +11521,26 @@ mod tests {
     fn test_large_audit_manifest(target_count: usize) -> LargeAuditManifest {
         let snapshot = large_audit_snapshot(target_count);
         let local_inspection = build_local_inspection("op_large_audit", Some(&snapshot), None);
-        build_large_audit_manifest(
-            "op_large_audit",
-            &test_task_scale(AiTaskScale::Large, target_count as u64),
-            "Проверь все требования для всей сборки",
-            Some(&snapshot),
-            None,
-            &local_inspection,
-            &json!({
+        build_large_audit_manifest(LargeAuditManifestInput {
+            operation_id: "op_large_audit",
+            task_scale: &test_task_scale(AiTaskScale::Large, target_count as u64),
+            prompt: "Проверь все требования для всей сборки",
+            local_snapshot: Some(&snapshot),
+            context_bundle: None,
+            local_inspection: &local_inspection,
+            intent_route: &json!({
                 "schema": "fluxora.ai.intent-route.v1",
                 "intent": "mod-requirements-audit"
             }),
-            &json!({
+            mod_research_route: &json!({
                 "schema": "fluxora.ai.mod-research-route.v1",
                 "route": "nexus-api",
                 "auditScope": "full-build-requirements",
                 "externalResearchAllowed": true,
                 "nexusAllowed": true
             }),
-            None,
-        )
+            research_report: None,
+        })
         .expect("large audit manifest")
     }
 
@@ -11350,26 +11632,26 @@ mod tests {
         let snapshot = large_audit_snapshot(target_count);
         let local_inspection = build_local_inspection("op_large_audit", Some(&snapshot), None);
         let research_report = requirement_research_report();
-        build_large_audit_manifest(
-            "op_large_audit",
-            &test_task_scale(AiTaskScale::Large, target_count as u64),
-            "Проверь все требования для всей сборки",
-            Some(&snapshot),
-            None,
-            &local_inspection,
-            &json!({
+        build_large_audit_manifest(LargeAuditManifestInput {
+            operation_id: "op_large_audit",
+            task_scale: &test_task_scale(AiTaskScale::Large, target_count as u64),
+            prompt: "Проверь все требования для всей сборки",
+            local_snapshot: Some(&snapshot),
+            context_bundle: None,
+            local_inspection: &local_inspection,
+            intent_route: &json!({
                 "schema": "fluxora.ai.intent-route.v1",
                 "intent": "mod-requirements-audit"
             }),
-            &json!({
+            mod_research_route: &json!({
                 "schema": "fluxora.ai.mod-research-route.v1",
                 "route": "nexus-api",
                 "auditScope": "full-build-requirements",
                 "externalResearchAllowed": true,
                 "nexusAllowed": true
             }),
-            Some(&research_report),
-        )
+            research_report: Some(&research_report),
+        })
         .expect("large audit manifest")
     }
 
@@ -12484,12 +12766,9 @@ mod tests {
             count_tokens_body["generateContentRequest"]["generationConfig"]["temperature"],
             0.2
         );
-        assert_eq!(
-            count_tokens_body["generateContentRequest"]["tools"][0]
-                .get("google_search")
-                .is_some(),
-            true
-        );
+        assert!(count_tokens_body["generateContentRequest"]["tools"][0]
+            .get("google_search")
+            .is_some());
         assert!(validate_gemini_count_tokens_request_shape(model, &messages, true).is_ok());
     }
 
@@ -12504,9 +12783,8 @@ mod tests {
             let model = model_by_id(model_id).expect("gemini model");
             let request = gemini_generate_content_request_body(model, &messages, true);
 
-            assert_eq!(
+            assert!(
                 request["tools"][0].get("google_search").is_some(),
-                true,
                 "{model_id}"
             );
         }
@@ -12884,19 +13162,20 @@ mod tests {
             write_tokens: 1_000,
         };
 
-        let cost = cost_payload(
-            "op_cost",
+        let cost_preflight = json!({ "decision": "allowed" });
+        let cost = cost_payload(CostPayloadInput {
+            operation_id: "op_cost",
             provider,
             model,
-            "paid-large-job",
-            1_000,
-            500,
-            None,
-            &prompt_cache,
-            &json!({ "decision": "allowed" }),
-            None,
+            routing_preset: "paid-large-job",
+            prompt_tokens: 1_000,
+            completion_tokens: 500,
+            actual_tokens: None,
+            prompt_cache: &prompt_cache,
+            cost_preflight: &cost_preflight,
+            research_report: None,
             additional_cost,
-        );
+        });
 
         assert!(cost.internal_cost > additional_cost.hard_cost);
         assert_eq!(
@@ -13154,38 +13433,40 @@ mod tests {
         } else {
             "chef-dispatch-context-limit"
         };
-        let orchestration = orchestration_payload(
-            "op_dispatch_fallback",
-            &chef,
-            "dispatch-fallback",
-            12,
-            &deterministic_large_audit_dispatch_plan(Some(&manifest)),
-            None,
-            &worker_results,
-            OrchestratedChatStatus::Completed,
-            "chef-final",
-            false,
-            Some(&manifest),
-            Some(json!({
+        let dispatch_plan = deterministic_large_audit_dispatch_plan(Some(&manifest));
+        let orchestration = orchestration_payload(OrchestrationPayloadInput {
+            operation_id: "op_dispatch_fallback",
+            chef: &chef,
+            chef_status: "dispatch-fallback",
+            dispatch_duration_ms: 12,
+            dispatch_plan: &dispatch_plan,
+            final_duration_ms: None,
+            worker_results: &worker_results,
+            status: OrchestratedChatStatus::Completed,
+            terminal_stage: "chef-final",
+            context_continuation_applied: false,
+            large_audit_manifest: Some(&manifest),
+            developer_metadata: Some(json!({
                 "dispatchStatus": "dispatch-fallback",
                 "dispatchFallbackReason": "chef-dispatch-context-limit"
             })),
-        );
-        let decision = orchestration_decision_payload(
-            "op_dispatch_fallback",
+        });
+        let task_scale = test_task_scale(AiTaskScale::Large, 610);
+        let decision = orchestration_decision_payload(OrchestrationDecisionInput {
+            operation_id: "op_dispatch_fallback",
             reason,
-            true,
-            true,
-            &test_task_scale(AiTaskScale::Large, 610),
-            false,
-            0,
-            5,
-            5,
-            0,
-            0,
-            Some("chef-final"),
-            false,
-        );
+            attempted: true,
+            completed: true,
+            task_scale: &task_scale,
+            context_compression_applied: false,
+            compression_level: 0,
+            completed_subagent_count: 5,
+            attempted_subagent_count: 5,
+            blocked_subagent_count: 0,
+            retryable_subagent_count: 0,
+            terminal_stage: Some("chef-final"),
+            context_continuation_applied: false,
+        });
 
         assert_eq!(orchestration["chef"]["status"], "dispatch-fallback");
         assert_eq!(orchestration["attemptedSubagentCount"].as_u64(), Some(5));
@@ -13360,26 +13641,28 @@ mod tests {
             status: "temporary",
             text: String::new(),
         };
-        let orchestration = orchestration_payload(
-            "op_temp_worker",
-            &AgentTarget {
-                agent_id: "chef-orchestrator",
-                label: "Chef orchestrator",
-                provider: provider_by_id("gemini").expect("gemini provider"),
-                model: model_by_id(MAIN_GEMINI_MODEL_ID).expect("main model"),
-                credential: "test-key".to_string(),
-            },
-            "dispatch-completed",
-            1,
-            "dispatch",
-            None,
-            &[worker],
-            OrchestratedChatStatus::Blocked,
-            "worker",
-            false,
-            None,
-            None,
-        );
+        let chef = AgentTarget {
+            agent_id: "chef-orchestrator",
+            label: "Chef orchestrator",
+            provider: provider_by_id("gemini").expect("gemini provider"),
+            model: model_by_id(MAIN_GEMINI_MODEL_ID).expect("main model"),
+            credential: "test-key".to_string(),
+        };
+        let worker_results = [worker];
+        let orchestration = orchestration_payload(OrchestrationPayloadInput {
+            operation_id: "op_temp_worker",
+            chef: &chef,
+            chef_status: "dispatch-completed",
+            dispatch_duration_ms: 1,
+            dispatch_plan: "dispatch",
+            final_duration_ms: None,
+            worker_results: &worker_results,
+            status: OrchestratedChatStatus::Blocked,
+            terminal_stage: "worker",
+            context_continuation_applied: false,
+            large_audit_manifest: None,
+            developer_metadata: None,
+        });
 
         assert!(provider_temporary_error(&error));
         assert_eq!(
@@ -13527,21 +13810,22 @@ mod tests {
     fn worker_context_limit_preserves_blocked_worker_and_precise_reason() {
         let worker = test_blocked_worker_result("context window exceeded after continuation");
         let reason = worker_block_reason(&[worker]);
-        let decision = orchestration_decision_payload(
-            "op_worker_context",
-            &reason,
-            true,
-            false,
-            &test_task_scale(AiTaskScale::Large, 610),
-            true,
-            MAX_PROMPT_COMPRESSION_LEVEL,
-            0,
-            1,
-            1,
-            0,
-            Some("worker"),
-            true,
-        );
+        let task_scale = test_task_scale(AiTaskScale::Large, 610);
+        let decision = orchestration_decision_payload(OrchestrationDecisionInput {
+            operation_id: "op_worker_context",
+            reason: &reason,
+            attempted: true,
+            completed: false,
+            task_scale: &task_scale,
+            context_compression_applied: true,
+            compression_level: MAX_PROMPT_COMPRESSION_LEVEL,
+            completed_subagent_count: 0,
+            attempted_subagent_count: 1,
+            blocked_subagent_count: 1,
+            retryable_subagent_count: 0,
+            terminal_stage: Some("worker"),
+            context_continuation_applied: true,
+        });
 
         assert_eq!(reason, "worker-context-limit");
         assert_eq!(

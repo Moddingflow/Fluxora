@@ -218,6 +218,12 @@ export interface NativeBridgeError {
   details?: Record<string, unknown>;
 }
 
+export interface NativeBridgeInvokeError extends NativeBridgeError {
+  schema: 'fluxora.tauri.bridge-error.v1';
+  method: string;
+  operationId: string;
+}
+
 export type FluxoraAiProviderKind = 'byok' | 'hosted' | 'local';
 
 export type FluxoraAiCredentialState =

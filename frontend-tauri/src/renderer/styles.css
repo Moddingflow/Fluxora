@@ -516,7 +516,11 @@ button:disabled {
 .library-build-row:focus-visible:not(:disabled) {
   color: var(--text);
   background: var(--flx-panel-hover);
-  outline: none;
+}
+
+.library-build-row:focus-visible:not(:disabled) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .project-row[data-selected="true"] .library-build-row:hover {
@@ -1869,14 +1873,18 @@ input::placeholder {
 
 .project-row--library {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  grid-template-areas:
+    "main main"
+    "open actions";
   align-items: center;
-  min-height: 56px;
-  padding: 0;
+  gap: 8px 6px;
+  min-height: 96px;
+  padding: 10px;
   border-color: transparent;
   border-radius: var(--radius-lg);
   background: transparent;
-  cursor: pointer;
+  cursor: default;
   transition:
     background-color var(--motion-fast),
     border-color var(--motion-fast),
@@ -1888,10 +1896,9 @@ input::placeholder {
 }
 
 .project-row--library:hover,
-.project-row--library:focus-visible {
+.project-row--library:focus-within {
   border-color: var(--line-soft);
   background: var(--flx-panel-hover);
-  outline: none;
 }
 
 .project-row--library[data-selected="true"] {
@@ -1900,9 +1907,10 @@ input::placeholder {
 }
 
 .project-row--library .library-build-row {
-  min-height: 56px;
-  padding: 10px 8px 10px 11px;
-  cursor: inherit;
+  grid-area: main;
+  min-height: 36px;
+  padding: 0;
+  cursor: pointer;
 }
 
 .project-row--library .library-build-row:hover {
@@ -1941,16 +1949,25 @@ input::placeholder {
 
 .project-row--library .row-actions {
   position: static;
+  grid-area: actions;
   display: flex;
   align-items: stretch;
   justify-content: flex-end;
   justify-self: end;
+  align-self: stretch;
   width: 34px;
   min-width: 34px;
   gap: 0;
-  padding-right: 6px;
-  opacity: 0;
-  pointer-events: none;
+  padding: 0;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.library-build-open {
+  grid-area: open;
+  align-self: stretch;
+  justify-content: center;
+  min-width: 0;
 }
 
 .library-build-actions[data-menu-open="true"] {
@@ -3974,7 +3991,7 @@ input::placeholder {
 
 .grass-cache-confirmation {
   position: fixed;
-  inset: 44px 0 0;
+  inset: var(--flx-titlebar-height, 32px) 0 0;
   z-index: 84;
   display: grid;
   place-items: center;
@@ -4061,7 +4078,7 @@ input::placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
-  top: 44px;
+  top: var(--flx-titlebar-height, 32px);
   right: 0;
   bottom: 0;
   left: 0;

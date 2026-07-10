@@ -726,7 +726,7 @@ namespace fluxora::tests
 #endif
     }
 
-    TEST(FluxPackServiceTests, InstallFluxPackCreatesLocalGameDirectoryWhenSourceBuildWasDeleted)
+    TEST(FluxPackServiceTests, InstallFluxPackKeepsLocalGameAlignedWhenCatalogNameCollides)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "FluxPack install project creation uses Windows instance metadata in this build.";
@@ -779,6 +779,21 @@ namespace fluxora::tests
         templates.initialize();
         ProjectService projects(logger, templates);
         projects.initialize();
+        const ProjectDescriptor catalogCollision = projects.createProject(ProjectCreateRequest{
+            L"Foundation Edition",
+            L"skyrimse",
+            temp.path() / L"Existing Skyrim" / L"SkyrimSE.exe",
+            temp.path() / L"Existing Builds",
+            false
+        });
+        const std::filesystem::path collisionSentinel =
+            catalogCollision.projectDirectory / L"keep-existing.txt";
+        writeTextFile(collisionSentinel, "existing catalog build");
+        const std::filesystem::path plannedProjectDirectory =
+            projects.buildProjectDirectory(installRoot, L"Foundation Edition");
+        ASSERT_EQ(
+            normalized(plannedProjectDirectory),
+            normalized(installRoot / L"Foundation Edition-2"));
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
         DownloadService downloadService(logger, settings, pathSettings);
@@ -794,9 +809,13 @@ namespace fluxora::tests
 
         const std::filesystem::path localGame = result.projectDirectory / L"stock game";
         EXPECT_EQ(result.buildName, L"Foundation Edition");
+        EXPECT_EQ(normalized(result.projectDirectory), normalized(plannedProjectDirectory));
         EXPECT_TRUE(std::filesystem::is_regular_file(result.configPath));
         EXPECT_TRUE(std::filesystem::is_directory(localGame));
         EXPECT_FALSE(std::filesystem::exists(sourceProject));
+        EXPECT_FALSE(std::filesystem::exists(installRoot / L"Foundation Edition"));
+        EXPECT_EQ(readTextFile(collisionSentinel), "existing catalog build");
+        EXPECT_TRUE(std::filesystem::is_regular_file(catalogCollision.configPath));
 
         const BuildPathSettings savedPaths = pathSettings.loadForConfig(result.configPath);
         EXPECT_EQ(normalized(savedPaths.gameDirectory), normalized(localGame));

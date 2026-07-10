@@ -30,10 +30,10 @@ interface LibraryHomeProps {
   catalogState: LibraryCatalogState;
   filteredProjects: FluxoraProject[];
   isNewBuildDisabled: boolean;
+  isProjectInteractionDisabled: boolean;
   onNewBuild: () => void;
   onOpenProject: (project: FluxoraProject) => void;
   onOpenProjectDirectory: (project: FluxoraProject) => void;
-  onOpenSelectedProject: () => void;
   onProjectMenuToggle: (project: FluxoraProject, anchor: DOMRect) => void;
   onSearchChange: (value: string) => void;
   onSelectProject: (project: FluxoraProject) => void;
@@ -82,10 +82,10 @@ export function LibraryHome({
   catalogState,
   filteredProjects,
   isNewBuildDisabled,
+  isProjectInteractionDisabled,
   onNewBuild,
   onOpenProject,
   onOpenProjectDirectory,
-  onOpenSelectedProject,
   onProjectMenuToggle,
   onSearchChange,
   onSelectProject,
@@ -125,6 +125,7 @@ export function LibraryHome({
             catalogState={catalogState}
             filteredProjects={filteredProjects}
             isNewBuildDisabled={isNewBuildDisabled}
+            isProjectInteractionDisabled={isProjectInteractionDisabled}
             onNewBuild={onNewBuild}
             onOpenProject={onOpenProject}
             onProjectMenuToggle={onProjectMenuToggle}
@@ -158,13 +159,6 @@ export function LibraryHome({
                 <h2>{selectedProject.name}</h2>
                 <span>{selectedGameLabel}</span>
               </div>
-              <Button
-                disabled={isNewBuildDisabled}
-                iconLeft={<Icon name="open" {...primaryActionIcon} />}
-                onClick={onOpenSelectedProject}
-              >
-                Open
-              </Button>
             </header>
 
             <dl className="library-detail-metrics">
@@ -222,6 +216,7 @@ interface LibraryProjectRowsProps {
   catalogState: LibraryCatalogState;
   filteredProjects: FluxoraProject[];
   isNewBuildDisabled: boolean;
+  isProjectInteractionDisabled: boolean;
   onNewBuild: () => void;
   onOpenProject: (project: FluxoraProject) => void;
   onProjectMenuToggle: (project: FluxoraProject, anchor: DOMRect) => void;
@@ -239,6 +234,7 @@ function LibraryProjectRows({
   catalogState,
   filteredProjects,
   isNewBuildDisabled,
+  isProjectInteractionDisabled,
   onNewBuild,
   onOpenProject,
   onProjectMenuToggle,
@@ -278,7 +274,7 @@ function LibraryProjectRows({
         action={
           projects.length === 0 ? (
             <Button
-              disabled={isNewBuildDisabled}
+              disabled={isProjectInteractionDisabled}
               iconLeft={<Icon name="plus" {...primaryActionIcon} />}
               onClick={onNewBuild}
               size="sm"
@@ -296,7 +292,7 @@ function LibraryProjectRows({
   }
 
   return (
-    <div className="library-build-list" role="listbox" aria-label="Fluxora builds">
+    <div className="library-build-list" role="list" aria-label="Fluxora builds">
       {filteredProjects.map((project) => {
         const isSelected =
           selectedProject?.id === project.id ||
@@ -310,29 +306,42 @@ function LibraryProjectRows({
             className="project-row project-row--library"
             data-selected={isSelected}
             key={project.id}
-            role="option"
-            aria-selected={isSelected}
-            tabIndex={0}
-            onClick={() => onSelectProject(project)}
-            onDoubleClick={() => onOpenProject(project)}
-            onKeyDown={(event) => {
-              if (event.currentTarget !== event.target) {
-                return;
-              }
-
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                onSelectProject(project);
-              }
-            }}
+            role="listitem"
           >
-            <div className="library-build-row">
+            <button
+              aria-current={isSelected ? 'true' : undefined}
+              aria-label={`Select ${project.name}`}
+              className="library-build-row"
+              disabled={isNewBuildDisabled}
+              onClick={() => onSelectProject(project)}
+              onDoubleClick={() => {
+                if (!isNewBuildDisabled) {
+                  onOpenProject(project);
+                }
+              }}
+              type="button"
+            >
               <img className="project-row__icon" src={projectIcon(project)} alt="" />
               <span className="project-row__main">
                 <strong>{project.name}</strong>
                 <small>{rowMeta(project, stats)}</small>
               </span>
-            </div>
+            </button>
+            <Button
+              aria-label={`Open ${project.name}`}
+              className="library-build-open"
+              disabled={isNewBuildDisabled}
+              fullWidth
+              iconLeft={<Icon name="open" size={14} strokeWidth={2.35} />}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectProject(project);
+                onOpenProject(project);
+              }}
+              size="sm"
+            >
+              Open
+            </Button>
             <div
               className="row-actions library-build-actions"
               aria-label={`${project.name} actions`}
@@ -340,6 +349,7 @@ function LibraryProjectRows({
             >
               <IconButton
                 data-project-menu-trigger="true"
+                disabled={isProjectInteractionDisabled}
                 label={`${project.name} actions`}
                 onClick={(event) => {
                   event.stopPropagation();

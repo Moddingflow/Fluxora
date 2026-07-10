@@ -60,7 +60,7 @@ test('shows redesigned titlebar chrome without Node exposure', async ({ page }) 
 
   const titlebar = page.getByLabel('Fluxora window chrome');
   await expect(titlebar).toBeVisible();
-  await expect(titlebar).toHaveCSS('height', '44px');
+  await expect(titlebar).toHaveCSS('height', '32px');
   await expect(titlebar.getByText('Fluxora', { exact: true })).toBeVisible();
 
   await expect(page.getByLabel('Home')).toBeVisible();

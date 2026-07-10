@@ -35,6 +35,9 @@ namespace fluxora::test_hooks
 {
     void setInstallStagingCacheProducerHook(
         std::function<void(std::wstring_view, std::wstring_view, const std::filesystem::path&)> hook);
+
+    void alignInstallStagingCacheMetadataDigestForTest(
+        const std::filesystem::path& entryDirectory);
 }
 #endif
 
@@ -1293,7 +1296,7 @@ namespace fluxora::tests
         EXPECT_FALSE(std::filesystem::exists(modPath / L"skse64_loader.exe"));
     }
 
-    TEST_F(ModFileOperationsIntegrationTests, AnalyzeDownloadContentLayoutCachesExtractedPayloadForInstall)
+    TEST_F(ModFileOperationsIntegrationTests, InstallDownloadRejectsTamperedContentLayoutCachePayload)
     {
         const DownloadEntry download = importArchive(
             L"Cached Layout.zip",
@@ -1326,7 +1329,13 @@ namespace fluxora::tests
         ASSERT_EQ(payloads.size(), 1U);
         const std::filesystem::path cachedPlugin = payloads.front() / L"Data" / L"SkyUI_SE.esp";
         ASSERT_TRUE(std::filesystem::is_regular_file(cachedPlugin));
-        writeTextFile(cachedPlugin, "cache-hit-plugin");
+        const std::uintmax_t cachedPluginSize = std::filesystem::file_size(cachedPlugin);
+        const std::filesystem::file_time_type cachedPluginTimestamp =
+            std::filesystem::last_write_time(cachedPlugin);
+        writeTextFile(cachedPlugin, "tampered-plugin");
+        ASSERT_EQ(std::filesystem::file_size(cachedPlugin), cachedPluginSize);
+        std::filesystem::last_write_time(cachedPlugin, cachedPluginTimestamp);
+        test_hooks::alignInstallStagingCacheMetadataDigestForTest(payloads.front().parent_path());
 
         std::optional<InstalledMod> installed;
         std::string installError;
@@ -1344,7 +1353,65 @@ namespace fluxora::tests
         }
 
         ASSERT_TRUE(installed.has_value()) << installError;
-        EXPECT_EQ(readTextFile(modsDirectory() / L"Cached Layout" / L"SkyUI_SE.esp"), "cache-hit-plugin");
+        EXPECT_EQ(readTextFile(modsDirectory() / L"Cached Layout" / L"SkyUI_SE.esp"), "original-plugin");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, InstallDownloadDoesNotReuseCacheAfterSameSizeSameTimestampArchiveReplacement)
+    {
+        const DownloadEntry download = importArchive(
+            L"Replaced Archive.zip",
+            {
+                {L"Data/Replaced.esp", "original-plugin"}
+            });
+
+        try
+        {
+            const PlacementPlan plan = downloads_.analyzeDownloadContentLayout(
+                project_,
+                download.localPath,
+                ExistingModInstallMode::FailIfExists);
+            ASSERT_TRUE(plan.canInstall());
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+            throw;
+        }
+
+        const std::uintmax_t originalSize = std::filesystem::file_size(download.localPath);
+        const std::filesystem::file_time_type originalTimestamp =
+            std::filesystem::last_write_time(download.localPath);
+        writeZipArchive(
+            download.localPath,
+            {
+                {L"Data/Replaced.esp", "replaced-plugin"}
+            });
+        ASSERT_EQ(std::filesystem::file_size(download.localPath), originalSize);
+        std::filesystem::last_write_time(download.localPath, originalTimestamp);
+        ASSERT_EQ(std::filesystem::last_write_time(download.localPath), originalTimestamp);
+
+        std::optional<InstalledMod> installed;
+        std::string installError;
+        try
+        {
+            installed = downloads_.installDownload(
+                project_,
+                download.localPath,
+                L"Replaced Archive",
+                ExistingModInstallMode::FailIfExists);
+        }
+        catch (const std::exception& exception)
+        {
+            installError = exception.what();
+        }
+
+        ASSERT_TRUE(installed.has_value()) << installError;
+        EXPECT_EQ(
+            readTextFile(modsDirectory() / L"Replaced Archive" / L"Replaced.esp"),
+            "replaced-plugin");
     }
 
     TEST_F(ModFileOperationsIntegrationTests, AnalyzeDownloadContentLayoutCleansStaleBuildingCacheEntry)
@@ -1912,7 +1979,7 @@ namespace fluxora::tests
         EXPECT_FALSE(std::filesystem::exists(modsDirectory() / L"SkyUI FOMOD Preview"));
     }
 
-    TEST_F(ModFileOperationsIntegrationTests, AnalyzeFomodDownloadCachesPackageForInstall)
+    TEST_F(ModFileOperationsIntegrationTests, InstallFomodDownloadRejectsTamperedPackageCachePayload)
     {
         const DownloadEntry download = importArchive(
             L"Cached FOMOD Package.fomod",
@@ -1948,7 +2015,12 @@ namespace fluxora::tests
         ASSERT_EQ(payloads.size(), 1U);
         const std::filesystem::path cachedPlugin = payloads.front() / L"payload" / L"Data" / L"SkyUI_SE.esp";
         ASSERT_TRUE(std::filesystem::is_regular_file(cachedPlugin));
-        writeTextFile(cachedPlugin, "cache-hit-plugin");
+        const std::uintmax_t cachedPluginSize = std::filesystem::file_size(cachedPlugin);
+        const std::filesystem::file_time_type cachedPluginTimestamp =
+            std::filesystem::last_write_time(cachedPlugin);
+        writeTextFile(cachedPlugin, "tampered-plugin");
+        ASSERT_EQ(std::filesystem::file_size(cachedPlugin), cachedPluginSize);
+        std::filesystem::last_write_time(cachedPlugin, cachedPluginTimestamp);
 
         std::optional<InstalledMod> installed;
         std::string installError;
@@ -1969,7 +2041,7 @@ namespace fluxora::tests
         ASSERT_TRUE(installed.has_value()) << installError;
         EXPECT_EQ(
             readTextFile(modsDirectory() / L"Cached FOMOD Package" / L"SkyUI_SE.esp"),
-            "cache-hit-plugin");
+            "original-plugin");
     }
 
 #ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS

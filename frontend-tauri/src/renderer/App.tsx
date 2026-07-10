@@ -26,7 +26,16 @@ import {
   UploadCloud,
   XCircle
 } from 'lucide-react';
-import { useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState
+} from 'react';
 import { createPortal } from 'react-dom';
 import type {
   CSSProperties,
@@ -128,7 +137,6 @@ import {
   isTextEditorFileName,
   TextEditorWorkspace
 } from './features/text-editor/TextEditorWorkspace';
-import { FilePreviewWorkspace } from './features/file-preview/FilePreviewWorkspace';
 import { previewKindForFile } from './features/file-preview/preview-kind-registry';
 import {
   emptyProjectDraft,
@@ -324,6 +332,11 @@ import type {
   NativeBridgeStatus
 } from '../shared/fluxora-api';
 
+const FilePreviewWorkspace = lazy(async () => {
+  const module = await import('./features/file-preview/FilePreviewWorkspace');
+  return { default: module.FilePreviewWorkspace };
+});
+
 type RouteId =
   | 'home'
   | 'build'
@@ -388,6 +401,17 @@ interface OpeningBuildSplashState {
   progress: number;
 }
 
+interface BuildPathEditorSnapshot {
+  buildPathDraft: BuildPathDraft;
+  buildPathExecutables: FluxoraExecutable[];
+  buildPathsError: string | null;
+  fluxPackInstallResult: FluxoraFluxPackInstallResult | null;
+  fluxPackSummary: FluxoraFluxPackSummary | null;
+  grassCacheConfirmationOpen: boolean;
+  isBuildPathsOpen: boolean;
+  isDirty: boolean;
+}
+
 interface InterfaceRefreshSplashState {
   buildName: string;
   operationId: string;
@@ -400,6 +424,7 @@ interface OverwriteClearSplashState {
 }
 
 type RightPaneId = 'plugins' | 'data' | 'downloads' | 'build';
+type WorkspaceStoreId = 'mods' | 'plugins' | 'downloads' | 'profiles' | 'executables';
 type DownloadDropCue = 'idle' | 'hover' | 'importing';
 type RowReorderKind = 'mod' | 'plugin';
 type RowDropPlacement = 'before' | 'after';
@@ -431,6 +456,7 @@ interface RowReorderSession {
 }
 
 interface WorkspaceLoadOptions {
+  coordinatedSequence?: number;
   showBusy?: boolean;
   showLoading?: boolean;
   resetScroll?: boolean;
@@ -1074,6 +1100,7 @@ export const App = () => {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() =>
     isBuildSettingsWindow ? buildSettingsProjectId : null
   );
+  const [loadedWorkspaceProjectId, setLoadedWorkspaceProjectId] = useState<string | null>(null);
   const [projectMenuId, setProjectMenuId] = useState<string | null>(null);
   const [projectMenuPosition, setProjectMenuPosition] = useState<ProjectMenuPosition | null>(null);
   const [catalogState, setCatalogState] = useState<CatalogState>('idle');
@@ -1089,13 +1116,24 @@ export const App = () => {
   const activeAiRunRef = useRef<ActiveAiRunControl | null>(null);
   const [openingBuildSplash, setOpeningBuildSplash] =
     useState<OpeningBuildSplashState | null>(null);
+  const [isOpeningBuildLocked, setIsOpeningBuildLocked] = useState(false);
   const [interfaceRefreshSplash, setInterfaceRefreshSplash] =
     useState<InterfaceRefreshSplashState | null>(null);
   const openingBuildCancelRequestsRef = useRef<Set<string>>(new Set());
   const openingBuildOperationIdRef = useRef<string | null>(null);
+  const coordinatedWorkspaceLoadRef = useRef<{ projectId: string; sequence: number } | null>(null);
+  const coordinatedWorkspaceLoadSequenceRef = useRef(0);
   const openingBuildPreviousViewRef = useRef<{
+    buildPathEditor: BuildPathEditorSnapshot;
+    profileName: string;
     route: RouteId;
+    selectedExecutableId: string | null;
     selectedProjectId: string | null;
+    loadedWorkspaceProjectId: string | null;
+  } | null>(null);
+  const pendingBuildPathEditorRestoreRef = useRef<{
+    selectedProjectId: string | null;
+    snapshot: BuildPathEditorSnapshot;
   } | null>(null);
   const [overwriteClearSplash, setOverwriteClearSplash] =
     useState<OverwriteClearSplashState | null>(null);
@@ -1286,6 +1324,37 @@ export const App = () => {
     useRef<Map<string, PendingPluginEnableSave>>(new Map());
   const suppressNextRowClickRef = useRef(false);
   const buildPathDraftDirtyRef = useRef(false);
+  const workspaceStoreLoadSequenceRef = useRef<Record<WorkspaceStoreId, number>>({
+    downloads: 0,
+    executables: 0,
+    mods: 0,
+    plugins: 0,
+    profiles: 0
+  });
+  const workspaceStoreBusyLoadSequenceRef = useRef<
+    Record<WorkspaceStoreId, number | null>
+  >({
+    downloads: null,
+    executables: null,
+    mods: null,
+    plugins: null,
+    profiles: null
+  });
+  const canBeginWorkspaceStoreLoad = (options: WorkspaceLoadOptions): boolean => {
+    const coordinatedLoad = coordinatedWorkspaceLoadRef.current;
+    return (
+      !coordinatedLoad || options.coordinatedSequence === coordinatedLoad.sequence
+    );
+  };
+  const beginWorkspaceStoreLoad = (store: WorkspaceStoreId): number => {
+    const nextSequence = workspaceStoreLoadSequenceRef.current[store] + 1;
+    workspaceStoreLoadSequenceRef.current[store] = nextSequence;
+    return nextSequence;
+  };
+  const isCurrentWorkspaceStoreLoad = (
+    store: WorkspaceStoreId,
+    sequence: number
+  ): boolean => workspaceStoreLoadSequenceRef.current[store] === sequence;
   const buildSettingsLoadedProjectRef = useRef<string | null>(null);
   const [isTransferPageOpen, setIsTransferPageOpen] = useState(false);
 
@@ -1623,7 +1692,11 @@ export const App = () => {
     return counts;
   }, [pluginsWorkspace.items]);
 
-  const selectedProjectRuntimeSummary = useMemo<ProjectRuntimeSummary>(() => {
+  const selectedProjectRuntimeSummary = useMemo<ProjectRuntimeSummary | undefined>(() => {
+    if (!loadedWorkspaceProjectId) {
+      return undefined;
+    }
+
     const modEntries =
       installedMods.length > 0
         ? installedMods
@@ -1631,6 +1704,7 @@ export const App = () => {
     const hasModData = installedMods.length > 0 || modsWorkspace.loadState === 'ready';
 
     return {
+      projectId: loadedWorkspaceProjectId,
       modCount: hasModData ? modEntries.length : undefined,
       disabledModCount: hasModData
         ? modEntries.filter((item) => !item.isEnabled).length
@@ -1642,6 +1716,7 @@ export const App = () => {
     downloadsWorkspace.items,
     downloadsWorkspace.loadState,
     installedMods,
+    loadedWorkspaceProjectId,
     modsWorkspace.items,
     modsWorkspace.loadState
   ]);
@@ -1941,8 +2016,16 @@ export const App = () => {
     project = selectedProject,
     options: WorkspaceLoadOptions = {}
   ) => {
+    if (!canBeginWorkspaceStoreLoad(options)) {
+      return false;
+    }
+    const loadSequence = beginWorkspaceStoreLoad('mods');
+    if (workspaceStoreBusyLoadSequenceRef.current.mods !== null) {
+      workspaceStoreBusyLoadSequenceRef.current.mods = null;
+      setModsBusyLabel(null);
+    }
     if (!project || !bridgeStatus?.ready) {
-      return;
+      return false;
     }
 
     const showBusy = options.showBusy ?? true;
@@ -1954,6 +2037,7 @@ export const App = () => {
       dispatchModsWorkspace({ type: 'load-started' });
     }
     if (showBusy) {
+      workspaceStoreBusyLoadSequenceRef.current.mods = loadSequence;
       setModsBusyLabel('Loading mods');
       setMessage(null);
     }
@@ -1966,6 +2050,10 @@ export const App = () => {
         })
       ]);
 
+      if (!isCurrentWorkspaceStoreLoad('mods', loadSequence)) {
+        return false;
+      }
+
       setInstalledMods(nextInstalledMods);
       dispatchModsWorkspace({ type: 'items-loaded', items: nextOrder });
       if (resetScroll) {
@@ -1973,11 +2061,17 @@ export const App = () => {
       }
       setDraggedModOrderId(null);
       setModDropTarget(null);
+      return true;
     } catch (error) {
+      if (!isCurrentWorkspaceStoreLoad('mods', loadSequence)) {
+        return false;
+      }
       dispatchModsWorkspace({ type: 'load-failed', message: errorMessage(error) });
       setMessage(errorMessage(error));
+      return false;
     } finally {
-      if (showBusy) {
+      if (workspaceStoreBusyLoadSequenceRef.current.mods === loadSequence) {
+        workspaceStoreBusyLoadSequenceRef.current.mods = null;
         setModsBusyLabel(null);
       }
     }
@@ -3018,16 +3112,31 @@ export const App = () => {
     project = selectedProject,
     options: WorkspaceLoadOptions = {}
   ) => {
+    if (!canBeginWorkspaceStoreLoad(options)) {
+      return false;
+    }
+    const loadSequence = beginWorkspaceStoreLoad('plugins');
+    if (workspaceStoreBusyLoadSequenceRef.current.plugins !== null) {
+      workspaceStoreBusyLoadSequenceRef.current.plugins = null;
+      setPluginsBusyLabel(null);
+    }
     const capabilities = pluginCapabilityView(project, bridgeStatus);
-    if (!project || !bridgeStatus?.ready || !capabilities.bridgeAvailable) {
-      return;
+    if (!project || !bridgeStatus?.ready) {
+      return false;
+    }
+
+    if (!capabilities.bridgeAvailable) {
+      dispatchPluginsWorkspace({ type: 'items-loaded', items: [] });
+      setDraggedPluginOrderId(null);
+      setPluginDropTarget(null);
+      return true;
     }
 
     if (!capabilities.projectSupported) {
       dispatchPluginsWorkspace({ type: 'items-loaded', items: [] });
       setDraggedPluginOrderId(null);
       setPluginDropTarget(null);
-      return;
+      return true;
     }
 
     const hasCurrentRows = pluginsWorkspace.items.length > 0;
@@ -3042,6 +3151,7 @@ export const App = () => {
       dispatchPluginsWorkspace({ type: 'load-started' });
     }
     if (showBusy) {
+      workspaceStoreBusyLoadSequenceRef.current.plugins = loadSequence;
       setPluginsBusyLabel('Loading plugins');
       setMessage(null);
     }
@@ -3053,6 +3163,9 @@ export const App = () => {
         profileName,
         { operationId }
       );
+      if (!isCurrentWorkspaceStoreLoad('plugins', loadSequence)) {
+        return false;
+      }
       dispatchPluginsWorkspace({
         type: 'items-loaded',
         items: applyPendingPluginEnableStates(nextPlugins, contextKey, snapshotSequence)
@@ -3062,11 +3175,17 @@ export const App = () => {
       }
       setDraggedPluginOrderId(null);
       setPluginDropTarget(null);
+      return true;
     } catch (error) {
+      if (!isCurrentWorkspaceStoreLoad('plugins', loadSequence)) {
+        return false;
+      }
       dispatchPluginsWorkspace({ type: 'load-failed', message: errorMessage(error) });
       setMessage(errorMessage(error));
+      return false;
     } finally {
-      if (showBusy) {
+      if (workspaceStoreBusyLoadSequenceRef.current.plugins === loadSequence) {
+        workspaceStoreBusyLoadSequenceRef.current.plugins = null;
         setPluginsBusyLabel(null);
       }
     }
@@ -3750,9 +3869,26 @@ export const App = () => {
     project = selectedProject,
     options: WorkspaceLoadOptions = {}
   ) => {
-    const capabilities = profilesCapabilityView(project, bridgeStatus);
-    if (!project || !bridgeStatus?.ready || !capabilities.bridgeAvailable) {
+    if (!canBeginWorkspaceStoreLoad(options)) {
       return null;
+    }
+    const loadSequence = beginWorkspaceStoreLoad('profiles');
+    if (workspaceStoreBusyLoadSequenceRef.current.profiles !== null) {
+      workspaceStoreBusyLoadSequenceRef.current.profiles = null;
+      setProfilesBusyLabel(null);
+    }
+    const capabilities = profilesCapabilityView(project, bridgeStatus);
+    if (!project || !bridgeStatus?.ready) {
+      return null;
+    }
+
+    if (!capabilities.bridgeAvailable) {
+      dispatchProfilesWorkspace({
+        type: 'items-loaded',
+        items: [],
+        defaultProfileName: projectDefaultProfileName(project)
+      });
+      return [];
     }
 
     const showBusy = options.showBusy ?? true;
@@ -3762,6 +3898,7 @@ export const App = () => {
       dispatchProfilesWorkspace({ type: 'load-started' });
     }
     if (showBusy) {
+      workspaceStoreBusyLoadSequenceRef.current.profiles = loadSequence;
       setProfilesBusyLabel('Loading profiles');
       setMessage(null);
     }
@@ -3772,6 +3909,9 @@ export const App = () => {
         projectDefaultProfileName(project),
         { operationId }
       );
+      if (!isCurrentWorkspaceStoreLoad('profiles', loadSequence)) {
+        return null;
+      }
       dispatchProfilesWorkspace({
         type: 'items-loaded',
         items: profiles,
@@ -3779,11 +3919,15 @@ export const App = () => {
       });
       return profiles;
     } catch (error) {
+      if (!isCurrentWorkspaceStoreLoad('profiles', loadSequence)) {
+        return null;
+      }
       dispatchProfilesWorkspace({ type: 'load-failed', message: errorMessage(error) });
       setMessage(errorMessage(error));
       return null;
     } finally {
-      if (showBusy) {
+      if (workspaceStoreBusyLoadSequenceRef.current.profiles === loadSequence) {
+        workspaceStoreBusyLoadSequenceRef.current.profiles = null;
         setProfilesBusyLabel(null);
       }
     }
@@ -3947,9 +4091,23 @@ export const App = () => {
     project = selectedProject,
     options: WorkspaceLoadOptions = {}
   ) => {
-    const capabilities = executablesCapabilityView(project, bridgeStatus);
-    if (!project || !bridgeStatus?.ready || !capabilities.bridgeAvailable) {
+    if (!canBeginWorkspaceStoreLoad(options)) {
       return null;
+    }
+    const loadSequence = beginWorkspaceStoreLoad('executables');
+    if (workspaceStoreBusyLoadSequenceRef.current.executables !== null) {
+      workspaceStoreBusyLoadSequenceRef.current.executables = null;
+      setExecutablesBusyLabel(null);
+    }
+    const capabilities = executablesCapabilityView(project, bridgeStatus);
+    if (!project || !bridgeStatus?.ready) {
+      return null;
+    }
+
+    if (!capabilities.bridgeAvailable) {
+      dispatchExecutablesWorkspace({ type: 'items-loaded', items: [] });
+      cacheProjectExecutables(project, []);
+      return [];
     }
 
     const showBusy = options.showBusy ?? true;
@@ -3959,6 +4117,7 @@ export const App = () => {
       dispatchExecutablesWorkspace({ type: 'load-started' });
     }
     if (showBusy) {
+      workspaceStoreBusyLoadSequenceRef.current.executables = loadSequence;
       setExecutablesBusyLabel('Loading executables');
       setMessage(null);
     }
@@ -3967,15 +4126,22 @@ export const App = () => {
       const executables = await window.fluxora.executables.list(project.configPath, {
         operationId
       });
+      if (!isCurrentWorkspaceStoreLoad('executables', loadSequence)) {
+        return null;
+      }
       dispatchExecutablesWorkspace({ type: 'items-loaded', items: executables });
       cacheProjectExecutables(project, executables);
       return executables;
     } catch (error) {
+      if (!isCurrentWorkspaceStoreLoad('executables', loadSequence)) {
+        return null;
+      }
       dispatchExecutablesWorkspace({ type: 'load-failed', message: errorMessage(error) });
       setMessage(errorMessage(error));
       return null;
     } finally {
-      if (showBusy) {
+      if (workspaceStoreBusyLoadSequenceRef.current.executables === loadSequence) {
+        workspaceStoreBusyLoadSequenceRef.current.executables = null;
         setExecutablesBusyLabel(null);
       }
     }
@@ -4508,9 +4674,21 @@ export const App = () => {
     project = selectedProject,
     options: WorkspaceLoadOptions = {}
   ) => {
+    if (!canBeginWorkspaceStoreLoad(options)) {
+      return false;
+    }
+    const loadSequence = beginWorkspaceStoreLoad('downloads');
+    if (workspaceStoreBusyLoadSequenceRef.current.downloads !== null) {
+      workspaceStoreBusyLoadSequenceRef.current.downloads = null;
+      setDownloadsBusyLabel(null);
+    }
     const capabilities = downloadCapabilityView(project, bridgeStatus);
-    if (!project || !bridgeStatus?.ready || !capabilities.bridgeAvailable) {
-      return;
+    if (!project || !bridgeStatus?.ready) {
+      return false;
+    }
+    if (!capabilities.bridgeAvailable) {
+      dispatchDownloadsWorkspace({ type: 'items-loaded', items: [] });
+      return true;
     }
 
     const showBusy = options.showBusy ?? true;
@@ -4520,6 +4698,7 @@ export const App = () => {
     const operationId = options.operationId ?? createRendererOperationId('downloads_load');
     dispatchDownloadsWorkspace({ type: 'load-started', silent: !showLoading });
     if (showBusy) {
+      workspaceStoreBusyLoadSequenceRef.current.downloads = loadSequence;
       setDownloadsBusyLabel('Loading downloads');
       setMessage(null);
     }
@@ -4528,16 +4707,25 @@ export const App = () => {
       const nextDownloads = await window.fluxora.downloads.list(project.projectDirectory, {
         operationId
       });
+      if (!isCurrentWorkspaceStoreLoad('downloads', loadSequence)) {
+        return false;
+      }
       dispatchDownloadsWorkspace({ type: 'items-loaded', items: nextDownloads });
       if (resetScroll) {
         setDownloadListScrollTop(0);
       }
+      return true;
     } catch (error) {
+      if (!isCurrentWorkspaceStoreLoad('downloads', loadSequence)) {
+        return false;
+      }
       const message = errorMessage(error);
       dispatchDownloadsWorkspace({ type: 'load-failed', message, silent: !showLoading });
       setMessage(message);
+      return false;
     } finally {
-      if (showBusy) {
+      if (workspaceStoreBusyLoadSequenceRef.current.downloads === loadSequence) {
+        workspaceStoreBusyLoadSequenceRef.current.downloads = null;
         setDownloadsBusyLabel(null);
       }
     }
@@ -5695,7 +5883,8 @@ export const App = () => {
       (activeRoute !== 'build' && activeRoute !== 'mods') ||
       !selectedProject ||
       !bridgeStatus?.ready ||
-      openingBuildOperationIdRef.current
+      openingBuildOperationIdRef.current ||
+      coordinatedWorkspaceLoadRef.current?.projectId === selectedProject.id
     ) {
       return;
     }
@@ -5784,7 +5973,8 @@ export const App = () => {
       (activeRoute !== 'build' && activeRoute !== 'plugins') ||
       !selectedProject ||
       !bridgeStatus?.ready ||
-      openingBuildOperationIdRef.current
+      openingBuildOperationIdRef.current ||
+      coordinatedWorkspaceLoadRef.current?.projectId === selectedProject.id
     ) {
       return;
     }
@@ -5810,7 +6000,8 @@ export const App = () => {
       (activeRoute !== 'build' && activeRoute !== 'downloads') ||
       !selectedProject ||
       !bridgeStatus?.ready ||
-      openingBuildOperationIdRef.current
+      openingBuildOperationIdRef.current ||
+      coordinatedWorkspaceLoadRef.current?.projectId === selectedProject.id
     ) {
       return;
     }
@@ -6116,7 +6307,8 @@ export const App = () => {
       (activeRoute !== 'build' && activeRoute !== 'profiles') ||
       !selectedProject ||
       !bridgeStatus?.ready ||
-      openingBuildOperationIdRef.current
+      openingBuildOperationIdRef.current ||
+      coordinatedWorkspaceLoadRef.current?.projectId === selectedProject.id
     ) {
       return;
     }
@@ -6149,7 +6341,8 @@ export const App = () => {
       (activeRoute !== 'build' && activeRoute !== 'executables') ||
       !selectedProject ||
       !bridgeStatus?.ready ||
-      openingBuildOperationIdRef.current
+      openingBuildOperationIdRef.current ||
+      coordinatedWorkspaceLoadRef.current?.projectId === selectedProject.id
     ) {
       return;
     }
@@ -6236,6 +6429,22 @@ export const App = () => {
   }, [operationOverlay?.operationId]);
 
   useEffect(() => {
+    const pendingRestore = pendingBuildPathEditorRestoreRef.current;
+    if (pendingRestore?.selectedProjectId === selectedProjectId) {
+      const { snapshot } = pendingRestore;
+      pendingBuildPathEditorRestoreRef.current = null;
+      buildPathDraftDirtyRef.current = snapshot.isDirty;
+      setBuildPathDraft({ ...snapshot.buildPathDraft });
+      setBuildPathExecutables([...snapshot.buildPathExecutables]);
+      setBuildPathsError(snapshot.buildPathsError);
+      setFluxPackSummary(snapshot.fluxPackSummary);
+      setFluxPackInstallResult(snapshot.fluxPackInstallResult);
+      setIsBuildPathsOpen(snapshot.isBuildPathsOpen);
+      setGrassCacheConfirmationOpen(snapshot.grassCacheConfirmationOpen);
+      return;
+    }
+
+    pendingBuildPathEditorRestoreRef.current = null;
     buildPathDraftDirtyRef.current = false;
     setBuildPathDraft(emptyBuildPathDraft(selectedProject));
     setBuildPathExecutables(selectedProject?.executables ?? []);
@@ -6244,7 +6453,7 @@ export const App = () => {
     setFluxPackInstallResult(null);
     setIsBuildPathsOpen(false);
     setGrassCacheConfirmationOpen(false);
-  }, [selectedProject?.configPath]);
+  }, [selectedProject?.configPath, selectedProjectId]);
 
   useEffect(() => {
     setExecutableDraft(selectedExecutableItem ? { ...selectedExecutableItem } : null);
@@ -6353,9 +6562,17 @@ export const App = () => {
 
   const changeRoute = (route: RouteId) => {
     if (route === 'home' && openingBuildOperationIdRef.current) {
-      openingBuildCancelRequestsRef.current.add(openingBuildOperationIdRef.current);
-      openingBuildOperationIdRef.current = null;
+      const operationId = openingBuildOperationIdRef.current;
+      openingBuildCancelRequestsRef.current.add(operationId);
+      const previousView = openingBuildPreviousViewRef.current;
+      if (previousView) {
+        setSelectedProjectId(previousView.selectedProjectId);
+      }
+      // Keep the operation lock until the in-flight loaders have settled and
+      // the previous workspace has been restored in openProjectByConfig().
+      setLoadedWorkspaceProjectId(null);
       setOpeningBuildSplash(null);
+      setMessage('Открытие сборки отменено.');
     }
 
     if (isTransferRunning && route !== 'home') {
@@ -6486,15 +6703,34 @@ export const App = () => {
     );
   };
 
-  const restoreOpeningBuildPreviousView = () => {
+  const showOpeningBuildPreviousView = () => {
     const previousView = openingBuildPreviousViewRef.current;
     if (!previousView) {
       return;
     }
 
+    pendingBuildPathEditorRestoreRef.current = {
+      selectedProjectId: previousView.selectedProjectId,
+      snapshot: previousView.buildPathEditor
+    };
+    buildPathDraftDirtyRef.current = previousView.buildPathEditor.isDirty;
+    setBuildPathDraft({ ...previousView.buildPathEditor.buildPathDraft });
+    setBuildPathExecutables([...previousView.buildPathEditor.buildPathExecutables]);
+    setBuildPathsError(previousView.buildPathEditor.buildPathsError);
+    setFluxPackSummary(previousView.buildPathEditor.fluxPackSummary);
+    setFluxPackInstallResult(previousView.buildPathEditor.fluxPackInstallResult);
+    setIsBuildPathsOpen(previousView.buildPathEditor.isBuildPathsOpen);
+    setGrassCacheConfirmationOpen(previousView.buildPathEditor.grassCacheConfirmationOpen);
+    dispatchProfilesWorkspace({ type: 'selected', name: previousView.profileName });
+    dispatchExecutablesWorkspace({
+      type: 'selected',
+      id: previousView.selectedExecutableId
+    });
     setSelectedProjectId(previousView.selectedProjectId);
     setActiveRoute(previousView.route);
-    openingBuildPreviousViewRef.current = null;
+    // An in-flight load may already have replaced only some workspace stores.
+    // Keep runtime metrics detached until the previous workspace is reloaded.
+    setLoadedWorkspaceProjectId(null);
   };
 
   const setOpeningBuildProgress = (
@@ -6517,33 +6753,116 @@ export const App = () => {
     project: FluxoraProject,
     options: WorkspaceLoadOptions = {}
   ) => {
+    const loadSequence = coordinatedWorkspaceLoadSequenceRef.current + 1;
+    coordinatedWorkspaceLoadSequenceRef.current = loadSequence;
+    coordinatedWorkspaceLoadRef.current = { projectId: project.id, sequence: loadSequence };
     const profileName = options.profileName ?? selectedProjectProfileName;
     const loadOptions: WorkspaceLoadOptions = {
       ...options,
+      coordinatedSequence: loadSequence,
       profileName
     };
 
-    await Promise.all([
-      loadModsWorkspace(project, loadOptions),
-      loadPluginsWorkspace(project, loadOptions),
-      loadDownloadsWorkspace(project, loadOptions),
-      loadProfilesWorkspace(project, loadOptions),
-      loadExecutablesWorkspace(project, loadOptions)
-    ]);
+    try {
+      const [modsLoaded, pluginsLoaded, downloadsLoaded, profiles, executables] = await Promise.all([
+        loadModsWorkspace(project, loadOptions),
+        loadPluginsWorkspace(project, loadOptions),
+        loadDownloadsWorkspace(project, loadOptions),
+        loadProfilesWorkspace(project, loadOptions),
+        loadExecutablesWorkspace(project, loadOptions)
+      ]);
+      if (
+        !modsLoaded ||
+        !pluginsLoaded ||
+        !downloadsLoaded ||
+        profiles === null ||
+        executables === null
+      ) {
+        throw new Error('The build workspace could not be loaded completely.');
+      }
+    } finally {
+      if (coordinatedWorkspaceLoadRef.current?.sequence === loadSequence) {
+        coordinatedWorkspaceLoadRef.current = null;
+      }
+    }
+  };
+
+  const restoreOpeningBuildPreviousView = async () => {
+    const previousView = openingBuildPreviousViewRef.current;
+    if (!previousView) {
+      return;
+    }
+
+    showOpeningBuildPreviousView();
+    const previousProject = previousView.loadedWorkspaceProjectId
+      ? projects.find((project) => project.id === previousView.loadedWorkspaceProjectId)
+      : null;
+
+    if (previousProject) {
+      try {
+        await loadBuildWorkspaceData(previousProject, {
+          operationId: createRendererOperationId('projects_open_restore'),
+          profileName: previousView.profileName,
+          resetScroll: true,
+          showBusy: false,
+          showLoading: true
+        });
+        setLoadedWorkspaceProjectId(previousProject.id);
+      } catch {
+        // The catalog remains usable; persisted project metrics are safer than
+        // attributing a partially restored workspace to the wrong build.
+        setLoadedWorkspaceProjectId(null);
+      }
+    }
+
+    openingBuildPreviousViewRef.current = null;
   };
 
   const openProjectByConfig = async (configPath: string) => {
+    if (
+      !bridgeStatus?.ready ||
+      isTransferRunning ||
+      isOpeningBuildLocked ||
+      openingBuildOperationIdRef.current
+    ) {
+      return;
+    }
+
     const operationId = createRendererOperationId('projects_open');
     const pendingProject = projects.find((project) => project.configPath === configPath);
 
-    if (openingBuildOperationIdRef.current) {
-      openingBuildCancelRequestsRef.current.add(openingBuildOperationIdRef.current);
+    if (pendingProject && pendingProject.id !== loadedWorkspaceProjectId) {
+      setLoadedWorkspaceProjectId(null);
     }
+
     openingBuildOperationIdRef.current = operationId;
+    setIsOpeningBuildLocked(true);
+    const previousWorkspaceProject = loadedWorkspaceProjectId
+      ? projects.find((project) => project.id === loadedWorkspaceProjectId)
+      : null;
     openingBuildPreviousViewRef.current = {
+      buildPathEditor: {
+        buildPathDraft: { ...buildPathDraft },
+        buildPathExecutables: [...buildPathExecutables],
+        buildPathsError,
+        fluxPackInstallResult,
+        fluxPackSummary,
+        grassCacheConfirmationOpen,
+        isBuildPathsOpen,
+        isDirty: buildPathDraftDirtyRef.current
+      },
+      profileName:
+        profilesWorkspace.selectedName ||
+        (previousWorkspaceProject
+          ? projectDefaultProfileName(previousWorkspaceProject)
+          : selectedProjectProfileName),
       route: activeRoute,
-      selectedProjectId
+      selectedExecutableId: executablesWorkspace.selectedId,
+      selectedProjectId,
+      loadedWorkspaceProjectId
     };
+
+    let shouldRestorePreviousView = false;
 
     setOpeningBuildSplash({
       operationId,
@@ -6560,6 +6879,7 @@ export const App = () => {
     try {
       const { project: opened } = await openProjectConfig(configPath, operationId);
       if (openingBuildCancelRequestsRef.current.has(operationId)) {
+        shouldRestorePreviousView = true;
         return;
       }
 
@@ -6579,43 +6899,30 @@ export const App = () => {
         showLoading: true
       });
       if (openingBuildCancelRequestsRef.current.has(operationId)) {
+        shouldRestorePreviousView = true;
         return;
       }
 
+      setLoadedWorkspaceProjectId(opened.id);
       setOpeningBuildProgress(operationId, 100, opened.name);
       openingBuildPreviousViewRef.current = null;
       setMessage(`Opened ${opened.name}`);
     } catch (error) {
-      if (openingBuildCancelRequestsRef.current.has(operationId)) {
-        return;
+      shouldRestorePreviousView = true;
+      if (!openingBuildCancelRequestsRef.current.has(operationId)) {
+        setMessage(errorMessage(error));
       }
-      restoreOpeningBuildPreviousView();
-      setMessage(errorMessage(error));
     } finally {
+      if (shouldRestorePreviousView) {
+        await restoreOpeningBuildPreviousView();
+      }
       openingBuildCancelRequestsRef.current.delete(operationId);
       if (openingBuildOperationIdRef.current === operationId) {
         openingBuildOperationIdRef.current = null;
+        setIsOpeningBuildLocked(false);
       }
       setOpeningBuildSplash((current) => (current?.operationId === operationId ? null : current));
     }
-  };
-
-  const openProjectFromDialog = async () => {
-    const result = await window.fluxora.dialogs.pickBuildConfig(catalog.buildConfigsDirectory);
-    if (result.canceled || !result.path) {
-      return;
-    }
-
-    await openProjectByConfig(result.path);
-  };
-
-  const openSelectedProject = async () => {
-    if (!selectedProject) {
-      await openProjectFromDialog();
-      return;
-    }
-
-    await openProjectByConfig(selectedProject.configPath);
   };
 
   const cancelOpeningBuild = () => {
@@ -6625,11 +6932,8 @@ export const App = () => {
     }
 
     openingBuildCancelRequestsRef.current.add(operationId);
-    if (openingBuildOperationIdRef.current === operationId) {
-      openingBuildOperationIdRef.current = null;
-    }
     setOpeningBuildSplash(null);
-    restoreOpeningBuildPreviousView();
+    showOpeningBuildPreviousView();
     setMessage('Открытие сборки отменено.');
   };
 
@@ -6694,6 +6998,7 @@ export const App = () => {
       const { project: renamed } = await renameProjectConfig(project, newName);
       setProjects((current) => upsertProject(current, renamed));
       setSelectedProjectId(renamed.id);
+      setLoadedWorkspaceProjectId((current) => (current === project.id ? renamed.id : current));
       setMessage(`Renamed to ${renamed.name}`);
     } catch (error) {
       setMessage(errorMessage(error));
@@ -7077,9 +7382,35 @@ export const App = () => {
       setFluxPackInstallResult(result);
       activateRightPane('build');
       const { project: opened } = await openProjectConfig(result.configPath, operationId);
+      setLoadedWorkspaceProjectId(null);
       setProjects((current) => upsertProject(current, opened));
       setSelectedProjectId(opened.id);
       changeRoute('build');
+      const openingProfileName = projectDefaultProfileName(opened);
+      dispatchProfilesWorkspace({ type: 'selected', name: openingProfileName });
+      let workspaceLoadError: unknown = null;
+      try {
+        await loadBuildWorkspaceData(opened, {
+          operationId,
+          profileName: openingProfileName,
+          resetScroll: true,
+          showBusy: false,
+          showLoading: true
+        });
+      } catch (error) {
+        workspaceLoadError = error;
+      }
+
+      if (workspaceLoadError) {
+        setMessage(
+          `Installed FluxPack, but its workspace could not be loaded: ${errorMessage(workspaceLoadError)}`
+        );
+        finishOperationOverlay(operationId, `Installed ${result.buildName || opened.name}`);
+        await loadCatalog();
+        return;
+      }
+
+      setLoadedWorkspaceProjectId(opened.id);
       setMessage(`Installed FluxPack: ${result.buildName || opened.name}`);
       finishOperationOverlay(operationId, `Installed ${result.buildName || opened.name}`);
       await loadCatalog();
@@ -7273,10 +7604,38 @@ export const App = () => {
         return;
       }
 
+      setLoadedWorkspaceProjectId(null);
       setProjects((current) => upsertProject(current, created));
       setSelectedProjectId(created.id);
       setIsCreateOpen(false);
       changeRoute('build');
+      const openingProfileName = projectDefaultProfileName(created);
+      dispatchProfilesWorkspace({ type: 'selected', name: openingProfileName });
+      let workspaceLoadError: unknown = null;
+      try {
+        await loadBuildWorkspaceData(created, {
+          operationId,
+          profileName: openingProfileName,
+          resetScroll: true,
+          showBusy: false,
+          showLoading: true
+        });
+      } catch (error) {
+        workspaceLoadError = error;
+      }
+
+      if (createCancelRequestsRef.current.has(operationId)) {
+        await cleanupCreatedBuild(created, operationId);
+        return;
+      }
+
+      if (workspaceLoadError) {
+        setMessage(`Build created, but its workspace could not be loaded: ${errorMessage(workspaceLoadError)}`);
+        closeOperationOverlay(operationId);
+        return;
+      }
+
+      setLoadedWorkspaceProjectId(created.id);
       closeOperationOverlay(operationId);
     } catch (error) {
       if (createCancelRequestsRef.current.has(operationId)) {
@@ -7458,7 +7817,7 @@ export const App = () => {
   };
 
   const refreshCurrentView = async () => {
-    if (refreshInFlightRef.current) {
+    if (refreshInFlightRef.current || openingBuildOperationIdRef.current) {
       return;
     }
 
@@ -7943,6 +8302,12 @@ export const App = () => {
       return null;
     }
 
+    const projectActionDisabled =
+      isOpeningBuildLocked ||
+      isTransferRunning ||
+      Boolean(busyLabel) ||
+      Boolean(operationOverlay?.isRunning);
+
     return createPortal(
       <div
         className="mod-row-menu project-row-menu project-row-menu--overlay"
@@ -7957,6 +8322,7 @@ export const App = () => {
         onClick={(event) => event.stopPropagation()}
       >
         <button
+          disabled={projectActionDisabled}
           type="button"
           role="menuitem"
           onClick={() => {
@@ -7968,6 +8334,7 @@ export const App = () => {
           <span>Rename</span>
         </button>
         <button
+          disabled={projectActionDisabled}
           type="button"
           role="menuitem"
           onClick={() => {
@@ -7980,6 +8347,7 @@ export const App = () => {
         </button>
         <button
           className="project-row-menu__danger"
+          disabled={projectActionDisabled}
           type="button"
           role="menuitem"
           onClick={() => {
@@ -8241,12 +8609,21 @@ export const App = () => {
         catalogPath={catalog.buildConfigsDirectory}
         catalogState={catalogState}
         filteredProjects={filteredProjects}
-        isNewBuildDisabled={!bridgeStatus?.ready || isTransferRunning}
+        isNewBuildDisabled={
+          !bridgeStatus?.ready ||
+          isTransferRunning ||
+          isOpeningBuildLocked ||
+          openingBuildSplash !== null
+        }
+        isProjectInteractionDisabled={isOpeningBuildLocked || isTransferRunning}
         onNewBuild={startCreate}
         onOpenProject={(project) => void openProjectByConfig(project.configPath)}
         onOpenProjectDirectory={(project) => void openProjectDirectory(project)}
-        onOpenSelectedProject={() => void openSelectedProject()}
         onProjectMenuToggle={(project, anchor) => {
+          if (isOpeningBuildLocked || isTransferRunning) {
+            return;
+          }
+
           if (projectMenuId === project.id) {
             setProjectMenuId(null);
             setProjectMenuPosition(null);
@@ -8487,6 +8864,11 @@ export const App = () => {
       !selectedProject ||
       !buildHeaderCapabilities.packageAvailable ||
       Boolean(operationOverlay?.isRunning);
+    const checkUpdatesDisabled =
+      !selectedProject ||
+      !buildHeaderCapabilities.refreshAvailable ||
+      Boolean(modsBusyLabel) ||
+      Boolean(operationOverlay?.isRunning);
     const installFluxPackDisabled = !bridgeStatus?.ready || Boolean(operationOverlay?.isRunning);
     const modCreationDisabled =
       !selectedProject ||
@@ -8526,6 +8908,19 @@ export const App = () => {
         >
           <MenuIcon source={menuPlusIcon} />
           <span>Создать пустой мод</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          title={buildHeaderCapabilities.refreshReason || 'Проверить обновления модов'}
+          disabled={checkUpdatesDisabled}
+          onClick={() => {
+            setModsToolbarMenuPosition(null);
+            void checkModUpdates();
+          }}
+        >
+          <MenuIcon source={menuCircleCheckIcon} />
+          <span>Проверить обновления</span>
         </button>
         <button
           type="button"
@@ -12190,14 +12585,20 @@ export const App = () => {
     return (
       <main className="desktop-shell desktop-shell--settings-window desktop-shell--file-preview-window">
         {renderTitlebar(false)}
-        <FilePreviewWorkspace
-          project={selectedProject}
-          initialModPath={filePreviewModId}
-          initialRelativePath={filePreviewInitialPath}
-          initialFileName={filePreviewInitialName}
-          initialProfileName={filePreviewProfileName}
-          initialKind={filePreviewKind}
-        />
+        <Suspense
+          fallback={
+            <section className="file-preview-window" aria-busy="true" aria-label="Loading file preview" />
+          }
+        >
+          <FilePreviewWorkspace
+            project={selectedProject}
+            initialModPath={filePreviewModId}
+            initialRelativePath={filePreviewInitialPath}
+            initialFileName={filePreviewInitialName}
+            initialProfileName={filePreviewProfileName}
+            initialKind={filePreviewKind}
+          />
+        </Suspense>
       </main>
     );
   }

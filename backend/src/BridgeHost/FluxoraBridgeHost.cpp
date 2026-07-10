@@ -2,6 +2,7 @@
 #include "FluxoraCore/Support/JsonReader.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <exception>
@@ -398,6 +399,48 @@ namespace
         return request;
     }
 
+    [[noreturn]] void throwProtocolVersionMismatch(std::wstring message)
+    {
+        throw BridgeError{
+            L"bridge.protocolVersionMismatch",
+            std::move(message),
+            ErrorCategory::Transport,
+            false
+        };
+    }
+
+    void validateRequestEnvelope(const fluxora::JsonValue& root, const BridgeRequest& request)
+    {
+        const std::wstring jsonRpc = requiredStringField(root, L"jsonrpc");
+        if (jsonRpc != L"2.0")
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"jsonrpc must be 2.0.",
+                ErrorCategory::Validation,
+                false
+            };
+        }
+
+        if (request.meta == nullptr || !request.meta->isObject())
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"meta object is required.",
+                ErrorCategory::Validation,
+                false
+            };
+        }
+
+        const std::wstring requestedProtocolVersion = requiredStringField(*request.meta, L"protocolVersion");
+        if (requestedProtocolVersion != protocolVersion)
+        {
+            throwProtocolVersionMismatch(
+                L"Unsupported bridge protocol version " + requestedProtocolVersion +
+                L"; expected " + std::wstring(protocolVersion) + L".");
+        }
+    }
+
     int callWithBuffer(int (*fn)(wchar_t*, int), std::wstring& output)
     {
         std::vector<wchar_t> buffer(static_cast<std::size_t>(initialBufferLength), L'\0');
@@ -728,8 +771,19 @@ namespace
         writer.endObject();
     }
 
-    std::wstring payloadHandshake()
+    std::wstring payloadHandshake(const BridgeRequest& request)
     {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::vector<std::wstring> supportedVersions =
+            requiredStringArrayField(params, L"supportedProtocolVersions");
+        if (std::find(supportedVersions.begin(), supportedVersions.end(), protocolVersion) ==
+            supportedVersions.end())
+        {
+            throwProtocolVersionMismatch(
+                L"No compatible bridge protocol version was offered; host requires " +
+                std::wstring(protocolVersion) + L".");
+        }
+
         fluxora::JsonWriter writer;
         writer.beginObject();
         writer.field(L"protocolVersion", protocolVersion);
@@ -2409,7 +2463,7 @@ namespace
     {
         if (request.method == L"system.handshake")
         {
-            return payloadHandshake();
+            return payloadHandshake(request);
         }
         if (request.method == L"system.initialize")
         {
@@ -2867,6 +2921,7 @@ namespace
                 const BridgeRequest request = parseRequest(root);
                 requestId = request.id;
                 operationId = currentOperationId(request);
+                validateRequestEnvelope(root, request);
                 beginCoreOperation(request);
 
                 const std::wstring payload = dispatch(request, shouldExit);

@@ -42,6 +42,7 @@ describe('project library stats', () => {
   it('lets runtime workspace counts override stale project metrics', () => {
     expect(
       buildProjectLibraryStats(project, {
+        projectId: project.id,
         disabledModCount: 1,
         downloadsCount: 4,
         modCount: 15
@@ -50,6 +51,21 @@ describe('project library stats', () => {
       disabledMods: '1',
       downloads: '4',
       mods: '15'
+    });
+  });
+
+  it('ignores runtime workspace counts that belong to another project', () => {
+    expect(
+      buildProjectLibraryStats(project, {
+        projectId: 'another-build',
+        disabledModCount: 9,
+        downloadsCount: 99,
+        modCount: 999
+      })
+    ).toMatchObject({
+      disabledMods: '2',
+      downloads: '3',
+      mods: '12'
     });
   });
 });

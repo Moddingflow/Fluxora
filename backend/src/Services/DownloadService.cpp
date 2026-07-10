@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cctype>
 #include <cstring>
 #include <ctime>
 #include <cwctype>
@@ -39,6 +40,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <bcrypt.h>
 #include <wincrypt.h>
 #include <winhttp.h>
 #endif
@@ -56,6 +58,11 @@ namespace fluxora
         constexpr std::chrono::milliseconds progressSidecarWriteInterval{250};
         constexpr std::chrono::seconds durableProgressCheckpointInterval{30};
         constexpr std::uintmax_t durableProgressCheckpointBytes = 64ULL * 1024ULL * 1024ULL;
+#ifdef _WIN32
+        constexpr std::chrono::milliseconds externalProcessPollInterval{250};
+        constexpr std::chrono::hours externalProcessTimeout{2};
+        constexpr std::chrono::seconds externalProcessTerminationWait{5};
+#endif
         constexpr std::wstring_view protocolKeyPath = L"Software\\Classes\\nxm";
         constexpr std::wstring_view commandKeyPath = L"Software\\Classes\\nxm\\shell\\open\\command";
         constexpr std::wstring_view backupKeyPath = L"Software\\Fluxora\\NxmProtocol";
@@ -173,6 +180,15 @@ namespace fluxora
             }
         };
 
+        class ArchiveExtractionCanceledException final : public std::runtime_error
+        {
+        public:
+            ArchiveExtractionCanceledException()
+                : std::runtime_error("Archive extraction was canceled.")
+            {
+            }
+        };
+
         std::wstring archiveFileName(
             const NxmDownloadRequest& request,
             std::wstring_view preferredName);
@@ -272,6 +288,27 @@ namespace fluxora
 #endif
         }
 
+        class ScopedLoggerOperationContext final
+        {
+        public:
+            explicit ScopedLoggerOperationContext(std::string_view operationId)
+            {
+                Logger::clearOperationId();
+                if (!operationId.empty())
+                {
+                    Logger::setOperationId(fromUtf8(std::string(operationId)));
+                }
+            }
+
+            ScopedLoggerOperationContext(const ScopedLoggerOperationContext&) = delete;
+            ScopedLoggerOperationContext& operator=(const ScopedLoggerOperationContext&) = delete;
+
+            ~ScopedLoggerOperationContext()
+            {
+                Logger::clearOperationId();
+            }
+        };
+
         std::string readTextFile(const std::filesystem::path& path)
         {
             std::ifstream file(path, std::ios::in | std::ios::binary);
@@ -347,15 +384,200 @@ namespace fluxora
             return hasDigit ? number : 0;
         }
 
-        std::uintmax_t parseContentRangeTotal(std::wstring_view value)
+        std::optional<std::uintmax_t> parseStrictUnsigned(std::wstring_view value)
         {
-            const std::size_t slash = value.find(L'/');
-            if (slash == std::wstring_view::npos || slash + 1 >= value.size())
+            while (!value.empty() && std::iswspace(value.front()))
             {
-                return 0;
+                value.remove_prefix(1);
+            }
+            while (!value.empty() && std::iswspace(value.back()))
+            {
+                value.remove_suffix(1);
+            }
+            if (value.empty())
+            {
+                return std::nullopt;
             }
 
-            return parseUnsigned(value.substr(slash + 1));
+            std::uintmax_t result = 0;
+            for (const wchar_t character : value)
+            {
+                if (character < L'0' || character > L'9')
+                {
+                    return std::nullopt;
+                }
+
+                const std::uintmax_t digit = static_cast<std::uintmax_t>(character - L'0');
+                if (result > ((std::numeric_limits<std::uintmax_t>::max)() - digit) / 10)
+                {
+                    return std::nullopt;
+                }
+                result = (result * 10) + digit;
+            }
+
+            return result;
+        }
+
+        struct HttpContentRange
+        {
+            std::uintmax_t start{0};
+            std::uintmax_t end{0};
+            std::optional<std::uintmax_t> total;
+        };
+
+        std::optional<HttpContentRange> parseHttpContentRange(std::wstring_view value)
+        {
+            while (!value.empty() && std::iswspace(value.front()))
+            {
+                value.remove_prefix(1);
+            }
+            while (!value.empty() && std::iswspace(value.back()))
+            {
+                value.remove_suffix(1);
+            }
+
+            constexpr std::wstring_view unit = L"bytes ";
+            if (value.size() <= unit.size() || toLower(std::wstring(value.substr(0, unit.size()))) != unit)
+            {
+                return std::nullopt;
+            }
+
+            value.remove_prefix(unit.size());
+            const std::size_t dash = value.find(L'-');
+            const std::size_t slash = value.find(L'/');
+            if (dash == std::wstring_view::npos ||
+                slash == std::wstring_view::npos ||
+                dash == 0 ||
+                dash + 1 >= slash ||
+                slash + 1 >= value.size())
+            {
+                return std::nullopt;
+            }
+
+            const std::optional<std::uintmax_t> start = parseStrictUnsigned(value.substr(0, dash));
+            const std::optional<std::uintmax_t> end = parseStrictUnsigned(value.substr(dash + 1, slash - dash - 1));
+            if (!start.has_value() || !end.has_value() || *end < *start)
+            {
+                return std::nullopt;
+            }
+
+            std::optional<std::uintmax_t> total;
+            const std::wstring_view totalText = value.substr(slash + 1);
+            if (totalText != L"*")
+            {
+                total = parseStrictUnsigned(totalText);
+                if (!total.has_value() || *total == 0 || *end >= *total)
+                {
+                    return std::nullopt;
+                }
+            }
+
+            return HttpContentRange{*start, *end, total};
+        }
+
+        struct HttpDownloadResponsePlan
+        {
+            bool appendToPartial{false};
+            std::uintmax_t initialFileBytes{0};
+            std::optional<std::uintmax_t> expectedResponseBytes;
+            std::optional<std::uintmax_t> expectedTotalBytes;
+        };
+
+        HttpDownloadResponsePlan planHttpDownloadResponse(
+            std::uint32_t statusCode,
+            std::uintmax_t requestedOffset,
+            std::wstring_view contentLengthText,
+            std::wstring_view contentRangeText)
+        {
+            std::optional<std::uintmax_t> contentLength;
+            if (!contentLengthText.empty())
+            {
+                contentLength = parseStrictUnsigned(contentLengthText);
+                if (!contentLength.has_value())
+                {
+                    throw std::runtime_error("Download response has an invalid Content-Length header.");
+                }
+            }
+
+            if (statusCode != 206)
+            {
+                return HttpDownloadResponsePlan{
+                    false,
+                    0,
+                    contentLength,
+                    contentLength};
+            }
+
+            const std::optional<HttpContentRange> contentRange = parseHttpContentRange(contentRangeText);
+            if (!contentRange.has_value())
+            {
+                throw std::runtime_error("Partial download response is missing a valid Content-Range header.");
+            }
+            if (contentRange->start != requestedOffset)
+            {
+                throw std::runtime_error(
+                    "Partial download response starts at byte " + std::to_string(contentRange->start) +
+                    " instead of requested byte " + std::to_string(requestedOffset) + ".");
+            }
+
+            if (contentRange->start == 0 &&
+                contentRange->end == (std::numeric_limits<std::uintmax_t>::max)())
+            {
+                throw std::runtime_error("Partial download Content-Range is too large.");
+            }
+            const std::uintmax_t rangeBytes = contentRange->end - contentRange->start + 1;
+            if (contentLength.has_value() && *contentLength != rangeBytes)
+            {
+                throw std::runtime_error(
+                    "Partial download Content-Length does not match Content-Range.");
+            }
+
+            return HttpDownloadResponsePlan{
+                requestedOffset > 0,
+                requestedOffset,
+                contentLength.has_value()
+                    ? contentLength
+                    : std::optional<std::uintmax_t>(rangeBytes),
+                contentRange->total};
+        }
+
+        void validateCompletedHttpDownload(
+            const HttpDownloadResponsePlan& plan,
+            std::uintmax_t responseBytesReceived,
+            std::uintmax_t completedFileBytes)
+        {
+            if (plan.expectedResponseBytes.has_value() &&
+                responseBytesReceived != *plan.expectedResponseBytes)
+            {
+                throw std::runtime_error(
+                    "Download response was truncated: expected " +
+                    std::to_string(*plan.expectedResponseBytes) + " response bytes but received " +
+                    std::to_string(responseBytesReceived) + ".");
+            }
+            if (plan.expectedTotalBytes.has_value() && completedFileBytes != *plan.expectedTotalBytes)
+            {
+                throw std::runtime_error(
+                    "Download response is incomplete: expected final size " +
+                    std::to_string(*plan.expectedTotalBytes) + " bytes but received " +
+                    std::to_string(completedFileBytes) + ".");
+            }
+        }
+
+        void promoteCompletedHttpDownload(
+            const std::filesystem::path& partialPath,
+            const std::filesystem::path& destinationPath,
+            const HttpDownloadResponsePlan& plan,
+            std::uintmax_t responseBytesReceived,
+            std::uintmax_t completedFileBytes)
+        {
+            validateCompletedHttpDownload(plan, responseBytesReceived, completedFileBytes);
+
+            std::error_code renameError;
+            std::filesystem::rename(partialPath, destinationPath, renameError);
+            if (renameError)
+            {
+                throw std::runtime_error("Failed to finalize downloaded file.");
+            }
         }
 
         std::wstring trim(std::wstring value)
@@ -569,6 +791,330 @@ namespace fluxora
             return stream.str();
         }
 
+        class StrongContentHasher final
+        {
+        public:
+            StrongContentHasher()
+            {
+#ifdef _WIN32
+                if (BCryptOpenAlgorithmProvider(
+                        &algorithm_,
+                        BCRYPT_SHA256_ALGORITHM,
+                        nullptr,
+                        0) < 0)
+                {
+                    throw std::runtime_error("Failed to initialize SHA-256 hashing.");
+                }
+
+                DWORD bytesWritten = 0;
+                DWORD objectLength = 0;
+                if (BCryptGetProperty(
+                        algorithm_,
+                        BCRYPT_OBJECT_LENGTH,
+                        reinterpret_cast<PUCHAR>(&objectLength),
+                        sizeof(objectLength),
+                        &bytesWritten,
+                        0) < 0 ||
+                    objectLength == 0)
+                {
+                    BCryptCloseAlgorithmProvider(algorithm_, 0);
+                    algorithm_ = nullptr;
+                    throw std::runtime_error("Failed to configure SHA-256 hashing.");
+                }
+
+                if (BCryptGetProperty(
+                        algorithm_,
+                        BCRYPT_HASH_LENGTH,
+                        reinterpret_cast<PUCHAR>(&hashLength_),
+                        sizeof(hashLength_),
+                        &bytesWritten,
+                        0) < 0 ||
+                    hashLength_ == 0)
+                {
+                    BCryptCloseAlgorithmProvider(algorithm_, 0);
+                    algorithm_ = nullptr;
+                    throw std::runtime_error("Failed to query SHA-256 hash length.");
+                }
+
+                hashObject_.resize(objectLength);
+                if (BCryptCreateHash(
+                        algorithm_,
+                        &hash_,
+                        hashObject_.data(),
+                        static_cast<ULONG>(hashObject_.size()),
+                        nullptr,
+                        0,
+                        0) < 0)
+                {
+                    BCryptCloseAlgorithmProvider(algorithm_, 0);
+                    algorithm_ = nullptr;
+                    throw std::runtime_error("Failed to create SHA-256 hash state.");
+                }
+#endif
+            }
+
+            StrongContentHasher(const StrongContentHasher&) = delete;
+            StrongContentHasher& operator=(const StrongContentHasher&) = delete;
+
+            ~StrongContentHasher()
+            {
+#ifdef _WIN32
+                if (hash_ != nullptr)
+                {
+                    BCryptDestroyHash(hash_);
+                }
+                if (algorithm_ != nullptr)
+                {
+                    BCryptCloseAlgorithmProvider(algorithm_, 0);
+                }
+#endif
+            }
+
+            void update(const void* data, std::size_t size)
+            {
+                if (finished_ || data == nullptr || size == 0)
+                {
+                    return;
+                }
+
+#ifdef _WIN32
+                const auto* bytes = static_cast<const unsigned char*>(data);
+                while (size > 0)
+                {
+                    const ULONG chunk = static_cast<ULONG>((std::min)(
+                        size,
+                        static_cast<std::size_t>((std::numeric_limits<ULONG>::max)())));
+                    if (BCryptHashData(
+                            hash_,
+                            const_cast<PUCHAR>(bytes),
+                            chunk,
+                            0) < 0)
+                    {
+                        throw std::runtime_error("Failed to update SHA-256 hash.");
+                    }
+                    bytes += chunk;
+                    size -= chunk;
+                }
+#else
+                const auto* bytes = static_cast<const unsigned char*>(data);
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    first_ ^= bytes[index];
+                    first_ *= 1099511628211ull;
+                    second_ += bytes[index] + 0x9e3779b97f4a7c15ull;
+                    second_ ^= second_ >> 29;
+                    second_ *= 0xbf58476d1ce4e5b9ull;
+                }
+#endif
+            }
+
+            void update(std::string_view value)
+            {
+                update(value.data(), value.size());
+            }
+
+            [[nodiscard]] std::string finish()
+            {
+                if (finished_)
+                {
+                    throw std::logic_error("Content hash was already finalized.");
+                }
+                finished_ = true;
+
+                std::vector<unsigned char> digest;
+#ifdef _WIN32
+                digest.resize(hashLength_);
+                if (BCryptFinishHash(
+                        hash_,
+                        digest.data(),
+                        static_cast<ULONG>(digest.size()),
+                        0) < 0)
+                {
+                    throw std::runtime_error("Failed to finalize SHA-256 hash.");
+                }
+#else
+                digest.resize(16);
+                for (std::size_t index = 0; index < 8; ++index)
+                {
+                    digest[index] = static_cast<unsigned char>((first_ >> (index * 8)) & 0xffu);
+                    digest[8 + index] = static_cast<unsigned char>((second_ >> (index * 8)) & 0xffu);
+                }
+#endif
+
+                std::ostringstream stream;
+                stream << std::hex << std::setfill('0');
+                for (const unsigned char byte : digest)
+                {
+                    stream << std::setw(2) << static_cast<unsigned int>(byte);
+                }
+                return stream.str();
+            }
+
+        private:
+            bool finished_{false};
+#ifdef _WIN32
+            BCRYPT_ALG_HANDLE algorithm_{nullptr};
+            BCRYPT_HASH_HANDLE hash_{nullptr};
+            std::vector<unsigned char> hashObject_;
+            DWORD hashLength_{0};
+#else
+            std::uint64_t first_{14695981039346656037ull};
+            std::uint64_t second_{1099511628211ull};
+#endif
+        };
+
+        [[nodiscard]] std::string regularFileIdentityToken(const std::filesystem::path& path)
+        {
+#ifdef _WIN32
+            const HANDLE handle = CreateFileW(
+                path.c_str(),
+                FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                nullptr);
+            if (handle == INVALID_HANDLE_VALUE)
+            {
+                throw std::runtime_error("Failed to inspect file identity.");
+            }
+
+            BY_HANDLE_FILE_INFORMATION information{};
+            FILE_BASIC_INFO basicInformation{};
+            const BOOL informationRead = GetFileInformationByHandle(handle, &information);
+            const BOOL basicInformationRead = GetFileInformationByHandleEx(
+                handle,
+                FileBasicInfo,
+                &basicInformation,
+                sizeof(basicInformation));
+            CloseHandle(handle);
+            if (informationRead == FALSE || basicInformationRead == FALSE)
+            {
+                throw std::runtime_error("Failed to read file identity.");
+            }
+
+            std::ostringstream token;
+            token << information.dwVolumeSerialNumber << ':'
+                  << information.nFileIndexHigh << ':'
+                  << information.nFileIndexLow << ':'
+                  << information.nFileSizeHigh << ':'
+                  << information.nFileSizeLow << ':'
+                  << information.ftLastWriteTime.dwHighDateTime << ':'
+                  << information.ftLastWriteTime.dwLowDateTime << ':'
+                  << basicInformation.ChangeTime.QuadPart;
+            return token.str();
+#else
+            std::error_code sizeError;
+            const std::uintmax_t size = std::filesystem::file_size(path, sizeError);
+            std::error_code timeError;
+            const auto modified = std::filesystem::last_write_time(path, timeError);
+            if (sizeError || timeError)
+            {
+                throw std::runtime_error("Failed to inspect file identity.");
+            }
+            return std::to_string(size) + ":" +
+                std::to_string(modified.time_since_epoch().count());
+#endif
+        }
+
+        void hashRegularFileContents(
+            const std::filesystem::path& path,
+            StrongContentHasher& hasher)
+        {
+            std::ifstream file(path, std::ios::in | std::ios::binary);
+            if (!file)
+            {
+                throw std::runtime_error("Failed to open file for integrity hashing.");
+            }
+
+            std::vector<char> buffer(1024 * 1024);
+            while (file)
+            {
+                file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+                const std::streamsize read = file.gcount();
+                if (read > 0)
+                {
+                    hasher.update(buffer.data(), static_cast<std::size_t>(read));
+                }
+            }
+            if (!file.eof())
+            {
+                throw std::runtime_error("Failed while hashing file contents.");
+            }
+        }
+
+        [[nodiscard]] std::string regularFileContentHash(const std::filesystem::path& path)
+        {
+            StrongContentHasher hasher;
+            hashRegularFileContents(path, hasher);
+            return hasher.finish();
+        }
+
+        [[nodiscard]] std::string cachedRegularFileContentHash(const std::filesystem::path& path)
+        {
+            struct CachedHash
+            {
+                std::string identity;
+                std::string digest;
+                std::uint64_t lastUse{0};
+            };
+
+#ifdef _WIN32
+            static std::mutex cacheMutex;
+            static std::map<std::wstring, CachedHash> cache;
+            static std::uint64_t useCounter = 0;
+            constexpr std::size_t maxCachedHashes = 32;
+            const std::wstring cacheKey = toLower(path.lexically_normal().wstring());
+#endif
+
+            for (int attempt = 0; attempt < 2; ++attempt)
+            {
+                const std::string identityBefore = regularFileIdentityToken(path);
+#ifdef _WIN32
+                {
+                    std::lock_guard lock(cacheMutex);
+                    const auto found = cache.find(cacheKey);
+                    if (found != cache.end() && found->second.identity == identityBefore)
+                    {
+                        found->second.lastUse = ++useCounter;
+                        return found->second.digest;
+                    }
+                }
+#endif
+
+                const std::string digest = regularFileContentHash(path);
+                const std::string identityAfter = regularFileIdentityToken(path);
+                if (identityBefore != identityAfter)
+                {
+                    continue;
+                }
+
+#ifdef _WIN32
+                {
+                    std::lock_guard lock(cacheMutex);
+                    cache[cacheKey] = CachedHash{identityAfter, digest, ++useCounter};
+                    if (cache.size() > maxCachedHashes)
+                    {
+                        const auto oldest = std::min_element(
+                            cache.begin(),
+                            cache.end(),
+                            [](const auto& left, const auto& right)
+                            {
+                                return left.second.lastUse < right.second.lastUse;
+                            });
+                        if (oldest != cache.end())
+                        {
+                            cache.erase(oldest);
+                        }
+                    }
+                }
+#endif
+                return digest;
+            }
+
+            throw std::runtime_error("File changed while its cache identity was being calculated.");
+        }
+
         [[nodiscard]] std::wstring fileCacheFingerprint(const std::filesystem::path& path)
         {
             if (path.empty())
@@ -576,17 +1122,9 @@ namespace fluxora
                 return {};
             }
 
-            std::error_code sizeError;
-            const std::uintmax_t size = std::filesystem::file_size(path, sizeError);
-            std::error_code timeError;
-            const auto modified = std::filesystem::last_write_time(path, timeError);
-            const auto modifiedTicks = timeError
-                ? 0
-                : modified.time_since_epoch().count();
-            return hashText(
-                toLower(path.lexically_normal().wstring()) +
-                L"|" + std::to_wstring(sizeError ? 0 : size) +
-                L"|" + std::to_wstring(modifiedTicks));
+            const std::string digest = cachedRegularFileContentHash(path);
+            return L"v=2|path=" + hashText(toLower(path.lexically_normal().wstring())) +
+                L"|content=" + std::wstring(digest.begin(), digest.end());
         }
 
         [[nodiscard]] std::wstring fomodOutputCacheFingerprint(
@@ -608,16 +1146,7 @@ namespace fluxora
             const std::filesystem::path& downloadPath,
             std::wstring_view fallbackName)
         {
-            std::error_code sizeError;
-            const std::uintmax_t size = std::filesystem::file_size(downloadPath, sizeError);
-            std::error_code timeError;
-            const auto modified = std::filesystem::last_write_time(downloadPath, timeError);
-            const auto modifiedTicks = timeError
-                ? 0
-                : modified.time_since_epoch().count();
-            const std::wstring key = toLower(downloadPath.wstring()) +
-                L"|" + std::to_wstring(sizeError ? 0 : size) +
-                L"|" + std::to_wstring(modifiedTicks);
+            const std::wstring key = fileCacheFingerprint(downloadPath);
 
             std::wstring safeName = sanitizeFileName(fallbackName);
             if (safeName.size() > 80)
@@ -2981,23 +3510,17 @@ namespace fluxora
             }
 
             const std::wstring contentDisposition = queryCustomHeader(request, L"Content-Disposition");
-            const bool appendToPartial = requestedOffset > 0 && statusCode == 206;
-            if (!appendToPartial)
-            {
-                requestedOffset = 0;
-            }
-
-            const std::uintmax_t responseBytes = parseUnsigned(queryCustomHeader(request, L"Content-Length"));
-            const std::uintmax_t contentRangeTotal = parseContentRangeTotal(queryCustomHeader(request, L"Content-Range"));
-            std::uintmax_t totalBytes = responseBytes;
-            if (appendToPartial)
-            {
-                totalBytes = contentRangeTotal > 0
-                    ? contentRangeTotal
-                    : responseBytes > 0
-                        ? requestedOffset + responseBytes
-                        : progressMetadata.totalBytes;
-            }
+            const HttpDownloadResponsePlan responsePlan = planHttpDownloadResponse(
+                statusCode,
+                requestedOffset,
+                queryCustomHeader(request, L"Content-Length"),
+                queryCustomHeader(request, L"Content-Range"));
+            const bool appendToPartial = responsePlan.appendToPartial;
+            requestedOffset = responsePlan.initialFileBytes;
+            const std::uintmax_t totalBytes = responsePlan.expectedTotalBytes.value_or(
+                responsePlan.expectedResponseBytes.has_value()
+                    ? requestedOffset + *responsePlan.expectedResponseBytes
+                    : progressMetadata.totalBytes);
 
             std::wstring destinationFileName = trim(progressMetadata.destinationFileName);
             if (destinationFileName.empty())
@@ -3036,6 +3559,7 @@ namespace fluxora
             }
 
             std::uintmax_t bytesReceived = requestedOffset;
+            std::uintmax_t responseBytesReceived = 0;
             const std::uintmax_t startedUnix = currentUnixSeconds();
             auto lastProgressWrite = std::chrono::steady_clock::now() - progressSidecarWriteInterval;
             auto lastDurableProgressCheckpoint = std::chrono::steady_clock::now();
@@ -3147,6 +3671,7 @@ namespace fluxora
                 }
 
                 bytesReceived += read;
+                responseBytesReceived += read;
                 const auto now = std::chrono::steady_clock::now();
                 if (now - lastProgressWrite >= progressSidecarWriteInterval ||
                     (totalBytes > 0 && bytesReceived >= totalBytes))
@@ -3170,18 +3695,198 @@ namespace fluxora
 
             writeProgressUpdate(DownloadProgressWriteMode::DurableCheckpoint);
             closeHandles();
+            promoteCompletedHttpDownload(
+                partialPath,
+                destinationPath,
+                responsePlan,
+                responseBytesReceived,
+                bytesReceived);
             std::filesystem::remove(cancelMarkerPath(progressPath));
-            std::error_code renameError;
-            std::filesystem::rename(partialPath, destinationPath, renameError);
-            if (renameError)
-            {
-                throw std::runtime_error("Failed to finalize downloaded file.");
-            }
             return destinationPath;
         }
 
-        bool runHiddenAndWait(std::wstring commandLine)
+        class OwnedWinHandle final
         {
+        public:
+            explicit OwnedWinHandle(HANDLE handle = nullptr) noexcept
+                : handle_(handle)
+            {
+            }
+
+            OwnedWinHandle(const OwnedWinHandle&) = delete;
+            OwnedWinHandle& operator=(const OwnedWinHandle&) = delete;
+
+            ~OwnedWinHandle()
+            {
+                if (handle_ != nullptr && handle_ != INVALID_HANDLE_VALUE)
+                {
+                    CloseHandle(handle_);
+                }
+            }
+
+            [[nodiscard]] HANDLE get() const noexcept
+            {
+                return handle_;
+            }
+
+        private:
+            HANDLE handle_{nullptr};
+        };
+
+        enum class ExternalProcessWaitOutcome
+        {
+            Exited,
+            Canceled,
+            TimedOut,
+            WaitFailed
+        };
+
+        struct ExternalProcessWaitResult
+        {
+            ExternalProcessWaitOutcome outcome{ExternalProcessWaitOutcome::WaitFailed};
+            DWORD exitCode{ERROR_GEN_FAILURE};
+            bool terminationAttempted{false};
+            bool terminationSucceeded{false};
+            bool exitConfirmedAfterTermination{false};
+        };
+
+        struct ExternalProcessWaitCallbacks
+        {
+            std::function<DWORD(DWORD)> waitForExit;
+            std::function<bool()> cancellationRequested;
+            std::function<bool()> timeoutReached;
+            std::function<bool()> terminateOwnedProcess;
+            std::function<bool(DWORD&)> queryExitCode;
+        };
+
+        ExternalProcessWaitResult terminateAndFinishExternalProcessWait(
+            ExternalProcessWaitOutcome outcome,
+            const ExternalProcessWaitCallbacks& callbacks,
+            DWORD terminationWaitMilliseconds)
+        {
+            ExternalProcessWaitResult result;
+            result.outcome = outcome;
+            result.terminationAttempted = true;
+            result.terminationSucceeded = callbacks.terminateOwnedProcess();
+            result.exitConfirmedAfterTermination =
+                callbacks.waitForExit(terminationWaitMilliseconds) == WAIT_OBJECT_0;
+            return result;
+        }
+
+        ExternalProcessWaitResult waitForOwnedExternalProcess(
+            const ExternalProcessWaitCallbacks& callbacks,
+            DWORD pollMilliseconds,
+            DWORD terminationWaitMilliseconds)
+        {
+            for (;;)
+            {
+                if (callbacks.cancellationRequested())
+                {
+                    return terminateAndFinishExternalProcessWait(
+                        ExternalProcessWaitOutcome::Canceled,
+                        callbacks,
+                        terminationWaitMilliseconds);
+                }
+                if (callbacks.timeoutReached())
+                {
+                    return terminateAndFinishExternalProcessWait(
+                        ExternalProcessWaitOutcome::TimedOut,
+                        callbacks,
+                        terminationWaitMilliseconds);
+                }
+
+                const DWORD waitResult = callbacks.waitForExit(pollMilliseconds);
+                if (waitResult == WAIT_OBJECT_0)
+                {
+                    ExternalProcessWaitResult result;
+                    result.outcome = ExternalProcessWaitOutcome::Exited;
+                    if (!callbacks.queryExitCode(result.exitCode))
+                    {
+                        result.outcome = ExternalProcessWaitOutcome::WaitFailed;
+                    }
+                    return result;
+                }
+                if (waitResult != WAIT_TIMEOUT)
+                {
+                    return terminateAndFinishExternalProcessWait(
+                        ExternalProcessWaitOutcome::WaitFailed,
+                        callbacks,
+                        terminationWaitMilliseconds);
+                }
+            }
+        }
+
+        std::filesystem::path operationCancellationDirectoryForDownloadService()
+        {
+            if (const std::wstring configured = readEnvironmentVariable(L"FLUXORA_OPERATION_CANCEL_DIR");
+                !configured.empty())
+            {
+                return std::filesystem::path(configured);
+            }
+            if (const std::wstring logs = readEnvironmentVariable(L"FLUXORA_LOG_DIR"); !logs.empty())
+            {
+                return std::filesystem::path(logs) / L"operation-cancel";
+            }
+            return {};
+        }
+
+        std::filesystem::path operationCancellationMarkerPathForDownloadService(
+            std::string_view operationId)
+        {
+            const std::filesystem::path directory = operationCancellationDirectoryForDownloadService();
+            if (directory.empty() || operationId.empty())
+            {
+                return {};
+            }
+
+            std::string safeOperationId;
+            safeOperationId.reserve(operationId.size() + 7);
+            for (const char character : operationId)
+            {
+                const unsigned char value = static_cast<unsigned char>(character);
+                safeOperationId.push_back(
+                    std::isalnum(value) != 0 || character == '_' || character == '-' || character == '.'
+                        ? character
+                        : '_');
+            }
+            if (safeOperationId.empty())
+            {
+                return {};
+            }
+
+            safeOperationId += ".cancel";
+            return directory / std::filesystem::path(safeOperationId);
+        }
+
+        bool operationCancellationMarkerExists(const std::filesystem::path& markerPath)
+        {
+            if (markerPath.empty())
+            {
+                return false;
+            }
+
+            std::error_code error;
+            return std::filesystem::exists(markerPath, error);
+        }
+
+        bool runHiddenAndWait(
+            std::wstring commandLine,
+            const std::filesystem::path& archivePath,
+            std::wstring_view extractorName,
+            const std::filesystem::path& cancellationMarker,
+            const Logger& logger)
+        {
+            if (operationCancellationMarkerExists(cancellationMarker))
+            {
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "ArchiveExtraction",
+                    "Archive extraction canceled before external extractor launch. extractor=\"" +
+                        toUtf8(std::wstring(extractorName)) +
+                        "\", archive=\"" + toUtf8(archivePath.wstring()) + "\".");
+                throw ArchiveExtractionCanceledException();
+            }
+
             STARTUPINFOW startupInfo{};
             startupInfo.cb = sizeof(startupInfo);
             startupInfo.dwFlags = STARTF_USESHOWWINDOW;
@@ -3203,15 +3908,117 @@ namespace fluxora
                     &startupInfo,
                     &processInfo))
             {
+                const DWORD error = GetLastError();
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "ArchiveExtraction",
+                    "External archive extractor failed to launch. extractor=\"" +
+                        toUtf8(std::wstring(extractorName)) +
+                        "\", win32Error=" + std::to_string(error) +
+                        ", archive=\"" + toUtf8(archivePath.wstring()) + "\".");
                 return false;
             }
 
-            WaitForSingleObject(processInfo.hProcess, INFINITE);
-            DWORD exitCode = 1;
-            GetExitCodeProcess(processInfo.hProcess, &exitCode);
-            CloseHandle(processInfo.hThread);
-            CloseHandle(processInfo.hProcess);
-            return exitCode == 0;
+            const OwnedWinHandle threadHandle(processInfo.hThread);
+            const OwnedWinHandle processHandle(processInfo.hProcess);
+            const auto deadline = std::chrono::steady_clock::now() + externalProcessTimeout;
+            DWORD waitError = ERROR_SUCCESS;
+            DWORD exitCodeError = ERROR_SUCCESS;
+            const ExternalProcessWaitCallbacks callbacks{
+                [&](DWORD milliseconds)
+                {
+                    const DWORD result = WaitForSingleObject(processHandle.get(), milliseconds);
+                    if (result == WAIT_FAILED)
+                    {
+                        waitError = GetLastError();
+                    }
+                    return result;
+                },
+                [&]()
+                {
+                    return operationCancellationMarkerExists(cancellationMarker);
+                },
+                [&]()
+                {
+                    return std::chrono::steady_clock::now() >= deadline;
+                },
+                [&]()
+                {
+                    return TerminateProcess(processHandle.get(), ERROR_CANCELLED) != FALSE;
+                },
+                [&](DWORD& exitCode)
+                {
+                    if (GetExitCodeProcess(processHandle.get(), &exitCode) != FALSE)
+                    {
+                        return true;
+                    }
+                    exitCodeError = GetLastError();
+                    return false;
+                }};
+
+            const ExternalProcessWaitResult result = waitForOwnedExternalProcess(
+                callbacks,
+                static_cast<DWORD>(externalProcessPollInterval.count()),
+                static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    externalProcessTerminationWait).count()));
+            const std::string processDetails =
+                " extractor=\"" + toUtf8(std::wstring(extractorName)) +
+                "\", pid=" + std::to_string(processInfo.dwProcessId) +
+                ", archive=\"" + toUtf8(archivePath.wstring()) + "\"";
+
+            if (result.outcome == ExternalProcessWaitOutcome::Canceled)
+            {
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "ArchiveExtraction",
+                    "External archive extraction canceled; owned child termination attempted." +
+                        processDetails +
+                        ", terminationSucceeded=" + std::to_string(result.terminationSucceeded ? 1 : 0) +
+                        ", exitConfirmed=" +
+                        std::to_string(result.exitConfirmedAfterTermination ? 1 : 0) + ".");
+                throw ArchiveExtractionCanceledException();
+            }
+            if (result.outcome == ExternalProcessWaitOutcome::TimedOut)
+            {
+                logger.writeOperation(
+                    LogLevel::Error,
+                    "ArchiveExtraction",
+                    "External archive extraction timed out; owned child termination attempted." +
+                        processDetails +
+                        ", timeoutSeconds=" +
+                        std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
+                            externalProcessTimeout).count()) +
+                        ", terminationSucceeded=" + std::to_string(result.terminationSucceeded ? 1 : 0) +
+                        ", exitConfirmed=" +
+                        std::to_string(result.exitConfirmedAfterTermination ? 1 : 0) + ".");
+                throw std::runtime_error("Archive extraction timed out after two hours.");
+            }
+            if (result.outcome == ExternalProcessWaitOutcome::WaitFailed)
+            {
+                logger.writeOperation(
+                    LogLevel::Error,
+                    "ArchiveExtraction",
+                    "External archive extractor wait failed; owned child cleanup state recorded." +
+                        processDetails +
+                        ", waitError=" + std::to_string(waitError) +
+                        ", exitCodeError=" + std::to_string(exitCodeError) +
+                        ", terminationAttempted=" + std::to_string(result.terminationAttempted ? 1 : 0) +
+                        ", terminationSucceeded=" + std::to_string(result.terminationSucceeded ? 1 : 0) +
+                        ", exitConfirmed=" +
+                        std::to_string(result.exitConfirmedAfterTermination ? 1 : 0) + ".");
+                throw std::runtime_error("Failed while waiting for archive extraction to finish.");
+            }
+
+            if (result.exitCode != ERROR_SUCCESS)
+            {
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "ArchiveExtraction",
+                    "External archive extractor returned a failure exit code." +
+                        processDetails + ", exitCode=" + std::to_string(result.exitCode) + ".");
+                return false;
+            }
+            return true;
         }
 #endif
 
@@ -3661,11 +4468,15 @@ namespace fluxora
 
         bool tryExtractWith7Zip(
             const std::filesystem::path& archivePath,
-            const std::filesystem::path& destinationDirectory)
+            const std::filesystem::path& destinationDirectory,
+            const std::filesystem::path& cancellationMarker,
+            const Logger& logger)
         {
 #ifndef _WIN32
             (void)archivePath;
             (void)destinationDirectory;
+            (void)cancellationMarker;
+            (void)logger;
             return false;
 #else
             for (std::wstring_view executableName : {L"7z.exe", L"7za.exe", L"7zz.exe"})
@@ -3682,7 +4493,7 @@ namespace fluxora
                     quoteCommandArgument(destinationDirectory.wstring()) +
                     L" " +
                     quoteCommandArgument(archivePath.wstring());
-                if (runHiddenAndWait(command))
+                if (runHiddenAndWait(command, archivePath, executableName, cancellationMarker, logger))
                 {
                     return true;
                 }
@@ -3694,11 +4505,15 @@ namespace fluxora
 
         bool tryExtractWithWinRar(
             const std::filesystem::path& archivePath,
-            const std::filesystem::path& destinationDirectory)
+            const std::filesystem::path& destinationDirectory,
+            const std::filesystem::path& cancellationMarker,
+            const Logger& logger)
         {
 #ifndef _WIN32
             (void)archivePath;
             (void)destinationDirectory;
+            (void)cancellationMarker;
+            (void)logger;
             return false;
 #else
             const std::wstring destination = directoryWithTrailingSlash(destinationDirectory);
@@ -3711,7 +4526,7 @@ namespace fluxora
                     quoteCommandArgument(archivePath.wstring()) +
                     L" " +
                     quoteCommandArgument(destination);
-                if (runHiddenAndWait(command))
+                if (runHiddenAndWait(command, archivePath, L"UnRAR.exe", cancellationMarker, logger))
                 {
                     return true;
                 }
@@ -3725,7 +4540,7 @@ namespace fluxora
                     quoteCommandArgument(archivePath.wstring()) +
                     L" " +
                     quoteCommandArgument(destination);
-                if (runHiddenAndWait(command))
+                if (runHiddenAndWait(command, archivePath, L"WinRAR.exe", cancellationMarker, logger))
                 {
                     return true;
                 }
@@ -3737,11 +4552,15 @@ namespace fluxora
 
         bool tryExtractWithTar(
             const std::filesystem::path& archivePath,
-            const std::filesystem::path& destinationDirectory)
+            const std::filesystem::path& destinationDirectory,
+            const std::filesystem::path& cancellationMarker,
+            const Logger& logger)
         {
 #ifndef _WIN32
             (void)archivePath;
             (void)destinationDirectory;
+            (void)cancellationMarker;
+            (void)logger;
             return false;
 #else
             const std::filesystem::path tar = findExtractorExecutable(L"tar.exe");
@@ -3756,13 +4575,14 @@ namespace fluxora
                 quoteCommandArgument(archivePath.wstring()) +
                 L" -C " +
                 quoteCommandArgument(destinationDirectory.wstring());
-            return runHiddenAndWait(command);
+            return runHiddenAndWait(command, archivePath, L"tar.exe", cancellationMarker, logger);
 #endif
         }
 
         bool extractArchiveToDirectory(
             const std::filesystem::path& archivePath,
-            const std::filesystem::path& destinationDirectory)
+            const std::filesystem::path& destinationDirectory,
+            const Logger& logger)
         {
             if (!isExtractableArchive(archivePath))
             {
@@ -3771,20 +4591,27 @@ namespace fluxora
 
             validateArchiveEntryPaths(archivePath);
 
-            if (tryExtractWith7Zip(archivePath, destinationDirectory))
+#ifdef _WIN32
+            const std::filesystem::path cancellationMarker =
+                operationCancellationMarkerPathForDownloadService(Logger::operationId());
+#else
+            const std::filesystem::path cancellationMarker;
+#endif
+
+            if (tryExtractWith7Zip(archivePath, destinationDirectory, cancellationMarker, logger))
             {
                 validateExtractedDirectoryTree(destinationDirectory);
                 return true;
             }
 
             if (archiveExtension(archivePath) == L".rar" &&
-                tryExtractWithWinRar(archivePath, destinationDirectory))
+                tryExtractWithWinRar(archivePath, destinationDirectory, cancellationMarker, logger))
             {
                 validateExtractedDirectoryTree(destinationDirectory);
                 return true;
             }
 
-            if (tryExtractWithTar(archivePath, destinationDirectory))
+            if (tryExtractWithTar(archivePath, destinationDirectory, cancellationMarker, logger))
             {
                 validateExtractedDirectoryTree(destinationDirectory);
                 return true;
@@ -3811,7 +4638,264 @@ namespace fluxora
             return entryDirectory / std::filesystem::path(installStagingCacheReadyFileName);
         }
 
-        [[nodiscard]] bool isUsableInstallStagingCacheEntry(
+        constexpr std::string_view installStagingCacheManifestPrefix =
+            "fluxora-staging-cache-v3\nsha256=";
+
+        struct InstallStagingCachePayloadIntegrity
+        {
+            std::string metadataDigest;
+            std::string contentDigest;
+        };
+
+        struct InstallStagingCacheManifest
+        {
+            std::string contentDigest;
+            std::string metadataDigest;
+        };
+
+#ifdef _WIN32
+        struct InstallStagingCacheVerifiedIntegrity
+        {
+            std::string contentDigest;
+            std::string metadataDigest;
+            std::uint64_t lastUse{0};
+        };
+
+        std::mutex installStagingCacheIntegrityMemoMutex;
+        std::map<std::wstring, InstallStagingCacheVerifiedIntegrity> installStagingCacheIntegrityMemo;
+        std::uint64_t installStagingCacheIntegrityMemoUseCounter{0};
+        constexpr std::size_t installStagingCacheIntegrityMemoMaxEntries = 64;
+#endif
+
+        [[nodiscard]] std::wstring installStagingCacheIntegrityMemoKey(
+            const std::filesystem::path& entryDirectory)
+        {
+            return toLower(std::filesystem::absolute(entryDirectory).lexically_normal().wstring());
+        }
+
+        [[nodiscard]] bool matchesVerifiedInstallStagingCacheIntegrity(
+            const std::filesystem::path& entryDirectory,
+            const InstallStagingCachePayloadIntegrity& integrity)
+        {
+#ifdef _WIN32
+            std::lock_guard lock(installStagingCacheIntegrityMemoMutex);
+            const auto found = installStagingCacheIntegrityMemo.find(
+                installStagingCacheIntegrityMemoKey(entryDirectory));
+            if (found == installStagingCacheIntegrityMemo.end() ||
+                found->second.contentDigest != integrity.contentDigest ||
+                found->second.metadataDigest != integrity.metadataDigest)
+            {
+                return false;
+            }
+
+            found->second.lastUse = ++installStagingCacheIntegrityMemoUseCounter;
+            return true;
+#else
+            (void)entryDirectory;
+            (void)integrity;
+            return false;
+#endif
+        }
+
+        void rememberVerifiedInstallStagingCacheIntegrity(
+            const std::filesystem::path& entryDirectory,
+            const InstallStagingCachePayloadIntegrity& integrity)
+        {
+#ifdef _WIN32
+            std::lock_guard lock(installStagingCacheIntegrityMemoMutex);
+            installStagingCacheIntegrityMemo[installStagingCacheIntegrityMemoKey(entryDirectory)] =
+                InstallStagingCacheVerifiedIntegrity{
+                    integrity.contentDigest,
+                    integrity.metadataDigest,
+                    ++installStagingCacheIntegrityMemoUseCounter};
+            if (installStagingCacheIntegrityMemo.size() > installStagingCacheIntegrityMemoMaxEntries)
+            {
+                const auto oldest = std::min_element(
+                    installStagingCacheIntegrityMemo.begin(),
+                    installStagingCacheIntegrityMemo.end(),
+                    [](const auto& left, const auto& right)
+                    {
+                        return left.second.lastUse < right.second.lastUse;
+                    });
+                if (oldest != installStagingCacheIntegrityMemo.end())
+                {
+                    installStagingCacheIntegrityMemo.erase(oldest);
+                }
+            }
+#else
+            (void)entryDirectory;
+            (void)integrity;
+#endif
+        }
+
+        [[nodiscard]] bool isHexDigest(std::string_view digest)
+        {
+            return !digest.empty() &&
+                std::all_of(digest.begin(), digest.end(), [](const char character)
+                {
+                    return std::isxdigit(static_cast<unsigned char>(character)) != 0;
+                });
+        }
+
+        [[nodiscard]] std::optional<InstallStagingCacheManifest> readInstallStagingCacheManifest(
+            const std::filesystem::path& entryDirectory)
+        {
+            const std::string manifest = readTextFile(installStagingCacheReadyPath(entryDirectory));
+            if (!manifest.starts_with(installStagingCacheManifestPrefix))
+            {
+                return std::nullopt;
+            }
+
+            const std::size_t digestStart = installStagingCacheManifestPrefix.size();
+            const std::size_t digestEnd = manifest.find('\n', digestStart);
+            if (digestEnd == std::string::npos)
+            {
+                return std::nullopt;
+            }
+            const std::string contentDigest = manifest.substr(
+                digestStart,
+                digestEnd - digestStart);
+            constexpr std::string_view metadataPrefix = "metadata-sha256=";
+            const std::size_t metadataStart = digestEnd + 1;
+            if (manifest.substr(metadataStart, metadataPrefix.size()) != metadataPrefix)
+            {
+                return std::nullopt;
+            }
+            const std::size_t metadataDigestStart = metadataStart + metadataPrefix.size();
+            const std::size_t metadataDigestEnd = manifest.find('\n', metadataDigestStart);
+            const std::string metadataDigest = manifest.substr(
+                metadataDigestStart,
+                metadataDigestEnd == std::string::npos
+                    ? std::string::npos
+                    : metadataDigestEnd - metadataDigestStart);
+            if (!isHexDigest(contentDigest) || !isHexDigest(metadataDigest))
+            {
+                return std::nullopt;
+            }
+            return InstallStagingCacheManifest{contentDigest, metadataDigest};
+        }
+
+        [[nodiscard]] std::string serializeInstallStagingCacheManifest(
+            std::string_view contentDigest,
+            std::string_view metadataDigest)
+        {
+            return std::string(installStagingCacheManifestPrefix) +
+                std::string(contentDigest) +
+                "\nmetadata-sha256=" + std::string(metadataDigest) + "\n";
+        }
+
+        [[nodiscard]] InstallStagingCachePayloadIntegrity inspectInstallStagingCachePayload(
+            const std::filesystem::path& payloadDirectory,
+            bool includeContents)
+        {
+            struct PayloadEntry
+            {
+                std::filesystem::path path;
+                std::string relativePath;
+                bool directory{false};
+            };
+
+            std::vector<PayloadEntry> entries;
+            std::error_code iterateError;
+            std::filesystem::recursive_directory_iterator iterator(
+                payloadDirectory,
+                std::filesystem::directory_options::skip_permission_denied,
+                iterateError);
+            const std::filesystem::recursive_directory_iterator end;
+            for (; iterator != end; iterator.increment(iterateError))
+            {
+                if (iterateError)
+                {
+                    throw std::runtime_error(
+                        "Failed to enumerate install staging cache payload: " +
+                        iterateError.message());
+                }
+
+                std::error_code statusError;
+                const std::filesystem::file_status status = iterator->symlink_status(statusError);
+                if (statusError || std::filesystem::is_symlink(status))
+                {
+                    throw std::runtime_error("Install staging cache payload contains an unsafe entry.");
+                }
+
+                const bool directory = std::filesystem::is_directory(status);
+                if (!directory && !std::filesystem::is_regular_file(status))
+                {
+                    throw std::runtime_error("Install staging cache payload contains an unsupported entry.");
+                }
+
+                const std::filesystem::path relative =
+                    iterator->path().lexically_relative(payloadDirectory);
+                entries.push_back(PayloadEntry{
+                    iterator->path(),
+                    toUtf8(relative.generic_wstring()),
+                    directory});
+            }
+            if (iterateError)
+            {
+                throw std::runtime_error(
+                    "Failed to enumerate install staging cache payload: " +
+                    iterateError.message());
+            }
+
+            std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right)
+            {
+                return left.relativePath < right.relativePath;
+            });
+
+            StrongContentHasher metadataHasher;
+            std::optional<StrongContentHasher> contentHasher;
+            if (includeContents)
+            {
+                contentHasher.emplace();
+            }
+
+            for (const PayloadEntry& entry : entries)
+            {
+                const std::string entryPrefix =
+                    std::string(entry.directory ? "D\0" : "F\0", 2) +
+                    entry.relativePath + '\0';
+                metadataHasher.update(entryPrefix);
+                if (contentHasher.has_value())
+                {
+                    contentHasher->update(entryPrefix);
+                }
+
+                if (entry.directory)
+                {
+                    continue;
+                }
+
+                const std::string identity = regularFileIdentityToken(entry.path);
+                metadataHasher.update(identity);
+                metadataHasher.update("\0", 1);
+
+                std::error_code sizeError;
+                const std::uintmax_t size = std::filesystem::file_size(entry.path, sizeError);
+                if (sizeError)
+                {
+                    throw std::runtime_error("Failed to inspect install staging cache payload size.");
+                }
+                if (contentHasher.has_value())
+                {
+                    const std::string sizeText = std::to_string(size);
+                    contentHasher->update(sizeText);
+                    contentHasher->update("\0", 1);
+                    contentHasher->update(cachedRegularFileContentHash(entry.path));
+                    contentHasher->update("\0", 1);
+                }
+            }
+
+            InstallStagingCachePayloadIntegrity result;
+            result.metadataDigest = metadataHasher.finish();
+            if (contentHasher.has_value())
+            {
+                result.contentDigest = contentHasher->finish();
+            }
+            return result;
+        }
+
+        [[nodiscard]] bool hasInstallStagingCacheEntryStructure(
             const std::filesystem::path& entryDirectory)
         {
             std::error_code payloadError;
@@ -3821,7 +4905,62 @@ namespace fluxora
                        payloadError) &&
                 std::filesystem::is_regular_file(
                     installStagingCacheReadyPath(entryDirectory),
-                    readyError);
+                    readyError) &&
+                readInstallStagingCacheManifest(entryDirectory).has_value();
+        }
+
+        [[nodiscard]] bool isUsableInstallStagingCacheEntry(
+            const std::filesystem::path& entryDirectory)
+        {
+            const std::filesystem::path payloadDirectory =
+                installStagingCachePayloadDirectory(entryDirectory);
+            if (!hasInstallStagingCacheEntryStructure(entryDirectory))
+            {
+                return false;
+            }
+
+            const std::optional<InstallStagingCacheManifest> manifest =
+                readInstallStagingCacheManifest(entryDirectory);
+            if (!manifest.has_value())
+            {
+                return false;
+            }
+
+            try
+            {
+                const InstallStagingCachePayloadIntegrity metadataOnly =
+                    inspectInstallStagingCachePayload(payloadDirectory, false);
+                if (metadataOnly.metadataDigest != manifest->metadataDigest)
+                {
+                    return false;
+                }
+
+                const InstallStagingCachePayloadIntegrity expectedIntegrity{
+                    manifest->metadataDigest,
+                    manifest->contentDigest};
+                if (matchesVerifiedInstallStagingCacheIntegrity(entryDirectory, expectedIntegrity))
+                {
+                    return true;
+                }
+
+                const InstallStagingCachePayloadIntegrity contentVerified =
+                    inspectInstallStagingCachePayload(payloadDirectory, true);
+                const InstallStagingCachePayloadIntegrity metadataAfterHash =
+                    inspectInstallStagingCachePayload(payloadDirectory, false);
+                if (contentVerified.metadataDigest != metadataAfterHash.metadataDigest ||
+                    contentVerified.metadataDigest != manifest->metadataDigest ||
+                    contentVerified.contentDigest != manifest->contentDigest)
+                {
+                    return false;
+                }
+
+                rememberVerifiedInstallStagingCacheIntegrity(entryDirectory, contentVerified);
+                return true;
+            }
+            catch (const std::exception&)
+            {
+                return false;
+            }
         }
 
         [[nodiscard]] std::filesystem::file_time_type installStagingCacheEntryTime(
@@ -3973,7 +5112,7 @@ namespace fluxora
                     continue;
                 }
 
-                if (!isUsableInstallStagingCacheEntry(entryPath) ||
+                if (!hasInstallStagingCacheEntryStructure(entryPath) ||
                     isInstallStagingCacheEntryStale(entryPath))
                 {
                     cleanupTemporaryDirectory(entryPath, logger, "InstallStagingCache");
@@ -4229,9 +5368,20 @@ namespace fluxora
 #endif
                 producer(temporaryPayloadDirectory);
                 validateExtractedDirectoryTree(temporaryPayloadDirectory);
+                const InstallStagingCachePayloadIntegrity producedIntegrity =
+                    inspectInstallStagingCachePayload(temporaryPayloadDirectory, true);
+                const InstallStagingCachePayloadIntegrity metadataAfterHash =
+                    inspectInstallStagingCachePayload(temporaryPayloadDirectory, false);
+                if (producedIntegrity.metadataDigest != metadataAfterHash.metadataDigest)
+                {
+                    throw std::runtime_error(
+                        "Install staging cache payload changed while its integrity manifest was being created.");
+                }
                 writeTextFile(
                     installStagingCacheReadyPath(temporaryEntryDirectory),
-                    "ready");
+                    serializeInstallStagingCacheManifest(
+                        producedIntegrity.contentDigest,
+                        metadataAfterHash.metadataDigest));
 
                 {
                     std::lock_guard<std::mutex> cacheLock(installStagingCacheMutex);
@@ -4254,6 +5404,11 @@ namespace fluxora
 
                     cleanupTemporaryDirectory(entryDirectory, logger, "InstallStagingCache");
                     std::filesystem::rename(temporaryEntryDirectory, entryDirectory);
+                    rememberVerifiedInstallStagingCacheIntegrity(
+                        entryDirectory,
+                        InstallStagingCachePayloadIntegrity{
+                            metadataAfterHash.metadataDigest,
+                            producedIntegrity.contentDigest});
                     touchInstallStagingCacheEntry(entryDirectory);
                     retainInstallStagingCacheEntryLocked(entryDirectory);
                     logger.write(
@@ -4363,9 +5518,10 @@ namespace fluxora
         void materializeArchiveInstallCachePayload(
             const std::filesystem::path& archivePath,
             const std::filesystem::path& destinationDirectory,
-            std::wstring_view safeName)
+            std::wstring_view safeName,
+            const Logger& logger)
         {
-            const bool extracted = extractArchiveToDirectory(archivePath, destinationDirectory);
+            const bool extracted = extractArchiveToDirectory(archivePath, destinationDirectory, logger);
             if (!extracted)
             {
                 std::filesystem::copy_file(archivePath, destinationDirectory / archivePath.filename());
@@ -4647,7 +5803,7 @@ namespace fluxora
                 }
                 if (!copiedFromCachedPayload)
                 {
-                    materializeArchiveInstallCachePayload(archivePath, stagingDirectory, safeName);
+                    materializeArchiveInstallCachePayload(archivePath, stagingDirectory, safeName, logger);
                 }
 
                 applyContentLayoutToStaging(
@@ -4840,7 +5996,7 @@ namespace fluxora
                         logger,
                         [&](const std::filesystem::path& payloadDirectory)
                         {
-                            if (!extractArchiveToDirectory(archivePath, payloadDirectory))
+                            if (!extractArchiveToDirectory(archivePath, payloadDirectory, logger))
                             {
                                 throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
                             }
@@ -5280,6 +6436,27 @@ namespace fluxora
             installStagingCacheProducerHook = std::move(hook);
         }
 
+        void alignInstallStagingCacheMetadataDigestForTest(
+            const std::filesystem::path& entryDirectory)
+        {
+            const std::optional<InstallStagingCacheManifest> manifest =
+                readInstallStagingCacheManifest(entryDirectory);
+            if (!manifest.has_value())
+            {
+                throw std::runtime_error("Install staging cache test manifest is missing.");
+            }
+
+            const InstallStagingCachePayloadIntegrity currentMetadata =
+                inspectInstallStagingCachePayload(
+                    installStagingCachePayloadDirectory(entryDirectory),
+                    false);
+            writeTextFile(
+                installStagingCacheReadyPath(entryDirectory),
+                serializeInstallStagingCacheManifest(
+                    manifest->contentDigest,
+                    currentMetadata.metadataDigest));
+        }
+
         void setActiveDownloadForTest(const std::filesystem::path& path, bool active)
         {
             std::lock_guard lock(activeDownloadsMutex);
@@ -5326,6 +6503,123 @@ namespace fluxora
                 totalBytes,
                 startedUnix,
                 DownloadProgressWriteMode::VolatileOnly);
+        }
+
+        void finalizeHttpDownloadResponseForTest(
+            const std::filesystem::path& partialPath,
+            const std::filesystem::path& destinationPath,
+            std::uint32_t statusCode,
+            std::uintmax_t requestedOffset,
+            std::wstring_view contentLength,
+            std::wstring_view contentRange,
+            std::uintmax_t responseBytesReceived)
+        {
+            const HttpDownloadResponsePlan plan = planHttpDownloadResponse(
+                statusCode,
+                requestedOffset,
+                contentLength,
+                contentRange);
+            promoteCompletedHttpDownload(
+                partialPath,
+                destinationPath,
+                plan,
+                responseBytesReceived,
+                regularFileSizeOrZero(partialPath));
+        }
+
+#ifdef _WIN32
+        std::string externalProcessWaitOutcomeForTest(
+            const std::vector<std::string>& events,
+            std::size_t& terminationCalls,
+            std::size_t& postTerminationWaits)
+        {
+            terminationCalls = 0;
+            postTerminationWaits = 0;
+            std::size_t eventIndex = 0;
+            bool terminationRequested = false;
+            const auto currentEvent = [&]() -> std::string_view
+            {
+                return eventIndex < events.size()
+                    ? std::string_view(events[eventIndex])
+                    : std::string_view{};
+            };
+
+            const ExternalProcessWaitCallbacks callbacks{
+                [&](DWORD)
+                {
+                    if (terminationRequested)
+                    {
+                        ++postTerminationWaits;
+                        return static_cast<DWORD>(WAIT_OBJECT_0);
+                    }
+                    if (eventIndex >= events.size())
+                    {
+                        return static_cast<DWORD>(WAIT_FAILED);
+                    }
+
+                    const std::string_view event = events[eventIndex++];
+                    return event == "exit"
+                        ? static_cast<DWORD>(WAIT_OBJECT_0)
+                        : static_cast<DWORD>(WAIT_TIMEOUT);
+                },
+                [&]()
+                {
+                    return currentEvent() == "cancel";
+                },
+                [&]()
+                {
+                    return currentEvent() == "timeout";
+                },
+                [&]()
+                {
+                    ++terminationCalls;
+                    terminationRequested = true;
+                    return true;
+                },
+                [](DWORD& exitCode)
+                {
+                    exitCode = ERROR_SUCCESS;
+                    return true;
+                }};
+
+            const ExternalProcessWaitResult result = waitForOwnedExternalProcess(
+                callbacks,
+                0,
+                0);
+            switch (result.outcome)
+            {
+            case ExternalProcessWaitOutcome::Exited:
+                return "exited";
+            case ExternalProcessWaitOutcome::Canceled:
+                return "canceled";
+            case ExternalProcessWaitOutcome::TimedOut:
+                return "timed-out";
+            case ExternalProcessWaitOutcome::WaitFailed:
+            default:
+                return "wait-failed";
+            }
+        }
+#endif
+
+        void writeNxmWorkerOperationContextLogForTest(
+            Logger& logger,
+            std::string operationId,
+            std::string inScopeMarker,
+            std::string afterScopeMarker)
+        {
+            std::thread worker(
+                [&logger,
+                 operationId = std::move(operationId),
+                 inScopeMarker = std::move(inScopeMarker),
+                 afterScopeMarker = std::move(afterScopeMarker)]()
+                {
+                    {
+                        const ScopedLoggerOperationContext operationContext(operationId);
+                        logger.write(LogLevel::Info, "Downloads", inScopeMarker);
+                    }
+                    logger.write(LogLevel::Info, "Downloads", afterScopeMarker);
+                });
+            worker.join();
         }
     }
 #endif
@@ -5452,7 +6746,10 @@ namespace fluxora
                 currentNxmDownloadPath_ = job.pendingPath;
             }
 
-            processQueuedNxmDownload(job);
+            {
+                const ScopedLoggerOperationContext operationContext(job.operationId);
+                processQueuedNxmDownload(job);
+            }
             unmarkActiveDownload(job.pendingPath);
 
             {
@@ -5686,7 +6983,8 @@ namespace fluxora
                         directory,
                         pendingPath,
                         link,
-                        {}
+                        {},
+                        Logger::operationId()
                     });
                     queuedEntry = buildEntry(pendingPath);
                 }
@@ -5942,7 +7240,8 @@ namespace fluxora
                     directory,
                     downloadPath,
                     link,
-                    metadata.nexusModName
+                    metadata.nexusModName,
+                    Logger::operationId()
                 });
                 queuedEntry = buildEntry(downloadPath);
             }
@@ -6068,7 +7367,7 @@ namespace fluxora
             logger_,
             [&](const std::filesystem::path& payloadDirectory)
             {
-                materializeArchiveInstallCachePayload(downloadPath, payloadDirectory, safeName);
+                materializeArchiveInstallCachePayload(downloadPath, payloadDirectory, safeName, logger_);
             });
 
         return analyzeContentLayoutForStaging(
@@ -6118,7 +7417,7 @@ namespace fluxora
             logger_,
             [&](const std::filesystem::path& payloadDirectory)
             {
-                if (!extractArchiveToDirectory(downloadPath, payloadDirectory))
+                if (!extractArchiveToDirectory(downloadPath, payloadDirectory, logger_))
                 {
                     throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
                 }
@@ -6222,7 +7521,7 @@ namespace fluxora
                     logger_,
                     [&](const std::filesystem::path& payloadDirectory)
                     {
-                        if (!extractArchiveToDirectory(downloadPath, payloadDirectory))
+                        if (!extractArchiveToDirectory(downloadPath, payloadDirectory, logger_))
                         {
                             throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
                         }

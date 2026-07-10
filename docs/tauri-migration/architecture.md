@@ -582,10 +582,17 @@ Rules:
 
 ### Version negotiation
 
-First request after host spawn:
+First request after host spawn uses the same required protocol metadata as every
+other request:
 
 ```json
-{ "jsonrpc": "2.0", "id": "hello_1", "method": "system.handshake", "params": { "supportedProtocolVersions": ["1.0"] } }
+{
+  "jsonrpc": "2.0",
+  "id": "hello_1",
+  "method": "system.handshake",
+  "params": { "supportedProtocolVersions": ["1.0"] },
+  "meta": { "protocolVersion": "1.0", "operationId": "op_startup" }
+}
 ```
 
 The host returns:
@@ -606,6 +613,14 @@ The host returns:
 Rules:
 
 - Tauri main refuses to continue if there is no compatible protocol.
+- The host rejects requests whose `jsonrpc` is not `2.0`, whose metadata is
+  missing, or whose metadata protocol does not equal the host protocol.
+- `system.handshake` succeeds only when `supportedProtocolVersions` contains
+  the host protocol, and Tauri main verifies the returned `protocolVersion`
+  before caching the handshake.
+- Bridge status is ready only after core initialization succeeds and the
+  capability response reports `core.available: true`; initialization or
+  capability transport failures remain fail-closed `ready: false` states.
 - Additive fields are allowed inside a protocol minor version.
 - Removing or changing field meaning requires a new protocol major version.
 
@@ -884,6 +899,11 @@ Required log flow for user-triggered operations:
 
 Bridge logs must be separate from UI logs. Do not merge Tauri renderer console noise into core or operations logs.
 Tauri main starts `FluxoraBridgeHost` with `FLUXORA_LOG_DIR` set to the app log directory so native core, bridge, operation and crash logs stay discoverable alongside the Tauri UI/main logs while remaining separate files.
+The shell selects the first writable log root in this order: explicit
+`FLUXORA_LOG_DIR`, `<executable>/logs`, the per-user Fluxora data directory,
+then the OS temporary Fluxora directory. Operation cancellation markers live
+under the same selected writable root, so a protected installation directory
+cannot prevent bridge startup.
 
 ## Concurrency
 
@@ -893,12 +913,19 @@ Current WPF `CoreBridgeService` serializes native calls because the native core 
 - Read operations can be serialized initially.
 - Parallel reads require explicit core approval and tests.
 - Renderer can remain responsive because requests are asynchronous and progress/event driven.
+- The 10-second bridge timeout is reserved for short control/read calls.
+  Recursive project/mod cleanup, overwrite cleanup, local download import,
+  archive/download install and FluxPack export/install use an explicit
+  two-hour file-mutation budget so normal large filesystem work is not treated
+  as a crashed host and terminated mid-operation.
 
 ## Testing and validation strategy
 
 Phase 1 is documentation and contract design, so no product build is required to close this phase. Later phases must add:
 
 - Native host unit tests for envelope parsing, error mapping and method routing.
+- `backend/tests/BridgeHostProtocol.Tests.ps1` exercises the built native host
+  over real stdio for compatible and incompatible protocol envelopes.
 - Contract fixture tests for every `fluxora.bridge.v1` method.
 - Tauri Rust shell/facade tests proving renderer only sees typed APIs.
 - Backend CTest coverage when a new C++ bridge-host adapter changes core behavior.

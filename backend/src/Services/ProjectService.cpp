@@ -42,6 +42,10 @@ namespace fluxora
         constexpr std::wstring_view buildManifestsFolderName = L"Builds";
         constexpr std::wstring_view manifestFileExtension = L".json";
         constexpr std::wstring_view invalidFolderCharacters = L"<>:\"/\\|?*";
+        constexpr std::wstring_view projectRenameMarkerPrefix = L".fluxora-project-rename-";
+        constexpr std::wstring_view projectRenameMarkerExtension = L".json";
+
+        std::atomic_uint64_t projectRenameMarkerCounter{0};
 
         struct ProjectConfigFileStamp
         {
@@ -119,6 +123,29 @@ namespace fluxora
             return equalsIgnoreCase(path.extension().wstring(), L".exe");
         }
 
+        bool isWindowsReservedFolderName(std::wstring_view name)
+        {
+            const std::wstring normalized = toLower(trimFolderName(std::wstring(name)));
+            const std::wstring stem = normalized.substr(0, normalized.find(L'.'));
+            if (stem == L"con" || stem == L"prn" || stem == L"aux" || stem == L"nul" ||
+                stem == L"clock$")
+            {
+                return true;
+            }
+
+            if (stem.size() != 4 ||
+                (!stem.starts_with(L"com") && !stem.starts_with(L"lpt")))
+            {
+                return false;
+            }
+
+            const wchar_t suffix = stem[3];
+            return (suffix >= L'1' && suffix <= L'9') ||
+                suffix == L'\u00B9' ||
+                suffix == L'\u00B2' ||
+                suffix == L'\u00B3';
+        }
+
         std::wstring fileNameWithoutExtension(const std::filesystem::path& path)
         {
             const std::wstring stem = path.stem().wstring();
@@ -145,6 +172,11 @@ namespace fluxora
             if (sanitized.empty())
             {
                 return std::wstring(fallbackProjectFolderName);
+            }
+
+            if (isWindowsReservedFolderName(sanitized))
+            {
+                sanitized.insert(sanitized.begin(), L'_');
             }
 
             return sanitized;
@@ -194,20 +226,66 @@ namespace fluxora
             return resolveFluxoraDataDirectory() / std::filesystem::path(buildManifestsFolderName);
         }
 
-        std::filesystem::path buildManifestPath(std::wstring_view projectName)
+        struct ProjectPathAllocation
         {
-            const std::filesystem::path directory = resolveBuildManifestDirectory();
-            const std::wstring fileStem = sanitizeFolderName(projectName);
-            std::filesystem::path candidate =
-                directory / std::filesystem::path(fileStem + std::wstring(manifestFileExtension));
+            std::filesystem::path projectDirectory;
+            std::filesystem::path manifestPath;
+        };
 
-            for (int index = 2; std::filesystem::exists(candidate); ++index)
+        struct ProjectRenameRecoveryRecord
+        {
+            std::filesystem::path previousManifestPath;
+            std::filesystem::path renamedManifestPath;
+            std::filesystem::path previousProjectDirectory;
+            std::filesystem::path renamedProjectDirectory;
+        };
+
+        bool isSamePath(
+            const std::filesystem::path& left,
+            const std::filesystem::path& right);
+
+        ProjectPathAllocation buildAvailableProjectPaths(
+            const std::filesystem::path& installRootDirectory,
+            std::wstring_view projectName,
+            const std::filesystem::path* reusableProjectDirectory = nullptr,
+            const std::filesystem::path* reusableManifestPath = nullptr)
+        {
+            const std::filesystem::path normalizedRoot =
+                normalizeRootDirectory(installRootDirectory);
+            const std::filesystem::path manifestDirectory = resolveBuildManifestDirectory();
+            const std::wstring baseStem = sanitizeFolderName(projectName);
+
+            for (int index = 1; ; ++index)
             {
-                candidate = directory / std::filesystem::path(
-                    fileStem + L"-" + std::to_wstring(index) + std::wstring(manifestFileExtension));
-            }
+                const std::wstring slotStem = index == 1
+                    ? baseStem
+                    : baseStem + L"-" + std::to_wstring(index);
+                const std::filesystem::path projectDirectory =
+                    normalizedRoot / std::filesystem::path(slotStem);
+                const std::filesystem::path manifestPath = std::filesystem::absolute(
+                    manifestDirectory /
+                    std::filesystem::path(slotStem + std::wstring(manifestFileExtension)));
 
-            return std::filesystem::absolute(candidate);
+                const bool reusesProjectDirectory =
+                    reusableProjectDirectory != nullptr &&
+                    isSamePath(projectDirectory, *reusableProjectDirectory);
+                const bool reusesManifestPath =
+                    reusableManifestPath != nullptr &&
+                    isSamePath(manifestPath, *reusableManifestPath);
+                const bool projectDirectoryAvailable =
+                    !std::filesystem::exists(projectDirectory) || reusesProjectDirectory;
+                const bool manifestPathAvailable =
+                    !std::filesystem::exists(manifestPath) || reusesManifestPath;
+                const bool reusesACompletePair = reusesProjectDirectory == reusesManifestPath;
+
+                if (projectDirectoryAvailable && manifestPathAvailable && reusesACompletePair)
+                {
+                    return ProjectPathAllocation{
+                        projectDirectory,
+                        manifestPath
+                    };
+                }
+            }
         }
 
         std::wstring normalizePathForComparison(const std::filesystem::path& path)
@@ -238,27 +316,6 @@ namespace fluxora
             }
 
             return normalizePathForComparison(left) == normalizePathForComparison(right);
-        }
-
-        std::filesystem::path buildManifestPath(
-            std::wstring_view projectName,
-            const std::filesystem::path& currentManifestPath)
-        {
-            const std::filesystem::path directory = resolveBuildManifestDirectory();
-            const std::wstring fileStem = sanitizeFolderName(projectName);
-            const std::filesystem::path current = std::filesystem::absolute(currentManifestPath);
-            std::filesystem::path candidate =
-                directory / std::filesystem::path(fileStem + std::wstring(manifestFileExtension));
-
-            for (int index = 2;
-                 std::filesystem::exists(candidate) && !isSamePath(candidate, current);
-                 ++index)
-            {
-                candidate = directory / std::filesystem::path(
-                    fileStem + L"-" + std::to_wstring(index) + std::wstring(manifestFileExtension));
-            }
-
-            return std::filesystem::absolute(candidate);
         }
 
         std::string toUtf8(const std::wstring& value)
@@ -2171,11 +2228,297 @@ namespace fluxora
             }
         }
 
+        bool isProjectRenameMarker(const std::filesystem::path& path)
+        {
+            const std::wstring name = path.filename().wstring();
+            return name.rfind(projectRenameMarkerPrefix, 0) == 0 &&
+                name.size() >= projectRenameMarkerExtension.size() &&
+                name.compare(
+                    name.size() - projectRenameMarkerExtension.size(),
+                    projectRenameMarkerExtension.size(),
+                    projectRenameMarkerExtension) == 0;
+        }
+
+        std::filesystem::path writeProjectRenameRecoveryMarker(
+            const ProjectRenameRecoveryRecord& record,
+            const AtomicFileStore& store)
+        {
+            const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+            const std::uint64_t counter = ++projectRenameMarkerCounter;
+            const std::filesystem::path markerPath =
+                record.previousManifestPath.parent_path() /
+                std::filesystem::path(
+                    std::wstring(projectRenameMarkerPrefix) +
+                    std::to_wstring(now) +
+                    L"." +
+                    std::to_wstring(counter) +
+                    std::wstring(projectRenameMarkerExtension));
+
+            JsonWriter writer;
+            writer.beginObject();
+            writer.field(L"schemaVersion", 1);
+            writer.field(L"operation", L"project-rename");
+            writer.field(L"previousManifestPath", record.previousManifestPath.wstring());
+            writer.field(L"renamedManifestPath", record.renamedManifestPath.wstring());
+            writer.field(L"previousProjectDirectory", record.previousProjectDirectory.wstring());
+            writer.field(L"renamedProjectDirectory", record.renamedProjectDirectory.wstring());
+            writer.endObject();
+
+            store.writeTextFile(
+                markerPath,
+                toUtf8(writer.str()),
+                AtomicFileWriteOptions{
+                    L"project rename transaction marker",
+                    ProjectStateValidation::JsonObject,
+                    {},
+                    false
+                });
+            return markerPath;
+        }
+
+        ProjectRenameRecoveryRecord readProjectRenameRecoveryRecord(
+            const std::filesystem::path& markerPath,
+            const std::filesystem::path& catalogDirectory)
+        {
+            const JsonValue root = JsonReader::parse(fromUtf8(readTextFile(markerPath)));
+            if (!root.isObject())
+            {
+                throw std::invalid_argument("Project rename marker root must be an object.");
+            }
+
+            const JsonValue* schemaVersion = root.find(L"schemaVersion");
+            if (schemaVersion == nullptr || !schemaVersion->isNumber() ||
+                schemaVersion->asNumber() != L"1" ||
+                readRequiredString(root, L"operation") != L"project-rename")
+            {
+                throw std::invalid_argument("Project rename marker schema is unsupported.");
+            }
+
+            ProjectRenameRecoveryRecord record{
+                std::filesystem::absolute(
+                    std::filesystem::path(readRequiredString(root, L"previousManifestPath")))
+                    .lexically_normal(),
+                std::filesystem::absolute(
+                    std::filesystem::path(readRequiredString(root, L"renamedManifestPath")))
+                    .lexically_normal(),
+                std::filesystem::absolute(
+                    std::filesystem::path(readRequiredString(root, L"previousProjectDirectory")))
+                    .lexically_normal(),
+                std::filesystem::absolute(
+                    std::filesystem::path(readRequiredString(root, L"renamedProjectDirectory")))
+                    .lexically_normal()
+            };
+
+            if (!isSamePath(record.previousManifestPath.parent_path(), catalogDirectory) ||
+                !isSamePath(record.renamedManifestPath.parent_path(), catalogDirectory) ||
+                !hasExtensionIgnoreCase(record.previousManifestPath, manifestFileExtension) ||
+                !hasExtensionIgnoreCase(record.renamedManifestPath, manifestFileExtension) ||
+                isSamePath(record.previousManifestPath, record.renamedManifestPath) ||
+                isSamePath(record.previousProjectDirectory, record.renamedProjectDirectory) ||
+                !isSamePath(
+                    record.previousProjectDirectory.parent_path(),
+                    record.renamedProjectDirectory.parent_path()))
+            {
+                throw std::invalid_argument("Project rename marker paths are inconsistent.");
+            }
+
+            return record;
+        }
+
+        bool projectManifestReferencesDirectory(
+            const std::filesystem::path& manifestPath,
+            const std::filesystem::path& projectDirectory)
+        {
+            if (!isRegularFile(manifestPath))
+            {
+                return false;
+            }
+
+            try
+            {
+                const JsonValue manifest = parseJsonConfig(readTextFile(manifestPath));
+                requireObject(manifest);
+                const std::filesystem::path referencedDirectory = resolveManifestPath(
+                    readRequiredString(manifest, L"projectDirectory"),
+                    manifestPath.parent_path());
+                return isSamePath(referencedDirectory, projectDirectory);
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool directoryExistsForRenameRecovery(const std::filesystem::path& path)
+        {
+            std::error_code error;
+            const bool exists = std::filesystem::exists(path, error);
+            if (error)
+            {
+                throw std::filesystem::filesystem_error(
+                    "Project rename directory state could not be inspected.",
+                    path,
+                    error);
+            }
+            if (!exists)
+            {
+                return false;
+            }
+            if (!std::filesystem::is_directory(path, error) || error)
+            {
+                throw std::invalid_argument("Project rename path is not a directory.");
+            }
+            return true;
+        }
+
+        bool regularFileExistsForRenameRecovery(const std::filesystem::path& path)
+        {
+            std::error_code error;
+            const bool exists = std::filesystem::exists(path, error);
+            if (error)
+            {
+                throw std::filesystem::filesystem_error(
+                    "Project rename manifest state could not be inspected.",
+                    path,
+                    error);
+            }
+            if (!exists)
+            {
+                return false;
+            }
+            if (!std::filesystem::is_regular_file(path, error) || error)
+            {
+                throw std::invalid_argument("Project rename manifest path is not a regular file.");
+            }
+            return true;
+        }
+
+        void removeRenameRecoveryFile(const std::filesystem::path& path, std::string_view label)
+        {
+            std::error_code error;
+            static_cast<void>(std::filesystem::remove(path, error));
+            if (error)
+            {
+                throw std::filesystem::filesystem_error(
+                    std::string("Project rename ") + std::string(label) + " could not be removed.",
+                    path,
+                    error);
+            }
+        }
+
+        void recoverProjectRenameTransactions(
+            const std::filesystem::path& catalogDirectory,
+            Logger& logger)
+        {
+            std::error_code error;
+            if (!std::filesystem::exists(catalogDirectory, error) ||
+                !std::filesystem::is_directory(catalogDirectory, error))
+            {
+                return;
+            }
+
+            std::vector<std::filesystem::path> markers;
+            for (const auto& entry : std::filesystem::directory_iterator(
+                     catalogDirectory,
+                     std::filesystem::directory_options::skip_permission_denied,
+                     error))
+            {
+                if (error)
+                {
+                    break;
+                }
+                std::error_code statusError;
+                if (entry.is_regular_file(statusError) && isProjectRenameMarker(entry.path()))
+                {
+                    markers.push_back(entry.path());
+                }
+            }
+            std::sort(markers.begin(), markers.end());
+
+            for (const std::filesystem::path& markerPath : markers)
+            {
+                try
+                {
+                    const ProjectRenameRecoveryRecord record =
+                        readProjectRenameRecoveryRecord(markerPath, catalogDirectory);
+                    const bool previousDirectoryExists =
+                        directoryExistsForRenameRecovery(record.previousProjectDirectory);
+                    const bool renamedDirectoryExists =
+                        directoryExistsForRenameRecovery(record.renamedProjectDirectory);
+                    const bool previousManifestExists =
+                        regularFileExistsForRenameRecovery(record.previousManifestPath);
+                    const bool renamedManifestExists =
+                        regularFileExistsForRenameRecovery(record.renamedManifestPath);
+                    const bool previousManifestMatches =
+                        !previousManifestExists ||
+                        projectManifestReferencesDirectory(
+                            record.previousManifestPath,
+                            record.previousProjectDirectory);
+                    const bool renamedManifestMatches =
+                        !renamedManifestExists ||
+                        projectManifestReferencesDirectory(
+                            record.renamedManifestPath,
+                            record.renamedProjectDirectory);
+
+                    if (!previousManifestMatches || !renamedManifestMatches)
+                    {
+                        throw std::runtime_error(
+                            "Project rename marker manifest paths do not match their directories.");
+                    }
+
+                    std::string recoveryAction;
+                    if (previousDirectoryExists && !renamedDirectoryExists &&
+                        previousManifestExists)
+                    {
+                        if (renamedManifestExists)
+                        {
+                            removeRenameRecoveryFile(record.renamedManifestPath, "renamed manifest");
+                        }
+                        recoveryAction = "rolledBack";
+                    }
+                    else if (!previousDirectoryExists && renamedDirectoryExists &&
+                        renamedManifestExists)
+                    {
+                        if (previousManifestExists)
+                        {
+                            removeRenameRecoveryFile(record.previousManifestPath, "previous manifest");
+                        }
+                        recoveryAction = "completed";
+                    }
+                    else
+                    {
+                        throw std::runtime_error(
+                            "Project rename marker does not describe a recoverable disk state.");
+                    }
+
+                    removeRenameRecoveryFile(markerPath, "transaction marker");
+                    logger.writeOperation(
+                        LogLevel::Warning,
+                        "ProjectStateRecovery",
+                        "projectRename recoveryAction=" + recoveryAction +
+                            " previousProjectDirectory=\"" +
+                            toUtf8(record.previousProjectDirectory.wstring()) +
+                            "\", renamedProjectDirectory=\"" +
+                            toUtf8(record.renamedProjectDirectory.wstring()) + "\".");
+                }
+                catch (const std::exception& exception)
+                {
+                    logger.writeOperation(
+                        LogLevel::Error,
+                        "ProjectStateRecovery",
+                        "projectRename recoveryAction=deferred marker=\"" +
+                            toUtf8(markerPath.wstring()) +
+                            "\", reason=\"" + exception.what() + "\".");
+                }
+            }
+        }
+
         void recoverBuildCatalogState(Logger& logger)
         {
             const std::filesystem::path catalogDirectory = resolveBuildManifestDirectory();
             AtomicFileStore store;
             static_cast<void>(ProjectStateTransaction::recoverDirectory(catalogDirectory, store, &logger));
+            recoverProjectRenameTransactions(catalogDirectory, logger);
 
             std::error_code error;
             if (!std::filesystem::exists(catalogDirectory, error) ||
@@ -2195,7 +2538,8 @@ namespace fluxora
                 }
                 std::error_code statusError;
                 if (!entry.is_regular_file(statusError) ||
-                    !hasExtensionIgnoreCase(entry.path(), manifestFileExtension))
+                    !hasExtensionIgnoreCase(entry.path(), manifestFileExtension) ||
+                    isProjectRenameMarker(entry.path()))
                 {
                     continue;
                 }
@@ -2296,7 +2640,7 @@ namespace fluxora
         const std::filesystem::path& installRootDirectory,
         std::wstring_view projectName) const
     {
-        return normalizeRootDirectory(installRootDirectory) / sanitizeFolderName(projectName);
+        return buildAvailableProjectPaths(installRootDirectory, projectName).projectDirectory;
     }
 
     ProjectDescriptor ProjectService::createProject(const ProjectCreateRequest& request)
@@ -2439,43 +2783,29 @@ namespace fluxora
                 }
             }
 
-            const auto projectDirectory = buildProjectDirectory(normalizedRoot, request.name);
+            const ProjectPathAllocation allocation =
+                buildAvailableProjectPaths(normalizedRoot, request.name);
+            const auto& projectDirectory = allocation.projectDirectory;
+            const auto& manifestPath = allocation.manifestPath;
             PathSafetyService().validateWritePath(normalizedRoot, projectDirectory)
                 .throwIfUnsafe("Project directory is unsafe");
-            const auto manifestPath = buildManifestPath(request.name);
-            rollbackProjectDirectory = projectDirectory;
-            rollbackConfigPath = manifestPath;
 
-            std::error_code projectExistsError;
-            const bool projectDirectoryExists = std::filesystem::exists(projectDirectory, projectExistsError);
-            if (projectExistsError)
+            std::error_code createProjectDirectoryError;
+            const bool createdProjectDirectory =
+                std::filesystem::create_directory(projectDirectory, createProjectDirectoryError);
+            if (createProjectDirectoryError)
             {
                 throw std::invalid_argument(
-                    std::string("Project directory could not be inspected: ") +
-                    projectExistsError.message());
+                    std::string("Project directory could not be created: ") +
+                    createProjectDirectoryError.message());
             }
-            if (projectDirectoryExists)
+            if (!createdProjectDirectory)
             {
-                std::error_code projectDirectoryError;
-                if (!std::filesystem::is_directory(projectDirectory, projectDirectoryError))
-                {
-                    throw std::invalid_argument("Project directory is not a directory.");
-                }
-
-                std::error_code cleanError;
-                static_cast<void>(std::filesystem::remove_all(projectDirectory, cleanError));
-                if (cleanError)
-                {
-                    throw std::invalid_argument(
-                        std::string("Project directory could not be cleaned: ") +
-                        cleanError.message());
-                }
-                logger_.writeOperation(
-                    LogLevel::Info,
-                    "ProjectDiagnostics",
-                    "createProject cleaned existing project directory path=\"" +
-                        toUtf8(projectDirectory.wstring()) + "\".");
+                throw std::invalid_argument(
+                    "Project directory became unavailable. Preview the build path again.");
             }
+            rollbackProjectDirectory = projectDirectory;
+            rollbackConfigPath = manifestPath;
 
             materializeTemplate(projectDirectory, resolved);
 
@@ -2920,20 +3250,31 @@ namespace fluxora
             throw std::invalid_argument("Build config file does not exist.");
         }
 
-        const JsonValue manifest = parseJsonConfig(readTextFile(absoluteConfigPath));
-        requireObject(manifest);
-
         ProjectOpenResult current = openProjectConfig(absoluteConfigPath);
+        const std::string previousManifestContent = readTextFile(absoluteConfigPath);
+        const JsonValue manifest = parseJsonConfig(previousManifestContent);
+        requireObject(manifest);
         ProjectDescriptor renamed = current.project;
         const ProjectDescriptor previous = current.project;
 
         renamed.name = std::move(normalizedName);
         renamed.installRootDirectory = resolveInstallRootForProject(previous);
-        renamed.projectDirectory = buildProjectDirectory(renamed.installRootDirectory, renamed.name);
-        renamed.configPath = buildManifestPath(renamed.name, previous.configPath);
+        const ProjectPathAllocation allocation = buildAvailableProjectPaths(
+            renamed.installRootDirectory,
+            renamed.name,
+            &previous.projectDirectory,
+            &previous.configPath);
+        renamed.projectDirectory = allocation.projectDirectory;
+        renamed.configPath = allocation.manifestPath;
 
         const bool movesProjectDirectory = !isSamePath(previous.projectDirectory, renamed.projectDirectory);
         const bool movesConfig = !isSamePath(previous.configPath, renamed.configPath);
+
+        if (movesProjectDirectory != movesConfig)
+        {
+            throw std::logic_error(
+                "Project rename must move the manifest and project directory as one pair.");
+        }
 
         if (movesProjectDirectory && std::filesystem::exists(renamed.projectDirectory))
         {
@@ -2952,14 +3293,26 @@ namespace fluxora
             L"project manifest",
             ProjectStateValidation::JsonObject);
 
+        bool movedProjectDirectory = false;
+        bool wroteRenamedManifest = false;
+        std::optional<std::filesystem::path> renameRecoveryMarker;
         try
         {
             if (movesProjectDirectory)
             {
-                std::filesystem::create_directories(renamed.projectDirectory.parent_path());
-                std::filesystem::rename(previous.projectDirectory, renamed.projectDirectory);
+                renameRecoveryMarker = writeProjectRenameRecoveryMarker(
+                    ProjectRenameRecoveryRecord{
+                        std::filesystem::absolute(previous.configPath).lexically_normal(),
+                        std::filesystem::absolute(renamed.configPath).lexically_normal(),
+                        std::filesystem::absolute(previous.projectDirectory).lexically_normal(),
+                        std::filesystem::absolute(renamed.projectDirectory).lexically_normal()
+                    },
+                    fileStore);
             }
 
+            // Publish the new manifest before moving the directory. A process
+            // interruption then always leaves at least one recoverable pair:
+            // old manifest + old directory, or new manifest + new directory.
             fileStore.writeTextFile(
                 renamed.configPath,
                 buildUpdatedManifest(manifest, renamed),
@@ -2967,17 +3320,161 @@ namespace fluxora
                     L"project manifest",
                     ProjectStateValidation::JsonObject
                 });
+            wroteRenamedManifest = true;
+
+            if (movesProjectDirectory)
+            {
+                std::filesystem::create_directories(renamed.projectDirectory.parent_path());
+                std::filesystem::rename(previous.projectDirectory, renamed.projectDirectory);
+                movedProjectDirectory = true;
+            }
 
             if (movesConfig && std::filesystem::exists(previous.configPath))
             {
                 std::filesystem::remove(previous.configPath);
             }
 
+            if (renameRecoveryMarker.has_value())
+            {
+                removeRenameRecoveryFile(
+                    renameRecoveryMarker.value(),
+                    "transaction marker");
+            }
             transaction.commit();
         }
-        catch (...)
+        catch (const std::exception& exception)
         {
-            throw;
+            std::string rollbackFailure;
+            const auto noteRollbackFailure = [&rollbackFailure](std::string message)
+            {
+                if (!rollbackFailure.empty())
+                {
+                    rollbackFailure += "; ";
+                }
+                rollbackFailure += std::move(message);
+            };
+
+            if (movedProjectDirectory)
+            {
+                std::error_code previousExistsError;
+                std::error_code renamedExistsError;
+                const bool previousExists = std::filesystem::exists(
+                    previous.projectDirectory,
+                    previousExistsError);
+                const bool renamedExists = std::filesystem::exists(
+                    renamed.projectDirectory,
+                    renamedExistsError);
+                if (previousExistsError || renamedExistsError)
+                {
+                    noteRollbackFailure("project directory state could not be inspected");
+                }
+                else if (!previousExists && renamedExists)
+                {
+                    std::error_code restoreError;
+                    std::filesystem::rename(
+                        renamed.projectDirectory,
+                        previous.projectDirectory,
+                        restoreError);
+                    if (restoreError)
+                    {
+                        noteRollbackFailure(
+                            "project directory could not be restored: " + restoreError.message());
+                    }
+                }
+                else if (!previousExists)
+                {
+                    noteRollbackFailure("renamed project directory disappeared before rollback");
+                }
+                else if (renamedExists)
+                {
+                    noteRollbackFailure("both original and renamed project directories exist");
+                }
+            }
+
+            if (movesConfig)
+            {
+                std::error_code previousManifestError;
+                const bool previousManifestExists = std::filesystem::exists(
+                    previous.configPath,
+                    previousManifestError);
+                if (previousManifestError)
+                {
+                    noteRollbackFailure("original project manifest state could not be inspected");
+                }
+                else if (!previousManifestExists)
+                {
+                    try
+                    {
+                        fileStore.writeTextFile(
+                            previous.configPath,
+                            previousManifestContent,
+                            AtomicFileWriteOptions{
+                                L"project manifest",
+                                ProjectStateValidation::JsonObject
+                            });
+                    }
+                    catch (const std::exception& restoreException)
+                    {
+                        noteRollbackFailure(
+                            std::string("original project manifest could not be restored: ") +
+                            restoreException.what());
+                    }
+                }
+
+                if (wroteRenamedManifest && rollbackFailure.empty())
+                {
+                    std::error_code removeError;
+                    static_cast<void>(std::filesystem::remove(renamed.configPath, removeError));
+                    if (removeError)
+                    {
+                        noteRollbackFailure(
+                            "renamed project manifest could not be removed: " + removeError.message());
+                    }
+                }
+            }
+
+            if (rollbackFailure.empty() && renameRecoveryMarker.has_value())
+            {
+                try
+                {
+                    removeRenameRecoveryFile(
+                        renameRecoveryMarker.value(),
+                        "transaction marker");
+                }
+                catch (const std::exception& markerException)
+                {
+                    noteRollbackFailure(
+                        std::string("project rename marker could not be removed: ") +
+                        markerException.what());
+                }
+            }
+
+            if (rollbackFailure.empty())
+            {
+                transaction.commit();
+                logger_.writeOperation(
+                    LogLevel::Warning,
+                    "ProjectDiagnostics",
+                    "renameProject rolled back previousProjectDirectory=\"" +
+                        toUtf8(previous.projectDirectory.wstring()) +
+                        "\", attemptedProjectDirectory=\"" +
+                        toUtf8(renamed.projectDirectory.wstring()) +
+                        "\", reason=\"" + exception.what() + "\".");
+                throw;
+            }
+
+            logger_.writeOperation(
+                LogLevel::Error,
+                "ProjectDiagnostics",
+                "renameProject rollback failed previousProjectDirectory=\"" +
+                    toUtf8(previous.projectDirectory.wstring()) +
+                    "\", attemptedProjectDirectory=\"" +
+                    toUtf8(renamed.projectDirectory.wstring()) +
+                    "\", reason=\"" + exception.what() +
+                    "\", rollbackReason=\"" + rollbackFailure + "\".");
+            throw std::runtime_error(
+                std::string("Project rename failed: ") + exception.what() +
+                ". Rollback also failed: " + rollbackFailure);
         }
 
         projects_.erase(

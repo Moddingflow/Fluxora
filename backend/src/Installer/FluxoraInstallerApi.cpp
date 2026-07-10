@@ -17,6 +17,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <memory>
@@ -26,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -45,9 +47,13 @@
 namespace
 {
     constexpr std::array<unsigned char, 8> PackageMagic{ 'F', 'L', 'X', 'P', 'K', 'G', '1', '\0' };
+    constexpr std::array<unsigned char, 8> TransactionMagic{ 'F', 'L', 'X', 'T', 'X', 'N', '1', '\0' };
     constexpr std::uint32_t MinimumPackageVersion = 1;
     constexpr std::uint32_t CurrentPackageVersion = 2;
     constexpr std::uint32_t PackageVersionWithFileHashes = 2;
+    constexpr std::uint32_t TransactionVersion = 1;
+    constexpr std::size_t TransactionIdSize = 16;
+    constexpr std::uintmax_t MaximumTransactionMarkerBytes = 64 * 1024;
     constexpr std::size_t Sha256HashSize = 32;
     constexpr std::size_t CopyBufferSize = 1024 * 256;
     constexpr std::chrono::milliseconds ProgressCallbackMinimumInterval{100};
@@ -79,6 +85,22 @@ namespace
         std::wstring lastPhase;
         double lastPercent{0.0};
         bool hasReport{false};
+    };
+
+    using TransactionId = std::array<unsigned char, TransactionIdSize>;
+
+    struct InstallerTransactionPaths
+    {
+        TransactionId id{};
+        std::filesystem::path stagingDirectory;
+        std::filesystem::path backupDirectory;
+        std::filesystem::path markerPath;
+    };
+
+    struct InstallerTransactionMarker
+    {
+        InstallerTransactionPaths paths;
+        bool hadExistingInstall{false};
     };
 
     bool isBlank(const wchar_t* value)
@@ -736,6 +758,48 @@ namespace
         return true;
     }
 
+    void rejectReparseInstallDirectory(const std::filesystem::path& installDirectory)
+    {
+#ifdef _WIN32
+        const DWORD attributes = GetFileAttributesW(installDirectory.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES)
+        {
+            const DWORD error = GetLastError();
+            if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+            {
+                return;
+            }
+
+            throw std::invalid_argument(
+                "Install directory could not be inspected for Windows reparse points.");
+        }
+
+        if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        {
+            throw std::invalid_argument(
+                "Install directory cannot be a symbolic link, junction or reparse point.");
+        }
+#else
+        std::error_code error;
+        const std::filesystem::file_status status = std::filesystem::symlink_status(installDirectory, error);
+        if (error == std::errc::no_such_file_or_directory)
+        {
+            return;
+        }
+        if (error)
+        {
+            throw std::invalid_argument("Install directory could not be inspected for symbolic links.");
+        }
+        if (std::filesystem::is_symlink(status))
+        {
+            throw std::invalid_argument(
+                "Install directory cannot be a symbolic link, junction or reparse point.");
+        }
+#endif
+    }
+
+    void recoverInstallTransaction(const std::filesystem::path& installDirectory);
+
     std::filesystem::path validateInstallDirectory(const std::filesystem::path& installDirectory)
     {
         if (installDirectory.empty())
@@ -755,12 +819,843 @@ namespace
             throw std::invalid_argument("Choose a folder inside a drive, not the drive root.");
         }
 
+        rejectReparseInstallDirectory(absolute);
+        recoverInstallTransaction(absolute.lexically_normal());
+        rejectReparseInstallDirectory(absolute);
+
         if (std::filesystem::exists(absolute, error) && !std::filesystem::is_directory(absolute, error))
         {
             throw std::invalid_argument("Install path points to a file. Choose a folder.");
         }
 
         return absolute.lexically_normal();
+    }
+
+    std::filesystem::path transactionSiblingPath(
+        const std::filesystem::path& installDirectory,
+        std::wstring_view role,
+        std::uint64_t attempt)
+    {
+        const std::wstring installName = installDirectory.filename().empty()
+            ? L"Fluxora"
+            : installDirectory.filename().wstring();
+        const auto nonce = static_cast<std::uint64_t>(
+            std::chrono::steady_clock::now().time_since_epoch().count());
+        return installDirectory.parent_path() /
+            (L"." + installName + L".fluxora-" + std::wstring(role) + L"-" +
+             std::to_wstring(nonce) + L"-" + std::to_wstring(attempt));
+    }
+
+    std::string transactionIdHex(const TransactionId& transactionId)
+    {
+        constexpr char Digits[] = "0123456789abcdef";
+        std::string value;
+        value.reserve(transactionId.size() * 2);
+        for (const unsigned char byte : transactionId)
+        {
+            value.push_back(Digits[byte >> 4]);
+            value.push_back(Digits[byte & 0x0F]);
+        }
+        return value;
+    }
+
+    std::filesystem::path ownedTransactionSibling(
+        const std::filesystem::path& installDirectory,
+        std::wstring_view role,
+        const TransactionId& transactionId)
+    {
+        return installDirectory.parent_path() /
+            (L"." + installDirectory.filename().wstring() + L".fluxora-" + std::wstring(role) + L"-" +
+             fromUtf8(transactionIdHex(transactionId)));
+    }
+
+    std::filesystem::path installTransactionMarkerPath(const std::filesystem::path& installDirectory)
+    {
+        return installDirectory.parent_path() /
+            (L"." + installDirectory.filename().wstring() + L".fluxora-transaction");
+    }
+
+    std::filesystem::path installTransactionSentinelPath(
+        const std::filesystem::path& directory,
+        const TransactionId& transactionId)
+    {
+        return directory /
+            (L".fluxora-commit-" + fromUtf8(transactionIdHex(transactionId)) + L".pending");
+    }
+
+    TransactionId generateTransactionId(std::uint64_t attempt)
+    {
+        TransactionId transactionId{};
+#ifdef _WIN32
+        (void)attempt;
+        const NTSTATUS status = BCryptGenRandom(
+            nullptr,
+            transactionId.data(),
+            static_cast<ULONG>(transactionId.size()),
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+        if (status < 0)
+        {
+            throw std::runtime_error("Failed to generate an installer transaction identifier.");
+        }
+#else
+        std::uint64_t state = static_cast<std::uint64_t>(
+            std::chrono::steady_clock::now().time_since_epoch().count()) ^
+            static_cast<std::uint64_t>(std::hash<std::thread::id>{}(std::this_thread::get_id())) ^
+            attempt;
+        for (unsigned char& byte : transactionId)
+        {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            byte = static_cast<unsigned char>(state & 0xFF);
+        }
+#endif
+        return transactionId;
+    }
+
+    InstallerTransactionPaths createStagingTransaction(const std::filesystem::path& installDirectory)
+    {
+        std::error_code error;
+        std::filesystem::create_directories(installDirectory.parent_path(), error);
+        if (error)
+        {
+            throw std::runtime_error(
+                "Failed to create installer staging parent: " +
+                toUtf8(installDirectory.parent_path().wstring()) + ". " + error.message());
+        }
+
+        for (std::uint64_t attempt = 0; attempt < 128; ++attempt)
+        {
+            InstallerTransactionPaths transaction;
+            transaction.id = generateTransactionId(attempt);
+            transaction.stagingDirectory = ownedTransactionSibling(
+                installDirectory,
+                L"staging",
+                transaction.id);
+            transaction.backupDirectory = ownedTransactionSibling(
+                installDirectory,
+                L"backup",
+                transaction.id);
+            transaction.markerPath = installTransactionMarkerPath(installDirectory);
+
+            error.clear();
+            const bool backupExists = std::filesystem::exists(transaction.backupDirectory, error);
+            if (error)
+            {
+                throw std::runtime_error(
+                    "Failed to inspect installer backup path: " +
+                    toUtf8(transaction.backupDirectory.wstring()) + ". " + error.message());
+            }
+            if (backupExists)
+            {
+                continue;
+            }
+
+            error.clear();
+            if (std::filesystem::create_directory(transaction.stagingDirectory, error))
+            {
+                return transaction;
+            }
+            if (error)
+            {
+                throw std::runtime_error(
+                    "Failed to create installer staging directory: " +
+                    toUtf8(transaction.stagingDirectory.wstring()) + ". " + error.message());
+            }
+        }
+
+        throw std::runtime_error("Failed to allocate a unique installer transaction directory.");
+    }
+
+    void removeTransactionDirectory(const std::filesystem::path& path, std::string_view role) noexcept
+    {
+        if (path.empty())
+        {
+            return;
+        }
+
+        std::error_code error;
+        const std::uintmax_t removed = std::filesystem::remove_all(path, error);
+        if (error)
+        {
+            writeLog(
+                "WARNING",
+                std::string("Failed to clean installer ") + std::string(role) +
+                    ". path=\"" + toUtf8(path.wstring()) + "\", error=\"" + error.message() + "\"");
+            return;
+        }
+
+        if (removed > 0)
+        {
+            writeLog(
+                "INFO",
+                std::string("Installer ") + std::string(role) +
+                    " cleaned. path=\"" + toUtf8(path.wstring()) + "\"");
+        }
+    }
+
+    class TransactionDirectoryCleanup final
+    {
+    public:
+        TransactionDirectoryCleanup(std::filesystem::path path, std::string role)
+            : path_(std::move(path)),
+              role_(std::move(role))
+        {
+        }
+
+        TransactionDirectoryCleanup(const TransactionDirectoryCleanup&) = delete;
+        TransactionDirectoryCleanup& operator=(const TransactionDirectoryCleanup&) = delete;
+
+        ~TransactionDirectoryCleanup()
+        {
+            if (active_)
+            {
+                removeTransactionDirectory(path_, role_);
+            }
+        }
+
+        void dismiss() noexcept
+        {
+            active_ = false;
+        }
+
+    private:
+        std::filesystem::path path_;
+        std::string role_;
+        bool active_{true};
+    };
+
+    void renameDirectory(
+        const std::filesystem::path& source,
+        const std::filesystem::path& destination,
+        std::string_view operation)
+    {
+        std::error_code error;
+        std::filesystem::rename(source, destination, error);
+        if (error)
+        {
+            throw std::runtime_error(
+                std::string(operation) + " failed. source=\"" + toUtf8(source.wstring()) +
+                "\", destination=\"" + toUtf8(destination.wstring()) +
+                "\", error=\"" + error.message() + "\"");
+        }
+    }
+
+    bool transactionPathExistsWithoutReparse(
+        const std::filesystem::path& path,
+        std::string_view role)
+    {
+#ifdef _WIN32
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES)
+        {
+            const DWORD error = GetLastError();
+            if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+            {
+                return false;
+            }
+            throw std::runtime_error(
+                "Failed to inspect installer transaction " + std::string(role) + ".");
+        }
+        if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        {
+            throw std::runtime_error(
+                "Installer transaction " + std::string(role) + " cannot be a reparse point.");
+        }
+        return true;
+#else
+        std::error_code error;
+        const std::filesystem::file_status status = std::filesystem::symlink_status(path, error);
+        if (error == std::errc::no_such_file_or_directory)
+        {
+            return false;
+        }
+        if (error)
+        {
+            throw std::runtime_error(
+                "Failed to inspect installer transaction " + std::string(role) + ".");
+        }
+        if (std::filesystem::is_symlink(status))
+        {
+            throw std::runtime_error(
+                "Installer transaction " + std::string(role) + " cannot be a symbolic link.");
+        }
+        return std::filesystem::exists(status);
+#endif
+    }
+
+    void removeOwnedTransactionDirectory(
+        const std::filesystem::path& path,
+        std::string_view role)
+    {
+        if (!transactionPathExistsWithoutReparse(path, role))
+        {
+            return;
+        }
+
+        std::error_code error;
+        if (!std::filesystem::is_directory(path, error) || error)
+        {
+            throw std::runtime_error(
+                "Installer transaction " + std::string(role) + " is not a directory.");
+        }
+
+        std::filesystem::remove_all(path, error);
+        if (error)
+        {
+            throw std::runtime_error(
+                "Failed to clean installer transaction " + std::string(role) + ": " + error.message());
+        }
+    }
+
+    template <typename T>
+    void appendTransactionPod(std::vector<unsigned char>& output, const T& value)
+    {
+        const auto* first = reinterpret_cast<const unsigned char*>(&value);
+        output.insert(output.end(), first, first + sizeof(T));
+    }
+
+    void appendTransactionBytes(
+        std::vector<unsigned char>& output,
+        const void* data,
+        std::size_t byteCount)
+    {
+        const auto* first = static_cast<const unsigned char*>(data);
+        output.insert(output.end(), first, first + byteCount);
+    }
+
+    std::vector<unsigned char> serializeTransactionMarker(
+        const InstallerTransactionPaths& transaction,
+        bool hadExistingInstall)
+    {
+        const std::string stagingName = toUtf8(transaction.stagingDirectory.filename().wstring());
+        const std::string backupName = toUtf8(transaction.backupDirectory.filename().wstring());
+        if (stagingName.empty() || backupName.empty() ||
+            stagingName.size() > std::numeric_limits<std::uint32_t>::max() ||
+            backupName.size() > std::numeric_limits<std::uint32_t>::max())
+        {
+            throw std::runtime_error("Installer transaction path names cannot be serialized safely.");
+        }
+
+        std::vector<unsigned char> marker;
+        marker.reserve(
+            TransactionMagic.size() + sizeof(TransactionVersion) + sizeof(std::uint8_t) +
+            transaction.id.size() + (sizeof(std::uint32_t) * 2) +
+            stagingName.size() + backupName.size());
+        appendTransactionBytes(marker, TransactionMagic.data(), TransactionMagic.size());
+        appendTransactionPod(marker, TransactionVersion);
+        appendTransactionPod(marker, static_cast<std::uint8_t>(hadExistingInstall ? 1 : 0));
+        appendTransactionBytes(marker, transaction.id.data(), transaction.id.size());
+        appendTransactionPod(marker, static_cast<std::uint32_t>(stagingName.size()));
+        appendTransactionBytes(marker, stagingName.data(), stagingName.size());
+        appendTransactionPod(marker, static_cast<std::uint32_t>(backupName.size()));
+        appendTransactionBytes(marker, backupName.data(), backupName.size());
+        return marker;
+    }
+
+    class TransactionMarkerReader final
+    {
+    public:
+        explicit TransactionMarkerReader(const std::vector<unsigned char>& bytes)
+            : bytes_(bytes)
+        {
+        }
+
+        template <typename T>
+        T readPod(std::string_view label)
+        {
+            T value{};
+            readExact(&value, sizeof(value), label);
+            return value;
+        }
+
+        void readExact(void* destination, std::size_t byteCount, std::string_view label)
+        {
+            if (byteCount > bytes_.size() - offset_)
+            {
+                throw std::runtime_error(
+                    "Installer transaction marker is truncated at " + std::string(label) + ".");
+            }
+            std::memcpy(destination, bytes_.data() + offset_, byteCount);
+            offset_ += byteCount;
+        }
+
+        std::string readString(std::string_view label)
+        {
+            const std::uint32_t length = readPod<std::uint32_t>(label);
+            if (length == 0 || length > 32768 || length > bytes_.size() - offset_)
+            {
+                throw std::runtime_error(
+                    "Installer transaction marker contains an invalid " + std::string(label) + ".");
+            }
+            std::string value(length, '\0');
+            readExact(value.data(), value.size(), label);
+            return value;
+        }
+
+        [[nodiscard]] bool atEnd() const noexcept
+        {
+            return offset_ == bytes_.size();
+        }
+
+    private:
+        const std::vector<unsigned char>& bytes_;
+        std::size_t offset_{0};
+    };
+
+    std::vector<unsigned char> readTransactionFile(
+        const std::filesystem::path& path,
+        std::uintmax_t maximumBytes,
+        std::string_view role)
+    {
+        std::error_code error;
+        const std::uintmax_t byteCount = std::filesystem::file_size(path, error);
+        if (error || byteCount == 0 || byteCount > maximumBytes ||
+            byteCount > static_cast<std::uintmax_t>(std::numeric_limits<std::size_t>::max()))
+        {
+            throw std::runtime_error(
+                "Installer transaction " + std::string(role) + " has an invalid size.");
+        }
+
+        std::vector<unsigned char> bytes(static_cast<std::size_t>(byteCount));
+        std::ifstream input(path, std::ios::in | std::ios::binary);
+        if (!input ||
+            !input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
+        {
+            throw std::runtime_error(
+                "Failed to read installer transaction " + std::string(role) + ".");
+        }
+        return bytes;
+    }
+
+    void validateRecordedTransactionName(
+        const std::wstring& recordedName,
+        const std::filesystem::path& expectedPath,
+        std::string_view role)
+    {
+        const std::filesystem::path recordedPath(recordedName);
+        if (recordedPath.empty() ||
+            recordedPath.has_root_path() ||
+            recordedPath.has_parent_path() ||
+            recordedPath.filename() != recordedPath ||
+            recordedPath != expectedPath.filename())
+        {
+            throw std::runtime_error(
+                "Installer transaction marker contains an untrusted " + std::string(role) + " path.");
+        }
+    }
+
+    InstallerTransactionMarker readTransactionMarker(
+        const std::filesystem::path& installDirectory,
+        const std::filesystem::path& markerPath)
+    {
+        const std::vector<unsigned char> bytes = readTransactionFile(
+            markerPath,
+            MaximumTransactionMarkerBytes,
+            "marker");
+        TransactionMarkerReader reader(bytes);
+
+        std::array<unsigned char, TransactionMagic.size()> magic{};
+        reader.readExact(magic.data(), magic.size(), "magic");
+        if (magic != TransactionMagic || reader.readPod<std::uint32_t>("version") != TransactionVersion)
+        {
+            throw std::runtime_error("Installer transaction marker has an unsupported format.");
+        }
+
+        const std::uint8_t hadExistingInstall = reader.readPod<std::uint8_t>("existing-install flag");
+        if (hadExistingInstall > 1)
+        {
+            throw std::runtime_error("Installer transaction marker has an invalid existing-install flag.");
+        }
+
+        InstallerTransactionMarker marker;
+        marker.paths.markerPath = markerPath;
+        marker.hadExistingInstall = hadExistingInstall != 0;
+        reader.readExact(marker.paths.id.data(), marker.paths.id.size(), "transaction id");
+        const std::wstring stagingName = fromUtf8(reader.readString("staging path"));
+        const std::wstring backupName = fromUtf8(reader.readString("backup path"));
+        if (!reader.atEnd())
+        {
+            throw std::runtime_error("Installer transaction marker contains trailing data.");
+        }
+
+        const std::filesystem::path expectedStaging = ownedTransactionSibling(
+            installDirectory,
+            L"staging",
+            marker.paths.id);
+        const std::filesystem::path expectedBackup = ownedTransactionSibling(
+            installDirectory,
+            L"backup",
+            marker.paths.id);
+        validateRecordedTransactionName(stagingName, expectedStaging, "staging");
+        validateRecordedTransactionName(backupName, expectedBackup, "backup");
+        marker.paths.stagingDirectory = installDirectory.parent_path() / stagingName;
+        marker.paths.backupDirectory = installDirectory.parent_path() / backupName;
+        return marker;
+    }
+
+    void writeDurableNewFile(
+        const std::filesystem::path& path,
+        const std::vector<unsigned char>& bytes,
+        std::string_view role)
+    {
+#ifdef _WIN32
+        const HANDLE handle = CreateFileW(
+            path.c_str(),
+            GENERIC_WRITE,
+            0,
+            nullptr,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_WRITE_THROUGH,
+            nullptr);
+        if (handle == INVALID_HANDLE_VALUE)
+        {
+            throw std::runtime_error(
+                "Failed to create installer transaction " + std::string(role) + ".");
+        }
+
+        DWORD failure = ERROR_SUCCESS;
+        std::size_t offset = 0;
+        while (offset < bytes.size())
+        {
+            const DWORD chunk = static_cast<DWORD>(std::min<std::size_t>(
+                bytes.size() - offset,
+                static_cast<std::size_t>(std::numeric_limits<DWORD>::max())));
+            DWORD written = 0;
+            if (!WriteFile(handle, bytes.data() + offset, chunk, &written, nullptr) || written != chunk)
+            {
+                failure = GetLastError();
+                break;
+            }
+            offset += written;
+        }
+        if (failure == ERROR_SUCCESS && !FlushFileBuffers(handle))
+        {
+            failure = GetLastError();
+        }
+        CloseHandle(handle);
+
+        if (failure != ERROR_SUCCESS)
+        {
+            DeleteFileW(path.c_str());
+            throw std::runtime_error(
+                "Failed to persist installer transaction " + std::string(role) + ".");
+        }
+#else
+        std::ofstream output(path, std::ios::out | std::ios::binary | std::ios::trunc);
+        output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        output.flush();
+        if (!output)
+        {
+            throw std::runtime_error(
+                "Failed to persist installer transaction " + std::string(role) + ".");
+        }
+#endif
+    }
+
+    void persistTransactionMarker(
+        const InstallerTransactionPaths& transaction,
+        bool hadExistingInstall)
+    {
+        const std::vector<unsigned char> marker = serializeTransactionMarker(
+            transaction,
+            hadExistingInstall);
+        std::filesystem::path temporaryMarker = transaction.markerPath;
+        temporaryMarker += L".tmp-" + fromUtf8(transactionIdHex(transaction.id));
+
+        writeDurableNewFile(temporaryMarker, marker, "marker temporary file");
+#ifdef _WIN32
+        if (!MoveFileExW(
+                temporaryMarker.c_str(),
+                transaction.markerPath.c_str(),
+                MOVEFILE_WRITE_THROUGH))
+        {
+            DeleteFileW(temporaryMarker.c_str());
+            throw std::runtime_error(
+                "Failed to publish the installer transaction marker; another installation may be active.");
+        }
+#else
+        std::error_code error;
+        if (std::filesystem::exists(transaction.markerPath, error) || error)
+        {
+            std::filesystem::remove(temporaryMarker);
+            throw std::runtime_error(
+                "Failed to publish the installer transaction marker; another installation may be active.");
+        }
+        std::filesystem::rename(temporaryMarker, transaction.markerPath, error);
+        if (error)
+        {
+            std::filesystem::remove(temporaryMarker);
+            throw std::runtime_error("Failed to publish the installer transaction marker.");
+        }
+#endif
+    }
+
+    void persistTransactionSentinel(const InstallerTransactionPaths& transaction)
+    {
+        const std::string value = transactionIdHex(transaction.id);
+        const std::vector<unsigned char> bytes(value.begin(), value.end());
+        writeDurableNewFile(
+            installTransactionSentinelPath(transaction.stagingDirectory, transaction.id),
+            bytes,
+            "commit sentinel");
+    }
+
+    void removeDurableTransactionFile(
+        const std::filesystem::path& path,
+        std::string_view role)
+    {
+        if (!transactionPathExistsWithoutReparse(path, role))
+        {
+            return;
+        }
+#ifdef _WIN32
+        const HANDLE handle = CreateFileW(
+            path.c_str(),
+            GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+        if (handle == INVALID_HANDLE_VALUE)
+        {
+            throw std::runtime_error(
+                "Failed to open installer transaction " + std::string(role) + " for final flush.");
+        }
+        const BOOL flushed = FlushFileBuffers(handle);
+        const DWORD flushError = flushed ? ERROR_SUCCESS : GetLastError();
+        CloseHandle(handle);
+        if (!flushed)
+        {
+            throw std::runtime_error(
+                "Failed to flush installer transaction " + std::string(role) +
+                " before removal. error=" + std::to_string(flushError));
+        }
+        if (!DeleteFileW(path.c_str()))
+        {
+            throw std::runtime_error(
+                "Failed to remove installer transaction " + std::string(role) + ".");
+        }
+#else
+        std::error_code error;
+        if (!std::filesystem::remove(path, error) || error)
+        {
+            throw std::runtime_error(
+                "Failed to remove installer transaction " + std::string(role) + ".");
+        }
+#endif
+    }
+
+    bool directoryHasTransactionSentinel(
+        const std::filesystem::path& directory,
+        const TransactionId& transactionId)
+    {
+        const std::filesystem::path sentinel = installTransactionSentinelPath(directory, transactionId);
+        if (!transactionPathExistsWithoutReparse(sentinel, "commit sentinel"))
+        {
+            return false;
+        }
+        const std::vector<unsigned char> contents = readTransactionFile(
+            sentinel,
+            256,
+            "commit sentinel");
+        const std::string expected = transactionIdHex(transactionId);
+        return contents.size() == expected.size() &&
+            std::equal(contents.begin(), contents.end(), expected.begin());
+    }
+
+    bool isVerifiedInstalledDirectory(const std::filesystem::path& installDirectory)
+    {
+        if (!transactionPathExistsWithoutReparse(installDirectory, "live directory"))
+        {
+            return false;
+        }
+
+        std::error_code error;
+        if (!std::filesystem::is_directory(installDirectory, error) || error)
+        {
+            return false;
+        }
+
+        const std::filesystem::path applicationPath = installDirectory / L"Fluxora.exe";
+        if (!transactionPathExistsWithoutReparse(applicationPath, "live executable"))
+        {
+            return false;
+        }
+        return std::filesystem::is_regular_file(applicationPath, error) && !error;
+    }
+
+    void recoverInstallTransaction(const std::filesystem::path& installDirectory)
+    {
+        const std::filesystem::path markerPath = installTransactionMarkerPath(installDirectory);
+        if (!transactionPathExistsWithoutReparse(markerPath, "marker"))
+        {
+            return;
+        }
+
+        const InstallerTransactionMarker marker = readTransactionMarker(installDirectory, markerPath);
+        const bool liveExists = transactionPathExistsWithoutReparse(
+            installDirectory,
+            "live directory");
+        const bool stagingExists = transactionPathExistsWithoutReparse(
+            marker.paths.stagingDirectory,
+            "staging directory");
+        const bool backupExists = transactionPathExistsWithoutReparse(
+            marker.paths.backupDirectory,
+            "backup directory");
+        const bool liveHasSentinel = liveExists && directoryHasTransactionSentinel(
+            installDirectory,
+            marker.paths.id);
+        const bool stagingHasSentinel = stagingExists && directoryHasTransactionSentinel(
+            marker.paths.stagingDirectory,
+            marker.paths.id);
+
+        if (liveHasSentinel)
+        {
+            if (stagingExists || !isVerifiedInstalledDirectory(installDirectory))
+            {
+                throw std::runtime_error(
+                    "Installer transaction recovery found an ambiguous committed installation state.");
+            }
+            if (backupExists)
+            {
+                removeOwnedTransactionDirectory(marker.paths.backupDirectory, "backup directory");
+            }
+            removeDurableTransactionFile(
+                installTransactionSentinelPath(installDirectory, marker.paths.id),
+                "commit sentinel");
+            removeDurableTransactionFile(marker.paths.markerPath, "marker");
+            writeLog("INFO", "Recovered and finalized a committed installer directory transaction.");
+            return;
+        }
+
+        if (!liveExists && marker.hadExistingInstall && backupExists)
+        {
+            renameDirectory(
+                marker.paths.backupDirectory,
+                installDirectory,
+                "Restoring the interrupted Fluxora installation");
+            if (stagingExists)
+            {
+                if (!stagingHasSentinel)
+                {
+                    throw std::runtime_error(
+                        "Installer transaction recovery refused an unverified staging directory.");
+                }
+                removeOwnedTransactionDirectory(marker.paths.stagingDirectory, "staging directory");
+            }
+            removeDurableTransactionFile(marker.paths.markerPath, "marker");
+            writeLog("INFO", "Recovered the previous installation after an interrupted directory swap.");
+            return;
+        }
+
+        if (!liveExists && !marker.hadExistingInstall && !backupExists && stagingHasSentinel)
+        {
+            removeOwnedTransactionDirectory(marker.paths.stagingDirectory, "staging directory");
+            removeDurableTransactionFile(marker.paths.markerPath, "marker");
+            writeLog("INFO", "Cleaned an abandoned staging directory from an interrupted new installation.");
+            return;
+        }
+
+        if (liveExists && marker.hadExistingInstall && stagingHasSentinel && !backupExists)
+        {
+            removeOwnedTransactionDirectory(marker.paths.stagingDirectory, "staging directory");
+            removeDurableTransactionFile(marker.paths.markerPath, "marker");
+            writeLog("INFO", "Cleaned an abandoned staging directory before the live-directory swap.");
+            return;
+        }
+
+        if (liveExists && !stagingExists && !backupExists &&
+            (marker.hadExistingInstall || isVerifiedInstalledDirectory(installDirectory)))
+        {
+            removeDurableTransactionFile(marker.paths.markerPath, "marker");
+            writeLog("INFO", "Finalized installer transaction metadata after directory commit cleanup.");
+            return;
+        }
+
+        throw std::runtime_error(
+            "Installer transaction marker describes an unsafe or ambiguous recovery state; no paths were changed.");
+    }
+
+    bool isWindowsReservedPathComponent(std::wstring_view component)
+    {
+        const std::size_t extensionSeparator = component.find(L'.');
+        std::wstring deviceName(component.substr(0, extensionSeparator));
+        std::transform(deviceName.begin(), deviceName.end(), deviceName.begin(), [](wchar_t value) {
+            return static_cast<wchar_t>(std::towupper(value));
+        });
+
+        if (deviceName == L"CON" ||
+            deviceName == L"PRN" ||
+            deviceName == L"AUX" ||
+            deviceName == L"NUL" ||
+            deviceName == L"CLOCK$" ||
+            deviceName == L"CONIN$" ||
+            deviceName == L"CONOUT$")
+        {
+            return true;
+        }
+
+        if (deviceName.size() != 4 ||
+            (deviceName.substr(0, 3) != L"COM" && deviceName.substr(0, 3) != L"LPT"))
+        {
+            return false;
+        }
+
+        const wchar_t suffix = deviceName.back();
+        return (suffix >= L'1' && suffix <= L'9') ||
+            suffix == L'\u00B9' ||
+            suffix == L'\u00B2' ||
+            suffix == L'\u00B3';
+    }
+
+    std::wstring windowsNormalizedOutputPathKey(const std::filesystem::path& relativePath)
+    {
+        std::wstring normalized = relativePath.lexically_normal().generic_wstring();
+#ifdef _WIN32
+        if (normalized.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        {
+            throw std::runtime_error("Package output path is too long to normalize.");
+        }
+
+        const int sourceLength = static_cast<int>(normalized.size());
+        const int requiredLength = LCMapStringEx(
+            LOCALE_NAME_INVARIANT,
+            LCMAP_LOWERCASE,
+            normalized.data(),
+            sourceLength,
+            nullptr,
+            0,
+            nullptr,
+            nullptr,
+            0);
+        if (requiredLength <= 0)
+        {
+            throw std::runtime_error("Failed to normalize a package output path for Windows.");
+        }
+
+        std::wstring folded(static_cast<std::size_t>(requiredLength), L'\0');
+        if (LCMapStringEx(
+                LOCALE_NAME_INVARIANT,
+                LCMAP_LOWERCASE,
+                normalized.data(),
+                sourceLength,
+                folded.data(),
+                requiredLength,
+                nullptr,
+                nullptr,
+                0) != requiredLength)
+        {
+            throw std::runtime_error("Failed to normalize a package output path for Windows.");
+        }
+        return folded;
+#else
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](wchar_t value) {
+            return static_cast<wchar_t>(std::towlower(value));
+        });
+        return normalized;
+#endif
     }
 
     std::filesystem::path resolvePackageEntryPath(
@@ -784,6 +1679,15 @@ namespace
             if (text == L"." || text == L".." || text.find(L':') != std::wstring::npos)
             {
                 throw std::runtime_error("Package contains an unsafe path.");
+            }
+            if (!text.empty() && (text.back() == L'.' || text.back() == L' '))
+            {
+                throw std::runtime_error(
+                    "Package path component has a trailing dot or space that aliases another Windows path.");
+            }
+            if (isWindowsReservedPathComponent(text))
+            {
+                throw std::runtime_error("Package contains a Windows-reserved path component.");
             }
         }
 
@@ -917,6 +1821,12 @@ namespace
             emitProgress(callback, userData, progressState, L"copying", currentItem, copiedBytes, totalBytes);
         }
 
+        output.flush();
+        if (!output)
+        {
+            throw std::runtime_error("Failed to flush installed file: " + toUtf8(destination.wstring()));
+        }
+
 #ifdef _WIN32
         if (expectedHash != nullptr && hasher)
         {
@@ -959,71 +1869,228 @@ namespace
         throw std::runtime_error("Installed package is missing Fluxora.exe.");
     }
 
+#ifdef _WIN32
+    class ScopedComApartment final
+    {
+    public:
+        ScopedComApartment()
+        {
+            const HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            if (result == RPC_E_CHANGED_MODE)
+            {
+                return;
+            }
+            if (FAILED(result))
+            {
+                throw std::runtime_error("Failed to initialize Windows shortcut services.");
+            }
+            shouldUninitialize_ = true;
+        }
+
+        ScopedComApartment(const ScopedComApartment&) = delete;
+        ScopedComApartment& operator=(const ScopedComApartment&) = delete;
+
+        ~ScopedComApartment()
+        {
+            if (shouldUninitialize_)
+            {
+                CoUninitialize();
+            }
+        }
+
+    private:
+        bool shouldUninitialize_{false};
+    };
+
+    struct ComInterfaceReleaser
+    {
+        template <typename Interface>
+        void operator()(Interface* value) const noexcept
+        {
+            if (value != nullptr)
+            {
+                value->Release();
+            }
+        }
+    };
+
+    template <typename Interface>
+    using ComInterfacePtr = std::unique_ptr<Interface, ComInterfaceReleaser>;
+
+    void requireShortcutResult(HRESULT result, std::string_view operation)
+    {
+        if (SUCCEEDED(result))
+        {
+            return;
+        }
+
+        std::ostringstream stream;
+        stream << "Failed to " << operation << " while creating the desktop shortcut. HRESULT=0x"
+               << std::hex << std::uppercase << static_cast<unsigned long>(result) << '.';
+        throw std::runtime_error(stream.str());
+    }
+
+    std::filesystem::path allocateShortcutTemporaryPath(const std::filesystem::path& shortcut)
+    {
+        for (std::uint64_t attempt = 0; attempt < 128; ++attempt)
+        {
+            std::filesystem::path candidate = transactionSiblingPath(shortcut, L"shortcut", attempt);
+            candidate += L".tmp";
+
+            std::error_code error;
+            const bool exists = std::filesystem::exists(candidate, error);
+            if (error)
+            {
+                throw std::runtime_error(
+                    "Failed to inspect a temporary desktop shortcut path: " + error.message());
+            }
+            if (!exists)
+            {
+                return candidate;
+            }
+        }
+
+        throw std::runtime_error("Failed to allocate a temporary desktop shortcut path.");
+    }
+
+    class TemporaryShortcutCleanup final
+    {
+    public:
+        explicit TemporaryShortcutCleanup(std::filesystem::path path)
+            : path_(std::move(path))
+        {
+        }
+
+        TemporaryShortcutCleanup(const TemporaryShortcutCleanup&) = delete;
+        TemporaryShortcutCleanup& operator=(const TemporaryShortcutCleanup&) = delete;
+
+        ~TemporaryShortcutCleanup()
+        {
+            if (!active_)
+            {
+                return;
+            }
+
+            std::error_code error;
+            std::filesystem::remove(path_, error);
+            if (error)
+            {
+                writeLog(
+                    "WARNING",
+                    std::string("Failed to clean temporary desktop shortcut. path=\"") +
+                        toUtf8(path_.wstring()) + "\", error=\"" + error.message() + "\"");
+            }
+        }
+
+        void dismiss() noexcept
+        {
+            active_ = false;
+        }
+
+    private:
+        std::filesystem::path path_;
+        bool active_{true};
+    };
+
+    void commitDesktopShortcut(
+        const std::filesystem::path& temporaryShortcut,
+        const std::filesystem::path& shortcut)
+    {
+        std::error_code error;
+        const bool replacingExisting = std::filesystem::exists(shortcut, error);
+        if (error)
+        {
+            throw std::runtime_error("Failed to inspect the existing desktop shortcut: " + error.message());
+        }
+
+        BOOL committed = FALSE;
+        if (replacingExisting)
+        {
+            committed = ReplaceFileW(
+                shortcut.c_str(),
+                temporaryShortcut.c_str(),
+                nullptr,
+                REPLACEFILE_WRITE_THROUGH,
+                nullptr,
+                nullptr);
+        }
+        else
+        {
+            committed = MoveFileExW(
+                temporaryShortcut.c_str(),
+                shortcut.c_str(),
+                MOVEFILE_WRITE_THROUGH);
+        }
+
+        if (!committed)
+        {
+            const std::error_code windowsError(
+                static_cast<int>(GetLastError()),
+                std::system_category());
+            throw std::runtime_error(
+                "Failed to atomically publish the desktop shortcut: " + windowsError.message());
+        }
+    }
+#endif
+
     std::filesystem::path createDesktopShortcut(const std::filesystem::path& applicationPath)
     {
 #ifdef _WIN32
-        HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        const bool shouldUninitialize = SUCCEEDED(initialized);
-        if (initialized == RPC_E_CHANGED_MODE)
-        {
-            initialized = S_OK;
-        }
+        const ScopedComApartment apartment;
 
-        if (FAILED(initialized))
-        {
-            throw std::runtime_error("Failed to initialize Windows shortcut services.");
-        }
-
-        IShellLinkW* shellLink = nullptr;
-        HRESULT hr = CoCreateInstance(
+        IShellLinkW* rawShellLink = nullptr;
+        requireShortcutResult(CoCreateInstance(
             CLSID_ShellLink,
             nullptr,
             CLSCTX_INPROC_SERVER,
             IID_IShellLinkW,
-            reinterpret_cast<void**>(&shellLink));
-        if (FAILED(hr) || shellLink == nullptr)
+            reinterpret_cast<void**>(&rawShellLink)),
+            "create the Windows shell-link object");
+        if (rawShellLink == nullptr)
         {
-            if (shouldUninitialize)
-            {
-                CoUninitialize();
-            }
             throw std::runtime_error("Failed to create a Windows shortcut.");
         }
+        ComInterfacePtr<IShellLinkW> shellLink(rawShellLink);
 
         const std::wstring target = applicationPath.wstring();
         const std::wstring workingDirectory = applicationPath.parent_path().wstring();
-        shellLink->SetPath(target.c_str());
-        shellLink->SetWorkingDirectory(workingDirectory.c_str());
-        shellLink->SetDescription(L"Fluxora Mod Manager");
-        shellLink->SetIconLocation(target.c_str(), 0);
+        requireShortcutResult(shellLink->SetPath(target.c_str()), "set the shortcut target");
+        requireShortcutResult(
+            shellLink->SetWorkingDirectory(workingDirectory.c_str()),
+            "set the shortcut working directory");
+        requireShortcutResult(
+            shellLink->SetDescription(L"Fluxora Mod Manager"),
+            "set the shortcut description");
+        requireShortcutResult(
+            shellLink->SetIconLocation(target.c_str(), 0),
+            "set the shortcut icon");
 
-        IPersistFile* persistFile = nullptr;
-        hr = shellLink->QueryInterface(IID_IPersistFile, reinterpret_cast<void**>(&persistFile));
-        if (FAILED(hr) || persistFile == nullptr)
+        IPersistFile* rawPersistFile = nullptr;
+        requireShortcutResult(
+            shellLink->QueryInterface(IID_IPersistFile, reinterpret_cast<void**>(&rawPersistFile)),
+            "open the shortcut persistence interface");
+        if (rawPersistFile == nullptr)
         {
-            shellLink->Release();
-            if (shouldUninitialize)
-            {
-                CoUninitialize();
-            }
             throw std::runtime_error("Failed to save a Windows shortcut.");
         }
+        ComInterfacePtr<IPersistFile> persistFile(rawPersistFile);
 
         const std::filesystem::path shortcut = desktopShortcutPath();
-        std::filesystem::create_directories(shortcut.parent_path());
-        hr = persistFile->Save(shortcut.wstring().c_str(), TRUE);
-
-        persistFile->Release();
-        shellLink->Release();
-        if (shouldUninitialize)
+        std::error_code directoryError;
+        std::filesystem::create_directories(shortcut.parent_path(), directoryError);
+        if (directoryError)
         {
-            CoUninitialize();
+            throw std::runtime_error(
+                "Failed to prepare the desktop shortcut directory: " + directoryError.message());
         }
 
-        if (FAILED(hr))
-        {
-            throw std::runtime_error("Failed to write the desktop shortcut.");
-        }
+        const std::filesystem::path temporaryShortcut = allocateShortcutTemporaryPath(shortcut);
+        TemporaryShortcutCleanup temporaryCleanup(temporaryShortcut);
+        requireShortcutResult(
+            persistFile->Save(temporaryShortcut.c_str(), TRUE),
+            "write the temporary desktop shortcut");
+        commitDesktopShortcut(temporaryShortcut, shortcut);
+        temporaryCleanup.dismiss();
 
         return shortcut;
 #else
@@ -1042,13 +2109,17 @@ namespace
     {
         const std::filesystem::path validatedInstallDirectory = validateInstallDirectory(installDirectory);
         const PackageHeader header = readHeader(package);
-        std::filesystem::create_directories(validatedInstallDirectory);
+        const InstallerTransactionPaths transaction = createStagingTransaction(validatedInstallDirectory);
+        const std::filesystem::path& stagingDirectory = transaction.stagingDirectory;
+        TransactionDirectoryCleanup stagingCleanup(stagingDirectory, "staging directory");
         {
             std::ostringstream stream;
             stream << "Installer package validated. source=\""
                    << package.sourceDescription()
                    << "\", installDirectory=\""
                    << toUtf8(validatedInstallDirectory.wstring())
+                   << "\", stagingDirectory=\""
+                   << toUtf8(stagingDirectory.wstring())
                    << "\", version=" << header.version
                    << ", entries=" << header.entryCount
                    << ", totalBytes=" << header.totalBytes
@@ -1058,14 +2129,20 @@ namespace
         emitProgress(callback, userData, progressState, L"preparing", L"", 0, header.totalBytes, true);
 
         std::uint64_t copiedBytes = 0;
+        std::unordered_set<std::wstring> outputTargets;
         for (std::uint64_t index = 0; index < header.entryCount; ++index)
         {
             const std::uint8_t entryType = readPod<std::uint8_t>(package, "entry type");
             const std::wstring relativePath = readRelativePath(package);
             const std::uint64_t byteCount = readPod<std::uint64_t>(package, "entry size");
             const std::filesystem::path destination = resolvePackageEntryPath(
-                validatedInstallDirectory,
+                stagingDirectory,
                 relativePath);
+            if (!outputTargets.insert(windowsNormalizedOutputPathKey(relativePath)).second)
+            {
+                throw std::runtime_error(
+                    "Package contains a duplicate output path after Windows normalization.");
+            }
 
             if (entryType == 0)
             {
@@ -1108,22 +2185,162 @@ namespace
             throw std::runtime_error("Payload manifest byte count does not match copied bytes.");
         }
 
-        const std::filesystem::path applicationPath = resolveInstalledApplicationPath(validatedInstallDirectory);
-        const std::wstring applicationFileName = applicationPath.filename().wstring();
+        const std::filesystem::path stagedApplicationPath = resolveInstalledApplicationPath(stagingDirectory);
+        const std::wstring applicationFileName = stagedApplicationPath.filename().wstring();
+
+        writeLog(
+            "INFO",
+            std::string("Installer staging verified. path=\"") +
+                toUtf8(stagingDirectory.wstring()) + "\"");
+        emitProgress(callback, userData, progressState, L"finalizing", applicationFileName, header.totalBytes, header.totalBytes, true);
+
+        rejectReparseInstallDirectory(validatedInstallDirectory);
+        std::error_code existsError;
+        const bool replacingExisting = std::filesystem::exists(validatedInstallDirectory, existsError);
+        if (existsError)
+        {
+            throw std::runtime_error(
+                "Failed to inspect existing installation: " + existsError.message());
+        }
+
+        persistTransactionSentinel(transaction);
+        persistTransactionMarker(transaction, replacingExisting);
+
+        std::filesystem::path backupDirectory = transaction.backupDirectory;
+        std::filesystem::path applicationPath;
+        bool existingMovedToBackup = false;
+        bool stagingMovedToInstall = false;
+        try
+        {
+            if (replacingExisting)
+            {
+                renameDirectory(
+                    validatedInstallDirectory,
+                    backupDirectory,
+                    "Backing up the existing Fluxora installation");
+                existingMovedToBackup = true;
+                writeLog(
+                    "INFO",
+                    std::string("Existing installation backed up. path=\"") +
+                        toUtf8(backupDirectory.wstring()) + "\"");
+            }
+
+            renameDirectory(
+                stagingDirectory,
+                validatedInstallDirectory,
+                "Committing the staged Fluxora installation");
+            stagingMovedToInstall = true;
+            applicationPath = resolveInstalledApplicationPath(validatedInstallDirectory);
+        }
+        catch (...)
+        {
+            const std::exception_ptr originalFailure = std::current_exception();
+            writeLog("WARNING", "Installer commit failed. Rolling back the installation directory swap.");
+
+            try
+            {
+                if (stagingMovedToInstall)
+                {
+                    renameDirectory(
+                        validatedInstallDirectory,
+                        stagingDirectory,
+                        "Moving the failed staged installation out of the live path");
+                    stagingMovedToInstall = false;
+                }
+
+                if (existingMovedToBackup)
+                {
+                    renameDirectory(
+                        backupDirectory,
+                        validatedInstallDirectory,
+                        "Restoring the previous Fluxora installation");
+                    existingMovedToBackup = false;
+                }
+
+                writeLog("INFO", "Installer rollback completed.");
+                try
+                {
+                    removeOwnedTransactionDirectory(stagingDirectory, "staging directory");
+                    stagingCleanup.dismiss();
+                    removeDurableTransactionFile(transaction.markerPath, "marker");
+                }
+                catch (const std::exception& cleanupError)
+                {
+                    writeLog(
+                        "WARNING",
+                        std::string("Rollback completed, but durable transaction cleanup was deferred. ") +
+                            cleanupError.what());
+                }
+            }
+            catch (const std::exception& rollbackError)
+            {
+                writeLog("ERROR", std::string("Installer rollback failed. ") + rollbackError.what());
+                throw std::runtime_error(
+                    std::string("Fluxora installation failed and rollback could not restore the previous installation. ") +
+                    rollbackError.what());
+            }
+
+            std::rethrow_exception(originalFailure);
+        }
+
+        stagingCleanup.dismiss();
+        try
+        {
+            if (existingMovedToBackup)
+            {
+                removeOwnedTransactionDirectory(backupDirectory, "backup directory");
+                existingMovedToBackup = false;
+            }
+            removeDurableTransactionFile(
+                installTransactionSentinelPath(validatedInstallDirectory, transaction.id),
+                "commit sentinel");
+            removeDurableTransactionFile(transaction.markerPath, "marker");
+        }
+        catch (const std::exception& cleanupError)
+        {
+            writeLog(
+                "WARNING",
+                std::string("Installation committed; durable transaction cleanup was deferred. ") +
+                    cleanupError.what());
+        }
+
+        writeLog(
+            "INFO",
+            std::string("Staged installation committed. installDirectory=\"") +
+                toUtf8(validatedInstallDirectory.wstring()) + "\"");
 
         InstallResult result;
         result.installDirectory = validatedInstallDirectory;
         result.applicationPath = applicationPath;
-        emitProgress(callback, userData, progressState, L"finalizing", applicationFileName, header.totalBytes, header.totalBytes, true);
 
         if (shouldCreateDesktopShortcut)
         {
-            result.desktopShortcutPath = createDesktopShortcut(applicationPath);
-            result.createdDesktopShortcut = true;
-            writeLog(
-                "INFO",
-                std::string("Desktop shortcut created. path=\"") +
-                    toUtf8(result.desktopShortcutPath.wstring()) + "\"");
+            try
+            {
+                result.desktopShortcutPath = createDesktopShortcut(applicationPath);
+                result.createdDesktopShortcut = true;
+                writeLog(
+                    "INFO",
+                    std::string("Desktop shortcut created after installer commit. path=\"") +
+                        toUtf8(result.desktopShortcutPath.wstring()) + "\"");
+            }
+            catch (const std::exception& shortcutError)
+            {
+                result.desktopShortcutPath.clear();
+                result.createdDesktopShortcut = false;
+                writeLog(
+                    "WARNING",
+                    std::string("Installation committed, but the desktop shortcut was not changed. ") +
+                        shortcutError.what());
+            }
+            catch (...)
+            {
+                result.desktopShortcutPath.clear();
+                result.createdDesktopShortcut = false;
+                writeLog(
+                    "WARNING",
+                    "Installation committed, but the desktop shortcut was not changed due to an unknown error.");
+            }
         }
 
         emitProgress(callback, userData, progressState, L"completed", L"", header.totalBytes, header.totalBytes, true);

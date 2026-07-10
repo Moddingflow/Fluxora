@@ -20,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <bcrypt.h>
@@ -28,7 +29,9 @@
 namespace
 {
     constexpr std::array<unsigned char, 8> PackageMagic{ 'F', 'L', 'X', 'P', 'K', 'G', '1', '\0' };
+    constexpr std::array<unsigned char, 8> TransactionMagic{ 'F', 'L', 'X', 'T', 'X', 'N', '1', '\0' };
     constexpr std::uint32_t PackageVersionWithHashes = 2;
+    constexpr std::uint32_t TransactionVersion = 1;
     constexpr std::size_t Sha256HashSize = 32;
 
     void requireBCrypt(NTSTATUS status, std::string_view operation)
@@ -182,6 +185,111 @@ namespace
             updates->push_back(progressJson);
         }
     }
+
+    struct InstallCallResult
+    {
+        int code{FluxoraInstallerResultInstallError};
+        std::wstring json;
+        std::wstring error;
+    };
+
+    InstallCallResult installPackageForTest(
+        const std::vector<unsigned char>& package,
+        const std::filesystem::path& installDirectory,
+        int createDesktopShortcut = 0)
+    {
+        VectorReadState readState{&package, 0, 17};
+        std::array<wchar_t, 4096> json{};
+        InstallCallResult result;
+        result.code = fluxora_installer_install_package_stream(
+            readVectorPackage,
+            &readState,
+            installDirectory.c_str(),
+            createDesktopShortcut,
+            nullptr,
+            nullptr,
+            json.data(),
+            static_cast<int>(json.size()));
+        result.json = json.data();
+
+        if (result.code != FluxoraInstallerResultOk)
+        {
+            std::array<wchar_t, 4096> error{};
+            if (fluxora_installer_get_last_error(error.data(), static_cast<int>(error.size())) ==
+                FluxoraInstallerResultOk)
+            {
+                result.error = error.data();
+            }
+        }
+
+        return result;
+    }
+
+    std::string transactionIdHex(const std::array<unsigned char, 16>& transactionId)
+    {
+        constexpr char Digits[] = "0123456789abcdef";
+        std::string value;
+        value.reserve(transactionId.size() * 2);
+        for (const unsigned char byte : transactionId)
+        {
+            value.push_back(Digits[byte >> 4]);
+            value.push_back(Digits[byte & 0x0F]);
+        }
+        return value;
+    }
+
+    std::filesystem::path transactionSibling(
+        const std::filesystem::path& installDirectory,
+        std::string_view role,
+        const std::array<unsigned char, 16>& transactionId)
+    {
+        const std::string name = "." + installDirectory.filename().string() +
+            ".fluxora-" + std::string(role) + "-" + transactionIdHex(transactionId);
+        return installDirectory.parent_path() / name;
+    }
+
+    std::filesystem::path transactionMarkerPath(const std::filesystem::path& installDirectory)
+    {
+        return installDirectory.parent_path() /
+            ("." + installDirectory.filename().string() + ".fluxora-transaction");
+    }
+
+    std::filesystem::path transactionSentinelPath(
+        const std::filesystem::path& directory,
+        const std::array<unsigned char, 16>& transactionId)
+    {
+        return directory / (".fluxora-commit-" + transactionIdHex(transactionId) + ".pending");
+    }
+
+    std::string makeTransactionMarkerWithNames(
+        const std::array<unsigned char, 16>& transactionId,
+        bool hadExistingInstall,
+        const std::string& stagingName,
+        const std::string& backupName)
+    {
+        std::vector<unsigned char> marker;
+        appendBytes(marker, TransactionMagic.data(), TransactionMagic.size());
+        appendPod(marker, TransactionVersion);
+        appendPod(marker, static_cast<std::uint8_t>(hadExistingInstall ? 1 : 0));
+        appendBytes(marker, transactionId.data(), transactionId.size());
+        appendPod(marker, static_cast<std::uint32_t>(stagingName.size()));
+        appendBytes(marker, stagingName.data(), stagingName.size());
+        appendPod(marker, static_cast<std::uint32_t>(backupName.size()));
+        appendBytes(marker, backupName.data(), backupName.size());
+        return std::string(marker.begin(), marker.end());
+    }
+
+    std::string makeTransactionMarker(
+        const std::filesystem::path& installDirectory,
+        const std::array<unsigned char, 16>& transactionId,
+        bool hadExistingInstall)
+    {
+        return makeTransactionMarkerWithNames(
+            transactionId,
+            hadExistingInstall,
+            transactionSibling(installDirectory, "staging", transactionId).filename().string(),
+            transactionSibling(installDirectory, "backup", transactionId).filename().string());
+    }
 }
 
 TEST(InstallerCorePackageTests, InstallPackageStreamInstallsV2Payload)
@@ -274,4 +382,370 @@ TEST(InstallerCorePackageTests, InstallPackageStreamRejectsTamperedPayload)
         FluxoraInstallerResultOk,
         fluxora_installer_get_last_error(error.data(), static_cast<int>(error.size())));
     EXPECT_NE(std::wstring(error.data()).find(L"Payload integrity check failed"), std::wstring::npos);
+}
+
+TEST(InstallerCorePackageTests, TamperedPackagePreservesExistingInstallationWithoutStagingLeftovers)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path installDirectory = temp.path() / L"install";
+    std::string existingExecutable = "existing executable";
+    existingExecutable.push_back('\0');
+    existingExecutable += "preserved bytes";
+    const std::string existingConfiguration = "keep=user configuration";
+    fluxora::tests::writeTextFile(installDirectory / L"Fluxora.exe", existingExecutable);
+    fluxora::tests::writeTextFile(
+        installDirectory / L"data" / L"user-config.txt",
+        existingConfiguration);
+
+    std::vector<unsigned char> package = makePackage({
+        {"new-only.txt", "must not reach the live installation"},
+        {"Fluxora.exe", "tampered replacement executable"}
+    });
+    package.back() ^= 0x01;
+
+    VectorReadState readState{&package, 0, 19};
+    std::array<wchar_t, 4096> json{};
+
+    const int result = fluxora_installer_install_package_stream(
+        readVectorPackage,
+        &readState,
+        installDirectory.c_str(),
+        0,
+        nullptr,
+        nullptr,
+        json.data(),
+        static_cast<int>(json.size()));
+
+    EXPECT_EQ(FluxoraInstallerResultInstallError, result);
+    EXPECT_EQ(
+        existingExecutable,
+        fluxora::tests::readTextFile(installDirectory / L"Fluxora.exe"));
+    EXPECT_EQ(
+        existingConfiguration,
+        fluxora::tests::readTextFile(installDirectory / L"data" / L"user-config.txt"));
+    EXPECT_FALSE(std::filesystem::exists(installDirectory / L"new-only.txt"));
+
+    std::vector<std::filesystem::path> rootEntries;
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(temp.path()))
+    {
+        rootEntries.push_back(entry.path().lexically_normal());
+    }
+
+    ASSERT_EQ(1u, rootEntries.size());
+    EXPECT_EQ(installDirectory.lexically_normal(), rootEntries.front());
+}
+
+TEST(InstallerCorePackageTests, ValidPackageAtomicallyReplacesExistingInstallation)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path installDirectory = temp.path() / L"install";
+    fluxora::tests::writeTextFile(installDirectory / L"Fluxora.exe", "old executable");
+    fluxora::tests::writeTextFile(installDirectory / L"old-only.txt", "obsolete payload");
+
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", "replacement executable"},
+        {"resources/native/FluxoraCore.dll", "replacement core"}
+    });
+    VectorReadState readState{&package, 0, 13};
+    std::array<wchar_t, 4096> json{};
+
+    const int result = fluxora_installer_install_package_stream(
+        readVectorPackage,
+        &readState,
+        installDirectory.c_str(),
+        0,
+        nullptr,
+        nullptr,
+        json.data(),
+        static_cast<int>(json.size()));
+
+    EXPECT_EQ(FluxoraInstallerResultOk, result);
+    EXPECT_EQ(
+        "replacement executable",
+        fluxora::tests::readTextFile(installDirectory / L"Fluxora.exe"));
+    EXPECT_EQ(
+        "replacement core",
+        fluxora::tests::readTextFile(
+            installDirectory / L"resources" / L"native" / L"FluxoraCore.dll"));
+    EXPECT_FALSE(std::filesystem::exists(installDirectory / L"old-only.txt"));
+
+    std::vector<std::filesystem::path> rootEntries;
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(temp.path()))
+    {
+        rootEntries.push_back(entry.path().lexically_normal());
+    }
+
+    ASSERT_EQ(1u, rootEntries.size());
+    EXPECT_EQ(installDirectory.lexically_normal(), rootEntries.front());
+}
+
+class ReservedWindowsPackagePathTest : public testing::TestWithParam<const char*>
+{
+};
+
+TEST_P(ReservedWindowsPackagePathTest, RejectsReservedDeviceComponent)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path installDirectory = temp.path() / L"install";
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", "executable"},
+        {GetParam(), "unsafe payload"}
+    });
+
+    const InstallCallResult result = installPackageForTest(package, installDirectory);
+
+    EXPECT_EQ(FluxoraInstallerResultInstallError, result.code);
+    EXPECT_NE(result.error.find(L"Windows-reserved"), std::wstring::npos);
+    EXPECT_FALSE(std::filesystem::exists(installDirectory));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ReservedDeviceNames,
+    ReservedWindowsPackagePathTest,
+    testing::Values(
+        "CON",
+        "assets/con.txt",
+        "NUL.txt",
+        "drivers/COM1.sys",
+        "lpt9/config.ini",
+        "Aux/data.bin"));
+
+class TrailingAliasPackagePathTest : public testing::TestWithParam<const char*>
+{
+};
+
+TEST_P(TrailingAliasPackagePathTest, RejectsComponentEndingInDotOrSpace)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path installDirectory = temp.path() / L"install";
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", "executable"},
+        {GetParam(), "unsafe payload"}
+    });
+
+    const InstallCallResult result = installPackageForTest(package, installDirectory);
+
+    EXPECT_EQ(FluxoraInstallerResultInstallError, result.code);
+    EXPECT_NE(result.error.find(L"trailing dot or space"), std::wstring::npos);
+    EXPECT_FALSE(std::filesystem::exists(installDirectory));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    WindowsPathAliases,
+    TrailingAliasPackagePathTest,
+    testing::Values(
+        "settings.",
+        "settings ",
+        "assets./settings.json",
+        "assets /settings.json"));
+
+TEST(InstallerCorePackageTests, RejectsWindowsNormalizedDuplicateOutputTargets)
+{
+    const std::array<std::pair<const char*, const char*>, 3> duplicatePaths{{
+        {"data/config.json", "DATA/CONFIG.JSON"},
+        {"assets\\icon.png", "assets/icon.png"},
+        {"readme.txt", "readme.txt"}
+    }};
+
+    for (const auto& [firstPath, secondPath] : duplicatePaths)
+    {
+        SCOPED_TRACE(std::string(firstPath) + " vs " + secondPath);
+        fluxora::tests::TempDirectory temp;
+        const std::filesystem::path installDirectory = temp.path() / L"install";
+        const std::vector<unsigned char> package = makePackage({
+            {"Fluxora.exe", "executable"},
+            {firstPath, "first payload"},
+            {secondPath, "second payload"}
+        });
+
+        const InstallCallResult result = installPackageForTest(package, installDirectory);
+
+        EXPECT_EQ(FluxoraInstallerResultInstallError, result.code);
+        EXPECT_NE(result.error.find(L"duplicate output path"), std::wstring::npos);
+        EXPECT_FALSE(std::filesystem::exists(installDirectory));
+    }
+}
+
+TEST(InstallerCorePackageTests, RejectsJunctionInstallRootWithoutTouchingItsTarget)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path targetDirectory = temp.path() / L"junction-target";
+    const std::filesystem::path installJunction = temp.path() / L"install-junction";
+    fluxora::tests::writeTextFile(targetDirectory / L"Fluxora.exe", "existing executable");
+
+    std::error_code junctionError;
+    if (!fluxora::tests::createDirectoryJunction(targetDirectory, installJunction, junctionError))
+    {
+        GTEST_SKIP() << "Directory junctions are unavailable in this test environment: "
+                     << junctionError.message();
+    }
+
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", "replacement executable"}
+    });
+
+    const InstallCallResult result = installPackageForTest(package, installJunction);
+
+    EXPECT_EQ(FluxoraInstallerResultInvalidArgument, result.code);
+    EXPECT_NE(result.error.find(L"junction or reparse point"), std::wstring::npos);
+    EXPECT_EQ(
+        "existing executable",
+        fluxora::tests::readTextFile(targetDirectory / L"Fluxora.exe"));
+    EXPECT_TRUE(std::filesystem::exists(installJunction));
+}
+
+TEST(InstallerCorePackageTests, ValidationRecoversOldLiveAfterCrashBetweenDirectoryRenames)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path installDirectory = temp.path() / L"install";
+    const std::array<unsigned char, 16> transactionId{
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
+    };
+    const std::filesystem::path stagingDirectory = transactionSibling(
+        installDirectory,
+        "staging",
+        transactionId);
+    const std::filesystem::path backupDirectory = transactionSibling(
+        installDirectory,
+        "backup",
+        transactionId);
+    const std::filesystem::path markerPath = transactionMarkerPath(installDirectory);
+
+    fluxora::tests::writeTextFile(backupDirectory / L"Fluxora.exe", "old executable");
+    fluxora::tests::writeTextFile(stagingDirectory / L"Fluxora.exe", "new executable");
+    fluxora::tests::writeTextFile(
+        transactionSentinelPath(stagingDirectory, transactionId),
+        transactionIdHex(transactionId));
+    fluxora::tests::writeTextFile(
+        markerPath,
+        makeTransactionMarker(installDirectory, transactionId, true));
+
+    std::array<wchar_t, 128> message{};
+    const int result = fluxora_installer_validate_install_directory(
+        installDirectory.c_str(),
+        message.data(),
+        static_cast<int>(message.size()));
+
+    EXPECT_EQ(FluxoraInstallerResultOk, result);
+    EXPECT_EQ("old executable", fluxora::tests::readTextFile(installDirectory / L"Fluxora.exe"));
+    EXPECT_FALSE(std::filesystem::exists(stagingDirectory));
+    EXPECT_FALSE(std::filesystem::exists(backupDirectory));
+    EXPECT_FALSE(std::filesystem::exists(markerPath));
+}
+
+TEST(InstallerCorePackageTests, ValidationFinalizesNewLiveAfterCrashFollowingCommitRename)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path installDirectory = temp.path() / L"install";
+    const std::array<unsigned char, 16> transactionId{
+        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F
+    };
+    const std::filesystem::path stagingDirectory = transactionSibling(
+        installDirectory,
+        "staging",
+        transactionId);
+    const std::filesystem::path backupDirectory = transactionSibling(
+        installDirectory,
+        "backup",
+        transactionId);
+    const std::filesystem::path markerPath = transactionMarkerPath(installDirectory);
+    const std::filesystem::path liveSentinel = transactionSentinelPath(
+        installDirectory,
+        transactionId);
+
+    fluxora::tests::writeTextFile(backupDirectory / L"Fluxora.exe", "old executable");
+    fluxora::tests::writeTextFile(installDirectory / L"Fluxora.exe", "new executable");
+    fluxora::tests::writeTextFile(liveSentinel, transactionIdHex(transactionId));
+    fluxora::tests::writeTextFile(
+        markerPath,
+        makeTransactionMarker(installDirectory, transactionId, true));
+
+    std::array<wchar_t, 128> message{};
+    const int result = fluxora_installer_validate_install_directory(
+        installDirectory.c_str(),
+        message.data(),
+        static_cast<int>(message.size()));
+
+    EXPECT_EQ(FluxoraInstallerResultOk, result);
+    EXPECT_EQ("new executable", fluxora::tests::readTextFile(installDirectory / L"Fluxora.exe"));
+    EXPECT_FALSE(std::filesystem::exists(stagingDirectory));
+    EXPECT_FALSE(std::filesystem::exists(backupDirectory));
+    EXPECT_FALSE(std::filesystem::exists(liveSentinel));
+    EXPECT_FALSE(std::filesystem::exists(markerPath));
+}
+
+TEST(InstallerCorePackageTests, ValidationRejectsTransactionMarkerWithEscapingSiblingPath)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path installDirectory = temp.path() / L"install";
+    const std::filesystem::path victimDirectory = temp.path() / L"victim";
+    const std::filesystem::path markerPath = transactionMarkerPath(installDirectory);
+    const std::array<unsigned char, 16> transactionId{
+        0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+        0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F
+    };
+    const std::string backupName = transactionSibling(
+        installDirectory,
+        "backup",
+        transactionId).filename().string();
+    fluxora::tests::writeTextFile(victimDirectory / L"keep.txt", "preserved");
+    fluxora::tests::writeTextFile(
+        markerPath,
+        makeTransactionMarkerWithNames(
+            transactionId,
+            true,
+            "../victim",
+            backupName));
+
+    std::array<wchar_t, 128> message{};
+    const int result = fluxora_installer_validate_install_directory(
+        installDirectory.c_str(),
+        message.data(),
+        static_cast<int>(message.size()));
+    std::array<wchar_t, 1024> error{};
+    ASSERT_EQ(
+        FluxoraInstallerResultOk,
+        fluxora_installer_get_last_error(error.data(), static_cast<int>(error.size())));
+
+    EXPECT_EQ(FluxoraInstallerResultInstallError, result);
+    EXPECT_NE(std::wstring(error.data()).find(L"untrusted staging path"), std::wstring::npos);
+    EXPECT_EQ("preserved", fluxora::tests::readTextFile(victimDirectory / L"keep.txt"));
+    EXPECT_TRUE(std::filesystem::exists(markerPath));
+    EXPECT_FALSE(std::filesystem::exists(installDirectory));
+}
+
+TEST(InstallerCorePackageTests, ValidationCleansAbandonedStagingBeforeFirstRename)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path installDirectory = temp.path() / L"install";
+    const std::array<unsigned char, 16> transactionId{
+        0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+        0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F
+    };
+    const std::filesystem::path stagingDirectory = transactionSibling(
+        installDirectory,
+        "staging",
+        transactionId);
+    const std::filesystem::path markerPath = transactionMarkerPath(installDirectory);
+    fluxora::tests::writeTextFile(installDirectory / L"Fluxora.exe", "old executable");
+    fluxora::tests::writeTextFile(stagingDirectory / L"Fluxora.exe", "new executable");
+    fluxora::tests::writeTextFile(
+        transactionSentinelPath(stagingDirectory, transactionId),
+        transactionIdHex(transactionId));
+    fluxora::tests::writeTextFile(
+        markerPath,
+        makeTransactionMarker(installDirectory, transactionId, true));
+
+    std::array<wchar_t, 128> message{};
+    const int result = fluxora_installer_validate_install_directory(
+        installDirectory.c_str(),
+        message.data(),
+        static_cast<int>(message.size()));
+
+    EXPECT_EQ(FluxoraInstallerResultOk, result);
+    EXPECT_EQ("old executable", fluxora::tests::readTextFile(installDirectory / L"Fluxora.exe"));
+    EXPECT_FALSE(std::filesystem::exists(stagingDirectory));
+    EXPECT_FALSE(std::filesystem::exists(markerPath));
 }

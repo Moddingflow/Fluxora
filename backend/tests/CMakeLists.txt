@@ -197,3 +197,33 @@ if(WIN32)
 
     gtest_discover_tests(FluxoraInstallerCoreTests DISCOVERY_MODE PRE_TEST)
 endif()
+
+if(WIN32)
+    find_program(FLUXORA_POWERSHELL_EXECUTABLE NAMES pwsh powershell REQUIRED)
+
+    add_test(
+        NAME FluxoraBridgeHostProtocol
+        COMMAND "${FLUXORA_POWERSHELL_EXECUTABLE}"
+            -NoProfile
+            -NonInteractive
+            -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/BridgeHostProtocol.Tests.ps1"
+            -HostPath "$<TARGET_FILE:FluxoraBridgeHost>")
+    set_tests_properties(FluxoraBridgeHostProtocol PROPERTIES
+        LABELS "bridge;smoke"
+        TIMEOUT 30)
+
+    add_test(
+        NAME FluxoraBridgeHostProtocolTimeout
+        COMMAND "${FLUXORA_POWERSHELL_EXECUTABLE}"
+            -NoProfile
+            -NonInteractive
+            -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/BridgeHostProtocol.Tests.ps1"
+            -RunTimeoutProbe
+            -ResponseTimeoutMilliseconds 250)
+    set_tests_properties(FluxoraBridgeHostProtocolTimeout PROPERTIES
+        LABELS "bridge;smoke"
+        PASS_REGULAR_EXPRESSION "Bridge host timeout probe passed"
+        TIMEOUT 5)
+endif()

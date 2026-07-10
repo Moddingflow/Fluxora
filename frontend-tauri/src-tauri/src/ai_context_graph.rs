@@ -45,6 +45,12 @@ struct ContextSource {
     stale_reason: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+struct NodeProvenance<'a> {
+    source_id: &'a str,
+    updated_at: &'a str,
+}
+
 pub struct FluxoraContextGraph {
     connection: Connection,
 }
@@ -500,8 +506,10 @@ impl FluxoraContextGraph {
             tool_name,
             &source_node_summary(tool_name, raw),
             raw,
-            source_id,
-            updated_at,
+            NodeProvenance {
+                source_id,
+                updated_at,
+            },
         )
     }
 
@@ -561,8 +569,10 @@ impl FluxoraContextGraph {
             &project,
             &summary,
             output,
-            source_id,
-            updated_at,
+            NodeProvenance {
+                source_id,
+                updated_at,
+            },
         )?;
 
         self.ingest_conflict_evidence(output, source_id, updated_at)
@@ -636,8 +646,10 @@ impl FluxoraContextGraph {
                 &format!("File conflict pair: {label}"),
                 &summary,
                 pair,
-                source_id,
-                updated_at,
+                NodeProvenance {
+                    source_id,
+                    updated_at,
+                },
             )?;
         }
 
@@ -695,8 +707,10 @@ impl FluxoraContextGraph {
                 &label,
                 &summary,
                 item,
-                source_id,
-                updated_at,
+                NodeProvenance {
+                    source_id,
+                    updated_at,
+                },
             )?;
             self.upsert_edge(
                 &format!("Source:{}", source_slug(source_id)),
@@ -723,8 +737,10 @@ impl FluxoraContextGraph {
                         label, overwrite_state, overwrite_label, overwrite_risk, overwrite_guidance
                     ),
                     item,
-                    source_id,
-                    updated_at,
+                    NodeProvenance {
+                        source_id,
+                        updated_at,
+                    },
                 )?;
                 self.upsert_edge(
                     &mod_node_id,
@@ -744,8 +760,10 @@ impl FluxoraContextGraph {
                     &label,
                     &format!("{} is marked as a Nexus-sourced mod.", label),
                     item,
-                    source_id,
-                    updated_at,
+                    NodeProvenance {
+                        source_id,
+                        updated_at,
+                    },
                 )?;
                 self.upsert_edge(&mod_node_id, &nexus_id, "sourced-from", source_id)?;
             }
@@ -802,8 +820,10 @@ impl FluxoraContextGraph {
                 &label,
                 &summary,
                 item,
-                source_id,
-                updated_at,
+                NodeProvenance {
+                    source_id,
+                    updated_at,
+                },
             )?;
             self.upsert_edge(
                 &format!("Source:{}", source_slug(source_id)),
@@ -863,8 +883,10 @@ impl FluxoraContextGraph {
                 &label,
                 &summary,
                 item,
-                source_id,
-                updated_at,
+                NodeProvenance {
+                    source_id,
+                    updated_at,
+                },
             )?;
             if !missing.is_empty() {
                 let conflict_id = node_id("Conflict", &[&id, &missing.join("|")]);
@@ -883,8 +905,10 @@ impl FluxoraContextGraph {
                         missing.join(", ")
                     ),
                     item,
-                    source_id,
-                    updated_at,
+                    NodeProvenance {
+                        source_id,
+                        updated_at,
+                    },
                 )?;
                 self.upsert_edge(&plugin_node_id, &conflict_id, "missing-master", source_id)?;
             }
@@ -924,8 +948,10 @@ impl FluxoraContextGraph {
                 &label,
                 &summary,
                 item,
-                source_id,
-                updated_at,
+                NodeProvenance {
+                    source_id,
+                    updated_at,
+                },
             )?;
         }
         Ok(())
@@ -945,8 +971,10 @@ impl FluxoraContextGraph {
                 &label,
                 &format!("Build profile {} is available.", label),
                 item,
-                source_id,
-                updated_at,
+                NodeProvenance {
+                    source_id,
+                    updated_at,
+                },
             )?;
         }
         Ok(())
@@ -977,8 +1005,10 @@ impl FluxoraContextGraph {
                 &label,
                 &summary,
                 item,
-                source_id,
-                updated_at,
+                NodeProvenance {
+                    source_id,
+                    updated_at,
+                },
             )?;
             if looks_like_archive(&file_name) {
                 let archive_id = node_id("Archive", &[&file_name, &id]);
@@ -991,8 +1021,10 @@ impl FluxoraContextGraph {
                         file_name, label
                     ),
                     item,
-                    source_id,
-                    updated_at,
+                    NodeProvenance {
+                        source_id,
+                        updated_at,
+                    },
                 )?;
                 self.upsert_edge(&download_id, &archive_id, "has-archive", source_id)?;
             }
@@ -1008,8 +1040,10 @@ impl FluxoraContextGraph {
                     &label,
                     &format!("{} is associated with a Nexus download source.", label),
                     item,
-                    source_id,
-                    updated_at,
+                    NodeProvenance {
+                        source_id,
+                        updated_at,
+                    },
                 )?;
                 self.upsert_edge(&download_id, &nexus_id, "download-source", source_id)?;
             }
@@ -1046,8 +1080,10 @@ impl FluxoraContextGraph {
                         &label,
                         &summary,
                         item,
-                        source_id,
-                        updated_at,
+                        NodeProvenance {
+                            source_id,
+                            updated_at,
+                        },
                     )?;
                 }
             }
@@ -1072,8 +1108,10 @@ impl FluxoraContextGraph {
                 &label,
                 &format!("Log event {}: {}", label, line),
                 item,
-                source_id,
-                updated_at,
+                NodeProvenance {
+                    source_id,
+                    updated_at,
+                },
             )?;
         }
         Ok(())
@@ -1093,8 +1131,10 @@ impl FluxoraContextGraph {
                 &label,
                 &format!("AI skill {} is available for retrieval.", label),
                 item,
-                source_id,
-                updated_at,
+                NodeProvenance {
+                    source_id,
+                    updated_at,
+                },
             )?;
         }
         Ok(())
@@ -1107,8 +1147,7 @@ impl FluxoraContextGraph {
         label: &str,
         summary: &str,
         raw: &Value,
-        source_id: &str,
-        updated_at: &str,
+        provenance: NodeProvenance<'_>,
     ) -> rusqlite::Result<()> {
         let token_estimate =
             estimated_tokens(summary) + estimated_tokens(&raw.to_string()).min(120);
@@ -1131,8 +1170,8 @@ impl FluxoraContextGraph {
                 summary,
                 raw.to_string(),
                 token_estimate,
-                updated_at,
-                source_id
+                provenance.updated_at,
+                provenance.source_id
             ],
         )?;
         self.connection.execute(

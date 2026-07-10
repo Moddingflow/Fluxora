@@ -60,10 +60,10 @@ const renderLibrary = (
       catalogState: 'ready',
       filteredProjects: projects,
       isNewBuildDisabled: false,
+      isProjectInteractionDisabled: false,
       onNewBuild: noop,
       onOpenProject: noop,
       onOpenProjectDirectory: noop,
-      onOpenSelectedProject: noop,
       onProjectMenuToggle: noop,
       onSearchChange: noop,
       onSelectProject: noop,
@@ -87,7 +87,14 @@ describe('library home redesign', () => {
     expect(markup).toContain('Search builds');
     expect(markup).toContain('Skyrim graphics overhaul');
     expect(markup).toContain('248 mods · 32.4 GB');
+    expect(markup).toContain('aria-label="Open Skyrim graphics overhaul"');
+    expect(markup).toContain('aria-label="Select Skyrim graphics overhaul"');
+    expect(markup).toContain('library-build-open');
     expect(markup).toContain('aria-label="Skyrim graphics overhaul actions"');
+    expect(markup).toContain('role="list"');
+    expect(markup).toContain('role="listitem"');
+    expect(markup).not.toContain('role="listbox"');
+    expect(markup).not.toContain('role="option"');
     expect(markup).toContain('New build');
     expect(markup).toContain('stroke-width="2.35"');
   });
@@ -105,7 +112,6 @@ describe('library home redesign', () => {
     expect(markup).toContain('<dd>32.4 GB</dd>');
     expect(markup).toContain('Project path');
     expect(markup).toContain('Open folder');
-    expect(markup).toContain('Open');
     expect(markup).not.toContain('<dt>Plugins</dt>');
     expect(markup).not.toContain('92');
     expect(markup).not.toContain('data-tone="accent"');
@@ -136,16 +142,30 @@ describe('library home redesign', () => {
 
   it('keeps the Phase 5 layout dimensions and lightweight row actions in CSS', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+    const component = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'library',
+      'LibraryHome.tsx'
+    );
 
     expect(styles).toContain('grid-template-columns: 290px minmax(0, 1fr);');
-    expect(styles).toContain('min-height: 56px;');
+    expect(styles).toContain('min-height: 96px;');
+    expect(styles).toContain('"open actions"');
+    expect(styles).toContain('.library-build-open');
+    expect(styles).toMatch(
+      /\.library-build-row:focus-visible:not\(:disabled\)\s*\{[^}]*outline: 2px solid var\(--focus-ring\);/s
+    );
     expect(styles).toContain('.library-build-actions[data-menu-open="true"]');
     expect(styles).toContain('grid-template-columns: repeat(3, minmax(140px, 1fr));');
     expect(styles).toContain('.library-detail-path-row');
+    expect(component).toContain('aria-label={`Open ${project.name}`}');
+    expect(component).not.toContain('onOpenSelectedProject');
     expect(styles).not.toContain('.library-detail-actions');
     expect(styles).not.toContain('activity-banner');
     expect(styles).not.toContain('library-message');
-    expect(styles).not.toContain('.library-build-open {');
   });
 
   it('prevents horizontal scrolling in the library sidebar list', () => {

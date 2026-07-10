@@ -2,6 +2,7 @@ import type { FluxoraProject } from '../../../shared/fluxora-api';
 import type { ProjectLibraryStats } from './LibraryHome';
 
 export interface ProjectRuntimeSummary {
+  projectId: string;
   modCount?: number;
   disabledModCount?: number;
   downloadsCount?: number;
@@ -113,15 +114,19 @@ export const buildProjectLibraryStats = (
   project: FluxoraProject,
   runtime?: ProjectRuntimeSummary
 ): ProjectLibraryStats => {
+  const matchingRuntime = runtime?.projectId === project.id ? runtime : undefined;
+
   return {
     lastLaunch: formatProjectDate(readTextMetric(project, projectMetricKeys.lastLaunch)),
     size: formatProjectBytes(readNumberMetric(project, projectMetricKeys.size)),
-    mods: formatOptionalCount(runtime?.modCount ?? readNumberMetric(project, projectMetricKeys.mods)),
+    mods: formatOptionalCount(
+      matchingRuntime?.modCount ?? readNumberMetric(project, projectMetricKeys.mods)
+    ),
     disabledMods: formatOptionalCount(
-      runtime?.disabledModCount ?? readNumberMetric(project, projectMetricKeys.disabledMods)
+      matchingRuntime?.disabledModCount ?? readNumberMetric(project, projectMetricKeys.disabledMods)
     ),
     downloads: formatOptionalCount(
-      runtime?.downloadsCount ?? readNumberMetric(project, projectMetricKeys.downloads)
+      matchingRuntime?.downloadsCount ?? readNumberMetric(project, projectMetricKeys.downloads)
     )
   };
 };

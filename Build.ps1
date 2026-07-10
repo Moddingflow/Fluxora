@@ -789,6 +789,7 @@ function Write-FluxoraPayloadPackage {
 }
 
 Assert-Command 'cmake'
+Assert-Command 'ctest'
 Assert-Command 'dotnet'
 Assert-Command 'npm'
 
@@ -860,6 +861,18 @@ Invoke-BuildStep "Building C++ backend ($Configuration)" {
     # Build every target (FluxoraCore, the FluxoraVfs hook DLL and Detours) so the
     # virtual file system ships alongside the core.
     Invoke-CheckedCommand -FilePath 'cmake' -Arguments @('--build', $BackendBuild, '--config', $Configuration)
+}
+
+if ($Runtime -like 'win-*') {
+    Invoke-BuildStep "Testing FluxoraBridgeHost protocol ($Configuration)" {
+        Invoke-CheckedCommand -FilePath 'ctest' -Arguments @(
+            '--test-dir', $BackendBuild,
+            '-C', $Configuration,
+            '--output-on-failure',
+            '--no-tests=error',
+            '-R', '^FluxoraBridgeHostProtocol(Timeout)?$'
+        )
+    }
 }
 
 $tauriTarget = Get-TauriPackageTarget

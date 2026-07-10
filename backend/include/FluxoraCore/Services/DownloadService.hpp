@@ -153,6 +153,7 @@ namespace fluxora
             std::filesystem::path pendingPath;
             std::wstring link;
             std::wstring nexusModName;
+            std::string operationId;
         };
 
         [[nodiscard]] std::filesystem::path inboundDirectory() const;

@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{
     atomic::{AtomicU32, AtomicU64, Ordering},
-    Arc,
+    Arc, OnceLock,
 };
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -29,6 +29,7 @@ use tokio::time::{timeout, Duration};
 
 const BRIDGE_PROTOCOL_VERSION: &str = "1.0";
 const BRIDGE_TIMEOUT_MS: u64 = 10_000;
+const BRIDGE_INVOKE_ERROR_SCHEMA: &str = "fluxora.tauri.bridge-error.v1";
 const AI_HOST_PROTOCOL_VERSION: &str = "1.0";
 const AI_HOST_TIMEOUT_MS: u64 = 5_000;
 const AI_HOST_LONG_RUNNING_TIMEOUT_MS: u64 = 45 * 60 * 1_000;
@@ -44,6 +45,24 @@ const MOD_DETAILS_WINDOW_LABEL_PREFIX: &str = "mod-details";
 const TEXT_EDITOR_WINDOW_LABEL_PREFIX: &str = "text-editor";
 const FILE_PREVIEW_WINDOW_LABEL_PREFIX: &str = "file-preview";
 const BUILD_SETTINGS_PATHS_SAVED_EVENT: &str = "fluxora:build-settings:paths-saved";
+
+fn validate_negotiated_protocol(
+    handshake: &Value,
+    expected_protocol: &str,
+    host_name: &str,
+) -> Result<(), String> {
+    let negotiated_protocol = handshake
+        .get("protocolVersion")
+        .and_then(Value::as_str)
+        .unwrap_or("<missing>");
+    if negotiated_protocol == expected_protocol {
+        return Ok(());
+    }
+
+    Err(format!(
+        "{host_name} negotiated unsupported protocol version {negotiated_protocol}; expected {expected_protocol}."
+    ))
+}
 const TRANSFER_MO2_HANDOFF_EVENT: &str = "fluxora:transfer:mo2-handoff";
 const TRANSFER_MO2_OPEN_EVENT: &str = "fluxora:transfer:mo2-open";
 const NXM_INBOUND_LINKS_CAPTURED_EVENT: &str = "fluxora:nxm:inbound-links-captured";
@@ -398,6 +417,16 @@ struct BuildContentWatcher {
     profile_name: String,
     operation_id: String,
     generation: u64,
+}
+
+struct BuildContentWatchEventContext {
+    app: AppHandle,
+    project_directory: String,
+    mods_directory: PathBuf,
+    profiles_directory: PathBuf,
+    profile_name: String,
+    game_data_directory: Option<PathBuf>,
+    sequence: Arc<AtomicU64>,
 }
 
 #[derive(Default)]
@@ -794,6 +823,20 @@ fn merge_runtime_capabilities(mut capabilities: Value) -> Value {
     capabilities
 }
 
+fn bridge_core_status_is_ready(status: &Value) -> bool {
+    status.get("available").and_then(Value::as_bool) == Some(true)
+        && status.get("initialized").and_then(Value::as_bool) == Some(true)
+}
+
+fn bridge_runtime_is_ready(status: &Value, capabilities: &Value) -> bool {
+    bridge_core_status_is_ready(status)
+        && capabilities
+            .get("core")
+            .and_then(|core| core.get("available"))
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
 fn operation_id(request: Option<&OperationRequest>, scope: &str) -> String {
     request
         .and_then(|request| request.operation_id.clone())
@@ -868,7 +911,7 @@ fn downloads_folder_changes(events: Vec<DebouncedEvent>) -> Vec<DownloadsFolderC
     for event in events {
         let kind = downloads_folder_event_kind(&event.kind).to_string();
         for path in &event.paths {
-            if is_transient_downloads_watch_path(&path) {
+            if is_transient_downloads_watch_path(path) {
                 continue;
             }
 
@@ -1106,40 +1149,36 @@ fn emit_downloads_folder_watch_result(
 }
 
 fn emit_build_content_watch_result(
-    app: &AppHandle,
-    project_directory: &str,
-    mods_directory: &Path,
-    profiles_directory: &Path,
-    profile_name: &str,
-    game_data_directory: Option<&Path>,
-    sequence: &AtomicU64,
+    context: &BuildContentWatchEventContext,
     result: DebounceEventResult,
 ) {
     match result {
         Ok(events) => {
             let changes = build_content_changes(
                 events,
-                mods_directory,
-                profiles_directory,
-                game_data_directory,
+                &context.mods_directory,
+                &context.profiles_directory,
+                context.game_data_directory.as_deref(),
             );
             if changes.is_empty() {
                 return;
             }
 
-            let sequence = sequence.fetch_add(1, Ordering::SeqCst) + 1;
+            let sequence = context.sequence.fetch_add(1, Ordering::SeqCst) + 1;
             let reason = build_content_batch_reason(&changes);
             let payload = BuildContentChangedPayload {
-                project_directory: project_directory.to_string(),
-                mods_directory: mods_directory.to_string_lossy().to_string(),
-                profiles_directory: profiles_directory.to_string_lossy().to_string(),
-                profile_name: profile_name.to_string(),
+                project_directory: context.project_directory.clone(),
+                mods_directory: context.mods_directory.to_string_lossy().to_string(),
+                profiles_directory: context.profiles_directory.to_string_lossy().to_string(),
+                profile_name: context.profile_name.clone(),
                 event_id: format!("evt_{}_build_content_{sequence}", now_millis()),
                 sequence,
                 reason,
                 changes,
             };
-            let _ = app.emit_to(MAIN_WINDOW_LABEL, BUILD_CONTENT_CHANGED_EVENT, payload);
+            let _ = context
+                .app
+                .emit_to(MAIN_WINDOW_LABEL, BUILD_CONTENT_CHANGED_EVENT, payload);
         }
         Err(errors) => {
             let message = errors
@@ -1147,7 +1186,7 @@ fn emit_build_content_watch_result(
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join("; ");
-            let app = app.clone();
+            let app = context.app.clone();
             tauri::async_runtime::spawn(async move {
                 let _ = write_log(
                     &app,
@@ -1326,12 +1365,66 @@ fn executable_log_dir() -> Option<PathBuf> {
         .and_then(|path| path.parent().map(|parent| parent.join("logs")))
 }
 
+static LOG_DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
+static LOG_DIRECTORY_PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn directory_is_writable(path: &Path) -> bool {
+    if std::fs::create_dir_all(path).is_err() {
+        return false;
+    }
+
+    let sequence = LOG_DIRECTORY_PROBE_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let probe_path = path.join(format!(
+        ".fluxora-write-probe-{}-{}-{sequence}",
+        std::process::id(),
+        now_millis()
+    ));
+    let Ok(mut probe) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe_path)
+    else {
+        return false;
+    };
+    if std::io::Write::write_all(&mut probe, b"probe").is_err() {
+        drop(probe);
+        let _ = std::fs::remove_file(probe_path);
+        return false;
+    }
+    drop(probe);
+
+    std::fs::remove_file(probe_path).is_ok()
+}
+
+fn choose_writable_directory(candidates: &[PathBuf]) -> PathBuf {
+    candidates
+        .iter()
+        .find(|candidate| directory_is_writable(candidate))
+        .cloned()
+        .or_else(|| candidates.last().cloned())
+        .unwrap_or_else(|| std::env::temp_dir().join("Fluxora").join("logs"))
+}
+
+fn log_directory_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(configured) = std::env::var_os("FLUXORA_LOG_DIR") {
+        push_unique_candidate(&mut candidates, PathBuf::from(configured));
+    }
+    if let Some(executable) = executable_log_dir() {
+        push_unique_candidate(&mut candidates, executable);
+    }
+    push_unique_candidate(&mut candidates, fluxora_data_dir().join("logs"));
+    push_unique_candidate(
+        &mut candidates,
+        std::env::temp_dir().join("Fluxora").join("logs"),
+    );
+    candidates
+}
+
 fn logs_dir(_app: &AppHandle) -> PathBuf {
-    executable_log_dir().unwrap_or_else(|| {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("logs")
-    })
+    LOG_DIRECTORY
+        .get_or_init(|| choose_writable_directory(&log_directory_candidates()))
+        .clone()
 }
 
 fn operation_cancel_dir(app: &AppHandle) -> PathBuf {
@@ -1485,6 +1578,41 @@ fn sanitize_log(value: &str) -> String {
     let value = redact_query_key(&value);
     let value = redact_bearer_tokens(&value);
     redact_named_secret_assignments(&value).trim().to_string()
+}
+
+fn serialize_bridge_invoke_error(method: &str, operation_id: &str, error: &Value) -> String {
+    json!({
+        "schema": BRIDGE_INVOKE_ERROR_SCHEMA,
+        "method": method,
+        "operationId": operation_id,
+        "error": error
+    })
+    .to_string()
+}
+
+fn bridge_status_error_fields(message: &str, fallback_category: &str) -> (String, String) {
+    let Ok(payload) = serde_json::from_str::<Value>(message) else {
+        return (message.to_string(), fallback_category.to_string());
+    };
+    if payload.get("schema").and_then(Value::as_str) != Some(BRIDGE_INVOKE_ERROR_SCHEMA) {
+        return (message.to_string(), fallback_category.to_string());
+    }
+
+    let native_error = payload.get("error").and_then(Value::as_object);
+    let decoded_message = native_error
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .unwrap_or("Native bridge request failed.");
+    let decoded_category = native_error
+        .and_then(|error| error.get("category"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|category| !category.is_empty())
+        .unwrap_or(fallback_category);
+
+    (decoded_message.to_string(), decoded_category.to_string())
 }
 
 fn sanitize_ai_event_text(value: &str, max_len: usize) -> String {
@@ -1952,6 +2080,14 @@ impl BridgeProcess {
                     timeout_ms,
                 )
                 .await?;
+            if let Err(error) = validate_negotiated_protocol(
+                &handshake,
+                BRIDGE_PROTOCOL_VERSION,
+                "FluxoraBridgeHost",
+            ) {
+                self.reset().await;
+                return Err(error);
+            }
             self.handshake = Some(handshake);
         }
 
@@ -2103,11 +2239,7 @@ impl BridgeProcess {
                     Some(&operation_id),
                 )
                 .await;
-                return Err(error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("Native bridge request failed.")
-                    .to_string());
+                return Err(serialize_bridge_invoke_error(method, &operation_id, error));
             }
 
             let result = envelope
@@ -2243,6 +2375,12 @@ impl AiHostProcess {
                     timeout_ms,
                 )
                 .await?;
+            if let Err(error) =
+                validate_negotiated_protocol(&handshake, AI_HOST_PROTOCOL_VERSION, "FluxoraAIHost")
+            {
+                self.reset().await;
+                return Err(error);
+            }
             self.handshake = Some(handshake);
         }
 
@@ -2616,7 +2754,7 @@ fn ai_request_estimated_context_tokens(request: &Value) -> u64 {
         })
         .unwrap_or_default();
 
-    std::cmp::max(1, (chars + 3) / 4)
+    std::cmp::max(1, chars.div_ceil(4))
 }
 
 fn ai_context_usage_fallback(request: &Value, operation_id: &str) -> Value {
@@ -3417,6 +3555,37 @@ async fn fluxora_bridge_request(
         .await
 }
 
+fn bridge_status_failure(
+    app: &AppHandle,
+    bridge: &BridgeProcess,
+    operation_id: &str,
+    code: &str,
+    category: &str,
+    retryable: bool,
+    message: &str,
+) -> Value {
+    let log_directory = logs_dir(app);
+    let (message, category) = bridge_status_error_fields(message, category);
+    json!({
+        "ready": false,
+        "operationId": operation_id,
+        "hostPath": bridge.host_path.as_ref().map(|path| path.to_string_lossy().to_string()),
+        "error": {
+            "code": code,
+            "message": message,
+            "category": category,
+            "retryable": retryable,
+            "capabilityId": null,
+            "details": {}
+        },
+        "logs": {
+            "uiLogPath": log_directory.join("fluxora-tauri-ui-current.log").to_string_lossy().to_string(),
+            "mainBridgeLogPath": log_directory.join("fluxora-tauri-main-bridge-current.log").to_string_lossy().to_string(),
+            "nativeLogDirectory": log_directory.to_string_lossy().to_string()
+        }
+    })
+}
+
 #[tauri::command]
 async fn fluxora_bridge_status(
     app: AppHandle,
@@ -3440,7 +3609,24 @@ async fn fluxora_bridge_status(
 
     match status {
         Ok(status) => {
-            let capabilities = bridge
+            if !bridge_core_status_is_ready(&status) {
+                let message = status
+                    .get("lastError")
+                    .and_then(Value::as_str)
+                    .filter(|message| !message.trim().is_empty())
+                    .unwrap_or("Native core failed to initialize.");
+                return Ok(bridge_status_failure(
+                    &app,
+                    &bridge,
+                    &operation_id,
+                    "bridge.coreUnavailable",
+                    "core",
+                    true,
+                    message,
+                ));
+            }
+
+            let capabilities = match bridge
                 .request(
                     &app,
                     "system.getCapabilities",
@@ -3449,14 +3635,31 @@ async fn fluxora_bridge_status(
                     BRIDGE_TIMEOUT_MS,
                 )
                 .await
-                .unwrap_or_else(|_| {
-                    json!({
-                        "platform": platform_name(),
-                        "arch": arch_name(),
-                        "core": { "available": false, "libraryName": native_library_name() },
-                        "features": {}
-                    })
-                });
+            {
+                Ok(capabilities) => capabilities,
+                Err(message) => {
+                    return Ok(bridge_status_failure(
+                        &app,
+                        &bridge,
+                        &operation_id,
+                        "bridge.capabilitiesUnavailable",
+                        "transport",
+                        true,
+                        &message,
+                    ));
+                }
+            };
+            if !bridge_runtime_is_ready(&status, &capabilities) {
+                return Ok(bridge_status_failure(
+                    &app,
+                    &bridge,
+                    &operation_id,
+                    "bridge.coreUnavailable",
+                    "core",
+                    true,
+                    "Native bridge capabilities report that the core is unavailable.",
+                ));
+            }
             let capabilities = merge_runtime_capabilities(capabilities);
             let handshake = bridge.handshake.clone().unwrap_or_default();
             Ok(json!({
@@ -3477,24 +3680,15 @@ async fn fluxora_bridge_status(
                 }
             }))
         }
-        Err(message) => Ok(json!({
-            "ready": false,
-            "operationId": operation_id,
-            "hostPath": bridge.host_path.as_ref().map(|path| path.to_string_lossy().to_string()),
-            "error": {
-                "code": "bridge.unavailable",
-                "message": message,
-                "category": "transport",
-                "retryable": true,
-                "capabilityId": null,
-                "details": {}
-            },
-            "logs": {
-                "uiLogPath": logs_dir(&app).join("fluxora-tauri-ui-current.log").to_string_lossy().to_string(),
-                "mainBridgeLogPath": logs_dir(&app).join("fluxora-tauri-main-bridge-current.log").to_string_lossy().to_string(),
-                "nativeLogDirectory": logs_dir(&app).to_string_lossy().to_string()
-            }
-        })),
+        Err(message) => Ok(bridge_status_failure(
+            &app,
+            &bridge,
+            &operation_id,
+            "bridge.unavailable",
+            "transport",
+            true,
+            &message,
+        )),
     }
 }
 
@@ -4723,13 +4917,15 @@ async fn fluxora_build_content_watch(
     let state = app.state::<BuildContentWatchState>();
     let watcher_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let active_generation = state.generation.clone();
-    let sequence = state.sequence.clone();
-    let app_for_events = app.clone();
-    let project_for_events = project_directory.clone();
-    let mods_for_events = mods_path.clone();
-    let profiles_for_events = profiles_path.clone();
-    let profile_for_events = profile_name.clone();
-    let game_data_for_events = game_data_path.clone();
+    let event_context = BuildContentWatchEventContext {
+        app: app.clone(),
+        project_directory: project_directory.clone(),
+        mods_directory: mods_path.clone(),
+        profiles_directory: profiles_path.clone(),
+        profile_name: profile_name.clone(),
+        game_data_directory: game_data_path.clone(),
+        sequence: state.sequence.clone(),
+    };
 
     let mut debouncer = new_debouncer(
         Duration::from_millis(BUILD_CONTENT_WATCH_DEBOUNCE_MS),
@@ -4738,16 +4934,7 @@ async fn fluxora_build_content_watch(
             if active_generation.load(Ordering::SeqCst) != watcher_generation {
                 return;
             }
-            emit_build_content_watch_result(
-                &app_for_events,
-                &project_for_events,
-                &mods_for_events,
-                &profiles_for_events,
-                &profile_for_events,
-                game_data_for_events.as_deref(),
-                &sequence,
-                result,
-            );
+            emit_build_content_watch_result(&event_context, result);
         },
     )
     .map_err(|error| error.to_string())?;
@@ -5007,6 +5194,157 @@ mod tests {
         assert!(message.contains("Bearer [redacted-secret]"));
         assert!(message.contains("api_key=[redacted-secret]"));
         assert!(message.contains("token=[redacted-secret]"));
+    }
+
+    #[test]
+    fn bridge_invoke_error_serialization_preserves_native_contract() {
+        let native_error = json!({
+            "code": "core.projectOpenFailed",
+            "message": "The selected build could not be opened.",
+            "category": "core",
+            "retryable": true,
+            "capabilityId": "projects.openConfig",
+            "details": {
+                "configPath": "C:/Builds/Foundation/fluxora.json",
+                "attempt": 2
+            }
+        });
+
+        let serialized = serialize_bridge_invoke_error(
+            "projects.openConfig",
+            "op_project_open_42",
+            &native_error,
+        );
+        let payload: Value = serde_json::from_str(&serialized).expect("versioned error payload");
+
+        assert_eq!(payload["schema"], BRIDGE_INVOKE_ERROR_SCHEMA);
+        assert_eq!(payload["method"], "projects.openConfig");
+        assert_eq!(payload["operationId"], "op_project_open_42");
+        assert_eq!(payload["error"], native_error);
+    }
+
+    #[test]
+    fn bridge_status_decodes_message_and_category_from_versioned_invoke_error() {
+        let native_error = json!({
+            "code": "core.initializationFailed",
+            "message": "Native core failed to initialize.",
+            "category": "core",
+            "retryable": true,
+            "capabilityId": null,
+            "details": {}
+        });
+        let serialized =
+            serialize_bridge_invoke_error("system.initialize", "op_bridge_status", &native_error);
+
+        let (message, category) = bridge_status_error_fields(&serialized, "transport");
+
+        assert_eq!(message, "Native core failed to initialize.");
+        assert_eq!(category, "core");
+        assert!(!message.contains(BRIDGE_INVOKE_ERROR_SCHEMA));
+    }
+
+    #[test]
+    fn bridge_invoke_error_keeps_renderer_details_while_log_message_is_redacted() {
+        let native_error = json!({
+            "code": "bridge.transport",
+            "message": "Request failed url=https://example.test?key=secret Bearer private-token",
+            "category": "transport",
+            "retryable": true,
+            "capabilityId": null,
+            "details": { "reason": "connection reset" }
+        });
+
+        let serialized =
+            serialize_bridge_invoke_error("projects.list", "op_projects_list", &native_error);
+        let payload: Value = serde_json::from_str(&serialized).expect("versioned error payload");
+        assert_eq!(payload["error"]["message"], native_error["message"]);
+
+        let log_message = sanitize_log(native_error["message"].as_str().expect("message"));
+        assert!(!log_message.contains("key=secret"));
+        assert!(!log_message.contains("private-token"));
+        assert!(log_message.contains("key=[redacted-secret]"));
+        assert!(log_message.contains("Bearer [redacted-secret]"));
+    }
+
+    #[test]
+    fn bridge_handshake_rejects_incompatible_protocol_version() {
+        let handshake = json!({
+            "protocolVersion": "2.0"
+        });
+
+        let result =
+            validate_negotiated_protocol(&handshake, BRIDGE_PROTOCOL_VERSION, "FluxoraBridgeHost");
+
+        assert_eq!(
+            result.unwrap_err(),
+            "FluxoraBridgeHost negotiated unsupported protocol version 2.0; expected 1.0."
+        );
+    }
+
+    #[test]
+    fn bridge_runtime_readiness_rejects_uninitialized_core() {
+        let status = json!({
+            "available": true,
+            "initialized": false
+        });
+        let capabilities = json!({
+            "core": {
+                "available": true
+            }
+        });
+
+        assert!(!bridge_runtime_is_ready(&status, &capabilities));
+    }
+
+    #[test]
+    fn bridge_runtime_readiness_requires_available_core_capability() {
+        let status = json!({
+            "available": true,
+            "initialized": true
+        });
+        let unavailable_capabilities = json!({
+            "core": {
+                "available": false
+            }
+        });
+        let ready_capabilities = json!({
+            "core": {
+                "available": true
+            }
+        });
+
+        assert!(!bridge_runtime_is_ready(&status, &unavailable_capabilities));
+        assert!(bridge_runtime_is_ready(&status, &ready_capabilities));
+    }
+
+    #[test]
+    fn writable_directory_chooser_skips_protected_candidate() {
+        let root = env::temp_dir().join(format!(
+            "fluxora-writable-directory-test-{}-{}",
+            std::process::id(),
+            now_millis()
+        ));
+        let blocked_parent = root.join("blocked-parent");
+        let writable = root.join("app-data").join("logs");
+        fs::create_dir_all(&root).expect("create test root");
+        fs::write(&blocked_parent, "not a directory").expect("create blocking file");
+
+        let selected = choose_writable_directory(&[
+            blocked_parent.join("logs"),
+            writable.clone(),
+            root.join("temp").join("logs"),
+        ]);
+
+        assert_eq!(selected, writable);
+        assert!(selected.is_dir());
+        assert!(
+            fs::read_dir(&selected)
+                .expect("read selected directory")
+                .next()
+                .is_none(),
+            "writability probe must clean up its temporary file"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
