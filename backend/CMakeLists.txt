@@ -43,6 +43,30 @@ else()
     endif()
 endif()
 
+find_package(zstd CONFIG QUIET)
+if(TARGET zstd::libzstd_static)
+    set(FLUXORA_ZSTD_TARGET zstd::libzstd_static)
+else()
+    set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        zstd
+        GIT_REPOSITORY https://github.com/facebook/zstd.git
+        GIT_TAG        v1.5.7
+        GIT_SHALLOW    TRUE
+        SOURCE_SUBDIR  build/cmake
+    )
+    FetchContent_MakeAvailable(zstd)
+    if(TARGET libzstd_static)
+        set(FLUXORA_ZSTD_TARGET libzstd_static)
+    else()
+        message(FATAL_ERROR "Static Zstandard target was not created.")
+    endif()
+endif()
+
 set(FLUXORA_GAME_DEFINITION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources/GameDefinitions")
 file(GLOB FLUXORA_GAME_DEFINITION_JSON CONFIGURE_DEPENDS "${FLUXORA_GAME_DEFINITION_DIR}/*.json")
 if(NOT FLUXORA_GAME_DEFINITION_JSON)
@@ -127,6 +151,7 @@ add_library(FluxoraCore SHARED
     src/Services/ExecutableIconService.cpp
     src/Services/ExecutableService.cpp
     src/Services/FomodInstallerService.cpp
+    src/Services/FluxPackPackage.cpp
     src/Services/FluxPackService.cpp
     src/Services/GrassCacheProcessRunner.cpp
     src/Services/GrassCacheService.cpp
@@ -163,7 +188,12 @@ target_include_directories(FluxoraCore
 
 target_compile_features(FluxoraCore PUBLIC cxx_std_20)
 target_compile_definitions(FluxoraCore PRIVATE FLUXORA_CORE_EXPORTS)
-target_link_libraries(FluxoraCore PRIVATE spdlog::spdlog_header_only ${FLUXORA_ZLIB_TARGET})
+target_link_libraries(
+    FluxoraCore
+    PRIVATE
+        spdlog::spdlog_header_only
+        ${FLUXORA_ZLIB_TARGET}
+        ${FLUXORA_ZSTD_TARGET})
 
 if(MSVC)
     # /utf-8 makes MSVC read the UTF-8 sources correctly, so Cyrillic wide-string

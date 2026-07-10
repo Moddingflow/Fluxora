@@ -1435,18 +1435,29 @@ export interface FluxoraFluxPackSummary {
   installStepCount: number;
   generatedAssetsIncluded: boolean;
   installPlanAvailable: boolean;
+  compressionMode: FluxoraFluxPackCompressionMode | 'none';
+  logicalPayloadBytes: number;
+  uniquePayloadBytes: number;
+  storedPayloadBytes: number;
+  deduplicatedPayloadBytes: number;
+  uniqueChunkCount: number;
+  dictionaryCount: number;
   operationId: string;
 }
+
+export type FluxoraFluxPackCompressionMode = 'fast' | 'optimal' | 'smallest';
 
 export interface FluxoraFluxPackExportRequest {
   configPath: string;
   outputPath: string;
   includeGeneratedAssets: boolean;
+  compressionMode: FluxoraFluxPackCompressionMode;
 }
 
 export interface FluxoraFluxPackInstallRequest {
   fluxPackPath: string;
   installRootDirectory: string;
+  existingConfigPath?: string;
 }
 
 export interface FluxoraFluxPackProviderProgress {
@@ -1470,8 +1481,13 @@ export interface FluxoraFluxPackInstallResult {
   installedSourceCount: number;
   pendingSourceCount: number;
   failedSourceCount: number;
+  reusedSourceCount: number;
+  reusedDownloadCount: number;
   appliedConfigCount: number;
   appliedProfileOrderItemCount: number;
+  reusedFileCount: number;
+  materializedFileCount: number;
+  updatedExistingProject: boolean;
   hasWarnings: boolean;
   operationId: string;
 }

@@ -113,6 +113,11 @@ import { BuildPathsInspector } from './features/build/BuildPathsInspector';
 import { BuildSettingsWorkspace } from './features/build/BuildSettingsWorkspace';
 import { BuildDetailHeader } from './features/build/BuildDetailHeader';
 import {
+  FluxPackExportDialog,
+  type FluxPackExportOptions
+} from './features/fluxpack/FluxPackExportDialog';
+import { resolveFluxPackInstallTarget } from './features/fluxpack/fluxpack-install-target';
+import {
   DeletionConfirmationDialog,
   deletionSubjectLabel,
   type DeletionConfirmationKind
@@ -307,6 +312,7 @@ import type {
   FluxoraFileDropEvent,
   FluxoraFomodInstaller,
   FluxoraFluxPackInstallResult,
+  FluxoraFluxPackCompressionMode,
   FluxoraFluxPackSummary,
   FluxoraGameTemplate,
   FluxoraInstalledMod,
@@ -1301,6 +1307,9 @@ export const App = () => {
   const [buildPathsBusyLabel, setBuildPathsBusyLabel] = useState<string | null>(null);
   const [buildPathsError, setBuildPathsError] = useState<string | null>(null);
   const [fluxPackSummary, setFluxPackSummary] = useState<FluxoraFluxPackSummary | null>(null);
+  const [fluxPackCompressionMode, setFluxPackCompressionMode] =
+    useState<FluxoraFluxPackCompressionMode>('optimal');
+  const [fluxPackExportPath, setFluxPackExportPath] = useState<string | null>(null);
   const [fluxPackInstallResult, setFluxPackInstallResult] =
     useState<FluxoraFluxPackInstallResult | null>(null);
   const [operationOverlay, setOperationOverlay] = useState<OperationOverlayState | null>(null);
@@ -6402,17 +6411,9 @@ export const App = () => {
   }, []);
 
   useEffect(() => {
-    if (!operationOverlay?.operationId) {
-      return;
-    }
-
     return window.fluxora.operations.onProgress((progress) => {
-      if (progress.operationId !== operationOverlay.operationId) {
-        return;
-      }
-
       setOperationOverlay((current) =>
-        current && current.operationId === progress.operationId
+        current && current.isRunning && current.operationId === progress.operationId
           ? {
               ...current,
               statusText:
@@ -6426,7 +6427,7 @@ export const App = () => {
           : current
       );
     });
-  }, [operationOverlay?.operationId]);
+  }, []);
 
   useEffect(() => {
     const pendingRestore = pendingBuildPathEditorRestoreRef.current;
@@ -7282,22 +7283,34 @@ export const App = () => {
 
     const saveResult = await window.fluxora.dialogs.saveFluxPack(
       defaultFluxPackPath(selectedProject),
-      'Export FluxPack'
+      'Сохранить FluxPack'
     );
     if (saveResult.canceled || !saveResult.path) {
       return;
     }
 
-    const includeGeneratedAssets =
-      window.confirm('Include generated assets in the FluxPack manifest?') === true;
+    setFluxPackExportPath(saveResult.path);
+  };
+
+  const confirmFluxPackExport = async ({
+    compressionMode,
+    includeGeneratedAssets
+  }: FluxPackExportOptions) => {
+    if (!selectedProject || !fluxPackExportPath) {
+      return;
+    }
+
+    const outputPath = fluxPackExportPath;
+    setFluxPackCompressionMode(compressionMode);
+    setFluxPackExportPath(null);
     const operationId = createRendererOperationId('fluxpack_export');
     beginOperationOverlay({
       operationId,
       kind: 'fluxpack-export',
-      title: 'Packaging FluxPack',
-      statusText: 'Writing FluxPack manifest',
+      title: 'Упаковываем сборку',
+      statusText: 'Изучаем сборку',
       currentItem: selectedProject.name,
-      percent: null
+      percent: 0
     });
     setMessage(null);
 
@@ -7305,16 +7318,17 @@ export const App = () => {
       const summary = await window.fluxora.fluxPack.export(
         {
           configPath: selectedProject.configPath,
-          outputPath: saveResult.path,
-          includeGeneratedAssets
+          outputPath,
+          includeGeneratedAssets,
+          compressionMode
         },
         { operationId }
       );
       setFluxPackSummary(summary);
       setFluxPackInstallResult(null);
       activateRightPane('build');
-      setMessage(`FluxPack exported: ${summary.outputPath}`);
-      finishOperationOverlay(operationId, `Exported ${summary.buildName || selectedProject.name}`);
+      setMessage(`Сборка упакована: ${summary.outputPath}`);
+      finishOperationOverlay(operationId, `Сборка ${summary.buildName || selectedProject.name} упакована`);
     } catch (error) {
       const nextMessage = errorMessage(error);
       setMessage(nextMessage);
@@ -7351,21 +7365,30 @@ export const App = () => {
       return;
     }
 
-    const rootResult = await window.fluxora.dialogs.pickFolder(
-      'Select FluxPack install root',
-      catalog.defaultInstallRootDirectory || selectedProject?.installRootDirectory
+    const installTarget = resolveFluxPackInstallTarget(
+      selectedProject,
+      catalog.defaultInstallRootDirectory
     );
-    if (rootResult.canceled || !rootResult.path) {
-      return;
+    let installRootDirectory = installTarget.installRootDirectory;
+    if (installTarget.requiresRootSelection) {
+      const rootResult = await window.fluxora.dialogs.pickFolder(
+        'Выберите папку для сборки',
+        installRootDirectory || undefined
+      );
+      if (rootResult.canceled || !rootResult.path) {
+        return;
+      }
+      installRootDirectory = rootResult.path;
     }
 
+    const isDeltaUpdate = Boolean(installTarget.existingConfigPath);
     const operationId = createRendererOperationId('fluxpack_install');
     beginOperationOverlay({
       operationId,
       kind: 'fluxpack-install',
-      title: 'Installing FluxPack',
-      statusText: 'Preparing FluxPack install',
-      currentItem: pickResult.path,
+      title: isDeltaUpdate ? 'Обновляем сборку' : 'Устанавливаем сборку',
+      statusText: isDeltaUpdate ? 'Сопоставляем Delta' : 'Подготавливаем установку',
+      currentItem: selectedProject?.name || pickResult.path,
       percent: 0
     });
     setMessage(null);
@@ -7374,7 +7397,10 @@ export const App = () => {
       const result = await window.fluxora.fluxPack.install(
         {
           fluxPackPath: pickResult.path,
-          installRootDirectory: rootResult.path
+          installRootDirectory,
+          ...(installTarget.existingConfigPath
+            ? { existingConfigPath: installTarget.existingConfigPath }
+            : {})
         },
         { operationId }
       );
@@ -7403,16 +7429,26 @@ export const App = () => {
 
       if (workspaceLoadError) {
         setMessage(
-          `Installed FluxPack, but its workspace could not be loaded: ${errorMessage(workspaceLoadError)}`
+          `${result.updatedExistingProject ? 'Сборка обновлена' : 'FluxPack установлен'}, но рабочее пространство не загрузилось: ${errorMessage(workspaceLoadError)}`
         );
-        finishOperationOverlay(operationId, `Installed ${result.buildName || opened.name}`);
+        finishOperationOverlay(
+          operationId,
+          `${result.updatedExistingProject ? 'Обновлена' : 'Установлена'} сборка ${result.buildName || opened.name}`
+        );
         await loadCatalog();
         return;
       }
 
       setLoadedWorkspaceProjectId(opened.id);
-      setMessage(`Installed FluxPack: ${result.buildName || opened.name}`);
-      finishOperationOverlay(operationId, `Installed ${result.buildName || opened.name}`);
+      setMessage(
+        result.updatedExistingProject
+          ? `Сборка обновлена: ${result.buildName || opened.name}. Переиспользовано: ${result.reusedSourceCount} мод., ${result.reusedDownloadCount} архив., ${result.reusedFileCount} файл.`
+          : `FluxPack установлен: ${result.buildName || opened.name}`
+      );
+      finishOperationOverlay(
+        operationId,
+        `${result.updatedExistingProject ? 'Обновлена' : 'Установлена'} сборка ${result.buildName || opened.name}`
+      );
       await loadCatalog();
     } catch (error) {
       const nextMessage = errorMessage(error);
@@ -10975,6 +11011,17 @@ export const App = () => {
       />
     ) : null;
 
+  const renderFluxPackExportDialog = () =>
+    fluxPackExportPath && selectedProject ? (
+      <FluxPackExportDialog
+        buildName={selectedProject.name}
+        defaultCompressionMode={fluxPackCompressionMode}
+        onCancel={() => setFluxPackExportPath(null)}
+        onConfirm={(options) => void confirmFluxPackExport(options)}
+        outputPath={fluxPackExportPath}
+      />
+    ) : null;
+
   const renderDownloadsWorkspace = () => {
     if (!selectedProject) {
       return (
@@ -11758,11 +11805,18 @@ export const App = () => {
             data-status={fluxPackInstallResult.hasWarnings ? 'checking' : 'ready'}
           >
             <strong>
-              {fluxPackInstallResult.hasWarnings ? 'Installed with warnings' : 'Install complete'}
+              {fluxPackInstallResult.updatedExistingProject
+                ? fluxPackInstallResult.hasWarnings
+                  ? 'Delta-обновление завершено с предупреждениями'
+                  : 'Delta-обновление завершено'
+                : fluxPackInstallResult.hasWarnings
+                  ? 'Установка завершена с предупреждениями'
+                  : 'Установка завершена'}
             </strong>
             <span>
-              {fluxPackInstallResult.installedSourceCount} source(s) installed,{' '}
-              {fluxPackInstallResult.appliedConfigCount} config(s) applied.
+              {fluxPackInstallResult.updatedExistingProject
+                ? `Переиспользовано: ${fluxPackInstallResult.reusedSourceCount} мод., ${fluxPackInstallResult.reusedDownloadCount} архив., ${fluxPackInstallResult.reusedFileCount} файл. Заменено файлов: ${fluxPackInstallResult.materializedFileCount}.`
+                : `Установлено источников: ${fluxPackInstallResult.installedSourceCount}. Применено конфигураций: ${fluxPackInstallResult.appliedConfigCount}.`}
             </span>
           </div>
         ) : null}
@@ -12650,6 +12704,7 @@ export const App = () => {
                   : null}
                 {renderInstallDialog()}
                 {renderModCreationDialog()}
+                {renderFluxPackExportDialog()}
                 {renderDeletionConfirmation()}
                 {renderGrassCacheConfirmation()}
                 {renderOperationOverlay()}

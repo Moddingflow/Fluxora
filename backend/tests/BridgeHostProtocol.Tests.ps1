@@ -271,6 +271,22 @@ if ($missingMetaResponse.error.code -ne 'bridge.invalidRequest') {
     throw "Expected missing metadata rejection, received: $($missingMetaResponse | ConvertTo-Json -Depth 10 -Compress)"
 }
 
+$invalidCompressionResponse = Invoke-BridgeHostRequest -Request @{
+    jsonrpc = '2.0'
+    id = 'invalid_fluxpack_compression'
+    method = 'fluxPack.export'
+    params = @{
+        configPath = 'C:\missing\build.json'
+        outputPath = 'C:\missing\build.fluxpack'
+        includeGeneratedAssets = $false
+        compressionMode = 'ultra'
+    }
+    meta = $requestMeta
+}
+if ($invalidCompressionResponse.error.code -ne 'bridge.invalidRequest') {
+    throw "Expected invalid FluxPack compression rejection, received: $($invalidCompressionResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+
 $compatibleResponse = Invoke-BridgeHostRequest -Request @{
     jsonrpc = '2.0'
     id = 'handshake_compatible'

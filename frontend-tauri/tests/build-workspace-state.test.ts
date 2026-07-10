@@ -7,10 +7,16 @@ import {
   buildPrimaryExecutableList,
   directoryFromExecutablePath,
   emptyBuildPathDraft,
+  fluxPackSummaryFacts,
   ngioGrassCacheActionView,
   validateBuildPathDraft
 } from '../src/renderer/build-workspace-state';
-import type { FluxoraExecutable, FluxoraProject, NativeBridgeStatus } from '../src/shared/fluxora-api';
+import type {
+  FluxoraExecutable,
+  FluxoraFluxPackSummary,
+  FluxoraProject,
+  NativeBridgeStatus
+} from '../src/shared/fluxora-api';
 
 const project: FluxoraProject = {
   id: 'C:\\Builds\\Skyrim.json',
@@ -144,6 +150,37 @@ describe('build workspace state', () => {
     expect(buildHeaderCapabilityView(unsupportedFluxPack)).toMatchObject({
       packageAvailable: false,
       packageReason: 'FluxPack export is disabled for this smoke bridge.'
+    });
+  });
+
+  it('shows FluxPack v3 compression and deduplication statistics', () => {
+    const summary: FluxoraFluxPackSummary = {
+      buildName: 'Skyrim Main',
+      compressionMode: 'smallest',
+      customConfigCount: 3,
+      customPatchCount: 2,
+      deduplicatedPayloadBytes: 1024 * 1024,
+      dictionaryCount: 1,
+      formatVersion: 3,
+      generatedAssetCount: 1,
+      generatedAssetsIncluded: true,
+      installPlanAvailable: true,
+      installStepCount: 4,
+      logicalPayloadBytes: 4 * 1024 * 1024,
+      manifestBytes: 4096,
+      operationId: 'op_fluxpack',
+      outputPath: 'D:\\Exports\\Skyrim.fluxpack',
+      sourceArchiveCount: 5,
+      storedPayloadBytes: 2 * 1024 * 1024,
+      uniqueChunkCount: 12,
+      uniquePayloadBytes: 3 * 1024 * 1024
+    };
+
+    expect(Object.fromEntries(fluxPackSummaryFacts(summary))).toMatchObject({
+      Compression: 'Минимальный размер',
+      Deduplicated: '1.0 MB',
+      Stored: '2.0 MB',
+      Chunks: '12'
     });
   });
 

@@ -62,6 +62,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/ExecutableIconService.cpp
     ../src/Services/ExecutableService.cpp
     ../src/Services/FomodInstallerService.cpp
+    ../src/Services/FluxPackPackage.cpp
     ../src/Services/FluxPackService.cpp
     ../src/Services/GrassCacheService.cpp
     ../src/Services/HookService.cpp
@@ -126,7 +127,13 @@ else()
     target_compile_options(FluxoraCoreTests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-target_link_libraries(FluxoraCoreTests PRIVATE GTest::gtest_main spdlog::spdlog_header_only ${FLUXORA_ZLIB_TARGET})
+target_link_libraries(
+    FluxoraCoreTests
+    PRIVATE
+        GTest::gtest_main
+        spdlog::spdlog_header_only
+        ${FLUXORA_ZLIB_TARGET}
+        ${FLUXORA_ZSTD_TARGET})
 
 if(WIN32)
     target_link_libraries(FluxoraCoreTests PRIVATE advapi32 bcrypt crypt32 gdiplus rstrtmgr shell32 winhttp ws2_32)

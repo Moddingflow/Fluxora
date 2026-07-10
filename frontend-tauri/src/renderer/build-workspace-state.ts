@@ -350,9 +350,34 @@ export const buildPrimaryExecutableList = (
   return next;
 };
 
+const formatFluxPackBytes = (bytes: number | undefined): string => {
+  if (!Number.isFinite(bytes) || (bytes ?? 0) <= 0) {
+    return '0 B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes ?? 0;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+};
+
+const fluxPackCompressionLabel = (mode: FluxoraFluxPackSummary['compressionMode']): string => {
+  if (mode === 'fast') return 'Быстро';
+  if (mode === 'smallest') return 'Минимальный размер';
+  if (mode === 'optimal') return 'Оптимально';
+  return 'Без сжатия';
+};
+
 export const fluxPackSummaryFacts = (summary: FluxoraFluxPackSummary): Array<[string, string]> => [
   ['Build', summary.buildName || '-'],
   ['Format', String(summary.formatVersion)],
+  ['Compression', fluxPackCompressionLabel(summary.compressionMode)],
+  ['Stored', formatFluxPackBytes(summary.storedPayloadBytes)],
+  ['Deduplicated', formatFluxPackBytes(summary.deduplicatedPayloadBytes)],
+  ['Chunks', String(summary.uniqueChunkCount ?? 0)],
   ['Sources', String(summary.sourceArchiveCount)],
   ['Generated assets', String(summary.generatedAssetCount)],
   ['Configs', String(summary.customConfigCount)],

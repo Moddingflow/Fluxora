@@ -1156,14 +1156,61 @@ namespace
             includeGeneratedAssetsField != nullptr &&
             includeGeneratedAssetsField->type() == fluxora::JsonValue::Type::Boolean &&
             includeGeneratedAssetsField->asBoolean();
+        const fluxora::JsonValue* compressionModeField =
+            findObjectField(params, L"compressionMode");
+        if (compressionModeField != nullptr &&
+            !compressionModeField->isNull() &&
+            !compressionModeField->isString())
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"compressionMode must be fast, optimal, or smallest.",
+                ErrorCategory::Validation,
+                false
+            };
+        }
+        const std::wstring compressionMode =
+            compressionModeField != nullptr && compressionModeField->isString()
+                ? compressionModeField->asString()
+                : L"optimal";
+        int compressionModeValue = 0;
+        if (compressionMode == L"fast")
+        {
+            compressionModeValue = 1;
+        }
+        else if (compressionMode == L"optimal")
+        {
+            compressionModeValue = 2;
+        }
+        else if (compressionMode == L"smallest")
+        {
+            compressionModeValue = 3;
+        }
+        else
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"compressionMode must be fast, optimal, or smallest.",
+                ErrorCategory::Validation,
+                false
+            };
+        }
+        ProgressCallbackContext progressContext{currentOperationId(request)};
         return payloadFromCoreJson(
             L"core.fluxPackExportFailed",
-            [&configPath, &outputPath, includeGeneratedAssets](wchar_t* buffer, int length)
+            [&configPath,
+             &outputPath,
+             includeGeneratedAssets,
+             compressionModeValue,
+             &progressContext](wchar_t* buffer, int length)
             {
-                return fluxora_export_fluxpack(
+                return fluxora_export_fluxpack_with_options_and_progress(
                     configPath.c_str(),
                     outputPath.c_str(),
                     includeGeneratedAssets ? 1 : 0,
+                    compressionModeValue,
+                    emitOperationProgress,
+                    &progressContext,
                     buffer,
                     length);
             });
@@ -1186,14 +1233,19 @@ namespace
         const fluxora::JsonValue& params = requiredParamsObject(request);
         const std::wstring fluxPackPath = requiredStringField(params, L"fluxPackPath");
         const std::wstring installRootDirectory = requiredStringField(params, L"installRootDirectory");
+        const std::wstring existingConfigPath = optionalStringField(&params, L"existingConfigPath");
         ProgressCallbackContext progressContext{currentOperationId(request)};
         return payloadFromCoreJson(
             L"core.fluxPackInstallFailed",
-            [&fluxPackPath, &installRootDirectory, &progressContext](wchar_t* buffer, int length)
+            [&fluxPackPath,
+             &installRootDirectory,
+             &existingConfigPath,
+             &progressContext](wchar_t* buffer, int length)
             {
-                return fluxora_install_fluxpack(
+                return fluxora_install_fluxpack_with_target(
                     fluxPackPath.c_str(),
                     installRootDirectory.c_str(),
+                    existingConfigPath.empty() ? nullptr : existingConfigPath.c_str(),
                     emitOperationProgress,
                     &progressContext,
                     buffer,

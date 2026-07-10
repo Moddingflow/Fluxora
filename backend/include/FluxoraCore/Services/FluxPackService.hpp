@@ -1,5 +1,6 @@
 #pragma once
 
+#include "FluxoraCore/Services/FluxPackPackage.hpp"
 #include "FluxoraCore/Services/IService.hpp"
 
 #include <cstdint>
@@ -15,11 +16,26 @@ namespace fluxora
     class Logger;
     class ProjectService;
 
+    struct FluxPackExportProgress
+    {
+        std::wstring phase;
+        std::wstring currentStep;
+        std::wstring currentItem;
+        std::wstring statusMessage;
+        int overallPercent{0};
+        std::uintmax_t processedFileCount{0};
+        std::uintmax_t totalFileCount{0};
+        std::uintmax_t processedBytes{0};
+        std::uintmax_t totalBytes{0};
+    };
+
     struct FluxPackExportRequest
     {
         std::filesystem::path configPath;
         std::filesystem::path outputPath;
         bool includeGeneratedAssets{false};
+        std::function<void(const FluxPackExportProgress&)> progress;
+        FluxPackCompressionMode compressionMode{FluxPackCompressionMode::Optimal};
     };
 
     struct FluxPackSummary
@@ -35,6 +51,13 @@ namespace fluxora
         std::uintmax_t installStepCount{0};
         bool generatedAssetsIncluded{false};
         bool installPlanAvailable{false};
+        std::wstring compressionMode{L"none"};
+        std::uintmax_t logicalPayloadBytes{0};
+        std::uintmax_t uniquePayloadBytes{0};
+        std::uintmax_t storedPayloadBytes{0};
+        std::uintmax_t deduplicatedPayloadBytes{0};
+        std::uintmax_t uniqueChunkCount{0};
+        std::uintmax_t dictionaryCount{0};
     };
 
     struct FluxPackProviderProgress
@@ -69,6 +92,7 @@ namespace fluxora
         std::filesystem::path fluxPackPath;
         std::filesystem::path installRootDirectory;
         std::function<void(const FluxPackInstallProgress&)> progress;
+        std::filesystem::path existingConfigPath;
     };
 
     struct FluxPackInstallResult
@@ -81,8 +105,13 @@ namespace fluxora
         std::uintmax_t installedSourceCount{0};
         std::uintmax_t pendingSourceCount{0};
         std::uintmax_t failedSourceCount{0};
+        std::uintmax_t reusedSourceCount{0};
+        std::uintmax_t reusedDownloadCount{0};
         std::uintmax_t appliedConfigCount{0};
         std::uintmax_t appliedProfileOrderItemCount{0};
+        std::uintmax_t reusedFileCount{0};
+        std::uintmax_t materializedFileCount{0};
+        bool updatedExistingProject{false};
         bool hasWarnings{false};
     };
 

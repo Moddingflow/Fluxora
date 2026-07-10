@@ -238,6 +238,24 @@ namespace fluxora::tests
         }
     }
 
+    TEST(FluxoraCoreApiTests, RejectsUnknownFluxPackCompressionModeBeforeExport)
+    {
+        fluxora_core_shutdown();
+        std::array<wchar_t, 256> output{};
+        EXPECT_EQ(
+            fluxora_export_fluxpack_with_options_and_progress(
+                L"C:\\missing\\build.json",
+                L"C:\\missing\\build.fluxpack",
+                0,
+                99,
+                nullptr,
+                nullptr,
+                output.data(),
+                static_cast<int>(output.size())),
+            FluxoraCoreResultInvalidArgument);
+        EXPECT_NE(lastCoreError().find(L"compression mode"), std::wstring::npos);
+    }
+
     TEST(FluxoraCoreApiTests, ListProjectConfigsReturnsLightCatalogPayload)
     {
         fluxora_core_shutdown();

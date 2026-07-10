@@ -81,7 +81,7 @@ Required unit anchors:
 | Executables | Automated | Playwright save/rename/delete executable flow and launch capability state |
 | Settings | Automated | Playwright settings sections, language/Nexus/MO2 transfer surfaces; theme customization is absent while the single dark theme is supported |
 | MO2 transfer | Automated validation smoke | Playwright opens MO2 transfer and verifies required-field validation; full import needs a real MO2 fixture |
-| FluxPack | Automated | Playwright export/inspect/install flow with progress events |
+| FluxPack | Automated | Playwright export/inspect/install flow with progress events plus in-place Delta target/reuse evidence |
 
 ## Backend gate
 

@@ -57,12 +57,13 @@ export const OperationOverlay = ({
     return null;
   }
 
-  const isIndeterminate = overlay.isRunning && overlay.percent === null;
+  const isIndeterminate =
+    overlay.isRunning && overlay.percent === null && overlay.kind !== 'fluxpack-export';
   const percent = Math.max(0, Math.min(100, overlay.percent ?? 0));
   const tone = operationOverlayTone(overlay);
-  const progressLabel = isIndeterminate ? 'Waiting for progress' : `${percent}%`;
+  const progressLabel = isIndeterminate ? 'Ожидаем данные' : `${percent}%`;
   const stepText =
-    overlay.errorText || overlay.resultText || overlay.statusText || 'Preparing operation';
+    overlay.errorText || overlay.resultText || overlay.statusText || 'Подготавливаем операцию';
   const showCurrentItemDetail = !(overlay.kind === 'build-delete' && tone === 'running');
   const detailText = showCurrentItemDetail ? overlay.currentItem || overlay.title : null;
   const canCancelBuildCreate =
@@ -100,23 +101,24 @@ export const OperationOverlay = ({
       role={tone === 'error' ? 'alert' : 'status'}
     >
       <div className="operation-overlay__panel">
-        <div className="operation-splash__topline">
-          <span>Operation</span>
-          {showCancel ? (
-            <button
-              className="operation-splash__action operation-splash__action--cancel"
-              disabled={cancelDisabled}
-              onClick={onCancel}
-              type="button"
-            >
-              Отменить
-            </button>
-          ) : showClose ? (
-            <button className="operation-splash__action" onClick={onClose} type="button">
-              Закрыть
-            </button>
-          ) : null}
-        </div>
+        {showCancel || showClose ? (
+          <div className="operation-splash__topline">
+            {showCancel ? (
+              <button
+                className="operation-splash__action operation-splash__action--cancel"
+                disabled={cancelDisabled}
+                onClick={onCancel}
+                type="button"
+              >
+                Отменить
+              </button>
+            ) : showClose ? (
+              <button className="operation-splash__action" onClick={onClose} type="button">
+                Закрыть
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="operation-splash__hero">
           <span className="operation-splash__spinner" aria-hidden="true">
@@ -136,14 +138,14 @@ export const OperationOverlay = ({
 
         <div className="operation-progress">
           <ProgressBar
-            aria-label={`${overlay.title} progress`}
+            aria-label={`${overlay.title}: прогресс`}
             className={`operation-progress__bar${isIndeterminate ? '' : ' operation-progress__bar--percent'}`}
             indeterminate={isIndeterminate}
             value={percent}
             valueLabel={progressLabel}
           />
           <div className="operation-splash__step">
-            <span>Current step</span>
+            <span>Сейчас</span>
             <strong>{stepText}</strong>
           </div>
         </div>

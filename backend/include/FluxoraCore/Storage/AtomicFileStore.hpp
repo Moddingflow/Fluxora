@@ -58,6 +58,11 @@ namespace fluxora
     class AtomicFileStore final
     {
     public:
+        void writeFileAtomically(
+            const std::filesystem::path& path,
+            const std::function<void(const std::filesystem::path&)>& writeTemporaryFile,
+            const AtomicFileWriteOptions& options = {}) const;
+
         void writeTextFile(
             const std::filesystem::path& path,
             const std::string& content,

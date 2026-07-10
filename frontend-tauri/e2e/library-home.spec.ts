@@ -512,6 +512,7 @@ test.beforeEach(async ({ page }) => {
     });
 
     const buildContentChangedCallbacks = new Set<(event: any) => void>();
+    const operationProgressCallbacks = new Set<(event: any) => void>();
     (window as any).__fluxoraCalls = calls;
     (window as any).__emitFluxoraBuildContentChanged = (event: any = {}) => {
       const payload = {
@@ -730,19 +731,38 @@ test.beforeEach(async ({ page }) => {
         export: async (request: any, operation: any) => {
           calls.push({ method: 'fluxPack.export', payload: { operation, request } });
           await waitForOperationPaint();
+          const operationId = operation?.operationId ?? 'op_fluxpack_export';
+          for (const callback of operationProgressCallbacks) {
+            callback({
+              currentItem: 'mods\\Local Patch\\textures',
+              currentStep: 'Добавляем файлы в пакет',
+              operationId,
+              overallPercent: 42,
+              phase: 'packing',
+              statusMessage: 'Добавляем файлы в пакет'
+            });
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 500));
           return {
             buildName: 'Skyrim graphics overhaul',
+            compressionMode: request.compressionMode,
             customConfigCount: 1,
             customPatchCount: 0,
-            formatVersion: 1,
+            deduplicatedPayloadBytes: 524288,
+            dictionaryCount: 1,
+            formatVersion: 3,
             generatedAssetCount: 2,
             generatedAssetsIncluded: true,
             installPlanAvailable: true,
             installStepCount: 3,
+            logicalPayloadBytes: 4194304,
             manifestBytes: 2048,
-            operationId: operation?.operationId ?? 'op_fluxpack_export',
+            operationId,
             outputPath: request.outputPath,
-            sourceArchiveCount: 4
+            sourceArchiveCount: 4,
+            storedPayloadBytes: 1572864,
+            uniqueChunkCount: 12,
+            uniquePayloadBytes: 3670016
           };
         },
         inspect: async () => ({}),
@@ -1111,7 +1131,12 @@ test.beforeEach(async ({ page }) => {
       },
       operations: {
         cancel: async () => ({ accepted: false, operationId: 'op_cancel', status: 'unsupported' }),
-        onProgress: () => () => undefined
+        onProgress: (callback: (event: any) => void) => {
+          operationProgressCallbacks.add(callback);
+          return () => {
+            operationProgressCallbacks.delete(callback);
+          };
+        }
       },
       plugins: {
         createSeparator: async () => pluginRows,
@@ -1299,6 +1324,38 @@ const openSkyrimBuild = async (page: Page) => {
   await clickSkyrimBuildOpenButton(page);
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Отмена', exact: true })).toBeHidden();
+};
+
+const submitFluxPackExportDialog = async (
+  page: Page,
+  compressionMode: 'fast' | 'optimal' | 'smallest' = 'optimal',
+  includeGeneratedAssets = false
+) => {
+  const compressionLabels = {
+    fast: 'Быстро',
+    optimal: 'Оптимально',
+    smallest: 'Минимальный размер'
+  } as const;
+  const dialog = page.getByRole('dialog', { name: 'Упаковать сборку' });
+  await expect(dialog).toBeVisible();
+  const compressionSelect = dialog.getByRole('combobox', { name: 'Режим сжатия FluxPack' });
+  await compressionSelect.click();
+  const compressionMenu = page.getByRole('listbox');
+  await expect(compressionMenu).toBeVisible();
+  await expect(compressionMenu).toHaveAttribute('data-open', 'true');
+  await compressionMenu
+    .getByRole('option', { name: compressionLabels[compressionMode], exact: true })
+    .click();
+  await expect(compressionSelect).toContainText(compressionLabels[compressionMode]);
+  if (includeGeneratedAssets) {
+    const generatedAssetsCheckbox = dialog.getByRole('checkbox', {
+      name: /Добавить сгенерированные файлы/
+    });
+    await generatedAssetsCheckbox.focus();
+    await page.keyboard.press('Space');
+    await expect(generatedAssetsCheckbox).toBeChecked();
+  }
+  await dialog.getByRole('button', { name: 'Упаковать', exact: true }).click();
 };
 
 const rowContextMenuScrollbarState = async (menu: Locator) =>
@@ -1899,10 +1956,15 @@ test('runs build package, check and launch actions through the facade', async ({
   await actionsTrigger.click();
   actionsMenu = page.getByRole('menu', { name: 'Действия со сборкой' });
   await actionsMenu.getByRole('menuitem', { name: 'Упаковать' }).click();
-  await expect(page.getByRole('status', { name: 'Packaging FluxPack' })).toBeVisible();
+  await submitFluxPackExportDialog(page, 'smallest', true);
+  await expect(page.getByRole('status', { name: 'Упаковываем сборку' })).toBeVisible();
   await expect(
-    page.getByRole('progressbar', { name: 'Packaging FluxPack progress' })
+    page.getByRole('progressbar', { name: 'Упаковываем сборку: прогресс' })
   ).toBeVisible();
+  await expect(
+    page.getByRole('progressbar', { name: 'Упаковываем сборку: прогресс' })
+  ).toHaveAttribute('aria-valuenow', '42');
+  await expect(page.getByText('Добавляем файлы в пакет', { exact: true })).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -1911,6 +1973,11 @@ test('runs build package, check and launch actions through the facade', async ({
       )
     )
     .toContain('fluxPack.export');
+  const selectedExportPayload = (await latestCallPayload(page, 'fluxPack.export')) as {
+    request?: { compressionMode?: string; includeGeneratedAssets?: boolean };
+  } | null;
+  expect(selectedExportPayload?.request?.compressionMode).toBe('smallest');
+  expect(selectedExportPayload?.request?.includeGeneratedAssets).toBe(true);
 });
 
 test('packages the build from the mods search-row three-dot menu', async ({ page }) => {
@@ -1927,24 +1994,105 @@ test('packages the build from the mods search-row three-dot menu', async ({ page
   const packageItem = menu.getByRole('menuitem', { name: 'Упаковать' });
   await expect(packageItem).toBeEnabled();
   await packageItem.click();
+  await submitFluxPackExportDialog(page);
 
-  await expect(page.getByRole('status', { name: 'Packaging FluxPack' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Упаковываем сборку' })).toBeVisible();
   await expect(
-    page.getByRole('progressbar', { name: 'Packaging FluxPack progress' })
+    page.getByRole('progressbar', { name: 'Упаковываем сборку: прогресс' })
   ).toBeVisible();
   await expect.poll(() => callMethods(page)).toContain('dialogs.saveFluxPack');
   await expect.poll(() => callMethods(page)).toContain('fluxPack.export');
 
   const exportPayload = (await latestCallPayload(page, 'fluxPack.export')) as {
-    request?: { configPath?: string; outputPath?: string };
+    request?: {
+      compressionMode?: string;
+      configPath?: string;
+      includeGeneratedAssets?: boolean;
+      outputPath?: string;
+    };
   } | null;
   expect(exportPayload?.request?.outputPath).toBe('D:\\Fluxora\\Exports\\skyrim.fluxpack');
   expect(exportPayload?.request?.configPath).toBe('D:\\Fluxora\\Configs\\skyrim-main.json');
+  expect(exportPayload?.request?.compressionMode).toBe('optimal');
+  expect(exportPayload?.request?.includeGeneratedAssets).toBe(false);
 
   await menu.waitFor({ state: 'detached' });
 });
 
-test('installs a packaged FluxPack from the mods search-row three-dot menu', async ({ page }) => {
+test('keeps the FluxPack export dialog cohesive in a compact viewport', async ({ page }) => {
+  const viewport = { width: 480, height: 360 };
+  await openSkyrimBuild(page);
+
+  const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
+  await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
+  await page
+    .getByRole('menu', { name: 'Действия со сборкой' })
+    .getByRole('menuitem', { name: 'Упаковать' })
+    .click();
+
+  const dialog = page.getByRole('dialog', { name: 'Упаковать сборку' });
+  await expect(dialog).toBeVisible();
+  await page.setViewportSize(viewport);
+  await expect(dialog.locator('select')).toHaveCount(0);
+
+  const dialogBox = await dialog.boundingBox();
+  const generatedAssetsBox = await dialog
+    .locator('.fluxpack-export-dialog__generated-assets')
+    .boundingBox();
+  const footerBox = await dialog.locator('.fluxpack-export-dialog__actions').boundingBox();
+  expect(dialogBox).not.toBeNull();
+  expect(generatedAssetsBox).not.toBeNull();
+  expect(footerBox).not.toBeNull();
+  expect(dialogBox?.x ?? -1).toBeGreaterThanOrEqual(0);
+  expect(dialogBox?.y ?? -1).toBeGreaterThanOrEqual(0);
+  expect((dialogBox?.x ?? 0) + (dialogBox?.width ?? viewport.width + 1)).toBeLessThanOrEqual(
+    viewport.width + 1
+  );
+  expect((dialogBox?.y ?? 0) + (dialogBox?.height ?? viewport.height + 1)).toBeLessThanOrEqual(
+    viewport.height + 1
+  );
+  expect((generatedAssetsBox?.x ?? 0) + (generatedAssetsBox?.width ?? 0)).toBeLessThanOrEqual(
+    (dialogBox?.x ?? 0) + (dialogBox?.width ?? 0) + 1
+  );
+  expect((generatedAssetsBox?.y ?? 0) + (generatedAssetsBox?.height ?? 0)).toBeLessThanOrEqual(
+    (footerBox?.y ?? 0) + 1
+  );
+
+  const actionButtons = dialog.locator('.fluxpack-export-dialog__actions button');
+  const cancelBox = await actionButtons.nth(0).boundingBox();
+  const confirmBox = await actionButtons.nth(1).boundingBox();
+  expect(Math.abs((cancelBox?.height ?? 0) - (confirmBox?.height ?? 0))).toBeLessThanOrEqual(1);
+
+  const compressionSelect = dialog.getByRole('combobox', { name: 'Режим сжатия FluxPack' });
+  await compressionSelect.click();
+  const compressionMenu = page.getByRole('listbox');
+  await expect(compressionMenu).toBeVisible();
+  await expect(compressionMenu).toHaveAttribute('data-open', 'true');
+  await expect
+    .poll(() => compressionMenu.evaluate((element) => window.getComputedStyle(element).opacity))
+    .toBe('1');
+  await expect(compressionMenu.getByRole('option')).toHaveCount(3);
+  const menuBox = await compressionMenu.boundingBox();
+  const menuBackground = await compressionMenu.evaluate(
+    (element) => window.getComputedStyle(element).backgroundColor
+  );
+  expect(menuBox).not.toBeNull();
+  expect(menuBox?.x ?? -1).toBeGreaterThanOrEqual(0);
+  expect(menuBox?.y ?? -1).toBeGreaterThanOrEqual(0);
+  expect((menuBox?.x ?? 0) + (menuBox?.width ?? viewport.width + 1)).toBeLessThanOrEqual(
+    viewport.width + 1
+  );
+  expect((menuBox?.y ?? 0) + (menuBox?.height ?? viewport.height + 1)).toBeLessThanOrEqual(
+    viewport.height + 1
+  );
+  expect(menuBackground).not.toBe('rgb(255, 255, 255)');
+
+  await page.keyboard.press('Escape');
+  await expect(compressionMenu).toBeHidden();
+  await expect(dialog).toBeVisible();
+});
+
+test('updates the current build from FluxPack with delta reuse', async ({ page }) => {
   await openSkyrimBuild(page);
 
   await page.evaluate(() => {
@@ -1961,7 +2109,7 @@ test('installs a packaged FluxPack from the mods search-row three-dot menu', asy
     };
     facade.fluxPack.install = async (request: any, operation: any) => {
       calls.push({ method: 'fluxPack.install', payload: { operation, request } });
-      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 120)));
+      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 600)));
       return {
         appliedConfigCount: 1,
         appliedProfileOrderItemCount: 12,
@@ -1970,9 +2118,13 @@ test('installs a packaged FluxPack from the mods search-row three-dot menu', asy
         failedSourceCount: 0,
         hasWarnings: false,
         installedSourceCount: 4,
+        materializedFileCount: 2,
         operationId: operation?.operationId ?? 'op_fluxpack_install',
         pendingSourceCount: 0,
         projectDirectory: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul',
+        reusedDownloadCount: 1,
+        reusedFileCount: 18,
+        reusedSourceCount: 3,
         summary: {
           buildName: 'Skyrim graphics overhaul',
           customConfigCount: 1,
@@ -1986,7 +2138,8 @@ test('installs a packaged FluxPack from the mods search-row three-dot menu', asy
           outputPath: 'D:\\Fluxora\\Exports\\skyrim.fluxpack',
           sourceArchiveCount: 4
         },
-        totalSourceCount: 4
+        totalSourceCount: 4,
+        updatedExistingProject: true
       };
     };
   });
@@ -2000,18 +2153,31 @@ test('installs a packaged FluxPack from the mods search-row three-dot menu', asy
   await expect(installItem).toBeEnabled();
   await installItem.click();
 
-  await expect(page.getByRole('status', { name: 'Installing FluxPack' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Обновляем сборку' })).toBeVisible();
   await expect.poll(() => callMethods(page)).toContain('dialogs.pickFluxPack');
-  await expect.poll(() => callMethods(page)).toContain('dialogs.pickFolder');
   await expect.poll(() => callMethods(page)).toContain('fluxPack.install');
+  expect(await callMethods(page)).not.toContain('dialogs.pickFolder');
 
   const installPayload = (await latestCallPayload(page, 'fluxPack.install')) as {
-    request?: { fluxPackPath?: string; installRootDirectory?: string };
+    request?: {
+      existingConfigPath?: string;
+      fluxPackPath?: string;
+      installRootDirectory?: string;
+    };
   } | null;
   expect(installPayload?.request?.fluxPackPath).toBe('D:\\Fluxora\\Exports\\skyrim.fluxpack');
   expect(installPayload?.request?.installRootDirectory).toBe('D:\\Fluxora\\Builds');
+  expect(installPayload?.request?.existingConfigPath).toBe(
+    'D:\\Fluxora\\Configs\\skyrim-main.json'
+  );
 
   await expect.poll(() => callMethods(page)).toContain('projects.openConfig');
+  await expect(page.getByText('Delta-обновление завершено', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Переиспользовано: 3 мод., 1 архив., 18 файл. Заменено файлов: 2.', {
+      exact: true
+    })
+  ).toBeVisible();
   await menu.waitFor({ state: 'detached' });
 });
 
@@ -2838,8 +3004,35 @@ test('captures phase 13 visual acceptance surfaces across desktop sizes', async 
       .getByRole('menu', { name: 'Действия со сборкой' })
       .getByRole('menuitem', { name: 'Упаковать' })
       .click();
-    await expect(page.getByRole('status', { name: 'Packaging FluxPack' })).toBeVisible();
-    await expect(page.getByRole('progressbar', { name: 'Packaging FluxPack progress' })).toBeVisible();
+    const fluxPackDialog = page.getByRole('dialog', { name: 'Упаковать сборку' });
+    await expect(fluxPackDialog).toBeVisible();
+    const fluxPackDialogBox = await fluxPackDialog.boundingBox();
+    expect(fluxPackDialogBox).not.toBeNull();
+    expect((fluxPackDialogBox?.x ?? -1) + (fluxPackDialogBox?.width ?? size.width + 1)).toBeLessThanOrEqual(
+      size.width + 1
+    );
+    expect((fluxPackDialogBox?.y ?? -1) + (fluxPackDialogBox?.height ?? size.height + 1)).toBeLessThanOrEqual(
+      size.height + 1
+    );
+    await capturePhase13Screenshot(page, testInfo, 'fluxpack-export-dialog', size);
+    const fluxPackCompressionSelect = fluxPackDialog.getByRole('combobox', {
+      name: 'Режим сжатия FluxPack'
+    });
+    await fluxPackCompressionSelect.click();
+    const fluxPackCompressionMenu = page.getByRole('listbox');
+    await expect(fluxPackCompressionMenu).toBeVisible();
+    await expect(fluxPackCompressionMenu).toHaveAttribute('data-open', 'true');
+    await expect
+      .poll(() =>
+        fluxPackCompressionMenu.evaluate((element) => window.getComputedStyle(element).opacity)
+      )
+      .toBe('1');
+    await capturePhase13Screenshot(page, testInfo, 'fluxpack-export-compression-menu', size);
+    await page.keyboard.press('Escape');
+    await expect(fluxPackDialog).toBeVisible();
+    await submitFluxPackExportDialog(page, 'fast');
+    await expect(page.getByRole('status', { name: 'Упаковываем сборку' })).toBeVisible();
+    await expect(page.getByRole('progressbar', { name: 'Упаковываем сборку: прогресс' })).toBeVisible();
     await capturePhase13Screenshot(page, testInfo, 'operation-overlay', size);
 
     await page.goto(`${baseUrl}/?window=settings`);

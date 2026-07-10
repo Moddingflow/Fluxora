@@ -2,11 +2,13 @@
 
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
+#include "FluxoraCore/Services/FluxPackPackage.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Services/ProjectService.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
+#include "FluxoraCore/Support/FilesystemPath.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
 
@@ -21,12 +23,14 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -34,8 +38,10 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
-#include <bcrypt.h>
 #endif
 
 namespace fluxora
@@ -43,10 +49,10 @@ namespace fluxora
     namespace
     {
         constexpr std::wstring_view packageFormat = L"FluxPack";
-        constexpr int packageFormatVersion = 1;
+        constexpr int packageFormatVersion = fluxPackCurrentFormatVersion;
         constexpr std::wstring_view metadataExtension = L".fluxora.json";
         constexpr std::wstring_view defaultLocalGameDirectoryName = L"stock game";
-        constexpr std::uintmax_t maxEmbeddedTextBytes = 256 * 1024;
+        constexpr std::uintmax_t maxLegacyManifestBytes = 256ULL * 1024ULL * 1024ULL;
 
         struct DownloadMetadata
         {
@@ -68,22 +74,20 @@ namespace fluxora
             std::uintmax_t size{0};
         };
 
-        struct PackModReference
-        {
-            InstalledModRecord mod;
-            std::optional<DownloadSourceFile> sourceArchive;
-        };
-
         struct FileManifestEntry
         {
             std::filesystem::path path;
             std::wstring relativePath;
             std::wstring sha256;
             std::uintmax_t size{0};
-            std::wstring textContent;
-            std::wstring contentBase64;
-            bool embedsText{false};
-            bool embedsContent{false};
+            std::optional<FluxPackPayloadReference> payload;
+        };
+
+        struct PackModReference
+        {
+            InstalledModRecord mod;
+            std::optional<DownloadSourceFile> sourceArchive;
+            std::vector<FileManifestEntry> files;
         };
 
         struct FluxPackSourceReference
@@ -102,7 +106,10 @@ namespace fluxora
         struct FluxPackConfigReference
         {
             std::wstring relativePath;
+            std::wstring sha256;
+            std::uintmax_t size{0};
             std::wstring text;
+            std::optional<FluxPackPayloadReference> payload;
             bool embedsText{false};
         };
 
@@ -112,6 +119,7 @@ namespace fluxora
             std::wstring sha256;
             std::uintmax_t size{0};
             std::wstring contentBase64;
+            std::optional<FluxPackPayloadReference> payload;
             bool embedsContent{false};
         };
 
@@ -145,6 +153,7 @@ namespace fluxora
             std::vector<FluxPackEmbeddedModReference> customPatches;
             std::vector<FluxPackConfigReference> customConfigs;
             std::vector<FluxPackProfileOrderReference> profileOrder;
+            std::vector<FluxPackStoredChunk> contentChunks;
         };
 
         struct ResolvedFluxPackGameDirectory
@@ -164,6 +173,147 @@ namespace fluxora
             std::wstring currentItem;
             std::wstring statusText;
         };
+
+        struct FluxPackDeltaApplyStatistics
+        {
+            std::uintmax_t reusedFileCount{0};
+            std::uintmax_t materializedFileCount{0};
+        };
+
+        class FluxPackExportProgressReporter final
+        {
+        public:
+            explicit FluxPackExportProgressReporter(
+                std::function<void(const FluxPackExportProgress&)> callback)
+                : callback_(std::move(callback))
+            {
+            }
+
+            void publish(
+                std::wstring phase,
+                std::wstring currentStep,
+                std::wstring currentItem,
+                std::wstring statusMessage,
+                int overallPercent,
+                std::uintmax_t processedFileCount = 0,
+                std::uintmax_t totalFileCount = 0,
+                std::uintmax_t processedBytes = 0,
+                std::uintmax_t totalBytes = 0,
+                bool force = false)
+            {
+                if (!callback_)
+                {
+                    return;
+                }
+
+                overallPercent = std::clamp(overallPercent, 0, 100);
+                if (!force && phase == lastPhase_ && overallPercent == lastPercent_)
+                {
+                    return;
+                }
+
+                lastPhase_ = phase;
+                lastPercent_ = overallPercent;
+                callback_(FluxPackExportProgress{
+                    std::move(phase),
+                    std::move(currentStep),
+                    std::move(currentItem),
+                    std::move(statusMessage),
+                    overallPercent,
+                    processedFileCount,
+                    totalFileCount,
+                    processedBytes,
+                    totalBytes
+                });
+            }
+
+        private:
+            std::function<void(const FluxPackExportProgress&)> callback_;
+            std::wstring lastPhase_;
+            int lastPercent_{-1};
+        };
+
+        class FluxPackInstallCleanup final
+        {
+        public:
+            FluxPackInstallCleanup(
+                ProjectService& projects,
+                Logger& logger,
+                std::filesystem::path configPath)
+                : projects_(projects),
+                  logger_(logger),
+                  configPath_(std::move(configPath))
+            {
+            }
+
+            ~FluxPackInstallCleanup() noexcept
+            {
+                if (!active_)
+                {
+                    return;
+                }
+
+                try
+                {
+                    projects_.deleteProject(configPath_);
+                    logger_.writeOperation(
+                        LogLevel::Warning,
+                        "FluxPack",
+                        "Removed a partially installed FluxPack project after an error.");
+                }
+                catch (const std::exception& exception)
+                {
+                    try
+                    {
+                        logger_.writeOperation(
+                            LogLevel::Error,
+                            "FluxPack",
+                            std::string("Failed to remove a partially installed FluxPack project: ") +
+                                exception.what());
+                    }
+                    catch (...)
+                    {
+                    }
+                }
+            }
+
+            void dismiss() noexcept
+            {
+                active_ = false;
+            }
+
+        private:
+            ProjectService& projects_;
+            Logger& logger_;
+            std::filesystem::path configPath_;
+            bool active_{true};
+        };
+
+        int progressPercent(
+            int start,
+            int end,
+            std::uintmax_t current,
+            std::uintmax_t total)
+        {
+            if (total == 0)
+            {
+                return end;
+            }
+
+            const long double ratio = std::min<long double>(
+                1.0L,
+                static_cast<long double>(current) / static_cast<long double>(total));
+            return start + static_cast<int>(ratio * static_cast<long double>(end - start));
+        }
+
+        void addChecked(std::uintmax_t& total, std::uintmax_t value, std::string_view context)
+        {
+            if (value > std::numeric_limits<std::uintmax_t>::max() - total)
+            {
+                throw std::overflow_error("FluxPack size overflow while counting " + std::string(context) + ".");
+            }
+            total += value;
+        }
 
         std::string toUtf8(const std::wstring& value)
         {
@@ -266,32 +416,6 @@ namespace fluxora
             return std::string(
                 std::istreambuf_iterator<char>(file),
                 std::istreambuf_iterator<char>());
-        }
-
-        std::wstring base64Encode(std::string_view bytes)
-        {
-            static constexpr wchar_t table[] =
-                L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-            std::wstring output;
-            output.reserve(((bytes.size() + 2) / 3) * 4);
-
-            for (std::size_t index = 0; index < bytes.size(); index += 3)
-            {
-                const std::uint32_t first = static_cast<unsigned char>(bytes[index]);
-                const std::uint32_t second =
-                    index + 1 < bytes.size() ? static_cast<unsigned char>(bytes[index + 1]) : 0;
-                const std::uint32_t third =
-                    index + 2 < bytes.size() ? static_cast<unsigned char>(bytes[index + 2]) : 0;
-                const std::uint32_t packed = (first << 16) | (second << 8) | third;
-
-                output.push_back(table[(packed >> 18) & 0x3f]);
-                output.push_back(table[(packed >> 12) & 0x3f]);
-                output.push_back(index + 1 < bytes.size() ? table[(packed >> 6) & 0x3f] : L'=');
-                output.push_back(index + 2 < bytes.size() ? table[packed & 0x3f] : L'=');
-            }
-
-            return output;
         }
 
         int base64Value(wchar_t ch)
@@ -663,118 +787,79 @@ namespace fluxora
             }
         }
 
-        std::wstring bytesToHex(const unsigned char* bytes, std::size_t size)
-        {
-            std::wostringstream stream;
-            stream << std::hex << std::setfill(L'0');
-            for (std::size_t index = 0; index < size; ++index)
-            {
-                stream << std::setw(2) << static_cast<int>(bytes[index]);
-            }
-
-            return stream.str();
-        }
-
         std::wstring sha256File(const std::filesystem::path& path)
         {
-#ifdef _WIN32
-            BCRYPT_ALG_HANDLE algorithm = nullptr;
-            BCRYPT_HASH_HANDLE hash = nullptr;
-            std::vector<unsigned char> object;
-            std::vector<unsigned char> digest;
+            return computeFluxPackFileSha256(path);
+        }
+
+        void materializeFluxPackFileAtomically(
+            const std::filesystem::path& target,
+            std::uintmax_t expectedSize,
+            const std::wstring& expectedSha256,
+            std::wstring stateName,
+            const std::function<void(const std::filesystem::path&)>& writer)
+        {
+            AtomicFileWriteOptions options;
+            options.stateName = std::move(stateName);
+            options.validation = ProjectStateValidation::None;
+            options.keepBackup = false;
+            options.validator = [expectedSize, expectedSha256](const std::filesystem::path& temporaryPath)
+            {
+                std::error_code sizeError;
+                const std::uintmax_t actualSize =
+                    std::filesystem::file_size(pathForFilesystemIo(temporaryPath), sizeError);
+                if (sizeError || actualSize != expectedSize)
+                {
+                    throw std::runtime_error("FluxPack materialized file size does not match the manifest.");
+                }
+                if (!expectedSha256.empty() &&
+                    !equalsIgnoreCase(sha256File(temporaryPath), expectedSha256))
+                {
+                    throw std::runtime_error("FluxPack materialized file hash does not match the manifest.");
+                }
+            };
+
+            AtomicFileStore().writeFileAtomically(pathForFilesystemIo(target), writer, options);
+        }
+
+        bool canReuseMaterializedFile(
+            const std::filesystem::path& path,
+            std::uintmax_t expectedSize,
+            std::wstring_view expectedSha256,
+            Logger& logger)
+        {
+            if (expectedSha256.empty())
+            {
+                return false;
+            }
+
+            std::error_code statusError;
+            const std::filesystem::path ioPath = pathForFilesystemIo(path);
+            if (!std::filesystem::is_regular_file(ioPath, statusError) ||
+                std::filesystem::is_symlink(ioPath, statusError))
+            {
+                return false;
+            }
+
+            const std::uintmax_t actualSize = std::filesystem::file_size(ioPath, statusError);
+            if (statusError || actualSize != expectedSize)
+            {
+                return false;
+            }
+
             try
             {
-                if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
-                {
-                    throw std::runtime_error("Failed to open SHA-256 provider.");
-                }
-
-                DWORD objectLength = 0;
-                DWORD returned = 0;
-                if (BCryptGetProperty(
-                        algorithm,
-                        BCRYPT_OBJECT_LENGTH,
-                        reinterpret_cast<PUCHAR>(&objectLength),
-                        sizeof(objectLength),
-                        &returned,
-                        0) < 0)
-                {
-                    throw std::runtime_error("Failed to query SHA-256 object size.");
-                }
-
-                DWORD hashLength = 0;
-                if (BCryptGetProperty(
-                        algorithm,
-                        BCRYPT_HASH_LENGTH,
-                        reinterpret_cast<PUCHAR>(&hashLength),
-                        sizeof(hashLength),
-                        &returned,
-                        0) < 0)
-                {
-                    throw std::runtime_error("Failed to query SHA-256 hash size.");
-                }
-
-                object.resize(objectLength);
-                digest.resize(hashLength);
-                if (BCryptCreateHash(
-                        algorithm,
-                        &hash,
-                        object.data(),
-                        static_cast<ULONG>(object.size()),
-                        nullptr,
-                        0,
-                        0) < 0)
-                {
-                    throw std::runtime_error("Failed to create SHA-256 hash.");
-                }
-
-                std::ifstream file(path, std::ios::in | std::ios::binary);
-                if (!file)
-                {
-                    throw std::runtime_error("File could not be opened for hashing.");
-                }
-
-                std::vector<char> buffer(64 * 1024);
-                while (file)
-                {
-                    file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-                    const std::streamsize read = file.gcount();
-                    if (read > 0 &&
-                        BCryptHashData(
-                            hash,
-                            reinterpret_cast<PUCHAR>(buffer.data()),
-                            static_cast<ULONG>(read),
-                            0) < 0)
-                    {
-                        throw std::runtime_error("Failed to update SHA-256 hash.");
-                    }
-                }
-
-                if (BCryptFinishHash(hash, digest.data(), static_cast<ULONG>(digest.size()), 0) < 0)
-                {
-                    throw std::runtime_error("Failed to finalize SHA-256 hash.");
-                }
-
-                BCryptDestroyHash(hash);
-                BCryptCloseAlgorithmProvider(algorithm, 0);
-                return bytesToHex(digest.data(), digest.size());
+                return equalsIgnoreCase(sha256File(path), expectedSha256);
             }
-            catch (const std::exception&)
+            catch (const std::exception& exception)
             {
-                if (hash != nullptr)
-                {
-                    BCryptDestroyHash(hash);
-                }
-                if (algorithm != nullptr)
-                {
-                    BCryptCloseAlgorithmProvider(algorithm, 0);
-                }
-                throw;
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "FluxPack",
+                    "FluxPack delta could not hash an existing file; it will be materialized again. path=\"" +
+                        pathForLog(path) + "\", reason=\"" + exception.what() + "\"");
+                return false;
             }
-#else
-            static_cast<void>(path);
-            return {};
-#endif
         }
 
         bool sourceHasRemoteIdentity(const ModSourceRecord& source)
@@ -917,11 +1002,6 @@ namespace fluxora
                 return std::nullopt;
             }
 
-            if (match->sha256.empty())
-            {
-                match->sha256 = sha256File(match->path);
-            }
-
             return *match;
         }
 
@@ -997,90 +1077,131 @@ namespace fluxora
             return std::filesystem::absolute(resolved).lexically_normal();
         }
 
-        FileManifestEntry buildFileManifestEntry(
+        bool isExcludedPayloadPath(
             const std::filesystem::path& path,
-            const std::filesystem::path& projectDirectory,
-            bool embedText,
-            bool embedContent)
+            const std::vector<std::filesystem::path>& exclusions)
+        {
+            const std::wstring candidate = normalizePathForComparison(path);
+            return std::any_of(exclusions.begin(), exclusions.end(), [&candidate](const std::filesystem::path& excluded)
+            {
+                return candidate == normalizePathForComparison(excluded);
+            });
+        }
+
+        FileManifestEntry describePayloadFile(
+            const std::filesystem::path& path,
+            std::wstring relativePath)
         {
             std::error_code sizeError;
-            const std::uintmax_t size = std::filesystem::file_size(path, sizeError);
-            FileManifestEntry entry{
-                path,
-                relativeToProject(path, projectDirectory),
-                sha256File(path),
-                sizeError ? 0 : size,
-                {},
-                {},
-                false,
-                false
-            };
-
-            if (embedText && entry.size <= maxEmbeddedTextBytes)
+            const std::uintmax_t size = std::filesystem::file_size(pathForFilesystemIo(path), sizeError);
+            if (sizeError)
             {
-                try
-                {
-                    entry.textContent = fromUtf8(tryReadTextFile(path));
-                    entry.embedsText = true;
-                }
-                catch (const std::exception&)
-                {
-                    entry.textContent.clear();
-                    entry.embedsText = false;
-                }
+                throw std::filesystem::filesystem_error(
+                    "FluxPack payload file size could not be read.",
+                    path,
+                    sizeError);
             }
 
-            if (embedContent)
-            {
-                entry.contentBase64 = base64Encode(readTextFile(path));
-                entry.embedsContent = true;
-            }
-
+            FileManifestEntry entry;
+            entry.path = path;
+            entry.relativePath = std::move(relativePath);
+            entry.size = size;
             return entry;
         }
 
-        std::vector<FileManifestEntry> scanFiles(
+        std::vector<FileManifestEntry> scanPayloadFiles(
             const std::filesystem::path& root,
+            const std::filesystem::path& logicalRoot,
             const std::filesystem::path& projectDirectory,
-            bool configOnly,
-            bool embedText,
-            bool embedContent)
+            bool configOnly)
         {
             std::vector<FileManifestEntry> files;
+            if (root.empty())
+            {
+                return files;
+            }
+            const std::filesystem::path absoluteRoot =
+                std::filesystem::absolute(root).lexically_normal();
+            const std::filesystem::path absoluteProjectDirectory =
+                std::filesystem::absolute(projectDirectory).lexically_normal();
+            const std::filesystem::path absoluteLogicalRoot =
+                std::filesystem::absolute(logicalRoot).lexically_normal();
+            const std::filesystem::path logicalRelativeRoot =
+                absoluteLogicalRoot.lexically_relative(absoluteProjectDirectory);
+            if (logicalRelativeRoot.empty() || logicalRelativeRoot.is_absolute())
+            {
+                throw std::invalid_argument("FluxPack logical payload root is outside the project layout.");
+            }
+            PathSafetyService().validateRelativePath(logicalRelativeRoot)
+                .throwIfUnsafe("FluxPack logical payload root is unsafe");
+
+            const std::filesystem::path filesystemRoot = pathForFilesystemIo(absoluteRoot);
             std::error_code error;
-            if (root.empty() ||
-                !std::filesystem::exists(root, error) ||
-                !std::filesystem::is_directory(root, error))
+            if (!std::filesystem::exists(filesystemRoot, error) ||
+                !std::filesystem::is_directory(filesystemRoot, error))
             {
                 return files;
             }
 
             for (const auto& entry : std::filesystem::recursive_directory_iterator(
-                     root,
+                     filesystemRoot,
                      std::filesystem::directory_options::skip_permission_denied,
                      error))
             {
                 if (error)
                 {
-                    break;
+                    throw std::filesystem::filesystem_error(
+                        "FluxPack payload directory could not be scanned.",
+                        absoluteRoot,
+                        error);
                 }
+
+                const std::filesystem::path relative =
+                    entry.path().lexically_relative(filesystemRoot);
+                if (relative.empty() || relative.is_absolute())
+                {
+                    throw std::invalid_argument(
+                        "FluxPack payload path could not be made relative to its source root.");
+                }
+                const std::filesystem::path sourcePath =
+                    (absoluteRoot / relative).lexically_normal();
 
                 std::error_code statusError;
-                if (!entry.is_regular_file(statusError))
+                if (entry.is_symlink(statusError))
+                {
+                    continue;
+                }
+                if (statusError)
+                {
+                    throw std::filesystem::filesystem_error(
+                        "FluxPack payload file type could not be inspected.",
+                        sourcePath,
+                        statusError);
+                }
+                const bool isRegularFile = entry.is_regular_file(statusError);
+                if (statusError)
+                {
+                    throw std::filesystem::filesystem_error(
+                        "FluxPack payload file type could not be inspected.",
+                        sourcePath,
+                        statusError);
+                }
+                if (!isRegularFile)
+                {
+                    continue;
+                }
+                if (configOnly && !isConfigFile(sourcePath))
                 {
                     continue;
                 }
 
-                if (configOnly && !isConfigFile(entry.path()))
-                {
-                    continue;
-                }
-
-                files.push_back(buildFileManifestEntry(
-                    entry.path(),
-                    projectDirectory,
-                    embedText,
-                    embedContent));
+                const std::filesystem::path logicalRelativePath =
+                    (logicalRelativeRoot / relative).lexically_normal();
+                PathSafetyService().validateRelativePath(logicalRelativePath)
+                    .throwIfUnsafe("FluxPack logical payload path is unsafe");
+                files.push_back(describePayloadFile(
+                    sourcePath,
+                    logicalRelativePath.generic_wstring()));
             }
 
             std::sort(files.begin(), files.end(), [](const FileManifestEntry& left, const FileManifestEntry& right)
@@ -1122,15 +1243,23 @@ namespace fluxora
             writer.field(L"size", file.size);
             writer.key(L"hash");
             writeHash(writer, file.sha256, file.sha256.empty() ? L"unavailable" : L"matched");
-            writer.field(L"embedsText", file.embedsText);
-            if (file.embedsText)
+            writer.field(L"embedsText", false);
+            writer.field(L"embedsContent", file.payload.has_value());
+            if (file.payload.has_value())
             {
-                writer.field(L"text", file.textContent);
-            }
-            writer.field(L"embedsContent", file.embedsContent);
-            if (file.embedsContent)
-            {
-                writer.field(L"contentBase64", file.contentBase64);
+                writer.key(L"payload").beginObject();
+                writer.field(L"size", file.payload->size);
+                writer.key(L"chunks").beginArray();
+                for (const FluxPackPayloadChunkReference& chunk : file.payload->chunks)
+                {
+                    writer.beginObject();
+                    writer.field(L"hash", chunk.sha256);
+                    writer.field(L"offset", chunk.offset);
+                    writer.field(L"size", chunk.size);
+                    writer.endObject();
+                }
+                writer.endArray();
+                writer.endObject();
             }
             writer.endObject();
         }
@@ -1149,9 +1278,7 @@ namespace fluxora
             JsonWriter& writer,
             const PackModReference& reference,
             bool includeFileManifest,
-            bool embedFileContent,
-            bool requiresDownload,
-            const std::filesystem::path& projectDirectory)
+            bool requiresDownload)
         {
             const InstalledModRecord& mod = reference.mod;
             writer.beginObject();
@@ -1189,12 +1316,7 @@ namespace fluxora
             if (includeFileManifest)
             {
                 writer.key(L"files");
-                writeFileEntries(writer, scanFiles(
-                    mod.path,
-                    projectDirectory,
-                    false,
-                    false,
-                    embedFileContent));
+                writeFileEntries(writer, reference.files);
             }
             writer.endObject();
         }
@@ -1203,9 +1325,7 @@ namespace fluxora
             JsonWriter& writer,
             const std::vector<PackModReference>& references,
             bool includeFileManifest,
-            bool embedFileContent,
-            bool requiresDownload,
-            const std::filesystem::path& projectDirectory)
+            bool requiresDownload)
         {
             writer.beginArray();
             for (const PackModReference& reference : references)
@@ -1214,9 +1334,7 @@ namespace fluxora
                     writer,
                     reference,
                     includeFileManifest,
-                    embedFileContent,
-                    requiresDownload,
-                    projectDirectory);
+                    requiresDownload);
             }
             writer.endArray();
         }
@@ -1248,7 +1366,6 @@ namespace fluxora
         void writeInstallPlan(
             JsonWriter& writer,
             const ProjectOpenResult& project,
-            const BuildPathSettings& paths,
             const std::vector<ProfileOrderItemRecord>& profileOrder,
             bool includeGeneratedAssets)
         {
@@ -1285,7 +1402,7 @@ namespace fluxora
             writer.beginObject();
             writer.field(L"id", L"custom-configs");
             writer.field(L"title", L"Apply profiles and configuration presets");
-            writer.field(L"policy", L"text-config-embedded-when-small");
+            writer.field(L"policy", L"package-payload");
             writer.stringArray(L"requires", {L"generated-assets", L"custom-patches"});
             writer.endObject();
 
@@ -1293,11 +1410,52 @@ namespace fluxora
             writer.key(L"profileOrder");
             writeProfileOrder(writer, profileOrder);
             writer.key(L"targetPaths").beginObject();
-            writer.field(L"modsDirectory", relativeToProject(paths.modsDirectory, project.project.projectDirectory));
-            writer.field(L"profilesDirectory", relativeToProject(paths.profilesDirectory, project.project.projectDirectory));
-            writer.field(L"downloadsDirectory", relativeToProject(paths.downloadsDirectory, project.project.projectDirectory));
-            writer.field(L"overwriteDirectory", relativeToProject(paths.overwriteDirectory, project.project.projectDirectory));
+            writer.field(L"modsDirectory", L"mods");
+            writer.field(L"profilesDirectory", L"profiles");
+            writer.field(L"downloadsDirectory", L"downloads");
+            writer.field(L"overwriteDirectory", L"overwrite");
             writer.endObject();
+            writer.endObject();
+        }
+
+        void writeContentStore(
+            JsonWriter& writer,
+            const std::vector<FluxPackStoredChunk>& chunks,
+            const FluxPackContentStoreStatistics& statistics)
+        {
+            writer.beginObject();
+            writer.field(L"version", 1);
+            writer.field(L"hashAlgorithm", L"sha256");
+            writer.field(L"compressionMode", fluxPackCompressionModeId(statistics.compressionMode));
+            writer.field(L"logicalBytes", statistics.logicalBytes);
+            writer.field(L"uniqueBytes", statistics.uniqueBytes);
+            writer.field(L"storedBytes", statistics.storedBytes);
+            writer.field(L"deduplicatedBytes", statistics.deduplicatedBytes);
+            writer.field(L"uniqueChunkCount", statistics.uniqueChunkCount);
+            writer.field(L"dictionaryCount", statistics.dictionaryCount);
+            writer.key(L"chunking").beginObject();
+            writer.field(L"algorithm", L"fastcdc");
+            writer.field(L"minimumBytes", static_cast<std::uintmax_t>(64 * 1024));
+            writer.field(L"averageBytes", static_cast<std::uintmax_t>(256 * 1024));
+            writer.field(L"maximumBytes", static_cast<std::uintmax_t>(1024 * 1024));
+            writer.endObject();
+            writer.key(L"chunks").beginArray();
+            for (const FluxPackStoredChunk& chunk : chunks)
+            {
+                writer.beginObject();
+                writer.field(L"hash", chunk.sha256);
+                writer.field(L"offset", chunk.offset);
+                writer.field(L"storedSize", chunk.storedSize);
+                writer.field(L"originalSize", chunk.originalSize);
+                writer.field(
+                    L"compression",
+                    chunk.compression == FluxPackChunkCompression::Zstandard ? L"zstd" : L"none");
+                writer.field(L"compressionLevel", chunk.compressionLevel);
+                writer.field(L"dictionaryHash", chunk.dictionarySha256);
+                writer.field(L"kind", chunk.isDictionary ? L"dictionary" : L"content");
+                writer.endObject();
+            }
+            writer.endArray();
             writer.endObject();
         }
 
@@ -1309,6 +1467,8 @@ namespace fluxora
             const std::vector<PackModReference>& customPatches,
             const std::vector<FileManifestEntry>& customConfigs,
             const std::vector<ProfileOrderItemRecord>& profileOrder,
+            const std::vector<FluxPackStoredChunk>& contentChunks,
+            const FluxPackContentStoreStatistics& contentStoreStatistics,
             bool includeGeneratedAssets)
         {
             JsonWriter writer;
@@ -1331,25 +1491,26 @@ namespace fluxora
             writer.field(L"sourceArchives", L"reference-only");
             writer.field(L"generatedAssets", includeGeneratedAssets ? L"approved-manifest" : L"confirm-before-including");
             writer.field(L"customPatches", L"project-local-manifest");
-            writer.field(L"customConfigs", L"small-text-embedded");
+            writer.field(L"customConfigs", L"package-payload");
             writer.endObject();
 
+            writer.key(L"contentStore");
+            writeContentStore(writer, contentChunks, contentStoreStatistics);
+
             writer.key(L"sourceArchives");
-            writeModReferences(writer, sourceArchives, false, false, true, project.project.projectDirectory);
+            writeModReferences(writer, sourceArchives, false, true);
             writer.key(L"generatedAssets");
             writeModReferences(
                 writer,
                 generatedAssets,
                 includeGeneratedAssets,
-                includeGeneratedAssets,
-                false,
-                project.project.projectDirectory);
+                false);
             writer.key(L"customPatches");
-            writeModReferences(writer, customPatches, true, true, false, project.project.projectDirectory);
+            writeModReferences(writer, customPatches, true, false);
             writer.key(L"customConfigs");
             writeFileEntries(writer, customConfigs);
             writer.key(L"installPlan");
-            writeInstallPlan(writer, project, paths, profileOrder, includeGeneratedAssets);
+            writeInstallPlan(writer, project, profileOrder, includeGeneratedAssets);
             writer.endObject();
             return writer.str();
         }
@@ -1369,9 +1530,15 @@ namespace fluxora
                 throw std::invalid_argument("Selected file is not a FluxPack manifest.");
             }
 
+            const std::uintmax_t formatVersion = readUnsignedOrDefault(root, L"formatVersion", 1);
+            if (formatVersion == 0 || formatVersion > static_cast<std::uintmax_t>(packageFormatVersion))
+            {
+                throw std::invalid_argument("FluxPack format version is not supported by this Fluxora build.");
+            }
+
             FluxPackSummary summary;
             summary.outputPath = path;
-            summary.formatVersion = packageFormatVersion;
+            summary.formatVersion = static_cast<int>(formatVersion);
             summary.manifestBytes = manifestBytes;
             summary.sourceArchiveCount = arraySize(root, L"sourceArchives");
             summary.generatedAssetCount = arraySize(root, L"generatedAssets");
@@ -1396,6 +1563,24 @@ namespace fluxora
             {
                 summary.generatedAssetsIncluded =
                     readStringOrDefault(*policies, L"generatedAssets") == L"approved-manifest";
+            }
+
+            if (const JsonValue* contentStore = root.find(L"contentStore");
+                contentStore != nullptr && contentStore->isObject())
+            {
+                summary.compressionMode = readStringOrDefault(
+                    *contentStore,
+                    L"compressionMode",
+                    L"optimal");
+                summary.logicalPayloadBytes = readUnsignedOrDefault(*contentStore, L"logicalBytes");
+                summary.uniquePayloadBytes = readUnsignedOrDefault(*contentStore, L"uniqueBytes");
+                summary.storedPayloadBytes = readUnsignedOrDefault(*contentStore, L"storedBytes");
+                summary.deduplicatedPayloadBytes =
+                    readUnsignedOrDefault(*contentStore, L"deduplicatedBytes");
+                summary.uniqueChunkCount =
+                    readUnsignedOrDefault(*contentStore, L"uniqueChunkCount");
+                summary.dictionaryCount =
+                    readUnsignedOrDefault(*contentStore, L"dictionaryCount");
             }
 
             return summary;
@@ -1511,6 +1696,62 @@ namespace fluxora
             return L"Мод";
         }
 
+        bool installedSourceMatches(
+            const InstalledModRecord& installed,
+            const FluxPackSourceReference& requested)
+        {
+            std::error_code directoryError;
+            if (installed.path.empty() ||
+                !std::filesystem::is_directory(pathForFilesystemIo(installed.path), directoryError))
+            {
+                return false;
+            }
+
+            if (!requested.folderName.empty() &&
+                !equalsIgnoreCase(installed.folderName, requested.folderName))
+            {
+                return false;
+            }
+
+            const ModSourceRecord& current = installed.source;
+            const ModSourceRecord& target = requested.source;
+            if (!target.remoteFileId.empty())
+            {
+                if (!equalsIgnoreCase(current.remoteFileId, target.remoteFileId) ||
+                    (!target.remoteModId.empty() &&
+                     !equalsIgnoreCase(current.remoteModId, target.remoteModId)) ||
+                    (!target.gameDomain.empty() &&
+                     !equalsIgnoreCase(current.gameDomain, target.gameDomain)))
+                {
+                    return false;
+                }
+
+                return true;
+            }
+
+            if (target.url.empty() || !equalsIgnoreCase(current.url, target.url))
+            {
+                return false;
+            }
+
+            return requested.version.empty() ||
+                (!installed.version.empty() && equalsIgnoreCase(installed.version, requested.version));
+        }
+
+        const InstalledModRecord* findReusableInstalledSource(
+            const std::vector<InstalledModRecord>& installedMods,
+            const FluxPackSourceReference& requested)
+        {
+            const auto match = std::find_if(
+                installedMods.begin(),
+                installedMods.end(),
+                [&requested](const InstalledModRecord& installed)
+                {
+                    return installedSourceMatches(installed, requested);
+                });
+            return match == installedMods.end() ? nullptr : &*match;
+        }
+
         std::wstring nxmLinkForSource(const FluxPackSourceReference& reference)
         {
             if (startsWithIgnoreCase(reference.source.url, L"nxm://"))
@@ -1566,6 +1807,95 @@ namespace fluxora
             return references;
         }
 
+        std::optional<FluxPackPayloadReference> readPayloadReference(
+            const JsonValue& item,
+            std::wstring_view fileSha256,
+            std::uintmax_t fileSize)
+        {
+            const JsonValue* payload = item.find(L"payload");
+            if (payload == nullptr || !payload->isObject())
+            {
+                return std::nullopt;
+            }
+
+            FluxPackPayloadReference reference;
+            reference.offset = readUnsignedOrDefault(*payload, L"offset");
+            reference.size = readUnsignedOrDefault(*payload, L"size", fileSize);
+            reference.sha256 = std::wstring(fileSha256);
+            if (const JsonValue* chunks = payload->find(L"chunks");
+                chunks != nullptr && chunks->isArray())
+            {
+                for (const JsonValue& value : chunks->asArray())
+                {
+                    if (!value.isObject())
+                    {
+                        throw std::invalid_argument("FluxPack payload chunk reference must be an object.");
+                    }
+                    reference.chunks.push_back(FluxPackPayloadChunkReference{
+                        readStringOrDefault(value, L"hash"),
+                        readUnsignedOrDefault(value, L"offset"),
+                        readUnsignedOrDefault(value, L"size")});
+                }
+            }
+            return reference;
+        }
+
+        std::vector<FluxPackStoredChunk> readContentStore(const JsonValue& root)
+        {
+            const JsonValue* contentStore = root.find(L"contentStore");
+            if (contentStore == nullptr)
+            {
+                return {};
+            }
+            if (!contentStore->isObject() ||
+                readUnsignedOrDefault(*contentStore, L"version") != 1 ||
+                !equalsIgnoreCase(readStringOrDefault(*contentStore, L"hashAlgorithm"), L"sha256"))
+            {
+                throw std::invalid_argument("FluxPack content store metadata is not supported.");
+            }
+
+            const JsonValue* chunks = contentStore->find(L"chunks");
+            if (chunks == nullptr || !chunks->isArray())
+            {
+                throw std::invalid_argument("FluxPack content store chunk catalog is missing.");
+            }
+
+            std::vector<FluxPackStoredChunk> result;
+            result.reserve(chunks->asArray().size());
+            for (const JsonValue& value : chunks->asArray())
+            {
+                if (!value.isObject())
+                {
+                    throw std::invalid_argument("FluxPack content store chunk must be an object.");
+                }
+                const std::wstring compressionId = readStringOrDefault(value, L"compression", L"none");
+                FluxPackChunkCompression compression = FluxPackChunkCompression::None;
+                if (equalsIgnoreCase(compressionId, L"zstd"))
+                {
+                    compression = FluxPackChunkCompression::Zstandard;
+                }
+                else if (!equalsIgnoreCase(compressionId, L"none"))
+                {
+                    throw std::invalid_argument("FluxPack content chunk compression is not supported.");
+                }
+                const std::uintmax_t level = readUnsignedOrDefault(value, L"compressionLevel");
+                if (level > static_cast<std::uintmax_t>(std::numeric_limits<int>::max()))
+                {
+                    throw std::invalid_argument("FluxPack content chunk compression level is invalid.");
+                }
+                result.push_back(FluxPackStoredChunk{
+                    readStringOrDefault(value, L"hash"),
+                    readUnsignedOrDefault(value, L"offset"),
+                    readUnsignedOrDefault(value, L"storedSize"),
+                    readUnsignedOrDefault(value, L"originalSize"),
+                    compression,
+                    static_cast<int>(level),
+                    readStringOrDefault(value, L"dictionaryHash"),
+                    equalsIgnoreCase(readStringOrDefault(value, L"kind"), L"dictionary")});
+            }
+            return result;
+        }
+
         std::vector<FluxPackEmbeddedFileReference> readEmbeddedFileReferences(const JsonValue& value)
         {
             if (!value.isArray())
@@ -1581,13 +1911,14 @@ namespace fluxora
                     continue;
                 }
 
-                files.push_back(FluxPackEmbeddedFileReference{
-                    readStringOrDefault(item, L"relativePath"),
-                    readHashValueOrDefault(item, L"hash"),
-                    readUnsignedOrDefault(item, L"size"),
-                    readStringOrDefault(item, L"contentBase64"),
-                    readBoolOrDefault(item, L"embedsContent", false)
-                });
+                FluxPackEmbeddedFileReference file;
+                file.relativePath = readStringOrDefault(item, L"relativePath");
+                file.sha256 = readHashValueOrDefault(item, L"hash");
+                file.size = readUnsignedOrDefault(item, L"size");
+                file.contentBase64 = readStringOrDefault(item, L"contentBase64");
+                file.embedsContent = readBoolOrDefault(item, L"embedsContent", false);
+                file.payload = readPayloadReference(item, file.sha256, file.size);
+                files.push_back(std::move(file));
             }
 
             return files;
@@ -1647,11 +1978,14 @@ namespace fluxora
                     continue;
                 }
 
-                references.push_back(FluxPackConfigReference{
-                    readStringOrDefault(item, L"relativePath"),
-                    readStringOrDefault(item, L"text"),
-                    readBoolOrDefault(item, L"embedsText", false)
-                });
+                FluxPackConfigReference reference;
+                reference.relativePath = readStringOrDefault(item, L"relativePath");
+                reference.sha256 = readHashValueOrDefault(item, L"hash");
+                reference.size = readUnsignedOrDefault(item, L"size");
+                reference.text = readStringOrDefault(item, L"text");
+                reference.embedsText = readBoolOrDefault(item, L"embedsText", false);
+                reference.payload = readPayloadReference(item, reference.sha256, reference.size);
+                references.push_back(std::move(reference));
             }
 
             return references;
@@ -1730,6 +2064,7 @@ namespace fluxora
             manifest.customPatches = readEmbeddedModReferences(root, L"customPatches");
             manifest.customConfigs = readCustomConfigReferences(root);
             manifest.profileOrder = readProfileOrderReferences(root);
+            manifest.contentChunks = readContentStore(root);
             return manifest;
         }
 
@@ -2122,6 +2457,36 @@ namespace fluxora
             return true;
         }
 
+        std::optional<std::filesystem::path> currentDownloadArchivePath(
+            const std::filesystem::path& downloadsDirectory,
+            const FluxPackSourceReference& source,
+            Logger& logger)
+        {
+            const std::optional<std::filesystem::path> archiveFileName =
+                safeArchiveFileName(source.archiveFileName);
+            if (!archiveFileName.has_value() ||
+                downloadsDirectory.empty() ||
+                source.archiveSha256.empty())
+            {
+                return std::nullopt;
+            }
+
+            const std::filesystem::path root =
+                std::filesystem::absolute(downloadsDirectory).lexically_normal();
+            const std::filesystem::path candidate =
+                std::filesystem::absolute(root / archiveFileName.value()).lexically_normal();
+            std::error_code statusError;
+            if (!isSameOrInsidePath(candidate, root) ||
+                !std::filesystem::is_regular_file(pathForFilesystemIo(candidate), statusError))
+            {
+                return std::nullopt;
+            }
+
+            return sourceArchiveMatchesManifest(candidate, source, logger)
+                ? std::optional<std::filesystem::path>(candidate)
+                : std::nullopt;
+        }
+
         std::optional<std::filesystem::path> localSourceArchivePath(
             const FluxPackManifest& manifest,
             const FluxPackSourceReference& source,
@@ -2222,13 +2587,15 @@ namespace fluxora
         std::uintmax_t applyEmbeddedConfigs(
             const std::filesystem::path& projectDirectory,
             const std::vector<FluxPackConfigReference>& configs,
-            Logger& logger)
+            const FluxPackPackageReader* packageReader,
+            Logger& logger,
+            FluxPackDeltaApplyStatistics& deltaStatistics)
         {
             std::uintmax_t applied = 0;
             const PathSafetyService safety;
             for (const FluxPackConfigReference& config : configs)
             {
-                if (!config.embedsText)
+                if (!config.embedsText && !config.payload.has_value())
                 {
                     continue;
                 }
@@ -2246,14 +2613,45 @@ namespace fluxora
                 const std::filesystem::path target = projectDirectory / relative.value();
                 safety.validateWritePath(projectDirectory, target)
                     .throwIfUnsafe("Embedded FluxPack config path is unsafe");
-                std::filesystem::create_directories(target.parent_path());
-                AtomicFileStore().writeTextFile(
-                    target,
-                    toUtf8(config.text),
-                    AtomicFileWriteOptions{
-                        L"FluxPack embedded config",
-                        ProjectStateValidation::Utf8Text
-                    });
+                if (canReuseMaterializedFile(target, config.size, config.sha256, logger))
+                {
+                    ++deltaStatistics.reusedFileCount;
+                    ++applied;
+                    continue;
+                }
+
+                std::filesystem::create_directories(pathForFilesystemIo(target.parent_path()));
+                if (config.payload.has_value())
+                {
+                    if (packageReader == nullptr)
+                    {
+                        throw std::invalid_argument("FluxPack config payload requires a package container.");
+                    }
+                    if (config.payload->size != config.size)
+                    {
+                        throw std::invalid_argument("FluxPack config payload size does not match the manifest.");
+                    }
+                    materializeFluxPackFileAtomically(
+                        target,
+                        config.size,
+                        config.sha256,
+                        L"FluxPack embedded config payload",
+                        [packageReader, &config](const std::filesystem::path& temporaryPath)
+                        {
+                            packageReader->extractPayload(config.payload.value(), temporaryPath);
+                        });
+                }
+                else
+                {
+                    AtomicFileStore().writeTextFile(
+                        target,
+                        toUtf8(config.text),
+                        AtomicFileWriteOptions{
+                            L"FluxPack embedded config",
+                            ProjectStateValidation::Utf8Text
+                        });
+                }
+                ++deltaStatistics.materializedFileCount;
                 ++applied;
             }
 
@@ -2263,8 +2661,10 @@ namespace fluxora
         std::uintmax_t applyEmbeddedMods(
             const std::filesystem::path& projectDirectory,
             const std::vector<FluxPackEmbeddedModReference>& mods,
+            const FluxPackPackageReader* packageReader,
             Logger& logger,
-            bool markAsPatch)
+            bool markAsPatch,
+            FluxPackDeltaApplyStatistics& deltaStatistics)
         {
             const PathSafetyService safety;
             std::vector<InstalledModImportRecord> imports;
@@ -2287,7 +2687,8 @@ namespace fluxora
                 bool restoredAnyFile = false;
                 for (const FluxPackEmbeddedFileReference& file : mod.files)
                 {
-                    if (!file.embedsContent || file.contentBase64.empty())
+                    if (!file.embedsContent ||
+                        (!file.payload.has_value() && file.contentBase64.empty()))
                     {
                         continue;
                     }
@@ -2314,23 +2715,54 @@ namespace fluxora
 
                     safety.validateWritePath(projectDirectory, target)
                         .throwIfUnsafe("Embedded FluxPack mod file path is unsafe");
-                    std::filesystem::create_directories(target.parent_path());
-
-                    const std::string content = base64Decode(file.contentBase64);
-                    if (file.size > 0 && content.size() != file.size)
+                    if (canReuseMaterializedFile(target, file.size, file.sha256, logger))
                     {
-                        throw std::runtime_error("Embedded FluxPack mod file size does not match the manifest.");
+                        ++deltaStatistics.reusedFileCount;
+                        restoredAnyFile = true;
+                        continue;
                     }
 
-                    writeBinaryFile(target, content);
-                    if (!file.sha256.empty())
+                    std::filesystem::create_directories(pathForFilesystemIo(target.parent_path()));
+
+                    if (file.payload.has_value())
                     {
-                        const std::wstring actualHash = sha256File(target);
-                        if (!equalsIgnoreCase(file.sha256, actualHash))
+                        if (packageReader == nullptr)
                         {
-                            throw std::runtime_error("Embedded FluxPack mod file hash does not match the manifest.");
+                            throw std::invalid_argument("FluxPack mod payload requires a package container.");
                         }
+                        if (file.payload->size != file.size)
+                        {
+                            throw std::invalid_argument("FluxPack mod payload size does not match the manifest.");
+                        }
+                        materializeFluxPackFileAtomically(
+                            target,
+                            file.size,
+                            file.sha256,
+                            L"FluxPack embedded mod payload",
+                            [packageReader, &file](const std::filesystem::path& temporaryPath)
+                            {
+                                packageReader->extractPayload(file.payload.value(), temporaryPath);
+                            });
                     }
+                    else
+                    {
+                        const std::string content = base64Decode(file.contentBase64);
+                        if (file.size > 0 && content.size() != file.size)
+                        {
+                            throw std::runtime_error("Embedded FluxPack mod file size does not match the manifest.");
+                        }
+
+                        materializeFluxPackFileAtomically(
+                            target,
+                            file.size,
+                            file.sha256,
+                            L"FluxPack embedded mod file",
+                            [&content](const std::filesystem::path& temporaryPath)
+                            {
+                                writeBinaryFile(temporaryPath, content);
+                            });
+                    }
+                    ++deltaStatistics.materializedFileCount;
                     restoredAnyFile = true;
                 }
 
@@ -2406,6 +2838,26 @@ namespace fluxora
             }
         }
 
+        std::vector<InstalledModRecord> listInstalledModsForDelta(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modsDirectory,
+            Logger& logger)
+        {
+            try
+            {
+                return InstanceMetadataStore::listInstalledMods(projectDirectory, modsDirectory);
+            }
+            catch (const std::exception& exception)
+            {
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "FluxPack",
+                    std::string("Installed mod metadata unavailable during FluxPack delta planning: ") +
+                        exception.what());
+                return {};
+            }
+        }
+
         std::vector<ProfileOrderItemRecord> listProfileOrderForPack(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modsDirectory,
@@ -2473,6 +2925,22 @@ namespace fluxora
             throw std::invalid_argument("FluxPack output path is required.");
         }
 
+        FluxPackExportProgressReporter progress(request.progress);
+        progress.publish(
+            L"analyzing",
+            L"Изучаем сборку",
+            request.configPath.filename().wstring(),
+            L"Читаем настройки и состав сборки",
+            0,
+            0,
+            0,
+            0,
+            0,
+            true);
+
+        const std::filesystem::path absoluteOutput =
+            std::filesystem::absolute(request.outputPath).lexically_normal();
+
         logger_.writeOperation(
             LogLevel::Info,
             "FluxPack",
@@ -2500,16 +2968,49 @@ namespace fluxora
                 std::string("Build path settings unavailable during FluxPack export: ") + exception.what());
         }
 
+        const bool overwritesProjectState =
+            normalizePathForComparison(absoluteOutput) == normalizePathForComparison(project.project.configPath);
+        const bool isInsideManagedContent =
+            isSameOrInsidePath(absoluteOutput, paths.modsDirectory) ||
+            isSameOrInsidePath(absoluteOutput, paths.profilesDirectory) ||
+            isSameOrInsidePath(absoluteOutput, paths.downloadsDirectory) ||
+            isSameOrInsidePath(absoluteOutput, paths.overwriteDirectory);
+        if (overwritesProjectState || isInsideManagedContent)
+        {
+            throw std::invalid_argument(
+                "FluxPack output must be outside the build's mods, profiles, downloads and overwrite directories.");
+        }
+
+        progress.publish(
+            L"sources",
+            L"Проверяем исходные архивы",
+            paths.downloadsDirectory.filename().wstring(),
+            L"Сопоставляем установленные моды с их источниками",
+            4);
         std::vector<DownloadSourceFile> downloads = buildDownloadIndex(paths.downloadsDirectory);
         std::vector<PackModReference> sourceArchives;
         std::vector<PackModReference> generatedAssets;
         std::vector<PackModReference> customPatches;
+        const std::vector<std::filesystem::path> payloadExclusions{
+            absoluteOutput,
+            AtomicFileStore::backupPathFor(absoluteOutput)
+        };
+        const std::vector<InstalledModRecord> installedMods = listInstalledModsForPack(
+            project.project.projectDirectory,
+            paths.modsDirectory,
+            logger_);
 
-        for (const InstalledModRecord& mod : listInstalledModsForPack(
-                 project.project.projectDirectory,
-                 paths.modsDirectory,
-                 logger_))
+        for (std::size_t index = 0; index < installedMods.size(); ++index)
         {
+            const InstalledModRecord& mod = installedMods[index];
+            progress.publish(
+                L"inventory",
+                L"Изучаем моды",
+                mod.displayName.empty() ? mod.folderName : mod.displayName,
+                L"Определяем, какие файлы нужно добавить в пакет",
+                progressPercent(5, 14, index, installedMods.size()),
+                index,
+                installedMods.size());
             PackModReference reference{
                 mod,
                 sourceHasRemoteIdentity(mod.source)
@@ -2519,6 +3020,20 @@ namespace fluxora
 
             if (isGeneratedAssetMod(mod))
             {
+                if (request.includeGeneratedAssets)
+                {
+                    const std::optional<std::filesystem::path> logicalFolder =
+                        safeArchiveFileName(mod.folderName);
+                    if (!logicalFolder.has_value())
+                    {
+                        throw std::invalid_argument("FluxPack mod folder name is unsafe.");
+                    }
+                    reference.files = scanPayloadFiles(
+                        mod.path,
+                        project.project.projectDirectory / L"mods" / logicalFolder.value(),
+                        project.project.projectDirectory,
+                        false);
+                }
                 generatedAssets.push_back(std::move(reference));
             }
             else if (sourceHasRemoteIdentity(mod.source))
@@ -2527,27 +3042,130 @@ namespace fluxora
             }
             else
             {
+                const std::optional<std::filesystem::path> logicalFolder =
+                    safeArchiveFileName(mod.folderName);
+                if (!logicalFolder.has_value())
+                {
+                    throw std::invalid_argument("FluxPack mod folder name is unsafe.");
+                }
+                reference.files = scanPayloadFiles(
+                    mod.path,
+                    project.project.projectDirectory / L"mods" / logicalFolder.value(),
+                    project.project.projectDirectory,
+                    false);
                 customPatches.push_back(std::move(reference));
             }
+
+            progress.publish(
+                L"inventory",
+                L"Изучаем моды",
+                mod.displayName.empty() ? mod.folderName : mod.displayName,
+                L"Определяем, какие файлы нужно добавить в пакет",
+                progressPercent(5, 14, index + 1, installedMods.size()),
+                index + 1,
+                installedMods.size());
+        }
+
+        struct SourceArchiveHashState
+        {
+            std::wstring hash;
+            std::uintmax_t expectedBytes{0};
+            bool complete{false};
+        };
+        std::unordered_map<std::wstring, SourceArchiveHashState> sourceArchiveHashes;
+        std::uintmax_t totalSourceArchiveBytes = 0;
+        for (const PackModReference& reference : sourceArchives)
+        {
+            if (!reference.sourceArchive.has_value())
+            {
+                continue;
+            }
+            const std::wstring key = normalizePathForComparison(reference.sourceArchive->path);
+            const auto [iterator, inserted] = sourceArchiveHashes.try_emplace(
+                key,
+                SourceArchiveHashState{{}, reference.sourceArchive->size, false});
+            static_cast<void>(iterator);
+            if (inserted)
+            {
+                addChecked(totalSourceArchiveBytes, reference.sourceArchive->size, "source archives");
+            }
+        }
+
+        std::uintmax_t hashedSourceArchiveBytes = 0;
+        std::uintmax_t hashedSourceArchiveCount = 0;
+        for (PackModReference& reference : sourceArchives)
+        {
+            if (!reference.sourceArchive.has_value())
+            {
+                continue;
+            }
+
+            const std::wstring key = normalizePathForComparison(reference.sourceArchive->path);
+            SourceArchiveHashState& state = sourceArchiveHashes.at(key);
+            if (!state.complete)
+            {
+                const std::uintmax_t bytesBeforeArchive = hashedSourceArchiveBytes;
+                std::uintmax_t fileBytes = 0;
+                state.hash = computeFluxPackFileSha256(
+                    reference.sourceArchive->path,
+                    [&](std::uintmax_t processedBytes)
+                    {
+                        fileBytes = processedBytes;
+                        progress.publish(
+                            L"sources",
+                            L"Проверяем исходные архивы",
+                            reference.sourceArchive->path.filename().wstring(),
+                            L"Сверяем целостность локальных архивов",
+                            progressPercent(
+                                15,
+                                19,
+                                bytesBeforeArchive + fileBytes,
+                                totalSourceArchiveBytes),
+                            hashedSourceArchiveCount,
+                            sourceArchiveHashes.size(),
+                            bytesBeforeArchive + fileBytes,
+                            totalSourceArchiveBytes);
+                    });
+                hashedSourceArchiveBytes = bytesBeforeArchive +
+                    (fileBytes > 0 ? fileBytes : state.expectedBytes);
+                ++hashedSourceArchiveCount;
+                state.complete = true;
+            }
+            reference.sourceArchive->sha256 = state.hash;
         }
 
         std::vector<FileManifestEntry> customConfigs;
         std::vector<FileManifestEntry> profileConfigs =
-            scanFiles(paths.profilesDirectory, project.project.projectDirectory, true, true, false);
-        customConfigs.insert(customConfigs.end(), profileConfigs.begin(), profileConfigs.end());
+            scanPayloadFiles(
+                paths.profilesDirectory,
+                project.project.projectDirectory / L"profiles",
+                project.project.projectDirectory,
+                true);
+        customConfigs.insert(
+            customConfigs.end(),
+            std::make_move_iterator(profileConfigs.begin()),
+            std::make_move_iterator(profileConfigs.end()));
         std::vector<FileManifestEntry> overwriteConfigs =
-            scanFiles(paths.overwriteDirectory, project.project.projectDirectory, true, true, false);
-        customConfigs.insert(customConfigs.end(), overwriteConfigs.begin(), overwriteConfigs.end());
+            scanPayloadFiles(
+                paths.overwriteDirectory,
+                project.project.projectDirectory / L"overwrite",
+                project.project.projectDirectory,
+                true);
+        customConfigs.insert(
+            customConfigs.end(),
+            std::make_move_iterator(overwriteConfigs.begin()),
+            std::make_move_iterator(overwriteConfigs.end()));
 
         const std::filesystem::path rootModOrganizerIni =
             project.project.projectDirectory / L"ModOrganizer.ini";
-        if (std::filesystem::is_regular_file(rootModOrganizerIni))
+        std::error_code rootIniError;
+        if (std::filesystem::is_regular_file(rootModOrganizerIni, rootIniError) &&
+            !std::filesystem::is_symlink(rootModOrganizerIni, rootIniError) &&
+            !isExcludedPayloadPath(rootModOrganizerIni, payloadExclusions))
         {
-            customConfigs.push_back(buildFileManifestEntry(
+            customConfigs.push_back(describePayloadFile(
                 rootModOrganizerIni,
-                project.project.projectDirectory,
-                true,
-                false));
+                L"ModOrganizer.ini"));
         }
 
         std::sort(customConfigs.begin(), customConfigs.end(), [](const FileManifestEntry& left, const FileManifestEntry& right)
@@ -2565,38 +3183,248 @@ namespace fluxora
                 defaultProfile,
                 logger_);
 
-        const std::wstring manifest = serializeFluxPack(
-            project,
-            paths,
-            sourceArchives,
-            generatedAssets,
-            customPatches,
-            customConfigs,
-            profileOrder,
-            request.includeGeneratedAssets);
-
-        const std::filesystem::path absoluteOutput =
-            std::filesystem::absolute(request.outputPath).lexically_normal();
-        if (!absoluteOutput.parent_path().empty())
+        std::uintmax_t totalFileCount = customConfigs.size();
+        std::uintmax_t totalPayloadBytes = 0;
+        const auto countPayloadFiles = [&totalFileCount, &totalPayloadBytes](
+                                           const std::vector<FileManifestEntry>& files)
         {
-            std::filesystem::create_directories(absoluteOutput.parent_path());
+            if (files.size() > std::numeric_limits<std::uintmax_t>::max() - totalFileCount)
+            {
+                throw std::overflow_error("FluxPack file count exceeds the supported range.");
+            }
+            totalFileCount += files.size();
+            for (const FileManifestEntry& file : files)
+            {
+                addChecked(totalPayloadBytes, file.size, "payload files");
+            }
+        };
+
+        for (const PackModReference& reference : generatedAssets)
+        {
+            countPayloadFiles(reference.files);
+        }
+        for (const PackModReference& reference : customPatches)
+        {
+            countPayloadFiles(reference.files);
+        }
+        for (const FileManifestEntry& file : customConfigs)
+        {
+            addChecked(totalPayloadBytes, file.size, "configuration files");
         }
 
-        AtomicFileStore().writeTextFile(
-            absoluteOutput,
-            toUtf8(manifest),
-            AtomicFileWriteOptions{
-                L"FluxPack manifest",
-                ProjectStateValidation::JsonObject
-            });
+        const std::filesystem::path outputDirectory = absoluteOutput.parent_path();
+        std::error_code spaceError;
+        const std::filesystem::space_info outputSpace = std::filesystem::space(outputDirectory, spaceError);
+        if (!spaceError)
+        {
+            std::uintmax_t estimatedManifestBytes = 1024ULL * 1024ULL;
+            const std::uintmax_t perFileManifestBytes = 768;
+            if (totalFileCount <=
+                (std::numeric_limits<std::uintmax_t>::max() - estimatedManifestBytes) / perFileManifestBytes)
+            {
+                estimatedManifestBytes += totalFileCount * perFileManifestBytes;
+            }
+            else
+            {
+                estimatedManifestBytes = std::numeric_limits<std::uintmax_t>::max();
+            }
 
-        std::error_code sizeError;
-        const std::uintmax_t manifestBytes = std::filesystem::file_size(absoluteOutput, sizeError);
+            std::uintmax_t requiredBytes = totalPayloadBytes;
+            addChecked(requiredBytes, estimatedManifestBytes, "the output package");
+            if (outputSpace.available < requiredBytes)
+            {
+                throw std::runtime_error(
+                    "Not enough free disk space to package this build. Free space on the destination drive and retry.");
+            }
+        }
+
+        progress.publish(
+            L"packing",
+            L"Добавляем файлы в пакет",
+            project.project.name,
+            L"Копируем файлы без загрузки всей сборки в память",
+            20,
+            0,
+            totalFileCount,
+            0,
+            totalPayloadBytes,
+            true);
+
+        std::uintmax_t processedFiles = 0;
+        std::uintmax_t processedBytes = 0;
+        std::uintmax_t manifestBytes = 0;
+        FluxPackContentStoreStatistics contentStoreStatistics;
+        AtomicFileWriteOptions writeOptions;
+        writeOptions.stateName = L"FluxPack package";
+        writeOptions.validation = ProjectStateValidation::None;
+        writeOptions.keepBackup = false;
+        writeOptions.validator = [](const std::filesystem::path& packagePath)
+        {
+            FluxPackPackageReader reader(packagePath);
+            const std::string manifest = reader.readManifest();
+            const JsonValue root = JsonReader::parse(fromUtf8(manifest));
+            const FluxPackManifest parsed = parseFluxPackManifest(packagePath, root, manifest.size());
+            if (parsed.summary.formatVersion >= 3)
+            {
+                reader.setContentStore(parsed.contentChunks);
+            }
+        };
+
+        AtomicFileStore().writeFileAtomically(
+            absoluteOutput,
+            [&](const std::filesystem::path& temporaryPath)
+            {
+                FluxPackPackageWriter package(temporaryPath, request.compressionMode);
+                const auto packagingPercent = [&]()
+                {
+                    return totalPayloadBytes > 0
+                        ? progressPercent(20, 90, processedBytes, totalPayloadBytes)
+                        : progressPercent(20, 90, processedFiles, totalFileCount);
+                };
+
+                std::vector<FileManifestEntry*> filesToPack;
+                filesToPack.reserve(static_cast<std::size_t>(totalFileCount));
+                const auto collectFiles = [&](std::vector<FileManifestEntry>& files)
+                {
+                    for (FileManifestEntry& file : files)
+                    {
+                        filesToPack.push_back(&file);
+                    }
+                };
+
+                for (PackModReference& reference : generatedAssets)
+                {
+                    collectFiles(reference.files);
+                }
+                for (PackModReference& reference : customPatches)
+                {
+                    collectFiles(reference.files);
+                }
+                collectFiles(customConfigs);
+
+                std::vector<std::filesystem::path> sourcePaths;
+                sourcePaths.reserve(filesToPack.size());
+                for (const FileManifestEntry* file : filesToPack)
+                {
+                    sourcePaths.push_back(file->path);
+                }
+
+                if (!filesToPack.empty())
+                {
+                    progress.publish(
+                        L"packing",
+                        L"Добавляем файлы в пакет",
+                        filesToPack.front()->relativePath,
+                        L"Разбиваем, сжимаем и проверяем содержимое",
+                        packagingPercent(),
+                        processedFiles,
+                        totalFileCount,
+                        processedBytes,
+                        totalPayloadBytes,
+                        true);
+                }
+
+                std::vector<std::uintmax_t> fileProgress(filesToPack.size(), 0);
+                std::vector<bool> fileCompleted(filesToPack.size(), false);
+                std::vector<FluxPackPayloadReference> payloads = package.appendFiles(
+                    sourcePaths,
+                    [&](std::size_t index, std::uintmax_t fileBytes)
+                    {
+                        if (index >= filesToPack.size())
+                        {
+                            throw std::logic_error("FluxPack package progress index is invalid.");
+                        }
+                        if (fileBytes > fileProgress[index])
+                        {
+                            addChecked(
+                                processedBytes,
+                                fileBytes - fileProgress[index],
+                                "packed payload progress");
+                            fileProgress[index] = fileBytes;
+                        }
+                        if (!fileCompleted[index] && fileBytes >= filesToPack[index]->size)
+                        {
+                            fileCompleted[index] = true;
+                            ++processedFiles;
+                        }
+                        progress.publish(
+                            L"packing",
+                            L"Добавляем файлы в пакет",
+                            filesToPack[index]->relativePath,
+                            L"Разбиваем, сжимаем и проверяем содержимое",
+                            packagingPercent(),
+                            processedFiles,
+                            totalFileCount,
+                            processedBytes,
+                            totalPayloadBytes);
+                    });
+                if (payloads.size() != filesToPack.size())
+                {
+                    throw std::logic_error("FluxPack package returned an incomplete payload map.");
+                }
+                for (std::size_t index = 0; index < filesToPack.size(); ++index)
+                {
+                    if (payloads[index].size > fileProgress[index])
+                    {
+                        addChecked(
+                            processedBytes,
+                            payloads[index].size - fileProgress[index],
+                            "packed payload completion");
+                    }
+                    if (!fileCompleted[index])
+                    {
+                        ++processedFiles;
+                    }
+                    filesToPack[index]->size = payloads[index].size;
+                    filesToPack[index]->sha256 = payloads[index].sha256;
+                    filesToPack[index]->payload = std::move(payloads[index]);
+                }
+                contentStoreStatistics = package.contentStoreStatistics();
+
+                progress.publish(
+                    L"manifest",
+                    L"Сохраняем описание сборки",
+                    project.project.name,
+                    L"Записываем список модов, настроек и порядок загрузки",
+                    94,
+                    processedFiles,
+                    totalFileCount,
+                    processedBytes,
+                    totalPayloadBytes,
+                    true);
+                const std::wstring manifest = serializeFluxPack(
+                    project,
+                    paths,
+                    sourceArchives,
+                    generatedAssets,
+                    customPatches,
+                    customConfigs,
+                    profileOrder,
+                    package.contentChunks(),
+                    contentStoreStatistics,
+                    request.includeGeneratedAssets);
+                const std::string manifestUtf8 = toUtf8(manifest);
+                manifestBytes = manifestUtf8.size();
+                package.finish(manifestUtf8);
+                progress.publish(
+                    L"finalizing",
+                    L"Завершаем упаковку",
+                    absoluteOutput.filename().wstring(),
+                    L"Проверяем пакет и безопасно заменяем предыдущий файл",
+                    98,
+                    processedFiles,
+                    totalFileCount,
+                    processedBytes,
+                    totalPayloadBytes,
+                    true);
+            },
+            writeOptions);
+
         FluxPackSummary summary;
         summary.outputPath = absoluteOutput;
         summary.buildName = project.project.name;
         summary.formatVersion = packageFormatVersion;
-        summary.manifestBytes = sizeError ? 0 : manifestBytes;
+        summary.manifestBytes = manifestBytes;
         summary.sourceArchiveCount = sourceArchives.size();
         summary.generatedAssetCount = generatedAssets.size();
         summary.customPatchCount = customPatches.size();
@@ -2604,6 +3432,25 @@ namespace fluxora
         summary.installStepCount = 4;
         summary.generatedAssetsIncluded = request.includeGeneratedAssets;
         summary.installPlanAvailable = true;
+        summary.compressionMode = std::wstring(fluxPackCompressionModeId(request.compressionMode));
+        summary.logicalPayloadBytes = contentStoreStatistics.logicalBytes;
+        summary.uniquePayloadBytes = contentStoreStatistics.uniqueBytes;
+        summary.storedPayloadBytes = contentStoreStatistics.storedBytes;
+        summary.deduplicatedPayloadBytes = contentStoreStatistics.deduplicatedBytes;
+        summary.uniqueChunkCount = contentStoreStatistics.uniqueChunkCount;
+        summary.dictionaryCount = contentStoreStatistics.dictionaryCount;
+
+        progress.publish(
+            L"complete",
+            L"Сборка упакована",
+            absoluteOutput.filename().wstring(),
+            L"FluxPack готов",
+            100,
+            processedFiles,
+            totalFileCount,
+            processedBytes,
+            totalPayloadBytes,
+            true);
 
         logger_.writeOperation(
             LogLevel::Info,
@@ -2611,7 +3458,15 @@ namespace fluxora
             "FluxPack export completed. sourceArchives=" + std::to_string(sourceArchives.size()) +
                 ", generatedAssets=" + std::to_string(generatedAssets.size()) +
                 ", customPatches=" + std::to_string(customPatches.size()) +
-                ", customConfigs=" + std::to_string(customConfigs.size()));
+                ", customConfigs=" + std::to_string(customConfigs.size()) +
+                ", payloadFiles=" + std::to_string(processedFiles) +
+                ", payloadBytes=" + std::to_string(processedBytes) +
+                ", uniqueChunks=" + std::to_string(contentStoreStatistics.uniqueChunkCount) +
+                ", storedBytes=" + std::to_string(contentStoreStatistics.storedBytes) +
+                ", deduplicatedBytes=" + std::to_string(contentStoreStatistics.deduplicatedBytes) +
+                ", compressionMode=" + toUtf8(summary.compressionMode) +
+                ", manifestBytes=" + std::to_string(manifestBytes) +
+                ", formatVersion=" + std::to_string(packageFormatVersion));
 
         return summary;
     }
@@ -2626,8 +3481,27 @@ namespace fluxora
         const std::filesystem::path absolutePath =
             std::filesystem::absolute(fluxPackPath).lexically_normal();
         std::error_code sizeError;
-        const std::uintmax_t manifestBytes = std::filesystem::file_size(absolutePath, sizeError);
-        const JsonValue root = JsonReader::parse(fromUtf8(readTextFile(absolutePath)));
+        const std::uintmax_t packageBytes = std::filesystem::file_size(absolutePath, sizeError);
+        if (sizeError)
+        {
+            throw std::invalid_argument("FluxPack file could not be inspected.");
+        }
+        std::string manifestContent;
+        if (FluxPackPackageReader::isPackage(absolutePath))
+        {
+            manifestContent = FluxPackPackageReader(absolutePath).readManifest();
+        }
+        else
+        {
+            if (packageBytes > maxLegacyManifestBytes)
+            {
+                throw std::invalid_argument(
+                    "Legacy FluxPack manifest is too large to open safely. Re-export it with the current Fluxora version.");
+            }
+            manifestContent = readTextFile(absolutePath);
+        }
+        const std::uintmax_t manifestBytes = manifestContent.size();
+        const JsonValue root = JsonReader::parse(fromUtf8(manifestContent));
         FluxPackSummary summary = summaryFromJson(root, absolutePath, sizeError ? 0 : manifestBytes);
 
         logger_.writeOperation(
@@ -2705,9 +3579,34 @@ namespace fluxora
         }
 
         std::error_code sizeError;
-        const std::uintmax_t manifestBytes = std::filesystem::file_size(absolutePath, sizeError);
-        const JsonValue root = JsonReader::parse(fromUtf8(readTextFile(absolutePath)));
+        const std::uintmax_t packageBytes = std::filesystem::file_size(absolutePath, sizeError);
+        if (sizeError)
+        {
+            throw std::invalid_argument("FluxPack file could not be inspected.");
+        }
+        std::optional<FluxPackPackageReader> packageReader;
+        std::string manifestContent;
+        if (FluxPackPackageReader::isPackage(absolutePath))
+        {
+            packageReader.emplace(absolutePath);
+            manifestContent = packageReader->readManifest();
+        }
+        else
+        {
+            if (packageBytes > maxLegacyManifestBytes)
+            {
+                throw std::invalid_argument(
+                    "Legacy FluxPack manifest is too large to install safely. Re-export it with the current Fluxora version.");
+            }
+            manifestContent = readTextFile(absolutePath);
+        }
+        const std::uintmax_t manifestBytes = manifestContent.size();
+        const JsonValue root = JsonReader::parse(fromUtf8(manifestContent));
         FluxPackManifest manifest = parseFluxPackManifest(absolutePath, root, sizeError ? 0 : manifestBytes);
+        if (packageReader.has_value() && manifest.summary.formatVersion >= 3)
+        {
+            packageReader->setContentStore(manifest.contentChunks);
+        }
         if (manifest.templateId.empty())
         {
             throw std::invalid_argument("FluxPack build template is missing.");
@@ -2717,11 +3616,38 @@ namespace fluxora
             throw std::invalid_argument("FluxPack install plan is missing.");
         }
 
-        const std::wstring projectName = uniqueProjectName(projects_, installRoot, manifest.buildName);
-        const std::filesystem::path projectDirectory =
-            projects_.buildProjectDirectory(installRoot, projectName);
-        const ResolvedFluxPackGameDirectory installGameDirectory =
-            resolveInstallGameDirectory(manifest, pathSettings_, logger_, projectDirectory);
+        const bool updateExistingProject = !request.existingConfigPath.empty();
+        std::optional<ProjectOpenResult> existingProject;
+        std::optional<BuildPathSettings> existingInstallPaths;
+        std::wstring projectName;
+        std::filesystem::path projectDirectory;
+        ResolvedFluxPackGameDirectory installGameDirectory;
+        if (updateExistingProject)
+        {
+            const std::filesystem::path existingConfigPath =
+                std::filesystem::absolute(request.existingConfigPath).lexically_normal();
+            existingProject = projects_.openProjectConfig(existingConfigPath);
+            if (!equalsIgnoreCase(existingProject->resolvedTemplate.id, manifest.templateId))
+            {
+                throw std::invalid_argument(
+                    "FluxPack cannot update this build because its game template is different.");
+            }
+
+            existingInstallPaths = pathSettings_.loadForConfig(existingProject->project.configPath);
+            projectName = existingProject->project.name;
+            projectDirectory = existingProject->project.projectDirectory;
+            installGameDirectory = ResolvedFluxPackGameDirectory{
+                existingInstallPaths->gameDirectory,
+                true
+            };
+        }
+        else
+        {
+            projectName = uniqueProjectName(projects_, installRoot, manifest.buildName);
+            projectDirectory = projects_.buildProjectDirectory(installRoot, projectName);
+            installGameDirectory =
+                resolveInstallGameDirectory(manifest, pathSettings_, logger_, projectDirectory);
+        }
         if (installGameDirectory.path.empty())
         {
             throw std::invalid_argument("FluxPack game directory could not be resolved.");
@@ -2749,6 +3675,7 @@ namespace fluxora
             "FluxPack install requested. path=\"" + pathForLog(absolutePath) +
                 "\", installRoot=\"" + pathForLog(installRoot) +
                 "\", buildName=\"" + toUtf8(projectName) +
+                "\", deltaUpdate=" + (updateExistingProject ? std::string("true") : std::string("false")) +
                 "\", gameDirectory=\"" + pathForLog(installGameDirectory.path) +
                 "\", sourceArchives=" + std::to_string(manifest.sourceArchives.size()));
 
@@ -2756,20 +3683,35 @@ namespace fluxora
             request.progress,
             providers,
             L"project",
-            L"Создаём сборку",
+            updateExistingProject ? L"Обновляем сборку" : L"Создаём сборку",
             projectName,
-            L"Готовим структуру проекта Fluxora",
+            updateExistingProject
+                ? L"Сопоставляем FluxPack с текущей сборкой"
+                : L"Готовим структуру проекта Fluxora",
             16);
 
-        const ProjectDescriptor project = projects_.createProject(ProjectCreateRequest{
-            projectName,
-            manifest.templateId,
-            installGameDirectory.path,
-            installRoot,
-            installGameDirectory.validateExistingGame
-        });
+        ProjectDescriptor project;
+        if (updateExistingProject)
+        {
+            project = existingProject->project;
+        }
+        else
+        {
+            project = projects_.createProject(ProjectCreateRequest{
+                projectName,
+                manifest.templateId,
+                installGameDirectory.path,
+                installRoot,
+                installGameDirectory.validateExistingGame
+            });
+        }
+        FluxPackInstallCleanup installCleanup(projects_, logger_, project.configPath);
+        if (updateExistingProject)
+        {
+            installCleanup.dismiss();
+        }
 
-        if (!installGameDirectory.validateExistingGame)
+        if (!updateExistingProject && !installGameDirectory.validateExistingGame)
         {
             PathSafetyService().validateWritePath(project.projectDirectory, project.gamePath)
                 .throwIfUnsafe("FluxPack game directory is unsafe");
@@ -2781,15 +3723,17 @@ namespace fluxora
                     pathForLog(project.gamePath) + "\"");
         }
 
-        const BuildPathSettings savedInstallPaths = pathSettings_.saveForConfig(
-            project.configPath,
-            BuildPathSettings{
-                project.gamePath,
-                project.projectDirectory / L"mods",
-                project.projectDirectory / L"profiles",
-                project.projectDirectory / L"downloads",
-                project.projectDirectory / L"overwrite"
-            });
+        const BuildPathSettings savedInstallPaths = updateExistingProject
+            ? existingInstallPaths.value()
+            : pathSettings_.saveForConfig(
+                  project.configPath,
+                  BuildPathSettings{
+                      project.gamePath,
+                      project.projectDirectory / L"mods",
+                      project.projectDirectory / L"profiles",
+                      project.projectDirectory / L"downloads",
+                      project.projectDirectory / L"overwrite"
+                  });
         static_cast<void>(savedInstallPaths);
 
         FluxPackInstallResult result;
@@ -2798,6 +3742,13 @@ namespace fluxora
         result.projectDirectory = project.projectDirectory;
         result.buildName = project.name;
         result.totalSourceCount = manifest.sourceArchives.size();
+        result.updatedExistingProject = updateExistingProject;
+        const std::vector<InstalledModRecord> installedMods = updateExistingProject
+            ? listInstalledModsForDelta(
+                  project.projectDirectory,
+                  savedInstallPaths.modsDirectory,
+                  logger_)
+            : std::vector<InstalledModRecord>{};
 
         publishInstallProgress(
             request.progress,
@@ -2813,56 +3764,131 @@ namespace fluxora
             ProviderInstallState& provider = providerStateFor(providers, providerIdForSource(source));
             const std::wstring installName = sourceInstallName(source);
             provider.currentItem = installName;
-            provider.statusText = L"Скачиваем";
+            provider.statusText = updateExistingProject ? L"Проверяем Delta" : L"Скачиваем";
             publishInstallProgress(
                 request.progress,
                 providers,
                 L"sources",
-                L"Скачиваем источники",
+                updateExistingProject ? L"Сопоставляем источники" : L"Скачиваем источники",
                 installName,
                 L"Источник: " + provider.displayName,
                 sourceInstallOverallPercent(providers));
 
+            if (const InstalledModRecord* reusable =
+                    findReusableInstalledSource(installedMods, source);
+                reusable != nullptr)
+            {
+                const bool currentlyEnabled = !equalsIgnoreCase(reusable->state, L"disabled");
+                if (currentlyEnabled != source.enabled)
+                {
+                    InstanceMetadataStore::setInstalledModEnabled(
+                        project.projectDirectory,
+                        reusable->path,
+                        source.enabled);
+                }
+
+                ++provider.completed;
+                ++result.reusedSourceCount;
+                provider.statusText = L"Уже установлен";
+                logger_.writeOperation(
+                    LogLevel::Info,
+                    "FluxPack",
+                    "FluxPack delta reused installed source mod. provider=\"" +
+                        toUtf8(provider.id) +
+                        "\", mod=\"" + toUtf8(installName) +
+                        "\", folder=\"" + toUtf8(reusable->folderName) + "\"");
+                publishInstallProgress(
+                    request.progress,
+                    providers,
+                    L"sources",
+                    L"Переиспользуем мод",
+                    installName,
+                    L"Мод уже соответствует FluxPack",
+                    sourceInstallOverallPercent(providers));
+                continue;
+            }
+
             try
             {
                 std::optional<DownloadEntry> localEntry;
-                if (const std::optional<std::filesystem::path> localArchive =
-                        localSourceArchivePath(manifest, source, pathSettings_, logger_);
-                    localArchive.has_value())
+                bool reusedLocalArchive = false;
+                if (updateExistingProject)
                 {
-                    provider.statusText = L"Копируем локальный архив";
-                    publishInstallProgress(
-                        request.progress,
-                        providers,
-                        L"sources",
-                        L"Копируем источник",
-                        installName,
-                        L"Используем архив из перенесённой сборки",
-                        sourceInstallOverallPercent(providers));
-
-                    try
+                    if (const std::optional<std::filesystem::path> cachedArchive =
+                            currentDownloadArchivePath(
+                                savedInstallPaths.downloadsDirectory,
+                                source,
+                                logger_);
+                        cachedArchive.has_value())
                     {
-                        DownloadEntry imported = downloads_.importLocalFile(project.projectDirectory, localArchive.value());
-                        writeFluxPackDownloadMetadata(imported.localPath, source);
+                        provider.statusText = L"Используем загруженный архив";
+                        publishInstallProgress(
+                            request.progress,
+                            providers,
+                            L"sources",
+                            L"Переиспользуем загрузку",
+                            installName,
+                            cachedArchive->filename().wstring(),
+                            sourceInstallOverallPercent(providers));
+
+                        writeFluxPackDownloadMetadata(cachedArchive.value(), source);
+                        DownloadEntry cachedEntry;
+                        cachedEntry.fileName = cachedArchive->filename().wstring();
+                        cachedEntry.localPath = cachedArchive.value();
+                        localEntry = std::move(cachedEntry);
+                        reusedLocalArchive = true;
                         logger_.writeOperation(
                             LogLevel::Info,
                             "FluxPack",
-                            "FluxPack source archive restored from source build downloads. provider=\"" +
+                            "FluxPack delta reused an archive from the current downloads directory. provider=\"" +
                                 toUtf8(provider.id) +
                                 "\", mod=\"" + toUtf8(installName) +
-                                "\", archive=\"" + pathForLog(localArchive.value()) + "\"");
-                        localEntry = std::move(imported);
+                                "\", archive=\"" + pathForLog(cachedArchive.value()) + "\"");
                     }
-                    catch (const std::exception& exception)
+                }
+
+                if (!localEntry.has_value())
+                {
+                    if (const std::optional<std::filesystem::path> localArchive =
+                            localSourceArchivePath(manifest, source, pathSettings_, logger_);
+                        localArchive.has_value())
                     {
-                        logger_.writeOperation(
-                            LogLevel::Warning,
-                            "FluxPack",
-                            "FluxPack local source archive could not be imported; falling back to remote download. provider=\"" +
-                                toUtf8(provider.id) +
-                                "\", mod=\"" + toUtf8(installName) +
-                                "\", archive=\"" + pathForLog(localArchive.value()) +
-                                "\", reason=\"" + exception.what() + "\"");
+                        provider.statusText = L"Копируем локальный архив";
+                        publishInstallProgress(
+                            request.progress,
+                            providers,
+                            L"sources",
+                            L"Копируем источник",
+                            installName,
+                            L"Используем архив из перенесённой сборки",
+                            sourceInstallOverallPercent(providers));
+
+                        try
+                        {
+                            DownloadEntry imported =
+                                downloads_.importLocalFile(project.projectDirectory, localArchive.value());
+                            writeFluxPackDownloadMetadata(imported.localPath, source);
+                            logger_.writeOperation(
+                                LogLevel::Info,
+                                "FluxPack",
+                                "FluxPack source archive restored from source build downloads. provider=\"" +
+                                    toUtf8(provider.id) +
+                                    "\", mod=\"" + toUtf8(installName) +
+                                    "\", archive=\"" + pathForLog(localArchive.value()) + "\"");
+                            localEntry = std::move(imported);
+                            reusedLocalArchive = true;
+                        }
+                        catch (const std::exception& exception)
+                        {
+                            logger_.writeOperation(
+                                LogLevel::Warning,
+                                "FluxPack",
+                                "FluxPack local source archive could not be imported; falling back to remote download. provider=\"" +
+                                    toUtf8(provider.id) +
+                                    "\", mod=\"" + toUtf8(installName) +
+                                    "\", archive=\"" + pathForLog(localArchive.value()) +
+                                    "\", reason=\"" + exception.what() + "\"");
+                        }
                     }
                 }
 
@@ -2927,6 +3953,9 @@ namespace fluxora
                     sourceInstallOverallPercent(providers));
 
                 InstalledMod installed;
+                const ExistingModInstallMode existingModMode = updateExistingProject
+                    ? ExistingModInstallMode::Replace
+                    : ExistingModInstallMode::FailIfExists;
                 const FomodInstallerDescriptor fomod = downloads_.analyzeFomodDownload(
                     project.projectDirectory,
                     entry.localPath);
@@ -2936,7 +3965,7 @@ namespace fluxora
                         project.projectDirectory,
                         entry.localPath,
                         installName,
-                        ExistingModInstallMode::FailIfExists,
+                        existingModMode,
                         {});
                 }
                 else
@@ -2945,7 +3974,7 @@ namespace fluxora
                         project.projectDirectory,
                         entry.localPath,
                         installName,
-                        ExistingModInstallMode::FailIfExists);
+                        existingModMode);
                 }
 
                 if (!source.enabled)
@@ -2955,6 +3984,10 @@ namespace fluxora
 
                 ++provider.completed;
                 ++result.installedSourceCount;
+                if (reusedLocalArchive)
+                {
+                    ++result.reusedDownloadCount;
+                }
                 provider.statusText = L"Установлено";
                 publishInstallProgress(
                     request.progress,
@@ -2996,8 +4029,23 @@ namespace fluxora
             L"Пишем embedded mods из FluxPack",
             76);
 
-        applyEmbeddedMods(project.projectDirectory, manifest.customPatches, logger_, true);
-        applyEmbeddedMods(project.projectDirectory, manifest.generatedAssets, logger_, false);
+        const FluxPackPackageReader* packageReaderPointer =
+            packageReader.has_value() ? &packageReader.value() : nullptr;
+        FluxPackDeltaApplyStatistics deltaStatistics;
+        applyEmbeddedMods(
+            project.projectDirectory,
+            manifest.customPatches,
+            packageReaderPointer,
+            logger_,
+            true,
+            deltaStatistics);
+        applyEmbeddedMods(
+            project.projectDirectory,
+            manifest.generatedAssets,
+            packageReaderPointer,
+            logger_,
+            false,
+            deltaStatistics);
 
         publishInstallProgress(
             request.progress,
@@ -3008,11 +4056,18 @@ namespace fluxora
             L"Пишем embedded config и порядок профиля",
             84);
 
-        result.appliedConfigCount = applyEmbeddedConfigs(project.projectDirectory, manifest.customConfigs, logger_);
+        result.appliedConfigCount = applyEmbeddedConfigs(
+            project.projectDirectory,
+            manifest.customConfigs,
+            packageReaderPointer,
+            logger_,
+            deltaStatistics);
         result.appliedProfileOrderItemCount = applyProfileOrder(
             project.projectDirectory,
             manifest.defaultProfile,
             manifest.profileOrder);
+        result.reusedFileCount = deltaStatistics.reusedFileCount;
+        result.materializedFileCount = deltaStatistics.materializedFileCount;
         result.hasWarnings = result.pendingSourceCount > 0 || result.failedSourceCount > 0;
 
         publishInstallProgress(
@@ -3031,10 +4086,15 @@ namespace fluxora
             "FluxPack",
             "FluxPack install completed. configPath=\"" + pathForLog(project.configPath) +
                 "\", installedSources=" + std::to_string(result.installedSourceCount) +
+                ", reusedSources=" + std::to_string(result.reusedSourceCount) +
+                ", reusedDownloads=" + std::to_string(result.reusedDownloadCount) +
                 ", pendingSources=" + std::to_string(result.pendingSourceCount) +
                 ", failedSources=" + std::to_string(result.failedSourceCount) +
                 ", appliedConfigs=" + std::to_string(result.appliedConfigCount) +
+                ", reusedFiles=" + std::to_string(result.reusedFileCount) +
+                ", materializedFiles=" + std::to_string(result.materializedFileCount) +
                 ", profileOrderItems=" + std::to_string(result.appliedProfileOrderItemCount));
+        installCleanup.dismiss();
         return result;
     }
 

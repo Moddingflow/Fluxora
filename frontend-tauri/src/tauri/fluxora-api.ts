@@ -128,11 +128,18 @@ const fluxPackExportRequestParams = (rawRequest: unknown): Record<string, unknow
       ? (rawRequest as Partial<Record<keyof FluxoraFluxPackExportRequest, unknown>>)
       : {};
   const stringParam = (value: unknown): string => (typeof value === 'string' ? value : '');
+  const compressionMode =
+    request.compressionMode === 'fast' ||
+    request.compressionMode === 'smallest' ||
+    request.compressionMode === 'optimal'
+      ? request.compressionMode
+      : 'optimal';
 
   return {
     configPath: stringParam(request.configPath),
     outputPath: stringParam(request.outputPath),
-    includeGeneratedAssets: request.includeGeneratedAssets === true
+    includeGeneratedAssets: request.includeGeneratedAssets === true,
+    compressionMode
   };
 };
 

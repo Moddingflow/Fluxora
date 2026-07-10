@@ -456,7 +456,7 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
-  it('normalizes FluxPack export flags and keeps packaging on a long timeout', async () => {
+  it('normalizes FluxPack export options and keeps packaging on a long timeout', async () => {
     const request: OperationRequest = { operationId: 'op_fluxpack_export' };
     invokeMock.mockResolvedValue({
       buildName: 'Foundation Edition',
@@ -478,7 +478,8 @@ describe('Tauri bridge request timeouts', () => {
         {
           configPath: 'C:\\Fluxora\\Builds\\Foundation.json',
           outputPath: 'E:\\Exports\\Foundation.fluxpack',
-          includeGeneratedAssets: null as unknown as boolean
+          includeGeneratedAssets: null as unknown as boolean,
+          compressionMode: null as unknown as 'optimal'
         },
         request
       )
@@ -492,7 +493,56 @@ describe('Tauri bridge request timeouts', () => {
       params: {
         configPath: 'C:\\Fluxora\\Builds\\Foundation.json',
         outputPath: 'E:\\Exports\\Foundation.fluxpack',
-        includeGeneratedAssets: false
+        includeGeneratedAssets: false,
+        compressionMode: 'optimal'
+      },
+      request,
+      timeoutMs: 7_200_000
+    });
+  });
+
+  it('passes the existing build target through the long-running FluxPack install request', async () => {
+    const request: OperationRequest = { operationId: 'op_fluxpack_delta' };
+    invokeMock.mockResolvedValue({
+      appliedConfigCount: 1,
+      appliedProfileOrderItemCount: 4,
+      buildName: 'Foundation Edition',
+      configPath: 'C:\\Fluxora\\Builds\\Foundation.json',
+      failedSourceCount: 0,
+      hasWarnings: false,
+      installedSourceCount: 1,
+      materializedFileCount: 2,
+      pendingSourceCount: 0,
+      projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+      reusedDownloadCount: 1,
+      reusedFileCount: 8,
+      reusedSourceCount: 3,
+      summary: {},
+      totalSourceCount: 4,
+      updatedExistingProject: true
+    });
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.fluxPack.install(
+        {
+          existingConfigPath: 'C:\\Fluxora\\Builds\\Foundation.json',
+          fluxPackPath: 'E:\\Updates\\Foundation.fluxpack',
+          installRootDirectory: 'E:\\Fluxora Builds'
+        },
+        request
+      )
+    ).resolves.toMatchObject({
+      operationId: 'op_fluxpack_delta',
+      updatedExistingProject: true
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'fluxPack.install',
+      params: {
+        existingConfigPath: 'C:\\Fluxora\\Builds\\Foundation.json',
+        fluxPackPath: 'E:\\Updates\\Foundation.fluxpack',
+        installRootDirectory: 'E:\\Fluxora Builds'
       },
       request,
       timeoutMs: 7_200_000

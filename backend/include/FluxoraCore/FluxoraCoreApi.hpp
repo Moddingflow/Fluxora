@@ -126,12 +126,33 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
-    // Writes a FluxPack recipe. Direct remote/source archives are referenced by
-    // provider/link/hash metadata; local mods without direct links are embedded.
+    // Writes a FluxPack v3 content store with FastCDC-style chunking, SHA-256
+    // content addressing and adaptive Zstandard compression. Direct remote/source
+    // archives remain references. Legacy entry points default to optimal mode.
     FLUXORA_CORE_API int fluxora_export_fluxpack(
         const wchar_t* configPath,
         const wchar_t* outputPath,
         int includeGeneratedAssets,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_export_fluxpack_with_progress(
+        const wchar_t* configPath,
+        const wchar_t* outputPath,
+        int includeGeneratedAssets,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    // compressionMode: 1 = fast, 2 = optimal, 3 = smallest.
+    FLUXORA_CORE_API int fluxora_export_fluxpack_with_options_and_progress(
+        const wchar_t* configPath,
+        const wchar_t* outputPath,
+        int includeGeneratedAssets,
+        int compressionMode,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
@@ -148,6 +169,17 @@ extern "C"
     FLUXORA_CORE_API int fluxora_install_fluxpack(
         const wchar_t* fluxPackPath,
         const wchar_t* installRootDirectory,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    // Installs into an existing Fluxora build when existingConfigPath is set.
+    // Matching source mods, cached downloads and payload files are reused.
+    FLUXORA_CORE_API int fluxora_install_fluxpack_with_target(
+        const wchar_t* fluxPackPath,
+        const wchar_t* installRootDirectory,
+        const wchar_t* existingConfigPath,
         FluxoraCoreProgressCallback progressCallback,
         void* progressUserData,
         wchar_t* jsonBuffer,

@@ -37,6 +37,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -711,6 +712,13 @@ namespace
         writer.field(L"installStepCount", summary.installStepCount);
         writer.field(L"generatedAssetsIncluded", summary.generatedAssetsIncluded);
         writer.field(L"installPlanAvailable", summary.installPlanAvailable);
+        writer.field(L"compressionMode", summary.compressionMode);
+        writer.field(L"logicalPayloadBytes", summary.logicalPayloadBytes);
+        writer.field(L"uniquePayloadBytes", summary.uniquePayloadBytes);
+        writer.field(L"storedPayloadBytes", summary.storedPayloadBytes);
+        writer.field(L"deduplicatedPayloadBytes", summary.deduplicatedPayloadBytes);
+        writer.field(L"uniqueChunkCount", summary.uniqueChunkCount);
+        writer.field(L"dictionaryCount", summary.dictionaryCount);
         writer.endObject();
     }
 
@@ -734,8 +742,13 @@ namespace
         writer.field(L"installedSourceCount", result.installedSourceCount);
         writer.field(L"pendingSourceCount", result.pendingSourceCount);
         writer.field(L"failedSourceCount", result.failedSourceCount);
+        writer.field(L"reusedSourceCount", result.reusedSourceCount);
+        writer.field(L"reusedDownloadCount", result.reusedDownloadCount);
         writer.field(L"appliedConfigCount", result.appliedConfigCount);
         writer.field(L"appliedProfileOrderItemCount", result.appliedProfileOrderItemCount);
+        writer.field(L"reusedFileCount", result.reusedFileCount);
+        writer.field(L"materializedFileCount", result.materializedFileCount);
+        writer.field(L"updatedExistingProject", result.updatedExistingProject);
         writer.field(L"hasWarnings", result.hasWarnings);
         writer.endObject();
         return writer.str();
@@ -1891,6 +1904,23 @@ namespace
         return writer.str();
     }
 
+    std::wstring serializeFluxPackExportProgress(const fluxora::FluxPackExportProgress& progress)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"phase", progress.phase);
+        writer.field(L"currentStep", progress.currentStep);
+        writer.field(L"currentItem", progress.currentItem);
+        writer.field(L"statusMessage", progress.statusMessage);
+        writer.field(L"overallPercent", progress.overallPercent);
+        writer.field(L"processedFileCount", progress.processedFileCount);
+        writer.field(L"totalFileCount", progress.totalFileCount);
+        writer.field(L"processedBytes", progress.processedBytes);
+        writer.field(L"totalBytes", progress.totalBytes);
+        writer.endObject();
+        return writer.str();
+    }
+
     std::wstring serializeGrassCacheProgress(const fluxora::GrassCacheGenerationProgress& progress)
     {
         fluxora::JsonWriter writer;
@@ -2567,7 +2597,10 @@ namespace
         lastBufferedOutput.clear();
         hasLastBufferedOutput = false;
         const char* message = exception.what();
-        lastError = messageToWide(std::string_view(message, std::strlen(message)));
+        const bool isBadAllocation = dynamic_cast<const std::bad_alloc*>(&exception) != nullptr;
+        lastError = isBadAllocation
+            ? L"Fluxora ran out of memory while processing this operation. Close memory-intensive apps and retry."
+            : messageToWide(std::string_view(message, std::strlen(message)));
         const bool isInvalidArgument = dynamic_cast<const std::invalid_argument*>(&exception) != nullptr;
         logApiException(isInvalidArgument ? fluxora::LogLevel::Warning : fluxora::LogLevel::Error, exception);
         logBridge(
@@ -3102,6 +3135,46 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength)
     {
+        return fluxora_export_fluxpack_with_progress(
+            configPath,
+            outputPath,
+            includeGeneratedAssets,
+            nullptr,
+            nullptr,
+            jsonBuffer,
+            jsonBufferLength);
+    }
+
+    int fluxora_export_fluxpack_with_progress(
+        const wchar_t* configPath,
+        const wchar_t* outputPath,
+        int includeGeneratedAssets,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        return fluxora_export_fluxpack_with_options_and_progress(
+            configPath,
+            outputPath,
+            includeGeneratedAssets,
+            static_cast<int>(fluxora::FluxPackCompressionMode::Optimal),
+            progressCallback,
+            progressUserData,
+            jsonBuffer,
+            jsonBufferLength);
+    }
+
+    int fluxora_export_fluxpack_with_options_and_progress(
+        const wchar_t* configPath,
+        const wchar_t* outputPath,
+        int includeGeneratedAssets,
+        int compressionMode,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
         try
         {
             if (isBlank(configPath) || isBlank(outputPath))
@@ -3110,12 +3183,38 @@ extern "C"
                 return FluxoraCoreResultInvalidArgument;
             }
 
+            fluxora::FluxPackCompressionMode resolvedCompressionMode;
+            switch (compressionMode)
+            {
+            case static_cast<int>(fluxora::FluxPackCompressionMode::Fast):
+                resolvedCompressionMode = fluxora::FluxPackCompressionMode::Fast;
+                break;
+            case static_cast<int>(fluxora::FluxPackCompressionMode::Optimal):
+                resolvedCompressionMode = fluxora::FluxPackCompressionMode::Optimal;
+                break;
+            case static_cast<int>(fluxora::FluxPackCompressionMode::Smallest):
+                resolvedCompressionMode = fluxora::FluxPackCompressionMode::Smallest;
+                break;
+            default:
+                lastError = L"FluxPack compression mode must be 1 (fast), 2 (optimal), or 3 (smallest).";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
             logBridge(fluxora::LogLevel::Info, "fluxora_export_fluxpack started.");
             const fluxora::FluxPackSummary summary = core().fluxPacks().exportProject(
                 fluxora::FluxPackExportRequest{
                     std::filesystem::path(configPath),
                     std::filesystem::path(outputPath),
-                    includeGeneratedAssets != 0
+                    includeGeneratedAssets != 0,
+                    [progressCallback, progressUserData](const fluxora::FluxPackExportProgress& progress)
+                    {
+                        if (progressCallback != nullptr)
+                        {
+                            const std::wstring json = serializeFluxPackExportProgress(progress);
+                            progressCallback(json.c_str(), progressUserData);
+                        }
+                    },
+                    resolvedCompressionMode
                 });
             return writeToBuffer(serializeFluxPackSummary(summary), jsonBuffer, jsonBufferLength);
         }
@@ -3157,6 +3256,25 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength)
     {
+        return fluxora_install_fluxpack_with_target(
+            fluxPackPath,
+            installRootDirectory,
+            nullptr,
+            progressCallback,
+            progressUserData,
+            jsonBuffer,
+            jsonBufferLength);
+    }
+
+    int fluxora_install_fluxpack_with_target(
+        const wchar_t* fluxPackPath,
+        const wchar_t* installRootDirectory,
+        const wchar_t* existingConfigPath,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
         try
         {
             if (isBlank(fluxPackPath) || isBlank(installRootDirectory))
@@ -3165,7 +3283,7 @@ extern "C"
                 return FluxoraCoreResultInvalidArgument;
             }
 
-            logBridge(fluxora::LogLevel::Info, "fluxora_install_fluxpack started.");
+            logBridge(fluxora::LogLevel::Info, "fluxora_install_fluxpack_with_target started.");
             const fluxora::FluxPackInstallResult result =
                 core().fluxPacks().installFluxPack(fluxora::FluxPackInstallRequest{
                     std::filesystem::path(fluxPackPath),
@@ -3177,7 +3295,10 @@ extern "C"
                             const std::wstring json = serializeFluxPackInstallProgress(progress);
                             progressCallback(json.c_str(), progressUserData);
                         }
-                    }
+                    },
+                    isBlank(existingConfigPath)
+                        ? std::filesystem::path{}
+                        : std::filesystem::path(existingConfigPath)
                 });
             return writeToBuffer(serializeFluxPackInstallResult(result), jsonBuffer, jsonBufferLength);
         }

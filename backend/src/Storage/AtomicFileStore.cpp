@@ -633,9 +633,27 @@ namespace fluxora
         const std::string& content,
         const AtomicFileWriteOptions& options) const
     {
+        writeFileAtomically(
+            path,
+            [&content, &options](const std::filesystem::path& tempPath)
+            {
+                writeContent(tempPath, content, options);
+            },
+            options);
+    }
+
+    void AtomicFileStore::writeFileAtomically(
+        const std::filesystem::path& path,
+        const std::function<void(const std::filesystem::path&)>& writeTemporaryFile,
+        const AtomicFileWriteOptions& options) const
+    {
         if (path.empty())
         {
             throw std::invalid_argument("Atomic project state path is required.");
+        }
+        if (!writeTemporaryFile)
+        {
+            throw std::invalid_argument("Atomic project state writer is required.");
         }
 
         const std::filesystem::path parent = path.parent_path();
@@ -648,7 +666,7 @@ namespace fluxora
         bool preserveTemp = false;
         try
         {
-            writeContent(tempPath, content, options);
+            writeTemporaryFile(tempPath);
             flushFile(tempPath);
             validateFile(tempPath, options);
             triggerSimulatedFailure(

@@ -57,13 +57,31 @@ describe('operation overlays', () => {
     expect(markup).toContain('operation-progress__bar operation-progress__bar--percent');
     expect(markup).toContain('aria-valuenow="44"');
     expect(markup).toContain('Отменить');
+    expect(markup).not.toContain('>Operation<');
   });
 
-  it('uses indeterminate progress only when the native API has no percent yet', () => {
+  it('keeps FluxPack export determinate even before the first native progress event', () => {
     const markup = renderOverlay(overlay({ kind: 'fluxpack-export', percent: null }));
 
-    expect(markup).toContain('data-indeterminate="true"');
-    expect(markup).toContain('Waiting for progress');
+    expect(markup).not.toContain('data-indeterminate="true"');
+    expect(markup).not.toContain('Waiting for progress');
+    expect(markup).toContain('aria-valuenow="0"');
+    expect(markup).toContain('0%');
+  });
+
+  it('places the close action in the top line without a technical operation label', () => {
+    const markup = renderOverlay(
+      overlay({
+        isRunning: false,
+        canClose: true,
+        resultText: 'Готово',
+        percent: 100
+      })
+    );
+
+    expect(markup).toContain('operation-splash__topline');
+    expect(markup).toContain('Закрыть');
+    expect(markup).not.toContain('>Operation<');
   });
 
   it('lets NGIO grass cache generation cancel through its operation marker', () => {
@@ -215,18 +233,62 @@ describe('operation overlays', () => {
 
   it('centers regular operation progress bars with the percent next to the bar', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+    const panelRule = styles.match(/\.operation-overlay__panel\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+    const progressLayoutRule = styles.match(/\.operation-progress\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+    const topLineRule = styles.match(/\.operation-splash__topline\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
     const progressRule = styles.match(/\.operation-progress__bar\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
     const percentRule =
       styles.match(/\.operation-progress__bar--percent \.flx-progress__meta > strong\s*\{[\s\S]*?\n\}/)?.[0] ??
       '';
 
-    expect(progressRule).toContain(
-      'grid-template-columns: minmax(0, 1fr) minmax(280px, 520px) minmax(0, 1fr);'
-    );
+    expect(progressRule).toContain('grid-template-columns: minmax(0, 1fr) auto;');
     expect(progressRule).toContain('column-gap: 8px;');
     expect(styles).toContain('.operation-progress__bar .flx-progress__track');
+    expect(panelRule).toContain('gap: 24px;');
+    expect(progressLayoutRule).toContain('gap: 24px;');
+    expect(progressLayoutRule).toContain('padding: 0 24px;');
+    expect(topLineRule).toContain('justify-content: flex-end;');
     expect(percentRule).toContain('font-size: 32.5px;');
     expect(percentRule).toContain('font-weight: 800;');
+  });
+
+  it('starts FluxPack packaging with user-facing Russian copy and a real zero percent', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+
+    expect(app).toContain("title: 'Упаковываем сборку'");
+    expect(app).toContain("statusText: 'Изучаем сборку'");
+    expect(app).toMatch(/kind: 'fluxpack-export',[\s\S]*?percent: 0/);
+    expect(app).not.toContain("title: 'Packaging FluxPack'");
+    expect(app).not.toContain("statusText: 'Writing FluxPack manifest'");
+  });
+
+  it('routes FluxPack export options through progress without breaking legacy ABI entries', () => {
+    const coreHeader = readText('backend', 'include', 'FluxoraCore', 'FluxoraCoreApi.hpp');
+    const coreApi = readText('backend', 'src', 'FluxoraCoreApi.cpp');
+    const bridgeHost = readText('backend', 'src', 'BridgeHost', 'FluxoraBridgeHost.cpp');
+
+    expect(coreHeader).toContain('fluxora_export_fluxpack(');
+    expect(coreHeader).toContain('fluxora_export_fluxpack_with_progress(');
+    expect(coreHeader).toContain('fluxora_export_fluxpack_with_options_and_progress(');
+    expect(coreApi).toContain('serializeFluxPackExportProgress');
+    expect(bridgeHost).toMatch(
+      /payloadExportFluxPack[\s\S]*?fluxora_export_fluxpack_with_options_and_progress[\s\S]*?emitOperationProgress/
+    );
+  });
+
+  it('routes the selected build into FluxPack delta install without breaking the legacy ABI', () => {
+    const coreHeader = readText('backend', 'include', 'FluxoraCore', 'FluxoraCoreApi.hpp');
+    const coreApi = readText('backend', 'src', 'FluxoraCoreApi.cpp');
+    const bridgeHost = readText('backend', 'src', 'BridgeHost', 'FluxoraBridgeHost.cpp');
+
+    expect(coreHeader).toContain('fluxora_install_fluxpack(');
+    expect(coreHeader).toContain('fluxora_install_fluxpack_with_target(');
+    expect(coreApi).toMatch(
+      /fluxora_install_fluxpack\([\s\S]*?fluxora_install_fluxpack_with_target\([\s\S]*?existingConfigPath/
+    );
+    expect(bridgeHost).toMatch(
+      /payloadInstallFluxPack[\s\S]*?existingConfigPath[\s\S]*?fluxora_install_fluxpack_with_target/
+    );
   });
 
   it('renders user-safe error states as alerts', () => {
