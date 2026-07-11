@@ -80,7 +80,9 @@ describe('right pane redesign', () => {
       app.match(/const dataTreeVisible = buildWorkspaceVisible[\s\S]*?selectedProjectProfileName\s+\]\);/)?.[0] ??
       '';
     const watcher =
-      app.match(/return window\.fluxora\.buildContent\.onChanged\(\(event\) => \{[\s\S]*?\}\);\s+\}, \[/)?.[0] ??
+      app.match(
+        /const unsubscribe = window\.fluxora\.buildContent\.onChanged\(\(event\) => \{[\s\S]*?return unsubscribe;/
+      )?.[0] ??
       '';
     const rightPaneTabsHeader =
       app.match(/<header className="build-pane__header build-pane__header--tabs">[\s\S]*?<\/header>/)?.[0] ??

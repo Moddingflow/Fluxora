@@ -774,6 +774,22 @@ namespace fluxora::tests
         EXPECT_FALSE(std::filesystem::exists(outputMod / L".flow"));
         EXPECT_TRUE(resolved.requiresParallaxGenMo2VfsCompatibilityFlag);
         EXPECT_EQ(resolved.commandLine.find(L"--ignore-mo2vfscheck"), std::wstring::npos);
+        ASSERT_EQ(resolved.activeProfileMods.size(), 4U);
+        EXPECT_EQ(normalized(resolved.activeProfileMods.back().path), normalized(outputMod));
+        EXPECT_EQ(resolved.activeProfileMods.back().name, expectedName);
+
+        const ResolvedExecutableLaunch repeated = service.resolveExecutable(config, L"pg");
+        ASSERT_EQ(repeated.activeProfileMods.size(), resolved.activeProfileMods.size());
+        for (std::size_t index = 0; index < resolved.activeProfileMods.size(); ++index)
+        {
+            EXPECT_EQ(
+                normalized(repeated.activeProfileMods[index].path),
+                normalized(resolved.activeProfileMods[index].path));
+            EXPECT_EQ(repeated.activeProfileMods[index].name, resolved.activeProfileMods[index].name);
+            EXPECT_EQ(
+                repeated.activeProfileMods[index].contentFingerprint,
+                resolved.activeProfileMods[index].contentFingerprint);
+        }
 
         const std::vector<InstalledModRecord> records =
             InstanceMetadataStore::listInstalledMods(project, mods);
@@ -936,6 +952,146 @@ namespace fluxora::tests
     }
 
 #ifdef _WIN32
+    TEST(ExecutableServiceTests, FreshActivationResolveUsesLaunchInventorySnapshotForOfflineRootBuilderExecutable)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Offline Tool Build";
+        const std::filesystem::path config = project / L"build.json";
+        const std::filesystem::path game = project / L"Stock Game";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path added = mods / L"Offline Tool";
+        const std::filesystem::path backingExecutable =
+            added / L"root" / L"Tools" / L"OfflineTool.exe";
+
+        writeExecutableStub(game / L"SkyrimSE.exe");
+        std::filesystem::create_directories(game / L"Data");
+        writeTextFile(
+            config,
+            "{"
+            "\"schemaVersion\":\"1\","
+            "\"name\":\"Offline Tool Build\","
+            "\"templateId\":\"skyrimse\","
+            "\"gameName\":\"Skyrim Special Edition\","
+            "\"gamePath\":\"Stock Game\","
+            "\"dataDirectory\":\"Data\","
+            "\"defaultProfile\":\"Default\","
+            "\"launchExecutables\":[{"
+            "\"id\":\"offline-tool\","
+            "\"displayName\":\"Offline Tool\","
+            "\"executablePath\":\"Tools\\\\OfflineTool.exe\","
+            "\"arguments\":\"\","
+            "\"workingDirectory\":\"\""
+            "}]"
+            "}");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+
+        // The folder appears while Fluxora is not watching this project. No
+        // exact workspace read or explicit install registration occurs.
+        writeExecutableStub(backingExecutable);
+        writeTextFile(
+            added / L".flow" / L"manifest.json",
+            R"({"schemaVersion":1,"modUuid":"offline-tool-mod","gameId":"skyrimse",)"
+            R"("folderName":"Offline Tool","displayName":"Offline Tool",)"
+            R"("version":"1.0","installedAt":"2026-07-11T00:00:00Z",)"
+            R"("updatedAt":"2026-07-11T00:00:00Z","state":"installed",)"
+            R"("contentFingerprint":"offline-tool-v1","source":{"provider":"manual"}})");
+        InstanceMetadataStore::beginProjectActivation(temp.path() / L"Other Build");
+        InstanceMetadataStore::beginProjectActivation(project);
+        InstanceMetadataStore::resetInventorySyncCountForTesting();
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        ExecutableIconService iconService(logger);
+        ExecutableService service(logger, iconService, pathSettings);
+
+        const ResolvedExecutableLaunch resolved =
+            service.resolveExecutable(config, L"offline-tool");
+
+        ASSERT_EQ(resolved.activeProfileMods.size(), 1U);
+        EXPECT_EQ(normalized(resolved.activeProfileMods.front().path), normalized(added));
+        EXPECT_EQ(resolved.activeProfileMods.front().name, L"Offline Tool");
+        EXPECT_EQ(resolved.activeProfileMods.front().contentFingerprint, L"offline-tool-v1");
+        EXPECT_EQ(InstanceMetadataStore::inventorySyncCountForTesting(), 1U);
+        ASSERT_FALSE(resolved.rootBuilderLaunchCacheDirectory.empty());
+        EXPECT_TRUE(std::filesystem::is_regular_file(resolved.resolvedExecutablePath));
+        EXPECT_NE(
+            normalized(resolved.resolvedExecutablePath).wstring().find(
+                normalized(resolved.rootBuilderLaunchCacheDirectory).wstring()),
+            std::wstring::npos);
+    }
+
+    TEST(ExecutableServiceTests, ExplicitProfileDrivesSharedLaunchSnapshotAndRootBuilderWinner)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Profile Launch Build";
+        const std::filesystem::path config = project / L"build.json";
+        const std::filesystem::path game = project / L"Stock Game";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path alpha = mods / L"Alpha Tool";
+        const std::filesystem::path beta = mods / L"Beta Tool";
+        const std::filesystem::path relativeTool = L"Tools\\SharedTool.exe";
+
+        writeExecutableStub(game / L"SkyrimSE.exe");
+        std::filesystem::create_directories(game / L"Data");
+        writeTextFile(alpha / L"root" / relativeTool, "MZ alpha winner");
+        writeTextFile(beta / L"root" / relativeTool, "MZ beta winner");
+        writeTextFile(
+            config,
+            "{"
+            "\"schemaVersion\":\"1\","
+            "\"name\":\"Profile Launch Build\","
+            "\"templateId\":\"skyrimse\","
+            "\"gameName\":\"Skyrim Special Edition\","
+            "\"gamePath\":\"Stock Game\","
+            "\"dataDirectory\":\"Data\","
+            "\"defaultProfile\":\"Default\","
+            "\"launchExecutables\":[{"
+            "\"id\":\"shared-tool\","
+            "\"displayName\":\"Shared Tool\","
+            "\"executablePath\":\"Tools\\\\SharedTool.exe\","
+            "\"arguments\":\"\","
+            "\"workingDirectory\":\"\""
+            "}]"
+            "}");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{alpha, L"Alpha Tool", {}, true, {}},
+                InstalledModImportRecord{beta, L"Beta Tool", {}, true, {}}
+            });
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"mod", L"Alpha Tool", {}},
+                ProfileOrderImportItemRecord{L"mod", L"Beta Tool", {}}
+            });
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Testing",
+            {
+                ProfileOrderImportItemRecord{L"mod", L"Beta Tool", {}},
+                ProfileOrderImportItemRecord{L"mod", L"Alpha Tool", {}}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        ExecutableIconService iconService(logger);
+        ExecutableService service(logger, iconService, pathSettings);
+
+        const ResolvedExecutableLaunch resolved =
+            service.resolveExecutable(config, L"shared-tool", L"Testing");
+
+        ASSERT_EQ(resolved.activeProfileMods.size(), 2U);
+        EXPECT_EQ(normalized(resolved.activeProfileMods[0].path), normalized(beta));
+        EXPECT_EQ(normalized(resolved.activeProfileMods[1].path), normalized(alpha));
+        EXPECT_EQ(resolved.defaultProfile, L"Testing");
+        EXPECT_EQ(readTextFile(resolved.resolvedExecutablePath), "MZ alpha winner");
+    }
+
     TEST(ExecutableServiceTests, RootBuilderLaunchCacheRefusesPreexistingJunction)
     {
         TempDirectory temp;

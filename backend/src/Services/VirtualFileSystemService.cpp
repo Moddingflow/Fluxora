@@ -3,22 +3,30 @@
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
-#include "FluxoraCore/Services/ProfileOrderService.hpp"
 #include "FluxoraCore/Services/VfsMountPlan.hpp"
+#include "FluxoraCore/Support/ScopedFileCleanup.hpp"
+#include "FluxoraCore/Support/LaunchDescriptorStore.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
+#include "FluxoraVfs/VfsEnvironment.hpp"
 
+#include <array>
+#include <chrono>
 #include <fstream>
 #include <algorithm>
 #include <cstdint>
 #include <cwctype>
+#include <iomanip>
 #include <map>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <bcrypt.h>
 #include <shlobj.h>
 #endif
 
@@ -621,6 +629,97 @@ namespace fluxora
             file.write(content.data(), static_cast<std::streamsize>(content.size()));
         }
 
+        std::wstring launchSessionId()
+        {
+#ifdef _WIN32
+            std::array<unsigned char, 16> randomBytes{};
+            if (BCryptGenRandom(
+                    nullptr,
+                    randomBytes.data(),
+                    static_cast<ULONG>(randomBytes.size()),
+                    BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
+            {
+                throw std::runtime_error("Failed to generate a VFS launch session id.");
+            }
+
+            std::wostringstream stream;
+            stream << std::hex << std::setfill(L'0');
+            for (const unsigned char byte : randomBytes)
+            {
+                stream << std::setw(2) << static_cast<unsigned int>(byte);
+            }
+            return stream.str();
+#else
+            throw std::runtime_error("VFS launch sessions require Windows.");
+#endif
+        }
+
+        void writeNewTextFile(const std::filesystem::path& path, const std::string& content)
+        {
+#ifdef _WIN32
+            HANDLE file = CreateFileW(
+                path.c_str(),
+                GENERIC_WRITE,
+                0,
+                nullptr,
+                CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,
+                nullptr);
+            if (file == INVALID_HANDLE_VALUE)
+            {
+                throw std::runtime_error(
+                    "Failed to create the immutable virtual file system descriptor. Win32 error: " +
+                    std::to_string(GetLastError()) + ".");
+            }
+
+            bool complete = false;
+            try
+            {
+                std::size_t offset = 0;
+                while (offset < content.size())
+                {
+                    const std::size_t remaining = content.size() - offset;
+                    const DWORD requested = remaining > static_cast<std::size_t>(MAXDWORD)
+                        ? MAXDWORD
+                        : static_cast<DWORD>(remaining);
+                    DWORD written = 0;
+                    if (!WriteFile(file, content.data() + offset, requested, &written, nullptr) || written == 0)
+                    {
+                        throw std::runtime_error(
+                            "Failed to write the immutable virtual file system descriptor. Win32 error: " +
+                            std::to_string(GetLastError()) + ".");
+                    }
+                    offset += written;
+                }
+                if (!FlushFileBuffers(file))
+                {
+                    throw std::runtime_error(
+                        "Failed to flush the immutable virtual file system descriptor. Win32 error: " +
+                        std::to_string(GetLastError()) + ".");
+                }
+                complete = true;
+            }
+            catch (...)
+            {
+                CloseHandle(file);
+                std::error_code ignored;
+                std::filesystem::remove(path, ignored);
+                throw;
+            }
+            CloseHandle(file);
+            if (!complete)
+            {
+                std::error_code ignored;
+                std::filesystem::remove(path, ignored);
+                throw std::runtime_error("Failed to publish the virtual file system descriptor.");
+            }
+#else
+            (void)path;
+            (void)content;
+            throw std::runtime_error("VFS launch sessions require Windows.");
+#endif
+        }
+
         // The FluxoraVfs.dll hook ships next to FluxoraCore.dll, so it is located
         // relative to this very module rather than the (unknown) game folder.
         std::filesystem::path hookDllPath()
@@ -837,11 +936,9 @@ namespace fluxora
     VirtualFileSystemService::VirtualFileSystemService(
         Logger& logger,
         ExecutableService& executables,
-        ProfileOrderService& profileOrder,
         const BuildPathSettingsService& pathSettings) noexcept
         : logger_(logger),
           executables_(executables),
-          profileOrder_(profileOrder),
           pathSettings_(pathSettings)
     {
     }
@@ -874,8 +971,12 @@ namespace fluxora
         std::wstring_view profileName,
         std::wstring_view additionalArguments) const
     {
-        const ResolvedExecutableLaunch resolved =
+        const auto launchStartedAt = std::chrono::steady_clock::now();
+        const std::wstring managerVfsEnvironmentBefore =
+            readEnvironmentVariable(L"FLUXORA_VFS_CONFIG");
+        ResolvedExecutableLaunch resolved =
             executables_.resolveExecutable(configPath, executableId, profileName, additionalArguments);
+        const auto executableResolvedAt = std::chrono::steady_clock::now();
         logger_.writeOperation(
             LogLevel::Info,
             "VfsDiagnostics",
@@ -985,10 +1086,31 @@ namespace fluxora
             return failVfsLaunch("the selected game enables Root Builder but does not define its root directory name.");
         }
 
-        std::wstring profile = resolved.defaultProfile.empty() ? L"Default" : resolved.defaultProfile;
-        const VfsGameRootMountPlan gameRootPlan = buildVfsGameRootMountPlan(
+        std::wstring profile(profileName);
+        if (profile.empty())
+        {
+            profile = resolved.defaultProfile.empty() ? L"Default" : resolved.defaultProfile;
+        }
+        const std::filesystem::path modsDirectory =
+            pathSettings_.modsDirectory(resolved.projectDirectory);
+        // A launch can occur before the debounced filesystem watcher publishes
+        // an external layout change. Shallow placement analysis is cheap enough
+        // to force fresh per-project roots here rather than risk stale Data/Root
+        // Builder classification.
+        invalidateVfsContentPlacementCache(modsDirectory, {modsDirectory});
+        std::vector<VfsActiveMod> activeMods;
+        activeMods.reserve(resolved.activeProfileMods.size());
+        for (ExecutableLaunchMod& mod : resolved.activeProfileMods)
+        {
+            activeMods.push_back(VfsActiveMod{
+                std::move(mod.path),
+                std::move(mod.name),
+                std::move(mod.contentFingerprint)
+            });
+        }
+        VfsGameRootMountPlan gameRootPlan = buildVfsGameRootMountPlan(
             logger_,
-            profileOrder_,
+            std::move(activeMods),
             pathSettings_,
             resolved.projectDirectory,
             resolved.gamePath,
@@ -996,10 +1118,11 @@ namespace fluxora
             resolved.gameCapabilities,
             *resolved.vfsRules,
             *contentRules);
+        const auto mountPlanReadyAt = std::chrono::steady_clock::now();
         const std::vector<VfsActiveMod>& mods = gameRootPlan.activeMods;
         const std::vector<std::filesystem::path>& dataMods = gameRootPlan.dataMods;
         const std::vector<std::filesystem::path>& rootMods = gameRootPlan.rootMods;
-        std::vector<VfsMountDescriptor> mounts = gameRootPlan.mounts;
+        std::vector<VfsMountDescriptor> mounts = std::move(gameRootPlan.mounts);
         const std::filesystem::path overwrite = pathSettings_.overwriteDirectory(resolved.projectDirectory);
         const std::filesystem::path vfsDirectory = resolved.projectDirectory / L".flow" / L"vfs";
         const std::filesystem::path rootOverwrite = overwrite / rootBuilderDirectoryName;
@@ -1053,6 +1176,7 @@ namespace fluxora
                 vfsDirectory / L"profile-overwrite",
                 profile);
         }
+        const auto finalMountsReadyAt = std::chrono::steady_clock::now();
 
         if (mounts.empty())
         {
@@ -1074,9 +1198,12 @@ namespace fluxora
             return failVfsLaunch("FluxoraVfs.dll was not found next to FluxoraCore.dll.");
         }
 
-        const std::filesystem::path descriptorPath = vfsDirectory / L"vfs-config.json";
         const std::filesystem::path logPath = vfsDirectory / L"vfs.log";
         const std::uint32_t managerProcessId = GetCurrentProcessId();
+        const std::filesystem::path sessionsDirectory = vfsDirectory / L"sessions";
+        const std::filesystem::path descriptorPath =
+            sessionsDirectory /
+            (L"vfs-config-" + std::to_wstring(managerProcessId) + L"-" + launchSessionId() + L".json");
         const std::string descriptorContent =
             toUtf8(buildDescriptor(logPath, hookDll, managerProcessId, mounts));
 
@@ -1088,6 +1215,15 @@ namespace fluxora
             return failVfsLaunch(
                 "unsafe VFS directory " + toUtf8(vfsDirectory.wstring()) +
                 " (" + pathSafetyErrorForLog(vfsDirectorySafety) + ").");
+        }
+
+        const PathSafetyResult sessionsDirectorySafety =
+            pathSafety.validateWritePath(vfsDirectory, sessionsDirectory);
+        if (!sessionsDirectorySafety.safe())
+        {
+            return failVfsLaunch(
+                "unsafe VFS sessions directory " + toUtf8(sessionsDirectory.wstring()) +
+                " (" + pathSafetyErrorForLog(sessionsDirectorySafety) + ").");
         }
 
         PathSafetyWriteOptions descriptorWriteOptions;
@@ -1135,13 +1271,14 @@ namespace fluxora
             }
         }
         error.clear();
-        std::filesystem::create_directories(vfsDirectory, error);
+        std::filesystem::create_directories(sessionsDirectory, error);
         if (error)
         {
             return failVfsLaunch(
                 "could not create VFS directory " + toUtf8(vfsDirectory.wstring()) +
                 " (" + describeWin32Error(static_cast<DWORD>(error.value())) + ").");
         }
+        pruneDeadManagerLaunchDescriptors(sessionsDirectory, managerProcessId);
 
         for (const VfsMountDescriptor& mount : mounts)
         {
@@ -1153,12 +1290,23 @@ namespace fluxora
                     ", excluded=" + std::to_string(mount.excludedRootNames.size()) + ".");
         }
 
-        writeTextFile(
+        writeNewTextFile(
             descriptorPath,
             descriptorContent);
+        ScopedFileCleanup descriptorCleanup(descriptorPath);
 
-        // Children inherit this, so the whole process tree shares one virtual view.
-        SetEnvironmentVariableW(vfs::protocol::configEnvironmentVariable, descriptorPath.c_str());
+        std::vector<wchar_t> childEnvironment;
+        try
+        {
+            childEnvironment = vfs::environment::currentWithVariable(
+                vfs::protocol::configEnvironmentVariable,
+                descriptorPath.wstring());
+        }
+        catch (const std::exception& exception)
+        {
+            return failVfsLaunch(
+                std::string("could not prepare the child process environment: ") + exception.what());
+        }
 
         std::wstring commandLine = resolved.commandLine;
         if (resolved.requiresParallaxGenMo2VfsCompatibilityFlag &&
@@ -1179,6 +1327,7 @@ namespace fluxora
         STARTUPINFOW startupInfo{};
         startupInfo.cb = sizeof(startupInfo);
         PROCESS_INFORMATION processInformation{};
+        const auto processCreateStartedAt = std::chrono::steady_clock::now();
 
         const BOOL started = DetourCreateProcessWithDllExW(
             resolved.resolvedExecutablePath.c_str(),
@@ -1186,13 +1335,14 @@ namespace fluxora
             nullptr,
             nullptr,
             FALSE,
-            CREATE_DEFAULT_ERROR_MODE,
-            nullptr,
+            CREATE_DEFAULT_ERROR_MODE | CREATE_UNICODE_ENVIRONMENT,
+            childEnvironment.data(),
             resolved.resolvedWorkingDirectory.c_str(),
             &startupInfo,
             &processInformation,
             hookDllAnsi.c_str(),
             nullptr);
+        const auto processCreatedAt = std::chrono::steady_clock::now();
 
         if (!started)
         {
@@ -1201,6 +1351,9 @@ namespace fluxora
                 ("the game could not be started with the hook injected. Win32 error: " +
                  describeWin32Error(launchError) + "."));
         }
+        descriptorCleanup.release();
+        const bool managerEnvironmentUnchanged =
+            readEnvironmentVariable(L"FLUXORA_VFS_CONFIG") == managerVfsEnvironmentBefore;
 
         const DWORD processId = processInformation.dwProcessId;
         CloseHandle(processInformation.hThread);
@@ -1217,8 +1370,30 @@ namespace fluxora
                 "\", definitionVersion=\"" + toUtf8(resolved.gameDefinitionVersion) +
                 "\", appliedVfsRules=\"" + vfsRulesSummary(rules) +
                 "\", processId=" + std::to_string(static_cast<std::uint32_t>(processId)) +
+                ", descriptorPath=\"" + toUtf8(descriptorPath.wstring()) + "\"" +
+                ", managerEnvironmentUnchanged=" +
+                std::to_string(managerEnvironmentUnchanged ? 1 : 0) +
                 ", mounts=" + std::to_string(mounts.size()) +
                 ", activeMods=" + std::to_string(mods.size()) + ".");
+        const auto elapsedMicroseconds = [](const auto start, const auto end)
+        {
+            return std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        };
+        logger_.writeOperation(
+            LogLevel::Info,
+            "Performance",
+            "launchTiming resolveExecutableUs=" +
+                std::to_string(elapsedMicroseconds(launchStartedAt, executableResolvedAt)) +
+                ", mountPlanUs=" +
+                std::to_string(elapsedMicroseconds(executableResolvedAt, mountPlanReadyAt)) +
+                ", postMountPreparationUs=" +
+                std::to_string(elapsedMicroseconds(mountPlanReadyAt, finalMountsReadyAt)) +
+                ", descriptorPreparationUs=" +
+                std::to_string(elapsedMicroseconds(finalMountsReadyAt, processCreateStartedAt)) +
+                ", detourCreateProcessUs=" +
+                std::to_string(elapsedMicroseconds(processCreateStartedAt, processCreatedAt)) +
+                ", totalUs=" +
+                std::to_string(elapsedMicroseconds(launchStartedAt, processCreatedAt)) + ".");
 
         return GameExecutableLaunchResult{
             resolved.executable,
@@ -1228,7 +1403,8 @@ namespace fluxora
             resolved.expectedChildProcessNames,
             resolved.handoffDisplayName,
             resolved.handoffTimeoutMs,
-            static_cast<std::uint32_t>(processId)
+            static_cast<std::uint32_t>(processId),
+            managerEnvironmentUnchanged
         };
 #endif
     }

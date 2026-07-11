@@ -49,6 +49,12 @@ namespace fluxora
         std::vector<std::wstring> overwrittenByModIds;
     };
 
+    struct ModWorkspaceSnapshot
+    {
+        std::vector<InstalledModEntry> installedMods;
+        std::vector<ProfileModOrderItem> modOrder;
+    };
+
     class ProfileOrderService final : public IService
     {
     public:
@@ -65,6 +71,21 @@ namespace fluxora
             std::wstring_view profileName) const;
 
         [[nodiscard]] std::vector<ProfileModOrderItem> listCachedModOrder(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName) const;
+
+        // Launch reconciles top-level inventory once per fresh activation, then
+        // reads enabled state, priority, paths and content generation. It never
+        // enters the file-index or conflict-summary scan used by the exact UI.
+        [[nodiscard]] std::vector<ProfileModOrderItem> listCachedLaunchModOrder(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName) const;
+
+        [[nodiscard]] ModWorkspaceSnapshot workspaceSnapshot(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName) const;
+
+        [[nodiscard]] ModWorkspaceSnapshot persistedWorkspaceSnapshot(
             const std::filesystem::path& projectDirectory,
             std::wstring_view profileName) const;
 

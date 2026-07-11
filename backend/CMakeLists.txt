@@ -172,9 +172,11 @@ add_library(FluxoraCore SHARED
     src/Services/VfsContentPlacementAnalyzer.cpp
     src/Services/VfsMountPlan.cpp
     src/Services/VirtualFileSystemService.cpp
+    src/Support/LaunchDescriptorStore.cpp
     src/Storage/AtomicFileStore.cpp
     src/Storage/InstanceMetadataStore.cpp
     src/Storage/ProjectStateTransaction.cpp
+    vfs/src/VfsEnvironment.cpp
 )
 
 target_include_directories(FluxoraCore
@@ -341,4 +343,15 @@ endif()
 option(FLUXORA_BUILD_TESTS "Build Fluxora C++ unit tests" ${BUILD_TESTING})
 if(FLUXORA_BUILD_TESTS)
     add_subdirectory(tests)
+endif()
+
+option(FLUXORA_BUILD_BENCHMARKS "Build opt-in Fluxora performance tools" OFF)
+if(FLUXORA_BUILD_BENCHMARKS)
+    if(NOT WIN32)
+        message(FATAL_ERROR "Fluxora performance tools currently require Windows.")
+    endif()
+    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+        message(FATAL_ERROR "Fluxora performance tools require an x64 build.")
+    endif()
+    add_subdirectory(performance)
 endif()

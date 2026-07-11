@@ -6639,6 +6639,14 @@ namespace fluxora
         stopNxmDownloadWorker();
     }
 
+    bool DownloadService::canAutomaticallyDownloadNexus() const
+    {
+        const NexusModsStoredAuth auth = settings_.loadNexusModsAuth();
+        return auth.linked &&
+            auth.isPremium &&
+            (!auth.protectedAccessToken.empty() || !auth.protectedApiKey.empty());
+    }
+
     void DownloadService::processQueuedNxmDownload(const NxmDownloadJob& job) const
     {
         try
@@ -7063,6 +7071,66 @@ namespace fluxora
         }
 
         return captureNxmLinks(projectDirectory, links);
+    }
+
+    DownloadEntry DownloadService::downloadNxmForFluxPack(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view nxmLink) const
+    {
+        if (!canAutomaticallyDownloadNexus())
+        {
+            throw std::invalid_argument(
+                "Automatic Nexus downloads require a linked Premium account. Download this file manually.");
+        }
+        if (projectDirectory.empty() || trim(std::wstring(nxmLink)).empty())
+        {
+            throw std::invalid_argument("Project directory and NXM link are required.");
+        }
+
+        const std::wstring link = trim(std::wstring(nxmLink));
+        const NxmDownloadRequest request = parseNxmLink(link);
+        const std::filesystem::path directory = pathSettings_.downloadsDirectory(projectDirectory);
+        PathSafetyService().validateDirectoryWriteRoot(directory)
+            .throwIfUnsafe("Downloads directory is unsafe");
+        std::filesystem::create_directories(directory);
+        removePendingNxmForLink(directory, link);
+
+        const std::filesystem::path pendingPath = savePendingNxm(directory, request, link);
+        DownloadMetadata progressMetadata = metadataForRequest(link, L"Скачивается", request);
+        progressMetadata.isDownloading = true;
+        writeMetadata(pendingPath, progressMetadata);
+
+        try
+        {
+            const NexusDownloadedFile downloadedFile = downloadNxm(
+                directory,
+                request,
+                settings_,
+                pendingPath,
+                progressMetadata);
+            if (downloadedFile.path.empty())
+            {
+                throw std::runtime_error("Nexus did not return a download URL for this file.");
+            }
+
+            removePendingNxmFile(pendingPath);
+            DownloadMetadata completedMetadata =
+                metadataForRequest(link, L"", request, downloadedFile.nexusModName);
+            completedMetadata.version = downloadedFile.version;
+            completedMetadata.latestVersion = downloadedFile.latestVersion;
+            writeMetadata(downloadedFile.path, completedMetadata);
+            logger_.writeOperation(
+                LogLevel::Info,
+                "Downloads",
+                "Completed synchronous Premium Nexus download for FluxPack: " +
+                    toUtf8(downloadedFile.path.filename().wstring()));
+            return buildEntry(downloadedFile.path);
+        }
+        catch (...)
+        {
+            removePendingNxmFile(pendingPath);
+            throw;
+        }
     }
 
     DownloadEntry DownloadService::importLocalFile(

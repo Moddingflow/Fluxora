@@ -633,6 +633,27 @@ namespace fluxora
         const std::string& content,
         const AtomicFileWriteOptions& options) const
     {
+        if (!path.empty())
+        {
+            try
+            {
+                std::error_code sizeError;
+                const std::uintmax_t existingSize = std::filesystem::file_size(path, sizeError);
+                if (!sizeError &&
+                    existingSize == content.size() &&
+                    readBinaryFile(path) == content &&
+                    isValidFile(path, options))
+                {
+                    return;
+                }
+            }
+            catch (const std::exception&)
+            {
+                // Preserve the established atomic-write error and recovery path
+                // when the existing target cannot be inspected safely.
+            }
+        }
+
         writeFileAtomically(
             path,
             [&content, &options](const std::filesystem::path& tempPath)

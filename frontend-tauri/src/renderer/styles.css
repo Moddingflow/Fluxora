@@ -386,18 +386,23 @@ button:disabled {
 }
 
 .library-header__title {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
 }
 
-.library-header__title span {
+.library-header__heading {
   color: var(--text);
   font-size: 18px;
   font-weight: 700;
   line-height: 1.15;
+}
+
+.library-header__install {
+  justify-self: end;
+  min-width: 0;
 }
 
 .library-header__title strong {
@@ -4270,6 +4275,91 @@ input::placeholder {
   line-height: 1;
 }
 
+.fluxpack-source-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 12px;
+  width: 100%;
+}
+
+.fluxpack-source-progress__sectors {
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.fluxpack-source-progress__segment {
+  --source-progress-color: #8ca0b8;
+  position: relative;
+  flex-basis: 0;
+  min-width: 8px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--source-progress-color) 22%, transparent);
+}
+
+.fluxpack-source-progress__segment > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--source-progress-color);
+  transition: width 180ms var(--ease-standard);
+}
+
+.fluxpack-source-progress__segment[data-provider="nexus"],
+.fluxpack-source-progress__legend > span[data-provider="nexus"] {
+  --source-progress-color: #d98f2b;
+}
+
+.fluxpack-source-progress__segment[data-provider="local"],
+.fluxpack-source-progress__legend > span[data-provider="local"] {
+  --source-progress-color: var(--accent);
+}
+
+.fluxpack-source-progress__percent {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 32.5px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.fluxpack-source-progress__legend {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  min-width: 0;
+}
+
+.fluxpack-source-progress__legend > span {
+  --source-progress-color: #8ca0b8;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.fluxpack-source-progress__legend i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--source-progress-color);
+}
+
+.fluxpack-source-progress__legend strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
 .operation-splash__step {
   display: grid;
   gap: 5px;
@@ -7324,6 +7414,238 @@ body.row-reorder-active * {
 
 .fluxpack-export-dialog__actions button {
   min-width: 96px;
+}
+
+.fluxpack-install-conflict-dialog {
+  width: min(500px, 100%);
+}
+
+.fluxpack-install-conflict-dialog__body > strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fluxpack-install-conflict-dialog__body > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.fluxpack-manual-download-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(720px, 100%);
+  max-height: min(620px, calc(100vh - 48px));
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.fluxpack-manual-download-dialog__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.fluxpack-manual-download-dialog__queue {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+}
+
+.fluxpack-manual-download-dialog__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.fluxpack-manual-download-dialog__summary strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fluxpack-manual-download-dialog__summary span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.fluxpack-manual-download-dialog__sources {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.fluxpack-manual-download-dialog__source {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.fluxpack-manual-download-dialog__source[data-complete="true"] {
+  color: var(--flx-success);
+  background: rgba(var(--flx-success-rgb), 0.08);
+}
+
+.fluxpack-manual-download-dialog__source > span {
+  display: grid;
+  place-items: center;
+}
+
+.fluxpack-manual-download-dialog__source > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.fluxpack-manual-download-dialog__source strong,
+.fluxpack-manual-download-dialog__source small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fluxpack-manual-download-dialog__source strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.fluxpack-manual-download-dialog__source small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.fluxpack-manual-download-dialog__action-panel {
+  display: grid;
+  grid-template-rows: auto auto auto 42px 34px;
+  align-content: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 22px;
+  background: var(--flx-panel-soft);
+}
+
+.fluxpack-manual-download-dialog__action-panel > span {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.fluxpack-manual-download-dialog__action-panel[data-provider="nexus"] > span {
+  color: #d98f2b;
+}
+
+.fluxpack-manual-download-dialog__action-panel > strong,
+.fluxpack-manual-download-dialog__action-panel > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fluxpack-manual-download-dialog__action-panel > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.manual-download-dialog__download-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--flx-ink-on-accent);
+  background: var(--flx-fill-accent);
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+  box-shadow: 0 0 0 3px rgba(var(--flx-accent-rgb), 0.18);
+}
+
+.manual-download-dialog__download-action[data-provider="nexus"] {
+  border-color: #e6a347;
+  color: #171109;
+  background: #d98f2b;
+  animation: nexusDownloadFocus 1.5s ease-in-out infinite alternate;
+}
+
+.manual-download-dialog__download-action:hover,
+.manual-download-dialog__download-action:focus-visible {
+  background: var(--flx-accent-hover);
+  outline: 2px solid rgba(var(--flx-accent-rgb), 0.62);
+  outline-offset: 2px;
+}
+
+.manual-download-dialog__download-action[data-provider="nexus"]:hover,
+.manual-download-dialog__download-action[data-provider="nexus"]:focus-visible {
+  background: #e6a347;
+  outline: 2px solid rgba(230, 163, 71, 0.72);
+  outline-offset: 2px;
+}
+
+.manual-download-dialog__download-action:disabled {
+  opacity: 0.55;
+  cursor: default;
+  animation: none;
+}
+
+.manual-download-dialog__pick-action {
+  width: 100%;
+}
+
+@keyframes nexusDownloadFocus {
+  from {
+    box-shadow: 0 0 0 3px rgba(217, 143, 43, 0.16);
+  }
+  to {
+    box-shadow: 0 0 0 6px rgba(217, 143, 43, 0.28);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .manual-download-dialog__download-action {
+    animation: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .fluxpack-manual-download-dialog__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fluxpack-manual-download-dialog__queue {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
 }
 
 .mod-create-dialog-backdrop {

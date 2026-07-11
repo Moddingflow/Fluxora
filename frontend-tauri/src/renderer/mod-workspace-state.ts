@@ -40,7 +40,7 @@ export interface ModWorkspaceState {
 
 export type ModWorkspaceAction =
   | { type: 'load-started' }
-  | { type: 'load-failed'; message: string }
+  | { type: 'load-failed'; message: string; silent?: boolean }
   | { type: 'items-loaded'; items: FluxoraModOrderItem[] }
   | { type: 'items-reordered'; orderId: string; targetIndex: number }
   | { type: 'item-enabled-set'; orderId: string; isEnabled: boolean }
@@ -694,7 +694,7 @@ export const modWorkspaceReducer = (
     case 'load-failed':
       return {
         ...state,
-        loadState: 'error',
+        loadState: action.silent ? state.loadState : 'error',
         errorMessage: action.message
       };
     case 'items-loaded': {

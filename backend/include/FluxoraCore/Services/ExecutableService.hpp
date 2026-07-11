@@ -35,6 +35,17 @@ namespace fluxora
         std::wstring handoffDisplayName;
         std::uint32_t handoffTimeoutMs{0};
         std::uint32_t processId{0};
+        bool managerEnvironmentUnchanged{true};
+    };
+
+    // Minimal, launch-scoped view of an enabled profile mod. Executable
+    // resolution and the VFS mount planner share this snapshot so a launch
+    // reconciles top-level inventory exactly once.
+    struct ExecutableLaunchMod
+    {
+        std::filesystem::path path;
+        std::wstring name;
+        std::wstring contentFingerprint;
     };
 
     // Everything needed to start an executable, resolved from the build config but
@@ -56,6 +67,7 @@ namespace fluxora
         std::wstring templateId;
         std::wstring dataDirectory;
         std::wstring defaultProfile;
+        std::vector<ExecutableLaunchMod> activeProfileMods;
         std::optional<VfsSupportRules> vfsRules;
         std::optional<ContentLayoutSupportRules> contentLayoutRules;
         bool requiresParallaxGenMo2VfsCompatibilityFlag{false};

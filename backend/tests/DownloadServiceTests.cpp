@@ -82,6 +82,34 @@ namespace fluxora::tests
     }
 #endif
 
+    TEST(DownloadServiceTests, AutomaticNexusDownloadsRequireLinkedPremiumAccount)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadService downloads(logger, settings, pathSettings);
+
+        EXPECT_FALSE(downloads.canAutomaticallyDownloadNexus());
+
+        NexusModsStoredAuth freeAuth;
+        freeAuth.linked = true;
+        freeAuth.protectedApiKey = L"protected-free-key";
+        settings.saveNexusModsAuth(freeAuth);
+        EXPECT_FALSE(downloads.canAutomaticallyDownloadNexus());
+
+        freeAuth.isPremium = true;
+        settings.saveNexusModsAuth(freeAuth);
+        EXPECT_TRUE(downloads.canAutomaticallyDownloadNexus());
+
+        pathSettings.shutdown();
+        settings.shutdown();
+    }
+
     TEST(DownloadServiceTests, CaptureNxmLinkWithoutDownloadKeyQueuesAuthenticatedDownload)
     {
 #ifndef _WIN32

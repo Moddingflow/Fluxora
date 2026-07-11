@@ -10,7 +10,6 @@
 namespace fluxora
 {
     class Logger;
-    class ProfileOrderService;
     class BuildPathSettingsService;
 
     // Launches a game executable behind a user-mode virtual file system, the same
@@ -26,7 +25,6 @@ namespace fluxora
         VirtualFileSystemService(
             Logger& logger,
             ExecutableService& executables,
-            ProfileOrderService& profileOrder,
             const BuildPathSettingsService& pathSettings) noexcept;
 
         void initialize() override;
@@ -46,7 +44,6 @@ namespace fluxora
     private:
         Logger& logger_;
         ExecutableService& executables_;
-        ProfileOrderService& profileOrder_;
         const BuildPathSettingsService& pathSettings_;
         bool initialized_{false};
     };

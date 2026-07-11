@@ -1,5 +1,7 @@
 #include "FluxoraCore/Services/ModService.hpp"
 
+#include "FluxoraCore/Services/VfsMountPlan.hpp"
+
 #include "FluxoraCore/Services/AppSettingsService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
@@ -1502,11 +1504,10 @@ namespace fluxora
         const std::filesystem::path& projectDirectory) const
     {
         const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
-        InstanceMetadataStore::refreshInstalledModsFromDisk(projectDirectory, modsDirectory);
-        const std::vector<InstalledModRecord> mods =
-            InstanceMetadataStore::listInstalledMods(projectDirectory, modsDirectory);
         const std::vector<ModFileSummaryRecord> summaries =
             InstanceMetadataStore::summarizeInstalledModFiles(projectDirectory, modsDirectory);
+        const std::vector<InstalledModRecord> mods =
+            InstanceMetadataStore::listInstalledMods(projectDirectory, modsDirectory);
 
         std::map<std::wstring, ModFileSummary> summariesByPath;
         for (const ModFileSummaryRecord& summary : summaries)
@@ -1525,6 +1526,43 @@ namespace fluxora
         }
 
         return entries;
+    }
+
+    std::vector<InstalledModEntry> ModService::listPersistedInstalledMods(
+        const std::filesystem::path& projectDirectory) const
+    {
+        const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
+        const PersistedInstalledModsSnapshot snapshot =
+            InstanceMetadataStore::persistedInstalledModsSnapshot(
+                projectDirectory,
+                modsDirectory);
+
+        std::vector<InstalledModEntry> entries;
+        entries.reserve(snapshot.mods.size());
+        for (std::size_t index = 0; index < snapshot.mods.size(); ++index)
+        {
+            const InstalledModRecord& mod = snapshot.mods[index];
+            const ModFileSummary& summary = index < snapshot.summaries.size()
+                ? snapshot.summaries[index].summary
+                : deferredFileSummary();
+            entries.push_back(entryFromRecord(
+                mod,
+                summary));
+        }
+        return entries;
+    }
+
+    void ModService::invalidateFileCaches(
+        const std::filesystem::path& projectDirectory,
+        const std::vector<std::filesystem::path>& changedPaths) const
+    {
+        InstanceMetadataStore::invalidateModFileCaches(
+            projectDirectory,
+            changedPaths,
+            pathSettings_.modsDirectory(projectDirectory));
+        invalidateVfsContentPlacementCache(
+            pathSettings_.modsDirectory(projectDirectory),
+            changedPaths);
     }
 
     std::vector<InstalledModEntry> ModService::checkInstalledModUpdates(

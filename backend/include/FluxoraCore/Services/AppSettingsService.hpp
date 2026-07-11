@@ -12,6 +12,7 @@ namespace fluxora
     struct NexusModsStoredAuth
     {
         bool linked{false};
+        bool isPremium{false};
         std::wstring username;
         std::wstring userId;
         std::wstring tokenType;

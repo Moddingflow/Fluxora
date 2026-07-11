@@ -125,12 +125,14 @@ namespace fluxora
         {
             std::wstring username;
             std::wstring userId;
+            bool isPremium{false};
         };
 
         struct ApiKeyUser
         {
             std::wstring username;
             std::wstring userId;
+            bool isPremium{false};
         };
 
         struct HttpResponse
@@ -1759,6 +1761,11 @@ namespace fluxora
             ApiKeyUser user;
             user.username = readFirstJsonString(root, {L"name", L"username", L"display_name"});
             user.userId = readFirstJsonString(root, {L"user_id", L"userId", L"id"});
+            if (const JsonValue* premium = root.find(L"is_premium");
+                premium != nullptr && premium->type() == JsonValue::Type::Boolean)
+            {
+                user.isPremium = premium->asBoolean();
+            }
             if (user.userId.empty())
             {
                 const long long numericUserId = readJsonInteger(root, L"user_id");
@@ -2080,6 +2087,17 @@ namespace fluxora
                 if (userObject != nullptr && userObject->isObject())
                 {
                     user.username = readJsonString(*userObject, L"username");
+                    if (const JsonValue* roles = userObject->find(L"membership_roles");
+                        roles != nullptr && roles->isArray())
+                    {
+                        user.isPremium = std::any_of(
+                            roles->asArray().begin(),
+                            roles->asArray().end(),
+                            [](const JsonValue& role)
+                            {
+                                return role.isString() && toLower(role.asString()) == L"premium";
+                            });
+                    }
                     if (user.userId.empty())
                     {
                         const JsonValue* id = userObject->find(L"id");
@@ -2333,6 +2351,7 @@ namespace fluxora
             status.hasApiKey = auth.linked && !auth.protectedApiKey.empty();
             const bool hasOAuthToken = auth.linked && !auth.protectedAccessToken.empty();
             status.isLinked = status.hasApiKey || hasOAuthToken;
+            status.isPremium = status.isLinked && auth.isPremium;
             status.displayName = status.isLinked ? auth.username : L"";
             status.userId = status.isLinked ? auth.userId : L"";
             status.clientId = config.clientId;
@@ -2556,6 +2575,7 @@ namespace fluxora
                     auth.expiresAtUtc = tokens.expiresInSeconds > 0
                         ? formatUtcExpiry(tokens.expiresInSeconds)
                         : L"";
+                    auth.isPremium = parseJwtUser(tokens.accessToken).isPremium;
                     settings_.saveNexusModsAuth(auth);
                     logger_.write(LogLevel::Info, "NexusMods OAuth token refreshed for trusted native services.");
                 }
@@ -2683,6 +2703,7 @@ namespace fluxora
 
             NexusModsStoredAuth stored;
             stored.linked = true;
+            stored.isPremium = user.isPremium;
             stored.username = user.username;
             stored.userId = user.userId;
             stored.tokenType = tokens.tokenType.empty() ? L"Bearer" : tokens.tokenType;
@@ -2713,6 +2734,7 @@ namespace fluxora
 
         NexusModsStoredAuth stored = settings_.loadNexusModsAuth();
         stored.linked = true;
+        stored.isPremium = user.isPremium;
         if (!user.username.empty())
         {
             stored.username = user.username;

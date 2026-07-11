@@ -723,6 +723,91 @@ namespace fluxora::tests
         EXPECT_EQ(order[1].name, L"Nemesis Output");
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, InstalledModListPerformsOneLiveInventorySync)
+    {
+        (void)mods_.createEmptyMod(project_, L"Inventory Probe");
+        InstanceMetadataStore::resetInventorySyncCountForTesting();
+
+        const std::vector<InstalledModEntry> installed = mods_.listInstalledMods(project_);
+
+        ASSERT_EQ(installed.size(), 1U);
+        EXPECT_EQ(installed.front().name, L"Inventory Probe");
+        EXPECT_EQ(InstanceMetadataStore::inventorySyncCountForTesting(), 1U);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, LiveProfileOrderPerformsOneLiveInventorySync)
+    {
+        (void)mods_.createEmptyMod(project_, L"Order Probe");
+        InstanceMetadataStore::resetInventorySyncCountForTesting();
+
+        const std::vector<ProfileModOrderItem> order =
+            profileOrder_.listModOrder(project_, L"Default");
+
+        ASSERT_EQ(order.size(), 1U);
+        EXPECT_EQ(order.front().name, L"Order Probe");
+        EXPECT_EQ(InstanceMetadataStore::inventorySyncCountForTesting(), 1U);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, ModWorkspaceSnapshotPreparesLiveInventoryExactlyOnce)
+    {
+        (void)mods_.createEmptyMod(project_, L"Workspace Probe");
+        InstanceMetadataStore::beginProjectActivation(temp_.path() / L"Other Workspace");
+        InstanceMetadataStore::beginProjectActivation(project_);
+        InstanceMetadataStore::resetInventorySyncCountForTesting();
+
+        const ModWorkspaceSnapshot snapshot =
+            profileOrder_.workspaceSnapshot(project_, L"Default");
+
+        ASSERT_EQ(snapshot.installedMods.size(), 1U);
+        ASSERT_EQ(snapshot.modOrder.size(), 1U);
+        EXPECT_EQ(snapshot.installedMods.front().name, L"Workspace Probe");
+        EXPECT_EQ(snapshot.modOrder.front().name, L"Workspace Probe");
+
+        const std::vector<ProfileModOrderItem> launchOrder =
+            profileOrder_.listCachedLaunchModOrder(project_, L"Default");
+        ASSERT_EQ(launchOrder.size(), 1U);
+        EXPECT_EQ(launchOrder.front().name, L"Workspace Probe");
+        EXPECT_EQ(InstanceMetadataStore::inventorySyncCountForTesting(), 1U);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, PersistedWorkspaceSnapshotSkipsLiveInventorySync)
+    {
+        (void)mods_.createEmptyMod(project_, L"Persisted Workspace Probe");
+        InstanceMetadataStore::resetInventorySyncCountForTesting();
+
+        const ModWorkspaceSnapshot snapshot =
+            profileOrder_.persistedWorkspaceSnapshot(project_, L"Default");
+
+        ASSERT_EQ(snapshot.installedMods.size(), 1U);
+        ASSERT_EQ(snapshot.modOrder.size(), 1U);
+        EXPECT_EQ(snapshot.installedMods.front().name, L"Persisted Workspace Probe");
+        EXPECT_EQ(snapshot.modOrder.front().name, L"Persisted Workspace Probe");
+        EXPECT_EQ(InstanceMetadataStore::inventorySyncCountForTesting(), 0U);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, LaunchOrderSkipsConflictSummaryButPreservesPriorityAndState)
+    {
+        const InstalledModEntry first = mods_.createEmptyMod(project_, L"Launch First");
+        const InstalledModEntry second = mods_.createEmptyMod(project_, L"Launch Second");
+        writeTextFile(first.id / L"Data" / L"shared.bin", "first");
+        writeTextFile(second.id / L"Data" / L"shared.bin", "second");
+        mods_.setInstalledModEnabled(project_, second.id, false);
+        (void)mods_.listInstalledMods(project_);
+
+        InstanceMetadataStore::resetInventorySyncCountForTesting();
+        const std::vector<ProfileModOrderItem> launchOrder =
+            profileOrder_.listCachedLaunchModOrder(project_, L"Default");
+
+        ASSERT_EQ(launchOrder.size(), 2U);
+        EXPECT_EQ(launchOrder[0].name, L"Launch First");
+        EXPECT_TRUE(launchOrder[0].isEnabled);
+        EXPECT_EQ(launchOrder[0].fileCount, -1);
+        EXPECT_FALSE(launchOrder[0].contentFingerprint.empty());
+        EXPECT_EQ(launchOrder[1].name, L"Launch Second");
+        EXPECT_FALSE(launchOrder[1].isEnabled);
+        EXPECT_EQ(InstanceMetadataStore::inventorySyncCountForTesting(), 0U);
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, CreateEmptyModRejectsOverlongWindowsFolderName)
     {
         const std::wstring overlongName(256, L'A');

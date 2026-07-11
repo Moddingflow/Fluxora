@@ -164,6 +164,7 @@ export const createInstantNexusAuthStatus = (
 ): NexusAuthViewStatus => ({
   isConfigured: true,
   isLinked: false,
+  isPremium: false,
   hasApiKey: false,
   displayName: '',
   userId: '',
@@ -221,6 +222,7 @@ export const createCheckingNexusAuthStatus = (
   return {
     isConfigured: status?.isConfigured ?? true,
     isLinked: false,
+    isPremium: false,
     hasApiKey: false,
     displayName: '',
     userId: '',
@@ -263,6 +265,7 @@ const normalizeCachedNexusAuthStatus = (
   return {
     isConfigured: record.isConfigured,
     isLinked: false,
+    isPremium: false,
     hasApiKey: false,
     displayName: '',
     userId: '',

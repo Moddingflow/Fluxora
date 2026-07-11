@@ -80,6 +80,7 @@ const baseSettingsWorkspaceProps: SettingsWorkspaceProps = {
 const cachedNativeNexusStatus: FluxoraNexusModsAuthStatus = {
   isConfigured: true,
   isLinked: true,
+  isPremium: true,
   hasApiKey: true,
   displayName: 'Cached user',
   userId: 'cached-user',

@@ -528,7 +528,13 @@ describe('Tauri bridge request timeouts', () => {
         {
           existingConfigPath: 'C:\\Fluxora\\Builds\\Foundation.json',
           fluxPackPath: 'E:\\Updates\\Foundation.fluxpack',
-          installRootDirectory: 'E:\\Fluxora Builds'
+          installRootDirectory: 'E:\\Fluxora Builds',
+          manualSourceArchives: [
+            {
+              sourceId: 'source-0:nexus:skyrimspecialedition:3863:123',
+              path: 'E:\\Downloads\\SkyUI.7z'
+            }
+          ]
         },
         request
       )
@@ -542,7 +548,64 @@ describe('Tauri bridge request timeouts', () => {
       params: {
         existingConfigPath: 'C:\\Fluxora\\Builds\\Foundation.json',
         fluxPackPath: 'E:\\Updates\\Foundation.fluxpack',
-        installRootDirectory: 'E:\\Fluxora Builds'
+        installRootDirectory: 'E:\\Fluxora Builds',
+        manualSourceArchives: [
+          {
+            sourceId: 'source-0:nexus:skyrimspecialedition:3863:123',
+            path: 'E:\\Downloads\\SkyUI.7z'
+          }
+        ]
+      },
+      request,
+      timeoutMs: 7_200_000
+    });
+  });
+
+  it('plans FluxPack acquisition through the typed bridge before installation', async () => {
+    const request: OperationRequest = { operationId: 'op_fluxpack_plan' };
+    invokeMock.mockResolvedValue({
+      automaticDownloadCount: 0,
+      manualDownloadCount: 1,
+      reusableDownloadCount: 2,
+      reusableSourceCount: 3,
+      sources: [
+        {
+          acquisitionMode: 'manual',
+          archiveFileName: 'SkyUI.7z',
+          canAutomaticallyDownload: false,
+          displayName: 'SkyUI',
+          manualDownloadUrl:
+            'https://www.nexusmods.com/skyrimspecialedition/mods/3863?tab=files&file_id=123',
+          providerDisplayName: 'Nexus Mods',
+          providerId: 'nexus',
+          requiresManualDownload: true,
+          sourceId: 'source-0:nexus:skyrimspecialedition:3863:123',
+          version: '5.2'
+        }
+      ],
+      summary: { buildName: 'Foundation Edition' },
+      updatesExistingProject: true
+    });
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.fluxPack.planInstall(
+        {
+          existingConfigPath: 'C:\\Fluxora\\Builds\\Foundation.json',
+          fluxPackPath: 'E:\\Updates\\Foundation.fluxpack'
+        },
+        request
+      )
+    ).resolves.toMatchObject({
+      manualDownloadCount: 1,
+      operationId: 'op_fluxpack_plan'
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'fluxPack.planInstall',
+      params: {
+        existingConfigPath: 'C:\\Fluxora\\Builds\\Foundation.json',
+        fluxPackPath: 'E:\\Updates\\Foundation.fluxpack'
       },
       request,
       timeoutMs: 7_200_000

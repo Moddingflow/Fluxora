@@ -163,6 +163,15 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    // Returns the source acquisition plan for a new or in-place install.
+    // Premium Nexus sources may be automatic; free-account sources are marked
+    // for manual selection while reusable mods and archives remain local.
+    FLUXORA_CORE_API int fluxora_plan_fluxpack_install(
+        const wchar_t* fluxPackPath,
+        const wchar_t* existingConfigPath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     // Creates a Fluxora build from a FluxPack recipe, downloads installable
     // source archives, applies embedded configs/profile order and returns:
     //   { "configPath", "projectDirectory", "buildName", source counters, ... }
@@ -180,6 +189,19 @@ extern "C"
         const wchar_t* fluxPackPath,
         const wchar_t* installRootDirectory,
         const wchar_t* existingConfigPath,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    // Additive install entry for user-selected source archives. The two JSON
+    // arrays are parallel arrays of plan source ids and local archive paths.
+    FLUXORA_CORE_API int fluxora_install_fluxpack_with_options_and_progress(
+        const wchar_t* fluxPackPath,
+        const wchar_t* installRootDirectory,
+        const wchar_t* existingConfigPath,
+        const wchar_t* manualSourceIdsJson,
+        const wchar_t* manualSourcePathsJson,
         FluxoraCoreProgressCallback progressCallback,
         void* progressUserData,
         wchar_t* jsonBuffer,
@@ -229,7 +251,7 @@ extern "C"
         int iconPathBufferLength);
 
     // Returns:
-    //   { "isConfigured", "isLinked", "hasApiKey", "displayName", "userId", "message",
+    //   { "isConfigured", "isLinked", "hasApiKey", "isPremium", "displayName", "userId", "message",
     //     "clientId", "redirectUri" }
     FLUXORA_CORE_API int fluxora_get_nexusmods_auth_status(
         wchar_t* jsonBuffer,
@@ -343,6 +365,24 @@ extern "C"
     FLUXORA_CORE_API int fluxora_get_mod_order(
         const wchar_t* projectDirectory,
         const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_get_mod_workspace(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_get_persisted_mod_workspace(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_invalidate_mod_file_caches(
+        const wchar_t* projectDirectory,
+        const wchar_t* changedPathsJson,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
@@ -506,6 +546,13 @@ extern "C"
         int jsonBufferLength);
 
     FLUXORA_CORE_API int fluxora_get_plugins(
+        const wchar_t* projectDirectory,
+        const wchar_t* templateId,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_get_persisted_plugins(
         const wchar_t* projectDirectory,
         const wchar_t* templateId,
         const wchar_t* profileName,

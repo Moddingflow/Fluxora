@@ -86,6 +86,14 @@ namespace fluxora
         ModFileSummary summary;
     };
 
+    struct PersistedInstalledModsSnapshot
+    {
+        std::vector<InstalledModRecord> mods;
+        // Index-aligned with mods so consumers can reuse records without a
+        // second lookup or path-key map.
+        std::vector<ModFileSummaryRecord> summaries;
+    };
+
     struct ModFileTreeEntry
     {
         std::wstring name;
@@ -155,10 +163,30 @@ namespace fluxora
         [[nodiscard]] static std::wstring gameId(
             const std::filesystem::path& projectDirectory);
 
+        // Marks a user-visible project activation. The first exact workspace
+        // read for a newly active project validates persisted file-index
+        // generations; persisted snapshot reads remain database-only.
+        static void beginProjectActivation(
+            const std::filesystem::path& projectDirectory);
+
 #ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
         static void resetSqlPrepareCountForTesting();
 
         [[nodiscard]] static std::uint64_t sqlPrepareCountForTesting();
+
+        static void resetSqlExecCountForTesting();
+
+        [[nodiscard]] static std::uint64_t sqlExecCountForTesting();
+
+        static void resetInventorySyncCountForTesting();
+
+        [[nodiscard]] static std::uint64_t inventorySyncCountForTesting();
+
+        static void setFileCacheScanFailureAfterEntriesForTesting(int entryCount);
+
+        static void resetStableMetadataHandleOpenCountForTesting();
+
+        [[nodiscard]] static std::uint64_t stableMetadataHandleOpenCountForTesting();
 #endif
 
         [[nodiscard]] static std::vector<InstalledModRecord> listInstalledMods(
@@ -169,15 +197,28 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modsDirectory = {});
 
+        static void invalidateModFileCaches(
+            const std::filesystem::path& projectDirectory,
+            const std::vector<std::filesystem::path>& changedPaths,
+            const std::filesystem::path& modsDirectory = {});
+
         [[nodiscard]] static std::vector<ProfileOrderItemRecord> listProfileOrderItems(
             const std::filesystem::path& projectDirectory,
             std::wstring_view profileName,
             const std::filesystem::path& modsDirectory = {});
 
-        // Launch paths use the saved profile order as the hot-path source of
-        // truth and avoid refreshing the whole mods directory immediately before
-        // process creation.
+        // Persisted UI snapshots use the saved profile order without touching
+        // the installed-mod directory.
         [[nodiscard]] static std::vector<ProfileOrderItemRecord> listCachedProfileOrderItems(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName,
+            const std::filesystem::path& modsDirectory = {});
+
+        // The first launch read after a fresh project activation reconciles only
+        // top-level installed folders, then repairs the saved profile order. The
+        // database remains authoritative for enabled state, and the path never
+        // prepares file or conflict caches.
+        [[nodiscard]] static std::vector<ProfileOrderItemRecord> listLaunchProfileOrderItems(
             const std::filesystem::path& projectDirectory,
             std::wstring_view profileName,
             const std::filesystem::path& modsDirectory = {});
@@ -297,6 +338,18 @@ namespace fluxora
             const std::filesystem::path& modsDirectory = {});
 
         [[nodiscard]] static std::vector<ModFileSummaryRecord> summarizeInstalledModFiles(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modsDirectory = {});
+
+        // Reads durable installed records and their freshness-masked summaries
+        // from one database snapshot without inventory or filesystem work.
+        [[nodiscard]] static PersistedInstalledModsSnapshot persistedInstalledModsSnapshot(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modsDirectory = {});
+
+        // Interactive startup may render the last durable snapshot while a
+        // watcher-covered disk reconciliation runs after the first frame.
+        [[nodiscard]] static std::vector<ModFileSummaryRecord> summarizePersistedInstalledModFiles(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modsDirectory = {});
 

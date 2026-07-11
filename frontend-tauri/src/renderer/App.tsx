@@ -29,6 +29,7 @@ import {
 import {
   lazy,
   Suspense,
+  useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -116,7 +117,12 @@ import {
   FluxPackExportDialog,
   type FluxPackExportOptions
 } from './features/fluxpack/FluxPackExportDialog';
-import { resolveFluxPackInstallTarget } from './features/fluxpack/fluxpack-install-target';
+import { FluxPackInstallConflictDialog } from './features/fluxpack/FluxPackInstallConflictDialog';
+import { FluxPackManualDownloadsDialog } from './features/fluxpack/FluxPackManualDownloadsDialog';
+import {
+  findFluxPackNameConflict,
+  resolveFluxPackInstallTarget
+} from './features/fluxpack/fluxpack-install-target';
 import {
   DeletionConfirmationDialog,
   deletionSubjectLabel,
@@ -292,8 +298,21 @@ import {
   type InstallSource
 } from './install-workspace-state';
 import { defaultModNameFromPath, shortPath } from './services/path-display-service';
+import {
+  createProjectOpenTiming,
+  formatProjectOpenBackgroundPerformanceMessage,
+  formatProjectOpenPerformanceMessage,
+  type ProjectOpenTiming
+} from './services/project-open-performance';
 import { createRendererOperationId, errorMessage } from './services/renderer-operation-service';
 import { installRendererRefreshShortcut } from './services/renderer-refresh-shortcut-service';
+import {
+  createPendingPathAccumulator,
+  createScopedSequenceTracker,
+  createTrailingRefreshCoordinator,
+  drainPendingPathsWithRetry,
+  topLevelChangedModPaths
+} from './services/trailing-refresh-coordinator';
 import {
   createMo2TransferImportRequest,
   normalizeMo2TransferAnalysis,
@@ -312,7 +331,9 @@ import type {
   FluxoraFileDropEvent,
   FluxoraFomodInstaller,
   FluxoraFluxPackInstallResult,
+  FluxoraFluxPackManualSourceArchive,
   FluxoraFluxPackCompressionMode,
+  FluxoraFluxPackSourceInstallPlan,
   FluxoraFluxPackSummary,
   FluxoraGameTemplate,
   FluxoraInstalledMod,
@@ -337,6 +358,26 @@ import type {
   FluxoraTransferDriveOption,
   NativeBridgeStatus
 } from '../shared/fluxora-api';
+
+interface FluxPackInstallConflictState {
+  fluxPackPath: string;
+  project: FluxoraProject;
+  summary: FluxoraFluxPackSummary;
+}
+
+interface FluxPackInstallExecution {
+  existingConfigPath?: string;
+  fluxPackPath: string;
+  installRootDirectory: string;
+  summary: FluxoraFluxPackSummary;
+  targetProject: FluxoraProject | null;
+}
+
+interface FluxPackManualDownloadState {
+  execution: FluxPackInstallExecution;
+  selectedArchives: Record<string, string>;
+  sources: FluxoraFluxPackSourceInstallPlan[];
+}
 
 const FilePreviewWorkspace = lazy(async () => {
   const module = await import('./features/file-preview/FilePreviewWorkspace');
@@ -463,12 +504,34 @@ interface RowReorderSession {
 
 interface WorkspaceLoadOptions {
   coordinatedSequence?: number;
+  persistedSnapshot?: boolean;
   showBusy?: boolean;
   showLoading?: boolean;
   resetScroll?: boolean;
   operationId?: string;
   profileName?: string;
 }
+
+const buildContentWatchKeyForProject = (
+  project: FluxoraProject,
+  profileName: string
+): string | null => {
+  const modsDirectory = project.paths?.modsDirectory;
+  const profilesDirectory = project.paths?.profilesDirectory;
+  if (!modsDirectory || !profilesDirectory) {
+    return null;
+  }
+  return JSON.stringify([
+    project.projectDirectory,
+    modsDirectory,
+    profilesDirectory,
+    profileName,
+    project.paths?.gameDirectory ?? ''
+  ]);
+};
+
+const buildContentScopeKey = (projectDirectory: string): string =>
+  projectDirectory.replaceAll('/', '\\').toLocaleLowerCase('en-US');
 
 interface WorkspaceMutationOptions {
   showBusy?: boolean;
@@ -1107,6 +1170,7 @@ export const App = () => {
     isBuildSettingsWindow ? buildSettingsProjectId : null
   );
   const [loadedWorkspaceProjectId, setLoadedWorkspaceProjectId] = useState<string | null>(null);
+  const [projectOpenCommitSequence, setProjectOpenCommitSequence] = useState(0);
   const [projectMenuId, setProjectMenuId] = useState<string | null>(null);
   const [projectMenuPosition, setProjectMenuPosition] = useState<ProjectMenuPosition | null>(null);
   const [catalogState, setCatalogState] = useState<CatalogState>('idle');
@@ -1127,8 +1191,40 @@ export const App = () => {
     useState<InterfaceRefreshSplashState | null>(null);
   const openingBuildCancelRequestsRef = useRef<Set<string>>(new Set());
   const openingBuildOperationIdRef = useRef<string | null>(null);
+  const pendingProjectOpenTimingRef = useRef<{
+    projectId: string;
+    project: FluxoraProject;
+    timing: ProjectOpenTiming;
+  } | null>(null);
+  const projectOpenExactWorkspaceRef = useRef<{
+    contentRevision: number;
+    invalidationsSettledAtStart: boolean;
+    operationId: string;
+    projectId: string;
+    watchGeneration: number;
+    watchKey: string | null;
+  } | null>(null);
   const coordinatedWorkspaceLoadRef = useRef<{ projectId: string; sequence: number } | null>(null);
   const coordinatedWorkspaceLoadSequenceRef = useRef(0);
+  const buildContentRefreshCoordinator = useMemo(createTrailingRefreshCoordinator, []);
+  const pendingBuildContentModPaths = useMemo(createPendingPathAccumulator, []);
+  const buildContentEventSequences = useMemo(createScopedSequenceTracker, []);
+  const buildContentWatchKeyRef = useRef<string | null>(null);
+  const buildContentWatchPromiseRef = useRef<Promise<void> | null>(null);
+  const buildContentWatchGenerationRef = useRef(0);
+  const buildContentEventRevisionRef = useRef(0);
+  const buildContentObservedRevisionByScopeRef = useRef(new Map<string, number>());
+  const buildContentInvalidatedRevisionByScopeRef = useRef(new Map<string, number>());
+  const exactWorkspaceWatchCoverageRef = useRef<{
+    contentRevision: number;
+    watchGeneration: number;
+    watchKey: string;
+  } | null>(null);
+  const selectedProjectDirectoryRef = useRef<string | null>(null);
+  const selectedWorkspaceScopeRef = useRef<{
+    profileName: string;
+    project: FluxoraProject | null;
+  }>({ profileName: '', project: null });
   const openingBuildPreviousViewRef = useRef<{
     buildPathEditor: BuildPathEditorSnapshot;
     profileName: string;
@@ -1310,6 +1406,10 @@ export const App = () => {
   const [fluxPackCompressionMode, setFluxPackCompressionMode] =
     useState<FluxoraFluxPackCompressionMode>('optimal');
   const [fluxPackExportPath, setFluxPackExportPath] = useState<string | null>(null);
+  const [fluxPackInstallConflict, setFluxPackInstallConflict] =
+    useState<FluxPackInstallConflictState | null>(null);
+  const [fluxPackManualDownload, setFluxPackManualDownload] =
+    useState<FluxPackManualDownloadState | null>(null);
   const [fluxPackInstallResult, setFluxPackInstallResult] =
     useState<FluxoraFluxPackInstallResult | null>(null);
   const [operationOverlay, setOperationOverlay] = useState<OperationOverlayState | null>(null);
@@ -1377,6 +1477,7 @@ export const App = () => {
       ) ?? null,
     [projects, selectedProjectId]
   );
+  selectedProjectDirectoryRef.current = selectedProject?.projectDirectory ?? null;
   const aiSessionScope = useMemo(
     () => ({
       buildLabel: selectedProject?.name,
@@ -1599,6 +1700,10 @@ export const App = () => {
       selectedProjectDefaultProfileName
     ]
   );
+  selectedWorkspaceScopeRef.current = {
+    profileName: selectedProjectProfileName,
+    project: selectedProject
+  };
 
   const modWorkspaceProfileName =
     isFilePreviewWindow && filePreviewProfileName
@@ -1737,6 +1842,172 @@ export const App = () => {
         : null,
     [selectedProject, selectedProjectRuntimeSummary]
   );
+
+  useEffect(() => {
+    const pending = pendingProjectOpenTimingRef.current;
+    if (!pending || pending.projectId !== loadedWorkspaceProjectId) {
+      return undefined;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const current = pendingProjectOpenTimingRef.current;
+      if (!current || current !== pending || current.projectId !== loadedWorkspaceProjectId) {
+        return;
+      }
+
+      pendingProjectOpenTimingRef.current = null;
+      const sample = current.timing.complete(current.projectId);
+      void window.fluxora.ui
+        .log({
+          level: 'info',
+          category: 'Performance',
+          message: formatProjectOpenPerformanceMessage(sample),
+          operationId: sample.operationId
+        })
+        .catch(() => undefined);
+      void (async () => {
+        if (selectedProjectDirectoryRef.current !== current.project.projectDirectory) {
+          return;
+        }
+        await loadDownloadsWorkspace(current.project, {
+          operationId: sample.operationId,
+          resetScroll: true,
+          showBusy: false,
+          showLoading: true
+        });
+        if (selectedProjectDirectoryRef.current !== current.project.projectDirectory) {
+          return;
+        }
+        const profileName = projectDefaultProfileName(current.project);
+        const liveScope = selectedWorkspaceScopeRef.current;
+        if (
+          liveScope.project?.projectDirectory !== current.project.projectDirectory ||
+          liveScope.profileName !== profileName
+        ) {
+          // A profile transition owns its own exact load. The open operation
+          // must not let its original profile overwrite the now-visible one.
+          return;
+        }
+        const watchKey = buildContentWatchKeyForProject(current.project, profileName);
+        const watchPromise = buildContentWatchPromiseRef.current;
+        if (
+          watchKey === null ||
+          buildContentWatchKeyRef.current !== watchKey ||
+          watchPromise === null
+        ) {
+          return;
+        }
+        try {
+          await watchPromise;
+        } catch {
+          return;
+        }
+        const watchedScope = selectedWorkspaceScopeRef.current;
+        if (
+          watchedScope.project?.projectDirectory !== current.project.projectDirectory ||
+          watchedScope.profileName !== profileName ||
+          buildContentWatchPromiseRef.current !== watchPromise ||
+          buildContentWatchKeyRef.current !== watchKey
+        ) {
+          return;
+        }
+        const scopeKey = buildContentScopeKey(current.project.projectDirectory);
+        const contentRevision =
+          buildContentObservedRevisionByScopeRef.current.get(scopeKey) ?? 0;
+        const invalidatedRevision =
+          buildContentInvalidatedRevisionByScopeRef.current.get(scopeKey) ?? 0;
+        const watchGeneration = buildContentWatchGenerationRef.current;
+        const invalidationsSettled = invalidatedRevision >= contentRevision;
+        const exactWorkspace = projectOpenExactWorkspaceRef.current;
+        const exactWorkspacePreparedDuringOpen =
+          exactWorkspace?.operationId === sample.operationId &&
+          exactWorkspace.projectId === current.projectId &&
+          exactWorkspace.watchKey === watchKey &&
+          exactWorkspace.watchGeneration === watchGeneration &&
+          exactWorkspace.contentRevision === contentRevision &&
+          exactWorkspace.invalidationsSettledAtStart &&
+          invalidationsSettled;
+        const exactCoverage = exactWorkspaceWatchCoverageRef.current;
+        const exactWorkspaceCoveredByWatcher =
+          watchKey !== null &&
+          buildContentWatchKeyRef.current === watchKey &&
+          exactCoverage?.watchKey === watchKey &&
+          exactCoverage.watchGeneration === watchGeneration &&
+          exactCoverage.contentRevision === contentRevision &&
+          invalidationsSettled;
+        if (exactWorkspacePreparedDuringOpen) {
+          projectOpenExactWorkspaceRef.current = null;
+        }
+        // Never start an exact read while an older invalidation is unresolved.
+        // Such a read can observe the stale cache immediately before the
+        // invalidation clears it, then return after the revision looks settled.
+        // The event coordinator owns the exact read that follows invalidation.
+        if (!invalidationsSettled) {
+          return;
+        }
+        const reconciled = exactWorkspacePreparedDuringOpen || exactWorkspaceCoveredByWatcher
+          ? true
+          : await loadModsWorkspace(current.project, {
+              operationId: sample.operationId,
+              profileName,
+              resetScroll: false,
+              showBusy: false,
+              showLoading: false
+            });
+        if (
+          !reconciled ||
+          selectedProjectDirectoryRef.current !== current.project.projectDirectory
+        ) {
+          return;
+        }
+        if (
+          buildContentWatchGenerationRef.current !== watchGeneration ||
+          selectedWorkspaceScopeRef.current.project?.projectDirectory !==
+            current.project.projectDirectory ||
+          selectedWorkspaceScopeRef.current.profileName !== profileName ||
+          buildContentWatchPromiseRef.current !== watchPromise ||
+          (buildContentObservedRevisionByScopeRef.current.get(scopeKey) ?? 0) !== contentRevision ||
+          (buildContentInvalidatedRevisionByScopeRef.current.get(scopeKey) ?? 0) < contentRevision ||
+          buildContentWatchKeyRef.current !== watchKey
+        ) {
+          return;
+        }
+        const pluginsReconciled = await loadPluginsWorkspace(current.project, {
+          operationId: sample.operationId,
+          profileName,
+          resetScroll: false,
+          showBusy: false,
+          showLoading: false
+        });
+        if (
+          !pluginsReconciled ||
+          selectedProjectDirectoryRef.current !== current.project.projectDirectory ||
+          buildContentWatchGenerationRef.current !== watchGeneration ||
+          selectedWorkspaceScopeRef.current.profileName !== profileName ||
+          buildContentWatchPromiseRef.current !== watchPromise ||
+          (buildContentObservedRevisionByScopeRef.current.get(scopeKey) ?? 0) !== contentRevision ||
+          (buildContentInvalidatedRevisionByScopeRef.current.get(scopeKey) ?? 0) < contentRevision ||
+          buildContentWatchKeyRef.current !== watchKey
+        ) {
+          return;
+        }
+        exactWorkspaceWatchCoverageRef.current = {
+          contentRevision,
+          watchGeneration,
+          watchKey
+        };
+        const backgroundSample = current.timing.completeBackground(current.projectId);
+        await window.fluxora.ui.log({
+          level: 'info',
+          category: 'Performance',
+          message: formatProjectOpenBackgroundPerformanceMessage(backgroundSample),
+          operationId: backgroundSample.operationId
+        });
+      })().catch(() => undefined);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [loadedWorkspaceProjectId, projectOpenCommitSequence]);
 
   const buildProfileOptions = useMemo(() => {
     if (profilesWorkspace.items.length > 0) {
@@ -2052,15 +2323,53 @@ export const App = () => {
     }
 
     try {
-      const [nextInstalledMods, nextOrder] = await Promise.all([
-        window.fluxora.mods.listInstalled(project.projectDirectory, { operationId }),
-        window.fluxora.mods.getOrder(project.projectDirectory, profileName, {
-          operationId
-        })
-      ]);
+      const getWorkspace = options.persistedSnapshot
+        ? window.fluxora.mods.getPersistedWorkspace
+        : window.fluxora.mods.getWorkspace;
+      let { installedMods: nextInstalledMods, modOrder: nextOrder } =
+        await getWorkspace(project.projectDirectory, profileName, { operationId });
+      let usedExactFallback = false;
+      let exactFallbackContentRevision = 0;
+      let exactFallbackInvalidationsSettledAtStart = false;
+      let exactFallbackWatchGeneration = -1;
+      let exactFallbackWatchKey: string | null = null;
+
+      if (
+        options.persistedSnapshot &&
+        (nextInstalledMods.length === 0 || nextOrder.length === 0)
+      ) {
+        if (!isCurrentWorkspaceStoreLoad('mods', loadSequence)) {
+          return false;
+        }
+        exactFallbackContentRevision =
+          buildContentObservedRevisionByScopeRef.current.get(
+            buildContentScopeKey(project.projectDirectory)
+          ) ?? 0;
+        exactFallbackInvalidationsSettledAtStart =
+          (buildContentInvalidatedRevisionByScopeRef.current.get(
+            buildContentScopeKey(project.projectDirectory)
+          ) ?? 0) >= exactFallbackContentRevision;
+        exactFallbackWatchGeneration = buildContentWatchGenerationRef.current;
+        exactFallbackWatchKey = buildContentWatchKeyForProject(project, profileName);
+        ({ installedMods: nextInstalledMods, modOrder: nextOrder } =
+          await window.fluxora.mods.getWorkspace(project.projectDirectory, profileName, {
+            operationId
+          }));
+        usedExactFallback = true;
+      }
 
       if (!isCurrentWorkspaceStoreLoad('mods', loadSequence)) {
         return false;
+      }
+      if (usedExactFallback) {
+        projectOpenExactWorkspaceRef.current = {
+          contentRevision: exactFallbackContentRevision,
+          invalidationsSettledAtStart: exactFallbackInvalidationsSettledAtStart,
+          operationId,
+          projectId: project.id,
+          watchGeneration: exactFallbackWatchGeneration,
+          watchKey: exactFallbackWatchKey
+        };
       }
 
       setInstalledMods(nextInstalledMods);
@@ -2075,7 +2384,11 @@ export const App = () => {
       if (!isCurrentWorkspaceStoreLoad('mods', loadSequence)) {
         return false;
       }
-      dispatchModsWorkspace({ type: 'load-failed', message: errorMessage(error) });
+      dispatchModsWorkspace({
+        type: 'load-failed',
+        message: errorMessage(error),
+        silent: !showLoading
+      });
       setMessage(errorMessage(error));
       return false;
     } finally {
@@ -3166,7 +3479,10 @@ export const App = () => {
     }
 
     try {
-      const nextPlugins = await window.fluxora.plugins.list(
+      const listPlugins = options.persistedSnapshot
+        ? window.fluxora.plugins.listPersisted
+        : window.fluxora.plugins.list;
+      const nextPlugins = await listPlugins(
         project.projectDirectory,
         project.templateId,
         profileName,
@@ -3189,7 +3505,11 @@ export const App = () => {
       if (!isCurrentWorkspaceStoreLoad('plugins', loadSequence)) {
         return false;
       }
-      dispatchPluginsWorkspace({ type: 'load-failed', message: errorMessage(error) });
+      dispatchPluginsWorkspace({
+        type: 'load-failed',
+        message: errorMessage(error),
+        silent: !showLoading
+      });
       setMessage(errorMessage(error));
       return false;
     } finally {
@@ -4336,6 +4656,7 @@ export const App = () => {
     }
 
     const operationId = createRendererOperationId('executables_launch');
+    const launchStartedAtMs = performance.now();
     setExecutablesBusyLabel('Launching executable');
     setExecutableLaunchResult(null);
     setLaunchSplash({
@@ -4356,6 +4677,17 @@ export const App = () => {
         selectedProjectProfileName,
         { operationId }
       );
+      const processCreatedAtMs = performance.now();
+      void window.fluxora.ui
+        .log({
+          level: 'info',
+          category: 'Performance',
+          message: `launch_renderer_process_created clickToProcessCreatedMs=${(
+            processCreatedAtMs - launchStartedAtMs
+          ).toFixed(2)}`,
+          operationId
+        })
+        .catch(() => undefined);
       setExecutableLaunchResult(result);
       const processName =
         result.handoffDisplayName || result.displayName || selectedExecutableItem.displayName;
@@ -4386,6 +4718,16 @@ export const App = () => {
       }
 
       const trackedProcessName = ready.processName || processName;
+      void window.fluxora.ui
+        .log({
+          level: 'info',
+          category: 'Performance',
+          message: `launch_renderer_external_ready clickToReadyMs=${(
+            performance.now() - launchStartedAtMs
+          ).toFixed(2)}`,
+          operationId
+        })
+        .catch(() => undefined);
       setLaunchSplash((current) =>
         current?.operationId === operationId
           ? {
@@ -6058,47 +6400,223 @@ export const App = () => {
     selectedProject?.projectDirectory
   ]);
 
+  const ensureBuildContentWatch = useCallback(
+    (
+      project: FluxoraProject,
+      profileName: string,
+      operationId: string
+    ): Promise<void> => {
+      const modsDirectory = project.paths?.modsDirectory;
+      const profilesDirectory = project.paths?.profilesDirectory;
+      if (!modsDirectory || !profilesDirectory) {
+        return Promise.reject(new Error('Build content folders are unavailable.'));
+      }
+
+      const key = buildContentWatchKeyForProject(project, profileName);
+      if (key === null) {
+        return Promise.reject(new Error('Build content folders are unavailable.'));
+      }
+      if (buildContentWatchKeyRef.current !== key) {
+        // Exact workspace reuse is valid only while watcher coverage is
+        // continuous. A project/profile/root transition creates an uncovered
+        // interval for the previous key, even when that key is selected again
+        // later (A -> B -> A), so require a fresh exact reconciliation.
+        buildContentWatchGenerationRef.current += 1;
+        exactWorkspaceWatchCoverageRef.current = null;
+      }
+      if (
+        buildContentWatchKeyRef.current === key &&
+        buildContentWatchPromiseRef.current
+      ) {
+        return buildContentWatchPromiseRef.current;
+      }
+
+      const request = window.fluxora.buildContent
+        .watch(
+          {
+            projectDirectory: project.projectDirectory,
+            modsDirectory,
+            profilesDirectory,
+            profileName,
+            gameDirectory: project.paths?.gameDirectory
+          },
+          { operationId }
+        )
+        .then((result) => {
+          if (!result.accepted) {
+            throw new Error('Build content watcher setup was superseded.');
+          }
+        });
+      buildContentWatchKeyRef.current = key;
+      buildContentWatchPromiseRef.current = request;
+      void request.catch(() => {
+        if (buildContentWatchPromiseRef.current === request) {
+          buildContentWatchKeyRef.current = null;
+          buildContentWatchPromiseRef.current = null;
+        }
+      });
+      return request;
+    },
+    []
+  );
+
   useEffect(() => {
-    const modsDirectory = selectedProject?.paths?.modsDirectory;
-    const profilesDirectory = selectedProject?.paths?.profilesDirectory;
     if (
       isSecondaryWindow ||
       !selectedProject ||
       !bridgeStatus?.ready ||
-      !modsDirectory ||
-      !profilesDirectory
+      loadedWorkspaceProjectId !== selectedProject.id
     ) {
       return undefined;
     }
 
-    const operationId = createRendererOperationId('build_content_watch');
-    void window.fluxora.buildContent
-      .watch(
-        {
-          projectDirectory: selectedProject.projectDirectory,
-          modsDirectory,
-          profilesDirectory,
-          profileName: selectedProjectProfileName,
-          gameDirectory: selectedProject.paths?.gameDirectory
-        },
-        { operationId }
-      )
-      .catch(() => undefined);
+    const project = selectedProject;
+    const profileName = selectedProjectProfileName;
+    const desiredWatchKey = buildContentWatchKeyForProject(project, profileName);
+    let cancelled = false;
+    let retryTimer: number | null = null;
+    let retryAttempt = 0;
+    let requiresReconciliation =
+      desiredWatchKey === null ||
+      buildContentWatchKeyRef.current !== desiredWatchKey ||
+      buildContentWatchPromiseRef.current === null;
 
+    const reconcileAfterWatchInstall = async (
+      watchKey: string,
+      watchPromise: Promise<void>
+    ): Promise<void> => {
+      const liveScope = selectedWorkspaceScopeRef.current;
+      if (
+        cancelled ||
+        liveScope.project?.projectDirectory !== project.projectDirectory ||
+        liveScope.profileName !== profileName ||
+        buildContentWatchKeyRef.current !== watchKey ||
+        buildContentWatchPromiseRef.current !== watchPromise
+      ) {
+        return;
+      }
+      const scopeKey = buildContentScopeKey(project.projectDirectory);
+      const contentRevision =
+        buildContentObservedRevisionByScopeRef.current.get(scopeKey) ?? 0;
+      const invalidatedRevision =
+        buildContentInvalidatedRevisionByScopeRef.current.get(scopeKey) ?? 0;
+      if (invalidatedRevision < contentRevision) {
+        // The event coordinator will perform the exact read after its native
+        // invalidation succeeds. Starting here would allow a stale cache read.
+        return;
+      }
+      const watchGeneration = buildContentWatchGenerationRef.current;
+      const modsReconciled = await loadModsWorkspace(project, {
+        operationId: createRendererOperationId('build_content_watch_reconciled_mods'),
+        profileName,
+        resetScroll: false,
+        showBusy: false,
+        showLoading: false
+      });
+      if (
+        !modsReconciled ||
+        cancelled ||
+        selectedWorkspaceScopeRef.current.project?.projectDirectory !== project.projectDirectory ||
+        selectedWorkspaceScopeRef.current.profileName !== profileName ||
+        buildContentWatchKeyRef.current !== watchKey ||
+        buildContentWatchPromiseRef.current !== watchPromise ||
+        buildContentWatchGenerationRef.current !== watchGeneration ||
+        (buildContentObservedRevisionByScopeRef.current.get(scopeKey) ?? 0) !== contentRevision ||
+        (buildContentInvalidatedRevisionByScopeRef.current.get(scopeKey) ?? 0) < contentRevision
+      ) {
+        return;
+      }
+      const pluginsReconciled = await loadPluginsWorkspace(project, {
+        operationId: createRendererOperationId('build_content_watch_reconciled_plugins'),
+        profileName,
+        resetScroll: false,
+        showBusy: false,
+        showLoading: false
+      });
+      if (
+        !pluginsReconciled ||
+        cancelled ||
+        selectedWorkspaceScopeRef.current.project?.projectDirectory !== project.projectDirectory ||
+        selectedWorkspaceScopeRef.current.profileName !== profileName ||
+        buildContentWatchKeyRef.current !== watchKey ||
+        buildContentWatchPromiseRef.current !== watchPromise ||
+        buildContentWatchGenerationRef.current !== watchGeneration ||
+        (buildContentObservedRevisionByScopeRef.current.get(scopeKey) ?? 0) !== contentRevision ||
+        (buildContentInvalidatedRevisionByScopeRef.current.get(scopeKey) ?? 0) < contentRevision
+      ) {
+        return;
+      }
+      exactWorkspaceWatchCoverageRef.current = {
+        contentRevision,
+        watchGeneration,
+        watchKey
+      };
+    };
+
+    const installWatch = (): void => {
+      if (cancelled || desiredWatchKey === null) {
+        return;
+      }
+      const watchPromise = ensureBuildContentWatch(
+        project,
+        profileName,
+        createRendererOperationId('build_content_watch')
+      );
+      void watchPromise.then(
+        async () => {
+          if (cancelled) {
+            return;
+          }
+          retryAttempt = 0;
+          if (requiresReconciliation) {
+            await reconcileAfterWatchInstall(desiredWatchKey, watchPromise);
+          }
+        },
+        () => {
+          if (cancelled) {
+            return;
+          }
+          requiresReconciliation = true;
+          const delay = Math.min(250 * 2 ** Math.min(retryAttempt, 5), 5_000);
+          retryAttempt += 1;
+          retryTimer = window.setTimeout(installWatch, delay);
+        }
+      );
+    };
+
+    installWatch();
     return () => {
+      cancelled = true;
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+      }
+    };
+  }, [
+    bridgeStatus?.ready,
+    ensureBuildContentWatch,
+    isSecondaryWindow,
+    loadedWorkspaceProjectId,
+    selectedProject,
+    selectedProjectProfileName
+  ]);
+
+  useEffect(() => {
+    if (isSecondaryWindow) {
+      buildContentRefreshCoordinator.stop();
+      return undefined;
+    }
+    buildContentRefreshCoordinator.resume();
+    return () => {
+      buildContentRefreshCoordinator.stop();
+      buildContentWatchKeyRef.current = null;
+      buildContentWatchPromiseRef.current = null;
+      buildContentWatchGenerationRef.current += 1;
+      exactWorkspaceWatchCoverageRef.current = null;
       void window.fluxora.buildContent
         .unwatch({ operationId: createRendererOperationId('build_content_unwatch') })
         .catch(() => undefined);
     };
-  }, [
-    bridgeStatus?.ready,
-    isSecondaryWindow,
-    selectedProject?.paths?.gameDirectory,
-    selectedProject?.paths?.modsDirectory,
-    selectedProject?.paths?.profilesDirectory,
-    selectedProject?.projectDirectory,
-    selectedProjectProfileName
-  ]);
+  }, [buildContentRefreshCoordinator, isSecondaryWindow]);
 
   useEffect(() => {
     if (isSecondaryWindow) {
@@ -6128,46 +6646,215 @@ export const App = () => {
       return undefined;
     }
 
-    return window.fluxora.buildContent.onChanged((event) => {
-      if (!selectedProject || event.projectDirectory !== selectedProject.projectDirectory) {
-        return;
+    const unsubscribe = window.fluxora.buildContent.onChanged((event) => {
+      const eventRevision = buildContentEventRevisionRef.current + 1;
+      buildContentEventRevisionRef.current = eventRevision;
+      const eventScopeKey = buildContentScopeKey(event.projectDirectory);
+      buildContentObservedRevisionByScopeRef.current.set(eventScopeKey, eventRevision);
+      exactWorkspaceWatchCoverageRef.current = null;
+      const eventProjectAtReceipt =
+        selectedProject?.projectDirectory === event.projectDirectory ? selectedProject : null;
+      let currentEventReconciled = false;
+      if (eventProjectAtReceipt) {
+        effectiveFileTreeCacheRef.current = {};
+        effectiveFileTreeFailedRequestKeyRef.current = null;
+        setEffectiveFileTreeError(null);
+        setEffectiveFileTreeLoadingChildren({});
+        effectiveFileTreeLoadingChildrenRef.current.clear();
       }
-
-      effectiveFileTreeCacheRef.current = {};
-      effectiveFileTreeFailedRequestKeyRef.current = null;
-      setEffectiveFileTreeError(null);
-      setEffectiveFileTreeLoadingChildren({});
-      effectiveFileTreeLoadingChildrenRef.current.clear();
-      void loadModsWorkspace(selectedProject, {
-        operationId: createRendererOperationId('build_content_mods_changed'),
-        resetScroll: false,
-        showBusy: false,
-        showLoading: false,
-        profileName: selectedProjectProfileName
-      });
-      void loadPluginsWorkspace(selectedProject, {
-        operationId: createRendererOperationId('build_content_plugins_changed'),
-        resetScroll: false,
-        showBusy: false,
-        showLoading: false,
-        profileName: selectedProjectProfileName
-      });
-      if (
+      const refreshEffectiveFileTree =
+        Boolean(eventProjectAtReceipt) &&
         (activeRoute === 'build' || activeRoute === 'workspace') &&
-        (activeRightPane === 'data' || effectiveFileTreeSnapshotRef.current)
-      ) {
-        void loadEffectiveFileTree(selectedProject, selectedProjectProfileName, {
-          force: true,
-          requestKey: effectiveFileTreeRequestKey
-        });
-      }
+        Boolean(activeRightPane === 'data' || effectiveFileTreeSnapshotRef.current);
+      const sequenceGap = buildContentEventSequences.record(
+        event.projectDirectory,
+        event.sequence
+      );
+      const changedModPaths = sequenceGap
+        ? [event.modsDirectory]
+        : topLevelChangedModPaths(
+            event.modsDirectory,
+            event.changes
+              .filter((change) => change.area === 'mods')
+              .map((change) => change.path)
+          );
+      pendingBuildContentModPaths.add(event.projectDirectory, changedModPaths, eventRevision);
+      void buildContentRefreshCoordinator
+        .schedule(async () => {
+          // The native route also clears plugin discovery caches. Failed and
+          // unprocessed batches are restored so a transient bridge error cannot
+          // silently lose cache-correctness work.
+          const { failedScopes } = await drainPendingPathsWithRetry(
+            pendingBuildContentModPaths,
+            async (pending) => {
+              await window.fluxora.mods.invalidateFileCaches(pending.scope, pending.paths, {
+                operationId: createRendererOperationId('mods_invalidate_file_caches')
+              });
+              const pendingScopeKey = buildContentScopeKey(pending.scope);
+              const previousRevision =
+                buildContentInvalidatedRevisionByScopeRef.current.get(pendingScopeKey) ?? 0;
+              buildContentInvalidatedRevisionByScopeRef.current.set(
+                pendingScopeKey,
+                Math.max(previousRevision, pending.revision)
+              );
+            }
+          );
+          const eventScopeFailed = failedScopes.some(
+            (scope) => buildContentScopeKey(scope) === eventScopeKey
+          );
+          const liveScope = selectedWorkspaceScopeRef.current;
+          const reconciliationProject =
+            liveScope.project?.projectDirectory === event.projectDirectory
+              ? liveScope.project
+              : null;
+          const reconciliationProfileName = liveScope.profileName;
+          const eventWatchKey = reconciliationProject
+            ? buildContentWatchKeyForProject(
+                reconciliationProject,
+                reconciliationProfileName
+              )
+            : null;
+          const watchPromise = buildContentWatchPromiseRef.current;
+          if (
+            currentEventReconciled ||
+            !reconciliationProject ||
+            eventWatchKey === null ||
+            buildContentWatchKeyRef.current !== eventWatchKey ||
+            watchPromise === null
+          ) {
+            if (failedScopes.length > 0) {
+              throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+            }
+            return;
+          }
+          try {
+            await watchPromise;
+          } catch {
+            if (failedScopes.length > 0) {
+              throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+            }
+            return;
+          }
+          const watchedScope = selectedWorkspaceScopeRef.current;
+          if (
+            watchedScope.project?.projectDirectory !== event.projectDirectory ||
+            watchedScope.profileName !== reconciliationProfileName ||
+            buildContentWatchPromiseRef.current !== watchPromise ||
+            buildContentWatchKeyRef.current !== eventWatchKey
+          ) {
+            if (failedScopes.length > 0) {
+              throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+            }
+            return;
+          }
+          const reconciliationRevision =
+            buildContentObservedRevisionByScopeRef.current.get(eventScopeKey) ?? 0;
+          const invalidatedRevision =
+            buildContentInvalidatedRevisionByScopeRef.current.get(eventScopeKey) ?? 0;
+          const reconciliationWatchGeneration = buildContentWatchGenerationRef.current;
+          if (
+            currentEventReconciled ||
+            selectedProjectDirectoryRef.current !== event.projectDirectory ||
+            buildContentWatchKeyRef.current !== eventWatchKey
+          ) {
+            if (failedScopes.length > 0) {
+              throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+            }
+            return;
+          }
+          if (eventScopeFailed) {
+            throw new Error('Build content invalidation remains pending for the active project.');
+          }
+          if (invalidatedRevision < reconciliationRevision) {
+            throw new Error('Build content invalidation has not reached the active project revision.');
+          }
+          // Rebuild mod_files/conflict state before any consumer (especially the
+          // effective tree) can observe the deliberately invalidated cache.
+          const modsReconciled = await loadModsWorkspace(reconciliationProject, {
+            operationId: createRendererOperationId('build_content_mods_changed'),
+            resetScroll: false,
+            showBusy: false,
+            showLoading: false,
+            profileName: reconciliationProfileName
+          });
+          if (
+            selectedProjectDirectoryRef.current !== event.projectDirectory ||
+            selectedWorkspaceScopeRef.current.profileName !== reconciliationProfileName ||
+            buildContentWatchPromiseRef.current !== watchPromise ||
+            buildContentWatchGenerationRef.current !== reconciliationWatchGeneration ||
+            (buildContentObservedRevisionByScopeRef.current.get(eventScopeKey) ?? 0) !==
+              reconciliationRevision ||
+            (buildContentInvalidatedRevisionByScopeRef.current.get(eventScopeKey) ?? 0) <
+              reconciliationRevision ||
+            buildContentWatchKeyRef.current !== eventWatchKey
+          ) {
+            if (failedScopes.length > 0) {
+              throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+            }
+            return;
+          }
+          if (!modsReconciled) {
+            throw new Error('Exact mod reconciliation failed for the active project.');
+          }
+          const refreshes: Promise<unknown>[] = [
+            loadPluginsWorkspace(reconciliationProject, {
+              operationId: createRendererOperationId('build_content_plugins_changed'),
+              resetScroll: false,
+              showBusy: false,
+              showLoading: false,
+              profileName: reconciliationProfileName
+            })
+          ];
+          if (refreshEffectiveFileTree) {
+            refreshes.push(
+              loadEffectiveFileTree(reconciliationProject, reconciliationProfileName, {
+                force: true,
+                requestKey: effectiveFileTreeRequestKey
+              })
+            );
+          }
+          const [pluginsReconciled] = await Promise.all(refreshes);
+          if (
+            selectedProjectDirectoryRef.current !== event.projectDirectory ||
+            selectedWorkspaceScopeRef.current.profileName !== reconciliationProfileName ||
+            buildContentWatchPromiseRef.current !== watchPromise ||
+            buildContentWatchGenerationRef.current !== reconciliationWatchGeneration ||
+            (buildContentObservedRevisionByScopeRef.current.get(eventScopeKey) ?? 0) !==
+              reconciliationRevision ||
+            (buildContentInvalidatedRevisionByScopeRef.current.get(eventScopeKey) ?? 0) <
+              reconciliationRevision ||
+            buildContentWatchKeyRef.current !== eventWatchKey
+          ) {
+            if (failedScopes.length > 0) {
+              throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+            }
+            return;
+          }
+          if (!pluginsReconciled) {
+            throw new Error('Exact plugin reconciliation failed for the active project.');
+          }
+          exactWorkspaceWatchCoverageRef.current = {
+            contentRevision: reconciliationRevision,
+            watchGeneration: reconciliationWatchGeneration,
+            watchKey: eventWatchKey
+          };
+          currentEventReconciled = true;
+          if (failedScopes.length > 0) {
+            throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
+          }
+        })
+        .catch(() => undefined);
     });
+    return unsubscribe;
   }, [
     activeRightPane,
     activeRoute,
+    buildContentEventSequences,
+    buildContentRefreshCoordinator,
     effectiveFileTreeRequestKey,
     isSecondaryWindow,
-    selectedProject?.projectDirectory,
+    pendingBuildContentModPaths,
+    selectedProject,
     selectedProjectProfileName
   ]);
 
@@ -6422,7 +7109,8 @@ export const App = () => {
                 progress.phase ||
                 current.statusText,
               currentItem: progress.currentItem || current.currentItem,
-              percent: Math.max(0, Math.min(100, progress.overallPercent))
+              percent: Math.max(0, Math.min(100, progress.overallPercent)),
+              providers: progress.providers ?? current.providers
             }
           : current
       );
@@ -6752,7 +7440,8 @@ export const App = () => {
 
   const loadBuildWorkspaceData = async (
     project: FluxoraProject,
-    options: WorkspaceLoadOptions = {}
+    options: WorkspaceLoadOptions = {},
+    includeDownloads = true
   ) => {
     const loadSequence = coordinatedWorkspaceLoadSequenceRef.current + 1;
     coordinatedWorkspaceLoadSequenceRef.current = loadSequence;
@@ -6768,7 +7457,7 @@ export const App = () => {
       const [modsLoaded, pluginsLoaded, downloadsLoaded, profiles, executables] = await Promise.all([
         loadModsWorkspace(project, loadOptions),
         loadPluginsWorkspace(project, loadOptions),
-        loadDownloadsWorkspace(project, loadOptions),
+        includeDownloads ? loadDownloadsWorkspace(project, loadOptions) : Promise.resolve(true),
         loadProfilesWorkspace(project, loadOptions),
         loadExecutablesWorkspace(project, loadOptions)
       ]);
@@ -6830,6 +7519,7 @@ export const App = () => {
     }
 
     const operationId = createRendererOperationId('projects_open');
+    const openTiming = createProjectOpenTiming(operationId);
     const pendingProject = projects.find((project) => project.configPath === configPath);
 
     if (pendingProject && pendingProject.id !== loadedWorkspaceProjectId) {
@@ -6879,6 +7569,7 @@ export const App = () => {
 
     try {
       const { project: opened } = await openProjectConfig(configPath, operationId);
+      openTiming.markProjectConfigLoaded();
       if (openingBuildCancelRequestsRef.current.has(operationId)) {
         shouldRestorePreviousView = true;
         return;
@@ -6892,19 +7583,34 @@ export const App = () => {
       const openingProfileName = projectDefaultProfileName(opened);
       dispatchProfilesWorkspace({ type: 'selected', name: openingProfileName });
       setOpeningBuildProgress(operationId, 42, opened.name);
+      // Establish watcher coverage before the disk-generation scan begins so a
+      // change racing the initial workspace load is queued for reconciliation.
+      await ensureBuildContentWatch(
+        opened,
+        openingProfileName,
+        createRendererOperationId('build_content_watch_before_workspace')
+      );
       await loadBuildWorkspaceData(opened, {
         operationId,
         profileName: openingProfileName,
+        persistedSnapshot: true,
         resetScroll: true,
         showBusy: false,
         showLoading: true
-      });
+      }, false);
+      openTiming.markWorkspaceDataLoaded();
       if (openingBuildCancelRequestsRef.current.has(operationId)) {
         shouldRestorePreviousView = true;
         return;
       }
 
+      pendingProjectOpenTimingRef.current = {
+        projectId: opened.id,
+        project: opened,
+        timing: openTiming
+      };
       setLoadedWorkspaceProjectId(opened.id);
+      setProjectOpenCommitSequence((current) => current + 1);
       setOpeningBuildProgress(operationId, 100, opened.name);
       openingBuildPreviousViewRef.current = null;
       setMessage(`Opened ${opened.name}`);
@@ -7359,36 +8065,25 @@ export const App = () => {
     }
   };
 
-  const installFluxPack = async () => {
-    const pickResult = await window.fluxora.dialogs.pickFluxPack(catalog.defaultInstallRootDirectory);
-    if (pickResult.canceled || !pickResult.path) {
-      return;
-    }
-
-    const installTarget = resolveFluxPackInstallTarget(
-      selectedProject,
-      catalog.defaultInstallRootDirectory
-    );
-    let installRootDirectory = installTarget.installRootDirectory;
-    if (installTarget.requiresRootSelection) {
-      const rootResult = await window.fluxora.dialogs.pickFolder(
-        'Выберите папку для сборки',
-        installRootDirectory || undefined
-      );
-      if (rootResult.canceled || !rootResult.path) {
-        return;
-      }
-      installRootDirectory = rootResult.path;
-    }
-
-    const isDeltaUpdate = Boolean(installTarget.existingConfigPath);
+  const executeFluxPackInstall = async (
+    execution: FluxPackInstallExecution,
+    manualSourceArchives: FluxoraFluxPackManualSourceArchive[] = []
+  ) => {
+    const {
+      existingConfigPath,
+      fluxPackPath,
+      installRootDirectory,
+      summary,
+      targetProject
+    } = execution;
+    const isDeltaUpdate = Boolean(existingConfigPath);
     const operationId = createRendererOperationId('fluxpack_install');
     beginOperationOverlay({
       operationId,
       kind: 'fluxpack-install',
       title: isDeltaUpdate ? 'Обновляем сборку' : 'Устанавливаем сборку',
       statusText: isDeltaUpdate ? 'Сопоставляем Delta' : 'Подготавливаем установку',
-      currentItem: selectedProject?.name || pickResult.path,
+      currentItem: targetProject?.name || summary.buildName || fluxPackPath,
       percent: 0
     });
     setMessage(null);
@@ -7396,11 +8091,10 @@ export const App = () => {
     try {
       const result = await window.fluxora.fluxPack.install(
         {
-          fluxPackPath: pickResult.path,
+          fluxPackPath,
           installRootDirectory,
-          ...(installTarget.existingConfigPath
-            ? { existingConfigPath: installTarget.existingConfigPath }
-            : {})
+          ...(existingConfigPath ? { existingConfigPath } : {}),
+          ...(manualSourceArchives.length > 0 ? { manualSourceArchives } : {})
         },
         { operationId }
       );
@@ -7455,6 +8149,167 @@ export const App = () => {
       setMessage(nextMessage);
       failOperationOverlay(operationId, nextMessage);
     }
+  };
+
+  const runFluxPackInstall = async (
+    fluxPackPath: string,
+    summary: FluxoraFluxPackSummary,
+    targetProject: FluxoraProject | null
+  ) => {
+    const installTarget = resolveFluxPackInstallTarget(
+      targetProject,
+      catalog.defaultInstallRootDirectory
+    );
+    let installRootDirectory = installTarget.installRootDirectory;
+    if (installTarget.requiresRootSelection) {
+      const rootResult = await window.fluxora.dialogs.pickFolder(
+        'Выберите папку для сборки',
+        installRootDirectory || undefined
+      );
+      if (rootResult.canceled || !rootResult.path) {
+        return;
+      }
+      installRootDirectory = rootResult.path;
+    }
+
+    const execution: FluxPackInstallExecution = {
+      fluxPackPath,
+      installRootDirectory,
+      summary,
+      targetProject,
+      ...(installTarget.existingConfigPath
+        ? { existingConfigPath: installTarget.existingConfigPath }
+        : {})
+    };
+    const planOperationId = createRendererOperationId('fluxpack_plan_install');
+    setBusyLabel('Проверяем локальные файлы');
+    setMessage(null);
+
+    try {
+      const plan = await window.fluxora.fluxPack.planInstall(
+        {
+          fluxPackPath,
+          ...(execution.existingConfigPath
+            ? { existingConfigPath: execution.existingConfigPath }
+            : {})
+        },
+        { operationId: planOperationId }
+      );
+      const unavailableSources = plan.sources.filter(
+        (source) => source.acquisitionMode === 'unavailable'
+      );
+      if (unavailableSources.length > 0) {
+        setMessage(
+          `Нельзя продолжить установку: для ${unavailableSources.length} мод. пока нет поддерживаемого источника.`
+        );
+        return;
+      }
+
+      const manualSources = plan.sources.filter((source) => source.requiresManualDownload);
+      if (manualSources.length > 0) {
+        setFluxPackManualDownload({
+          execution: { ...execution, summary: plan.summary },
+          selectedArchives: {},
+          sources: manualSources
+        });
+        return;
+      }
+
+      setBusyLabel(null);
+      await executeFluxPackInstall({ ...execution, summary: plan.summary });
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setBusyLabel(null);
+    }
+  };
+
+  const installFluxPack = async () => {
+    const pickResult = await window.fluxora.dialogs.pickFluxPack(catalog.defaultInstallRootDirectory);
+    if (pickResult.canceled || !pickResult.path) {
+      return;
+    }
+
+    const inspectOperationId = createRendererOperationId('fluxpack_inspect_install');
+    setBusyLabel('Проверяем FluxPack');
+    setMessage(null);
+    try {
+      const summary = await window.fluxora.fluxPack.inspect(pickResult.path, {
+        operationId: inspectOperationId
+      });
+      setFluxPackSummary(summary);
+      setFluxPackInstallResult(null);
+      const conflict = findFluxPackNameConflict(projects, summary.buildName, selectedProject?.id);
+      if (conflict) {
+        setFluxPackInstallConflict({
+          fluxPackPath: pickResult.path,
+          project: conflict,
+          summary
+        });
+        return;
+      }
+
+      await runFluxPackInstall(pickResult.path, summary, null);
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setBusyLabel(null);
+    }
+  };
+
+  const openFluxPackManualDownload = async (source: FluxoraFluxPackSourceInstallPlan) => {
+    if (!source.manualDownloadUrl) {
+      setMessage(`Для ${source.displayName} не удалось определить страницу загрузки.`);
+      return;
+    }
+
+    try {
+      await window.fluxora.links.openExternal(source.manualDownloadUrl);
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const pickFluxPackManualArchive = async (source: FluxoraFluxPackSourceInstallPlan) => {
+    try {
+      const picked = await window.fluxora.dialogs.pickArchive();
+      if (picked.canceled || !picked.path) {
+        return;
+      }
+      const archivePath = picked.path;
+      setFluxPackManualDownload((current) =>
+        current
+          ? {
+              ...current,
+              selectedArchives: {
+                ...current.selectedArchives,
+                [source.sourceId]: archivePath
+              }
+            }
+          : current
+      );
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const confirmFluxPackManualInstall = async () => {
+    const pending = fluxPackManualDownload;
+    if (!pending) {
+      return;
+    }
+
+    const manualSourceArchives = pending.sources.flatMap((source) => {
+      const path = pending.selectedArchives[source.sourceId];
+      return path ? [{ sourceId: source.sourceId, path }] : [];
+    });
+    if (manualSourceArchives.length !== pending.sources.length) {
+      setMessage('Сначала выберите загруженный архив для каждого мода.');
+      return;
+    }
+
+    setFluxPackManualDownload(null);
+    await executeFluxPackInstall(pending.execution, manualSourceArchives);
   };
 
   const cleanupCreatedBuild = async (project: FluxoraProject, sourceOperationId: string) => {
@@ -8645,6 +9500,13 @@ export const App = () => {
         catalogPath={catalog.buildConfigsDirectory}
         catalogState={catalogState}
         filteredProjects={filteredProjects}
+        isInstallFluxPackDisabled={
+          !bridgeStatus?.ready ||
+          Boolean(busyLabel) ||
+          Boolean(operationOverlay?.isRunning) ||
+          fluxPackInstallConflict !== null ||
+          fluxPackManualDownload !== null
+        }
         isNewBuildDisabled={
           !bridgeStatus?.ready ||
           isTransferRunning ||
@@ -8652,6 +9514,7 @@ export const App = () => {
           openingBuildSplash !== null
         }
         isProjectInteractionDisabled={isOpeningBuildLocked || isTransferRunning}
+        onInstallFluxPack={() => void installFluxPack()}
         onNewBuild={startCreate}
         onOpenProject={(project) => void openProjectByConfig(project.configPath)}
         onOpenProjectDirectory={(project) => void openProjectDirectory(project)}
@@ -11022,6 +11885,37 @@ export const App = () => {
       />
     ) : null;
 
+  const renderFluxPackInstallConflictDialog = () =>
+    fluxPackInstallConflict ? (
+      <FluxPackInstallConflictDialog
+        buildName={fluxPackInstallConflict.summary.buildName}
+        onCancel={() => setFluxPackInstallConflict(null)}
+        onCreateNew={() => {
+          const pending = fluxPackInstallConflict;
+          setFluxPackInstallConflict(null);
+          void runFluxPackInstall(pending.fluxPackPath, pending.summary, null);
+        }}
+        onUpdateExisting={() => {
+          const pending = fluxPackInstallConflict;
+          setFluxPackInstallConflict(null);
+          void runFluxPackInstall(pending.fluxPackPath, pending.summary, pending.project);
+        }}
+      />
+    ) : null;
+
+  const renderFluxPackManualDownloadsDialog = () =>
+    fluxPackManualDownload ? (
+      <FluxPackManualDownloadsDialog
+        buildName={fluxPackManualDownload.execution.summary.buildName}
+        onCancel={() => setFluxPackManualDownload(null)}
+        onDownload={(source) => void openFluxPackManualDownload(source)}
+        onInstall={() => void confirmFluxPackManualInstall()}
+        onPickArchive={(source) => void pickFluxPackManualArchive(source)}
+        selectedArchives={fluxPackManualDownload.selectedArchives}
+        sources={fluxPackManualDownload.sources}
+      />
+    ) : null;
+
   const renderDownloadsWorkspace = () => {
     if (!selectedProject) {
       return (
@@ -12705,6 +13599,8 @@ export const App = () => {
                 {renderInstallDialog()}
                 {renderModCreationDialog()}
                 {renderFluxPackExportDialog()}
+                {renderFluxPackInstallConflictDialog()}
+                {renderFluxPackManualDownloadsDialog()}
                 {renderDeletionConfirmation()}
                 {renderGrassCacheConfirmation()}
                 {renderOperationOverlay()}

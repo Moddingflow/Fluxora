@@ -29,8 +29,10 @@ interface LibraryHomeProps {
   catalogPath: string;
   catalogState: LibraryCatalogState;
   filteredProjects: FluxoraProject[];
+  isInstallFluxPackDisabled: boolean;
   isNewBuildDisabled: boolean;
   isProjectInteractionDisabled: boolean;
+  onInstallFluxPack: () => void;
   onNewBuild: () => void;
   onOpenProject: (project: FluxoraProject) => void;
   onOpenProjectDirectory: (project: FluxoraProject) => void;
@@ -81,8 +83,10 @@ export function LibraryHome({
   catalogPath,
   catalogState,
   filteredProjects,
+  isInstallFluxPackDisabled,
   isNewBuildDisabled,
   isProjectInteractionDisabled,
+  onInstallFluxPack,
   onNewBuild,
   onOpenProject,
   onOpenProjectDirectory,
@@ -105,8 +109,19 @@ export function LibraryHome({
       <aside className="library-sidebar" aria-label="Build library sidebar">
         <header className="library-header">
           <div className="library-header__title">
-            <span>Library</span>
+            <span className="library-header__heading">Library</span>
             <Badge tone="neutral">{projects.length} builds</Badge>
+            <Button
+              aria-label="Установить сборку из FluxPack"
+              className="library-header__install"
+              disabled={isInstallFluxPackDisabled}
+              iconLeft={<Icon name="hard-drive" size={14} />}
+              onClick={onInstallFluxPack}
+              size="sm"
+              variant="secondary"
+            >
+              Установить
+            </Button>
           </div>
           <Input
             aria-label="Search builds"

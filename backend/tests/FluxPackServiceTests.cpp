@@ -991,7 +991,108 @@ namespace fluxora::tests
 #endif
     }
 
-    TEST(FluxPackServiceTests, InstallFluxPackReportsNexusDownloadFailuresAsErrorsAndCleansPlaceholder)
+    TEST(FluxPackServiceTests, PlanInstallSeparatesPremiumAutomaticAndManualNexusAcquisition)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path fluxPack = temp.path() / L"Foundation.fluxpack";
+        writeTextFile(
+            fluxPack,
+            "{"
+            "\"format\":\"FluxPack\","
+            "\"formatVersion\":1,"
+            "\"build\":{"
+            "\"name\":\"Foundation Edition\","
+            "\"templateId\":\"skyrimse\","
+            "\"gameName\":\"Skyrim Special Edition\","
+            "\"gamePath\":\"\","
+            "\"projectDirectoryHint\":\"\","
+            "\"defaultProfile\":\"Default\""
+            "},"
+            "\"policies\":{},"
+            "\"sourceArchives\":[{"
+            "\"folderName\":\"SkyUI\","
+            "\"displayName\":\"SkyUI\","
+            "\"version\":\"5.2\","
+            "\"archiveFileName\":\"SkyUI.7z\","
+            "\"archiveSize\":0,"
+            "\"requiresDownload\":true,"
+            "\"source\":{"
+            "\"provider\":\"nexus\","
+            "\"gameDomain\":\"skyrimspecialedition\","
+            "\"remoteModId\":\"3863\","
+            "\"remoteFileId\":\"123\","
+            "\"url\":\"nxm://skyrimspecialedition/mods/3863/files/123\""
+            "}"
+            "}],"
+            "\"generatedAssets\":[],"
+            "\"customPatches\":[],"
+            "\"customConfigs\":[],"
+            "\"installPlan\":{"
+            "\"version\":1,"
+            "\"defaultProfile\":\"Default\","
+            "\"stages\":[{\"id\":\"source-archives\",\"title\":\"Download\",\"policy\":\"reference-only\",\"requires\":[]}],"
+            "\"profileOrder\":[],"
+            "\"targetPaths\":{}"
+            "}"
+            "}");
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadService downloadService(logger, settings, pathSettings);
+        downloadService.initialize();
+        FluxPackService service(logger, projects, downloadService, pathSettings);
+        service.initialize();
+
+        const FluxPackInstallPlan manualPlan = service.planInstall(FluxPackInstallPlanRequest{
+            fluxPack,
+            {}
+        });
+        ASSERT_EQ(manualPlan.sources.size(), 1U);
+        EXPECT_EQ(manualPlan.summary.buildName, L"Foundation Edition");
+        EXPECT_EQ(manualPlan.sources.front().providerId, L"nexus");
+        EXPECT_EQ(manualPlan.sources.front().acquisitionMode, L"manual");
+        EXPECT_TRUE(manualPlan.sources.front().requiresManualDownload);
+        EXPECT_FALSE(manualPlan.sources.front().canAutomaticallyDownload);
+        EXPECT_FALSE(manualPlan.sources.front().sourceId.empty());
+        EXPECT_EQ(
+            manualPlan.sources.front().manualDownloadUrl,
+            L"https://www.nexusmods.com/skyrimspecialedition/mods/3863?tab=files&file_id=123");
+
+        NexusModsStoredAuth premiumAuth;
+        premiumAuth.linked = true;
+        premiumAuth.isPremium = true;
+        premiumAuth.protectedApiKey = L"protected-premium-key";
+        settings.saveNexusModsAuth(premiumAuth);
+
+        const FluxPackInstallPlan automaticPlan = service.planInstall(FluxPackInstallPlanRequest{
+            fluxPack,
+            {}
+        });
+        ASSERT_EQ(automaticPlan.sources.size(), 1U);
+        EXPECT_EQ(automaticPlan.sources.front().acquisitionMode, L"automatic");
+        EXPECT_FALSE(automaticPlan.sources.front().requiresManualDownload);
+        EXPECT_TRUE(automaticPlan.sources.front().canAutomaticallyDownload);
+
+        service.shutdown();
+        downloadService.shutdown();
+        projects.shutdown();
+        templates.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+    }
+
+    TEST(FluxPackServiceTests, InstallFluxPackRequiresAndAcceptsManualNexusArchiveWithoutPremium)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "FluxPack install project creation uses Windows game detection in this build.";
@@ -1002,9 +1103,12 @@ namespace fluxora::tests
         const std::filesystem::path installRoot = temp.path() / L"Installed";
         const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
         const std::filesystem::path fluxPack = temp.path() / L"Foundation.fluxpack";
+        const std::filesystem::path manualArchive = temp.path() / L"Manual" / L"Nexus Source.bsa";
         std::filesystem::create_directories(installRoot);
         writeTextFile(game / L"SkyrimSE.exe", "MZ");
         writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(manualArchive, "archive");
+        const std::wstring manualArchiveHash = computeFluxPackFileSha256(manualArchive);
         const std::string fluxPackJson =
             std::string("{")
             + "\"format\":\"FluxPack\","
@@ -1022,6 +1126,9 @@ namespace fluxora::tests
             + "\"displayName\":\"Nexus Source\","
             + "\"version\":\"1.0\","
             + "\"enabled\":true,"
+            + "\"archiveHash\":{\"algorithm\":\"sha256\",\"value\":\"" + toUtf8(manualArchiveHash) + "\"},"
+            + "\"archiveFileName\":\"Nexus Source.bsa\","
+            + "\"archiveSize\":7,"
             + "\"requiresDownload\":true,"
             + "\"source\":{"
             + "\"provider\":\"nexus\","
@@ -1096,13 +1203,49 @@ namespace fluxora::tests
         }
 
         ASSERT_NE(failedUpdate, nullptr);
-        EXPECT_EQ(failedUpdate->currentStep, L"Ошибка загрузки");
+        EXPECT_EQ(failedUpdate->currentStep, L"Требуется ручная загрузка");
         ASSERT_EQ(failedUpdate->providers.size(), 1U);
         EXPECT_EQ(failedUpdate->providers.front().providerId, L"nexus");
         EXPECT_EQ(failedUpdate->providers.front().pendingCount, 0U);
         EXPECT_EQ(failedUpdate->providers.front().failedCount, 1U);
-        EXPECT_NE(failedUpdate->providers.front().statusText.find(L"Ошибка загрузки"), std::wstring::npos);
+        EXPECT_NE(failedUpdate->providers.front().statusText.find(L"Скачайте вручную"), std::wstring::npos);
         EXPECT_EQ(failedUpdate->providers.front().statusText.find(L"Ожидает"), std::wstring::npos);
+
+        const std::filesystem::path manualInstallRoot = temp.path() / L"Installed manually";
+        EXPECT_THROW(
+            static_cast<void>(service.installFluxPack(FluxPackInstallRequest{
+                fluxPack,
+                manualInstallRoot,
+                {},
+                {},
+                {
+                    FluxPackManualSourceArchive{
+                        L"source-unknown:nexus:skyrimspecialedition:3863:123",
+                        manualArchive
+                    }
+                }
+            })),
+            std::invalid_argument);
+        EXPECT_FALSE(std::filesystem::exists(manualInstallRoot));
+
+        const FluxPackInstallResult manualResult = service.installFluxPack(FluxPackInstallRequest{
+            fluxPack,
+            manualInstallRoot,
+            {},
+            {},
+            {
+                FluxPackManualSourceArchive{
+                    L"source-0:nexus:skyrimspecialedition:3863:123",
+                    manualArchive
+                }
+            }
+        });
+
+        EXPECT_EQ(manualResult.installedSourceCount, 1U);
+        EXPECT_EQ(manualResult.failedSourceCount, 0U);
+        EXPECT_FALSE(manualResult.hasWarnings);
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            manualResult.projectDirectory / L"mods" / L"Nexus Source" / L"Nexus Source.bsa"));
 
         service.shutdown();
         downloadService.shutdown();
@@ -1773,6 +1916,14 @@ namespace fluxora::tests
 
         FluxPackService service(logger, projects, downloadService, pathSettings);
         service.initialize();
+        const FluxPackInstallPlan plan = service.planInstall(FluxPackInstallPlanRequest{
+            fluxPack,
+            existing.configPath
+        });
+        ASSERT_EQ(plan.sources.size(), 1U);
+        EXPECT_EQ(plan.sources.front().acquisitionMode, L"installed");
+        EXPECT_EQ(plan.reusableSourceCount, 1U);
+        EXPECT_EQ(plan.manualDownloadCount, 0U);
         const FluxPackInstallResult result = service.installFluxPack(FluxPackInstallRequest{
             fluxPack,
             installRoot,
@@ -1906,6 +2057,14 @@ namespace fluxora::tests
 
         FluxPackService service(logger, projects, downloadService, pathSettings);
         service.initialize();
+        const FluxPackInstallPlan plan = service.planInstall(FluxPackInstallPlanRequest{
+            fluxPack,
+            existing.configPath
+        });
+        ASSERT_EQ(plan.sources.size(), 1U);
+        EXPECT_EQ(plan.sources.front().acquisitionMode, L"cached-download");
+        EXPECT_EQ(plan.reusableDownloadCount, 1U);
+        EXPECT_EQ(plan.manualDownloadCount, 0U);
         const FluxPackInstallResult result = service.installFluxPack(FluxPackInstallRequest{
             fluxPack,
             installRoot,

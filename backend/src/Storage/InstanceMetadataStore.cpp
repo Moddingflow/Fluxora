@@ -1,6 +1,7 @@
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
+#include "FluxoraCore/Support/FilesystemPath.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
 
@@ -30,6 +31,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <bcrypt.h>
 #endif
 
 #ifndef _WIN32
@@ -49,12 +51,49 @@ namespace fluxora
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
 
+    void InstanceMetadataStore::beginProjectActivation(
+        const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
 #ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
     void InstanceMetadataStore::resetSqlPrepareCountForTesting()
     {
     }
 
     std::uint64_t InstanceMetadataStore::sqlPrepareCountForTesting()
+    {
+        return 0;
+    }
+
+    void InstanceMetadataStore::resetSqlExecCountForTesting()
+    {
+    }
+
+    std::uint64_t InstanceMetadataStore::sqlExecCountForTesting()
+    {
+        return 0;
+    }
+
+    void InstanceMetadataStore::resetInventorySyncCountForTesting()
+    {
+    }
+
+    std::uint64_t InstanceMetadataStore::inventorySyncCountForTesting()
+    {
+        return 0;
+    }
+
+    void InstanceMetadataStore::setFileCacheScanFailureAfterEntriesForTesting(int)
+    {
+    }
+
+    void InstanceMetadataStore::resetStableMetadataHandleOpenCountForTesting()
+    {
+    }
+
+    std::uint64_t InstanceMetadataStore::stableMetadataHandleOpenCountForTesting()
     {
         return 0;
     }
@@ -69,6 +108,14 @@ namespace fluxora
 
     void InstanceMetadataStore::refreshInstalledModsFromDisk(
         const std::filesystem::path&,
+        const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::invalidateModFileCaches(
+        const std::filesystem::path&,
+        const std::vector<std::filesystem::path>&,
         const std::filesystem::path&)
     {
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
@@ -242,6 +289,20 @@ namespace fluxora
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
 
+    std::vector<ModFileSummaryRecord> InstanceMetadataStore::summarizePersistedInstalledModFiles(
+        const std::filesystem::path&,
+        const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    PersistedInstalledModsSnapshot InstanceMetadataStore::persistedInstalledModsSnapshot(
+        const std::filesystem::path&,
+        const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
     std::vector<ModFileSummaryRecord> InstanceMetadataStore::summarizeProfileModFiles(
         const std::filesystem::path&,
         std::wstring_view,
@@ -300,17 +361,105 @@ namespace fluxora
         constexpr std::wstring_view profilePluginOrderSeparatorKind = L"separator";
         constexpr std::wstring_view modInventoryRevisionKey = L"mod_inventory_revision";
         constexpr std::wstring_view generatedPgPatcherProvider = L"generated-pgpatcher";
+        constexpr int instanceDatabaseSchemaVersion = 6;
+        constexpr int fileCacheSchemaVersion = 2;
 
         using SqliteDestructor = void (*)(void*);
 
 #ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
         std::atomic<std::uint64_t> sqlitePrepareCountForTesting{0};
+        std::atomic<std::uint64_t> sqliteExecCountForTesting{0};
+        std::atomic<std::uint64_t> inventorySyncInvocationCount{0};
+        std::atomic<int> fileCacheScanFailureAfterEntriesForTesting{-1};
+        std::atomic<std::uint64_t> stableMetadataHandleOpenCounterForTesting{0};
 #endif
 
         std::mutex& metadataStoreMutex()
         {
             static std::mutex mutex;
             return mutex;
+        }
+
+        struct FileCacheValidationState
+        {
+            std::wstring activeProjectKey;
+            std::uint64_t activationGeneration{0};
+            std::uint64_t validatedGeneration{0};
+            std::uint64_t launchInventoryValidatedGeneration{0};
+        };
+
+        FileCacheValidationState& fileCacheValidationState()
+        {
+            static FileCacheValidationState state;
+            return state;
+        }
+
+        std::wstring normalizedProjectKey(const std::filesystem::path& projectDirectory)
+        {
+            std::wstring value = std::filesystem::absolute(projectDirectory).lexically_normal().wstring();
+            std::transform(
+                value.begin(),
+                value.end(),
+                value.begin(),
+                [](wchar_t character)
+                {
+                    return static_cast<wchar_t>(std::towlower(character));
+                });
+            return value;
+        }
+
+        void beginFileCacheActivationLocked(const std::filesystem::path& projectDirectory)
+        {
+            FileCacheValidationState& state = fileCacheValidationState();
+            const std::wstring key = normalizedProjectKey(projectDirectory);
+            if (state.activeProjectKey == key)
+            {
+                return;
+            }
+            state.activeProjectKey = key;
+            ++state.activationGeneration;
+            state.validatedGeneration = 0;
+            state.launchInventoryValidatedGeneration = 0;
+        }
+
+        bool fileCacheValidationRequiredLocked(const std::filesystem::path& projectDirectory)
+        {
+            beginFileCacheActivationLocked(projectDirectory);
+            const FileCacheValidationState& state = fileCacheValidationState();
+            return state.validatedGeneration != state.activationGeneration;
+        }
+
+        void markFileCacheValidatedLocked(const std::filesystem::path& projectDirectory)
+        {
+            beginFileCacheActivationLocked(projectDirectory);
+            FileCacheValidationState& state = fileCacheValidationState();
+            state.validatedGeneration = state.activationGeneration;
+        }
+
+        bool launchInventoryReconciliationRequiredLocked(
+            const std::filesystem::path& projectDirectory)
+        {
+            beginFileCacheActivationLocked(projectDirectory);
+            const FileCacheValidationState& state = fileCacheValidationState();
+            return state.launchInventoryValidatedGeneration != state.activationGeneration;
+        }
+
+        void markLaunchInventoryReconciledLocked(
+            const std::filesystem::path& projectDirectory)
+        {
+            beginFileCacheActivationLocked(projectDirectory);
+            FileCacheValidationState& state = fileCacheValidationState();
+            state.launchInventoryValidatedGeneration = state.activationGeneration;
+        }
+
+        void invalidateLaunchInventoryReconciliationLocked(
+            const std::filesystem::path& projectDirectory)
+        {
+            FileCacheValidationState& state = fileCacheValidationState();
+            if (state.activeProjectKey == normalizedProjectKey(projectDirectory))
+            {
+                state.launchInventoryValidatedGeneration = 0;
+            }
         }
 
         std::string toUtf8(const std::wstring& value)
@@ -591,12 +740,12 @@ namespace fluxora
             const std::filesystem::path& modDirectory)
         {
             const std::filesystem::path path = manifestPathForMod(modDirectory);
+            recoverMetadataManifest(path);
             if (!std::filesystem::exists(path))
             {
                 return std::nullopt;
             }
 
-            recoverMetadataManifest(path);
             const JsonValue root = JsonReader::parse(fromUtf8(readTextFile(path)));
             if (!root.isObject())
             {
@@ -651,79 +800,7 @@ namespace fluxora
             return portableManifestNeedsWrite(record, stateChanged);
         }
 
-        void mixHash(std::uint64_t& hash, std::uint64_t value)
-        {
-            hash ^= value;
-            hash *= 1099511628211ULL;
-        }
-
-        void mixHash(std::uint64_t& hash, std::wstring_view value)
-        {
-            for (wchar_t character : value)
-            {
-                mixHash(hash, static_cast<std::uint64_t>(character));
-            }
-        }
-
-        std::wstring computeContentFingerprint(const std::filesystem::path& modDirectory)
-        {
-            std::uint64_t hash = 1469598103934665603ULL;
-            std::uintmax_t fileCount = 0;
-            std::uintmax_t totalBytes = 0;
-
-            if (!std::filesystem::exists(modDirectory))
-            {
-                return {};
-            }
-
-            std::error_code error;
-            std::filesystem::recursive_directory_iterator iterator(
-                modDirectory,
-                std::filesystem::directory_options::skip_permission_denied,
-                error);
-            const std::filesystem::recursive_directory_iterator end;
-
-            while (!error && iterator != end)
-            {
-                const std::filesystem::path current = iterator->path();
-                if (iterator->is_directory(error) && current.filename().wstring() == manifestDirectoryName)
-                {
-                    iterator.disable_recursion_pending();
-                    iterator.increment(error);
-                    continue;
-                }
-
-                if (iterator->is_regular_file(error))
-                {
-                    ++fileCount;
-                    const auto relative = std::filesystem::relative(current, modDirectory, error);
-                    mixHash(hash, error ? current.wstring() : relative.generic_wstring());
-
-                    const std::uintmax_t size = iterator->file_size(error);
-                    if (!error)
-                    {
-                        totalBytes += size;
-                        mixHash(hash, size);
-                    }
-
-                    const auto writeTime = iterator->last_write_time(error);
-                    if (!error)
-                    {
-                        mixHash(
-                            hash,
-                            static_cast<std::uint64_t>(
-                                writeTime.time_since_epoch().count()));
-                    }
-                }
-
-                iterator.increment(error);
-            }
-
-            std::wostringstream stream;
-            stream << L"v1:" << fileCount << L":" << totalBytes << L":"
-                   << std::hex << std::setw(16) << std::setfill(L'0') << hash;
-            return stream.str();
-        }
+        std::wstring computeContentFingerprint(const std::filesystem::path& modDirectory);
 
         bool containsToken(std::wstring_view value, std::wstring_view token)
         {
@@ -854,7 +931,9 @@ namespace fluxora
             using ExecFn = int (__cdecl *)(sqlite3*, const char*, int (*)(void*, int, char**, char**), void*, char**);
             using PrepareFn = int (__cdecl *)(sqlite3*, const char*, int, sqlite3_stmt**, const char**);
             using StepFn = int (__cdecl *)(sqlite3_stmt*);
+            using ResetFn = int (__cdecl *)(sqlite3_stmt*);
             using FinalizeFn = int (__cdecl *)(sqlite3_stmt*);
+            using ClearBindingsFn = int (__cdecl *)(sqlite3_stmt*);
             using BindText16Fn = int (__cdecl *)(sqlite3_stmt*, int, const void*, int, SqliteDestructor);
             using BindIntFn = int (__cdecl *)(sqlite3_stmt*, int, int);
             using BindInt64Fn = int (__cdecl *)(sqlite3_stmt*, int, long long);
@@ -881,7 +960,9 @@ namespace fluxora
                 exec = load<ExecFn>("sqlite3_exec");
                 prepare = load<PrepareFn>("sqlite3_prepare_v2");
                 step = load<StepFn>("sqlite3_step");
+                reset = load<ResetFn>("sqlite3_reset");
                 finalize = load<FinalizeFn>("sqlite3_finalize");
+                clearBindings = load<ClearBindingsFn>("sqlite3_clear_bindings");
                 bindText16 = load<BindText16Fn>("sqlite3_bind_text16");
                 bindInt = load<BindIntFn>("sqlite3_bind_int");
                 bindInt64 = load<BindInt64Fn>("sqlite3_bind_int64");
@@ -912,7 +993,9 @@ namespace fluxora
             ExecFn exec{};
             PrepareFn prepare{};
             StepFn step{};
+            ResetFn reset{};
             FinalizeFn finalize{};
+            ClearBindingsFn clearBindings{};
             BindText16Fn bindText16{};
             BindIntFn bindInt{};
             BindInt64Fn bindInt64{};
@@ -1048,6 +1131,26 @@ namespace fluxora
                 finalize();
             }
 
+            void stepDoneAndReset()
+            {
+                const int result = sqlite().step(statement_);
+                if (result != sqliteDone)
+                {
+                    throw std::runtime_error(sqliteError(handle_));
+                }
+
+                const int resetResult = sqlite().reset(statement_);
+                if (resetResult != sqliteOk)
+                {
+                    throw std::runtime_error(sqliteError(handle_));
+                }
+                const int clearResult = sqlite().clearBindings(statement_);
+                if (clearResult != sqliteOk)
+                {
+                    throw std::runtime_error(sqliteError(handle_));
+                }
+            }
+
             std::wstring columnText(int index) const
             {
                 const void* text = sqlite().columnText16(statement_, index);
@@ -1154,6 +1257,9 @@ namespace fluxora
 
             void exec(const char* sql)
             {
+#ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
+                sqliteExecCountForTesting.fetch_add(1, std::memory_order_relaxed);
+#endif
                 char* error = nullptr;
                 const int result = sqlite().exec(handle_, sql, nullptr, nullptr, &error);
                 if (result != sqliteOk)
@@ -1252,10 +1358,25 @@ namespace fluxora
 
         void ensureSchema(Database& database)
         {
-            database.exec("PRAGMA busy_timeout = 15000;");
+            int persistedVersion = 0;
+            {
+                Statement version = database.prepare("PRAGMA user_version;");
+                persistedVersion = version.stepRow() ? version.columnInt(0) : 0;
+            }
+            if (persistedVersion > instanceDatabaseSchemaVersion)
+            {
+                throw std::runtime_error(
+                    "The instance database was created by a newer Fluxora version.");
+            }
+
             database.exec("PRAGMA foreign_keys = ON;");
             database.exec("PRAGMA journal_mode = WAL;");
             database.exec("PRAGMA synchronous = NORMAL;");
+            if (persistedVersion == instanceDatabaseSchemaVersion)
+            {
+                return;
+            }
+
             database.exec(
                 "CREATE TABLE IF NOT EXISTS instance_metadata ("
                 "key TEXT PRIMARY KEY NOT NULL,"
@@ -1307,6 +1428,14 @@ namespace fluxora
                 "size INTEGER NOT NULL DEFAULT 0,"
                 "modified_at TEXT NOT NULL DEFAULT '',"
                 "PRIMARY KEY(mod_id, path_key)"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_file_cache_state ("
+                "mod_id INTEGER PRIMARY KEY NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
+                "schema_version INTEGER NOT NULL,"
+                "cache_key TEXT NOT NULL,"
+                "entry_count INTEGER NOT NULL,"
+                "validated_at TEXT NOT NULL"
                 ");");
             database.exec(
                 "CREATE TABLE IF NOT EXISTS mod_tags ("
@@ -1419,6 +1548,9 @@ namespace fluxora
             database.exec("CREATE INDEX IF NOT EXISTS idx_mods_display_name ON mods(display_name COLLATE NOCASE);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_sources_remote ON mod_sources(provider, game_domain, remote_mod_id, remote_file_id);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_files_path ON mod_files(path_key);");
+            database.exec(
+                "CREATE INDEX IF NOT EXISTS idx_mod_files_relative_path "
+                "ON mod_files(mod_id, relative_path COLLATE NOCASE);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_files_parent ON mod_files(mod_id, parent_key, kind, name COLLATE NOCASE);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_tags_tag ON mod_tags(tag COLLATE NOCASE);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_dependencies_target ON mod_dependencies(target_provider, target_mod_id, target_file_id);");
@@ -1431,7 +1563,7 @@ namespace fluxora
             database.exec("CREATE INDEX IF NOT EXISTS idx_profile_order_profile_position ON profile_order_items(profile_name, position);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_profile_plugin_order_profile_position ON profile_plugin_order_items(profile_name, position);");
             database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_profile_plugin_order_unique_plugin ON profile_plugin_order_items(profile_name, plugin_name) WHERE kind = 'plugin';");
-            database.exec("PRAGMA user_version = 5;");
+            database.exec("PRAGMA user_version = 6;");
         }
 
         Database openInstanceDatabase(const std::filesystem::path& projectDirectory)
@@ -1869,25 +2001,40 @@ namespace fluxora
         void appendMissingProfileModItems(Database& database, std::wstring_view profileName)
         {
             Statement mods = database.prepare(
-                "SELECT id FROM mods "
-                "WHERE state IN ('installed', 'disabled') "
-                "ORDER BY display_name COLLATE NOCASE, folder_name COLLATE NOCASE;");
+                "SELECT m.id FROM mods m "
+                "WHERE m.state IN ('installed', 'disabled') "
+                "AND NOT EXISTS ("
+                "SELECT 1 FROM profile_order_items oi "
+                "WHERE oi.profile_name = ? AND oi.kind = 'mod' AND oi.mod_id = m.id"
+                ") "
+                "ORDER BY m.display_name COLLATE NOCASE, m.folder_name COLLATE NOCASE;");
+            mods.bindText(1, profileName);
+
+            std::vector<std::int64_t> missingModIds;
+            while (mods.stepRow())
+            {
+                missingModIds.push_back(mods.columnInt64(0));
+            }
+            if (missingModIds.empty())
+            {
+                return;
+            }
 
             int nextPosition = nextProfileOrderPosition(database, profileName);
             const std::wstring now = nowUtcText();
-            while (mods.stepRow())
+            Statement insert = database.prepare(
+                "INSERT OR IGNORE INTO profile_order_items("
+                "id, profile_name, kind, mod_id, separator_title, position, created_at, updated_at"
+                ") VALUES(?, ?, 'mod', ?, '', ?, ?, ?);");
+            for (const std::int64_t modId : missingModIds)
             {
-                Statement insert = database.prepare(
-                    "INSERT OR IGNORE INTO profile_order_items("
-                    "id, profile_name, kind, mod_id, separator_title, position, created_at, updated_at"
-                    ") VALUES(?, ?, 'mod', ?, '', ?, ?, ?);");
                 insert.bindText(1, generateUuid());
                 insert.bindText(2, profileName);
-                insert.bindInt64(3, mods.columnInt64(0));
+                insert.bindInt64(3, modId);
                 insert.bindInt(4, nextPosition);
                 insert.bindText(5, now);
                 insert.bindText(6, now);
-                insert.stepDone();
+                insert.stepDoneAndReset();
                 ++nextPosition;
             }
         }
@@ -1895,28 +2042,46 @@ namespace fluxora
         void compactProfileOrderPositions(Database& database, std::wstring_view profileName)
         {
             Statement select = database.prepare(
-                "SELECT id FROM profile_order_items "
+                "SELECT id, position FROM profile_order_items "
                 "WHERE profile_name = ? "
                 "ORDER BY position, rowid;");
             select.bindText(1, profileName);
 
-            std::vector<std::wstring> ids;
+            std::vector<std::pair<std::wstring, int>> rows;
             while (select.stepRow())
             {
-                ids.push_back(select.columnText(0));
+                rows.emplace_back(select.columnText(0), select.columnInt(1));
+            }
+
+            bool needsCompaction = false;
+            for (std::size_t index = 0; index < rows.size(); ++index)
+            {
+                if (rows[index].second != static_cast<int>(index))
+                {
+                    needsCompaction = true;
+                    break;
+                }
+            }
+            if (!needsCompaction)
+            {
+                return;
             }
 
             const std::wstring now = nowUtcText();
-            for (int index = 0; index < static_cast<int>(ids.size()); ++index)
+            Statement update = database.prepare(
+                "UPDATE profile_order_items "
+                "SET position = ?, updated_at = ? "
+                "WHERE id = ?;");
+            for (int index = 0; index < static_cast<int>(rows.size()); ++index)
             {
-                Statement update = database.prepare(
-                    "UPDATE profile_order_items "
-                    "SET position = ?, updated_at = ? "
-                    "WHERE id = ?;");
+                if (rows[static_cast<std::size_t>(index)].second == index)
+                {
+                    continue;
+                }
                 update.bindInt(1, index);
                 update.bindText(2, now);
-                update.bindText(3, ids[static_cast<std::size_t>(index)]);
-                update.stepDone();
+                update.bindText(3, rows[static_cast<std::size_t>(index)].first);
+                update.stepDoneAndReset();
             }
         }
 
@@ -2069,27 +2234,46 @@ namespace fluxora
             std::wstring_view profileName,
             const std::vector<std::wstring>& pluginNames)
         {
-            int nextPosition = nextProfilePluginOrderPosition(database, profileName);
-            const std::wstring now = nowUtcText();
+            std::set<std::wstring> existingKeys;
+            Statement existing = database.prepare(
+                "SELECT plugin_name FROM profile_plugin_order_items "
+                "WHERE profile_name = ? AND kind = 'plugin';");
+            existing.bindText(1, profileName);
+            while (existing.stepRow())
+            {
+                existingKeys.insert(toLower(existing.columnText(0)));
+            }
+
+            std::vector<std::wstring> missingPluginNames;
+            missingPluginNames.reserve(pluginNames.size());
             for (const std::wstring& pluginName : pluginNames)
             {
                 const std::wstring normalized = trim(pluginName);
-                if (normalized.empty())
+                if (!normalized.empty() && existingKeys.insert(toLower(normalized)).second)
                 {
-                    continue;
+                    missingPluginNames.push_back(normalized);
                 }
+            }
+            if (missingPluginNames.empty())
+            {
+                return;
+            }
 
-                Statement insert = database.prepare(
-                    "INSERT OR IGNORE INTO profile_plugin_order_items("
-                    "id, profile_name, kind, plugin_name, separator_title, position, created_at, updated_at"
-                    ") VALUES(?, ?, 'plugin', ?, '', ?, ?, ?);");
+            int nextPosition = nextProfilePluginOrderPosition(database, profileName);
+            const std::wstring now = nowUtcText();
+            Statement insert = database.prepare(
+                "INSERT OR IGNORE INTO profile_plugin_order_items("
+                "id, profile_name, kind, plugin_name, separator_title, position, created_at, updated_at"
+                ") VALUES(?, ?, 'plugin', ?, '', ?, ?, ?);");
+            for (const std::wstring& pluginName : missingPluginNames)
+            {
                 insert.bindText(1, generateUuid());
                 insert.bindText(2, profileName);
-                insert.bindText(3, normalized);
+                insert.bindText(3, pluginName);
                 insert.bindInt(4, nextPosition);
                 insert.bindText(5, now);
                 insert.bindText(6, now);
-                insert.stepDone();
+                insert.stepDoneAndReset();
                 ++nextPosition;
             }
         }
@@ -2097,28 +2281,46 @@ namespace fluxora
         void compactProfilePluginOrderPositions(Database& database, std::wstring_view profileName)
         {
             Statement select = database.prepare(
-                "SELECT id FROM profile_plugin_order_items "
+                "SELECT id, position FROM profile_plugin_order_items "
                 "WHERE profile_name = ? "
                 "ORDER BY position, rowid;");
             select.bindText(1, profileName);
 
-            std::vector<std::wstring> ids;
+            std::vector<std::pair<std::wstring, int>> rows;
             while (select.stepRow())
             {
-                ids.push_back(select.columnText(0));
+                rows.emplace_back(select.columnText(0), select.columnInt(1));
+            }
+
+            bool needsCompaction = false;
+            for (std::size_t index = 0; index < rows.size(); ++index)
+            {
+                if (rows[index].second != static_cast<int>(index))
+                {
+                    needsCompaction = true;
+                    break;
+                }
+            }
+            if (!needsCompaction)
+            {
+                return;
             }
 
             const std::wstring now = nowUtcText();
-            for (int index = 0; index < static_cast<int>(ids.size()); ++index)
+            Statement update = database.prepare(
+                "UPDATE profile_plugin_order_items "
+                "SET position = ?, updated_at = ? "
+                "WHERE id = ?;");
+            for (int index = 0; index < static_cast<int>(rows.size()); ++index)
             {
-                Statement update = database.prepare(
-                    "UPDATE profile_plugin_order_items "
-                    "SET position = ?, updated_at = ? "
-                    "WHERE id = ?;");
+                if (rows[static_cast<std::size_t>(index)].second == index)
+                {
+                    continue;
+                }
                 update.bindInt(1, index);
                 update.bindText(2, now);
-                update.bindText(3, ids[static_cast<std::size_t>(index)]);
-                update.stepDone();
+                update.bindText(3, rows[static_cast<std::size_t>(index)].first);
+                update.stepDoneAndReset();
             }
         }
 
@@ -2494,13 +2696,53 @@ namespace fluxora
             return statement.stepRow() ? statement.columnInt(0) : 0;
         }
 
-        std::wstring fileTimeCacheText(const std::filesystem::directory_entry& entry)
+        struct PersistedFileCacheState
         {
-            std::error_code error;
-            const auto writeTime = entry.last_write_time(error);
-            return error
-                ? std::wstring()
-                : std::to_wstring(writeTime.time_since_epoch().count());
+            int schemaVersion{0};
+            std::wstring cacheKey;
+            int entryCount{0};
+        };
+
+        std::optional<PersistedFileCacheState> readFileCacheState(
+            Database& database,
+            std::int64_t modId)
+        {
+            Statement statement = database.prepare(
+                "SELECT schema_version, cache_key, entry_count "
+                "FROM mod_file_cache_state WHERE mod_id = ?;");
+            statement.bindInt64(1, modId);
+            if (!statement.stepRow())
+            {
+                return std::nullopt;
+            }
+            return PersistedFileCacheState{
+                statement.columnInt(0),
+                statement.columnText(1),
+                statement.columnInt(2)
+            };
+        }
+
+        void upsertFileCacheState(
+            Database& database,
+            std::int64_t modId,
+            std::wstring_view cacheKey,
+            int entryCount)
+        {
+            Statement statement = database.prepare(
+                "INSERT INTO mod_file_cache_state("
+                "mod_id, schema_version, cache_key, entry_count, validated_at"
+                ") VALUES(?, ?, ?, ?, ?) "
+                "ON CONFLICT(mod_id) DO UPDATE SET "
+                "schema_version = excluded.schema_version, "
+                "cache_key = excluded.cache_key, "
+                "entry_count = excluded.entry_count, "
+                "validated_at = excluded.validated_at;");
+            statement.bindInt64(1, modId);
+            statement.bindInt(2, fileCacheSchemaVersion);
+            statement.bindText(3, cacheKey);
+            statement.bindInt(4, entryCount);
+            statement.bindText(5, nowUtcText());
+            statement.stepDone();
         }
 
         struct FileCacheEntry
@@ -2512,6 +2754,598 @@ namespace fluxora
             std::uintmax_t size{0};
             std::wstring modifiedAt;
         };
+
+        class Win32Handle final
+        {
+        public:
+            explicit Win32Handle(HANDLE handle = INVALID_HANDLE_VALUE) noexcept
+                : handle_(handle)
+            {
+            }
+
+            Win32Handle(const Win32Handle&) = delete;
+            Win32Handle& operator=(const Win32Handle&) = delete;
+
+            ~Win32Handle()
+            {
+                if (handle_ != INVALID_HANDLE_VALUE && handle_ != nullptr)
+                {
+                    CloseHandle(handle_);
+                }
+            }
+
+            [[nodiscard]] HANDLE get() const noexcept
+            {
+                return handle_;
+            }
+
+        private:
+            HANDLE handle_{INVALID_HANDLE_VALUE};
+        };
+
+        class Sha256Builder final
+        {
+        public:
+            Sha256Builder()
+            {
+                if (BCryptOpenAlgorithmProvider(
+                        &algorithm_,
+                        BCRYPT_SHA256_ALGORITHM,
+                        nullptr,
+                        0) != 0)
+                {
+                    throw std::runtime_error("Failed to initialize SHA-256.");
+                }
+
+                ULONG objectLength = 0;
+                ULONG resultLength = 0;
+                if (BCryptGetProperty(
+                        algorithm_,
+                        BCRYPT_OBJECT_LENGTH,
+                        reinterpret_cast<PUCHAR>(&objectLength),
+                        sizeof(objectLength),
+                        &resultLength,
+                        0) != 0)
+                {
+                    BCryptCloseAlgorithmProvider(algorithm_, 0);
+                    algorithm_ = nullptr;
+                    throw std::runtime_error("Failed to query the SHA-256 object size.");
+                }
+                object_.resize(objectLength);
+                if (BCryptCreateHash(
+                        algorithm_,
+                        &hash_,
+                        object_.data(),
+                        static_cast<ULONG>(object_.size()),
+                        nullptr,
+                        0,
+                        0) != 0)
+                {
+                    BCryptCloseAlgorithmProvider(algorithm_, 0);
+                    algorithm_ = nullptr;
+                    throw std::runtime_error("Failed to create a SHA-256 hash.");
+                }
+            }
+
+            Sha256Builder(const Sha256Builder&) = delete;
+            Sha256Builder& operator=(const Sha256Builder&) = delete;
+
+            ~Sha256Builder()
+            {
+                if (hash_ != nullptr)
+                {
+                    BCryptDestroyHash(hash_);
+                }
+                if (algorithm_ != nullptr)
+                {
+                    BCryptCloseAlgorithmProvider(algorithm_, 0);
+                }
+            }
+
+            void append(const void* data, std::size_t size)
+            {
+                const auto* bytes = static_cast<const unsigned char*>(data);
+                while (size > 0)
+                {
+                    const ULONG chunk = static_cast<ULONG>((std::min<std::size_t>)(
+                        size,
+                        (std::numeric_limits<ULONG>::max)()));
+                    if (BCryptHashData(
+                            hash_,
+                            const_cast<PUCHAR>(bytes),
+                            chunk,
+                            0) != 0)
+                    {
+                        throw std::runtime_error("Failed to update SHA-256.");
+                    }
+                    bytes += chunk;
+                    size -= chunk;
+                }
+            }
+
+            template <typename Value>
+            void appendValue(const Value& value)
+            {
+                append(&value, sizeof(value));
+            }
+
+            void appendText(std::wstring_view value)
+            {
+                const std::string utf8 = toUtf8(std::wstring(value));
+                const std::uint64_t length = utf8.size();
+                appendValue(length);
+                append(utf8.data(), utf8.size());
+            }
+
+            [[nodiscard]] std::wstring finish(
+                std::wstring_view prefix = L"file-index-v2:")
+            {
+                std::array<unsigned char, 32> digest{};
+                if (BCryptFinishHash(
+                        hash_,
+                        digest.data(),
+                        static_cast<ULONG>(digest.size()),
+                        0) != 0)
+                {
+                    throw std::runtime_error("Failed to finish SHA-256.");
+                }
+                BCryptDestroyHash(hash_);
+                hash_ = nullptr;
+
+                std::wostringstream text;
+                text << prefix << std::hex << std::setfill(L'0');
+                for (const unsigned char byte : digest)
+                {
+                    text << std::setw(2) << static_cast<unsigned int>(byte);
+                }
+                return text.str();
+            }
+
+        private:
+            BCRYPT_ALG_HANDLE algorithm_{nullptr};
+            BCRYPT_HASH_HANDLE hash_{nullptr};
+            std::vector<unsigned char> object_;
+        };
+
+        struct StableFileMetadata
+        {
+            std::uint64_t volumeSerial{0};
+            std::array<unsigned char, 16> fileId{};
+            std::int64_t changeTime{0};
+            std::int64_t lastWriteTime{0};
+            std::uint32_t attributes{0};
+            bool stableIdentity{false};
+        };
+
+        bool volumeSupportsStableChangeIdentity(const std::filesystem::path& path)
+        {
+            const std::filesystem::path ioPath = pathForFilesystemIo(path);
+            std::array<wchar_t, MAX_PATH> volumePath{};
+            if (!GetVolumePathNameW(
+                    ioPath.c_str(),
+                    volumePath.data(),
+                    static_cast<DWORD>(volumePath.size())))
+            {
+                return false;
+            }
+            std::array<wchar_t, 32> fileSystemName{};
+            if (!GetVolumeInformationW(
+                    volumePath.data(),
+                    nullptr,
+                    0,
+                    nullptr,
+                    nullptr,
+                    nullptr,
+                    fileSystemName.data(),
+                    static_cast<DWORD>(fileSystemName.size())))
+            {
+                return false;
+            }
+            const std::wstring normalized = toLower(fileSystemName.data());
+            return normalized == L"ntfs" || normalized == L"refs";
+        }
+
+        StableFileMetadata stableFileMetadata(
+            const std::filesystem::path& path,
+            bool isDirectory,
+            bool stableVolume)
+        {
+#ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
+            stableMetadataHandleOpenCounterForTesting.fetch_add(1, std::memory_order_relaxed);
+#endif
+            const DWORD flags = isDirectory ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL;
+            const std::filesystem::path ioPath = pathForFilesystemIo(path);
+            Win32Handle handle(CreateFileW(
+                ioPath.c_str(),
+                FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr,
+                OPEN_EXISTING,
+                flags,
+                nullptr));
+            if (handle.get() == INVALID_HANDLE_VALUE)
+            {
+                throw std::filesystem::filesystem_error(
+                    "Failed to inspect a mod file",
+                    path,
+                    std::error_code(static_cast<int>(GetLastError()), std::system_category()));
+            }
+
+            FILE_BASIC_INFO basic{};
+            if (!GetFileInformationByHandleEx(
+                    handle.get(),
+                    FileBasicInfo,
+                    &basic,
+                    sizeof(basic)))
+            {
+                throw std::filesystem::filesystem_error(
+                    "Failed to read mod file change metadata",
+                    path,
+                    std::error_code(static_cast<int>(GetLastError()), std::system_category()));
+            }
+
+            StableFileMetadata metadata;
+            metadata.changeTime = basic.ChangeTime.QuadPart;
+            metadata.lastWriteTime = basic.LastWriteTime.QuadPart;
+            metadata.attributes = basic.FileAttributes;
+
+            FILE_ID_INFO identity{};
+            if (stableVolume && GetFileInformationByHandleEx(
+                    handle.get(),
+                    FileIdInfo,
+                    &identity,
+                    sizeof(identity)))
+            {
+                metadata.volumeSerial = identity.VolumeSerialNumber;
+                std::copy(
+                    std::begin(identity.FileId.Identifier),
+                    std::end(identity.FileId.Identifier),
+                    metadata.fileId.begin());
+                metadata.stableIdentity = true;
+            }
+            return metadata;
+        }
+
+        void appendFileContentHashInput(
+            Sha256Builder& hash,
+            const std::filesystem::path& path)
+        {
+            std::ifstream file(pathForFilesystemIo(path), std::ios::binary);
+            if (!file)
+            {
+                throw std::filesystem::filesystem_error(
+                    "Failed to hash a mod file",
+                    path,
+                    std::make_error_code(std::errc::permission_denied));
+            }
+            std::array<char, 64 * 1024> buffer{};
+            while (file)
+            {
+                file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+                const std::streamsize count = file.gcount();
+                if (count > 0)
+                {
+                    hash.append(buffer.data(), static_cast<std::size_t>(count));
+                }
+            }
+            if (!file.eof())
+            {
+                throw std::filesystem::filesystem_error(
+                    "Failed while hashing a mod file",
+                    path,
+                    std::make_error_code(std::errc::io_error));
+            }
+        }
+
+        struct FileCacheSnapshotEntry
+        {
+            FileCacheEntry cache;
+            std::filesystem::path absolutePath;
+            StableFileMetadata metadata;
+        };
+
+        struct FileCacheSnapshot
+        {
+            std::vector<FileCacheEntry> entries;
+            std::wstring cacheKey;
+        };
+
+        bool appendStableDirectorySnapshotEntries(
+            const std::filesystem::path& root,
+            const StableFileMetadata& rootMetadata,
+            std::vector<FileCacheSnapshotEntry>& scanned)
+        {
+            std::vector<std::filesystem::path> pendingDirectories{root};
+            while (!pendingDirectories.empty())
+            {
+                const std::filesystem::path directory = std::move(pendingDirectories.back());
+                pendingDirectories.pop_back();
+
+                const std::filesystem::path ioDirectory = pathForFilesystemIo(directory);
+                Win32Handle handle(CreateFileW(
+                    ioDirectory.c_str(),
+                    FILE_LIST_DIRECTORY,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    nullptr,
+                    OPEN_EXISTING,
+                    FILE_FLAG_BACKUP_SEMANTICS,
+                    nullptr));
+                if (handle.get() == INVALID_HANDLE_VALUE)
+                {
+                    throw std::filesystem::filesystem_error(
+                        "Failed to enumerate a mod directory",
+                        directory,
+                        std::error_code(static_cast<int>(GetLastError()), std::system_category()));
+                }
+
+                alignas(FILE_ID_EXTD_DIR_INFO) std::array<unsigned char, 64 * 1024> buffer{};
+                bool restart = true;
+                for (;;)
+                {
+                    const FILE_INFO_BY_HANDLE_CLASS informationClass = restart
+                        ? FileIdExtdDirectoryRestartInfo
+                        : FileIdExtdDirectoryInfo;
+                    if (!GetFileInformationByHandleEx(
+                            handle.get(),
+                            informationClass,
+                            buffer.data(),
+                            static_cast<DWORD>(buffer.size())))
+                    {
+                        const DWORD error = GetLastError();
+                        if (error == ERROR_NO_MORE_FILES)
+                        {
+                            break;
+                        }
+                        if (error == ERROR_INVALID_PARAMETER || error == ERROR_NOT_SUPPORTED)
+                        {
+                            return false;
+                        }
+                        throw std::filesystem::filesystem_error(
+                            "Failed to read batched mod file metadata",
+                            directory,
+                            std::error_code(static_cast<int>(error), std::system_category()));
+                    }
+                    restart = false;
+
+                    std::size_t offset = 0;
+                    for (;;)
+                    {
+                        if (offset + offsetof(FILE_ID_EXTD_DIR_INFO, FileName) > buffer.size())
+                        {
+                            throw std::runtime_error("A batched mod directory entry is truncated.");
+                        }
+                        const auto* information = reinterpret_cast<const FILE_ID_EXTD_DIR_INFO*>(
+                            buffer.data() + offset);
+                        const std::size_t fileNameBytes = information->FileNameLength;
+                        const std::size_t entryBytes =
+                            offsetof(FILE_ID_EXTD_DIR_INFO, FileName) + fileNameBytes;
+                        if (fileNameBytes % sizeof(wchar_t) != 0 ||
+                            entryBytes > buffer.size() - offset)
+                        {
+                            throw std::runtime_error("A batched mod directory entry is invalid.");
+                        }
+
+                        const std::wstring name(
+                            information->FileName,
+                            fileNameBytes / sizeof(wchar_t));
+                        if (name != L"." && name != L"..")
+                        {
+                            const bool isDirectory =
+                                (information->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                            if (!(isDirectory && equalsIgnoreCase(name, manifestDirectoryName)))
+                            {
+                                if (information->EndOfFile.QuadPart < 0)
+                                {
+                                    throw std::runtime_error("A mod file reported a negative size.");
+                                }
+                                const std::filesystem::path current = directory / name;
+                                const std::filesystem::path relative = current.lexically_relative(root);
+                                if (relative.empty() || relative == L".")
+                                {
+                                    throw std::runtime_error(
+                                        "A mod cache entry could not be made relative to its root.");
+                                }
+
+                                const bool isReparsePoint =
+                                    (information->FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+                                StableFileMetadata metadata;
+                                metadata.volumeSerial = rootMetadata.volumeSerial;
+                                std::copy(
+                                    std::begin(information->FileId.Identifier),
+                                    std::end(information->FileId.Identifier),
+                                    metadata.fileId.begin());
+                                metadata.changeTime = information->ChangeTime.QuadPart;
+                                metadata.lastWriteTime = information->LastWriteTime.QuadPart;
+                                metadata.attributes = information->FileAttributes;
+                                metadata.stableIdentity = true;
+                                if (isReparsePoint)
+                                {
+                                    // Preserve the legacy scanner's target-following fingerprint
+                                    // while still avoiding per-entry handles for normal files.
+                                    metadata = stableFileMetadata(current, isDirectory, true);
+                                }
+
+                                const std::wstring relativeText = normalizeRelativePath(relative);
+                                const std::uintmax_t fileSize =
+                                    !isDirectory && isReparsePoint
+                                        ? std::filesystem::file_size(pathForFilesystemIo(current))
+                                        : static_cast<std::uintmax_t>(information->EndOfFile.QuadPart);
+                                scanned.push_back(FileCacheSnapshotEntry{
+                                    FileCacheEntry{
+                                        relativeText,
+                                        normalizeRelativePath(relative.parent_path()),
+                                        name,
+                                        isDirectory ? L"directory" : L"file",
+                                        isDirectory ? 0 : fileSize,
+                                        std::to_wstring(metadata.lastWriteTime)
+                                    },
+                                    current,
+                                    metadata
+                                });
+#ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
+                                const int failureAfter =
+                                    fileCacheScanFailureAfterEntriesForTesting.load(
+                                        std::memory_order_relaxed);
+                                if (failureAfter >= 0 &&
+                                    scanned.size() >= static_cast<std::size_t>(failureAfter))
+                                {
+                                    throw std::runtime_error("Injected mod file cache scan failure.");
+                                }
+#endif
+                                if (isDirectory && !isReparsePoint)
+                                {
+                                    pendingDirectories.push_back(std::move(current));
+                                }
+                            }
+                        }
+
+                        if (information->NextEntryOffset == 0)
+                        {
+                            break;
+                        }
+                        if (information->NextEntryOffset < entryBytes ||
+                            information->NextEntryOffset > buffer.size() - offset)
+                        {
+                            throw std::runtime_error("A batched mod directory entry offset is invalid.");
+                        }
+                        offset += information->NextEntryOffset;
+                    }
+                }
+            }
+            return true;
+        }
+
+        FileCacheSnapshot collectFileCacheSnapshot(const InstalledModRecord& record)
+        {
+            if (!std::filesystem::is_directory(record.path))
+            {
+                throw std::filesystem::filesystem_error(
+                    "Installed mod directory is unavailable",
+                    record.path,
+                    std::make_error_code(std::errc::no_such_file_or_directory));
+            }
+
+            const bool stableVolume = volumeSupportsStableChangeIdentity(record.path);
+            const StableFileMetadata rootMetadata = stableFileMetadata(
+                record.path,
+                true,
+                stableVolume);
+            std::vector<FileCacheSnapshotEntry> scanned;
+            const bool usedBatchedEnumeration =
+                stableVolume &&
+                rootMetadata.stableIdentity &&
+                appendStableDirectorySnapshotEntries(record.path, rootMetadata, scanned);
+            if (!usedBatchedEnumeration)
+            {
+                scanned.clear();
+                std::filesystem::recursive_directory_iterator iterator(record.path);
+                const std::filesystem::recursive_directory_iterator end;
+                while (iterator != end)
+                {
+                    const std::filesystem::directory_entry entry = *iterator;
+                    const std::filesystem::path current = entry.path();
+                    const bool isDirectory = entry.is_directory();
+                    if (isDirectory && equalsIgnoreCase(current.filename().wstring(), manifestDirectoryName))
+                    {
+                        iterator.disable_recursion_pending();
+                        ++iterator;
+                        continue;
+                    }
+
+                    const bool isFile = !isDirectory && entry.is_regular_file();
+                    if (isDirectory || isFile)
+                    {
+                        const std::filesystem::path relative = current.lexically_relative(record.path);
+                        if (relative.empty() || relative == L".")
+                        {
+                            throw std::runtime_error(
+                                "A mod cache entry could not be made relative to its root.");
+                        }
+                        const std::wstring relativeText = normalizeRelativePath(relative);
+                        const StableFileMetadata metadata = stableFileMetadata(
+                            current,
+                            isDirectory,
+                            stableVolume);
+                        scanned.push_back(FileCacheSnapshotEntry{
+                            FileCacheEntry{
+                                relativeText,
+                                normalizeRelativePath(relative.parent_path()),
+                                current.filename().wstring(),
+                                isDirectory ? L"directory" : L"file",
+                                isFile ? entry.file_size() : 0,
+                                std::to_wstring(metadata.lastWriteTime)
+                            },
+                            current,
+                            metadata
+                        });
+#ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
+                        const int failureAfter =
+                            fileCacheScanFailureAfterEntriesForTesting.load(std::memory_order_relaxed);
+                        if (failureAfter >= 0 &&
+                            scanned.size() >= static_cast<std::size_t>(failureAfter))
+                        {
+                            throw std::runtime_error("Injected mod file cache scan failure.");
+                        }
+#endif
+                    }
+                    ++iterator;
+                }
+            }
+
+            std::sort(
+                scanned.begin(),
+                scanned.end(),
+                [](const FileCacheSnapshotEntry& left, const FileCacheSnapshotEntry& right)
+                {
+                    const std::wstring leftKey = pathKey(left.cache.relativePath);
+                    const std::wstring rightKey = pathKey(right.cache.relativePath);
+                    if (leftKey != rightKey)
+                    {
+                        return leftKey < rightKey;
+                    }
+                    return left.cache.kind < right.cache.kind;
+                });
+
+            Sha256Builder hash;
+            hash.appendText(L"fluxora-mod-file-index-v2");
+            hash.appendText(pathKey(std::filesystem::absolute(record.path).lexically_normal().wstring()));
+            hash.appendValue(rootMetadata.volumeSerial);
+            hash.append(rootMetadata.fileId.data(), rootMetadata.fileId.size());
+
+            FileCacheSnapshot snapshot;
+            snapshot.entries.reserve(scanned.size());
+            for (const FileCacheSnapshotEntry& entry : scanned)
+            {
+                hash.appendText(pathKey(entry.cache.relativePath));
+                hash.appendText(entry.cache.kind);
+                const std::uint64_t size = entry.cache.size;
+                hash.appendValue(size);
+                hash.appendValue(entry.metadata.lastWriteTime);
+                hash.appendValue(entry.metadata.changeTime);
+                hash.appendValue(entry.metadata.attributes);
+                const unsigned char stable = entry.metadata.stableIdentity ? 1U : 0U;
+                hash.appendValue(stable);
+                if (entry.metadata.stableIdentity)
+                {
+                    hash.appendValue(entry.metadata.volumeSerial);
+                    hash.append(entry.metadata.fileId.data(), entry.metadata.fileId.size());
+                }
+                else if (entry.cache.kind == L"file")
+                {
+                    appendFileContentHashInput(hash, entry.absolutePath);
+                }
+                snapshot.entries.push_back(entry.cache);
+            }
+            snapshot.cacheKey = hash.finish();
+            return snapshot;
+        }
+
+        std::wstring computeContentFingerprint(const std::filesystem::path& modDirectory)
+        {
+            InstalledModRecord record;
+            record.path = modDirectory;
+            return collectFileCacheSnapshot(record).cacheKey;
+        }
 
         void insertFileCacheEntry(
             Database& database,
@@ -2547,61 +3381,6 @@ namespace fluxora
             insert.stepDone();
         }
 
-        std::vector<FileCacheEntry> collectFileCacheEntries(const InstalledModRecord& record)
-        {
-            std::vector<FileCacheEntry> entries;
-            if (!std::filesystem::exists(record.path) || !std::filesystem::is_directory(record.path))
-            {
-                return entries;
-            }
-
-            std::error_code error;
-            std::filesystem::recursive_directory_iterator iterator(
-                record.path,
-                std::filesystem::directory_options::skip_permission_denied,
-                error);
-            const std::filesystem::recursive_directory_iterator end;
-
-            while (!error && iterator != end)
-            {
-                const std::filesystem::path current = iterator->path();
-                std::error_code entryError;
-                const bool isDirectory = iterator->is_directory(entryError);
-                if (!entryError && isDirectory && current.filename().wstring() == manifestDirectoryName)
-                {
-                    iterator.disable_recursion_pending();
-                    iterator.increment(error);
-                    continue;
-                }
-
-                const bool isFile = !isDirectory && iterator->is_regular_file(entryError);
-                if (!entryError && (isDirectory || isFile))
-                {
-                    std::error_code relativeError;
-                    const std::filesystem::path relative = std::filesystem::relative(current, record.path, relativeError);
-                    if (!relativeError && !relative.empty())
-                    {
-                        std::error_code sizeError;
-                        const std::wstring relativeText = normalizeRelativePath(relative);
-                        const std::wstring parentText = normalizeRelativePath(relative.parent_path());
-                        const std::uintmax_t size = isFile ? iterator->file_size(sizeError) : 0;
-                        entries.push_back(FileCacheEntry{
-                            relativeText,
-                            parentText,
-                            current.filename().wstring(),
-                            isDirectory ? L"directory" : L"file",
-                            sizeError ? 0 : size,
-                            fileTimeCacheText(*iterator)
-                        });
-                    }
-                }
-
-                iterator.increment(error);
-            }
-
-            return entries;
-        }
-
         void replaceFileCache(
             Database& database,
             std::int64_t modId,
@@ -2623,6 +3402,42 @@ namespace fluxora
                     entry.size,
                     entry.modifiedAt);
             }
+        }
+
+        bool cachedFileRowsMatch(
+            Database& database,
+            std::int64_t modId,
+            const std::vector<FileCacheEntry>& expectedEntries)
+        {
+            Statement statement = database.prepare(
+                "SELECT relative_path, parent_path, path_key, parent_key, "
+                "name, kind, size, modified_at "
+                "FROM mod_files WHERE mod_id = ? "
+                "ORDER BY path_key COLLATE BINARY;");
+            statement.bindInt64(1, modId);
+
+            std::size_t index = 0;
+            while (statement.stepRow())
+            {
+                if (index >= expectedEntries.size())
+                {
+                    return false;
+                }
+
+                const FileCacheEntry& expected = expectedEntries[index++];
+                if (statement.columnText(0) != expected.relativePath ||
+                    statement.columnText(1) != expected.parentPath ||
+                    statement.columnText(2) != pathKey(expected.relativePath) ||
+                    statement.columnText(3) != pathKey(expected.parentPath) ||
+                    statement.columnText(4) != expected.name ||
+                    statement.columnText(5) != expected.kind ||
+                    statement.columnInt64(6) != static_cast<std::int64_t>(expected.size) ||
+                    statement.columnText(7) != expected.modifiedAt)
+                {
+                    return false;
+                }
+            }
+            return index == expectedEntries.size();
         }
 
         void updateRecordContentFingerprint(
@@ -2647,29 +3462,47 @@ namespace fluxora
             writePortableManifest(record);
         }
 
-        void ensureFileCachePrepared(Database& database, InstalledModRecord& record)
+        void ensureFileCachePrepared(
+            Database& database,
+            InstalledModRecord& record,
+            bool validateAgainstDisk = false)
         {
-            if (cachedEntryCount(database, record.id) > 0)
+            const int persistedEntryCount = cachedEntryCount(database, record.id);
+            const std::optional<PersistedFileCacheState> persistedState =
+                readFileCacheState(database, record.id);
+            const bool hasCurrentState =
+                persistedState.has_value() &&
+                persistedState->schemaVersion == fileCacheSchemaVersion &&
+                persistedState->entryCount == persistedEntryCount &&
+                !persistedState->cacheKey.empty();
+            if (!validateAgainstDisk && hasCurrentState)
             {
                 return;
             }
 
-            const std::vector<FileCacheEntry> entries = collectFileCacheEntries(record);
-            std::wstring contentFingerprint;
-            if (record.contentFingerprint.empty())
+            const FileCacheSnapshot snapshot = collectFileCacheSnapshot(record);
+            if (snapshot.entries.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)()))
             {
-                contentFingerprint = computeContentFingerprint(record.path);
+                throw std::runtime_error("A mod contains too many cache entries.");
+            }
+            const int snapshotEntryCount = static_cast<int>(snapshot.entries.size());
+            const bool reusable =
+                hasCurrentState &&
+                persistedState->cacheKey == snapshot.cacheKey &&
+                persistedEntryCount == snapshotEntryCount &&
+                cachedFileRowsMatch(database, record.id, snapshot.entries);
+            if (reusable && record.contentFingerprint == snapshot.cacheKey)
+            {
+                return;
             }
 
             Transaction transaction(database);
-            if (cachedEntryCount(database, record.id) == 0)
+            if (!reusable)
             {
-                replaceFileCache(database, record.id, entries);
+                replaceFileCache(database, record.id, snapshot.entries);
             }
-            if (!contentFingerprint.empty())
-            {
-                updateRecordContentFingerprint(database, record, std::move(contentFingerprint));
-            }
+            upsertFileCacheState(database, record.id, snapshot.cacheKey, snapshotEntryCount);
+            updateRecordContentFingerprint(database, record, snapshot.cacheKey);
             transaction.commit();
         }
 
@@ -2935,38 +3768,6 @@ namespace fluxora
             return summary;
         }
 
-        void applyInstalledConflictOwnerGroup(
-            const std::vector<ConflictOwner>& owners,
-            const std::map<std::int64_t, std::size_t>& summaryIndexes,
-            const std::map<std::int64_t, std::wstring>& modPathsById,
-            std::vector<ModFileSummaryRecord>& summaries)
-        {
-            if (owners.size() <= 1)
-            {
-                return;
-            }
-
-            std::vector<std::int64_t> activeOwnerIds;
-            activeOwnerIds.reserve(owners.size());
-            for (const ConflictOwner& owner : owners)
-            {
-                activeOwnerIds.push_back(owner.modId);
-            }
-
-            for (const ConflictOwner& owner : owners)
-            {
-                const auto summaryIndex = summaryIndexes.find(owner.modId);
-                if (summaryIndex == summaryIndexes.end())
-                {
-                    continue;
-                }
-
-                ModFileSummary& summary = summaries[summaryIndex->second].summary;
-                applyConflictOwnerSummary(summary, owners, owner.modId);
-                applyConflictOwnerRelations(summary, owner.modId, activeOwnerIds, modPathsById);
-            }
-        }
-
         std::vector<ModFileSummaryRecord> summarizeCachedInstalledModFiles(
             Database& database,
             const std::vector<InstalledModRecord>& records)
@@ -2987,58 +3788,122 @@ namespace fluxora
                 });
             }
 
+            std::vector<bool> currentCacheStates(summaries.size(), false);
             Statement fileCounts = database.prepare(
-                "SELECT mod_id, COUNT(*) FROM mod_files WHERE kind = 'file' GROUP BY mod_id;");
+                "SELECT m.id, "
+                "COUNT(f.mod_id), "
+                "COALESCE(SUM(CASE WHEN f.kind = 'file' THEN 1 ELSE 0 END), 0), "
+                "COALESCE(s.schema_version, 0), "
+                "COALESCE(s.cache_key, ''), "
+                "COALESCE(s.entry_count, -1) "
+                "FROM mods m "
+                "LEFT JOIN mod_files f ON f.mod_id = m.id "
+                "LEFT JOIN mod_file_cache_state s ON s.mod_id = m.id "
+                "WHERE m.state IN ('installed', 'disabled') "
+                "GROUP BY m.id, s.schema_version, s.cache_key, s.entry_count;");
             while (fileCounts.stepRow())
             {
                 const auto summaryIndex = summaryIndexes.find(fileCounts.columnInt64(0));
                 if (summaryIndex != summaryIndexes.end())
                 {
-                    summaries[summaryIndex->second].summary.fileCount = fileCounts.columnInt(1);
+                    const std::size_t index = summaryIndex->second;
+                    const int persistedEntryCount = fileCounts.columnInt(1);
+                    const std::wstring cacheKey = fileCounts.columnText(4);
+                    summaries[index].summary.fileCount = fileCounts.columnInt(2);
+                    currentCacheStates[index] =
+                        fileCounts.columnInt(3) == fileCacheSchemaVersion &&
+                        fileCounts.columnInt(5) == persistedEntryCount &&
+                        !cacheKey.empty() &&
+                        records[index].contentFingerprint == cacheKey;
                 }
             }
 
-            Statement owners = database.prepare(
-                "SELECT f.path_key, f.mod_id "
-                "FROM mod_files f "
-                "JOIN mods m ON m.id = f.mod_id "
-                "WHERE f.kind = 'file' "
-                "AND m.state = 'installed' "
-                "ORDER BY f.path_key, f.mod_id ASC;");
-
-            std::wstring currentPathKey;
-            std::vector<ConflictOwner> currentOwners;
-            auto flushOwners = [&]()
+            // Reconciliation materializes only the conflicting paths. Startup
+            // summaries should aggregate that compact delta instead of sorting
+            // every cached file row again.
+            Statement conflictCounts = database.prepare(
+                "SELECT mod_id, "
+                "COUNT(DISTINCT relative_path), "
+                "COUNT(DISTINCT CASE WHEN conflict_kind = 'overwritten-by' THEN relative_path END), "
+                "COUNT(DISTINCT CASE WHEN conflict_kind = 'overwrites' THEN relative_path END) "
+                "FROM mod_conflicts WHERE source = 'scan' GROUP BY mod_id;");
+            while (conflictCounts.stepRow())
             {
-                applyInstalledConflictOwnerGroup(
-                    currentOwners,
-                    summaryIndexes,
-                    modPathsById,
-                    summaries);
-            };
-
-            while (owners.stepRow())
-            {
-                const std::wstring itemPathKey = owners.columnText(0);
-                if (!currentPathKey.empty() && itemPathKey != currentPathKey)
+                const auto summaryIndex = summaryIndexes.find(conflictCounts.columnInt64(0));
+                if (summaryIndex == summaryIndexes.end())
                 {
-                    flushOwners();
-                    currentOwners.clear();
+                    continue;
                 }
-
-                currentPathKey = itemPathKey;
-                currentOwners.push_back(ConflictOwner{
-                    owners.columnInt64(1),
-                    {}
-                });
+                ModFileSummary& summary = summaries[summaryIndex->second].summary;
+                summary.conflictingFileCount = conflictCounts.columnInt(1);
+                summary.overwrittenFileCount = conflictCounts.columnInt(2);
+                summary.overwritingFileCount = conflictCounts.columnInt(3);
             }
 
-            if (!currentOwners.empty())
+            Statement relations = database.prepare(
+                "SELECT mod_id, other_mod_id, conflict_kind "
+                "FROM mod_conflicts WHERE source = 'scan' "
+                "GROUP BY mod_id, other_mod_id, conflict_kind "
+                "ORDER BY mod_id, conflict_kind, other_mod_id;");
+            while (relations.stepRow())
             {
-                flushOwners();
+                const auto summaryIndex = summaryIndexes.find(relations.columnInt64(0));
+                const auto targetPath = modPathsById.find(relations.columnInt64(1));
+                if (summaryIndex == summaryIndexes.end() || targetPath == modPathsById.end())
+                {
+                    continue;
+                }
+                ModFileSummary& summary = summaries[summaryIndex->second].summary;
+                const std::wstring kind = relations.columnText(2);
+                if (kind == L"overwrites")
+                {
+                    appendUniqueConflictTarget(summary.overwritesModIds, targetPath->second);
+                }
+                else if (kind == L"overwritten-by")
+                {
+                    appendUniqueConflictTarget(summary.overwrittenByModIds, targetPath->second);
+                }
+            }
+
+            for (std::size_t index = 0; index < summaries.size(); ++index)
+            {
+                if (!currentCacheStates[index])
+                {
+                    summaries[index].summary = ModFileSummary{};
+                    summaries[index].summary.fileCount = -1;
+                }
             }
 
             return summaries;
+        }
+
+        std::wstring conflictInputsKey(const std::vector<InstalledModRecord>& records)
+        {
+            std::vector<const InstalledModRecord*> ordered;
+            ordered.reserve(records.size());
+            for (const InstalledModRecord& record : records)
+            {
+                ordered.push_back(&record);
+            }
+            std::sort(
+                ordered.begin(),
+                ordered.end(),
+                [](const InstalledModRecord* left, const InstalledModRecord* right)
+                {
+                    return left->id < right->id;
+                });
+
+            Sha256Builder hash;
+            hash.appendText(L"fluxora-conflict-inputs-v1");
+            const std::uint64_t count = ordered.size();
+            hash.appendValue(count);
+            for (const InstalledModRecord* record : ordered)
+            {
+                hash.appendValue(record->id);
+                hash.appendText(record->state);
+                hash.appendText(record->contentFingerprint);
+            }
+            return hash.finish(L"conflict-inputs-v1:");
         }
 
         void ensureAllFileCachesPrepared(
@@ -3048,15 +3913,23 @@ namespace fluxora
         {
             syncInstalledModsFromDisk(database, projectDirectory, modsRoot);
             std::vector<InstalledModRecord> records = readInstalledRecords(database, projectDirectory, modsRoot);
+            const bool validateAgainstDisk = fileCacheValidationRequiredLocked(projectDirectory);
 
             for (InstalledModRecord& record : records)
             {
-                ensureFileCachePrepared(database, record);
+                ensureFileCachePrepared(database, record, validateAgainstDisk);
             }
 
-            Transaction transaction(database);
-            refreshDetectedConflicts(database);
-            transaction.commit();
+            const std::wstring inputsKey = conflictInputsKey(records);
+            if (readMetadataValue(database, L"mod_conflict_inputs_key") != inputsKey)
+            {
+                Transaction transaction(database);
+                refreshDetectedConflicts(database);
+                setMetadataValue(database, L"mod_conflict_inputs_key", inputsKey);
+                transaction.commit();
+            }
+            markFileCacheValidatedLocked(projectDirectory);
+            markLaunchInventoryReconciledLocked(projectDirectory);
         }
 
         struct ProfileFileOwner
@@ -3154,8 +4027,8 @@ namespace fluxora
                 });
             }
 
-            Statement statement = database.prepare(
-                "SELECT f.path_key, f.mod_id, m.state "
+            Statement fileCounts = database.prepare(
+                "SELECT f.mod_id, COUNT(*) "
                 "FROM mod_files f "
                 "JOIN profile_order_items oi ON oi.mod_id = f.mod_id "
                 "JOIN mods m ON m.id = f.mod_id "
@@ -3163,6 +4036,30 @@ namespace fluxora
                 "AND oi.kind = 'mod' "
                 "AND f.kind = 'file' "
                 "AND m.state IN ('installed', 'disabled') "
+                "GROUP BY f.mod_id;");
+            fileCounts.bindText(1, normalizedProfileName);
+            while (fileCounts.stepRow())
+            {
+                const auto summaryIndex = summaryIndexes.find(fileCounts.columnInt64(0));
+                if (summaryIndex != summaryIndexes.end())
+                {
+                    summaries[summaryIndex->second].summary.fileCount = fileCounts.columnInt(1);
+                }
+            }
+
+            Statement statement = database.prepare(
+                "SELECT f.path_key, f.mod_id "
+                "FROM mod_conflicts c "
+                "JOIN mod_files f ON f.mod_id = c.mod_id "
+                "AND f.relative_path = c.relative_path COLLATE NOCASE "
+                "AND f.kind = 'file' "
+                "JOIN profile_order_items oi ON oi.mod_id = f.mod_id "
+                "JOIN mods m ON m.id = f.mod_id "
+                "WHERE c.source = 'scan' "
+                "AND oi.profile_name = ? "
+                "AND oi.kind = 'mod' "
+                "AND m.state = 'installed' "
+                "GROUP BY f.path_key, f.mod_id, oi.position, oi.rowid "
                 "ORDER BY f.path_key, oi.position, oi.rowid;");
             statement.bindText(1, normalizedProfileName);
 
@@ -3180,15 +4077,9 @@ namespace fluxora
                 currentPathKey = itemPathKey;
 
                 const std::int64_t modId = statement.columnInt64(1);
-                const auto summaryIndex = summaryIndexes.find(modId);
-                if (summaryIndex != summaryIndexes.end())
-                {
-                    ++summaries[summaryIndex->second].summary.fileCount;
-                }
-
                 owners.push_back(ProfileFileOwner{
                     modId,
-                    statement.columnText(2) == L"installed"
+                    true
                 });
             }
 
@@ -3284,6 +4175,9 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modsRoot)
         {
+#ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
+            inventorySyncInvocationCount.fetch_add(1, std::memory_order_relaxed);
+#endif
             const std::filesystem::path directory = modsDirectory(projectDirectory, modsRoot);
             if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
             {
@@ -3401,6 +4295,20 @@ namespace fluxora
         return readMetadataValue(database, L"game_id");
     }
 
+    void InstanceMetadataStore::beginProjectActivation(
+        const std::filesystem::path& projectDirectory)
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        // Reopening the same continuously watched project is not an uncovered
+        // interval. A project switch (or a new process) advances the generation;
+        // live watcher events invalidate affected durable rows directly.
+        beginFileCacheActivationLocked(projectDirectory);
+    }
+
 #ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
     void InstanceMetadataStore::resetSqlPrepareCountForTesting()
     {
@@ -3410,6 +4318,41 @@ namespace fluxora
     std::uint64_t InstanceMetadataStore::sqlPrepareCountForTesting()
     {
         return sqlitePrepareCountForTesting.load(std::memory_order_relaxed);
+    }
+
+    void InstanceMetadataStore::resetSqlExecCountForTesting()
+    {
+        sqliteExecCountForTesting.store(0, std::memory_order_relaxed);
+    }
+
+    std::uint64_t InstanceMetadataStore::sqlExecCountForTesting()
+    {
+        return sqliteExecCountForTesting.load(std::memory_order_relaxed);
+    }
+
+    void InstanceMetadataStore::resetInventorySyncCountForTesting()
+    {
+        inventorySyncInvocationCount.store(0, std::memory_order_relaxed);
+    }
+
+    std::uint64_t InstanceMetadataStore::inventorySyncCountForTesting()
+    {
+        return inventorySyncInvocationCount.load(std::memory_order_relaxed);
+    }
+
+    void InstanceMetadataStore::setFileCacheScanFailureAfterEntriesForTesting(int entryCount)
+    {
+        fileCacheScanFailureAfterEntriesForTesting.store(entryCount, std::memory_order_relaxed);
+    }
+
+    void InstanceMetadataStore::resetStableMetadataHandleOpenCountForTesting()
+    {
+        stableMetadataHandleOpenCounterForTesting.store(0, std::memory_order_relaxed);
+    }
+
+    std::uint64_t InstanceMetadataStore::stableMetadataHandleOpenCountForTesting()
+    {
+        return stableMetadataHandleOpenCounterForTesting.load(std::memory_order_relaxed);
     }
 #endif
 
@@ -3429,6 +4372,98 @@ namespace fluxora
 
         Database database = openInstanceDatabase(projectDirectory);
         syncInstalledModsFromDisk(database, projectDirectory, modsRoot);
+    }
+
+    void InstanceMetadataStore::invalidateModFileCaches(
+        const std::filesystem::path& projectDirectory,
+        const std::vector<std::filesystem::path>& changedPaths,
+        const std::filesystem::path& modsRoot)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+        if (changedPaths.empty())
+        {
+            return;
+        }
+        invalidateLaunchInventoryReconciliationLocked(projectDirectory);
+
+        const std::filesystem::path root =
+            modsDirectory(projectDirectory, modsRoot).lexically_normal();
+        std::set<std::wstring> folderNames;
+        bool invalidateAll = false;
+        for (const std::filesystem::path& changedPath : changedPaths)
+        {
+            const std::filesystem::path normalized =
+                (changedPath.is_absolute() ? changedPath : root / changedPath).lexically_normal();
+            const std::filesystem::path relative = normalized.lexically_relative(root);
+            if (relative.empty() || relative == L".")
+            {
+                invalidateAll = true;
+                break;
+            }
+
+            auto component = relative.begin();
+            if (component == relative.end() || *component == L"..")
+            {
+                continue;
+            }
+            const std::wstring folderName = component->wstring();
+            ++component;
+            if (component != relative.end() && component->wstring() == manifestDirectoryName)
+            {
+                continue;
+            }
+            folderNames.insert(folderName);
+        }
+        if (!invalidateAll && folderNames.empty())
+        {
+            return;
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        Transaction transaction(database);
+        if (invalidateAll)
+        {
+            database.exec("DELETE FROM mod_files;");
+            database.exec("DELETE FROM mod_file_cache;");
+            database.exec("DELETE FROM mod_file_cache_state;");
+            Statement clearFingerprints = database.prepare(
+                "UPDATE mods SET content_fingerprint = '', updated_at = ? "
+                "WHERE state IN ('installed', 'disabled');");
+            clearFingerprints.bindText(1, nowUtcText());
+            clearFingerprints.stepDone();
+        }
+        else
+        {
+            for (const std::wstring& folderName : folderNames)
+            {
+                Statement removeFiles = database.prepare(
+                    "DELETE FROM mod_files WHERE mod_id = "
+                    "(SELECT id FROM mods WHERE folder_name = ? COLLATE NOCASE LIMIT 1);");
+                removeFiles.bindText(1, folderName);
+                removeFiles.stepDone();
+                Statement removeLegacyFiles = database.prepare(
+                    "DELETE FROM mod_file_cache WHERE mod_id = "
+                    "(SELECT id FROM mods WHERE folder_name = ? COLLATE NOCASE LIMIT 1);");
+                removeLegacyFiles.bindText(1, folderName);
+                removeLegacyFiles.stepDone();
+                Statement removeState = database.prepare(
+                    "DELETE FROM mod_file_cache_state WHERE mod_id = "
+                    "(SELECT id FROM mods WHERE folder_name = ? COLLATE NOCASE LIMIT 1);");
+                removeState.bindText(1, folderName);
+                removeState.stepDone();
+                Statement clearFingerprint = database.prepare(
+                    "UPDATE mods SET content_fingerprint = '', updated_at = ? "
+                    "WHERE folder_name = ? COLLATE NOCASE;");
+                clearFingerprint.bindText(1, nowUtcText());
+                clearFingerprint.bindText(2, folderName);
+                clearFingerprint.stepDone();
+            }
+        }
+        transaction.commit();
     }
 
     std::vector<ProfileOrderItemRecord> InstanceMetadataStore::listProfileOrderItems(
@@ -3474,6 +4509,40 @@ namespace fluxora
         transaction.commit();
 
         return readProfileOrderItems(database, projectDirectory, normalizedProfileName, modsRoot);
+    }
+
+    std::vector<ProfileOrderItemRecord> InstanceMetadataStore::listLaunchProfileOrderItems(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName,
+        const std::filesystem::path& modsRoot)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        const std::wstring normalizedProfileName = profileNameOrDefault(profileName);
+        Database database = openInstanceDatabase(projectDirectory);
+        const bool reconcileInventory =
+            launchInventoryReconciliationRequiredLocked(projectDirectory);
+        if (reconcileInventory)
+        {
+            syncInstalledModsFromDisk(database, projectDirectory, modsRoot);
+        }
+
+        Transaction transaction(database);
+        syncProfileOrderItems(database, normalizedProfileName);
+        transaction.commit();
+
+        std::vector<ProfileOrderItemRecord> records =
+            readProfileOrderItems(database, projectDirectory, normalizedProfileName, modsRoot);
+        if (reconcileInventory)
+        {
+            markLaunchInventoryReconciledLocked(projectDirectory);
+        }
+        return records;
     }
 
     std::vector<std::wstring> InstanceMetadataStore::listProfileNames(
@@ -4529,6 +5598,31 @@ namespace fluxora
         const std::vector<InstalledModRecord> records =
             readInstalledRecords(database, projectDirectory, modsRoot);
         return summarizeCachedInstalledModFiles(database, records);
+    }
+
+    PersistedInstalledModsSnapshot InstanceMetadataStore::persistedInstalledModsSnapshot(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modsRoot)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        PersistedInstalledModsSnapshot snapshot;
+        snapshot.mods = readInstalledRecords(database, projectDirectory, modsRoot);
+        snapshot.summaries = summarizeCachedInstalledModFiles(database, snapshot.mods);
+        return snapshot;
+    }
+
+    std::vector<ModFileSummaryRecord> InstanceMetadataStore::summarizePersistedInstalledModFiles(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modsRoot)
+    {
+        return persistedInstalledModsSnapshot(projectDirectory, modsRoot).summaries;
     }
 
     std::vector<ModFileSummaryRecord> InstanceMetadataStore::summarizeProfileModFiles(

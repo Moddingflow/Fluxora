@@ -537,16 +537,28 @@ namespace fluxora
 
         void appendRootLaunchPrecacheMarkers(
             std::vector<std::filesystem::path>& markers,
+            const std::filesystem::path& projectDirectory,
             const std::filesystem::path& rootLaunchDirectory)
         {
+            const PathSafetyService pathSafety;
+            if (!pathSafety.validateContainedPath(projectDirectory, rootLaunchDirectory).safe())
+            {
+                return;
+            }
+
             std::error_code error;
             if (!std::filesystem::is_directory(rootLaunchDirectory, error) || error)
             {
                 return;
             }
 
+            // Root-launch overlays are stored as direct child directories and
+            // each child is mounted at the game root. Only a marker directly
+            // inside such a child can surface as game-root PrecacheGrass.txt;
+            // recursively walking copied cache contents is unnecessary launch
+            // I/O and can be very large.
             for (const std::filesystem::directory_entry& entry :
-                 std::filesystem::recursive_directory_iterator(
+                 std::filesystem::directory_iterator(
                      rootLaunchDirectory,
                      std::filesystem::directory_options::skip_permission_denied,
                      error))
@@ -556,10 +568,16 @@ namespace fluxora
                     return;
                 }
 
-                if (entry.is_regular_file(error) &&
-                    equalsIgnoreCase(entry.path().filename().wstring(), precacheMarkerFileName))
+                if (entry.is_directory(error))
                 {
-                    markers.push_back(entry.path());
+                    const std::filesystem::path marker =
+                        entry.path() /
+                        std::filesystem::path(std::wstring(precacheMarkerFileName));
+                    if (pathSafety.validateContainedPath(rootLaunchDirectory, marker).safe() &&
+                        pathSafety.validateContainedPath(projectDirectory, marker).safe())
+                    {
+                        markers.push_back(marker);
+                    }
                 }
                 error.clear();
             }
@@ -974,6 +992,7 @@ namespace fluxora
         }
         appendRootLaunchPrecacheMarkers(
             markers,
+            opened.project.projectDirectory,
             opened.project.projectDirectory / L".flow" / L"root-launch");
 
         int removedCount = 0;

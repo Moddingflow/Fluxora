@@ -40,7 +40,7 @@ namespace fluxora
           projects_(std::make_unique<ProjectService>(*logger_, *templates_)),
           fluxPacks_(std::make_unique<FluxPackService>(*logger_, *projects_, *downloads_, *buildPathSettings_)),
           modOrganizerImport_(std::make_unique<ModOrganizerImportService>(*logger_, *templates_, *projects_, *buildPathSettings_)),
-          virtualFileSystem_(std::make_unique<VirtualFileSystemService>(*logger_, *executables_, *profileOrder_, *buildPathSettings_)),
+          virtualFileSystem_(std::make_unique<VirtualFileSystemService>(*logger_, *executables_, *buildPathSettings_)),
           grassCache_(std::make_unique<GrassCacheService>(
               *logger_,
               *projects_,

@@ -85,6 +85,9 @@ export const FluxoraIpcChannels = {
   modsGetModConflictTree: 'fluxora:mods:get-mod-conflict-tree',
   modsGetModDetailsSummary: 'fluxora:mods:get-mod-details-summary',
   modsGetOrder: 'fluxora:mods:get-order',
+  modsGetPersistedWorkspace: 'fluxora:mods:get-persisted-workspace',
+  modsGetWorkspace: 'fluxora:mods:get-workspace',
+  modsInvalidateFileCaches: 'fluxora:mods:invalidate-file-caches',
   modsListPreviewVariants: 'fluxora:mods:list-preview-variants',
   modsListInstalled: 'fluxora:mods:list-installed',
   modsMoveOrderItem: 'fluxora:mods:move-order-item',
@@ -97,6 +100,7 @@ export const FluxoraIpcChannels = {
   pluginsCreateSeparator: 'fluxora:plugins:create-separator',
   pluginsDeleteSeparator: 'fluxora:plugins:delete-separator',
   pluginsList: 'fluxora:plugins:list',
+  pluginsListPersisted: 'fluxora:plugins:list-persisted',
   pluginsMove: 'fluxora:plugins:move',
   pluginsSetAllEnabled: 'fluxora:plugins:set-all-enabled',
   pluginsSetEnabled: 'fluxora:plugins:set-enabled',
@@ -124,6 +128,7 @@ export const FluxoraIpcChannels = {
   buildSettingsPathsSaved: 'fluxora:build-settings:paths-saved',
   fluxPackExport: 'fluxora:flux-pack:export',
   fluxPackInspect: 'fluxora:flux-pack:inspect',
+  fluxPackPlanInstall: 'fluxora:flux-pack:plan-install',
   fluxPackInstall: 'fluxora:flux-pack:install',
   grassCacheGenerate: 'fluxora:grass-cache:generate',
   projectsCreate: 'fluxora:projects:create',
@@ -1458,6 +1463,49 @@ export interface FluxoraFluxPackInstallRequest {
   fluxPackPath: string;
   installRootDirectory: string;
   existingConfigPath?: string;
+  manualSourceArchives?: FluxoraFluxPackManualSourceArchive[];
+}
+
+export interface FluxoraFluxPackManualSourceArchive {
+  sourceId: string;
+  path: string;
+}
+
+export interface FluxoraFluxPackInstallPlanRequest {
+  fluxPackPath: string;
+  existingConfigPath?: string;
+}
+
+export type FluxoraFluxPackAcquisitionMode =
+  | 'installed'
+  | 'cached-download'
+  | 'source-build'
+  | 'automatic'
+  | 'manual'
+  | 'unavailable';
+
+export interface FluxoraFluxPackSourceInstallPlan {
+  sourceId: string;
+  providerId: string;
+  providerDisplayName: string;
+  displayName: string;
+  version: string;
+  archiveFileName: string;
+  manualDownloadUrl: string;
+  acquisitionMode: FluxoraFluxPackAcquisitionMode;
+  requiresManualDownload: boolean;
+  canAutomaticallyDownload: boolean;
+}
+
+export interface FluxoraFluxPackInstallPlan {
+  summary: FluxoraFluxPackSummary;
+  updatesExistingProject: boolean;
+  reusableSourceCount: number;
+  reusableDownloadCount: number;
+  automaticDownloadCount: number;
+  manualDownloadCount: number;
+  sources: FluxoraFluxPackSourceInstallPlan[];
+  operationId: string;
 }
 
 export interface FluxoraFluxPackProviderProgress {
@@ -1547,6 +1595,16 @@ export interface FluxoraModOrderItem extends FluxoraInstalledMod {
   isOverwrite?: boolean;
   modUuid: string;
   separatorTitle: string;
+}
+
+export interface FluxoraModWorkspaceSnapshot {
+  installedMods: FluxoraInstalledMod[];
+  modOrder: FluxoraModOrderItem[];
+}
+
+export interface FluxoraModFileCacheInvalidationResult {
+  invalidated: boolean;
+  changedPathCount: number;
 }
 
 export interface FluxoraModFileTreeEntry {
@@ -1962,6 +2020,7 @@ export interface FluxoraNexusModsAuthStatus {
   isConfigured: boolean;
   isLinked: boolean;
   hasApiKey: boolean;
+  isPremium: boolean;
   displayName: string;
   userId: string;
   message: string;
@@ -2331,6 +2390,21 @@ export interface FluxoraApi {
       profileName?: string,
       request?: OperationRequest
     ) => Promise<FluxoraModOrderItem[]>;
+    getWorkspace: (
+      projectDirectory: string,
+      profileName?: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraModWorkspaceSnapshot>;
+    getPersistedWorkspace: (
+      projectDirectory: string,
+      profileName?: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraModWorkspaceSnapshot>;
+    invalidateFileCaches: (
+      projectDirectory: string,
+      changedPaths: string[],
+      request?: OperationRequest
+    ) => Promise<FluxoraModFileCacheInvalidationResult>;
     createSeparator: (
       projectDirectory: string,
       profileName: string | undefined,
@@ -2456,6 +2530,12 @@ export interface FluxoraApi {
   };
   plugins: {
     list: (
+      projectDirectory: string,
+      templateId: string,
+      profileName?: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraPluginOrderItem[]>;
+    listPersisted: (
       projectDirectory: string,
       templateId: string,
       profileName?: string,
@@ -2707,6 +2787,10 @@ export interface FluxoraApi {
       fluxPackPath: string,
       request?: OperationRequest
     ) => Promise<FluxoraFluxPackSummary>;
+    planInstall: (
+      request: FluxoraFluxPackInstallPlanRequest,
+      operation?: OperationRequest
+    ) => Promise<FluxoraFluxPackInstallPlan>;
     install: (
       request: FluxoraFluxPackInstallRequest,
       operation?: OperationRequest

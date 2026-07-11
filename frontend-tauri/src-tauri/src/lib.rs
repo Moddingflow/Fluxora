@@ -1,11 +1,12 @@
 use keyring::Entry;
 use notify_debouncer_full::{
     new_debouncer,
+    new_debouncer_opt,
     notify::{
         event::{CreateKind, ModifyKind, RemoveKind, RenameMode},
-        EventKind, RecommendedWatcher, RecursiveMode,
+        Config, EventKind, RecommendedWatcher, RecursiveMode,
     },
-    DebounceEventResult, DebouncedEvent, Debouncer, RecommendedCache,
+    DebounceEventResult, DebouncedEvent, Debouncer, NoCache, RecommendedCache,
 };
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -372,6 +373,7 @@ struct OperationStatusState {
 struct DownloadsFolderWatchState {
     active: Mutex<Option<DownloadsFolderWatcher>>,
     generation: Arc<AtomicU64>,
+    requested_generation: AtomicU64,
     sequence: Arc<AtomicU64>,
 }
 
@@ -380,6 +382,7 @@ impl Default for DownloadsFolderWatchState {
         Self {
             active: Mutex::new(None),
             generation: Arc::new(AtomicU64::new(0)),
+            requested_generation: AtomicU64::new(0),
             sequence: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -396,6 +399,7 @@ struct DownloadsFolderWatcher {
 struct BuildContentWatchState {
     active: Mutex<Option<BuildContentWatcher>>,
     generation: Arc<AtomicU64>,
+    requested_generation: AtomicU64,
     sequence: Arc<AtomicU64>,
 }
 
@@ -404,13 +408,14 @@ impl Default for BuildContentWatchState {
         Self {
             active: Mutex::new(None),
             generation: Arc::new(AtomicU64::new(0)),
+            requested_generation: AtomicU64::new(0),
             sequence: Arc::new(AtomicU64::new(0)),
         }
     }
 }
 
 struct BuildContentWatcher {
-    debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
+    debouncer: Debouncer<RecommendedWatcher, NoCache>,
     project_directory: String,
     mods_directory: PathBuf,
     profiles_directory: PathBuf,
@@ -856,6 +861,24 @@ fn build_content_watch_request(request: Option<OperationRequest>, scope: &str) -
     })
 }
 
+fn build_content_watch_generation_is_current(
+    active_generation: &AtomicU64,
+    watcher_generation: u64,
+) -> bool {
+    active_generation.load(Ordering::SeqCst) == watcher_generation
+}
+
+fn reserve_build_content_watch_generation(requested_generation: &AtomicU64) -> u64 {
+    requested_generation.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+fn build_content_watch_install_is_current(
+    requested_generation: &AtomicU64,
+    watcher_generation: u64,
+) -> bool {
+    requested_generation.load(Ordering::SeqCst) == watcher_generation
+}
+
 fn is_transient_downloads_watch_path(path: &Path) -> bool {
     let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
         return true;
@@ -946,6 +969,15 @@ fn downloads_folder_batch_reason(changes: &[DownloadsFolderChange]) -> String {
 }
 
 fn is_transient_build_content_path(path: &Path) -> bool {
+    if path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|value| value.eq_ignore_ascii_case(".flow"))
+    }) {
+        return true;
+    }
+
     let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
         return true;
     };
@@ -955,10 +987,15 @@ fn is_transient_build_content_path(path: &Path) -> bool {
     }
 
     let lower = file_name.to_ascii_lowercase();
+    let is_compact_atomic_backup = lower
+        .strip_prefix(".fb")
+        .is_some_and(|token| token.len() == 8 && token.bytes().all(|byte| byte.is_ascii_hexdigit()));
     if matches!(
         lower.as_str(),
         ".ds_store" | "thumbs.db" | "desktop.ini" | ".fluxora-mod.json"
-    ) {
+    ) || is_compact_atomic_backup
+        || lower.ends_with(".fluxora-bak")
+    {
         return true;
     }
     if lower.starts_with("~$") || lower.starts_with(".~") {
@@ -1087,6 +1124,32 @@ fn build_content_changes(
     changes
 }
 
+fn build_content_reconciliation_changes(
+    mods_directory: &Path,
+    profiles_directory: &Path,
+    game_data_directory: Option<&Path>,
+) -> Vec<BuildContentChange> {
+    let mut roots = vec![
+        (mods_directory, "mods"),
+        (profiles_directory, "profile"),
+    ];
+    if let Some(game_data_directory) = game_data_directory {
+        roots.push((game_data_directory, "game"));
+    }
+    roots
+        .into_iter()
+        .map(|(path, area)| BuildContentChange {
+            path: path.to_string_lossy().to_string(),
+            file_name: path
+                .file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            kind: "reconcile".to_string(),
+            area: area.to_string(),
+        })
+        .collect()
+}
+
 fn build_content_batch_reason(changes: &[BuildContentChange]) -> String {
     let Some(first) = changes.first() else {
         return "changed".to_string();
@@ -1186,6 +1249,24 @@ fn emit_build_content_watch_result(
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join("; ");
+            let sequence = context.sequence.fetch_add(1, Ordering::SeqCst) + 1;
+            let payload = BuildContentChangedPayload {
+                project_directory: context.project_directory.clone(),
+                mods_directory: context.mods_directory.to_string_lossy().to_string(),
+                profiles_directory: context.profiles_directory.to_string_lossy().to_string(),
+                profile_name: context.profile_name.clone(),
+                event_id: format!("evt_{}_build_content_{sequence}", now_millis()),
+                sequence,
+                reason: "watcher-error-reconcile".to_string(),
+                changes: build_content_reconciliation_changes(
+                    &context.mods_directory,
+                    &context.profiles_directory,
+                    context.game_data_directory.as_deref(),
+                ),
+            };
+            let _ = context
+                .app
+                .emit_to(MAIN_WINDOW_LABEL, BUILD_CONTENT_CHANGED_EVENT, payload);
             let app = context.app.clone();
             tauri::async_runtime::spawn(async move {
                 let _ = write_log(
@@ -3515,6 +3596,13 @@ async fn fluxora_ai_chat_respond(app: AppHandle, request: Value) -> Result<Value
     }
 }
 
+fn bridge_queue_performance_message(method: &str, queue_wait_us: u128) -> String {
+    format!(
+        "bridgeQueue method={} queueWaitUs={}",
+        method, queue_wait_us
+    )
+}
+
 #[tauri::command]
 async fn fluxora_bridge_request(
     app: AppHandle,
@@ -3548,11 +3636,31 @@ async fn fluxora_bridge_request(
     let operation_id = operation_id(Some(&request), &method);
     clear_operation_cancel_marker(&app, &operation_id).await;
     let state = bridge_state(&app);
+    let queue_started_at = Instant::now();
     let mut bridge = state.process.lock().await;
+    let queue_wait_us = queue_started_at.elapsed().as_micros();
     let timeout_ms = timeout_ms.unwrap_or(BRIDGE_TIMEOUT_MS);
-    bridge
+    let result = bridge
         .request(&app, &method, params, request, timeout_ms)
-        .await
+        .await;
+    drop(bridge);
+
+    let log_app = app.clone();
+    let log_method = method.clone();
+    let log_operation_id = operation_id.clone();
+    tauri::async_runtime::spawn(async move {
+        let message = bridge_queue_performance_message(&log_method, queue_wait_us);
+        let _ = write_log(
+            &log_app,
+            "main-bridge",
+            "info",
+            "Performance",
+            &message,
+            Some(&log_operation_id),
+        )
+        .await;
+    });
+    result
 }
 
 fn bridge_status_failure(
@@ -4735,7 +4843,8 @@ async fn fluxora_downloads_watch_folder(
     }
 
     let state = app.state::<DownloadsFolderWatchState>();
-    let watcher_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let watcher_generation =
+        reserve_build_content_watch_generation(&state.requested_generation);
     let active_generation = state.generation.clone();
     let sequence = state.sequence.clone();
     let app_for_events = app.clone();
@@ -4765,6 +4874,18 @@ async fn fluxora_downloads_watch_folder(
         .map_err(|error| error.to_string())?;
 
     let mut active = state.active.lock().await;
+    if !build_content_watch_install_is_current(
+        &state.requested_generation,
+        watcher_generation,
+    ) {
+        drop(active);
+        debouncer.stop_nonblocking();
+        return Ok(DownloadsFolderWatchResult {
+            accepted: false,
+            operation_id,
+        });
+    }
+    state.generation.store(watcher_generation, Ordering::SeqCst);
     let previous = active.take();
     *active = Some(DownloadsFolderWatcher {
         debouncer,
@@ -4807,7 +4928,9 @@ async fn fluxora_downloads_unwatch_folder(
     let request = downloads_watch_request(request, "downloads_unwatch_folder");
     let operation_id = operation_id(Some(&request), "downloads_unwatch_folder");
     let state = app.state::<DownloadsFolderWatchState>();
-    state.generation.fetch_add(1, Ordering::SeqCst);
+    let stopped_generation =
+        reserve_build_content_watch_generation(&state.requested_generation);
+    state.generation.store(stopped_generation, Ordering::SeqCst);
 
     let mut active = state.active.lock().await;
     let previous = active.take();
@@ -4915,7 +5038,8 @@ async fn fluxora_build_content_watch(
     }
 
     let state = app.state::<BuildContentWatchState>();
-    let watcher_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let watcher_generation =
+        reserve_build_content_watch_generation(&state.requested_generation);
     let active_generation = state.generation.clone();
     let event_context = BuildContentWatchEventContext {
         app: app.clone(),
@@ -4927,15 +5051,23 @@ async fn fluxora_build_content_watch(
         sequence: state.sequence.clone(),
     };
 
-    let mut debouncer = new_debouncer(
+    // The built-in FileIdMap recursively indexes every watched entry during
+    // watch(), which makes opening a large modlist O(files) before T3. Fluxora
+    // invalidates by path and does not require file-ID rename stitching.
+    let mut debouncer = new_debouncer_opt::<_, RecommendedWatcher, NoCache>(
         Duration::from_millis(BUILD_CONTENT_WATCH_DEBOUNCE_MS),
         None,
         move |result: DebounceEventResult| {
-            if active_generation.load(Ordering::SeqCst) != watcher_generation {
+            if !build_content_watch_generation_is_current(
+                &active_generation,
+                watcher_generation,
+            ) {
                 return;
             }
             emit_build_content_watch_result(&event_context, result);
         },
+        NoCache,
+        Config::default(),
     )
     .map_err(|error| error.to_string())?;
 
@@ -4953,6 +5085,18 @@ async fn fluxora_build_content_watch(
     }
 
     let mut active = state.active.lock().await;
+    if !build_content_watch_install_is_current(
+        &state.requested_generation,
+        watcher_generation,
+    ) {
+        drop(active);
+        debouncer.stop_nonblocking();
+        return Ok(BuildContentWatchResult {
+            accepted: false,
+            operation_id,
+        });
+    }
+    state.generation.store(watcher_generation, Ordering::SeqCst);
     let previous = active.take();
     *active = Some(BuildContentWatcher {
         debouncer,
@@ -5005,7 +5149,9 @@ async fn fluxora_build_content_unwatch(
     let operation = build_content_watch_request(operation, "build_content_unwatch");
     let operation_id = operation_id(Some(&operation), "build_content_unwatch");
     let state = app.state::<BuildContentWatchState>();
-    state.generation.fetch_add(1, Ordering::SeqCst);
+    let stopped_generation =
+        reserve_build_content_watch_generation(&state.requested_generation);
+    state.generation.store(stopped_generation, Ordering::SeqCst);
 
     let mut active = state.active.lock().await;
     let previous = active.take();
@@ -5508,15 +5654,49 @@ mod tests {
     }
 
     #[test]
+    fn build_content_watcher_errors_request_conservative_root_reconciliation() {
+        let changes = build_content_reconciliation_changes(
+            Path::new("C:/Build/mods"),
+            Path::new("C:/Build/profiles"),
+            Some(Path::new("C:/Game/Data")),
+        );
+
+        assert_eq!(changes.len(), 3);
+        assert_eq!(changes[0].area, "mods");
+        assert_eq!(changes[0].kind, "reconcile");
+        assert_eq!(changes[0].path, "C:/Build/mods");
+        assert_eq!(changes[1].area, "profile");
+        assert_eq!(changes[2].area, "game");
+    }
+
+    #[test]
     fn build_content_watch_filters_sidecars_but_keeps_profile_state_files() {
         assert!(is_transient_build_content_path(Path::new(
             "C:/Build/mods/SkyUI/.fluxora-mod.json"
         )));
         assert!(is_transient_build_content_path(Path::new(
+            "C:/Build/mods/SkyUI/.flow"
+        )));
+        assert!(is_transient_build_content_path(Path::new(
+            "C:/Build/mods/SkyUI/.flow/manifest.json"
+        )));
+        assert!(is_transient_build_content_path(Path::new(
+            "C:/Build/mods/SkyUI/.FLOW/manifest.json.tmp"
+        )));
+        assert!(is_transient_build_content_path(Path::new(
             "C:/Build/mods/SkyUI/SkyUI_SE.esp.tmp"
+        )));
+        assert!(is_transient_build_content_path(Path::new(
+            "C:/Build/profiles/Default/.fbc0f04f63"
+        )));
+        assert!(is_transient_build_content_path(Path::new(
+            "C:/Build/profiles/Default/plugins.txt.fluxora-bak"
         )));
         assert!(!is_transient_build_content_path(Path::new(
             "C:/Build/mods/SkyUI/SkyUI_SE.esp"
+        )));
+        assert!(!is_transient_build_content_path(Path::new(
+            "C:/Build/mods/SkyUI/.flowchart/diagram.json"
         )));
         assert!(!is_transient_build_content_path(Path::new(
             "C:/Build/profiles/Default/plugins.txt"
@@ -5524,6 +5704,103 @@ mod tests {
         assert!(!is_transient_build_content_path(Path::new(
             "C:/Build/profiles/Default/modlist.txt"
         )));
+    }
+
+    #[test]
+    fn build_content_watch_batch_drops_generated_manifests_without_hiding_real_changes() {
+        let mods = Path::new("C:/Build/mods");
+        let profiles = Path::new("C:/Build/profiles");
+        let now = Instant::now();
+        let generated_manifest = DebouncedEvent::new(
+            notify_debouncer_full::notify::Event::new(EventKind::Modify(ModifyKind::Any))
+                .add_path(mods.join("SkyUI/.flow/manifest.json")),
+            now,
+        );
+        let real_plugin = DebouncedEvent::new(
+            notify_debouncer_full::notify::Event::new(EventKind::Modify(ModifyKind::Any))
+                .add_path(mods.join("SkyUI/Data/SkyUI_SE.esp")),
+            now,
+        );
+
+        const NO_GAME_DATA: Option<&Path> = None;
+        let mixed = build_content_changes(
+            vec![generated_manifest.clone(), real_plugin],
+            mods,
+            profiles,
+            NO_GAME_DATA,
+        );
+        assert_eq!(mixed.len(), 1);
+        assert_eq!(mixed[0].area, "mods");
+        assert_eq!(
+            mixed[0].path,
+            mods.join("SkyUI/Data/SkyUI_SE.esp")
+                .to_string_lossy()
+                .to_string()
+        );
+
+        let generated_only = build_content_changes(
+            vec![generated_manifest],
+            mods,
+            profiles,
+            NO_GAME_DATA,
+        );
+        assert!(generated_only.is_empty());
+    }
+
+    #[test]
+    fn build_content_watcher_rejects_superseded_generation() {
+        let generation = AtomicU64::new(1);
+        assert!(build_content_watch_generation_is_current(&generation, 1));
+
+        generation.store(2, Ordering::SeqCst);
+        assert!(!build_content_watch_generation_is_current(&generation, 1));
+        assert!(build_content_watch_generation_is_current(&generation, 2));
+    }
+
+    #[test]
+    fn build_content_watcher_failed_setup_keeps_previous_generation_live() {
+        let active_generation = AtomicU64::new(7);
+        let requested_generation = AtomicU64::new(7);
+
+        let candidate = reserve_build_content_watch_generation(&requested_generation);
+        assert_eq!(candidate, 8);
+        assert!(build_content_watch_install_is_current(
+            &requested_generation,
+            candidate
+        ));
+
+        // Setup failure never publishes the reserved generation, so callbacks
+        // from the previously installed watcher remain current.
+        assert!(build_content_watch_generation_is_current(
+            &active_generation,
+            7
+        ));
+        assert!(!build_content_watch_generation_is_current(
+            &active_generation,
+            candidate
+        ));
+    }
+
+    #[test]
+    fn build_content_watcher_only_publishes_latest_successful_reservation() {
+        let active_generation = AtomicU64::new(3);
+        let requested_generation = AtomicU64::new(3);
+        let first = reserve_build_content_watch_generation(&requested_generation);
+        let latest = reserve_build_content_watch_generation(&requested_generation);
+
+        assert!(!build_content_watch_install_is_current(
+            &requested_generation,
+            first
+        ));
+        assert!(build_content_watch_install_is_current(
+            &requested_generation,
+            latest
+        ));
+        active_generation.store(latest, Ordering::SeqCst);
+        assert!(build_content_watch_generation_is_current(
+            &active_generation,
+            latest
+        ));
     }
 
     #[test]
@@ -5697,6 +5974,14 @@ mod tests {
         assert_eq!(entry["operationId"], "op_ai_chat_run");
         assert_eq!(entry["category"], "AI.Tool");
         assert_eq!(entry["level"], "info");
+    }
+
+    #[test]
+    fn bridge_queue_performance_log_is_machine_readable() {
+        assert_eq!(
+            bridge_queue_performance_message("mods.getWorkspace", 12_345),
+            "bridgeQueue method=mods.getWorkspace queueWaitUs=12345"
+        );
     }
 
     #[cfg(windows)]

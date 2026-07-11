@@ -35,6 +35,7 @@ logs/
 
 # Temporary local workspaces
 tmp/
+benchmarks/work/
 
 # OS
 Thumbs.db

@@ -171,6 +171,7 @@ const transferDrives: FluxoraTransferDriveOption[] = [
 const nexusStatus: FluxoraNexusModsAuthStatus = {
   isConfigured: true,
   isLinked: true,
+  isPremium: true,
   hasApiKey: true,
   displayName: 'Valerii',
   userId: '123',

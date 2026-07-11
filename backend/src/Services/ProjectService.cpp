@@ -2200,32 +2200,9 @@ namespace fluxora
                 }
             }
 
-            const std::filesystem::path modsRoot = projectDirectory / L"mods";
-            if (std::filesystem::exists(modsRoot, error) &&
-                std::filesystem::is_directory(modsRoot, error))
-            {
-                for (const auto& entry : std::filesystem::directory_iterator(
-                         modsRoot,
-                         std::filesystem::directory_options::skip_permission_denied,
-                         error))
-                {
-                    if (error)
-                    {
-                        break;
-                    }
-                    std::error_code statusError;
-                    if (!entry.is_directory(statusError))
-                    {
-                        continue;
-                    }
-
-                    recoverStateFile(
-                        entry.path() / L".flow" / L"manifest.json",
-                        L"generated mod metadata",
-                        ProjectStateValidation::JsonObject,
-                        logger);
-                }
-            }
+            // Generated mod metadata is recovered while the live inventory is
+            // reconciled. Doing it here made the interactive config open O(mods)
+            // even though T3 deliberately consumes only the durable snapshot.
         }
 
         bool isProjectRenameMarker(const std::filesystem::path& path)

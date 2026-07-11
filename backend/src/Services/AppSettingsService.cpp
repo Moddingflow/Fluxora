@@ -332,6 +332,7 @@ namespace fluxora
 
             NexusModsStoredAuth auth;
             auth.linked = readBoolOrDefault(*nexusMods, L"linked");
+            auth.isPremium = readBoolOrDefault(*nexusMods, L"isPremium");
             auth.username = readStringOrDefault(*nexusMods, L"username");
             auth.userId = readStringOrDefault(*nexusMods, L"userId");
             auth.tokenType = readStringOrDefault(*nexusMods, L"tokenType");
@@ -355,6 +356,7 @@ namespace fluxora
         writer.beginObject();
         writer.key(L"nexusMods").beginObject();
         writer.field(L"linked", auth.linked);
+        writer.field(L"isPremium", auth.isPremium);
         writer.field(L"username", auth.username);
         writer.field(L"userId", auth.userId);
         writer.field(L"tokenType", auth.tokenType);

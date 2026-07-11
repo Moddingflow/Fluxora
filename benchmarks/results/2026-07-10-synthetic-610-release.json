@@ -1,0 +1,445 @@
+{
+  "schemaVersion": 1,
+  "generatedAtUtc": "2026-07-10T21:38:01.1812020Z",
+  "environment": {
+    "os": "Microsoft Windows NT 10.0.26200.0",
+    "processor": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "processorCount": 16,
+    "configuration": "Release",
+    "architecture": "x64",
+    "gitCommit": "f4f324885c9dcb84ff166074d4433a15886b7197",
+    "gitDirty": true,
+    "hostSha256": "E0A092A71E34A1B6D5B6EA92E910854884EC1C860AF823A400B022F699B96DA7",
+    "fixtureBuilderSha256": "461E5F9CC669A47F9E507DF2333EF79E1EFB0BDF297732703674030F92A5C348",
+    "probeSha256": "65415F714E7424CA9A996507A5011FDCED41A2E2A9C634C489023598C2F64E80"
+  },
+  "cacheSemantics": {
+    "metadataCold": "instance.db absent; operating-system file cache is uncontrolled and may be warm-biased by fixture generation",
+    "processColdMetadataWarm": "new BridgeHost process with persisted instance.db and filesystem caches",
+    "processWarm": "same BridgeHost process after explicit warm-up runs",
+    "launch": "metadata prepared before launch; probe process exits cleanly after each isolated sample"
+  },
+  "settings": {
+    "modCounts": [
+      610
+    ],
+    "filesPerMod": 96,
+    "pluginCount": 350,
+    "runs": 5,
+    "warmups": 1,
+    "coldRuns": 2,
+    "seed": "0xF10C0A"
+  },
+  "scenarios": [
+    {
+      "fixture": {
+        "schemaVersion": 1,
+        "generator": "FluxoraSyntheticModlistFixture",
+        "seed": 15797258,
+        "modCount": 610,
+        "filesPerMod": 96,
+        "pluginCount": 350,
+        "disabledPercent": 8,
+        "conflictFilesPerMod": 16,
+        "directoryDepth": 4,
+        "expectedOverlaySentinel": "winner-mod=609"
+      },
+      "fixtureRoot": "C:\\Fluxora\\benchmarks\\work\\fixture-610",
+      "metadataCold": {
+        "samples": [
+          {
+            "totalMs": 12238.656,
+            "openConfigMs": 136.974,
+            "modsWorkspaceMs": 11728.514,
+            "pluginsMs": 342.785,
+            "profilesMs": 4.226,
+            "executablesMs": 25.155,
+            "downloadsMs": 1.0,
+            "installedCount": 610,
+            "orderCount": 610,
+            "pluginCount": 355
+          },
+          {
+            "totalMs": 12423.787,
+            "openConfigMs": 235.942,
+            "modsWorkspaceMs": 11780.501,
+            "pluginsMs": 375.339,
+            "profilesMs": 4.656,
+            "executablesMs": 26.309,
+            "downloadsMs": 1.039,
+            "installedCount": 610,
+            "orderCount": 610,
+            "pluginCount": 355
+          }
+        ],
+        "statistics": {
+          "total": {
+            "runs": 2,
+            "minMs": 12238.656,
+            "medianMs": 12331.222,
+            "p95Ms": 12423.787,
+            "maxMs": 12423.787
+          },
+          "openConfig": {
+            "runs": 2,
+            "minMs": 136.974,
+            "medianMs": 186.458,
+            "p95Ms": 235.942,
+            "maxMs": 235.942
+          },
+          "modsWorkspace": {
+            "runs": 2,
+            "minMs": 11728.514,
+            "medianMs": 11754.508,
+            "p95Ms": 11780.501,
+            "maxMs": 11780.501
+          },
+          "plugins": {
+            "runs": 2,
+            "minMs": 342.785,
+            "medianMs": 359.062,
+            "p95Ms": 375.339,
+            "maxMs": 375.339
+          },
+          "profiles": {
+            "runs": 2,
+            "minMs": 4.226,
+            "medianMs": 4.441,
+            "p95Ms": 4.656,
+            "maxMs": 4.656
+          },
+          "executables": {
+            "runs": 2,
+            "minMs": 25.155,
+            "medianMs": 25.732,
+            "p95Ms": 26.309,
+            "maxMs": 26.309
+          },
+          "downloads": {
+            "runs": 2,
+            "minMs": 1.0,
+            "medianMs": 1.019,
+            "p95Ms": 1.039,
+            "maxMs": 1.039
+          }
+        }
+      },
+      "processColdMetadataWarm": {
+        "samples": [
+          {
+            "totalMs": 1410.373,
+            "openConfigMs": 127.463,
+            "modsWorkspaceMs": 870.432,
+            "pluginsMs": 380.006,
+            "profilesMs": 4.765,
+            "executablesMs": 26.441,
+            "downloadsMs": 1.266,
+            "installedCount": 610,
+            "orderCount": 610,
+            "pluginCount": 355
+          },
+          {
+            "totalMs": 1351.524,
+            "openConfigMs": 124.687,
+            "modsWorkspaceMs": 865.878,
+            "pluginsMs": 329.196,
+            "profilesMs": 4.466,
+            "executablesMs": 26.341,
+            "downloadsMs": 0.954,
+            "installedCount": 610,
+            "orderCount": 610,
+            "pluginCount": 355
+          },
+          {
+            "totalMs": 1343.095,
+            "openConfigMs": 124.46,
+            "modsWorkspaceMs": 868.443,
+            "pluginsMs": 319.673,
+            "profilesMs": 4.345,
+            "executablesMs": 24.996,
+            "downloadsMs": 1.178,
+            "installedCount": 610,
+            "orderCount": 610,
+            "pluginCount": 355
+          },
+          {
+            "totalMs": 1355.231,
+            "openConfigMs": 120.665,
+            "modsWorkspaceMs": 861.331,
+            "pluginsMs": 340.764,
+            "profilesMs": 7.057,
+            "executablesMs": 24.306,
+            "downloadsMs": 1.109,
+            "installedCount": 610,
+            "orderCount": 610,
+            "pluginCount": 355
+          },
+          {
+            "totalMs": 1375.829,
+            "openConfigMs": 126.808,
+            "modsWorkspaceMs": 888.323,
+            "pluginsMs": 329.532,
+            "profilesMs": 4.469,
+            "executablesMs": 25.536,
+            "downloadsMs": 1.16,
+            "installedCount": 610,
+            "orderCount": 610,
+            "pluginCount": 355
+          }
+        ],
+        "statistics": {
+          "total": {
+            "runs": 5,
+            "minMs": 1343.095,
+            "medianMs": 1355.231,
+            "p95Ms": 1410.373,
+            "maxMs": 1410.373
+          },
+          "openConfig": {
+            "runs": 5,
+            "minMs": 120.665,
+            "medianMs": 124.687,
+            "p95Ms": 127.463,
+            "maxMs": 127.463
+          },
+          "modsWorkspace": {
+            "runs": 5,
+            "minMs": 861.331,
+            "medianMs": 868.443,
+            "p95Ms": 888.323,
+            "maxMs": 888.323
+          },
+          "plugins": {
+            "runs": 5,
+            "minMs": 319.673,
+            "medianMs": 329.532,
+            "p95Ms": 380.006,
+            "maxMs": 380.006
+          },
+          "profiles": {
+            "runs": 5,
+            "minMs": 4.345,
+            "medianMs": 4.469,
+            "p95Ms": 7.057,
+            "maxMs": 7.057
+          },
+          "executables": {
+            "runs": 5,
+            "minMs": 24.306,
+            "medianMs": 25.536,
+            "p95Ms": 26.441,
+            "maxMs": 26.441
+          },
+          "downloads": {
+            "runs": 5,
+            "minMs": 0.954,
+            "medianMs": 1.16,
+            "p95Ms": 1.266,
+            "maxMs": 1.266
+          }
+        }
+      },
+      "processWarm": {
+        "samples": [
+          {
+            "totalMs": 1152.994,
+            "openConfigMs": 89.136,
+            "modsWorkspaceMs": 838.906,
+            "pluginsMs": 194.36,
+            "profilesMs": 4.38,
+            "executablesMs": 25.314,
+            "downloadsMs": 0.898,
+            "installedCount": 610,
+            "orderCount": 610,
+            "pluginCount": 355
+          },
+          {
+            "totalMs": 1175.851,
+            "openConfigMs": 94.006,
+            "modsWorkspaceMs": 844.326,
+            "pluginsMs": 203.422,
+            "profilesMs": 5.007,
+            "executablesMs": 28.176,
+            "downloadsMs": 0.915,
+            "installedCount": 610,
+            "orderCount": 610,
+            "pluginCount": 355
+          },
+          {
+            "totalMs": 1188.038,
+            "openConfigMs": 103.601,
+            "modsWorkspaceMs": 850.002,
+            "pluginsMs": 201.336,
+            "profilesMs": 4.338,
+            "executablesMs": 27.703,
+            "downloadsMs": 1.059,
+            "installedCount": 610,
+            "orderCount": 610,
+            "pluginCount": 355
+          },
+          {
+            "totalMs": 1154.078,
+            "openConfigMs": 103.228,
+            "modsWorkspaceMs": 823.2,
+            "pluginsMs": 197.464,
+            "profilesMs": 4.532,
+            "executablesMs": 24.773,
+            "downloadsMs": 0.882,
+            "installedCount": 610,
+            "orderCount": 610,
+            "pluginCount": 355
+          },
+          {
+            "totalMs": 1161.887,
+            "openConfigMs": 91.336,
+            "modsWorkspaceMs": 835.604,
+            "pluginsMs": 203.534,
+            "profilesMs": 4.301,
+            "executablesMs": 26.184,
+            "downloadsMs": 0.929,
+            "installedCount": 610,
+            "orderCount": 610,
+            "pluginCount": 355
+          }
+        ],
+        "statistics": {
+          "total": {
+            "runs": 5,
+            "minMs": 1152.994,
+            "medianMs": 1161.887,
+            "p95Ms": 1188.038,
+            "maxMs": 1188.038
+          },
+          "openConfig": {
+            "runs": 5,
+            "minMs": 89.136,
+            "medianMs": 94.006,
+            "p95Ms": 103.601,
+            "maxMs": 103.601
+          },
+          "modsWorkspace": {
+            "runs": 5,
+            "minMs": 823.2,
+            "medianMs": 838.906,
+            "p95Ms": 850.002,
+            "maxMs": 850.002
+          },
+          "plugins": {
+            "runs": 5,
+            "minMs": 194.36,
+            "medianMs": 201.336,
+            "p95Ms": 203.534,
+            "maxMs": 203.534
+          },
+          "profiles": {
+            "runs": 5,
+            "minMs": 4.301,
+            "medianMs": 4.38,
+            "p95Ms": 5.007,
+            "maxMs": 5.007
+          },
+          "executables": {
+            "runs": 5,
+            "minMs": 24.773,
+            "medianMs": 26.184,
+            "p95Ms": 28.176,
+            "maxMs": 28.176
+          },
+          "downloads": {
+            "runs": 5,
+            "minMs": 0.882,
+            "medianMs": 0.915,
+            "p95Ms": 1.059,
+            "maxMs": 1.059
+          }
+        }
+      },
+      "launch": {
+        "samples": [
+          {
+            "bridgeLaunchMs": 159.37,
+            "requestStartToReadyMs": 181.315,
+            "responseToReadyMs": 21.569,
+            "processCreationToMainMs": 16.889,
+            "descriptorPath": "C:\\Fluxora\\benchmarks\\work\\fixture-610\\.flow\\vfs\\sessions\\vfs-config-25080-953ef7964ae65cec4c2ff41e873fe766.json",
+            "processId": 32920,
+            "overlayCorrect": true
+          },
+          {
+            "bridgeLaunchMs": 158.763,
+            "requestStartToReadyMs": 186.873,
+            "responseToReadyMs": 27.751,
+            "processCreationToMainMs": 18.408,
+            "descriptorPath": "C:\\Fluxora\\benchmarks\\work\\fixture-610\\.flow\\vfs\\sessions\\vfs-config-25080-9cff8f8856ca91ce6fae0b4b429297be.json",
+            "processId": 8168,
+            "overlayCorrect": true
+          },
+          {
+            "bridgeLaunchMs": 156.887,
+            "requestStartToReadyMs": 185.605,
+            "responseToReadyMs": 28.403,
+            "processCreationToMainMs": 16.3,
+            "descriptorPath": "C:\\Fluxora\\benchmarks\\work\\fixture-610\\.flow\\vfs\\sessions\\vfs-config-25080-ceb16d6160d836a7b3cd0a7d45ad3580.json",
+            "processId": 29480,
+            "overlayCorrect": true
+          },
+          {
+            "bridgeLaunchMs": 155.654,
+            "requestStartToReadyMs": 170.521,
+            "responseToReadyMs": 14.528,
+            "processCreationToMainMs": 15.895,
+            "descriptorPath": "C:\\Fluxora\\benchmarks\\work\\fixture-610\\.flow\\vfs\\sessions\\vfs-config-25080-dbace4c23900ee80f74d31431dc496f6.json",
+            "processId": 34768,
+            "overlayCorrect": true
+          },
+          {
+            "bridgeLaunchMs": 158.934,
+            "requestStartToReadyMs": 185.009,
+            "responseToReadyMs": 25.725,
+            "processCreationToMainMs": 16.095,
+            "descriptorPath": "C:\\Fluxora\\benchmarks\\work\\fixture-610\\.flow\\vfs\\sessions\\vfs-config-25080-96a6bc18baa74f70c52fce731cd7aa34.json",
+            "processId": 48000,
+            "overlayCorrect": true
+          }
+        ],
+        "statistics": {
+          "bridgeLaunch": {
+            "runs": 5,
+            "minMs": 155.654,
+            "medianMs": 158.763,
+            "p95Ms": 159.37,
+            "maxMs": 159.37
+          },
+          "requestStartToReady": {
+            "runs": 5,
+            "minMs": 170.521,
+            "medianMs": 185.009,
+            "p95Ms": 186.873,
+            "maxMs": 186.873
+          },
+          "responseToReady": {
+            "runs": 5,
+            "minMs": 14.528,
+            "medianMs": 25.725,
+            "p95Ms": 28.403,
+            "maxMs": 28.403
+          },
+          "processCreationToMain": {
+            "runs": 5,
+            "minMs": 15.895,
+            "medianMs": 16.3,
+            "p95Ms": 18.408,
+            "maxMs": 18.408
+          }
+        }
+      },
+      "correctness": {
+        "repeatedProfileReadPreservedHash": true,
+        "repeatedProfileReadPreservedTimestamp": true,
+        "allLaunchOverlaysCorrect": true,
+        "launchDescriptorsUnique": true,
+        "parentVfsEnvironmentUnchanged": true
+      }
+    }
+  ]
+}

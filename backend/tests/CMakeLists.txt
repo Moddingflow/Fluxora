@@ -28,6 +28,7 @@ add_executable(FluxoraCoreTests
     HookServiceTests.cpp
     InstanceMetadataStoreTests.cpp
     JsonSupportTests.cpp
+    LaunchDescriptorStoreTests.cpp
     FomodInstallerServiceTests.cpp
     FluxPackServiceTests.cpp
     GrassCacheServiceTests.cpp
@@ -43,8 +44,10 @@ add_executable(FluxoraCoreTests
     PluginServiceTests.cpp
     ProjectServiceTests.cpp
     ProjectStateTransactionTests.cpp
+    ScopedFileCleanupTests.cpp
     TemplateServiceTests.cpp
     VfsContentPlacementAnalyzerTests.cpp
+    VfsMountPlanTests.cpp
     TestFilesystem.hpp
     ../src/Services/AppSettingsService.cpp
     ../src/Services/BulkFileCopyService.cpp
@@ -85,6 +88,7 @@ add_executable(FluxoraCoreTests
     ../src/Storage/AtomicFileStore.cpp
     ../src/Storage/InstanceMetadataStore.cpp
     ../src/Storage/ProjectStateTransaction.cpp
+    ../src/Support/LaunchDescriptorStore.cpp
 )
 
 if(WIN32)
@@ -92,8 +96,10 @@ if(WIN32)
         PRIVATE
             VfsTreeTests.cpp
             VfsConfigTests.cpp
+            VfsEnvironmentTests.cpp
             VfsLifecycleTests.cpp
             ../vfs/src/VfsConfig.cpp
+            ../vfs/src/VfsEnvironment.cpp
             ../vfs/src/VfsLifecycle.cpp
             ../vfs/src/VfsLog.cpp
             ../vfs/src/VfsTree.cpp

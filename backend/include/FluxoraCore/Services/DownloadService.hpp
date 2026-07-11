@@ -69,6 +69,7 @@ namespace fluxora
 
         void registerNxmProtocol(const std::filesystem::path& executablePath) const;
         [[nodiscard]] bool isNxmProtocolRegistered(const std::filesystem::path& executablePath) const;
+        [[nodiscard]] bool canAutomaticallyDownloadNexus() const;
 
         [[nodiscard]] std::vector<DownloadEntry> listDownloads(
             const std::filesystem::path& projectDirectory) const;
@@ -82,6 +83,10 @@ namespace fluxora
 
         std::vector<DownloadEntry> importInboundNxmLinks(
             const std::filesystem::path& projectDirectory) const;
+
+        DownloadEntry downloadNxmForFluxPack(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view nxmLink) const;
 
         DownloadEntry importLocalFile(
             const std::filesystem::path& projectDirectory,

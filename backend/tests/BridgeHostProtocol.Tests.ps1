@@ -67,7 +67,9 @@ function Stop-OwnedProcess {
 function Invoke-BridgeHostRequest {
     param(
         [Parameter(Mandatory)]
-        [hashtable]$Request
+        [hashtable]$Request,
+
+        [hashtable]$EnvironmentVariables
     )
 
     $resolvedHost = (Resolve-Path -LiteralPath $HostPath).Path
@@ -92,6 +94,11 @@ function Invoke-BridgeHostRequest {
         $startInfo.RedirectStandardError = $true
         $startInfo.Environment['FLUXORA_LOG_DIR'] = $testRoot
         $startInfo.Environment['FLUXORA_OPERATION_CANCEL_DIR'] = (Join-Path $testRoot 'operation-cancel')
+        if ($null -ne $EnvironmentVariables) {
+            foreach ($entry in $EnvironmentVariables.GetEnumerator()) {
+                $startInfo.Environment[[string]$entry.Key] = [string]$entry.Value
+            }
+        }
 
         $process = [System.Diagnostics.Process]::new()
         $process.StartInfo = $startInfo
@@ -285,6 +292,124 @@ $invalidCompressionResponse = Invoke-BridgeHostRequest -Request @{
 }
 if ($invalidCompressionResponse.error.code -ne 'bridge.invalidRequest') {
     throw "Expected invalid FluxPack compression rejection, received: $($invalidCompressionResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+
+$modWorkspaceRouteResponse = Invoke-BridgeHostRequest -Request @{
+    jsonrpc = '2.0'
+    id = 'mods_workspace_route'
+    method = 'mods.getWorkspace'
+    params = @{}
+    meta = $requestMeta
+}
+if ($modWorkspaceRouteResponse.error.code -ne 'bridge.invalidRequest') {
+    throw "Expected mods.getWorkspace validation rejection, received: $($modWorkspaceRouteResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+
+$persistedModWorkspaceRouteResponse = Invoke-BridgeHostRequest -Request @{
+    jsonrpc = '2.0'
+    id = 'mods_persisted_workspace_route'
+    method = 'mods.getPersistedWorkspace'
+    params = @{}
+    meta = $requestMeta
+}
+if ($persistedModWorkspaceRouteResponse.error.code -ne 'bridge.invalidRequest') {
+    throw "Expected mods.getPersistedWorkspace validation rejection, received: $($persistedModWorkspaceRouteResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+
+$modCacheInvalidationRouteResponse = Invoke-BridgeHostRequest -Request @{
+    jsonrpc = '2.0'
+    id = 'mods_invalidate_file_caches_route'
+    method = 'mods.invalidateFileCaches'
+    params = @{}
+    meta = $requestMeta
+}
+if ($modCacheInvalidationRouteResponse.error.code -ne 'bridge.invalidRequest') {
+    throw "Expected mods.invalidateFileCaches validation rejection, received: $($modCacheInvalidationRouteResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+
+$protocolTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+$persistedPluginsFixtureRoot = [System.IO.Path]::GetFullPath(
+    (Join-Path $protocolTempRoot ("fluxora-bridge-persisted-plugins-{0}" -f ([guid]::NewGuid().ToString('N'))))
+)
+if (-not $persistedPluginsFixtureRoot.StartsWith($protocolTempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Persisted plugin fixture escaped the OS temp directory: $persistedPluginsFixtureRoot"
+}
+New-Item -ItemType Directory -Path $persistedPluginsFixtureRoot -Force | Out-Null
+
+try {
+    $projectName = 'Persisted Plugins Bridge Build'
+    $gameDirectory = Join-Path $persistedPluginsFixtureRoot 'Skyrim Special Edition'
+    $gameDataDirectory = Join-Path $gameDirectory 'Data'
+    $installRoot = Join-Path $persistedPluginsFixtureRoot 'Builds'
+    $appDataDirectory = Join-Path $persistedPluginsFixtureRoot 'AppData'
+    New-Item -ItemType Directory -Path $gameDataDirectory -Force | Out-Null
+    New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $appDataDirectory -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $gameDirectory 'SkyrimSE.exe'), 'MZ executable stub')
+    [System.IO.File]::WriteAllText((Join-Path $gameDataDirectory 'Skyrim.esm'), 'master')
+
+    $fixtureEnvironment = @{ APPDATA = $appDataDirectory }
+    $createProjectResponse = Invoke-BridgeHostRequest `
+        -EnvironmentVariables $fixtureEnvironment `
+        -Request @{
+            jsonrpc = '2.0'
+            id = 'create_persisted_plugins_fixture'
+            method = 'projects.create'
+            params = @{
+                projectName = $projectName
+                templateId = 'skyrimse'
+                gamePath = $gameDirectory
+                installRootDirectory = $installRoot
+            }
+            meta = $requestMeta
+        }
+    if ($createProjectResponse.result.ok -ne $true) {
+        throw "Failed to create persisted plugin protocol fixture: $($createProjectResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+
+    $projectDirectory = Join-Path $installRoot $projectName
+    $offlinePluginDirectory = Join-Path $projectDirectory 'mods\Offline Disk Mod\Data'
+    New-Item -ItemType Directory -Path $offlinePluginDirectory -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $offlinePluginDirectory 'OfflineOnly.esp'), 'disk-only plugin')
+
+    $persistedPluginsResponse = Invoke-BridgeHostRequest `
+        -EnvironmentVariables $fixtureEnvironment `
+        -Request @{
+            jsonrpc = '2.0'
+            id = 'plugins_list_persisted'
+            method = 'plugins.listPersisted'
+            params = @{
+                projectDirectory = $projectDirectory
+                templateId = 'skyrimse'
+                profileName = 'Default'
+            }
+            meta = $requestMeta
+        }
+    if ($persistedPluginsResponse.result.ok -ne $true) {
+        throw "Expected plugins.listPersisted success, received: $($persistedPluginsResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+    if ($persistedPluginsResponse.id -ne 'plugins_list_persisted' -or
+        $persistedPluginsResponse.meta.operationId -ne 'op_bridge_protocol_test') {
+        throw 'plugins.listPersisted response lost request envelope correlation.'
+    }
+
+    $persistedPlugins = @($persistedPluginsResponse.result.data)
+    $skyrimPlugins = @($persistedPlugins | Where-Object { $_.name -eq 'Skyrim.esm' })
+    if ($skyrimPlugins.Count -ne 1 -or
+        $skyrimPlugins[0].kind -ne 'plugin' -or
+        $skyrimPlugins[0].isEnabled -ne $true -or
+        $skyrimPlugins[0].isMaster -ne $true -or
+        $skyrimPlugins[0].isLocked -ne $true) {
+        throw "plugins.listPersisted returned an invalid persisted Skyrim plugin contract: $($persistedPluginsResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+    if (@($persistedPlugins | Where-Object { $_.name -eq 'OfflineOnly.esp' }).Count -ne 0) {
+        throw 'plugins.listPersisted performed live disk discovery instead of returning persisted profile state.'
+    }
+}
+finally {
+    if ($persistedPluginsFixtureRoot.StartsWith($protocolTempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Remove-Item -LiteralPath $persistedPluginsFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 $compatibleResponse = Invoke-BridgeHostRequest -Request @{

@@ -112,6 +112,10 @@ test.beforeEach(async ({ page }) => {
       new Promise<void>((resolve) =>
         setTimeout(resolve, Number((window as any).__fluxoraDownloadsListDelayMs ?? 0))
       );
+    const waitForPersistedWorkspace = () =>
+      new Promise<void>((resolve) =>
+        setTimeout(resolve, Number((window as any).__fluxoraPersistedWorkspaceDelayMs ?? 0))
+      );
     const waitForNexusStatus = () =>
       new Promise<void>((resolve) =>
         setTimeout(resolve, Number((window as any).__fluxoraNexusStatusDelayMs ?? 0))
@@ -512,12 +516,19 @@ test.beforeEach(async ({ page }) => {
     });
 
     const buildContentChangedCallbacks = new Set<(event: any) => void>();
+    let buildContentSequence = 0;
     const operationProgressCallbacks = new Set<(event: any) => void>();
     (window as any).__fluxoraCalls = calls;
     (window as any).__emitFluxoraBuildContentChanged = (event: any = {}) => {
       const payload = {
         eventId: `evt_test_build_content_${Date.now()}`,
         projectDirectory: skyrimProject.projectDirectory,
+        modsDirectory: skyrimProject.paths.modsDirectory,
+        profilesDirectory: skyrimProject.paths.profilesDirectory,
+        profileName: 'Default',
+        sequence: ++buildContentSequence,
+        reason: 'test-change',
+        changes: [],
         ...event
       };
       for (const callback of buildContentChangedCallbacks) {
@@ -645,10 +656,13 @@ test.beforeEach(async ({ page }) => {
           accepted: true,
           operationId: operation?.operationId ?? 'op_build_content_unwatch'
         }),
-        watch: async (_watchRequest: any, operation: any) => ({
-          accepted: true,
-          operationId: operation?.operationId ?? 'op_build_content_watch'
-        })
+        watch: async (watchRequest: any, operation: any) => {
+          calls.push({ method: 'buildContent.watch', payload: { operation, watchRequest } });
+          return {
+            accepted: true,
+            operationId: operation?.operationId ?? 'op_build_content_watch'
+          };
+        }
       },
       downloads: {
         analyzeContentLayout: async (request: any, operation: any) => {
@@ -766,6 +780,7 @@ test.beforeEach(async ({ page }) => {
           };
         },
         inspect: async () => ({}),
+        planInstall: async () => ({ operationId: 'op_fluxpack_plan', sources: [], summary: {} }),
         install: async () => ({ operationId: 'op_fluxpack_install', summary: {} })
       },
       links: {
@@ -1080,6 +1095,29 @@ test.beforeEach(async ({ page }) => {
           String(projectDirectory).includes('Fallout test lab')
             ? []
             : modRows,
+        getWorkspace: async (projectDirectory: any) => {
+          const isEmptyBuild =
+            String(projectDirectory).includes('Playwright build') ||
+            String(projectDirectory).includes('Fallout test lab');
+          return {
+            installedMods: isEmptyBuild ? [] : modRows.filter((item) => item.isMod),
+            modOrder: isEmptyBuild ? [] : modRows
+          };
+        },
+        getPersistedWorkspace: async (projectDirectory: any) => {
+          await waitForPersistedWorkspace();
+          const isEmptyBuild =
+            String(projectDirectory).includes('Playwright build') ||
+            String(projectDirectory).includes('Fallout test lab');
+          return {
+            installedMods: isEmptyBuild ? [] : modRows.filter((item) => item.isMod),
+            modOrder: isEmptyBuild ? [] : modRows
+          };
+        },
+        invalidateFileCaches: async (_projectDirectory: any, changedPaths: any[]) => ({
+          invalidated: changedPaths.length > 0,
+          changedPathCount: changedPaths.length
+        }),
         listInstalled: async (projectDirectory: any) =>
           String(projectDirectory).includes('Playwright build') ||
           String(projectDirectory).includes('Fallout test lab')
@@ -1141,7 +1179,25 @@ test.beforeEach(async ({ page }) => {
       plugins: {
         createSeparator: async () => pluginRows,
         deleteSeparator: async () => pluginRows,
-        list: async () => pluginRows,
+        list: async (projectDirectory: any, templateId: any, profileName: any, operation: any) => {
+          calls.push({
+            method: 'plugins.list',
+            payload: { operation, profileName, projectDirectory, templateId }
+          });
+          return pluginRows;
+        },
+        listPersisted: async (
+          projectDirectory: any,
+          templateId: any,
+          profileName: any,
+          operation: any
+        ) => {
+          calls.push({
+            method: 'plugins.listPersisted',
+            payload: { operation, profileName, projectDirectory, templateId }
+          });
+          return pluginRows;
+        },
         move: async (projectDirectory: any, templateId: any, profileName: any, orderId: any, targetIndex: any, operation: any) => {
           calls.push({
             method: 'plugins.move',
@@ -1737,7 +1793,7 @@ test('restores the previous workspace after cancelling a build open', async ({ p
   await openSkyrimBuild(page);
   await page.getByRole('button', { name: 'Home' }).click();
   await page.evaluate(() => {
-    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
+    (window as typeof window & { __fluxoraPersistedWorkspaceDelayMs?: number }).__fluxoraPersistedWorkspaceDelayMs =
       2_500;
   });
 
@@ -1746,7 +1802,7 @@ test('restores the previous workspace after cancelling a build open', async ({ p
   const newBuildButton = page.getByRole('button', { name: 'New build' }).first();
   await expect(newBuildButton).toBeDisabled();
   await page.evaluate(() => {
-    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
+    (window as typeof window & { __fluxoraPersistedWorkspaceDelayMs?: number }).__fluxoraPersistedWorkspaceDelayMs =
       0;
   });
 
@@ -1763,18 +1819,18 @@ test('restores the active non-default profile after cancelling a build open', as
       __fluxoraCalls?: Array<{ method: string; payload?: any }>;
       fluxora: any;
     };
-    const getOrder = scope.fluxora.mods.getOrder;
+    const getWorkspace = scope.fluxora.mods.getWorkspace;
     scope.fluxora.profiles.list = async () => ['Default', 'Testing'];
-    scope.fluxora.mods.getOrder = async (
+    scope.fluxora.mods.getWorkspace = async (
       projectDirectory: string,
       profileName: string,
       operation: unknown
     ) => {
       scope.__fluxoraCalls?.push({
-        method: 'test.mods.getOrder',
+        method: 'test.mods.getWorkspace',
         payload: { operation, profileName, projectDirectory }
       });
-      return getOrder(projectDirectory, profileName, operation);
+      return getWorkspace(projectDirectory, profileName, operation);
     };
   });
 
@@ -1788,16 +1844,16 @@ test('restores the active non-default profile after cancelling a build open', as
   await page.evaluate(() => {
     const scope = window as typeof window & {
       __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
-      __fluxoraDownloadsListDelayMs?: number;
+      __fluxoraPersistedWorkspaceDelayMs?: number;
     };
     scope.__fluxoraCalls?.splice(0);
-    scope.__fluxoraDownloadsListDelayMs = 2_500;
+    scope.__fluxoraPersistedWorkspaceDelayMs = 2_500;
   });
 
   await page.getByRole('button', { name: 'Open Fallout test lab' }).click();
   await page.getByRole('button', { name: 'Отмена', exact: true }).click();
   await page.evaluate(() => {
-    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
+    (window as typeof window & { __fluxoraPersistedWorkspaceDelayMs?: number }).__fluxoraPersistedWorkspaceDelayMs =
       0;
   });
   await expect(page.getByRole('button', { name: 'New build' }).first()).toBeEnabled();
@@ -1810,7 +1866,7 @@ test('restores the active non-default profile after cancelling a build open', as
         return calls
           ?.filter(
             (call) =>
-              call.method === 'test.mods.getOrder' &&
+              call.method === 'test.mods.getWorkspace' &&
               String(call.payload?.projectDirectory).includes('Skyrim graphics overhaul')
           )
           .at(-1)?.payload?.profileName;
@@ -1851,7 +1907,7 @@ test('ignores refresh shortcuts while a build is opening', async ({ page }) => {
   await openSkyrimBuild(page);
   await page.getByRole('button', { name: 'Home' }).click();
   await page.evaluate(() => {
-    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
+    (window as typeof window & { __fluxoraPersistedWorkspaceDelayMs?: number }).__fluxoraPersistedWorkspaceDelayMs =
       900;
   });
 
@@ -1859,7 +1915,7 @@ test('ignores refresh shortcuts while a build is opening', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Отмена', exact: true })).toBeVisible();
   await page.keyboard.press('Control+R');
   await page.evaluate(() => {
-    (window as typeof window & { __fluxoraDownloadsListDelayMs?: number }).__fluxoraDownloadsListDelayMs =
+    (window as typeof window & { __fluxoraPersistedWorkspaceDelayMs?: number }).__fluxoraPersistedWorkspaceDelayMs =
       0;
   });
 
@@ -1872,12 +1928,12 @@ test('does not attach partial workspace data after a failed build open', async (
   await page.getByRole('button', { name: 'Home' }).click();
   await page.evaluate(() => {
     const facade = (window as typeof window & { fluxora: any }).fluxora;
-    const listInstalled = facade.mods.listInstalled;
-    facade.mods.listInstalled = async (projectDirectory: string, ...args: unknown[]) => {
+    const getPersistedWorkspace = facade.mods.getPersistedWorkspace;
+    facade.mods.getPersistedWorkspace = async (projectDirectory: string, ...args: unknown[]) => {
       if (projectDirectory.includes('Fallout test lab')) {
         throw new Error('Simulated Fallout workspace failure');
       }
-      return listInstalled(projectDirectory, ...args);
+      return getPersistedWorkspace(projectDirectory, ...args);
     };
   });
 
@@ -1893,12 +1949,12 @@ test('restores the previous workspace when plugin loading fails', async ({ page 
   await page.getByRole('button', { name: 'Home' }).click();
   await page.evaluate(() => {
     const facade = (window as typeof window & { fluxora: any }).fluxora;
-    const listPlugins = facade.plugins.list;
-    facade.plugins.list = async (projectDirectory: string, ...args: unknown[]) => {
+    const listPersistedPlugins = facade.plugins.listPersisted;
+    facade.plugins.listPersisted = async (projectDirectory: string, ...args: unknown[]) => {
       if (projectDirectory.includes('Fallout test lab')) {
         throw new Error('Simulated Fallout plugin failure');
       }
-      return listPlugins(projectDirectory, ...args);
+      return listPersistedPlugins(projectDirectory, ...args);
     };
   });
 
@@ -1907,6 +1963,910 @@ test('restores the previous workspace when plugin loading fails', async ({ page 
   const skyrimSummary = page.getByRole('article', { name: 'Skyrim graphics overhaul summary' });
   await expect(skyrimSummary).toBeVisible();
   await expect(skyrimSummary.getByText('2', { exact: true })).toBeVisible();
+});
+
+test('reconciles exact plugins after the persisted project-open snapshot', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const methods =
+          (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+            ?.map((call) => call.method) ?? [];
+        const persistedIndex = methods.indexOf('plugins.listPersisted');
+        const exactIndex = methods.indexOf('plugins.list');
+        return persistedIndex >= 0 && exactIndex > persistedIndex;
+      })
+    )
+    .toBe(true);
+});
+
+test('keeps persisted plugin rows usable when background exact discovery fails', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const facade = (window as typeof window & { fluxora: any }).fluxora;
+    const listPlugins = facade.plugins.list;
+    facade.plugins.list = async (...args: unknown[]) => {
+      await listPlugins(...args);
+      throw new Error('Simulated background plugin discovery failure');
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.some((call) => call.method === 'plugins.list')
+      )
+    )
+    .toBe(true);
+
+  const pluginsTable = page.getByRole('table', { name: 'Plugin load order' });
+  await expect(pluginsTable).toBeVisible();
+  await expect(pluginsTable.getByRole('row', { name: /Skyrim.esm/ })).toBeVisible();
+  await expect(page.getByText('Plugins unavailable')).toHaveCount(0);
+});
+
+test('continues exact T4 reconciliation when deferred downloads fail', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const facade = (window as typeof window & { fluxora: any }).fluxora;
+    const listDownloads = facade.downloads.list;
+    facade.downloads.list = async (...args: unknown[]) => {
+      await listDownloads(...args);
+      throw new Error('Simulated deferred downloads failure');
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+  await expect(page.getByRole('row', { name: /SkyUI mod/ })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.some((call) => call.method === 'plugins.list')
+      )
+    )
+    .toBe(true);
+});
+
+test('uses one exact mod fallback before T3 when the persisted snapshot is unprepared', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      fluxora: any;
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+    };
+    const exactWorkspace = testWindow.fluxora.mods.getWorkspace;
+    testWindow.fluxora.mods.getPersistedWorkspace = async () => ({
+      installedMods: [],
+      modOrder: []
+    });
+    testWindow.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      testWindow.__fluxoraCalls?.push({ method: 'mods.getWorkspace.exact-fallback' });
+      return exactWorkspace(...args);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+  await expect(page.getByRole('row', { name: /SkyUI mod/ })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.some((call) => call.method === 'plugins.list')
+      )
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.filter((call) => call.method === 'mods.getWorkspace.exact-fallback').length
+      )
+    )
+    .toBe(1);
+});
+
+test('reuses exact mod reconciliation while the same project watcher remains active', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      fluxora: any;
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+    };
+    const exactWorkspace = testWindow.fluxora.mods.getWorkspace;
+    testWindow.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      testWindow.__fluxoraCalls?.push({ method: 'mods.getWorkspace.watched-exact' });
+      return exactWorkspace(...args);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.filter((call) => call.method === 'plugins.list').length
+      )
+    )
+    .toBe(1);
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  await clickSkyrimBuildOpenButton(page);
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.filter((call) => call.method === 'plugins.list').length
+      )
+    )
+    .toBe(2);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+          ?.filter((call) => call.method === 'mods.getWorkspace.watched-exact').length
+      )
+    )
+    .toBe(1);
+});
+
+test('requires exact mods after watcher coverage leaves and returns to a project', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+      fluxora: any;
+    };
+    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    const listDownloads = scope.fluxora.downloads.list;
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({ method: 'mods.getWorkspace.coverage-gap' });
+      return exactWorkspace(...args);
+    };
+    scope.fluxora.downloads.list = async (projectDirectory: string, ...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({
+        method: 'downloads.list.coverage-gap',
+        payload: { projectDirectory }
+      });
+      return listDownloads(projectDirectory, ...args);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'mods.getWorkspace.coverage-gap'
+        ).length
+      )
+    )
+    .toBe(1);
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.evaluate(() => {
+    (window as any).__fluxoraDownloadsListDelayMs = 2_500;
+  });
+  await page.getByRole('button', { name: 'Open Fallout test lab' }).click();
+  await expect(page.getByRole('heading', { name: 'Fallout test lab' })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.some(
+          (call: { method: string; payload?: { projectDirectory?: string } }) =>
+            call.method === 'downloads.list.coverage-gap' &&
+            call.payload?.projectDirectory?.includes('Fallout test lab')
+        )
+      )
+    )
+    .toBe(true);
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  await page.evaluate(() => {
+    (window as any).__fluxoraDownloadsListDelayMs = 0;
+  });
+  await clickSkyrimBuildOpenButton(page);
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'mods.getWorkspace.coverage-gap'
+        ).length
+      )
+    )
+    .toBe(3);
+});
+
+test('requires exact mods after profile watcher coverage leaves and returns', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: any }>;
+      fluxora: any;
+    };
+    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    scope.fluxora.profiles.list = async () => ['Default', 'Testing'];
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({ method: 'mods.getWorkspace.profile-coverage-gap' });
+      return exactWorkspace(...args);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'mods.getWorkspace.profile-coverage-gap'
+        ).length
+      )
+    )
+    .toBe(1);
+
+  const profileSelect = page.getByRole('combobox', { name: 'Profile' });
+  await profileSelect.click();
+  await page.getByRole('option', { name: 'Testing' }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.some(
+          (call: { method: string; payload?: { watchRequest?: { profileName?: string } } }) =>
+            call.method === 'buildContent.watch' && call.payload?.watchRequest?.profileName === 'Testing'
+        )
+      )
+    )
+    .toBe(true);
+  await profileSelect.click();
+  await page.getByRole('option', { name: 'Default' }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string; payload?: { watchRequest?: { profileName?: string } } }) =>
+            call.method === 'buildContent.watch' && call.payload?.watchRequest?.profileName === 'Default'
+        ).length
+      )
+    )
+    .toBeGreaterThanOrEqual(2);
+
+  const exactCallsBeforeReopen = await page.evaluate(() =>
+    (window as any).__fluxoraCalls.filter(
+      (call: { method: string }) => call.method === 'mods.getWorkspace.profile-coverage-gap'
+    ).length
+  );
+  await page.getByRole('button', { name: 'Home' }).click();
+  await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'mods.getWorkspace.profile-coverage-gap'
+        ).length
+      )
+    )
+    .toBe(exactCallsBeforeReopen + 1);
+});
+
+test('does not let delayed open background work overwrite a newly selected profile', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __deferredDownloadsReturned?: number;
+      __fluxoraCalls?: Array<{ method: string; payload?: any }>;
+      __releaseDeferredDownloads?: () => void;
+      fluxora: any;
+    };
+    const listDownloads = scope.fluxora.downloads.list;
+    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    let releaseDownloads!: () => void;
+    const downloadsGate = new Promise<void>((resolve) => {
+      releaseDownloads = resolve;
+    });
+    scope.__deferredDownloadsReturned = 0;
+    scope.__releaseDeferredDownloads = releaseDownloads;
+    scope.fluxora.profiles.list = async () => ['Default', 'Testing'];
+    scope.fluxora.downloads.list = async (...args: unknown[]) => {
+      await downloadsGate;
+      const result = await listDownloads(...args);
+      scope.__deferredDownloadsReturned = (scope.__deferredDownloadsReturned ?? 0) + 1;
+      return result;
+    };
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({
+        method: 'mods.getWorkspace.live-profile',
+        payload: { profileName: args[1] }
+      });
+      return exactWorkspace(...args);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  const profileSelect = page.getByRole('combobox', { name: 'Profile' });
+  await profileSelect.click();
+  await page.getByRole('option', { name: 'Testing' }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string; payload?: { profileName?: string } }) =>
+            call.method === 'mods.getWorkspace.live-profile' &&
+            call.payload?.profileName === 'Testing'
+        ).length
+      )
+    )
+    .toBeGreaterThanOrEqual(1);
+
+  await page.evaluate(() => (window as any).__releaseDeferredDownloads());
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__deferredDownloadsReturned))
+    .toBeGreaterThanOrEqual(1);
+  expect(
+    await page.evaluate(() =>
+      (window as any).__fluxoraCalls.filter(
+        (call: { method: string; payload?: { profileName?: string } }) =>
+          call.method === 'mods.getWorkspace.live-profile' &&
+          call.payload?.profileName === 'Default'
+      ).length
+    )
+  ).toBe(0);
+});
+
+test('reconciles the live profile after a delayed watcher invalidation', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __delayedInvalidationStarted?: boolean;
+      __fluxoraCalls?: Array<{ method: string; payload?: any }>;
+      __releaseDelayedInvalidation?: () => void;
+      fluxora: any;
+    };
+    const invalidate = scope.fluxora.mods.invalidateFileCaches;
+    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    let releaseInvalidation!: () => void;
+    const invalidationGate = new Promise<void>((resolve) => {
+      releaseInvalidation = resolve;
+    });
+    scope.__releaseDelayedInvalidation = releaseInvalidation;
+    scope.fluxora.profiles.list = async () => ['Default', 'Testing'];
+    scope.fluxora.mods.invalidateFileCaches = async (...args: unknown[]) => {
+      scope.__delayedInvalidationStarted = true;
+      await invalidationGate;
+      return invalidate(...args);
+    };
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({
+        method: 'mods.getWorkspace.delayed-profile-invalidation',
+        payload: { profileName: args[1] }
+      });
+      return exactWorkspace(...args);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) =>
+            call.method === 'mods.getWorkspace.delayed-profile-invalidation'
+        ).length
+      )
+    )
+    .toBe(1);
+  await page.evaluate(() => {
+    (window as any).__emitFluxoraBuildContentChanged({
+      changes: [
+        {
+          area: 'mods',
+          fileName: 'profile-race.txt',
+          kind: 'modify',
+          path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI\\profile-race.txt'
+        }
+      ]
+    });
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__delayedInvalidationStarted))
+    .toBe(true);
+
+  const profileSelect = page.getByRole('combobox', { name: 'Profile' });
+  await profileSelect.click();
+  await page.getByRole('option', { name: 'Testing' }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string; payload?: { profileName?: string } }) =>
+            call.method === 'mods.getWorkspace.delayed-profile-invalidation' &&
+            call.payload?.profileName === 'Testing'
+        ).length
+      )
+    )
+    .toBe(1);
+
+  await page.evaluate(() => (window as any).__releaseDelayedInvalidation());
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string; payload?: { profileName?: string } }) =>
+            call.method === 'mods.getWorkspace.delayed-profile-invalidation' &&
+            call.payload?.profileName === 'Testing'
+        ).length
+      )
+    )
+    .toBe(2);
+});
+
+test('retries a failed profile watcher and reconciles after watcher coverage resumes', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: any }>;
+      __testingWatchAttempts?: number;
+      fluxora: any;
+    };
+    const watch = scope.fluxora.buildContent.watch;
+    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    scope.__testingWatchAttempts = 0;
+    scope.fluxora.profiles.list = async () => ['Default', 'Testing'];
+    scope.fluxora.buildContent.watch = async (request: any, ...args: unknown[]) => {
+      if (request.profileName === 'Testing') {
+        scope.__testingWatchAttempts = (scope.__testingWatchAttempts ?? 0) + 1;
+        if (scope.__testingWatchAttempts === 1) {
+          throw new Error('simulated watcher replacement failure');
+        }
+      }
+      return watch(request, ...args);
+    };
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({
+        method: 'mods.getWorkspace.watcher-retry-profile',
+        payload: { profileName: args[1] }
+      });
+      return exactWorkspace(...args);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  const profileSelect = page.getByRole('combobox', { name: 'Profile' });
+  await profileSelect.click();
+  await page.getByRole('option', { name: 'Testing' }).click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__testingWatchAttempts), { timeout: 5_000 })
+    .toBe(2);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string; payload?: { profileName?: string } }) =>
+            call.method === 'mods.getWorkspace.watcher-retry-profile' &&
+            call.payload?.profileName === 'Testing'
+        ).length
+      )
+    )
+    .toBeGreaterThanOrEqual(2);
+});
+
+test('does not mark exact watcher coverage when an event arrives during reconciliation', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __deferNextExact?: () => void;
+      __deferredExactStarted?: boolean;
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+      __releaseDeferredExact?: () => void;
+      fluxora: any;
+    };
+    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    let deferNextExact = false;
+    scope.__deferNextExact = () => {
+      deferNextExact = true;
+      scope.__deferredExactStarted = false;
+    };
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({ method: 'mods.getWorkspace.epoch' });
+      if (deferNextExact) {
+        deferNextExact = false;
+        await new Promise<void>((resolve) => {
+          scope.__releaseDeferredExact = resolve;
+          scope.__deferredExactStarted = true;
+        });
+      }
+      return exactWorkspace(...args);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'mods.getWorkspace.epoch'
+        ).length
+      )
+    )
+    .toBe(1);
+
+  await page.evaluate(() => {
+    (window as any).__deferNextExact();
+    (window as any).__emitFluxoraBuildContentChanged({
+      changes: [
+        {
+          area: 'mods',
+          fileName: 'first.txt',
+          kind: 'modify',
+          path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI\\first.txt'
+        }
+      ]
+    });
+  });
+  await expect.poll(() => page.evaluate(() => (window as any).__deferredExactStarted)).toBe(true);
+  await page.evaluate(() => {
+    (window as any).__emitFluxoraBuildContentChanged({
+      changes: [
+        {
+          area: 'mods',
+          fileName: 'second.txt',
+          kind: 'modify',
+          path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI\\second.txt'
+        }
+      ]
+    });
+    (window as any).__releaseDeferredExact();
+  });
+
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'mods.getWorkspace.epoch'
+        ).length
+      )
+    )
+    .toBe(3);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.some(
+          (call: {
+            method: string;
+            payload?: { operation?: { operationId?: string } };
+          }) =>
+            call.method === 'plugins.list' &&
+            call.payload?.operation?.operationId?.includes(
+              '_build_content_plugins_changed_'
+            )
+        )
+      )
+    )
+    .toBe(true);
+
+  const pluginsBeforeFinalReopen = await page.evaluate(() =>
+    (window as any).__fluxoraCalls.filter(
+      (call: { method: string }) => call.method === 'plugins.list'
+    ).length
+  );
+  await page.getByRole('button', { name: 'Home' }).click();
+  await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'plugins.list'
+        ).length
+      )
+    )
+    .toBeGreaterThan(pluginsBeforeFinalReopen);
+  expect(
+    await page.evaluate(() =>
+      (window as any).__fluxoraCalls.filter(
+        (call: { method: string }) => call.method === 'mods.getWorkspace.epoch'
+      ).length
+    )
+  ).toBe(3);
+});
+
+test('starts coverage reconciliation only after the pending invalidation settles', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __coverageExactStarted?: boolean;
+      __coverageInvalidationStarted?: boolean;
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+      __releaseCoverageExact?: () => void;
+      __releaseCoverageInvalidation?: () => void;
+      fluxora: any;
+    };
+    const invalidate = scope.fluxora.mods.invalidateFileCaches;
+    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    let releaseInvalidation!: () => void;
+    const invalidationGate = new Promise<void>((resolve) => {
+      releaseInvalidation = resolve;
+    });
+    let deferNextExact = false;
+    scope.__releaseCoverageInvalidation = releaseInvalidation;
+    scope.fluxora.mods.invalidateFileCaches = async (...args: unknown[]) => {
+      scope.__coverageInvalidationStarted = true;
+      await invalidationGate;
+      return invalidate(...args);
+    };
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({ method: 'mods.getWorkspace.invalidation-happens-before' });
+      const result = await exactWorkspace(...args);
+      if (deferNextExact) {
+        deferNextExact = false;
+        scope.__coverageExactStarted = true;
+        await new Promise<void>((resolve) => {
+          scope.__releaseCoverageExact = resolve;
+        });
+      }
+      return result;
+    };
+    (scope as any).__deferCoverageExact = () => {
+      deferNextExact = true;
+      scope.__coverageExactStarted = false;
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) =>
+            call.method === 'mods.getWorkspace.invalidation-happens-before'
+        ).length
+      )
+    )
+    .toBe(1);
+  await page.evaluate(() => {
+    (window as any).__deferCoverageExact();
+    (window as any).__emitFluxoraBuildContentChanged({
+      changes: [
+        {
+          area: 'mods',
+          fileName: 'happens-before.txt',
+          kind: 'modify',
+          path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI\\happens-before.txt'
+        }
+      ]
+    });
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__coverageInvalidationStarted))
+    .toBe(true);
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  await clickSkyrimBuildOpenButton(page);
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__coverageExactStarted)).not.toBe(true);
+  expect(
+    await page.evaluate(() =>
+      (window as any).__fluxoraCalls.filter(
+        (call: { method: string }) =>
+          call.method === 'mods.getWorkspace.invalidation-happens-before'
+      ).length
+    )
+  ).toBe(1);
+
+  await page.evaluate(() => (window as any).__releaseCoverageInvalidation());
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__coverageExactStarted))
+    .toBe(true);
+  await page.evaluate(() => (window as any).__releaseCoverageExact());
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) =>
+            call.method === 'mods.getWorkspace.invalidation-happens-before'
+        ).length
+      )
+    )
+    .toBe(2);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'plugins.list'
+        ).length
+      )
+    )
+    .toBe(2);
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'plugins.list'
+        ).length
+      )
+    )
+    .toBe(3);
+  expect(
+    await page.evaluate(() =>
+      (window as any).__fluxoraCalls.filter(
+        (call: { method: string }) =>
+          call.method === 'mods.getWorkspace.invalidation-happens-before'
+      ).length
+    )
+  ).toBe(2);
+});
+
+test('autonomously retries a failed watcher invalidation before exact refresh', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+      __watchInvalidationAttempts?: number;
+      fluxora: any;
+    };
+    const invalidate = scope.fluxora.mods.invalidateFileCaches;
+    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    scope.__watchInvalidationAttempts = 0;
+    scope.fluxora.mods.invalidateFileCaches = async (...args: unknown[]) => {
+      scope.__watchInvalidationAttempts = (scope.__watchInvalidationAttempts ?? 0) + 1;
+      if (scope.__watchInvalidationAttempts <= 3) {
+        throw new Error('simulated bridge restart');
+      }
+      return invalidate(...args);
+    };
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({ method: 'mods.getWorkspace.retry' });
+      return exactWorkspace(...args);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'mods.getWorkspace.retry'
+        ).length
+      )
+    )
+    .toBe(1);
+
+  await page.evaluate(() => {
+    (window as any).__emitFluxoraBuildContentChanged({
+      changes: [
+        {
+          area: 'mods',
+          fileName: 'retry.txt',
+          kind: 'modify',
+          path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI\\retry.txt'
+        }
+      ]
+    });
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__watchInvalidationAttempts), { timeout: 6_000 })
+    .toBe(4);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'mods.getWorkspace.retry'
+        ).length
+      )
+    )
+    .toBe(2);
+});
+
+test('does not reuse exact mods while a watcher invalidation remains unresolved', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __allowPendingInvalidation?: boolean;
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+      __pendingInvalidationAttempts?: number;
+      fluxora: any;
+    };
+    const invalidate = scope.fluxora.mods.invalidateFileCaches;
+    const exactWorkspace = scope.fluxora.mods.getWorkspace;
+    scope.__allowPendingInvalidation = false;
+    scope.__pendingInvalidationAttempts = 0;
+    scope.fluxora.mods.invalidateFileCaches = async (...args: unknown[]) => {
+      scope.__pendingInvalidationAttempts = (scope.__pendingInvalidationAttempts ?? 0) + 1;
+      if (!scope.__allowPendingInvalidation) {
+        throw new Error('persistent invalidation failure');
+      }
+      return invalidate(...args);
+    };
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      scope.__fluxoraCalls?.push({ method: 'mods.getWorkspace.pending-invalidation' });
+      return exactWorkspace(...args);
+    };
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'mods.getWorkspace.pending-invalidation'
+        ).length
+      )
+    )
+    .toBe(1);
+
+  await page.evaluate(() => {
+    (window as any).__emitFluxoraBuildContentChanged({
+      changes: [
+        {
+          area: 'mods',
+          fileName: 'pending.txt',
+          kind: 'modify',
+          path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\SkyUI\\pending.txt'
+        }
+      ]
+    });
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__pendingInvalidationAttempts))
+    .toBeGreaterThanOrEqual(3);
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  await clickSkyrimBuildOpenButton(page);
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      (window as any).__fluxoraCalls.filter(
+        (call: { method: string }) => call.method === 'mods.getWorkspace.pending-invalidation'
+      ).length
+    )
+  ).toBe(1);
+
+  await page.getByRole('button', { name: 'Home' }).click();
+  await clickSkyrimBuildOpenButton(page);
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      (window as any).__fluxoraCalls.filter(
+        (call: { method: string }) => call.method === 'mods.getWorkspace.pending-invalidation'
+      ).length
+    )
+  ).toBe(1);
+
+  await page.evaluate(() => {
+    (window as any).__allowPendingInvalidation = true;
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'mods.getWorkspace.pending-invalidation'
+        ).length
+      ),
+      { timeout: 12_000 }
+    )
+    .toBe(2);
 });
 
 test('runs build package, check and launch actions through the facade', async ({ page }) => {
@@ -2092,6 +3052,83 @@ test('keeps the FluxPack export dialog cohesive in a compact viewport', async ({
   await expect(dialog).toBeVisible();
 });
 
+test('starts a manual Nexus FluxPack install from the Library action', async ({ page }) => {
+  await page.goto(baseUrl);
+
+  await page.evaluate(() => {
+    const facade = (window as any).fluxora;
+    const calls = (window as any).__fluxoraCalls as Array<{ method: string; payload?: unknown }>;
+    const summary = {
+      buildName: 'Nexus Manual Build',
+      customConfigCount: 0,
+      customPatchCount: 0,
+      formatVersion: 3,
+      generatedAssetCount: 0,
+      generatedAssetsIncluded: false,
+      installPlanAvailable: true,
+      installStepCount: 1,
+      manifestBytes: 1024,
+      outputPath: 'D:\\Fluxora\\Exports\\manual.fluxpack',
+      sourceArchiveCount: 1
+    };
+
+    facade.dialogs.pickFluxPack = async (initialDirectory: any) => {
+      calls.push({ method: 'dialogs.pickFluxPack', payload: { initialDirectory } });
+      return { canceled: false, path: 'D:\\Fluxora\\Exports\\manual.fluxpack' };
+    };
+    facade.fluxPack.inspect = async (fluxPackPath: any, operation: any) => {
+      calls.push({ method: 'fluxPack.inspect', payload: { fluxPackPath, operation } });
+      return summary;
+    };
+    facade.fluxPack.planInstall = async (request: any, operation: any) => {
+      calls.push({ method: 'fluxPack.planInstall', payload: { operation, request } });
+      return {
+        automaticDownloadCount: 0,
+        manualDownloadCount: 1,
+        operationId: operation?.operationId ?? 'op_fluxpack_plan',
+        reusableDownloadCount: 0,
+        reusableSourceCount: 0,
+        sources: [
+          {
+            acquisitionMode: 'manual',
+            archiveFileName: 'SkyUI.7z',
+            canAutomaticallyDownload: false,
+            displayName: 'SkyUI',
+            manualDownloadUrl:
+              'https://www.nexusmods.com/skyrimspecialedition/mods/3863?tab=files&file_id=123',
+            providerDisplayName: 'Nexus Mods',
+            providerId: 'nexus',
+            requiresManualDownload: true,
+            sourceId: 'source-0:nexus:skyrimspecialedition:3863:123',
+            version: '5.2'
+          }
+        ],
+        summary,
+        updatesExistingProject: false
+      };
+    };
+  });
+
+  const installButton = page.getByRole('button', { name: 'Установить сборку из FluxPack' });
+  await expect(installButton).toBeVisible();
+  await installButton.click();
+
+  const dialog = page.getByRole('dialog', { name: 'Ручная загрузка' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('SkyUI', { exact: true }).first()).toBeVisible();
+  const downloadButton = dialog.getByRole('button', { name: 'Скачать на Nexus Mods' });
+  await expect(downloadButton).toBeFocused();
+  await expect(downloadButton).toHaveAttribute('data-highlighted', 'true');
+  await expect(downloadButton).toHaveCSS('background-color', 'rgb(217, 143, 43)');
+  await downloadButton.click();
+  await expect.poll(() => callMethods(page)).toContain('links.openExternal');
+
+  const installAction = dialog.getByRole('button', { name: 'Начать установку' });
+  await expect(installAction).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Выбрать загруженный файл' }).click();
+  await expect(installAction).toBeEnabled();
+});
+
 test('updates the current build from FluxPack with delta reuse', async ({ page }) => {
   await openSkyrimBuild(page);
 
@@ -2106,6 +3143,36 @@ test('updates the current build from FluxPack with delta reuse', async ({ page }
     facade.dialogs.pickFolder = async (title: any, initialDirectory: any) => {
       calls.push({ method: 'dialogs.pickFolder', payload: { initialDirectory, title } });
       return { canceled: false, path: 'D:\\Fluxora\\Builds' };
+    };
+    const summary = {
+      buildName: 'Skyrim graphics overhaul',
+      customConfigCount: 1,
+      customPatchCount: 0,
+      formatVersion: 3,
+      generatedAssetCount: 2,
+      generatedAssetsIncluded: true,
+      installPlanAvailable: true,
+      installStepCount: 3,
+      manifestBytes: 2048,
+      outputPath: 'D:\\Fluxora\\Exports\\skyrim.fluxpack',
+      sourceArchiveCount: 4
+    };
+    facade.fluxPack.inspect = async (fluxPackPath: any, operation: any) => {
+      calls.push({ method: 'fluxPack.inspect', payload: { fluxPackPath, operation } });
+      return summary;
+    };
+    facade.fluxPack.planInstall = async (request: any, operation: any) => {
+      calls.push({ method: 'fluxPack.planInstall', payload: { operation, request } });
+      return {
+        automaticDownloadCount: 0,
+        manualDownloadCount: 0,
+        operationId: operation?.operationId ?? 'op_fluxpack_plan',
+        reusableDownloadCount: 1,
+        reusableSourceCount: 3,
+        sources: [],
+        summary,
+        updatesExistingProject: true
+      };
     };
     facade.fluxPack.install = async (request: any, operation: any) => {
       calls.push({ method: 'fluxPack.install', payload: { operation, request } });
@@ -2125,19 +3192,7 @@ test('updates the current build from FluxPack with delta reuse', async ({ page }
         reusedDownloadCount: 1,
         reusedFileCount: 18,
         reusedSourceCount: 3,
-        summary: {
-          buildName: 'Skyrim graphics overhaul',
-          customConfigCount: 1,
-          customPatchCount: 0,
-          formatVersion: 1,
-          generatedAssetCount: 2,
-          generatedAssetsIncluded: true,
-          installPlanAvailable: true,
-          installStepCount: 3,
-          manifestBytes: 2048,
-          outputPath: 'D:\\Fluxora\\Exports\\skyrim.fluxpack',
-          sourceArchiveCount: 4
-        },
+        summary,
         totalSourceCount: 4,
         updatedExistingProject: true
       };
@@ -2153,8 +3208,13 @@ test('updates the current build from FluxPack with delta reuse', async ({ page }
   await expect(installItem).toBeEnabled();
   await installItem.click();
 
+  const conflictDialog = page.getByRole('dialog', { name: 'Сборка уже существует' });
+  await expect(conflictDialog).toBeVisible();
+  await conflictDialog.getByRole('button', { name: 'Обновить существующую' }).click();
+
   await expect(page.getByRole('status', { name: 'Обновляем сборку' })).toBeVisible();
   await expect.poll(() => callMethods(page)).toContain('dialogs.pickFluxPack');
+  await expect.poll(() => callMethods(page)).toContain('fluxPack.planInstall');
   await expect.poll(() => callMethods(page)).toContain('fluxPack.install');
   expect(await callMethods(page)).not.toContain('dialogs.pickFolder');
 

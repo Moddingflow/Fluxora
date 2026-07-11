@@ -378,4 +378,122 @@ namespace fluxora::tests
         fluxora_core_shutdown();
 #endif
     }
+
+    TEST(FluxoraCoreApiTests, ModWorkspaceReturnsInstalledModsAndProfileOrderInOnePayload)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Core API mod workspace test uses the Windows instance metadata store.";
+#else
+        fluxora_core_shutdown();
+
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path project = installRoot / L"Workspace API Build";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+
+        std::array<wchar_t, 4> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_create_project(
+                L"Workspace API Build",
+                L"skyrimse",
+                game.c_str(),
+                installRoot.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        (void)copyBufferedApiOutput();
+
+        ASSERT_EQ(
+            fluxora_create_empty_mod(
+                project.c_str(),
+                L"Workspace API Probe",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        (void)copyBufferedApiOutput();
+
+        ASSERT_EQ(
+            fluxora_get_mod_workspace(
+                project.c_str(),
+                L"Default",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        const std::wstring json = copyBufferedApiOutput();
+        EXPECT_NE(json.find(L"\"installedMods\":["), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"modOrder\":["), std::wstring::npos);
+        EXPECT_NE(json.find(L"Workspace API Probe"), std::wstring::npos);
+
+        ASSERT_EQ(
+            fluxora_get_persisted_mod_workspace(
+                project.c_str(),
+                L"Default",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        const std::wstring persistedJson = copyBufferedApiOutput();
+        EXPECT_NE(persistedJson.find(L"\"installedMods\":["), std::wstring::npos);
+        EXPECT_NE(persistedJson.find(L"\"modOrder\":["), std::wstring::npos);
+        EXPECT_NE(persistedJson.find(L"Workspace API Probe"), std::wstring::npos);
+
+        fluxora_core_shutdown();
+#endif
+    }
+
+    TEST(FluxoraCoreApiTests, PersistedPluginsReturnsSerializedProfileStateWithoutDiskDiscovery)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Core API persisted plugin test uses the Windows instance metadata store.";
+#else
+        fluxora_core_shutdown();
+
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path project = installRoot / L"Persisted Plugins API Build";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+
+        std::array<wchar_t, 4> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_create_project(
+                L"Persisted Plugins API Build",
+                L"skyrimse",
+                game.c_str(),
+                installRoot.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        (void)copyBufferedApiOutput();
+
+        writeTextFile(
+            project / L"mods" / L"Offline Disk Mod" / L"Data" / L"OfflineOnly.esp",
+            "disk-only plugin");
+
+        ASSERT_EQ(
+            fluxora_get_persisted_plugins(
+                project.c_str(),
+                L"skyrimse",
+                L"Default",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        const std::wstring json = copyBufferedApiOutput();
+        EXPECT_NE(json.find(L"\"kind\":\"plugin\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"name\":\"Skyrim.esm\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"isEnabled\":true"), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"isMaster\":true"), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"isLocked\":true"), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"missingMasters\":[]"), std::wstring::npos);
+        EXPECT_EQ(json.find(L"OfflineOnly.esp"), std::wstring::npos);
+
+        fluxora_core_shutdown();
+#endif
+    }
 }

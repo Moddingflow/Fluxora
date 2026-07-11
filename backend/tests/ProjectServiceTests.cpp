@@ -1041,6 +1041,69 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(ProjectServiceTests, OpenProjectConfigDefersModManifestRecoveryToExactReconciliation)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Opening a project initializes the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Deferred Mod Recovery Build";
+        const std::filesystem::path configPath = projectDirectory / L"fluxora.build.json";
+        const std::filesystem::path modManifest =
+            projectDirectory / L"mods" / L"Interrupted Mod" / L".flow" / L"manifest.json";
+        writeTextFile(projectDirectory / L"Game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(projectDirectory / L"Game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(projectDirectory / L"profiles" / L"Default" / L"plugins.txt", "*Skyrim.esm\n");
+        writeTextFile(projectDirectory / L"profiles" / L"Default" / L"loadorder.txt", "Skyrim.esm\n");
+        writeTextFile(configPath, std::string(LegacySkyrimManifest));
+        EXPECT_THROW(
+            AtomicFileStore().writeTextFile(
+                modManifest,
+                R"json({
+                    "schemaVersion": 1,
+                    "modUuid": "interrupted-mod",
+                    "gameId": "skyrimse",
+                    "folderName": "Interrupted Mod",
+                    "displayName": "Recovered Later",
+                    "state": "installed"
+                })json",
+                AtomicFileWriteOptions{
+                    L"generated mod metadata",
+                    ProjectStateValidation::JsonObject,
+                    {},
+                    false,
+                    AtomicWriteFailurePoint::AfterTempFileValidated
+                }),
+            std::runtime_error);
+        ASSERT_FALSE(std::filesystem::exists(modManifest));
+
+        std::filesystem::path managedTemp;
+        for (const auto& entry : std::filesystem::directory_iterator(modManifest.parent_path()))
+        {
+            if (AtomicFileStore::isManagedTempFileFor(modManifest, entry.path()))
+            {
+                managedTemp = entry.path();
+                break;
+            }
+        }
+        ASSERT_FALSE(managedTemp.empty());
+
+        Logger logger;
+        TemplateService templates(logger);
+        templates.initialize();
+        ProjectService projects(logger, templates);
+        projects.initialize();
+
+        const ProjectOpenResult opened = projects.openProjectConfig(configPath);
+
+        EXPECT_EQ(opened.project.name, L"Legacy Skyrim Build");
+        EXPECT_FALSE(std::filesystem::exists(modManifest));
+        EXPECT_TRUE(std::filesystem::is_regular_file(managedTemp));
+#endif
+    }
+
     TEST(ProjectServiceTests, DeleteProjectStreamsLargeBuildTreeAndReportsProgress)
     {
 #ifndef _WIN32

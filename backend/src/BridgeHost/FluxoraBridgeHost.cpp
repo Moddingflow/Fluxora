@@ -373,6 +373,50 @@ namespace
         return writer.str();
     }
 
+    struct FluxPackManualSourceArchiveParams
+    {
+        std::vector<std::wstring> sourceIds;
+        std::vector<std::wstring> paths;
+    };
+
+    FluxPackManualSourceArchiveParams optionalFluxPackManualSourceArchives(
+        const fluxora::JsonValue& value)
+    {
+        const fluxora::JsonValue* field = findObjectField(value, L"manualSourceArchives");
+        if (field == nullptr || field->isNull())
+        {
+            return {};
+        }
+        if (!field->isArray())
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"manualSourceArchives must be an array.",
+                ErrorCategory::Validation,
+                false
+            };
+        }
+
+        FluxPackManualSourceArchiveParams result;
+        result.sourceIds.reserve(field->asArray().size());
+        result.paths.reserve(field->asArray().size());
+        for (const fluxora::JsonValue& item : field->asArray())
+        {
+            if (!item.isObject())
+            {
+                throw BridgeError{
+                    L"bridge.invalidRequest",
+                    L"manualSourceArchives entries must be objects.",
+                    ErrorCategory::Validation,
+                    false
+                };
+            }
+            result.sourceIds.push_back(requiredStringField(item, L"sourceId"));
+            result.paths.push_back(requiredStringField(item, L"path"));
+        }
+        return result;
+    }
+
     std::wstring currentOperationId(const BridgeRequest& request)
     {
         return optionalStringField(request.meta, L"operationId");
@@ -1228,24 +1272,49 @@ namespace
             });
     }
 
+    std::wstring payloadPlanFluxPackInstall(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring fluxPackPath = requiredStringField(params, L"fluxPackPath");
+        const std::wstring existingConfigPath = optionalStringField(&params, L"existingConfigPath");
+        return payloadFromCoreJson(
+            L"core.fluxPackPlanInstallFailed",
+            [&fluxPackPath, &existingConfigPath](wchar_t* buffer, int length)
+            {
+                return fluxora_plan_fluxpack_install(
+                    fluxPackPath.c_str(),
+                    existingConfigPath.empty() ? nullptr : existingConfigPath.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadInstallFluxPack(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
         const std::wstring fluxPackPath = requiredStringField(params, L"fluxPackPath");
         const std::wstring installRootDirectory = requiredStringField(params, L"installRootDirectory");
         const std::wstring existingConfigPath = optionalStringField(&params, L"existingConfigPath");
+        const FluxPackManualSourceArchiveParams manualSourceArchives =
+            optionalFluxPackManualSourceArchives(params);
+        const std::wstring manualSourceIdsJson = serializeStringArray(manualSourceArchives.sourceIds);
+        const std::wstring manualSourcePathsJson = serializeStringArray(manualSourceArchives.paths);
         ProgressCallbackContext progressContext{currentOperationId(request)};
         return payloadFromCoreJson(
             L"core.fluxPackInstallFailed",
             [&fluxPackPath,
              &installRootDirectory,
              &existingConfigPath,
+             &manualSourceIdsJson,
+             &manualSourcePathsJson,
              &progressContext](wchar_t* buffer, int length)
             {
-                return fluxora_install_fluxpack_with_target(
+                return fluxora_install_fluxpack_with_options_and_progress(
                     fluxPackPath.c_str(),
                     installRootDirectory.c_str(),
                     existingConfigPath.empty() ? nullptr : existingConfigPath.c_str(),
+                    manualSourceIdsJson.c_str(),
+                    manualSourcePathsJson.c_str(),
                     emitOperationProgress,
                     &progressContext,
                     buffer,
@@ -1453,6 +1522,58 @@ namespace
             [&projectDirectory](wchar_t* buffer, int length)
             {
                 return fluxora_get_installed_mods(projectDirectory.c_str(), buffer, length);
+            });
+    }
+
+    std::wstring payloadGetModWorkspace(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        return payloadFromCoreJson(
+            L"core.modsWorkspaceFailed",
+            [&projectDirectory, &profileName](wchar_t* buffer, int length)
+            {
+                return fluxora_get_mod_workspace(
+                    projectDirectory.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadGetPersistedModWorkspace(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        return payloadFromCoreJson(
+            L"core.persistedModsWorkspaceFailed",
+            [&projectDirectory, &profileName](wchar_t* buffer, int length)
+            {
+                return fluxora_get_persisted_mod_workspace(
+                    projectDirectory.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadInvalidateModFileCaches(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring changedPathsJson =
+            serializeStringArray(requiredStringArrayField(params, L"changedPaths"));
+        return payloadFromCoreJson(
+            L"core.modFileCacheInvalidationFailed",
+            [&projectDirectory, &changedPathsJson](wchar_t* buffer, int length)
+            {
+                return fluxora_invalidate_mod_file_caches(
+                    projectDirectory.c_str(),
+                    changedPathsJson.c_str(),
+                    buffer,
+                    length);
             });
     }
 
@@ -1925,6 +2046,25 @@ namespace
             [&projectDirectory, &templateId, &profileName](wchar_t* buffer, int length)
             {
                 return fluxora_get_plugins(
+                    projectDirectory.c_str(),
+                    templateId.c_str(),
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadListPersistedPlugins(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring templateId = requiredStringField(params, L"templateId");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        return payloadFromCoreJson(
+            L"core.persistedPluginsListFailed",
+            [&projectDirectory, &templateId, &profileName](wchar_t* buffer, int length)
+            {
+                return fluxora_get_persisted_plugins(
                     projectDirectory.c_str(),
                     templateId.c_str(),
                     profileName.empty() ? nullptr : profileName.c_str(),
@@ -2599,6 +2739,10 @@ namespace
         {
             return payloadInspectFluxPack(request);
         }
+        if (request.method == L"fluxPack.planInstall")
+        {
+            return payloadPlanFluxPackInstall(request);
+        }
         if (request.method == L"fluxPack.install")
         {
             return payloadInstallFluxPack(request);
@@ -2646,6 +2790,18 @@ namespace
         if (request.method == L"mods.listInstalled")
         {
             return payloadListInstalledMods(request);
+        }
+        if (request.method == L"mods.getWorkspace")
+        {
+            return payloadGetModWorkspace(request);
+        }
+        if (request.method == L"mods.getPersistedWorkspace")
+        {
+            return payloadGetPersistedModWorkspace(request);
+        }
+        if (request.method == L"mods.invalidateFileCaches")
+        {
+            return payloadInvalidateModFileCaches(request);
         }
         if (request.method == L"mods.getOrder")
         {
@@ -2746,6 +2902,10 @@ namespace
         if (request.method == L"plugins.list")
         {
             return payloadListPlugins(request);
+        }
+        if (request.method == L"plugins.listPersisted")
+        {
+            return payloadListPersistedPlugins(request);
         }
         if (request.method == L"plugins.move")
         {

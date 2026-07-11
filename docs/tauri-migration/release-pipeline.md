@@ -85,7 +85,7 @@ Phase 15 reviewed these data-processing surfaces for German/EU transparency expe
 - Installer UI/bridge/operation/crash logs: local files under the user's app data or temp path.
 - Nexus Mods auth: optional user-triggered OAuth/API connection, tokens stored locally and disconnectable.
 - NXM protocol/deep links: local protocol links are captured when the user registers/uses Fluxora as handler.
-- Downloads: user-triggered network requests to mod hosting URLs or Nexus Mods.
+- Downloads: user-triggered network requests to mod hosting URLs or Nexus Mods. FluxPack may automatically fetch Nexus sources only for a linked account whose native status is Premium; free-account flow opens the user-selected Nexus page and imports a user-selected local archive. This adds no telemetry or automatic upload.
 - Support logs: sent only when the user manually shares them.
 - Telemetry/analytics: none is enabled in Phase 15. Adding it later requires explicit opt-in/legal review.
 - Third-party components: Tauri, the platform webview runtime, React, Three.js, Lucide, Vite, TypeScript, Tauri bundler, Playwright/Vitest test tooling, spdlog, Microsoft Detours where VFS is built, SharpVectors for the installer UI, and GoogleTest for backend tests.

@@ -45,6 +45,8 @@ import type {
   FluxoraGrassCacheGenerationResult,
   FluxoraFluxPackInstallRequest,
   FluxoraFluxPackInstallResult,
+  FluxoraFluxPackInstallPlan,
+  FluxoraFluxPackInstallPlanRequest,
   FluxoraFluxPackSummary,
   FluxoraInstallArchiveRequest,
   FluxoraInstallDownloadRequest,
@@ -60,8 +62,10 @@ import type {
   FluxoraEffectiveFileTreeSnapshot,
   FluxoraModConflictTreePage,
   FluxoraModFileTreeEntry,
+  FluxoraModFileCacheInvalidationResult,
   FluxoraModMutationResult,
   FluxoraModOrderItem,
+  FluxoraModWorkspaceSnapshot,
   FluxoraNxmInboundLinksCaptured,
   FluxoraNxmProtocolResult,
   FluxoraNexusModsAuthStatus,
@@ -372,6 +376,42 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         profileName,
         request
       ),
+    getWorkspace: (
+      projectDirectory: string,
+      profileName?: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraModWorkspaceSnapshot>(
+        ipc,
+        FluxoraIpcChannels.modsGetWorkspace,
+        projectDirectory,
+        profileName,
+        request
+      ),
+    getPersistedWorkspace: (
+      projectDirectory: string,
+      profileName?: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraModWorkspaceSnapshot>(
+        ipc,
+        FluxoraIpcChannels.modsGetPersistedWorkspace,
+        projectDirectory,
+        profileName,
+        request
+      ),
+    invalidateFileCaches: (
+      projectDirectory: string,
+      changedPaths: string[],
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraModFileCacheInvalidationResult>(
+        ipc,
+        FluxoraIpcChannels.modsInvalidateFileCaches,
+        projectDirectory,
+        changedPaths,
+        request
+      ),
     createSeparator: (
       projectDirectory: string,
       profileName: string | undefined,
@@ -653,6 +693,20 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
       invokeTyped<FluxoraPluginOrderItem[]>(
         ipc,
         FluxoraIpcChannels.pluginsList,
+        projectDirectory,
+        templateId,
+        profileName,
+        request
+      ),
+    listPersisted: (
+      projectDirectory: string,
+      templateId: string,
+      profileName?: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraPluginOrderItem[]>(
+        ipc,
+        FluxoraIpcChannels.pluginsListPersisted,
         projectDirectory,
         templateId,
         profileName,
@@ -1176,6 +1230,16 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         fluxPackPath,
         request
       ),
+    planInstall: (
+      request: FluxoraFluxPackInstallPlanRequest,
+      operation?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraFluxPackInstallPlan>(
+        ipc,
+        FluxoraIpcChannels.fluxPackPlanInstall,
+        request,
+        operation
+      ),
     install: (request: FluxoraFluxPackInstallRequest, operation?: OperationRequest) =>
       invokeTyped<FluxoraFluxPackInstallResult>(
         ipc,
@@ -1388,6 +1452,7 @@ const legacyRuntimePattern = new RegExp(['Elec', 'tron'].join(''), 'gi');
 const legacyPackagerPattern = new RegExp(['Fo', 'rge'].join(''), 'gi');
 const projectsListTimeoutMs = 30_000;
 const projectOpenConfigTimeoutMs = 60_000;
+const modsWorkspaceTimeoutMs = 60_000;
 const executablesListTimeoutMs = 30_000;
 const executablesLaunchTimeoutMs = 2 * 60 * 1000;
 const effectiveFileTreeIndexTimeoutMs = 2 * 60 * 1000;
@@ -2802,6 +2867,22 @@ const createTauriInvoker = (): IpcInvoker => ({
         return withOperationId(data, request, 'fluxpack_inspect');
       }
 
+      case FluxoraIpcChannels.fluxPackPlanInstall: {
+        const request = requestWithOperationId(args[1], 'fluxpack_plan_install');
+        const data = await bridgeRequest<FluxoraFluxPackInstallPlan>(
+          'fluxPack.planInstall',
+          args[0] as Record<string, unknown>,
+          request,
+          fileMutationTimeoutMs
+        );
+        const operationId = operationIdOf(request, 'fluxpack_plan_install');
+        return {
+          ...data,
+          summary: { ...data.summary, operationId },
+          operationId
+        };
+      }
+
       case FluxoraIpcChannels.fluxPackInstall: {
         const request = requestWithOperationId(args[1], 'fluxpack_install');
         const data = await bridgeRequest<FluxoraFluxPackInstallResult>(
@@ -2833,6 +2914,27 @@ const createTauriInvoker = (): IpcInvoker => ({
         return bridgeRequest('mods.listInstalled', { projectDirectory: args[0] }, requestWithOperationId(args[1], 'mods_list_installed'));
       case FluxoraIpcChannels.modsGetOrder:
         return bridgeRequest('mods.getOrder', { projectDirectory: args[0], profileName: optionalString(args[1]) }, requestWithOperationId(args[2], 'mods_get_order'));
+      case FluxoraIpcChannels.modsGetWorkspace:
+        return bridgeRequest(
+          'mods.getWorkspace',
+          { projectDirectory: args[0], profileName: optionalString(args[1]) },
+          requestWithOperationId(args[2], 'mods_get_workspace'),
+          modsWorkspaceTimeoutMs
+        );
+      case FluxoraIpcChannels.modsGetPersistedWorkspace:
+        return bridgeRequest(
+          'mods.getPersistedWorkspace',
+          { projectDirectory: args[0], profileName: optionalString(args[1]) },
+          requestWithOperationId(args[2], 'mods_get_persisted_workspace'),
+          modsWorkspaceTimeoutMs
+        );
+      case FluxoraIpcChannels.modsInvalidateFileCaches:
+        return bridgeRequest(
+          'mods.invalidateFileCaches',
+          { projectDirectory: args[0], changedPaths: args[1] },
+          requestWithOperationId(args[2], 'mods_invalidate_file_caches'),
+          modsWorkspaceTimeoutMs
+        );
       case FluxoraIpcChannels.modsCreateSeparator:
         return bridgeRequest('mods.createSeparator', { projectDirectory: args[0], profileName: optionalString(args[1]), title: args[2], targetIndex: args[3] }, requestWithOperationId(args[4], 'mods_create_separator'));
       case FluxoraIpcChannels.modsDeleteSeparator:
@@ -3003,6 +3105,8 @@ const createTauriInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.pluginsList:
         return bridgeRequest('plugins.list', { projectDirectory: args[0], templateId: args[1], profileName: optionalString(args[2]) }, requestWithOperationId(args[3], 'plugins_list'));
+      case FluxoraIpcChannels.pluginsListPersisted:
+        return bridgeRequest('plugins.listPersisted', { projectDirectory: args[0], templateId: args[1], profileName: optionalString(args[2]) }, requestWithOperationId(args[3], 'plugins_list_persisted'));
       case FluxoraIpcChannels.pluginsCreateSeparator:
         return bridgeRequest('plugins.createSeparator', { projectDirectory: args[0], templateId: args[1], profileName: optionalString(args[2]), title: args[3], targetIndex: args[4] }, requestWithOperationId(args[5], 'plugins_create_separator'));
       case FluxoraIpcChannels.pluginsDeleteSeparator:

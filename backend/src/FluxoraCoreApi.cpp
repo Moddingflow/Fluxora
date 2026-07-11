@@ -30,6 +30,7 @@
 #include "FluxoraCore/Support/JsonWriter.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <cwchar>
@@ -674,6 +675,7 @@ namespace
             false,
             false);
         writer.field(L"processId", static_cast<int>(result.processId));
+        writer.field(L"managerEnvironmentUnchanged", result.managerEnvironmentUnchanged);
         writer.endObject();
         return writer.str();
     }
@@ -880,6 +882,38 @@ namespace
         return writer.str();
     }
 
+    std::wstring serializeFluxPackInstallPlan(const fluxora::FluxPackInstallPlan& plan)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.key(L"summary");
+        writeFluxPackSummary(writer, plan.summary);
+        writer.field(L"updatesExistingProject", plan.updatesExistingProject);
+        writer.field(L"reusableSourceCount", plan.reusableSourceCount);
+        writer.field(L"reusableDownloadCount", plan.reusableDownloadCount);
+        writer.field(L"automaticDownloadCount", plan.automaticDownloadCount);
+        writer.field(L"manualDownloadCount", plan.manualDownloadCount);
+        writer.key(L"sources").beginArray();
+        for (const fluxora::FluxPackSourceInstallPlan& source : plan.sources)
+        {
+            writer.beginObject();
+            writer.field(L"sourceId", source.sourceId);
+            writer.field(L"providerId", source.providerId);
+            writer.field(L"providerDisplayName", source.providerDisplayName);
+            writer.field(L"displayName", source.displayName);
+            writer.field(L"version", source.version);
+            writer.field(L"archiveFileName", source.archiveFileName);
+            writer.field(L"manualDownloadUrl", source.manualDownloadUrl);
+            writer.field(L"acquisitionMode", source.acquisitionMode);
+            writer.field(L"requiresManualDownload", source.requiresManualDownload);
+            writer.field(L"canAutomaticallyDownload", source.canAutomaticallyDownload);
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.endObject();
+        return writer.str();
+    }
+
     std::wstring serializeProjectConfigList(const std::vector<fluxora::ProjectOpenResult>& results)
     {
         fluxora::JsonWriter writer;
@@ -922,6 +956,7 @@ namespace
         writer.field(L"isConfigured", status.isConfigured);
         writer.field(L"isLinked", status.isLinked);
         writer.field(L"hasApiKey", status.hasApiKey);
+        writer.field(L"isPremium", status.isPremium);
         writer.field(L"displayName", status.displayName);
         writer.field(L"userId", status.userId);
         writer.field(L"message", status.message);
@@ -1504,6 +1539,26 @@ namespace
             writeModFileTreeEntry(writer, entry);
         }
         writer.endArray();
+        return writer.str();
+    }
+
+    std::wstring serializeModWorkspaceSnapshot(const fluxora::ModWorkspaceSnapshot& snapshot)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.key(L"installedMods").beginArray();
+        for (const fluxora::InstalledModEntry& mod : snapshot.installedMods)
+        {
+            writeInstalledModEntry(writer, mod);
+        }
+        writer.endArray();
+        writer.key(L"modOrder").beginArray();
+        for (const fluxora::ProfileModOrderItem& item : snapshot.modOrder)
+        {
+            writeProfileModOrderItem(writer, item);
+        }
+        writer.endArray();
+        writer.endObject();
         return writer.str();
     }
 
@@ -2946,6 +3001,8 @@ extern "C"
 
             const fluxora::ProjectOpenResult result = core().projects().openProjectConfig(
                 std::filesystem::path(configPath));
+            fluxora::InstanceMetadataStore::beginProjectActivation(
+                result.project.projectDirectory);
             return writeToBuffer(serializeOpenedProject(result), jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)
@@ -3248,6 +3305,36 @@ extern "C"
         }
     }
 
+    int fluxora_plan_fluxpack_install(
+        const wchar_t* fluxPackPath,
+        const wchar_t* existingConfigPath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(fluxPackPath))
+            {
+                lastError = L"FluxPack path is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            logBridge(fluxora::LogLevel::Info, "fluxora_plan_fluxpack_install started.");
+            const fluxora::FluxPackInstallPlan plan = core().fluxPacks().planInstall(
+                fluxora::FluxPackInstallPlanRequest{
+                    std::filesystem::path(fluxPackPath),
+                    isBlank(existingConfigPath)
+                        ? std::filesystem::path{}
+                        : std::filesystem::path(existingConfigPath)
+                });
+            return writeToBuffer(serializeFluxPackInstallPlan(plan), jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
     int fluxora_install_fluxpack(
         const wchar_t* fluxPackPath,
         const wchar_t* installRootDirectory,
@@ -3275,6 +3362,29 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength)
     {
+        return fluxora_install_fluxpack_with_options_and_progress(
+            fluxPackPath,
+            installRootDirectory,
+            existingConfigPath,
+            nullptr,
+            nullptr,
+            progressCallback,
+            progressUserData,
+            jsonBuffer,
+            jsonBufferLength);
+    }
+
+    int fluxora_install_fluxpack_with_options_and_progress(
+        const wchar_t* fluxPackPath,
+        const wchar_t* installRootDirectory,
+        const wchar_t* existingConfigPath,
+        const wchar_t* manualSourceIdsJson,
+        const wchar_t* manualSourcePathsJson,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
         try
         {
             if (isBlank(fluxPackPath) || isBlank(installRootDirectory))
@@ -3283,7 +3393,34 @@ extern "C"
                 return FluxoraCoreResultInvalidArgument;
             }
 
-            logBridge(fluxora::LogLevel::Info, "fluxora_install_fluxpack_with_target started.");
+            const std::vector<std::wstring> manualSourceIds = isBlank(manualSourceIdsJson)
+                ? std::vector<std::wstring>{}
+                : parseStringArrayJson(manualSourceIdsJson);
+            const std::vector<std::wstring> manualSourcePaths = isBlank(manualSourcePathsJson)
+                ? std::vector<std::wstring>{}
+                : parseStringArrayJson(manualSourcePathsJson);
+            if (manualSourceIds.size() != manualSourcePaths.size())
+            {
+                lastError = L"Manual FluxPack source id and path arrays must have the same length.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            std::vector<fluxora::FluxPackManualSourceArchive> manualSourceArchives;
+            manualSourceArchives.reserve(manualSourceIds.size());
+            for (std::size_t index = 0; index < manualSourceIds.size(); ++index)
+            {
+                if (manualSourceIds[index].empty() || manualSourcePaths[index].empty())
+                {
+                    lastError = L"Manual FluxPack source ids and paths must not be empty.";
+                    return FluxoraCoreResultInvalidArgument;
+                }
+                manualSourceArchives.push_back(fluxora::FluxPackManualSourceArchive{
+                    manualSourceIds[index],
+                    std::filesystem::path(manualSourcePaths[index])
+                });
+            }
+
+            logBridge(fluxora::LogLevel::Info, "fluxora_install_fluxpack_with_options_and_progress started.");
             const fluxora::FluxPackInstallResult result =
                 core().fluxPacks().installFluxPack(fluxora::FluxPackInstallRequest{
                     std::filesystem::path(fluxPackPath),
@@ -3298,7 +3435,8 @@ extern "C"
                     },
                     isBlank(existingConfigPath)
                         ? std::filesystem::path{}
-                        : std::filesystem::path(existingConfigPath)
+                        : std::filesystem::path(existingConfigPath),
+                    std::move(manualSourceArchives)
                 });
             return writeToBuffer(serializeFluxPackInstallResult(result), jsonBuffer, jsonBufferLength);
         }
@@ -3493,13 +3631,33 @@ extern "C"
                     pathForLog(std::filesystem::path(configPath)) + "\", executableId=\"" +
                     textForLog(executableId) + "\", profile=\"" +
                     textForLog(isBlank(profileName) ? L"" : profileName) + "\"");
+            const auto launchStartedAt = std::chrono::steady_clock::now();
             (void)core().grassCache().clearStaleNgioPrecacheMarkersForLaunch(
                 std::filesystem::path(configPath));
-            const std::wstring json = serializeGameExecutableLaunch(
+            const auto grassCleanupCompletedAt = std::chrono::steady_clock::now();
+            const fluxora::GameExecutableLaunchResult launchResult =
                 core().virtualFileSystem().launchExecutable(
                     std::filesystem::path(configPath),
                     executableId,
-                    isBlank(profileName) ? L"" : std::wstring_view(profileName)));
+                    isBlank(profileName) ? L"" : std::wstring_view(profileName));
+            const auto processCreatedAt = std::chrono::steady_clock::now();
+            const std::wstring json = serializeGameExecutableLaunch(launchResult);
+            const auto serializedAt = std::chrono::steady_clock::now();
+            const auto elapsedMicroseconds = [](const auto start, const auto end)
+            {
+                return std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            };
+            logOperation(
+                fluxora::LogLevel::Info,
+                "Performance",
+                "launchApiTiming grassCleanupUs=" +
+                    std::to_string(elapsedMicroseconds(launchStartedAt, grassCleanupCompletedAt)) +
+                    ", vfsAndProcessCreateUs=" +
+                    std::to_string(elapsedMicroseconds(grassCleanupCompletedAt, processCreatedAt)) +
+                    ", serializeUs=" +
+                    std::to_string(elapsedMicroseconds(processCreatedAt, serializedAt)) +
+                    ", totalUs=" +
+                    std::to_string(elapsedMicroseconds(launchStartedAt, serializedAt)) + ".");
             logOperation(fluxora::LogLevel::Info, "Launch", "Launch executable completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
@@ -3736,6 +3894,100 @@ extern "C"
             const std::wstring json = serializeInstalledModList(
                 core().mods().listInstalledMods(std::filesystem::path(projectDirectory)));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_mod_workspace(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeModWorkspaceSnapshot(
+                core().profileOrder().workspaceSnapshot(
+                    std::filesystem::path(projectDirectory),
+                    isBlank(profileName) ? L"" : std::wstring_view(profileName)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_persisted_mod_workspace(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::wstring json = serializeModWorkspaceSnapshot(
+                core().profileOrder().persistedWorkspaceSnapshot(
+                    std::filesystem::path(projectDirectory),
+                    isBlank(profileName) ? L"" : std::wstring_view(profileName)));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_invalidate_mod_file_caches(
+        const wchar_t* projectDirectory,
+        const wchar_t* changedPathsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::vector<std::wstring> changedPathValues =
+                isBlank(changedPathsJson)
+                    ? std::vector<std::wstring>{}
+                    : parseStringArrayJson(changedPathsJson);
+            std::vector<std::filesystem::path> changedPaths;
+            changedPaths.reserve(changedPathValues.size());
+            for (const std::wstring& changedPath : changedPathValues)
+            {
+                changedPaths.emplace_back(changedPath);
+            }
+            core().mods().invalidateFileCaches(
+                std::filesystem::path(projectDirectory),
+                changedPaths);
+            core().plugins().invalidateDiscoveryCaches();
+
+            fluxora::JsonWriter writer;
+            writer.beginObject();
+            writer.field(L"invalidated", !changedPaths.empty());
+            writer.field(L"changedPathCount", static_cast<int>(changedPaths.size()));
+            writer.endObject();
+            return writeToBuffer(writer.str(), jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)
         {
@@ -4753,6 +5005,34 @@ extern "C"
 
             const fluxora::PluginRuleContext rules = resolvePluginRuleContextForTemplate(templateId);
             const std::wstring json = serializePlugins(core().plugins().listPlugins(
+                std::filesystem::path(projectDirectory),
+                rules,
+                isBlank(profileName) ? L"" : profileName));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_persisted_plugins(
+        const wchar_t* projectDirectory,
+        const wchar_t* templateId,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const fluxora::PluginRuleContext rules = resolvePluginRuleContextForTemplate(templateId);
+            const std::wstring json = serializePlugins(core().plugins().listPersistedPlugins(
                 std::filesystem::path(projectDirectory),
                 rules,
                 isBlank(profileName) ? L"" : profileName));

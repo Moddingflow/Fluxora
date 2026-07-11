@@ -1364,6 +1364,66 @@ namespace fluxora
             return reconciled;
         }
 
+        std::vector<StoredPlugin> persistedStoredPlugins(
+            const BuildPathSettingsService& pathSettings,
+            const std::filesystem::path& projectDirectory,
+            const PluginRuleContext& context,
+            std::wstring_view profileName)
+        {
+            const PluginSupportRules& rules = context.rulesProvider->pluginRules();
+            const std::filesystem::path profile =
+                profileDirectory(pathSettings, projectDirectory, context, profileName);
+            const std::vector<StoredPlugin> stored = readStoredPlugins(
+                pluginsFilePath(pathSettings, projectDirectory, context, profileName));
+            const std::vector<StoredPlugin> loadOrder =
+                rules.loadOrderFileName.empty()
+                    ? std::vector<StoredPlugin>()
+                    : readStoredPlugins(profile / std::filesystem::path(rules.loadOrderFileName));
+
+            std::vector<StoredPlugin> persisted;
+            std::set<std::wstring> included;
+            const auto append = [&persisted, &included, &rules](
+                const StoredPlugin& plugin,
+                bool requireSupportedExtension)
+            {
+                const std::wstring key = toLower(plugin.name);
+                if (key.empty() || included.contains(key))
+                {
+                    return;
+                }
+                if (requireSupportedExtension)
+                {
+                    NormalizedExtension extension;
+                    if (!hasPluginExtension(std::filesystem::path(plugin.name), rules, extension))
+                    {
+                        return;
+                    }
+                }
+                included.insert(key);
+                persisted.push_back(plugin);
+            };
+
+            for (const std::wstring& basePlugin : rules.basePlugins)
+            {
+                append(StoredPlugin{basePlugin, true}, false);
+            }
+            for (const StoredPlugin& plugin : stored)
+            {
+                if (!isBasePlugin(rules, plugin.name))
+                {
+                    append(plugin, true);
+                }
+            }
+            for (const StoredPlugin& plugin : loadOrder)
+            {
+                if (!isBasePlugin(rules, plugin.name))
+                {
+                    append(StoredPlugin{plugin.name, false}, true);
+                }
+            }
+            return persisted;
+        }
+
         void writeStoredPlugins(
             const BuildPathSettingsService& pathSettings,
             const std::filesystem::path& projectDirectory,
@@ -1751,6 +1811,18 @@ namespace fluxora
         initialized_ = false;
     }
 
+    void PluginService::invalidateDiscoveryCaches() const
+    {
+        {
+            const std::lock_guard<std::mutex> lock(pluginSearchDirectoryStampCacheMutex());
+            pluginSearchDirectoryStampCache().clear();
+        }
+        {
+            const std::lock_guard<std::mutex> lock(pluginScanCacheMutex());
+            pluginScanCache().clear();
+        }
+    }
+
     std::vector<PluginEntry> PluginService::listPlugins(
         const std::filesystem::path& projectDirectory,
         const BuildTemplate& resolvedTemplate,
@@ -1795,6 +1867,41 @@ namespace fluxora
             stored,
             storedPluginsFromEntries(entries));
         return entries;
+    }
+
+    std::vector<PluginEntry> PluginService::listPersistedPlugins(
+        const std::filesystem::path& projectDirectory,
+        const BuildTemplate& resolvedTemplate,
+        std::wstring_view profileName) const
+    {
+        return withTemplatePluginRules(
+            resolvedTemplate,
+            [this, &projectDirectory, profileName](const PluginRuleContext& rules)
+            {
+                return listPersistedPlugins(projectDirectory, rules, profileName);
+            });
+    }
+
+    std::vector<PluginEntry> PluginService::listPersistedPlugins(
+        const std::filesystem::path& projectDirectory,
+        const PluginRuleContext& rules,
+        std::wstring_view profileName) const
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        ensurePluginSystemSupported(rules, false, &logger_, "listPersistedPlugins");
+        logAppliedPluginRules(logger_, "listPersistedPlugins", rules, profileName);
+        std::filesystem::create_directories(
+            profileDirectory(pathSettings_, projectDirectory, rules, profileName));
+
+        const std::vector<StoredPlugin> stored =
+            persistedStoredPlugins(pathSettings_, projectDirectory, rules, profileName);
+        const std::vector<ProfilePluginOrderItemRecord> orderRecords =
+            syncPluginOrderItems(projectDirectory, profileName, stored);
+        return buildEntries(projectDirectory, rules, stored, orderRecords, {});
     }
 
     void PluginService::syncPluginsForInstalledMods(

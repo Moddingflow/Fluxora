@@ -119,13 +119,13 @@ namespace fluxora
             return toLower(path.wstring());
         }
 
-        std::map<std::wstring, InstalledModEntry> installedModsByPath(
+        std::map<std::wstring, const InstalledModEntry*> installedModsByPath(
             const std::vector<InstalledModEntry>& mods)
         {
-            std::map<std::wstring, InstalledModEntry> entries;
+            std::map<std::wstring, const InstalledModEntry*> entries;
             for (const InstalledModEntry& mod : mods)
             {
-                entries.emplace(pathKey(mod.id), mod);
+                entries.emplace(pathKey(mod.id), &mod);
             }
 
             return entries;
@@ -289,7 +289,8 @@ namespace fluxora
             const std::vector<ProfileOrderItemRecord>& records,
             const std::vector<InstalledModEntry>& mods)
         {
-            const std::map<std::wstring, InstalledModEntry> modEntries = installedModsByPath(mods);
+            const std::map<std::wstring, const InstalledModEntry*> modEntries =
+                installedModsByPath(mods);
             std::vector<ProfileModOrderItem> items;
             items.reserve(records.size());
 
@@ -309,20 +310,20 @@ namespace fluxora
                 const auto mod = modEntries.find(pathKey(record.mod.path));
                 if (mod != modEntries.end())
                 {
-                    items.push_back(modItemFromRecord(record, mod->second));
+                    items.push_back(modItemFromRecord(record, *mod->second));
                 }
             }
 
             return items;
         }
 
-        std::map<std::wstring, ModFileSummary> summariesByPath(
+        std::map<std::wstring, const ModFileSummary*> summariesByPath(
             const std::vector<ModFileSummaryRecord>& summaries)
         {
-            std::map<std::wstring, ModFileSummary> entries;
+            std::map<std::wstring, const ModFileSummary*> entries;
             for (const ModFileSummaryRecord& summary : summaries)
             {
-                entries.emplace(pathKey(summary.modPath), summary.summary);
+                entries.emplace(pathKey(summary.modPath), &summary.summary);
             }
 
             return entries;
@@ -332,7 +333,8 @@ namespace fluxora
             const std::vector<ProfileOrderItemRecord>& records,
             const std::vector<ModFileSummaryRecord>& summaries)
         {
-            const std::map<std::wstring, ModFileSummary> summariesByModPath = summariesByPath(summaries);
+            const std::map<std::wstring, const ModFileSummary*> summariesByModPath =
+                summariesByPath(summaries);
             std::vector<ProfileModOrderItem> items;
             items.reserve(records.size());
 
@@ -352,7 +354,7 @@ namespace fluxora
                 const auto summary = summariesByModPath.find(pathKey(record.mod.path));
                 if (summary != summariesByModPath.end())
                 {
-                    items.push_back(modItemFromRecord(record, summary->second));
+                    items.push_back(modItemFromRecord(record, *summary->second));
                 }
                 else
                 {
@@ -442,13 +444,18 @@ namespace fluxora
             throw std::invalid_argument("Project directory is required.");
         }
 
-        const std::vector<ProfileOrderItemRecord> records =
-            InstanceMetadataStore::listProfileOrderItems(
+        const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
+        const std::vector<ModFileSummaryRecord> summaries =
+            InstanceMetadataStore::summarizeProfileModFiles(
                 projectDirectory,
                 profileName,
-                pathSettings_.modsDirectory(projectDirectory));
-        const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
-        return buildLiveModOrder(projectDirectory, profileName, modsDirectory, records);
+                modsDirectory);
+        const std::vector<ProfileOrderItemRecord> records =
+            InstanceMetadataStore::listCachedProfileOrderItems(
+                projectDirectory,
+                profileName,
+                modsDirectory);
+        return buildModOrder(records, summaries);
     }
 
     std::vector<ProfileModOrderItem> ProfileOrderService::listCachedModOrder(
@@ -471,6 +478,58 @@ namespace fluxora
                 profileName,
                 pathSettings_.modsDirectory(projectDirectory));
         return buildModOrder(records, summaries);
+    }
+
+    std::vector<ProfileModOrderItem> ProfileOrderService::listCachedLaunchModOrder(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName) const
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+        return buildModOrder(InstanceMetadataStore::listLaunchProfileOrderItems(
+            projectDirectory,
+            profileName,
+            pathSettings_.modsDirectory(projectDirectory)));
+    }
+
+    ModWorkspaceSnapshot ProfileOrderService::workspaceSnapshot(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName) const
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        ModWorkspaceSnapshot snapshot;
+        snapshot.installedMods = mods_.listInstalledMods(projectDirectory);
+        snapshot.modOrder = listCachedModOrder(projectDirectory, profileName);
+        return snapshot;
+    }
+
+    ModWorkspaceSnapshot ProfileOrderService::persistedWorkspaceSnapshot(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName) const
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        ModWorkspaceSnapshot snapshot;
+        snapshot.installedMods = mods_.listPersistedInstalledMods(projectDirectory);
+        // T3 reuses the durable installed-summary snapshot for row decoration.
+        // Profile-specific conflict projection is reconciled by workspaceSnapshot
+        // at T4; ordering/enabled state still comes from the requested profile.
+        snapshot.modOrder = buildModOrder(
+            InstanceMetadataStore::listCachedProfileOrderItems(
+                projectDirectory,
+                profileName,
+                pathSettings_.modsDirectory(projectDirectory)),
+            snapshot.installedMods);
+        return snapshot;
     }
 
     std::vector<ProfileModOrderItem> ProfileOrderService::createModSeparator(

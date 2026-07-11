@@ -42,6 +42,7 @@ namespace fluxora
         bool isConfigured{false};
         bool isLinked{false};
         bool hasApiKey{false};
+        bool isPremium{false};
         std::wstring displayName;
         std::wstring userId;
         std::wstring message;

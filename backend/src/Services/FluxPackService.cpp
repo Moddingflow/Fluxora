@@ -1696,6 +1696,38 @@ namespace fluxora
             return L"Мод";
         }
 
+        std::wstring sourceInstallId(
+            const FluxPackSourceReference& reference,
+            std::size_t index)
+        {
+            return L"source-" + std::to_wstring(index) + L":" +
+                providerIdForSource(reference) + L":" +
+                reference.source.gameDomain + L":" +
+                reference.source.remoteModId + L":" +
+                reference.source.remoteFileId;
+        }
+
+        std::wstring manualDownloadUrlForSource(const FluxPackSourceReference& reference)
+        {
+            if (providerIdForSource(reference) == L"nexus" &&
+                !reference.source.gameDomain.empty() &&
+                !reference.source.remoteModId.empty())
+            {
+                std::wstring url = L"https://www.nexusmods.com/" + reference.source.gameDomain +
+                    L"/mods/" + reference.source.remoteModId;
+                if (!reference.source.remoteFileId.empty())
+                {
+                    url += L"?tab=files&file_id=" + reference.source.remoteFileId;
+                }
+                return url;
+            }
+
+            return startsWithIgnoreCase(reference.source.url, L"https://") ||
+                    startsWithIgnoreCase(reference.source.url, L"http://")
+                ? reference.source.url
+                : std::wstring{};
+        }
+
         bool installedSourceMatches(
             const InstalledModRecord& installed,
             const FluxPackSourceReference& requested)
@@ -2549,6 +2581,76 @@ namespace fluxora
             }
 
             return std::nullopt;
+        }
+
+        std::filesystem::path validateManualSourceArchivePath(
+            const FluxPackManualSourceArchive& archive,
+            const FluxPackSourceReference& source,
+            Logger& logger)
+        {
+            if (archive.path.empty())
+            {
+                throw std::invalid_argument("Selected manual source archive path is empty.");
+            }
+            const std::filesystem::path absolutePath =
+                std::filesystem::absolute(archive.path).lexically_normal();
+            std::error_code statusError;
+            if (!std::filesystem::is_regular_file(pathForFilesystemIo(absolutePath), statusError))
+            {
+                throw std::invalid_argument("Selected manual source archive does not exist.");
+            }
+            if (!sourceArchiveMatchesManifest(absolutePath, source, logger))
+            {
+                throw std::invalid_argument(
+                    "Selected manual source archive does not match the FluxPack file size or SHA-256 hash.");
+            }
+
+            logger.writeOperation(
+                LogLevel::Info,
+                "FluxPack",
+                "FluxPack accepted a user-selected source archive. sourceId=\"" +
+                    toUtf8(archive.sourceId) + "\", path=\"" + pathForLog(absolutePath) + "\"");
+            return absolutePath;
+        }
+
+        std::unordered_map<std::wstring, std::filesystem::path> validateManualSourceArchives(
+            const std::vector<FluxPackManualSourceArchive>& archives,
+            const std::vector<FluxPackSourceReference>& sources,
+            Logger& logger)
+        {
+            std::unordered_map<std::wstring, std::filesystem::path> validated;
+            if (archives.empty())
+            {
+                return validated;
+            }
+
+            std::unordered_map<std::wstring, const FluxPackSourceReference*> sourcesById;
+            sourcesById.reserve(sources.size());
+            for (std::size_t index = 0; index < sources.size(); ++index)
+            {
+                sourcesById.emplace(sourceInstallId(sources[index], index), &sources[index]);
+            }
+
+            validated.reserve(archives.size());
+            for (const FluxPackManualSourceArchive& archive : archives)
+            {
+                const auto source = sourcesById.find(archive.sourceId);
+                if (archive.sourceId.empty() || source == sourcesById.end())
+                {
+                    throw std::invalid_argument(
+                        "Selected manual source archive does not belong to this FluxPack install plan.");
+                }
+                if (validated.contains(archive.sourceId))
+                {
+                    throw std::invalid_argument(
+                        "Selected manual source archive was provided more than once.");
+                }
+
+                validated.emplace(
+                    archive.sourceId,
+                    validateManualSourceArchivePath(archive, *source->second, logger));
+            }
+            return validated;
         }
 
         void writeFluxPackDownloadMetadata(
@@ -3513,6 +3615,140 @@ namespace fluxora
         return summary;
     }
 
+    FluxPackInstallPlan FluxPackService::planInstall(const FluxPackInstallPlanRequest& request) const
+    {
+        if (request.fluxPackPath.empty())
+        {
+            throw std::invalid_argument("FluxPack path is required.");
+        }
+
+        const std::filesystem::path absolutePath =
+            std::filesystem::absolute(request.fluxPackPath).lexically_normal();
+        std::error_code sizeError;
+        const std::uintmax_t packageBytes = std::filesystem::file_size(absolutePath, sizeError);
+        if (sizeError)
+        {
+            throw std::invalid_argument("FluxPack file could not be inspected.");
+        }
+
+        std::string manifestContent;
+        if (FluxPackPackageReader::isPackage(absolutePath))
+        {
+            manifestContent = FluxPackPackageReader(absolutePath).readManifest();
+        }
+        else
+        {
+            if (packageBytes > maxLegacyManifestBytes)
+            {
+                throw std::invalid_argument(
+                    "Legacy FluxPack manifest is too large to plan safely. Re-export it with the current Fluxora version.");
+            }
+            manifestContent = readTextFile(absolutePath);
+        }
+
+        const JsonValue root = JsonReader::parse(fromUtf8(manifestContent));
+        const FluxPackManifest manifest = parseFluxPackManifest(
+            absolutePath,
+            root,
+            manifestContent.size());
+        if (manifest.templateId.empty())
+        {
+            throw std::invalid_argument("FluxPack build template is missing.");
+        }
+        if (!manifest.summary.installPlanAvailable)
+        {
+            throw std::invalid_argument("FluxPack install plan is missing.");
+        }
+
+        FluxPackInstallPlan plan;
+        plan.summary = manifest.summary;
+        plan.updatesExistingProject = !request.existingConfigPath.empty();
+
+        std::optional<BuildPathSettings> existingPaths;
+        std::vector<InstalledModRecord> installedMods;
+        if (plan.updatesExistingProject)
+        {
+            const ProjectOpenResult existing = projects_.openProjectConfig(
+                std::filesystem::absolute(request.existingConfigPath).lexically_normal());
+            if (!equalsIgnoreCase(existing.resolvedTemplate.id, manifest.templateId))
+            {
+                throw std::invalid_argument(
+                    "FluxPack cannot update this build because its game template is different.");
+            }
+            existingPaths = pathSettings_.loadForConfig(existing.project.configPath);
+            installedMods = listInstalledModsForDelta(
+                existing.project.projectDirectory,
+                existingPaths->modsDirectory,
+                logger_);
+        }
+
+        plan.sources.reserve(manifest.sourceArchives.size());
+        for (std::size_t index = 0; index < manifest.sourceArchives.size(); ++index)
+        {
+            const FluxPackSourceReference& source = manifest.sourceArchives[index];
+            FluxPackSourceInstallPlan sourcePlan;
+            sourcePlan.sourceId = sourceInstallId(source, index);
+            sourcePlan.providerId = providerIdForSource(source);
+            sourcePlan.providerDisplayName = providerDisplayName(sourcePlan.providerId);
+            sourcePlan.displayName = sourceInstallName(source);
+            sourcePlan.version = source.version;
+            sourcePlan.archiveFileName = source.archiveFileName;
+            sourcePlan.manualDownloadUrl = manualDownloadUrlForSource(source);
+
+            if (findReusableInstalledSource(installedMods, source) != nullptr)
+            {
+                sourcePlan.acquisitionMode = L"installed";
+                ++plan.reusableSourceCount;
+            }
+            else if (existingPaths.has_value() &&
+                currentDownloadArchivePath(existingPaths->downloadsDirectory, source, logger_).has_value())
+            {
+                sourcePlan.acquisitionMode = L"cached-download";
+                ++plan.reusableDownloadCount;
+            }
+            else if (localSourceArchivePath(manifest, source, pathSettings_, logger_).has_value())
+            {
+                sourcePlan.acquisitionMode = L"source-build";
+                ++plan.reusableDownloadCount;
+            }
+            else
+            {
+                sourcePlan.canAutomaticallyDownload =
+                    sourcePlan.providerId == L"nexus" &&
+                    !nxmLinkForSource(source).empty() &&
+                    downloads_.canAutomaticallyDownloadNexus();
+                if (sourcePlan.canAutomaticallyDownload)
+                {
+                    sourcePlan.acquisitionMode = L"automatic";
+                    ++plan.automaticDownloadCount;
+                }
+                else if (!sourcePlan.manualDownloadUrl.empty())
+                {
+                    sourcePlan.acquisitionMode = L"manual";
+                    sourcePlan.requiresManualDownload = true;
+                    ++plan.manualDownloadCount;
+                }
+                else
+                {
+                    sourcePlan.acquisitionMode = L"unavailable";
+                }
+            }
+
+            plan.sources.push_back(std::move(sourcePlan));
+        }
+
+        logger_.writeOperation(
+            LogLevel::Info,
+            "FluxPack",
+            "FluxPack install planned. path=\"" + pathForLog(absolutePath) +
+                "\", deltaUpdate=" + (plan.updatesExistingProject ? std::string("true") : std::string("false")) +
+                ", reusableSources=" + std::to_string(plan.reusableSourceCount) +
+                ", reusableDownloads=" + std::to_string(plan.reusableDownloadCount) +
+                ", automaticDownloads=" + std::to_string(plan.automaticDownloadCount) +
+                ", manualDownloads=" + std::to_string(plan.manualDownloadCount));
+        return plan;
+    }
+
     FluxPackInstallResult FluxPackService::installFluxPack(const FluxPackInstallRequest& request) const
     {
         if (request.fluxPackPath.empty())
@@ -3615,6 +3851,11 @@ namespace fluxora
         {
             throw std::invalid_argument("FluxPack install plan is missing.");
         }
+        const std::unordered_map<std::wstring, std::filesystem::path> manualSourceArchives =
+            validateManualSourceArchives(
+                request.manualSourceArchives,
+                manifest.sourceArchives,
+                logger_);
 
         const bool updateExistingProject = !request.existingConfigPath.empty();
         std::optional<ProjectOpenResult> existingProject;
@@ -3759,10 +4000,12 @@ namespace fluxora
             L"Подключаем источники из FluxPack",
             manifest.sourceArchives.empty() ? 68 : 24);
 
-        for (const FluxPackSourceReference& source : manifest.sourceArchives)
+        for (std::size_t sourceIndex = 0; sourceIndex < manifest.sourceArchives.size(); ++sourceIndex)
         {
+            const FluxPackSourceReference& source = manifest.sourceArchives[sourceIndex];
             ProviderInstallState& provider = providerStateFor(providers, providerIdForSource(source));
             const std::wstring installName = sourceInstallName(source);
+            const std::wstring sourceId = sourceInstallId(source, sourceIndex);
             provider.currentItem = installName;
             provider.statusText = updateExistingProject ? L"Проверяем Delta" : L"Скачиваем";
             publishInstallProgress(
@@ -3892,6 +4135,27 @@ namespace fluxora
                     }
                 }
 
+                if (!localEntry.has_value())
+                {
+                    if (const auto manualArchive = manualSourceArchives.find(sourceId);
+                        manualArchive != manualSourceArchives.end())
+                    {
+                        provider.statusText = L"Используем выбранный архив";
+                        publishInstallProgress(
+                            request.progress,
+                            providers,
+                            L"sources",
+                            L"Проверяем ручную загрузку",
+                            installName,
+                            manualArchive->second.filename().wstring(),
+                            sourceInstallOverallPercent(providers));
+                        DownloadEntry imported =
+                            downloads_.importLocalFile(project.projectDirectory, manualArchive->second);
+                        writeFluxPackDownloadMetadata(imported.localPath, source);
+                        localEntry = std::move(imported);
+                    }
+                }
+
                 DownloadEntry entry;
                 if (localEntry.has_value())
                 {
@@ -3900,7 +4164,42 @@ namespace fluxora
                 else
                 {
                     const std::wstring nxmLink = nxmLinkForSource(source);
-                    if (provider.id != L"nexus" || nxmLink.empty())
+                    if (provider.id == L"nexus" &&
+                        !nxmLink.empty() &&
+                        downloads_.canAutomaticallyDownloadNexus())
+                    {
+                        provider.statusText = L"Скачиваем автоматически";
+                        publishInstallProgress(
+                            request.progress,
+                            providers,
+                            L"sources",
+                            L"Скачиваем с Nexus Mods",
+                            installName,
+                            L"Premium: автоматическая загрузка",
+                            sourceInstallOverallPercent(providers));
+                        entry = downloads_.downloadNxmForFluxPack(project.projectDirectory, nxmLink);
+                    }
+                    else if (provider.id == L"nexus" && !nxmLink.empty())
+                    {
+                        ++provider.failed;
+                        ++result.failedSourceCount;
+                        provider.statusText = L"Скачайте вручную и выберите архив";
+                        logger_.writeOperation(
+                            LogLevel::Info,
+                            "FluxPack",
+                            "FluxPack Nexus source requires a user-selected archive. provider=\"nexus\", mod=\"" +
+                                toUtf8(installName) + "\"");
+                        publishInstallProgress(
+                            request.progress,
+                            providers,
+                            L"sources",
+                            L"Требуется ручная загрузка",
+                            installName,
+                            provider.statusText,
+                            sourceInstallOverallPercent(providers));
+                        continue;
+                    }
+                    else
                     {
                         ++provider.failed;
                         ++result.failedSourceCount;
@@ -3920,27 +4219,6 @@ namespace fluxora
                             sourceInstallOverallPercent(providers));
                         continue;
                     }
-
-                    ++provider.failed;
-                    ++result.failedSourceCount;
-                    provider.statusText =
-                        L"Ошибка загрузки: автоматическая загрузка FluxPack источников требует локальный архив";
-                    logger_.writeOperation(
-                        LogLevel::Warning,
-                        "FluxPack",
-                        "FluxPack source was not queued for asynchronous Nexus download during install. provider=\"" +
-                            toUtf8(provider.id) +
-                            "\", mod=\"" + toUtf8(installName) +
-                            "\", nxmLink=\"" + toUtf8(nxmLink) + "\"");
-                    publishInstallProgress(
-                        request.progress,
-                        providers,
-                        L"sources",
-                        L"Ошибка загрузки",
-                        installName,
-                        provider.statusText,
-                        sourceInstallOverallPercent(providers));
-                    continue;
                 }
                 provider.statusText = L"Устанавливаем";
                 publishInstallProgress(

@@ -1,7 +1,11 @@
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
+import type { CSSProperties } from 'react';
 
 import { FacetSpinner, LoadingSplash, ProgressBar } from '../../design-system';
-import type { FluxoraProject } from '../../../shared/fluxora-api';
+import type {
+  FluxoraFluxPackProviderProgress,
+  FluxoraProject
+} from '../../../shared/fluxora-api';
 
 export type OperationOverlayKind =
   | 'build-create'
@@ -24,6 +28,7 @@ export interface OperationOverlayState {
   createdProject: FluxoraProject | null;
   resultText: string | null;
   errorText: string | null;
+  providers?: FluxoraFluxPackProviderProgress[];
 }
 
 type OperationOverlayTone = 'running' | 'complete' | 'error';
@@ -47,6 +52,87 @@ interface OperationOverlayProps {
   overlay: OperationOverlayState | null;
 }
 
+interface FluxPackSourceProgressProps {
+  label: string;
+  percent: number;
+  providers: FluxoraFluxPackProviderProgress[];
+}
+
+const providerDataId = (providerId: string): string =>
+  providerId.trim().toLocaleLowerCase().replace(/[^a-z0-9_-]+/g, '-') || 'unknown';
+
+const futureProviderColors = ['#54a6d8', '#9b7ee3', '#49b58b', '#d66b87', '#c6a54a'];
+
+const providerProgressColor = (providerId: string): string => {
+  const normalizedId = providerDataId(providerId);
+  if (normalizedId === 'nexus') {
+    return '#d98f2b';
+  }
+  if (normalizedId === 'local') {
+    return 'var(--accent)';
+  }
+
+  const hash = [...normalizedId].reduce(
+    (current, character) => (current * 31 + character.charCodeAt(0)) >>> 0,
+    0
+  );
+  return futureProviderColors[hash % futureProviderColors.length] ?? '#8ca0b8';
+};
+
+type ProviderProgressStyle = CSSProperties & { '--source-progress-color': string };
+
+const providerProgressStyle = (
+  provider: FluxoraFluxPackProviderProgress,
+  includeWeight: boolean
+): ProviderProgressStyle => ({
+  '--source-progress-color': providerProgressColor(provider.providerId),
+  ...(includeWeight ? { flexGrow: Math.max(1, provider.totalCount) } : {})
+});
+
+const FluxPackSourceProgress = ({
+  label,
+  percent,
+  providers
+}: FluxPackSourceProgressProps) => (
+  <div className="fluxpack-source-progress">
+    <div
+      aria-label={label}
+      aria-valuemax={100}
+      aria-valuemin={0}
+      aria-valuenow={percent}
+      className="fluxpack-source-progress__sectors"
+      role="progressbar"
+    >
+      {providers.map((provider) => (
+        <span
+          aria-label={`${provider.displayName}: ${provider.progressPercent}%`}
+          className="fluxpack-source-progress__segment"
+          data-provider={providerDataId(provider.providerId)}
+          key={provider.providerId}
+          style={providerProgressStyle(provider, true)}
+          title={`${provider.displayName}: ${provider.completedCount} / ${provider.totalCount}`}
+        >
+          <span style={{ width: `${Math.max(0, Math.min(100, provider.progressPercent))}%` }} />
+        </span>
+      ))}
+    </div>
+    <strong className="fluxpack-source-progress__percent">{percent}%</strong>
+    <div className="fluxpack-source-progress__legend" aria-label="Источники установки">
+      {providers.map((provider) => (
+        <span
+          data-provider={providerDataId(provider.providerId)}
+          key={provider.providerId}
+          style={providerProgressStyle(provider, false)}
+        >
+          <i aria-hidden="true" />
+          {provider.displayName}
+          <strong>{provider.completedCount} / {provider.totalCount}</strong>
+        </span>
+      ))}
+    </div>
+  </div>
+);
+
 export const OperationOverlay = ({
   cancellationSupported,
   onCancel,
@@ -62,6 +148,8 @@ export const OperationOverlay = ({
   const percent = Math.max(0, Math.min(100, overlay.percent ?? 0));
   const tone = operationOverlayTone(overlay);
   const progressLabel = isIndeterminate ? 'Ожидаем данные' : `${percent}%`;
+  const showProviderProgress =
+    overlay.kind === 'fluxpack-install' && Boolean(overlay.providers?.length);
   const stepText =
     overlay.errorText || overlay.resultText || overlay.statusText || 'Подготавливаем операцию';
   const showCurrentItemDetail = !(overlay.kind === 'build-delete' && tone === 'running');
@@ -137,13 +225,21 @@ export const OperationOverlay = ({
         </div>
 
         <div className="operation-progress">
-          <ProgressBar
-            aria-label={`${overlay.title}: прогресс`}
-            className={`operation-progress__bar${isIndeterminate ? '' : ' operation-progress__bar--percent'}`}
-            indeterminate={isIndeterminate}
-            value={percent}
-            valueLabel={progressLabel}
-          />
+          {showProviderProgress ? (
+            <FluxPackSourceProgress
+              label={`${overlay.title}: прогресс`}
+              percent={percent}
+              providers={overlay.providers ?? []}
+            />
+          ) : (
+            <ProgressBar
+              aria-label={`${overlay.title}: прогресс`}
+              className={`operation-progress__bar${isIndeterminate ? '' : ' operation-progress__bar--percent'}`}
+              indeterminate={isIndeterminate}
+              value={percent}
+              valueLabel={progressLabel}
+            />
+          )}
           <div className="operation-splash__step">
             <span>Сейчас</span>
             <strong>{stepText}</strong>

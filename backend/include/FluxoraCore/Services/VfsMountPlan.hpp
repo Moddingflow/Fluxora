@@ -50,9 +50,31 @@ namespace fluxora
     [[nodiscard]] bool vfsDirectoryHasEntries(const std::filesystem::path& path);
     [[nodiscard]] std::wstring vfsNormalizedPathForComparison(const std::filesystem::path& path);
 
+    void invalidateVfsContentPlacementCache(
+        const std::filesystem::path& modsDirectory,
+        const std::vector<std::filesystem::path>& changedPaths);
+
+#ifdef FLUXORA_VFS_TEST_HOOKS
+    [[nodiscard]] bool vfsContentPlacementCacheContainsForTesting(
+        const std::filesystem::path& modDirectory);
+#endif
+
     [[nodiscard]] VfsGameRootMountPlan buildVfsGameRootMountPlan(
         Logger& logger,
         const ProfileOrderService& profileOrder,
+        const BuildPathSettingsService& pathSettings,
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& gameDirectory,
+        std::wstring_view profileName,
+        const CapabilitySet& capabilities,
+        const VfsSupportRules& vfsRules,
+        const ContentLayoutSupportRules& contentRules);
+
+    // Launch callers that already reconciled active profile inventory pass the
+    // snapshot directly, avoiding a second metadata-store/profile read.
+    [[nodiscard]] VfsGameRootMountPlan buildVfsGameRootMountPlan(
+        Logger& logger,
+        std::vector<VfsActiveMod> activeMods,
         const BuildPathSettingsService& pathSettings,
         const std::filesystem::path& projectDirectory,
         const std::filesystem::path& gameDirectory,

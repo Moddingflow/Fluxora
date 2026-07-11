@@ -279,6 +279,11 @@ test.beforeEach(async ({ page }) => {
         deleteSeparator: async () => [],
         getFileTree: async () => [],
         getOrder: async () => [],
+        getWorkspace: async () => ({ installedMods: [], modOrder: [] }),
+        invalidateFileCaches: async (_projectDirectory: string, changedPaths: string[]) => ({
+          invalidated: changedPaths.length > 0,
+          changedPathCount: changedPaths.length
+        }),
         listInstalled: async () => [],
         listPreviewVariants: async () => [],
         moveOrderItem: async () => [],

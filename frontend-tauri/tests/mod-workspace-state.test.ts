@@ -95,6 +95,22 @@ const items: FluxoraModOrderItem[] = [
 ];
 
 describe('mod workspace state', () => {
+  it('keeps a committed snapshot usable when background reconciliation fails', () => {
+    const ready = modWorkspaceReducer(emptyModWorkspaceState(), {
+      type: 'items-loaded',
+      items
+    });
+    const failed = modWorkspaceReducer(ready, {
+      type: 'load-failed',
+      message: 'Exact reconciliation failed',
+      silent: true
+    });
+
+    expect(failed.items).toEqual(items);
+    expect(failed.loadState).toBe('ready');
+    expect(failed.errorMessage).toBe('Exact reconciliation failed');
+  });
+
   it('filters mod order rows by mod, separator and status terms', () => {
     expect(filterModOrderItems(items, 'skyui')).toEqual([items[1]]);
     expect(filterModOrderItems(items, 'visuals')).toEqual([items[0]]);

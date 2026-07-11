@@ -4,9 +4,11 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace fluxora::tests
 {
@@ -111,6 +113,29 @@ namespace fluxora::tests
 
         EXPECT_EQ(backup.parent_path(), manifest.parent_path());
         EXPECT_LT(backup.filename().wstring().size(), manifest.filename().wstring().size());
+    }
+
+    TEST(AtomicFileStoreTests, IdenticalValidTextWritePreservesTargetAndDoesNotCreateBackup)
+    {
+        TempDirectory temp;
+        const std::filesystem::path plugins = temp.path() / L"plugins.txt";
+        const std::string content = "*Skyrim.esm\n*SkyUI_SE.esp\n";
+        const AtomicFileWriteOptions options{
+            L"plugin list state",
+            ProjectStateValidation::Utf8Text
+        };
+
+        AtomicFileStore store;
+        store.writeTextFile(plugins, content, options);
+        const std::filesystem::file_time_type initialWriteTime =
+            std::filesystem::last_write_time(plugins);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        store.writeTextFile(plugins, content, options);
+
+        EXPECT_EQ(readTextFile(plugins), content);
+        EXPECT_EQ(std::filesystem::last_write_time(plugins), initialWriteTime);
+        EXPECT_FALSE(std::filesystem::exists(AtomicFileStore::backupPathFor(plugins)));
     }
 
     TEST(AtomicFileStoreTests, CorruptedManifestRestoresPreviousBackup)

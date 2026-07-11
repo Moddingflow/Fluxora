@@ -8,11 +8,13 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -362,6 +364,80 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(PluginServiceTests, PersistedListUsesProfileStateWithoutLiveInventoryDiscovery)
+    {
+#if !defined(_WIN32) || !defined(FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS)
+        GTEST_SKIP() << "Plugin persistence counters are enabled for Windows metadata tests.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Persisted Plugin Build";
+        const std::filesystem::path profile = project / L"profiles" / L"Default";
+        writeTextFile(
+            profile / L"enabled.dat",
+            "*Base.master\n*Persisted.ABC\nDisabled.ABC\nIgnored.txt\n");
+        writeTextFile(
+            profile / L"order.dat",
+            "Base.master\nPersisted.ABC\nDisabled.ABC\nLoadOrderOnly.ABC\n");
+        writeTextFile(project / L"mods" / L"Offline" / L"AddOns" / L"Offline.ABC", "plugin");
+
+        InstanceMetadataStore::ensureInstance(project, L"customgame");
+        InstanceMetadataStore::replaceProfilePluginOrderItems(
+            project,
+            L"Default",
+            {
+                ProfilePluginOrderImportItemRecord{L"separator", {}, L"Persisted Group"},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"Persisted.ABC", {}},
+                ProfilePluginOrderImportItemRecord{L"plugin", L"Disabled.ABC", {}}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+        FakePluginRulesProvider provider(customRules());
+        const CapabilitySet caps = capabilities(true, true);
+        InstanceMetadataStore::resetInventorySyncCountForTesting();
+
+        const std::vector<PluginEntry> entries = plugins.listPersistedPlugins(
+            project,
+            PluginRuleContext{&provider, &caps, nullptr, L"Default"},
+            L"Default");
+
+        const PluginEntry* base = findPlugin(entries, L"Base.master");
+        ASSERT_NE(base, nullptr);
+        EXPECT_TRUE(base->isEnabled);
+        EXPECT_TRUE(base->isLocked);
+        EXPECT_TRUE(base->isMaster);
+        EXPECT_EQ(base->sourceMod, L"Custom Game");
+
+        const PluginEntry* persisted = findPlugin(entries, L"Persisted.ABC");
+        ASSERT_NE(persisted, nullptr);
+        EXPECT_TRUE(persisted->isEnabled);
+        EXPECT_EQ(persisted->extension, L"ABC");
+        EXPECT_TRUE(persisted->sourceMod.empty());
+        EXPECT_TRUE(persisted->path.empty());
+        EXPECT_TRUE(persisted->masterFiles.empty());
+        EXPECT_TRUE(persisted->missingMasters.empty());
+
+        const PluginEntry* disabled = findPlugin(entries, L"Disabled.ABC");
+        ASSERT_NE(disabled, nullptr);
+        EXPECT_FALSE(disabled->isEnabled);
+        const PluginEntry* loadOrderOnly = findPlugin(entries, L"LoadOrderOnly.ABC");
+        ASSERT_NE(loadOrderOnly, nullptr);
+        EXPECT_FALSE(loadOrderOnly->isEnabled);
+        EXPECT_EQ(findPlugin(entries, L"Offline.ABC"), nullptr);
+        EXPECT_EQ(findPlugin(entries, L"Ignored.txt"), nullptr);
+        EXPECT_TRUE(std::any_of(
+            entries.begin(),
+            entries.end(),
+            [](const PluginEntry& entry)
+            {
+                return entry.kind == L"separator" && entry.separatorTitle == L"Persisted Group";
+            }));
+        EXPECT_EQ(InstanceMetadataStore::inventorySyncCountForTesting(), 0U);
+#endif
+    }
+
     TEST(PluginServiceTests, BulkPluginEnablePersistsUnlockedPluginsTogether)
     {
 #ifndef _WIN32
@@ -598,6 +674,51 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(PluginServiceTests, RepeatedListPluginsDoesNotRewriteUnchangedProfileState)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Stable Plugin State Build";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path pluginPath = mods / L"Example Mod" / L"AddOns" / L"Example.ABC";
+        writeTextFile(pluginPath, "plugin");
+
+        InstanceMetadataStore::ensureInstance(project, L"customgame");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{mods / L"Example Mod", L"Example Mod", {}, true, {}}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+
+        FakePluginRulesProvider provider(customRules());
+        const CapabilitySet caps = capabilities(true, true);
+        const PluginRuleContext context{&provider, &caps, nullptr, L"Default"};
+
+        const std::vector<PluginEntry> first = plugins.listPlugins(project, context, L"Default");
+        ASSERT_NE(findPlugin(first, L"Example.ABC"), nullptr);
+
+        const std::filesystem::path statePath = project / L"profiles" / L"Default" / L"enabled.dat";
+        ASSERT_TRUE(std::filesystem::exists(statePath));
+        const std::string firstContent = readTextFile(statePath);
+        const std::filesystem::file_time_type firstWriteTime =
+            std::filesystem::last_write_time(statePath);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        const std::vector<PluginEntry> second = plugins.listPlugins(project, context, L"Default");
+
+        EXPECT_NE(findPlugin(second, L"Example.ABC"), nullptr);
+        EXPECT_EQ(readTextFile(statePath), firstContent);
+        EXPECT_EQ(std::filesystem::last_write_time(statePath), firstWriteTime);
+#endif
+    }
+
     TEST(PluginServiceTests, RestoredPluginReturnsToCachedProfileOrderPosition)
     {
 #ifndef _WIN32
@@ -652,6 +773,78 @@ namespace fluxora::tests
         EXPECT_EQ(afterRestore[0].name, L"Base.master");
         EXPECT_EQ(afterRestore[1].name, L"Beta.ABC");
         EXPECT_EQ(afterRestore[2].name, L"Alpha.ABC");
+#endif
+    }
+
+    TEST(PluginServiceTests, ExplicitInvalidationRefreshesInPlacePluginHeaderChanges)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Plugin service test uses the Windows instance metadata store.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Plugin Invalidation Build";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path pluginDirectory = mods / L"Example Mod" / L"Data";
+        const std::filesystem::path pluginPath = pluginDirectory / L"Example.esp";
+        const std::filesystem::path gamePluginDirectory = project / L"Game" / L"Data";
+        const std::filesystem::path gamePluginPath = gamePluginDirectory / L"GameExample.esp";
+        writeBethesdaPluginFile(pluginPath, {});
+        writeBethesdaPluginFile(gamePluginPath, {});
+        writeTextFile(
+            project / L".fluxora" / L"paths.json",
+            "{\"gameDirectory\":\"Game\",\"modsDirectory\":\"mods\","
+            "\"profilesDirectory\":\"profiles\",\"downloadsDirectory\":\"downloads\","
+            "\"overwriteDirectory\":\"overwrite\"}");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {InstalledModImportRecord{mods / L"Example Mod", L"Example Mod", {}, true, {}}});
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        PluginService plugins(logger, pathSettings);
+        plugins.initialize();
+        GameSupportRegistry registry;
+        registry.loadEmbeddedDefinitions();
+        const GameSupportLookupResult lookup = registry.lookupById(L"skyrimse");
+        ASSERT_TRUE(lookup.supported);
+        ASSERT_NE(lookup.support, nullptr);
+        const PluginRuleContext context{
+            lookup.support->components().pluginRulesProvider,
+            &lookup.support->capabilities(),
+            nullptr,
+            lookup.support->identity().defaultProfileName
+        };
+
+        const std::vector<PluginEntry> first = plugins.listPlugins(project, context, L"Default");
+        const PluginEntry* firstPlugin = findPlugin(first, L"Example.esp");
+        const PluginEntry* firstGamePlugin = findPlugin(first, L"GameExample.esp");
+        ASSERT_NE(firstPlugin, nullptr);
+        ASSERT_NE(firstGamePlugin, nullptr);
+        EXPECT_TRUE(firstPlugin->masterFiles.empty());
+        EXPECT_TRUE(firstGamePlugin->masterFiles.empty());
+
+        const std::filesystem::file_time_type directoryWriteTime =
+            std::filesystem::last_write_time(pluginDirectory);
+        const std::filesystem::file_time_type gameDirectoryWriteTime =
+            std::filesystem::last_write_time(gamePluginDirectory);
+        writeBethesdaPluginFile(pluginPath, {"Missing.esm"});
+        writeBethesdaPluginFile(gamePluginPath, {"GameMissing.esm"});
+        std::filesystem::last_write_time(pluginDirectory, directoryWriteTime);
+        std::filesystem::last_write_time(gamePluginDirectory, gameDirectoryWriteTime);
+        plugins.invalidateDiscoveryCaches();
+
+        const std::vector<PluginEntry> refreshed =
+            plugins.listPlugins(project, context, L"Default");
+        const PluginEntry* refreshedPlugin = findPlugin(refreshed, L"Example.esp");
+        ASSERT_NE(refreshedPlugin, nullptr);
+        ASSERT_EQ(refreshedPlugin->masterFiles.size(), 1U);
+        EXPECT_EQ(refreshedPlugin->masterFiles.front(), L"Missing.esm");
+        const PluginEntry* refreshedGamePlugin = findPlugin(refreshed, L"GameExample.esp");
+        ASSERT_NE(refreshedGamePlugin, nullptr);
+        ASSERT_EQ(refreshedGamePlugin->masterFiles.size(), 1U);
+        EXPECT_EQ(refreshedGamePlugin->masterFiles.front(), L"GameMissing.esm");
 #endif
     }
 

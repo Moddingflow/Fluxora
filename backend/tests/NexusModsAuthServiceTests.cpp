@@ -60,6 +60,7 @@ namespace fluxora::tests
 
         NexusModsStoredAuth auth;
         auth.linked = true;
+        auth.isPremium = true;
         auth.username = L"modder";
         auth.userId = L"42";
         auth.tokenType = L"Bearer";
@@ -72,6 +73,7 @@ namespace fluxora::tests
 
         EXPECT_TRUE(status.isConfigured);
         EXPECT_TRUE(status.isLinked);
+        EXPECT_TRUE(status.isPremium);
         EXPECT_FALSE(status.hasApiKey);
         EXPECT_EQ(status.clientId, L"fluxora-test-client");
         EXPECT_EQ(status.displayName, L"modder");

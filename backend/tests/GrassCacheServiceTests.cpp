@@ -408,6 +408,10 @@ namespace fluxora::tests
         writeTextFile(
             project_ / L".flow" / L"root-launch" / L"SKSE64" / L"PrecacheGrass.txt",
             "cache marker");
+        const std::filesystem::path nestedUnrelatedMarker =
+            project_ / L".flow" / L"root-launch" / L"SKSE64" /
+            L"copied-cache" / L"deep" / L"PrecacheGrass.txt";
+        writeTextFile(nestedUnrelatedMarker, "not a game-root marker");
 
         FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 1);
         GrassCacheService service(
@@ -424,7 +428,87 @@ namespace fluxora::tests
         EXPECT_FALSE(std::filesystem::exists(paths.overwriteDirectory / L"root" / L"PrecacheGrass.txt"));
         EXPECT_FALSE(std::filesystem::exists(
             project_ / L".flow" / L"root-launch" / L"SKSE64" / L"PrecacheGrass.txt"));
+        EXPECT_TRUE(std::filesystem::exists(nestedUnrelatedMarker));
     }
+
+#ifdef _WIN32
+    TEST_F(GrassCacheServiceTestFixture, OrdinaryLaunchCleanupDoesNotFollowRootLaunchJunction)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        const std::filesystem::path rootLaunchDirectory =
+            project_ / L".flow" / L"root-launch";
+        const std::filesystem::path safeMarker =
+            rootLaunchDirectory / L"SKSE64" / L"PrecacheGrass.txt";
+        const std::filesystem::path outsideDirectory = temp_.path() / L"outside-root-launch";
+        const std::filesystem::path outsideMarker = outsideDirectory / L"PrecacheGrass.txt";
+        const std::filesystem::path junction = rootLaunchDirectory / L"unsafe-overlay";
+
+        writeTextFile(safeMarker, "safe cache marker");
+        writeTextFile(outsideMarker, "outside sentinel");
+
+        std::error_code junctionError;
+        if (!createDirectoryJunction(outsideDirectory, junction, junctionError))
+        {
+            GTEST_SKIP() << "Directory junction creation is not available: " << junctionError.message();
+        }
+
+        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 1);
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+
+        EXPECT_EQ(service.clearStaleNgioPrecacheMarkersForLaunch(config_), 1);
+        EXPECT_FALSE(std::filesystem::exists(safeMarker));
+        EXPECT_EQ(readTextFile(outsideMarker), "outside sentinel");
+
+        std::error_code cleanupError;
+        std::filesystem::remove(junction, cleanupError);
+    }
+
+    TEST_F(GrassCacheServiceTestFixture, OrdinaryLaunchCleanupDoesNotFollowRootLaunchDirectoryJunction)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        const std::filesystem::path rootLaunchDirectory =
+            project_ / L".flow" / L"root-launch";
+        const std::filesystem::path outsideDirectory = temp_.path() / L"outside-root-launch-root";
+        const std::filesystem::path outsideMarker =
+            outsideDirectory / L"SKSE64" / L"PrecacheGrass.txt";
+        const std::filesystem::path gameMarker =
+            paths.gameDirectory / L"PrecacheGrass.txt";
+
+        writeTextFile(outsideMarker, "outside root sentinel");
+        writeTextFile(gameMarker, "stock marker");
+        std::filesystem::create_directories(rootLaunchDirectory.parent_path());
+
+        std::error_code junctionError;
+        if (!createDirectoryJunction(outsideDirectory, rootLaunchDirectory, junctionError))
+        {
+            GTEST_SKIP() << "Directory junction creation is not available: " << junctionError.message();
+        }
+
+        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 1);
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+
+        EXPECT_EQ(service.clearStaleNgioPrecacheMarkersForLaunch(config_), 1);
+        EXPECT_FALSE(std::filesystem::exists(gameMarker));
+        EXPECT_EQ(readTextFile(outsideMarker), "outside root sentinel");
+
+        std::error_code cleanupError;
+        std::filesystem::remove(rootLaunchDirectory, cleanupError);
+    }
+#endif
 
     TEST_F(GrassCacheServiceTestFixture, NgioGenerationStopsWhenOperationCancelMarkerExists)
     {

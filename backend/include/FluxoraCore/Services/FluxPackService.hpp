@@ -87,12 +87,50 @@ namespace fluxora
         std::vector<FluxPackProviderProgress> providers;
     };
 
+    struct FluxPackInstallPlanRequest
+    {
+        std::filesystem::path fluxPackPath;
+        std::filesystem::path existingConfigPath;
+    };
+
+    struct FluxPackSourceInstallPlan
+    {
+        std::wstring sourceId;
+        std::wstring providerId;
+        std::wstring providerDisplayName;
+        std::wstring displayName;
+        std::wstring version;
+        std::wstring archiveFileName;
+        std::wstring manualDownloadUrl;
+        std::wstring acquisitionMode;
+        bool requiresManualDownload{false};
+        bool canAutomaticallyDownload{false};
+    };
+
+    struct FluxPackInstallPlan
+    {
+        FluxPackSummary summary;
+        bool updatesExistingProject{false};
+        std::uintmax_t reusableSourceCount{0};
+        std::uintmax_t reusableDownloadCount{0};
+        std::uintmax_t automaticDownloadCount{0};
+        std::uintmax_t manualDownloadCount{0};
+        std::vector<FluxPackSourceInstallPlan> sources;
+    };
+
+    struct FluxPackManualSourceArchive
+    {
+        std::wstring sourceId;
+        std::filesystem::path path;
+    };
+
     struct FluxPackInstallRequest
     {
         std::filesystem::path fluxPackPath;
         std::filesystem::path installRootDirectory;
         std::function<void(const FluxPackInstallProgress&)> progress;
         std::filesystem::path existingConfigPath;
+        std::vector<FluxPackManualSourceArchive> manualSourceArchives;
     };
 
     struct FluxPackInstallResult
@@ -129,6 +167,7 @@ namespace fluxora
 
         [[nodiscard]] FluxPackSummary exportProject(const FluxPackExportRequest& request) const;
         [[nodiscard]] FluxPackSummary inspectFluxPack(const std::filesystem::path& fluxPackPath) const;
+        [[nodiscard]] FluxPackInstallPlan planInstall(const FluxPackInstallPlanRequest& request) const;
         [[nodiscard]] FluxPackInstallResult installFluxPack(const FluxPackInstallRequest& request) const;
         [[nodiscard]] bool isInitialized() const noexcept;
 

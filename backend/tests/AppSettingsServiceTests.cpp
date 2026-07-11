@@ -84,6 +84,7 @@ namespace fluxora::tests
 
         NexusModsStoredAuth saved;
         saved.linked = true;
+        saved.isPremium = true;
         saved.username = L"modder";
         saved.userId = L"42";
         saved.tokenType = L"Bearer";
@@ -96,6 +97,7 @@ namespace fluxora::tests
         const NexusModsStoredAuth loaded = service.loadNexusModsAuth();
 
         EXPECT_TRUE(loaded.linked);
+        EXPECT_TRUE(loaded.isPremium);
         EXPECT_EQ(loaded.username, saved.username);
         EXPECT_EQ(loaded.userId, saved.userId);
         EXPECT_EQ(loaded.tokenType, saved.tokenType);
@@ -107,6 +109,7 @@ namespace fluxora::tests
         service.clearNexusModsAuth();
         const NexusModsStoredAuth cleared = service.loadNexusModsAuth();
         EXPECT_FALSE(cleared.linked);
+        EXPECT_FALSE(cleared.isPremium);
         EXPECT_TRUE(cleared.protectedAccessToken.empty());
         EXPECT_TRUE(cleared.protectedApiKey.empty());
     }

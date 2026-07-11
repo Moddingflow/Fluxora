@@ -205,6 +205,7 @@ const fileTree: FluxoraModFileTreeEntry[] = [
 const nexusStatus: FluxoraNexusModsAuthStatus = {
   isConfigured: true,
   isLinked: false,
+  isPremium: false,
   hasApiKey: false,
   displayName: '',
   userId: '',

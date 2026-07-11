@@ -9,6 +9,7 @@
 #include <cwctype>
 #include <map>
 #include <mutex>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -119,12 +120,14 @@ namespace fluxora
             std::wstring_view profileName)
         {
             std::vector<VfsActiveMod> mods;
-            for (const ProfileModOrderItem& item : profileOrder.listCachedModOrder(projectDirectory, profileName))
+            for (const ProfileModOrderItem& item : profileOrder.listCachedLaunchModOrder(projectDirectory, profileName))
             {
-                const bool isFullyOverwritten =
-                    item.fileCount > 0 &&
-                    item.overwrittenFileCount >= item.fileCount;
-                if (item.kind == L"mod" && item.isEnabled && !item.id.empty() && !isFullyOverwritten)
+                // Keep every enabled layer in the launch plan. A conflict-summary
+                // cache can be briefly stale before a debounced watcher event, and
+                // pruning a supposedly fully overwritten mod would then change the
+                // overlay if the winning file was removed. USVFS priority already
+                // makes redundant lower layers semantically harmless.
+                if (item.kind == L"mod" && item.isEnabled && !item.id.empty())
                 {
                     mods.push_back(VfsActiveMod{
                         item.id,
@@ -262,9 +265,69 @@ namespace fluxora
         return toLower(value);
     }
 
+    void invalidateVfsContentPlacementCache(
+        const std::filesystem::path& modsDirectory,
+        const std::vector<std::filesystem::path>& changedPaths)
+    {
+        if (modsDirectory.empty() || changedPaths.empty())
+        {
+            return;
+        }
+
+        const std::filesystem::path root = std::filesystem::absolute(modsDirectory).lexically_normal();
+        const std::wstring normalizedRoot = vfsNormalizedPathForComparison(root);
+        std::vector<std::wstring> affectedModKeys;
+        bool invalidateProject = false;
+        for (const std::filesystem::path& changedPath : changedPaths)
+        {
+            const std::filesystem::path absolute = std::filesystem::absolute(
+                changedPath.is_absolute() ? changedPath : root / changedPath).lexically_normal();
+            const std::filesystem::path relative = absolute.lexically_relative(root);
+            if (relative.empty() || relative == L".")
+            {
+                invalidateProject = true;
+                break;
+            }
+            auto component = relative.begin();
+            if (component == relative.end() || *component == L"..")
+            {
+                continue;
+            }
+            affectedModKeys.push_back(vfsNormalizedPathForComparison(root / *component));
+        }
+
+        std::lock_guard lock(vfsContentPlacementCacheMutex());
+        auto& cache = vfsContentPlacementCache();
+        if (invalidateProject)
+        {
+            const std::wstring prefix = normalizedRoot + L"\\";
+            std::erase_if(
+                cache,
+                [&normalizedRoot, &prefix](const auto& entry)
+                {
+                    return entry.first == normalizedRoot || entry.first.starts_with(prefix);
+                });
+            return;
+        }
+        for (const std::wstring& key : affectedModKeys)
+        {
+            cache.erase(key);
+        }
+    }
+
+#ifdef FLUXORA_VFS_TEST_HOOKS
+    bool vfsContentPlacementCacheContainsForTesting(
+        const std::filesystem::path& modDirectory)
+    {
+        std::lock_guard lock(vfsContentPlacementCacheMutex());
+        return vfsContentPlacementCache().contains(
+            vfsNormalizedPathForComparison(modDirectory));
+    }
+#endif
+
     VfsGameRootMountPlan buildVfsGameRootMountPlan(
         Logger& logger,
-        const ProfileOrderService& profileOrder,
+        std::vector<VfsActiveMod> activeMods,
         const BuildPathSettingsService& pathSettings,
         const std::filesystem::path& projectDirectory,
         const std::filesystem::path& gameDirectory,
@@ -286,7 +349,7 @@ namespace fluxora
         const std::wstring profile = profileName.empty()
             ? std::wstring(L"Default")
             : std::wstring(profileName);
-        plan.activeMods = collectEnabledMods(profileOrder, projectDirectory, profile);
+        plan.activeMods = std::move(activeMods);
 
         const VfsContentPlacementAnalyzer placementAnalyzer;
         std::vector<VfsContentPlacementRoots> placements;
@@ -354,5 +417,31 @@ namespace fluxora
                 ", rootMods=" + std::to_string(plan.rootMods.size()) +
                 ", mounts=" + std::to_string(plan.mounts.size()) + ".");
         return plan;
+    }
+
+    VfsGameRootMountPlan buildVfsGameRootMountPlan(
+        Logger& logger,
+        const ProfileOrderService& profileOrder,
+        const BuildPathSettingsService& pathSettings,
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& gameDirectory,
+        std::wstring_view profileName,
+        const CapabilitySet& capabilities,
+        const VfsSupportRules& vfsRules,
+        const ContentLayoutSupportRules& contentRules)
+    {
+        const std::wstring profile = profileName.empty()
+            ? std::wstring(L"Default")
+            : std::wstring(profileName);
+        return buildVfsGameRootMountPlan(
+            logger,
+            collectEnabledMods(profileOrder, projectDirectory, profile),
+            pathSettings,
+            projectDirectory,
+            gameDirectory,
+            profile,
+            capabilities,
+            vfsRules,
+            contentRules);
     }
 }

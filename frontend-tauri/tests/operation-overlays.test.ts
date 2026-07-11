@@ -69,6 +69,45 @@ describe('operation overlays', () => {
     expect(markup).toContain('0%');
   });
 
+  it('splits FluxPack install progress into provider-colored sectors', () => {
+    const markup = renderOverlay(
+      overlay({
+        providers: [
+          {
+            providerId: 'nexus',
+            displayName: 'Nexus Mods',
+            totalCount: 3,
+            completedCount: 1,
+            pendingCount: 0,
+            failedCount: 0,
+            currentItem: 'SkyUI',
+            statusText: 'Downloading',
+            progressPercent: 33
+          },
+          {
+            providerId: 'local',
+            displayName: 'FluxPack',
+            totalCount: 1,
+            completedCount: 1,
+            pendingCount: 0,
+            failedCount: 0,
+            currentItem: 'Local files',
+            statusText: 'Reused',
+            progressPercent: 100
+          }
+        ]
+      })
+    );
+
+    expect(markup).toContain('fluxpack-source-progress');
+    expect(markup).toContain('data-provider="nexus"');
+    expect(markup).toContain('--source-progress-color:#d98f2b');
+    expect(markup).toContain('Nexus Mods');
+    expect(markup).toContain('1 / 3');
+    expect(markup).toContain('FluxPack');
+    expect(markup).not.toContain('flx-progress__track');
+  });
+
   it('places the close action in the top line without a technical operation label', () => {
     const markup = renderOverlay(
       overlay({
@@ -287,7 +326,34 @@ describe('operation overlays', () => {
       /fluxora_install_fluxpack\([\s\S]*?fluxora_install_fluxpack_with_target\([\s\S]*?existingConfigPath/
     );
     expect(bridgeHost).toMatch(
-      /payloadInstallFluxPack[\s\S]*?existingConfigPath[\s\S]*?fluxora_install_fluxpack_with_target/
+      /payloadInstallFluxPack[\s\S]*?existingConfigPath[\s\S]*?fluxora_install_fluxpack_with_options_and_progress/
+    );
+  });
+
+  it('routes FluxPack install planning through the native core before acquisition', () => {
+    const coreHeader = readText('backend', 'include', 'FluxoraCore', 'FluxoraCoreApi.hpp');
+    const coreApi = readText('backend', 'src', 'FluxoraCoreApi.cpp');
+    const bridgeHost = readText('backend', 'src', 'BridgeHost', 'FluxoraBridgeHost.cpp');
+
+    expect(coreHeader).toContain('fluxora_plan_fluxpack_install(');
+    expect(coreApi).toContain('serializeFluxPackInstallPlan');
+    expect(bridgeHost).toMatch(
+      /payloadPlanFluxPackInstall[\s\S]*?existingConfigPath[\s\S]*?fluxora_plan_fluxpack_install/
+    );
+    expect(bridgeHost).toContain('request.method == L"fluxPack.planInstall"');
+  });
+
+  it('passes user-selected source archives through an additive FluxPack install ABI', () => {
+    const coreHeader = readText('backend', 'include', 'FluxoraCore', 'FluxoraCoreApi.hpp');
+    const coreApi = readText('backend', 'src', 'FluxoraCoreApi.cpp');
+    const bridgeHost = readText('backend', 'src', 'BridgeHost', 'FluxoraBridgeHost.cpp');
+
+    expect(coreHeader).toContain('fluxora_install_fluxpack_with_options_and_progress(');
+    expect(coreApi).toMatch(
+      /fluxora_install_fluxpack_with_target\([\s\S]*?fluxora_install_fluxpack_with_options_and_progress/
+    );
+    expect(bridgeHost).toMatch(
+      /payloadInstallFluxPack[\s\S]*?manualSourceArchives[\s\S]*?fluxora_install_fluxpack_with_options_and_progress/
     );
   });
 

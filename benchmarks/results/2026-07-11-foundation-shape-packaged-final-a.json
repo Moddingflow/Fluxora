@@ -1,0 +1,710 @@
+{
+  "schemaVersion": 5,
+  "generatedAtUtc": "2026-07-11T03:46:05.7630489Z",
+  "environment": {
+    "os": "Microsoft Windows NT 10.0.26200.0",
+    "processor": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "processorCount": 16,
+    "configuration": "Release",
+    "architecture": "x64",
+    "gitCommit": "f4f324885c9dcb84ff166074d4433a15886b7197",
+    "gitDirty": true,
+    "hostSha256": "731765A19231D523CFC940E39366A5870C45F31CACD758CDBAD56EF15B90410A",
+    "coreSha256": "C8C3B083C50BD6DD99739923065A1F5F547F553B9B45CE1FF9C81AFC728E141E",
+    "vfsSha256": "2E5852A15DE91BD4B8D3FEAE7177A281DC595D114FFBA90B435D7FA965028462",
+    "fixtureBuilderSha256": "AF5E465376EB7D7A866B643FEBE884535B992FEB33BB6937800A144F80CE543A",
+    "probeSha256": "D62EDE1D639BA9A5C8F4AA28539B4C14146E61896C78854B52494CC54FF75C17"
+  },
+  "cacheSemantics": {
+    "nativeOpenRpcProxy": "sum of production BridgeHost RPC elapsed times only; it excludes Tauri watcher installation, renderer scheduling, React commit, and the next interactive frame and therefore is not UI T0-to-T3",
+    "metadataCold": "instance.db absent; an empty persisted mod snapshot falls back to exact mods.getWorkspace inside nativeOpenRpcTotalMs; raw persisted counts and fallback timing remain explicit; operating-system file cache is uncontrolled",
+    "processColdMetadataWarm": "new BridgeHost process with persisted instance.db; nativeOpenRpcTotalMs excludes downloads and exact mod/plugin reconciliation",
+    "processWarm": "same BridgeHost process after explicit warm-up runs; nativeOpenRpcTotalMs excludes deferred exact mod/plugin work",
+    "interactivePlugins": "plugins.listPersisted reads persisted profile plugin state and is recorded as pluginsMs inside nativeOpenRpcTotalMs",
+    "interactiveFallback": "empty persisted installed/order rows trigger exact mods.getWorkspace as interactiveFallbackMs; only packaged UI logs can establish whether this lies inside UI T0-to-T3",
+    "backgroundReconciliation": "downloads, then exact mods.getWorkspace unless the fallback already ran it, then exact plugins.list after the persisted RPC snapshot",
+    "exactPlugins": "plugins.list runs after exact mods.getWorkspace and is recorded as exactPluginsMs inside backgroundTotalMs",
+    "launch": "metadata prepared before launch; probe process exits cleanly after each isolated sample"
+  },
+  "settings": {
+    "modCounts": [
+      619
+    ],
+    "filesPerMod": 115,
+    "pluginCount": 292,
+    "disabledPercent": 2,
+    "conflictFilesPerMod": 24,
+    "directoryDepth": 7,
+    "directoriesPerMod": 18,
+    "runs": 5,
+    "warmups": 1,
+    "coldRuns": 1,
+    "maximumModeledFiles": 2000000,
+    "allowLargeFixture": false,
+    "importedStructuralStatistics": {
+      "sha256": "D8C146D2DDE1E23D994FAA57301CFAB912FC6ED48B62AF1CFD1C4B2E722CFE24",
+      "modCount": 619,
+      "filesPerMod": 115,
+      "pluginCount": 292,
+      "disabledPercent": 2,
+      "conflictFilesPerMod": 24,
+      "directoryDepth": 7,
+      "directoriesPerMod": 18
+    },
+    "seed": "0xF10C0A"
+  },
+  "scenarios": [
+    {
+      "fixture": {
+        "schemaVersion": 1,
+        "generator": "FluxoraSyntheticModlistFixture",
+        "ownershipToken": "fluxora.synthetic-performance-fixture.v1",
+        "seed": 15797258,
+        "modCount": 619,
+        "filesPerMod": 115,
+        "pluginCount": 292,
+        "basePluginCount": 5,
+        "expectedPluginCount": 295,
+        "disabledPercent": 2,
+        "conflictFilesPerMod": 24,
+        "directoryDepth": 7,
+        "directoryBranches": 3,
+        "expectedOverlaySentinel": "winner-mod=618",
+        "alternateExpectedOverlaySentinel": "winner-mod=1"
+      },
+      "fixtureRoot": "C:\\Fluxora\\benchmarks\\work\\fixture-619",
+      "metadataCold": {
+        "samples": [
+          {
+            "nativeOpenRpcTotalMs": 10156.104,
+            "openConfigMs": 60.922,
+            "modsWorkspaceMs": 4.677,
+            "interactiveFallbackMs": 10051.226,
+            "pluginsMs": 12.385,
+            "profilesMs": 2.163,
+            "executablesMs": 24.728,
+            "downloadsMs": 1.11,
+            "reconciliationMs": 0.0,
+            "exactPluginsMs": 321.622,
+            "backgroundTotalMs": 322.732,
+            "installedCount": 619,
+            "orderCount": 619,
+            "persistedInstalledCount": 0,
+            "persistedOrderCount": 0,
+            "pluginCount": 295,
+            "exactPluginCount": 295,
+            "expectedPluginCount": 295,
+            "persistedPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB",
+            "exactPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB"
+          }
+        ],
+        "statistics": {
+          "nativeOpenRpcTotal": {
+            "runs": 1,
+            "minMs": 10156.104,
+            "medianMs": 10156.104,
+            "p95Ms": 10156.104,
+            "maxMs": 10156.104
+          },
+          "openConfig": {
+            "runs": 1,
+            "minMs": 60.922,
+            "medianMs": 60.922,
+            "p95Ms": 60.922,
+            "maxMs": 60.922
+          },
+          "modsWorkspace": {
+            "runs": 1,
+            "minMs": 4.677,
+            "medianMs": 4.677,
+            "p95Ms": 4.677,
+            "maxMs": 4.677
+          },
+          "interactiveFallback": {
+            "runs": 1,
+            "minMs": 10051.226,
+            "medianMs": 10051.226,
+            "p95Ms": 10051.226,
+            "maxMs": 10051.226
+          },
+          "plugins": {
+            "runs": 1,
+            "minMs": 12.385,
+            "medianMs": 12.385,
+            "p95Ms": 12.385,
+            "maxMs": 12.385
+          },
+          "profiles": {
+            "runs": 1,
+            "minMs": 2.163,
+            "medianMs": 2.163,
+            "p95Ms": 2.163,
+            "maxMs": 2.163
+          },
+          "executables": {
+            "runs": 1,
+            "minMs": 24.728,
+            "medianMs": 24.728,
+            "p95Ms": 24.728,
+            "maxMs": 24.728
+          },
+          "downloads": {
+            "runs": 1,
+            "minMs": 1.11,
+            "medianMs": 1.11,
+            "p95Ms": 1.11,
+            "maxMs": 1.11
+          },
+          "reconciliation": {
+            "runs": 1,
+            "minMs": 0.0,
+            "medianMs": 0.0,
+            "p95Ms": 0.0,
+            "maxMs": 0.0
+          },
+          "exactPlugins": {
+            "runs": 1,
+            "minMs": 321.622,
+            "medianMs": 321.622,
+            "p95Ms": 321.622,
+            "maxMs": 321.622
+          },
+          "backgroundTotal": {
+            "runs": 1,
+            "minMs": 322.732,
+            "medianMs": 322.732,
+            "p95Ms": 322.732,
+            "maxMs": 322.732
+          }
+        }
+      },
+      "processColdMetadataWarm": {
+        "samples": [
+          {
+            "nativeOpenRpcTotalMs": 243.702,
+            "openConfigMs": 53.248,
+            "modsWorkspaceMs": 154.417,
+            "interactiveFallbackMs": 0.0,
+            "pluginsMs": 6.608,
+            "profilesMs": 2.368,
+            "executablesMs": 27.06,
+            "downloadsMs": 0.962,
+            "reconciliationMs": 9887.465,
+            "exactPluginsMs": 329.172,
+            "backgroundTotalMs": 10217.599,
+            "installedCount": 619,
+            "orderCount": 619,
+            "persistedInstalledCount": 619,
+            "persistedOrderCount": 619,
+            "pluginCount": 295,
+            "exactPluginCount": 295,
+            "expectedPluginCount": 295,
+            "persistedPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB",
+            "exactPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB"
+          },
+          {
+            "nativeOpenRpcTotalMs": 237.475,
+            "openConfigMs": 53.101,
+            "modsWorkspaceMs": 148.132,
+            "interactiveFallbackMs": 0.0,
+            "pluginsMs": 6.866,
+            "profilesMs": 2.487,
+            "executablesMs": 26.888,
+            "downloadsMs": 0.944,
+            "reconciliationMs": 2716.298,
+            "exactPluginsMs": 318.974,
+            "backgroundTotalMs": 3036.216,
+            "installedCount": 619,
+            "orderCount": 619,
+            "persistedInstalledCount": 619,
+            "persistedOrderCount": 619,
+            "pluginCount": 295,
+            "exactPluginCount": 295,
+            "expectedPluginCount": 295,
+            "persistedPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB",
+            "exactPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB"
+          },
+          {
+            "nativeOpenRpcTotalMs": 232.652,
+            "openConfigMs": 50.956,
+            "modsWorkspaceMs": 150.251,
+            "interactiveFallbackMs": 0.0,
+            "pluginsMs": 6.653,
+            "profilesMs": 2.126,
+            "executablesMs": 22.666,
+            "downloadsMs": 1.246,
+            "reconciliationMs": 2684.683,
+            "exactPluginsMs": 317.295,
+            "backgroundTotalMs": 3003.224,
+            "installedCount": 619,
+            "orderCount": 619,
+            "persistedInstalledCount": 619,
+            "persistedOrderCount": 619,
+            "pluginCount": 295,
+            "exactPluginCount": 295,
+            "expectedPluginCount": 295,
+            "persistedPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB",
+            "exactPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB"
+          },
+          {
+            "nativeOpenRpcTotalMs": 244.398,
+            "openConfigMs": 55.701,
+            "modsWorkspaceMs": 153.383,
+            "interactiveFallbackMs": 0.0,
+            "pluginsMs": 6.532,
+            "profilesMs": 2.183,
+            "executablesMs": 26.599,
+            "downloadsMs": 0.964,
+            "reconciliationMs": 2712.425,
+            "exactPluginsMs": 314.199,
+            "backgroundTotalMs": 3027.587,
+            "installedCount": 619,
+            "orderCount": 619,
+            "persistedInstalledCount": 619,
+            "persistedOrderCount": 619,
+            "pluginCount": 295,
+            "exactPluginCount": 295,
+            "expectedPluginCount": 295,
+            "persistedPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB",
+            "exactPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB"
+          },
+          {
+            "nativeOpenRpcTotalMs": 228.722,
+            "openConfigMs": 55.255,
+            "modsWorkspaceMs": 143.804,
+            "interactiveFallbackMs": 0.0,
+            "pluginsMs": 6.238,
+            "profilesMs": 2.115,
+            "executablesMs": 21.311,
+            "downloadsMs": 0.791,
+            "reconciliationMs": 2605.096,
+            "exactPluginsMs": 302.683,
+            "backgroundTotalMs": 2908.571,
+            "installedCount": 619,
+            "orderCount": 619,
+            "persistedInstalledCount": 619,
+            "persistedOrderCount": 619,
+            "pluginCount": 295,
+            "exactPluginCount": 295,
+            "expectedPluginCount": 295,
+            "persistedPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB",
+            "exactPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB"
+          }
+        ],
+        "statistics": {
+          "nativeOpenRpcTotal": {
+            "runs": 5,
+            "minMs": 228.722,
+            "medianMs": 237.475,
+            "p95Ms": 244.398,
+            "maxMs": 244.398
+          },
+          "openConfig": {
+            "runs": 5,
+            "minMs": 50.956,
+            "medianMs": 53.248,
+            "p95Ms": 55.701,
+            "maxMs": 55.701
+          },
+          "modsWorkspace": {
+            "runs": 5,
+            "minMs": 143.804,
+            "medianMs": 150.251,
+            "p95Ms": 154.417,
+            "maxMs": 154.417
+          },
+          "interactiveFallback": {
+            "runs": 5,
+            "minMs": 0.0,
+            "medianMs": 0.0,
+            "p95Ms": 0.0,
+            "maxMs": 0.0
+          },
+          "plugins": {
+            "runs": 5,
+            "minMs": 6.238,
+            "medianMs": 6.608,
+            "p95Ms": 6.866,
+            "maxMs": 6.866
+          },
+          "profiles": {
+            "runs": 5,
+            "minMs": 2.115,
+            "medianMs": 2.183,
+            "p95Ms": 2.487,
+            "maxMs": 2.487
+          },
+          "executables": {
+            "runs": 5,
+            "minMs": 21.311,
+            "medianMs": 26.599,
+            "p95Ms": 27.06,
+            "maxMs": 27.06
+          },
+          "downloads": {
+            "runs": 5,
+            "minMs": 0.791,
+            "medianMs": 0.962,
+            "p95Ms": 1.246,
+            "maxMs": 1.246
+          },
+          "reconciliation": {
+            "runs": 5,
+            "minMs": 2605.096,
+            "medianMs": 2712.425,
+            "p95Ms": 9887.465,
+            "maxMs": 9887.465
+          },
+          "exactPlugins": {
+            "runs": 5,
+            "minMs": 302.683,
+            "medianMs": 317.295,
+            "p95Ms": 329.172,
+            "maxMs": 329.172
+          },
+          "backgroundTotal": {
+            "runs": 5,
+            "minMs": 2908.571,
+            "medianMs": 3027.587,
+            "p95Ms": 10217.599,
+            "maxMs": 10217.599
+          }
+        }
+      },
+      "processWarm": {
+        "samples": [
+          {
+            "nativeOpenRpcTotalMs": 204.512,
+            "openConfigMs": 26.4,
+            "modsWorkspaceMs": 147.561,
+            "interactiveFallbackMs": 0.0,
+            "pluginsMs": 6.149,
+            "profilesMs": 2.162,
+            "executablesMs": 22.24,
+            "downloadsMs": 0.871,
+            "reconciliationMs": 1150.025,
+            "exactPluginsMs": 173.33,
+            "backgroundTotalMs": 1324.226,
+            "installedCount": 619,
+            "orderCount": 619,
+            "persistedInstalledCount": 619,
+            "persistedOrderCount": 619,
+            "pluginCount": 295,
+            "exactPluginCount": 295,
+            "expectedPluginCount": 295,
+            "persistedPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB",
+            "exactPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB"
+          },
+          {
+            "nativeOpenRpcTotalMs": 202.026,
+            "openConfigMs": 24.35,
+            "modsWorkspaceMs": 147.87,
+            "interactiveFallbackMs": 0.0,
+            "pluginsMs": 6.119,
+            "profilesMs": 2.185,
+            "executablesMs": 21.502,
+            "downloadsMs": 0.799,
+            "reconciliationMs": 1164.673,
+            "exactPluginsMs": 173.018,
+            "backgroundTotalMs": 1338.491,
+            "installedCount": 619,
+            "orderCount": 619,
+            "persistedInstalledCount": 619,
+            "persistedOrderCount": 619,
+            "pluginCount": 295,
+            "exactPluginCount": 295,
+            "expectedPluginCount": 295,
+            "persistedPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB",
+            "exactPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB"
+          },
+          {
+            "nativeOpenRpcTotalMs": 202.412,
+            "openConfigMs": 27.273,
+            "modsWorkspaceMs": 143.42,
+            "interactiveFallbackMs": 0.0,
+            "pluginsMs": 5.972,
+            "profilesMs": 2.148,
+            "executablesMs": 23.599,
+            "downloadsMs": 0.826,
+            "reconciliationMs": 1167.853,
+            "exactPluginsMs": 202.837,
+            "backgroundTotalMs": 1371.517,
+            "installedCount": 619,
+            "orderCount": 619,
+            "persistedInstalledCount": 619,
+            "persistedOrderCount": 619,
+            "pluginCount": 295,
+            "exactPluginCount": 295,
+            "expectedPluginCount": 295,
+            "persistedPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB",
+            "exactPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB"
+          },
+          {
+            "nativeOpenRpcTotalMs": 211.758,
+            "openConfigMs": 25.83,
+            "modsWorkspaceMs": 154.429,
+            "interactiveFallbackMs": 0.0,
+            "pluginsMs": 5.931,
+            "profilesMs": 2.174,
+            "executablesMs": 23.394,
+            "downloadsMs": 0.855,
+            "reconciliationMs": 1179.025,
+            "exactPluginsMs": 174.474,
+            "backgroundTotalMs": 1354.354,
+            "installedCount": 619,
+            "orderCount": 619,
+            "persistedInstalledCount": 619,
+            "persistedOrderCount": 619,
+            "pluginCount": 295,
+            "exactPluginCount": 295,
+            "expectedPluginCount": 295,
+            "persistedPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB",
+            "exactPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB"
+          },
+          {
+            "nativeOpenRpcTotalMs": 198.326,
+            "openConfigMs": 25.182,
+            "modsWorkspaceMs": 143.562,
+            "interactiveFallbackMs": 0.0,
+            "pluginsMs": 5.804,
+            "profilesMs": 2.01,
+            "executablesMs": 21.767,
+            "downloadsMs": 0.809,
+            "reconciliationMs": 1187.927,
+            "exactPluginsMs": 182.738,
+            "backgroundTotalMs": 1371.474,
+            "installedCount": 619,
+            "orderCount": 619,
+            "persistedInstalledCount": 619,
+            "persistedOrderCount": 619,
+            "pluginCount": 295,
+            "exactPluginCount": 295,
+            "expectedPluginCount": 295,
+            "persistedPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB",
+            "exactPluginProjectionSha256": "DFFB0612498AADE9DEA1B12D9751652111778C697697567D48ECC6B806F6AFCB"
+          }
+        ],
+        "statistics": {
+          "nativeOpenRpcTotal": {
+            "runs": 5,
+            "minMs": 198.326,
+            "medianMs": 202.412,
+            "p95Ms": 211.758,
+            "maxMs": 211.758
+          },
+          "openConfig": {
+            "runs": 5,
+            "minMs": 24.35,
+            "medianMs": 25.83,
+            "p95Ms": 27.273,
+            "maxMs": 27.273
+          },
+          "modsWorkspace": {
+            "runs": 5,
+            "minMs": 143.42,
+            "medianMs": 147.561,
+            "p95Ms": 154.429,
+            "maxMs": 154.429
+          },
+          "interactiveFallback": {
+            "runs": 5,
+            "minMs": 0.0,
+            "medianMs": 0.0,
+            "p95Ms": 0.0,
+            "maxMs": 0.0
+          },
+          "plugins": {
+            "runs": 5,
+            "minMs": 5.804,
+            "medianMs": 5.972,
+            "p95Ms": 6.149,
+            "maxMs": 6.149
+          },
+          "profiles": {
+            "runs": 5,
+            "minMs": 2.01,
+            "medianMs": 2.162,
+            "p95Ms": 2.185,
+            "maxMs": 2.185
+          },
+          "executables": {
+            "runs": 5,
+            "minMs": 21.502,
+            "medianMs": 22.24,
+            "p95Ms": 23.599,
+            "maxMs": 23.599
+          },
+          "downloads": {
+            "runs": 5,
+            "minMs": 0.799,
+            "medianMs": 0.826,
+            "p95Ms": 0.871,
+            "maxMs": 0.871
+          },
+          "reconciliation": {
+            "runs": 5,
+            "minMs": 1150.025,
+            "medianMs": 1167.853,
+            "p95Ms": 1187.927,
+            "maxMs": 1187.927
+          },
+          "exactPlugins": {
+            "runs": 5,
+            "minMs": 173.018,
+            "medianMs": 174.474,
+            "p95Ms": 202.837,
+            "maxMs": 202.837
+          },
+          "backgroundTotal": {
+            "runs": 5,
+            "minMs": 1324.226,
+            "medianMs": 1354.354,
+            "p95Ms": 1371.517,
+            "maxMs": 1371.517
+          }
+        }
+      },
+      "launch": {
+        "samples": [
+          {
+            "bridgeLaunchMs": 99.762,
+            "requestStartToReadyMs": 119.453,
+            "responseToReadyMs": 19.371,
+            "processCreationToProbeEntryMs": 15.459,
+            "processCreationToValidatedReadyMs": 15.585,
+            "descriptorPath": "C:\\Fluxora\\benchmarks\\work\\fixture-619\\.flow\\vfs\\sessions\\vfs-config-31644-e9c7cab342fe55be567db2eb11cbeedc.json",
+            "processId": 29316,
+            "overlayCorrect": true,
+            "managerEnvironmentUnchanged": true,
+            "profileName": "Default",
+            "executableId": "probe"
+          },
+          {
+            "bridgeLaunchMs": 105.976,
+            "requestStartToReadyMs": 123.231,
+            "responseToReadyMs": 16.944,
+            "processCreationToProbeEntryMs": 15.843,
+            "processCreationToValidatedReadyMs": 15.968,
+            "descriptorPath": "C:\\Fluxora\\benchmarks\\work\\fixture-619\\.flow\\vfs\\sessions\\vfs-config-31644-ff75ca495343d8ee8e41c684cd1232a2.json",
+            "processId": 31344,
+            "overlayCorrect": true,
+            "managerEnvironmentUnchanged": true,
+            "profileName": "Default",
+            "executableId": "probe"
+          },
+          {
+            "bridgeLaunchMs": 101.402,
+            "requestStartToReadyMs": 123.821,
+            "responseToReadyMs": 22.09,
+            "processCreationToProbeEntryMs": 16.694,
+            "processCreationToValidatedReadyMs": 16.824,
+            "descriptorPath": "C:\\Fluxora\\benchmarks\\work\\fixture-619\\.flow\\vfs\\sessions\\vfs-config-31644-96dc03a9dd9c7e60c441d429bc6b2fe4.json",
+            "processId": 40444,
+            "overlayCorrect": true,
+            "managerEnvironmentUnchanged": true,
+            "profileName": "Default",
+            "executableId": "probe"
+          },
+          {
+            "bridgeLaunchMs": 105.48,
+            "requestStartToReadyMs": 121.965,
+            "responseToReadyMs": 16.107,
+            "processCreationToProbeEntryMs": 16.402,
+            "processCreationToValidatedReadyMs": 16.535,
+            "descriptorPath": "C:\\Fluxora\\benchmarks\\work\\fixture-619\\.flow\\vfs\\sessions\\vfs-config-31644-c5c46227cefe81f4470f95c40c790cff.json",
+            "processId": 45416,
+            "overlayCorrect": true,
+            "managerEnvironmentUnchanged": true,
+            "profileName": "Default",
+            "executableId": "probe"
+          },
+          {
+            "bridgeLaunchMs": 117.606,
+            "requestStartToReadyMs": 139.383,
+            "responseToReadyMs": 21.418,
+            "processCreationToProbeEntryMs": 17.486,
+            "processCreationToValidatedReadyMs": 17.659,
+            "descriptorPath": "C:\\Fluxora\\benchmarks\\work\\fixture-619\\.flow\\vfs\\sessions\\vfs-config-31644-20c046489771ef1b179a37083b0fdca3.json",
+            "processId": 6968,
+            "overlayCorrect": true,
+            "managerEnvironmentUnchanged": true,
+            "profileName": "Default",
+            "executableId": "probe"
+          }
+        ],
+        "statistics": {
+          "bridgeLaunch": {
+            "runs": 5,
+            "minMs": 99.762,
+            "medianMs": 105.48,
+            "p95Ms": 117.606,
+            "maxMs": 117.606
+          },
+          "requestStartToReady": {
+            "runs": 5,
+            "minMs": 119.453,
+            "medianMs": 123.231,
+            "p95Ms": 139.383,
+            "maxMs": 139.383
+          },
+          "responseToReady": {
+            "runs": 5,
+            "minMs": 16.107,
+            "medianMs": 19.371,
+            "p95Ms": 22.09,
+            "maxMs": 22.09
+          },
+          "processCreationToProbeEntry": {
+            "runs": 5,
+            "minMs": 15.459,
+            "medianMs": 16.402,
+            "p95Ms": 17.486,
+            "maxMs": 17.486
+          },
+          "processCreationToValidatedReady": {
+            "runs": 5,
+            "minMs": 15.585,
+            "medianMs": 16.535,
+            "p95Ms": 17.659,
+            "maxMs": 17.659
+          }
+        },
+        "profileIsolationSamples": [
+          {
+            "bridgeLaunchMs": 111.923,
+            "requestStartToReadyMs": 137.957,
+            "responseToReadyMs": 25.719,
+            "processCreationToProbeEntryMs": 16.98,
+            "processCreationToValidatedReadyMs": 17.106,
+            "descriptorPath": "C:\\Fluxora\\benchmarks\\work\\fixture-619\\.flow\\vfs\\sessions\\vfs-config-31644-9c5158b1d7ef0ab43faada5f36839f87.json",
+            "processId": 39052,
+            "overlayCorrect": true,
+            "managerEnvironmentUnchanged": true,
+            "profileName": "Alternate",
+            "executableId": "probe-alternate"
+          },
+          {
+            "bridgeLaunchMs": 100.17,
+            "requestStartToReadyMs": 122.847,
+            "responseToReadyMs": 22.351,
+            "processCreationToProbeEntryMs": 16.132,
+            "processCreationToValidatedReadyMs": 16.277,
+            "descriptorPath": "C:\\Fluxora\\benchmarks\\work\\fixture-619\\.flow\\vfs\\sessions\\vfs-config-31644-d1ca21a11765e25233a2261068d070da.json",
+            "processId": 15048,
+            "overlayCorrect": true,
+            "managerEnvironmentUnchanged": true,
+            "profileName": "Default",
+            "executableId": "probe"
+          }
+        ]
+      },
+      "correctness": {
+        "repeatedProfileReadPreservedHash": true,
+        "repeatedProfileReadPreservedTimestamp": true,
+        "allLaunchOverlaysCorrect": true,
+        "launchDescriptorsUnique": true,
+        "managerVfsEnvironmentUnchanged": true
+      }
+    }
+  ]
+}

@@ -119,6 +119,11 @@ namespace fluxora
         [[nodiscard]] const std::vector<ModDescriptor>& mods() const noexcept;
         [[nodiscard]] std::vector<InstalledModEntry> listInstalledMods(
             const std::filesystem::path& projectDirectory) const;
+        [[nodiscard]] std::vector<InstalledModEntry> listPersistedInstalledMods(
+            const std::filesystem::path& projectDirectory) const;
+        void invalidateFileCaches(
+            const std::filesystem::path& projectDirectory,
+            const std::vector<std::filesystem::path>& changedPaths) const;
         [[nodiscard]] std::vector<InstalledModEntry> checkInstalledModUpdates(
             const std::filesystem::path& projectDirectory) const;
         [[nodiscard]] std::vector<ModFileTreeEntry> listModFileTree(

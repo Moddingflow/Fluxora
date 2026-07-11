@@ -48,21 +48,24 @@ Phase 5 extends the first bridge slice to cover the build catalog and creation e
 
 Phase 6 extends `fluxora.bridge.v1` to the installed-mod workspace:
 
-- Native host routes `mods.listInstalled`, `mods.getOrder`, `mods.createSeparator`, `mods.deleteSeparator`, `mods.moveOrderItem`, `mods.deleteInstalled`, `mods.createEmpty`, `mods.setEnabled`, `mods.setAllEnabled`, `mods.checkUpdates`, `mods.clearOverwrite`, `mods.getFileTree`, `mods.getEffectiveFileTree`, `mods.getEffectiveFileTreeRoot`, `mods.getEffectiveFileTreeChildren`, `mods.getModDetailsSummary`, `mods.getModConflictTree`, `mods.listPreviewVariants` and `mods.readPreviewAsset` to existing C++ C ABI functions.
+- Native host routes `mods.listInstalled`, `mods.getOrder`, the interactive aggregate read `mods.getPersistedWorkspace`, the reconciling aggregate read `mods.getWorkspace`, watcher-driven `mods.invalidateFileCaches`, `mods.createSeparator`, `mods.deleteSeparator`, `mods.moveOrderItem`, `mods.deleteInstalled`, `mods.createEmpty`, `mods.setEnabled`, `mods.setAllEnabled`, `mods.checkUpdates`, `mods.clearOverwrite`, `mods.getFileTree`, `mods.getEffectiveFileTree`, `mods.getEffectiveFileTreeRoot`, `mods.getEffectiveFileTreeChildren`, `mods.getModDetailsSummary`, `mods.getModConflictTree`, `mods.listPreviewVariants` and `mods.readPreviewAsset` to existing C++ C ABI functions.
 - Tauri Rust shell/facade expose typed `window.fluxora.mods.*` calls only; renderer still has no Node.js, filesystem or raw command access.
 - Renderer owns local mod search, selection, row action menus, scroll windowing and expanded file-tree state.
 - C++ core remains the owner of installed mod records, profile order, enabled state, separator persistence, update checks, file tree indexing and filesystem mutations.
 - Selected-mod file tree is lazy by `relativeDirectory` so large mods do not require one unbounded payload.
 - Effective game-root Data pages are lazy on cold cache: `mods.getEffectiveFileTreeRoot` and `mods.getEffectiveFileTreeChildren` return shallow bounded pages without preparing a full recursive index. Full `mods.getEffectiveFileTree` and `build.prepareWorkspaceIndexes` remain explicit heavy index operations with a long bridge timeout and are not run during build open.
+- `mods.getPersistedWorkspace` returns installed rows and profile order from the last durable file-index generation with zero live inventory synchronization. It is the normal T3 renderer path and may expose deferred (`fileCount = -1`) summaries for never-indexed mods. An absent or incomplete persisted snapshot triggers one exact `mods.getWorkspace` fallback before T3; otherwise `mods.getWorkspace` performs exact offline file-index reconciliation in T4. The build-content watcher is installed before the first workspace read, remains active across same-project reopens, and turns setup errors, event-sequence gaps, or watcher errors into conservative reconciliation instead of trusting a potentially incomplete delta.
+- `mods.invalidateFileCaches` accepts deduplicated affected mod-folder paths, clears per-mod file-index generation state plus VFS placement/plugin discovery caches, and must complete before watcher-triggered workspace/effective-tree reads. Failed invalidation batches remain queued and retry autonomously with a bounded delay even when no later watcher event arrives. These calls carry an operation id and keep bridge/UI/core performance logging separate.
 
 ## Phase 7 Plugins/Load Order MVP
 
 Phase 7 extends `fluxora.bridge.v1` to the plugin/load-order workspace:
 
-- Native host routes `plugins.list`, `plugins.move`, `plugins.createSeparator`, `plugins.deleteSeparator`, `plugins.setEnabled` and `plugins.setAllEnabled` to existing C++ C ABI functions backed by `PluginService`.
+- Native host routes `plugins.listPersisted`, `plugins.list`, `plugins.move`, `plugins.createSeparator`, `plugins.deleteSeparator`, `plugins.setEnabled` and `plugins.setAllEnabled` to C++ C ABI functions backed by `PluginService`.
 - Tauri Rust shell/facade expose typed `window.fluxora.plugins.*` calls only; renderer still has no Node.js, filesystem or raw command access.
 - Renderer owns local plugin search, selection, row action menus, scroll windowing, selected-plugin details and capability explanation only.
 - C++ core remains the owner of plugin detection, active plugin state, base-plugin locks, missing masters, separator persistence and load-order mutation rules.
+- T3 uses `plugins.listPersisted`, which reads durable profile state and base-plugin rules without live mod/plugin discovery. After exact mod reconciliation, T4 calls `plugins.list` to discover offline additions/removals and refresh source/master diagnostics. A failed T4 refresh leaves the committed persisted rows usable.
 - The renderer intersects bridge capability availability with the selected build's game capabilities. Unsupported games show an explanatory capability state instead of an empty broken panel.
 
 ## Phase 8 Downloads, NXM And Archive Install MVP
@@ -118,16 +121,17 @@ Phase 11 extends `fluxora.bridge.v1` to WPF-parity settings and MO2 transfer:
 
 Phase 12 extends `fluxora.bridge.v1` to WPF-parity build path settings and FluxPack workflows:
 
-- Native host routes `buildPaths.get`, `buildPaths.save`, `fluxPack.export`, `fluxPack.inspect` and `fluxPack.install` to existing C++ C ABI functions backed by `BuildPathSettingsService`, `ExecutableService`, `FluxPackService` and `ProjectService`.
+- Native host routes `buildPaths.get`, `buildPaths.save`, `fluxPack.export`, `fluxPack.inspect`, `fluxPack.planInstall` and `fluxPack.install` to C++ C ABI functions backed by `BuildPathSettingsService`, `ExecutableService`, `FluxPackService`, `DownloadService`, `NexusModsAuthService` and `ProjectService`.
 - New exports use the FluxPack v3 content-store container. Every mod/config path remains a distinct manifest entry, while its bytes reference SHA-256-addressed chunks that are stored once and materialized as ordinary independent files during install. Large files use normalized content-defined chunking (`fastcdc`, 64 KiB minimum, 256 KiB average, 1 MiB maximum), so local insertions can reuse the unchanged chunk sequence instead of duplicating the rest of the file.
 - Each unique chunk uses adaptive Zstandard compression. `fluxPack.export.params.compressionMode` is `fast`, `optimal` (default), or `smallest`, mapped by the C++ core to levels 1, 6, and 19. DDS/BSA/BA2/ZIP/7z/OGG/audio/video inputs are probed first and remain raw when the sample does not save at least one percent; every other chunk also falls back to raw storage when compression would not produce a meaningful gain. Small INI/JSON/XML files are grouped by extension into shared content chunks, exact duplicates share a slice, and a trained type dictionary is stored/applied only when total stored bytes decrease.
 - Inspect/install remain backward-compatible with FluxPack v2 containers and bounded legacy v1 JSON recipes; oversized legacy manifests fail with an actionable re-export error instead of exhausting memory. Inspect summaries expose compression mode, logical/unique/stored/deduplicated bytes, chunk count, and dictionary count.
-- `fluxPack.install` accepts optional `existingConfigPath`. When it is present, C++ verifies the game template and updates that exact build instead of allocating a suffixed project. Source mods are reused only when the target folder and strong remote file identity match; enabled state is synchronized without reinstalling. A matching archive already in the build downloads directory is reused only after file-name, size and SHA-256 validation. Embedded mod/config files are reused only after size and SHA-256 validation; changed payloads are validated in a temporary file and promoted atomically, while changed source mods use the existing replace-install path. Unreferenced user mods/files are preserved conservatively instead of being pruned without prior FluxPack ownership state.
-- Delta results expose `updatedExistingProject`, `reusedSourceCount`, `reusedDownloadCount`, `reusedFileCount` and `materializedFileCount`. The legacy `fluxora_install_fluxpack` ABI remains a create-new wrapper; `fluxora_install_fluxpack_with_target` carries the optional existing config through the native host.
+- `fluxPack.install` accepts optional `existingConfigPath`. When it is present, C++ verifies the game template and updates that exact build instead of allocating a suffixed project. Source mods are reused only when the target folder and strong remote file identity match; enabled state is synchronized without reinstalling. A matching archive already in the build downloads directory is reused only after file-name, size and SHA-256 validation. Embedded mod/config files are reused only after size and SHA-256 validation; changed payloads are validated in a temporary file and promoted atomically, while changed source mods use the existing replace-install path. Unreferenced user mods/files are preserved conservatively instead of being pruned without prior FluxPack ownership state. Create-new installs allocate a unique suffixed project name when the recipe name already exists.
+- `fluxPack.planInstall` returns a source-level acquisition plan before mutation. Each source is classified as `installed`, `cached-download`, `source-build`, `automatic`, `manual` or `unavailable`. A linked Nexus account is automatic only when the native verified account state is Premium; free accounts receive the Nexus file page and the renderer collects a user-selected archive. Manual archive source ids, paths, file sizes and SHA-256 hashes are validated by C++ before a project is created or updated.
+- Delta results expose `updatedExistingProject`, `reusedSourceCount`, `reusedDownloadCount`, `reusedFileCount` and `materializedFileCount`. The legacy `fluxora_install_fluxpack` ABI remains a create-new wrapper; `fluxora_install_fluxpack_with_target` remains compatible, while additive `fluxora_install_fluxpack_with_options_and_progress` carries the optional existing config and validated manual source archives through the native host.
 - Native host now calls `fluxora_delete_project_with_progress` for `projects.delete` and emits `operations.progress` events for project deletion.
-- Native host emits `operations.progress` events during FluxPack export and install. Export reports bounded, monotonic phases for build analysis, file inventory, streamed payload copy, compact description writing and atomic finalization; install keeps provider/source progress. The final response still remains authoritative.
+- Native host emits `operations.progress` events during FluxPack export and install. Export reports bounded, monotonic phases for build analysis, file inventory, streamed payload copy, compact description writing and atomic finalization; install keeps provider/source progress. The renderer presents provider sectors proportionally by source count, uses Nexus orange for Nexus sectors and assigns stable fallback colors to future providers. The final response still remains authoritative.
 - Tauri Rust shell/facade expose typed `window.fluxora.buildPaths.*`, `window.fluxora.fluxPack.*` and `.fluxpack` native open/save dialogs only; renderer still has no Node.js, filesystem, shell, native module or raw command access.
-- Renderer owns the Build Paths inspector, primary executable form state, native browse/save/open dialog orchestration, FluxPack summary display and operation overlays. C++ core remains the owner of path persistence, executable persistence, FluxPack recipe creation, package inspection, package install, provider/source handling and filesystem mutation.
+- Renderer owns the Build Paths inspector, primary executable form state, native browse/save/open dialog orchestration, FluxPack summary display, same-name choice dialog, manual-download queue and operation overlays. C++ core remains the owner of path persistence, executable persistence, FluxPack recipe creation, package inspection, acquisition planning, Premium eligibility, package install, provider/source handling, archive validation and filesystem mutation.
 - Generic operation cancellation remains capability-reported as unsupported until each operation has a cancellable C++ path. Build creation/deletion and FluxPack overlays show close/cancel rules honestly: close is disabled while running, and cancel is disabled unless the bridge capability reports support.
 
 ## NGIO Grass Cache Generation
@@ -171,6 +175,9 @@ Implemented MVP methods:
 - `grassCache.generate`
 - `mods.listInstalled`
 - `mods.getOrder`
+- `mods.getWorkspace`
+- `mods.getPersistedWorkspace`
+- `mods.invalidateFileCaches`
 - `mods.createSeparator`
 - `mods.deleteSeparator`
 - `mods.moveOrderItem`
@@ -714,7 +721,8 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 
 - `fluxPack.export` with `{ configPath, outputPath, includeGeneratedAssets, compressionMode: "fast" | "optimal" | "smallest" }`
 - `fluxPack.inspect`
-- `fluxPack.install` with `{ fluxPackPath, installRootDirectory, existingConfigPath? }`
+- `fluxPack.planInstall` with `{ fluxPackPath, existingConfigPath? }`
+- `fluxPack.install` with `{ fluxPackPath, installRootDirectory, existingConfigPath?, manualSourceArchives?: [{ sourceId, path }] }`
 
 ### MO2 transfer
 
@@ -835,7 +843,7 @@ The native host initially maps bridge methods to the existing exported functions
 - Operation context/log correlation: `fluxora_set_operation_context`.
 - Buffer handling: `fluxora_get_last_required_buffer_length`, `fluxora_copy_last_output`.
 - Templates/projects/build paths: `fluxora_get_game_templates`, `fluxora_resolve_template`, `fluxora_preview_project_directory`, `fluxora_create_project`, `fluxora_open_project_config`, `fluxora_list_project_configs`, `fluxora_rename_project`, `fluxora_delete_project`, `fluxora_delete_project_with_progress`, `fluxora_get_build_path_settings`, `fluxora_save_build_path_settings`.
-- FluxPack and transfer: `fluxora_export_fluxpack`, `fluxora_export_fluxpack_with_progress` (both ABI-compatible and defaulting to optimal compression), `fluxora_export_fluxpack_with_options_and_progress`, `fluxora_inspect_fluxpack`, `fluxora_install_fluxpack`, `fluxora_install_fluxpack_with_target`, `fluxora_analyze_mod_organizer_instance`, `fluxora_import_mod_organizer_instance`.
+- FluxPack and transfer: `fluxora_export_fluxpack`, `fluxora_export_fluxpack_with_progress` (both ABI-compatible and defaulting to optimal compression), `fluxora_export_fluxpack_with_options_and_progress`, `fluxora_inspect_fluxpack`, `fluxora_plan_fluxpack_install`, `fluxora_install_fluxpack`, `fluxora_install_fluxpack_with_target`, `fluxora_install_fluxpack_with_options_and_progress`, `fluxora_analyze_mod_organizer_instance`, `fluxora_import_mod_organizer_instance`.
 - Settings/executables/Nexus/NXM: `fluxora_get_app_language`, `fluxora_set_app_language`, `fluxora_get_app_theme`, `fluxora_set_app_theme`, `fluxora_get_game_executables`, `fluxora_save_game_executables`, `fluxora_launch_game_executable`, `fluxora_get_executable_icon`, `fluxora_get_nexusmods_auth_status`, `fluxora_get_api_limit_status`, `fluxora_connect_nexusmods`, `fluxora_connect_nexusmods_with_api_key`, `fluxora_disconnect_nexusmods`, `fluxora_register_nxm_protocol`.
 - Mods/profiles/plugins/downloads/install: every exported `fluxora_get_*`, `fluxora_create_*`, `fluxora_delete_*`, `fluxora_move_*`, `fluxora_set_*`, `fluxora_capture_nxm_links`, `fluxora_import_*`, `fluxora_install_*`, `fluxora_analyze_*` function listed in `FluxoraCoreApi.hpp`, plus `fluxora_generate_ngio_grass_cache` for Skyrim NGIO cache generation.
 

@@ -136,6 +136,22 @@ const project = (capabilities: FluxoraProject['gameCapabilities']): FluxoraProje
 });
 
 describe('plugin workspace state', () => {
+  it('keeps a committed snapshot usable when background reconciliation fails', () => {
+    const ready = pluginWorkspaceReducer(emptyPluginWorkspaceState(), {
+      type: 'items-loaded',
+      items
+    });
+    const failed = pluginWorkspaceReducer(ready, {
+      type: 'load-failed',
+      message: 'Exact discovery failed',
+      silent: true
+    });
+
+    expect(failed.items).toEqual(items);
+    expect(failed.loadState).toBe('ready');
+    expect(failed.errorMessage).toBe('Exact discovery failed');
+  });
+
   it('filters plugin order rows by plugin, separator and source terms', () => {
     expect(filterPluginOrderItems(items, 'skyui')).toEqual([items[2]]);
     expect(filterPluginOrderItems(items, 'late')).toEqual([items[1]]);

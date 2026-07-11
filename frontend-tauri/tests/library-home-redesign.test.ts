@@ -59,8 +59,10 @@ const renderLibrary = (
       catalogPath: 'D:\\Fluxora\\Configs',
       catalogState: 'ready',
       filteredProjects: projects,
+      isInstallFluxPackDisabled: false,
       isNewBuildDisabled: false,
       isProjectInteractionDisabled: false,
+      onInstallFluxPack: noop,
       onNewBuild: noop,
       onOpenProject: noop,
       onOpenProjectDirectory: noop,
@@ -85,6 +87,8 @@ describe('library home redesign', () => {
     expect(markup).toContain('Library');
     expect(markup).toContain('2 builds');
     expect(markup).toContain('Search builds');
+    expect(markup).toContain('Установить');
+    expect(markup).toContain('aria-label="Установить сборку из FluxPack"');
     expect(markup).toContain('Skyrim graphics overhaul');
     expect(markup).toContain('248 mods · 32.4 GB');
     expect(markup).toContain('aria-label="Open Skyrim graphics overhaul"');

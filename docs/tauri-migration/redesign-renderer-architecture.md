@@ -27,15 +27,15 @@ Graphify query for the broad redesign split returned backend-heavy noise around 
 | Area | Current home | Current responsibility |
 | --- | --- | --- |
 | App shell/titlebar | `App.tsx` `renderTitlebar` | Frameless chrome, drag region and `window.fluxora.windowControls` calls. |
-| Library/home/catalog | `features/library/LibraryHome.tsx`, `features/library/projectLibraryStats.ts`, `App.tsx`, `project-catalog-state.ts`, `services/project-catalog-service.ts` | Project list/search, create/open/rename/delete, template filtering, catalog loading and compact project metrics. |
-| Build workspace | `App.tsx`, `features/build/BuildDetailHeader.tsx`, `features/build/BuildPathsInspector.tsx`, `build-workspace-state.ts` | Build header actions, build path drawer, FluxPack summary/actions and workspace orchestration. |
+| Library/home/catalog | `features/library/LibraryHome.tsx`, `features/library/projectLibraryStats.ts`, `App.tsx`, `project-catalog-state.ts`, `services/project-catalog-service.ts` | Project list/search, create/open/rename/delete, visible FluxPack install entry, template filtering, catalog loading and compact project metrics. |
+| Build workspace | `App.tsx`, `features/build/BuildDetailHeader.tsx`, `features/build/BuildPathsInspector.tsx`, `features/fluxpack/*`, `build-workspace-state.ts` | Build header actions, build path drawer, FluxPack inspect/plan/conflict/manual-download orchestration and summary state. |
 | Mods table/tree | `App.tsx`, `mod-workspace-state.ts`, `ui-performance.ts` | Mod list/order/search, row menus, virtual windowing, file tree expansion and bridge calls. |
 | Plugins/load order | `App.tsx`, `plugin-workspace-state.ts`, `ui-performance.ts` | Plugin list/order/search, row menus, virtual windowing, selected-plugin details and capability state. |
 | Downloads/install entry | `App.tsx`, `download-workspace-state.ts` | Download list/search, row context menu, import/archive/NXM actions and selected-download details. |
 | Install/FOMOD/details | `features/install/InstallDialog.tsx`, `App.tsx`, `install-workspace-state.ts` | Dialog state, analyze/install flow, FOMOD selections, placement overrides and virtualized details tree. |
 | Profiles/executables | `App.tsx`, `profiles-executables-workspace-state.ts` | Profile CRUD, executable list/edit/icon/launch state and capability display. |
 | Settings/transfer | `features/settings/SettingsWorkspace.tsx`, `App.tsx`, `settings-workspace-state.ts`, `TransferSettingsPanel.tsx`, `TransferMo2Page.tsx`, `mo2-transfer-request.ts` | Settings nav, Nexus/language/transfer forms, MO2 handoff page and transfer progress/cancel state. |
-| Operation overlays/dialogs | `features/operations/OperationOverlay.tsx`, `App.tsx`, `services/renderer-operation-service.ts` | Operation id creation, progress subscription, cancel affordance and build/FluxPack overlays. |
+| Operation overlays/dialogs | `features/operations/OperationOverlay.tsx`, `features/fluxpack/*`, `App.tsx`, `services/renderer-operation-service.ts` | Operation id creation, progress subscription, provider-segmented FluxPack progress, conflict/manual-download dialogs, cancel affordance and build overlays. |
 
 The redesign migration should reduce `App.tsx` toward app startup, route selection, global bridge/security state, selected build context and top-level composition only.
 
