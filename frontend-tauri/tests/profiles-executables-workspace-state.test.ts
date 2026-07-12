@@ -119,6 +119,42 @@ describe('profiles and executables workspace state', () => {
     expect(selectedExecutable(executables, 'missing')?.id).toBe('skyrimse');
   });
 
+  it('keeps committed profile and executable rows visible during silent refreshes', () => {
+    const loadedProfiles = profilesWorkspaceReducer(emptyProfilesWorkspaceState(), {
+      type: 'items-loaded',
+      items: ['Default', 'Testing'],
+      defaultProfileName: 'Default'
+    });
+    const refreshingProfiles = profilesWorkspaceReducer(loadedProfiles, {
+      type: 'load-started',
+      silent: true
+    });
+    const failedProfiles = profilesWorkspaceReducer(refreshingProfiles, {
+      type: 'load-failed',
+      message: 'Bridge timed out',
+      silent: true
+    });
+
+    const loadedExecutables = executablesWorkspaceReducer(emptyExecutablesWorkspaceState(), {
+      type: 'items-loaded',
+      items: executables
+    });
+    const refreshingExecutables = executablesWorkspaceReducer(loadedExecutables, {
+      type: 'load-started',
+      silent: true
+    });
+    const failedExecutables = executablesWorkspaceReducer(refreshingExecutables, {
+      type: 'load-failed',
+      message: 'Bridge timed out',
+      silent: true
+    });
+
+    expect(failedProfiles.items).toEqual(['Default', 'Testing']);
+    expect(failedProfiles.loadState).toBe('ready');
+    expect(failedExecutables.items).toEqual(executables);
+    expect(failedExecutables.loadState).toBe('ready');
+  });
+
   it('describes bridge capabilities separately for management and launch', () => {
     expect(profilesCapabilityView(project, readyBridge).bridgeAvailable).toBe(true);
     const executableCapabilities = executablesCapabilityView(project, readyBridge);

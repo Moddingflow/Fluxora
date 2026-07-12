@@ -3,6 +3,7 @@
 #include "FluxoraCore/Services/AppSettingsService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
+#include "FluxoraCore/Services/DownloadTransferLimiter.hpp"
 #include "FluxoraCore/Services/EffectiveFileTreeService.hpp"
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
 #include "FluxoraCore/Services/ExecutableService.hpp"
@@ -31,7 +32,12 @@ namespace fluxora
           plugins_(std::make_unique<PluginService>(*logger_, *buildPathSettings_)),
           profileOrder_(std::make_unique<ProfileOrderService>(*logger_, *mods_, *buildPathSettings_)),
           profiles_(std::make_unique<ProfileService>(*logger_, *buildPathSettings_)),
-          downloads_(std::make_unique<DownloadService>(*logger_, *settings_, *buildPathSettings_)),
+          downloadTransferLimiter_(std::make_unique<DownloadTransferLimiter>()),
+          downloads_(std::make_unique<DownloadService>(
+              *logger_,
+              *settings_,
+              *buildPathSettings_,
+              *downloadTransferLimiter_)),
           effectiveFileTree_(std::make_unique<EffectiveFileTreeService>(*logger_, *profileOrder_, *buildPathSettings_)),
           executableIcons_(std::make_unique<ExecutableIconService>(*logger_)),
           executables_(std::make_unique<ExecutableService>(*logger_, *executableIcons_, *buildPathSettings_)),

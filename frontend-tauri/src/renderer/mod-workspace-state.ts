@@ -1,4 +1,6 @@
 import type {
+  FluxoraInstalledMod,
+  FluxoraInstalledModSummary,
   FluxoraModFileTreeEntry,
   FluxoraModOrderItem
 } from '../shared/fluxora-api';
@@ -22,6 +24,7 @@ import {
   selectOrderItemRange,
   toggleOrderItemSelection
 } from './order-selection-state';
+import type { InstallModOrderPlacement } from './install-workspace-state';
 
 export type ModWorkspaceLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -634,6 +637,115 @@ export const reorderModOrderItems = (
   targetIndex: number
 ): FluxoraModOrderItem[] | null =>
   reorderOrderItems(items, orderId, targetIndex, { separatorMoveMode: 'single' });
+
+export interface OptimisticModInstallState {
+  installedMods: FluxoraInstalledMod[];
+  installedOrderId: string;
+  items: FluxoraModOrderItem[];
+}
+
+const installedModMatchesSummary = (
+  mod: Pick<FluxoraInstalledMod, 'id' | 'name'>,
+  installed: FluxoraInstalledModSummary
+): boolean =>
+  normalizeModLookupValue(mod.id) === normalizeModLookupValue(installed.id) ||
+  mod.name.trim().toLocaleLowerCase() === installed.name.trim().toLocaleLowerCase();
+
+const optimisticInstalledMod = (
+  installed: FluxoraInstalledModSummary,
+  existing?: FluxoraInstalledMod
+): FluxoraInstalledMod => ({
+  id: installed.id,
+  name: installed.name,
+  version: installed.version,
+  installedAt: existing?.installedAt,
+  updatedAt: existing?.updatedAt,
+  latestVersion: existing?.latestVersion ?? '',
+  lastCheckedAt: existing?.lastCheckedAt ?? '',
+  updateStatus: existing?.updateStatus ?? '',
+  conflictStatus: existing?.conflictStatus ?? '',
+  fileCount: existing?.fileCount ?? -1,
+  conflictingFileCount: existing?.conflictingFileCount ?? 0,
+  overwrittenFileCount: existing?.overwrittenFileCount ?? 0,
+  overwritingFileCount: existing?.overwritingFileCount ?? 0,
+  isEnabled: installed.isEnabled,
+  canCheckUpdates: existing?.canCheckUpdates ?? false,
+  hasUpdate: existing?.hasUpdate ?? false,
+  sourceIsNexus: existing?.sourceIsNexus ?? false,
+  sourceIsModdingFlow: existing?.sourceIsModdingFlow ?? false,
+  sourceProvider: existing?.sourceProvider,
+  sourceGameDomain: existing?.sourceGameDomain,
+  sourceModId: existing?.sourceModId,
+  sourceFileId: existing?.sourceFileId,
+  sourceUrl: existing?.sourceUrl,
+  isLocal: existing?.isLocal ?? true,
+  isTranslation: existing?.isTranslation ?? false,
+  isPatch: existing?.isPatch ?? false,
+  overwritesModIds: existing?.overwritesModIds ?? [],
+  overwrittenByModIds: existing?.overwrittenByModIds ?? []
+});
+
+export const optimisticModInstallState = (
+  installedMods: FluxoraInstalledMod[],
+  items: FluxoraModOrderItem[],
+  installed: FluxoraInstalledModSummary,
+  placement?: InstallModOrderPlacement | null
+): OptimisticModInstallState => {
+  const existingInstalled = installedMods.find((mod) => installedModMatchesSummary(mod, installed));
+  const nextInstalled = optimisticInstalledMod(installed, existingInstalled);
+  const nextInstalledMods = existingInstalled
+    ? installedMods.map((mod) => (installedModMatchesSummary(mod, installed) ? nextInstalled : mod))
+    : [...installedMods, nextInstalled];
+
+  const existingOrderItem = items.find(
+    (item) => item.isMod && installedModMatchesSummary(item, installed)
+  );
+  const installedOrderId = existingOrderItem?.orderId ?? `pending-install:${installed.operationId}`;
+  const nextOrderItem: FluxoraModOrderItem = existingOrderItem
+    ? {
+        ...existingOrderItem,
+        ...nextInstalled,
+        orderId: existingOrderItem.orderId,
+        kind: existingOrderItem.kind,
+        order: existingOrderItem.order,
+        isSeparator: false,
+        isMod: true,
+        modUuid: existingOrderItem.modUuid,
+        separatorTitle: ''
+      }
+    : {
+        ...nextInstalled,
+        orderId: installedOrderId,
+        kind: 'mod',
+        order: items.length,
+        isSeparator: false,
+        isMod: true,
+        modUuid: '',
+        separatorTitle: ''
+      };
+  let nextItems = existingOrderItem
+    ? items.map((item) => (item.orderId === existingOrderItem.orderId ? nextOrderItem : item))
+    : [...items, nextOrderItem];
+
+  if (placement && placement.targetOrderId !== installedOrderId) {
+    const targetIndex = targetIndexForDrop(
+      nextItems,
+      installedOrderId,
+      placement.targetOrderId,
+      placement.placement
+    );
+    if (targetIndex !== null) {
+      nextItems = reorderModOrderItems(nextItems, installedOrderId, targetIndex) ?? nextItems;
+    }
+  }
+
+  nextItems = nextItems.map((item, index) => ({ ...item, order: index }));
+  return {
+    installedMods: nextInstalledMods,
+    installedOrderId,
+    items: nextItems
+  };
+};
 
 export const modStatusText = (item: FluxoraModOrderItem | null): string => {
   if (!item) {

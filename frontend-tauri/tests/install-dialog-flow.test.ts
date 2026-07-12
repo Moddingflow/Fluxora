@@ -27,7 +27,7 @@ describe('install dialog flow', () => {
       app.match(/const installDownload = async[\s\S]*?\n  const deleteDownload = async/)?.[0] ??
       '';
 
-    expect(installDownload).toContain('await startInstallFlow(source)');
+    expect(installDownload).toContain('await startInstallFlow(source, placement)');
     expect(installDownload).toContain("kind: 'download'");
     expect(installDownload).not.toContain('window.fluxora.downloads.install');
     expect(installDownload).not.toContain("phase: 'installing'");
@@ -92,6 +92,9 @@ describe('install dialog flow', () => {
     );
 
     expect(startInstallFlow).toContain("phase: 'options'");
+    expect(startInstallFlow).toContain(
+      'defaultInstallModName(source.displayName, source.sourcePath)'
+    );
     expect(startInstallFlow).toContain('const analysisPromise = (async (): Promise<InstallAnalysisResult>');
     expect(startInstallFlow).toContain('watchInstallAnalysis(operationId, analysisPromise)');
     expect(startInstallFlow).not.toContain("phase: 'analyzing'");
@@ -175,5 +178,20 @@ describe('install dialog flow', () => {
     expect(submitInstallOptions.indexOf('resolveExistingModNameForInstall')).toBeLessThan(
       submitInstallOptions.indexOf("phase: 'installing'")
     );
+  });
+
+  it('commits the installed row immediately and reconciles native state in the background', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const submitInstallOptions = sliceBetween(
+      app,
+      'const submitInstallOptions = async',
+      '  useEffect(() => {'
+    );
+
+    expect(submitInstallOptions).toContain('installSubmitInFlightRef.current');
+    expect(submitInstallOptions).toContain('applyOptimisticInstalledMod(');
+    expect(submitInstallOptions).toContain('void reconcileInstalledModAfterInstall(');
+    expect(submitInstallOptions).not.toContain('await loadModsWorkspace(selectedProject)');
+    expect(submitInstallOptions).not.toContain('await loadPluginsWorkspace(selectedProject)');
   });
 });

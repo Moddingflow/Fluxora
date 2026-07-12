@@ -514,7 +514,7 @@ namespace fluxora::tests
               project_(temp_.path() / L"Тестовая сборка Ä Skyrim"),
               settings_(logger_),
               pathSettings_(logger_),
-              downloads_(logger_, settings_, pathSettings_),
+              downloads_(logger_, settings_, pathSettings_, transferLimiter_),
               mods_(logger_, settings_, pathSettings_),
               profiles_(logger_, pathSettings_),
               profileOrder_(logger_, mods_, pathSettings_)
@@ -605,6 +605,7 @@ namespace fluxora::tests
         std::filesystem::path project_;
         AppSettingsService settings_;
         BuildPathSettingsService pathSettings_;
+        DownloadTransferLimiter transferLimiter_;
         DownloadService downloads_;
         ModService mods_;
         ProfileService profiles_;

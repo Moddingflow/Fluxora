@@ -14,6 +14,7 @@ import {
   modItemConflictHighlight,
   modLatestVersionText,
   modOrderItemMatchesLookup,
+  optimisticModInstallState,
   modStatusText,
   modOverwriteView,
   modRowConflictHighlight,
@@ -30,6 +31,7 @@ import {
   visibleModOrderItems
 } from '../src/renderer/mod-workspace-state';
 import type {
+  FluxoraInstalledModSummary,
   FluxoraModFileTreeEntry,
   FluxoraModOrderItem
 } from '../src/shared/fluxora-api';
@@ -349,6 +351,40 @@ describe('mod workspace state', () => {
       'mod_smoothcam'
     ]);
     expect(restored.selectedOrderId).toBe('mod_skyui');
+  });
+
+  it('shows a completed install immediately at its drag and drop position', () => {
+    const installed: FluxoraInstalledModSummary = {
+      id: 'C:\\Builds\\Skyrim\\mods\\Cabbage CS Preset',
+      name: 'Cabbage CS Preset',
+      version: '1.4.0',
+      isEnabled: true,
+      operationId: 'op_install_cabbage'
+    };
+
+    const optimistic = optimisticModInstallState(
+      items.filter((item) => item.isMod),
+      items,
+      installed,
+      {
+        targetOrderId: 'mod_smoothcam',
+        placement: 'before'
+      }
+    );
+
+    expect(optimistic.items.map((item) => item.orderId)).toEqual([
+      'sep_visuals',
+      'mod_skyui',
+      'pending-install:op_install_cabbage',
+      'mod_smoothcam'
+    ]);
+    expect(optimistic.installedMods.at(-1)).toMatchObject({
+      id: installed.id,
+      name: installed.name,
+      version: installed.version,
+      isEnabled: true
+    });
+    expect(optimistic.installedOrderId).toBe('pending-install:op_install_cabbage');
   });
 
   it('applies optimistic enabled state without changing the current row context', () => {

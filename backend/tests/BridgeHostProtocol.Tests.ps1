@@ -92,6 +92,10 @@ function Invoke-BridgeHostRequest {
         $startInfo.RedirectStandardInput = $true
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
+        $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $startInfo.StandardInputEncoding = $utf8
+        $startInfo.StandardOutputEncoding = $utf8
+        $startInfo.StandardErrorEncoding = $utf8
         $startInfo.Environment['FLUXORA_LOG_DIR'] = $testRoot
         $startInfo.Environment['FLUXORA_OPERATION_CANCEL_DIR'] = (Join-Path $testRoot 'operation-cancel')
         if ($null -ne $EnvironmentVariables) {

@@ -19,6 +19,7 @@ add_executable(FluxoraCoreTests
     BuildPathSettingsServiceTests.cpp
     ContentLayoutServiceTests.cpp
     DownloadServiceTests.cpp
+    DownloadTransferLimiterTests.cpp
     EffectiveFileTreeServiceTests.cpp
     ExecutableServiceTests.cpp
     GameDetectionHealthServiceTests.cpp
@@ -61,6 +62,7 @@ add_executable(FluxoraCoreTests
     ../src/GameSupport/ProjectFingerprint.cpp
     ../src/GameSupport/SkyrimSpecialEditionSupport.cpp
     ../src/Services/DownloadService.cpp
+    ../src/Services/DownloadTransferLimiter.cpp
     ../src/Services/EffectiveFileTreeService.cpp
     ../src/Services/ExecutableIconService.cpp
     ../src/Services/ExecutableService.cpp

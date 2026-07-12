@@ -11,14 +11,16 @@ const readText = (...segments: string[]): string =>
   fs.readFileSync(path.join(repoRoot, ...segments), 'utf8');
 
 describe('build refresh loading', () => {
-  it('renders F5 refresh through the full loading splash', () => {
+  it('keeps F5 refresh in the background without replacing committed workspace rows', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const refreshFlow =
+      app.match(/const refreshBuildWorkspace = async[\s\S]*?refreshCurrentViewRef\.current = refreshCurrentView;/)?.[0] ??
+      '';
 
-    expect(app).toContain('interfaceRefreshMessages');
-    expect(app).toContain('setInterfaceRefreshSplash({');
     expect(app).toContain("createRendererOperationId('renderer_refresh')");
-    expect(app).toContain('title="Обновляем интерфейс"');
-    expect(app).toContain('renderInterfaceRefreshSplash()');
+    expect(refreshFlow).toContain('showLoading: false');
+    expect(refreshFlow).not.toContain('setInterfaceRefreshSplash');
+    expect(app).not.toContain('renderInterfaceRefreshSplash');
   });
 
   it('keeps mods and plugins table-shaped while initial rows are loading', () => {
@@ -37,6 +39,23 @@ describe('build refresh loading', () => {
     expect(styles).toContain('.plugin-row--skeleton {');
     expect(styles).toContain('min-height: 48px;');
     expect(styles).toContain('.workspace-skeleton');
+  });
+
+  it('uses table-shaped first paint and keeps generic loading strips out of workspace refreshes', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
+
+    expect(app).toContain(
+      "profilesWorkspace.loadState === 'loading' && profilesWorkspace.items.length === 0"
+    );
+    expect(app).toContain(
+      "executablesWorkspace.loadState === 'loading' && executablesWorkspace.items.length === 0"
+    );
+    expect(app).toContain('profile-row--skeleton');
+    expect(app).toContain('executable-row--skeleton');
+    expect(styles).toContain('.profile-row--skeleton,');
+    expect(styles).toContain('.executable-row--skeleton {');
+    expect(app).toContain('const showBusy = options.showBusy ?? false;');
   });
 
   it('refreshes mods and plugins from filesystem watcher events without loading chrome', () => {

@@ -1,12 +1,14 @@
 #pragma once
 
 #include "FluxoraCore/Services/ContentLayoutService.hpp"
+#include "FluxoraCore/Services/DownloadTransferLimiter.hpp"
 #include "FluxoraCore/Services/FomodInstallerService.hpp"
 #include "FluxoraCore/Services/IService.hpp"
 
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -61,7 +63,8 @@ namespace fluxora
         DownloadService(
             Logger& logger,
             AppSettingsService& settings,
-            const BuildPathSettingsService& pathSettings) noexcept;
+            const BuildPathSettingsService& pathSettings,
+            DownloadTransferLimiter& transferLimiter) noexcept;
         ~DownloadService() override;
 
         void initialize() override;
@@ -151,6 +154,13 @@ namespace fluxora
 
         [[nodiscard]] bool isInitialized() const noexcept;
 
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        void queueTransferProbeForTest(std::function<void()> transfer) const;
+        void runSynchronousTransferProbeForTest(
+            std::function<void()> beforeAcquire,
+            std::function<void()> transfer) const;
+#endif
+
     private:
         struct NxmDownloadJob
         {
@@ -159,23 +169,30 @@ namespace fluxora
             std::wstring link;
             std::wstring nexusModName;
             std::string operationId;
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+            std::function<void()> transferProbe;
+#endif
         };
 
         [[nodiscard]] std::filesystem::path inboundDirectory() const;
         void processQueuedNxmDownload(const NxmDownloadJob& job) const;
-        void runNxmDownloadWorker() const;
-        void stopNxmDownloadWorker() noexcept;
+        void enqueueNxmDownloadJob(NxmDownloadJob job) const;
+        void runNxmDownloadWorker() const noexcept;
+        [[nodiscard]] bool stopNxmDownloadWorker() noexcept;
 
         Logger& logger_;
         AppSettingsService& settings_;
         const BuildPathSettingsService& pathSettings_;
+        mutable std::mutex nxmShutdownMutex_;
         mutable std::mutex nxmQueueMutex_;
         mutable std::condition_variable nxmQueueCv_;
         mutable std::deque<NxmDownloadJob> nxmQueue_;
-        mutable std::thread nxmWorker_;
-        mutable std::filesystem::path currentNxmDownloadPath_;
+        mutable std::vector<std::thread> nxmWorkers_;
+        mutable std::vector<std::filesystem::path> currentNxmDownloadPaths_;
+        DownloadTransferLimiter& transferLimiter_;
         mutable bool nxmWorkerStopping_{false};
         mutable bool nxmWorkerStarted_{false};
+        mutable bool nxmAcceptingJobs_{false};
         bool initialized_{false};
     };
 }

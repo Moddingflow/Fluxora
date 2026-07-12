@@ -40,4 +40,15 @@ describe('downloads drag and drop affordance', () => {
     expect(tauriApi).toContain('getCurrentWebview().onDragDropEvent');
     expect(tauriApi).toContain('callback(toFluxoraFileDropEvent(event.payload))');
   });
+
+  it('installs a ready download when its row is dropped at a mod-order position', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+
+    expect(app).toContain("const downloadInstallDragType = 'application/x-fluxora-download-id'");
+    expect(app).toContain('handleDownloadInstallDragStart(event, entry)');
+    expect(app).toContain('handleModInstallDragOver(event, item)');
+    expect(app).toContain('handleModInstallDrop(event, item)');
+    expect(app).toContain('await installDownload(entry, placement)');
+    expect(app).toContain('modOrderPlacement: placement');
+  });
 });

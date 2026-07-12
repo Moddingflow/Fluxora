@@ -95,6 +95,9 @@ const trimTrailingSeparators = (value: string): string =>
 const stripArchiveExtension = (value: string): string =>
   value.replace(archiveExtensionPattern, '').trim();
 
+const nexusCdnSuffixPattern =
+  /^(.+?)[\s._-]+\d{4,9}[\s._-]+\d+[\s._-]+\d{4}-\d{2}-\d{2}T\d{2}[-:]\d{2}(?:[-:]\d{2})?Z[\s._-]+[a-z0-9]{6,}$/i;
+
 const looksLikeNexusNumericSuffix = (tokens: string[]): boolean => {
   if (tokens.length < 3) {
     return false;
@@ -109,6 +112,12 @@ export const downloadDisplayName = (rawName: string): string => {
   const stem = stripArchiveExtension(rawName.trim());
   if (!stem) {
     return '';
+  }
+
+  const cdnSuffixMatch = stem.match(nexusCdnSuffixPattern);
+  const cdnCandidate = trimTrailingSeparators(cdnSuffixMatch?.[1] ?? '');
+  if (cdnCandidate && hasTextualName(cdnCandidate)) {
+    return cdnCandidate;
   }
 
   const parts = stem.split('-');
@@ -132,7 +141,7 @@ export const downloadDisplayName = (rawName: string): string => {
 };
 
 export const downloadTitle = (entry: FluxoraDownloadEntry): string =>
-  downloadDisplayName(entry.name || entry.fileName || entry.id) || 'Download';
+  downloadDisplayName(entry.fileName || entry.name || entry.id) || 'Download';
 
 export const downloadRawTitle = (entry: FluxoraDownloadEntry): string =>
   entry.fileName || entry.name || entry.localPath || entry.id || 'Download';

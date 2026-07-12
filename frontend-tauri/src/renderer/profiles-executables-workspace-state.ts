@@ -24,15 +24,15 @@ export interface ExecutablesWorkspaceState {
 }
 
 export type ProfilesWorkspaceAction =
-  | { type: 'load-started' }
-  | { type: 'load-failed'; message: string }
+  | { type: 'load-started'; silent?: boolean }
+  | { type: 'load-failed'; message: string; silent?: boolean }
   | { type: 'items-loaded'; items: string[]; defaultProfileName: string }
   | { type: 'search-changed'; searchText: string }
   | { type: 'selected'; name: string | null };
 
 export type ExecutablesWorkspaceAction =
-  | { type: 'load-started' }
-  | { type: 'load-failed'; message: string }
+  | { type: 'load-started'; silent?: boolean }
+  | { type: 'load-failed'; message: string; silent?: boolean }
   | { type: 'items-loaded'; items: FluxoraExecutable[] }
   | { type: 'search-changed'; searchText: string }
   | { type: 'selected'; id: string | null };
@@ -243,13 +243,13 @@ export const profilesWorkspaceReducer = (
     case 'load-started':
       return {
         ...state,
-        loadState: 'loading',
+        loadState: action.silent ? state.loadState : 'loading',
         errorMessage: null
       };
     case 'load-failed':
       return {
         ...state,
-        loadState: 'error',
+        loadState: action.silent ? state.loadState : 'error',
         errorMessage: action.message
       };
     case 'items-loaded': {
@@ -289,13 +289,13 @@ export const executablesWorkspaceReducer = (
     case 'load-started':
       return {
         ...state,
-        loadState: 'loading',
+        loadState: action.silent ? state.loadState : 'loading',
         errorMessage: null
       };
     case 'load-failed':
       return {
         ...state,
-        loadState: 'error',
+        loadState: action.silent ? state.loadState : 'error',
         errorMessage: action.message
       };
     case 'items-loaded': {

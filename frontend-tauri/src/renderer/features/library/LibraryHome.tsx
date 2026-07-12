@@ -50,6 +50,7 @@ interface LibraryHomeProps {
 
 const hiddenStatValues = new Set(['', '-', 'Not tracked']);
 const primaryActionIcon = { size: 16, strokeWidth: 2.35 } as const;
+const libraryLoadingRows = [0, 1, 2] as const;
 
 const hasStatValue = (value: string): boolean => !hiddenStatValues.has(value.trim());
 
@@ -260,14 +261,38 @@ function LibraryProjectRows({
   renderProjectRowMenu,
   selectedProject
 }: LibraryProjectRowsProps) {
-  if (catalogState === 'loading') {
+  if (catalogState === 'loading' && projects.length === 0) {
     return (
-      <EmptyState
-        compact
-        description={catalogPath || 'Fluxora catalog'}
-        icon={<Icon name="refresh" size={18} />}
-        title="Loading builds"
-      />
+      <div
+        className="library-build-list library-build-list--loading"
+        role="list"
+        aria-label="Fluxora builds"
+        aria-busy="true"
+      >
+        <span className="sr-only" role="status">
+          Loading builds
+        </span>
+        {libraryLoadingRows.map((index) => (
+          <div
+            aria-hidden="true"
+            className="project-row project-row--library project-row--library-skeleton"
+            key={`library-build-skeleton-${index}`}
+            role="listitem"
+          >
+            <div className="library-build-row">
+              <span className="project-row__icon workspace-skeleton library-build-skeleton__icon" />
+              <span className="project-row__main library-build-skeleton__copy">
+                <span className="workspace-skeleton library-build-skeleton__title" />
+                <span className="workspace-skeleton library-build-skeleton__meta" />
+              </span>
+            </div>
+            <span className="library-build-open workspace-skeleton library-build-skeleton__button" />
+            <span className="row-actions library-build-actions">
+              <span className="workspace-skeleton library-build-skeleton__action" />
+            </span>
+          </div>
+        ))}
+      </div>
     );
   }
 

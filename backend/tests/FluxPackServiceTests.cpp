@@ -478,7 +478,8 @@ namespace fluxora::tests
         projects.initialize();
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
-        DownloadService downloadService(logger, settings, pathSettings);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
         downloadService.initialize();
         const BuildPathSettings savedPaths = pathSettings.saveForConfig(
             config,
@@ -653,7 +654,8 @@ namespace fluxora::tests
         projects.initialize();
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
-        DownloadService downloadService(logger, settings, pathSettings);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
         downloadService.initialize();
         const BuildPathSettings savedPaths = pathSettings.saveForConfig(
             config,
@@ -944,7 +946,8 @@ namespace fluxora::tests
         projects.initialize();
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
-        DownloadService downloadService(logger, settings, pathSettings);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
         downloadService.initialize();
         FluxPackService service(logger, projects, downloadService, pathSettings);
         service.initialize();
@@ -1048,7 +1051,8 @@ namespace fluxora::tests
         projects.initialize();
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
-        DownloadService downloadService(logger, settings, pathSettings);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
         downloadService.initialize();
         FluxPackService service(logger, projects, downloadService, pathSettings);
         service.initialize();
@@ -1161,7 +1165,8 @@ namespace fluxora::tests
         projects.initialize();
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
-        DownloadService downloadService(logger, settings, pathSettings);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
         downloadService.initialize();
         FluxPackService service(logger, projects, downloadService, pathSettings);
         service.initialize();
@@ -1329,7 +1334,8 @@ namespace fluxora::tests
         projects.initialize();
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
-        DownloadService downloadService(logger, settings, pathSettings);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
         downloadService.initialize();
         FluxPackService service(logger, projects, downloadService, pathSettings);
         service.initialize();
@@ -1465,7 +1471,8 @@ namespace fluxora::tests
             normalized(installRoot / L"Foundation Edition-2"));
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
-        DownloadService downloadService(logger, settings, pathSettings);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
         downloadService.initialize();
         FluxPackService service(logger, projects, downloadService, pathSettings);
         service.initialize();
@@ -1551,7 +1558,8 @@ namespace fluxora::tests
         projects.initialize();
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
-        DownloadService downloadService(logger, settings, pathSettings);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
         downloadService.initialize();
         InstanceMetadataStore::ensureInstance(project, L"skyrimse");
 
@@ -1637,7 +1645,8 @@ namespace fluxora::tests
         projects.initialize();
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
-        DownloadService downloadService(logger, settings, pathSettings);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
         downloadService.initialize();
         FluxPackService service(logger, projects, downloadService, pathSettings);
         service.initialize();
@@ -1692,7 +1701,8 @@ namespace fluxora::tests
         projects.initialize();
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
-        DownloadService downloadService(logger, settings, pathSettings);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
         downloadService.initialize();
 
         const ProjectDescriptor existing = projects.createProject(ProjectCreateRequest{
@@ -1836,7 +1846,8 @@ namespace fluxora::tests
         projects.initialize();
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
-        DownloadService downloadService(logger, settings, pathSettings);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
         downloadService.initialize();
 
         const ProjectDescriptor existing = projects.createProject(ProjectCreateRequest{
@@ -1974,7 +1985,8 @@ namespace fluxora::tests
         projects.initialize();
         BuildPathSettingsService pathSettings(logger);
         pathSettings.initialize();
-        DownloadService downloadService(logger, settings, pathSettings);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloadService(logger, settings, pathSettings, transferLimiter);
         downloadService.initialize();
 
         const ProjectDescriptor existing = projects.createProject(ProjectCreateRequest{

@@ -22,6 +22,7 @@ import {
   toggleFomodOption,
   validateInstallModName,
   type EvaluatedFomodWizard,
+  type InstallModOrderPlacement,
   type InstallSource,
   type PlacementOverrideMap
 } from '../../install-workspace-state';
@@ -52,6 +53,7 @@ export interface InstallDialogState {
   activeFomodOptionId: string | null;
   layoutPreview: FluxoraContentLayoutPreview | null;
   modName: string;
+  modOrderPlacement: InstallModOrderPlacement | null;
   existingModMode: FluxoraExistingModInstallMode;
   placementOverrides: PlacementOverrideMap;
   draggedSourcePath: string | null;

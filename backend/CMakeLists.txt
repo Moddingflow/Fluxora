@@ -147,6 +147,7 @@ add_library(FluxoraCore SHARED
     src/Services/HookService.cpp
     src/Services/ContentLayoutService.cpp
     src/Services/DownloadService.cpp
+    src/Services/DownloadTransferLimiter.cpp
     src/Services/EffectiveFileTreeService.cpp
     src/Services/ExecutableIconService.cpp
     src/Services/ExecutableService.cpp

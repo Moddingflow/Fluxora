@@ -217,6 +217,53 @@ test.beforeEach(async ({ page }) => {
         overwrittenByModIds: ['D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Unofficial Patch']
       }
     ];
+    const recordInstalledMod = (request: any, operation: any, fallbackOperationId: string) => {
+      const operationId = operation?.operationId ?? fallbackOperationId;
+      const name = String(request.modName);
+      const existing = modRows.find(
+        (item) => item.isMod && String(item.name).toLocaleLowerCase() === name.toLocaleLowerCase()
+      );
+      const id = existing?.id ?? `${skyrimProject.paths.modsDirectory}\\${name}`;
+      const version = existing?.version ?? '';
+
+      if (existing) {
+        existing.name = name;
+        existing.isEnabled = true;
+      } else {
+        modRows.push({
+          id,
+          orderId: `mod_${name.toLocaleLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}`,
+          kind: 'mod',
+          order: modRows.length,
+          isSeparator: false,
+          isMod: true,
+          modUuid: '',
+          separatorTitle: '',
+          name,
+          version,
+          latestVersion: '',
+          lastCheckedAt: '',
+          updateStatus: '',
+          conflictStatus: '',
+          fileCount: 0,
+          conflictingFileCount: 0,
+          overwrittenFileCount: 0,
+          overwritingFileCount: 0,
+          isEnabled: true,
+          canCheckUpdates: false,
+          hasUpdate: false,
+          sourceIsNexus: false,
+          sourceIsModdingFlow: false,
+          isLocal: true,
+          isTranslation: false,
+          isPatch: false,
+          overwritesModIds: [],
+          overwrittenByModIds: []
+        });
+      }
+
+      return { id, name, version, isEnabled: true, operationId };
+    };
     const pluginRows = [
       {
         id: 'Skyrim.esm',
@@ -319,7 +366,7 @@ test.beforeEach(async ({ page }) => {
       },
       {
         id: 'aetherius_archive',
-        name: 'Aetherius - A Race Overhaul-26686-2-14-1-1719514447',
+        name: 'Aetherius mod page title',
         fileName: 'Aetherius - A Race Overhaul-26686-2-14-1-1719514447.7z',
         localPath:
           'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\downloads\\Aetherius - A Race Overhaul-26686-2-14-1-1719514447.7z',
@@ -554,11 +601,11 @@ test.beforeEach(async ({ page }) => {
       archives: {
         install: async (request: any, operation: any) => {
           calls.push({ method: 'archives.install', payload: { operation, request } });
-          return { name: request.modName, operationId: operation?.operationId ?? 'op_archive_install' };
+          return recordInstalledMod(request, operation, 'op_archive_install');
         },
         installFomod: async (request: any, operation: any) => {
           calls.push({ method: 'archives.installFomod', payload: { operation, request } });
-          return { name: request.modName, operationId: operation?.operationId ?? 'op_archive_fomod' };
+          return recordInstalledMod(request, operation, 'op_archive_fomod');
         }
       },
       bridge: {
@@ -690,11 +737,11 @@ test.beforeEach(async ({ page }) => {
         },
         install: async (request: any, operation: any) => {
           calls.push({ method: 'downloads.install', payload: { operation, request } });
-          return { name: request.modName, operationId: operation?.operationId ?? 'op_download_install' };
+          return recordInstalledMod(request, operation, 'op_download_install');
         },
         installFomod: async (request: any, operation: any) => {
           calls.push({ method: 'downloads.installFomod', payload: { operation, request } });
-          return { name: request.modName, operationId: operation?.operationId ?? 'op_download_fomod' };
+          return recordInstalledMod(request, operation, 'op_download_fomod');
         },
         list: async (projectDirectory: any) => {
           await waitForDownloadsList();
@@ -1128,7 +1175,15 @@ test.beforeEach(async ({ page }) => {
             method: 'mods.moveOrderItem',
             payload: { operation, orderId, profileName, projectDirectory, targetIndex }
           });
-          return modRows;
+          const sourceIndex = modRows.findIndex((item) => item.orderId === orderId);
+          if (sourceIndex >= 0) {
+            const [moved] = modRows.splice(sourceIndex, 1);
+            modRows.splice(Math.max(0, Math.min(Number(targetIndex), modRows.length)), 0, moved);
+            modRows.forEach((item, index) => {
+              item.order = index;
+            });
+          }
+          return [...modRows];
         },
         setAllEnabled: async () => ({}),
         setEnabled: async (projectDirectory: any, modId: any, isEnabled: any, operation: any) => {
@@ -3402,6 +3457,75 @@ test('drags mod order rows with pointer placement feedback', async ({ page }) =>
     });
 });
 
+test('installs a dragged download immediately at the chosen mod position', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+
+  const source = rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ });
+  const target = page.getByRole('row', { name: /SkyUI mod/ });
+  const targetBox = await target.boundingBox();
+  expect(targetBox).not.toBeNull();
+
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  await source.dispatchEvent('dragstart', { dataTransfer });
+  await expect(source).toHaveAttribute('data-dragging', 'true');
+  await target.dispatchEvent('dragover', {
+    clientX: targetBox!.x + targetBox!.width / 2,
+    clientY: targetBox!.y + 2,
+    dataTransfer
+  });
+  await expect(target).toHaveAttribute('data-install-drop-target', 'true');
+  await expect(target).toHaveAttribute('data-drop-placement', 'before');
+  await target.dispatchEvent('drop', {
+    clientX: targetBox!.x + targetBox!.width / 2,
+    clientY: targetBox!.y + 2,
+    dataTransfer
+  });
+  await source.dispatchEvent('dragend', { dataTransfer });
+  await dataTransfer.dispose();
+
+  const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
+  await expect(installDialog).toBeVisible();
+  await expect(
+    installDialog.getByText('Aetherius - A Race Overhaul', { exact: true }).first()
+  ).toBeVisible();
+  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+
+  await expect(installDialog).toHaveCount(0);
+  const installedRow = page.getByRole('row', { name: /Aetherius - A Race Overhaul mod/ });
+  await expect(installedRow).toBeVisible();
+  await expect(page.getByText('Loading mods', { exact: true })).toHaveCount(0);
+
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        ((window as any).__fluxoraCalls as Array<{ method: string }>).filter(
+          (call) => call.method === 'downloads.install'
+        ).length
+      )
+    )
+    .toBe(1);
+  await expect
+    .poll(() => latestCallPayload(page, 'mods.moveOrderItem'))
+    .toMatchObject({
+      orderId: 'mod_aetherius_a_race_overhaul',
+      targetIndex: 2
+    });
+  await expect
+    .poll(() =>
+      page.locator('.mod-list-row[data-order-id]').evaluateAll((rows) => {
+        const orderIds = rows.map((row) => row.getAttribute('data-order-id'));
+        return {
+          installedIndex: orderIds.indexOf('mod_aetherius_a_race_overhaul'),
+          targetIndex: orderIds.indexOf('mod_skyui')
+        };
+      })
+    )
+    .toEqual({ installedIndex: 2, targetIndex: 3 });
+});
+
 test('keeps downloads rows visible during delayed refresh', async ({ page }) => {
   await page.goto(baseUrl);
 
@@ -3421,6 +3545,36 @@ test('keeps downloads rows visible during delayed refresh', async ({ page }) => 
   await expect(skeletonTable).toHaveCount(0);
   await expect(rightPane.getByText('Loading downloads', { exact: true })).toHaveCount(0);
   await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
+});
+
+test('refreshes the build in place without a blocking loading splash', async ({ page }) => {
+  await openSkyrimBuild(page);
+  const skyUiRow = page.getByRole('row', { name: /SkyUI mod/ });
+  await expect(skyUiRow).toBeVisible();
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __backgroundWorkspaceRefreshCalls?: number;
+      fluxora: any;
+    };
+    const getWorkspace = testWindow.fluxora.mods.getWorkspace;
+    testWindow.__backgroundWorkspaceRefreshCalls = 0;
+    testWindow.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      testWindow.__backgroundWorkspaceRefreshCalls =
+        (testWindow.__backgroundWorkspaceRefreshCalls ?? 0) + 1;
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      return getWorkspace(...args);
+    };
+  });
+
+  await page.keyboard.press('F5');
+  await expect(skyUiRow).toBeVisible();
+  await expect(page.locator('.mod-list-row--skeleton')).toHaveCount(0);
+  await expect(page.getByText('Обновляем интерфейс', { exact: true })).toHaveCount(0);
+  await expect(page.locator('.flx-loading-splash')).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__backgroundWorkspaceRefreshCalls ?? 0))
+    .toBeGreaterThanOrEqual(1);
 });
 
 test('does not flash a stale downloads drop cue when returning to the downloads tab', async ({ page }) => {

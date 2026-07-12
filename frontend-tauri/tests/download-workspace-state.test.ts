@@ -237,6 +237,19 @@ describe('download workspace state', () => {
       'Texture Pack 2024'
     );
     expect(downloadDisplayName('Archive 2048 Edition.7z')).toBe('Archive 2048 Edition');
+    expect(
+      downloadDisplayName('Cabbage CS Preset 182366 5 2026-07-01T12-33Z Ks18n0uG9.7z')
+    ).toBe('Cabbage CS Preset');
+  });
+
+  it('uses the downloaded file name instead of the mod title', () => {
+    const entry = downloadEntry(
+      'cabbage',
+      'Cabbage CS Preset 182366 5 2026-07-01T12-33Z Ks18n0uG9.7z',
+      { name: 'Cabbage Community Shaders preset for NAT' }
+    );
+
+    expect(downloadTitle(entry)).toBe('Cabbage CS Preset');
   });
 
   it('describes download capabilities from bridge feature state', () => {

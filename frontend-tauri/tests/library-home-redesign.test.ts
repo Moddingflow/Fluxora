@@ -52,13 +52,15 @@ const noop = () => undefined;
 
 const renderLibrary = (
   selectedProject: FluxoraProject | null = projects[0],
-  selectedStats: ProjectLibraryStats = stats
+  selectedStats: ProjectLibraryStats = stats,
+  catalogState: 'idle' | 'loading' | 'ready' | 'blocked' | 'error' = 'ready',
+  projectItems: FluxoraProject[] = projects
 ) =>
   renderToStaticMarkup(
     React.createElement(LibraryHome, {
       catalogPath: 'D:\\Fluxora\\Configs',
-      catalogState: 'ready',
-      filteredProjects: projects,
+      catalogState,
+      filteredProjects: projectItems,
       isInstallFluxPackDisabled: false,
       isNewBuildDisabled: false,
       isProjectInteractionDisabled: false,
@@ -70,7 +72,7 @@ const renderLibrary = (
       onSearchChange: noop,
       onSelectProject: noop,
       projectMenuId: null,
-      projects,
+      projects: projectItems,
       projectStats: () => selectedStats,
       renderProjectRowMenu: () => null,
       searchText: '',
@@ -142,6 +144,26 @@ describe('library home redesign', () => {
 
     expect(markup).toContain('Choose a build');
     expect(markup).toContain('Open a build from the library on the left');
+  });
+
+  it('uses build-row skeletons only for the empty first load and keeps committed rows on refresh', () => {
+    const firstLoadMarkup = renderLibrary(null, stats, 'loading', []);
+    const refreshMarkup = renderLibrary(projects[0], stats, 'loading', projects);
+    const component = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'library',
+      'LibraryHome.tsx'
+    );
+
+    expect(firstLoadMarkup).toContain('library-build-list--loading');
+    expect(firstLoadMarkup).toContain('workspace-skeleton');
+    expect(firstLoadMarkup).toContain('aria-busy="true"');
+    expect(component).not.toContain('title="Loading builds"');
+    expect(refreshMarkup).toContain('Skyrim graphics overhaul');
+    expect(refreshMarkup).not.toContain('library-build-list--loading');
   });
 
   it('keeps the Phase 5 layout dimensions and lightweight row actions in CSS', () => {

@@ -17,6 +17,11 @@ export interface InstallSource {
   fileName: string;
 }
 
+export interface InstallModOrderPlacement {
+  targetOrderId: string;
+  placement: 'before' | 'after';
+}
+
 export type PlacementOverrideMap = Record<
   string,
   {

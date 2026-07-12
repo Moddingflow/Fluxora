@@ -190,6 +190,7 @@ import {
   modTableStatusView,
   modVersionText,
   modWorkspaceReducer,
+  optimisticModInstallState,
   reorderModOrderItems,
   removeModOrderItems,
   selectedModOrderItem,
@@ -295,6 +296,7 @@ import {
   initialFomodSelection,
   normalizeInstallModName,
   validateInstallModName,
+  type InstallModOrderPlacement,
   type InstallSource
 } from './install-workspace-state';
 import { defaultModNameFromPath, shortPath } from './services/path-display-service';
@@ -457,11 +459,6 @@ interface BuildPathEditorSnapshot {
   grassCacheConfirmationOpen: boolean;
   isBuildPathsOpen: boolean;
   isDirty: boolean;
-}
-
-interface InterfaceRefreshSplashState {
-  buildName: string;
-  operationId: string;
 }
 
 interface OverwriteClearSplashState {
@@ -812,8 +809,6 @@ const openingBuildMessages = [
   'Еще чуть-чуть'
 ] as const;
 
-const interfaceRefreshMessages = ['Обновляем интерфейс'] as const;
-
 const overwriteClearMessages = [
   'Очищаем override',
   'Удаляем временные файлы',
@@ -954,6 +949,7 @@ const rowContextMenuViewportPadding = 8;
 const rowReorderDragThreshold = 5;
 const rowReorderAutoScrollEdge = 36;
 const rowReorderAutoScrollMaxStep = 18;
+const downloadInstallDragType = 'application/x-fluxora-download-id';
 const pluginMissingMasterStatusLimit = 20;
 const backgroundReorderLoadOptions: WorkspaceLoadOptions = {
   resetScroll: false,
@@ -1187,8 +1183,6 @@ export const App = () => {
   const [openingBuildSplash, setOpeningBuildSplash] =
     useState<OpeningBuildSplashState | null>(null);
   const [isOpeningBuildLocked, setIsOpeningBuildLocked] = useState(false);
-  const [interfaceRefreshSplash, setInterfaceRefreshSplash] =
-    useState<InterfaceRefreshSplashState | null>(null);
   const openingBuildCancelRequestsRef = useRef<Set<string>>(new Set());
   const openingBuildOperationIdRef = useRef<string | null>(null);
   const pendingProjectOpenTimingRef = useRef<{
@@ -1294,6 +1288,8 @@ export const App = () => {
   const [modListScrollTop, setModListScrollTop] = useState(0);
   const [draggedModOrderId, setDraggedModOrderId] = useState<string | null>(null);
   const [modDropTarget, setModDropTarget] = useState<RowDropTargetState | null>(null);
+  const [downloadInstallDropTarget, setDownloadInstallDropTarget] =
+    useState<RowDropTargetState | null>(null);
   const [fileTreeCache, setFileTreeCache] = useState<Record<string, FluxoraModFileTreeEntry[]>>(
     () => {
       if (initialModDetailsBootstrap?.rootFileTree) {
@@ -1362,6 +1358,7 @@ export const App = () => {
     useState<RowContextMenuPosition | null>(null);
   const [downloadListScrollTop, setDownloadListScrollTop] = useState(0);
   const [downloadDropCue, setDownloadDropCueState] = useState<DownloadDropCue>('idle');
+  const [draggedDownloadInstallId, setDraggedDownloadInstallId] = useState<string | null>(null);
   const downloadDropCueRef = useRef<DownloadDropCue>('idle');
   const downloadDropSurfaceRef = useRef<HTMLDivElement | null>(null);
   const downloadDropResetRef = useRef<number | null>(null);
@@ -1389,6 +1386,7 @@ export const App = () => {
   const [executableDeleteArmedId, setExecutableDeleteArmedId] = useState<string | null>(null);
   const [installDialog, setInstallDialog] = useState<InstallDialogState | null>(null);
   const installAnalysisPromiseRef = useRef<Promise<InstallAnalysisResult> | null>(null);
+  const installSubmitInFlightRef = useRef<string | null>(null);
   const [isBuildPathsOpen, setIsBuildPathsOpen] = useState(false);
   const [buildPathDraft, setBuildPathDraft] = useState<BuildPathDraft>(() =>
     initialBuildSettingsBootstrap?.draft ??
@@ -2308,8 +2306,9 @@ export const App = () => {
       return false;
     }
 
-    const showBusy = options.showBusy ?? true;
-    const showLoading = options.showLoading ?? true;
+    const hasCurrentRows = modsWorkspace.items.length > 0;
+    const showBusy = options.showBusy ?? false;
+    const showLoading = options.showLoading ?? !hasCurrentRows;
     const resetScroll = options.resetScroll ?? true;
     const operationId = options.operationId ?? createRendererOperationId('mods_load');
     const profileName = options.profileName ?? modWorkspaceProfileName;
@@ -3463,7 +3462,7 @@ export const App = () => {
 
     const hasCurrentRows = pluginsWorkspace.items.length > 0;
     const showLoading = options.showLoading ?? !hasCurrentRows;
-    const showBusy = options.showBusy ?? !hasCurrentRows;
+    const showBusy = options.showBusy ?? false;
     const resetScroll = options.resetScroll ?? true;
     const operationId = options.operationId ?? createRendererOperationId('plugins_load');
     const profileName = options.profileName ?? selectedProjectProfileName;
@@ -4220,12 +4219,11 @@ export const App = () => {
       return [];
     }
 
-    const showBusy = options.showBusy ?? true;
-    const showLoading = options.showLoading ?? true;
+    const hasCurrentRows = profilesWorkspace.items.length > 0;
+    const showBusy = options.showBusy ?? false;
+    const showLoading = options.showLoading ?? !hasCurrentRows;
     const operationId = options.operationId ?? createRendererOperationId('profiles_load');
-    if (showLoading) {
-      dispatchProfilesWorkspace({ type: 'load-started' });
-    }
+    dispatchProfilesWorkspace({ type: 'load-started', silent: !showLoading });
     if (showBusy) {
       workspaceStoreBusyLoadSequenceRef.current.profiles = loadSequence;
       setProfilesBusyLabel('Loading profiles');
@@ -4251,7 +4249,11 @@ export const App = () => {
       if (!isCurrentWorkspaceStoreLoad('profiles', loadSequence)) {
         return null;
       }
-      dispatchProfilesWorkspace({ type: 'load-failed', message: errorMessage(error) });
+      dispatchProfilesWorkspace({
+        type: 'load-failed',
+        message: errorMessage(error),
+        silent: !showLoading
+      });
       setMessage(errorMessage(error));
       return null;
     } finally {
@@ -4439,12 +4441,11 @@ export const App = () => {
       return [];
     }
 
-    const showBusy = options.showBusy ?? true;
-    const showLoading = options.showLoading ?? true;
+    const hasCurrentRows = executablesWorkspace.items.length > 0;
+    const showBusy = options.showBusy ?? false;
+    const showLoading = options.showLoading ?? !hasCurrentRows;
     const operationId = options.operationId ?? createRendererOperationId('executables_load');
-    if (showLoading) {
-      dispatchExecutablesWorkspace({ type: 'load-started' });
-    }
+    dispatchExecutablesWorkspace({ type: 'load-started', silent: !showLoading });
     if (showBusy) {
       workspaceStoreBusyLoadSequenceRef.current.executables = loadSequence;
       setExecutablesBusyLabel('Loading executables');
@@ -4465,7 +4466,11 @@ export const App = () => {
       if (!isCurrentWorkspaceStoreLoad('executables', loadSequence)) {
         return null;
       }
-      dispatchExecutablesWorkspace({ type: 'load-failed', message: errorMessage(error) });
+      dispatchExecutablesWorkspace({
+        type: 'load-failed',
+        message: errorMessage(error),
+        silent: !showLoading
+      });
       setMessage(errorMessage(error));
       return null;
     } finally {
@@ -4967,14 +4972,17 @@ export const App = () => {
     );
   };
 
-  const startInstallFlow = async (source: InstallSource) => {
+  const startInstallFlow = async (
+    source: InstallSource,
+    placement: InstallModOrderPlacement | null = null
+  ) => {
     const project = selectedProject;
     if (!project || !downloadCapabilities.bridgeAvailable) {
       return;
     }
 
     const operationId = createRendererOperationId('install_flow');
-    const fallbackName = defaultInstallModName(source.sourcePath, source.displayName);
+    const fallbackName = defaultInstallModName(source.displayName, source.sourcePath);
     setDownloadMenuId(null);
     setMessage(null);
     setInstallDialog({
@@ -4988,6 +4996,7 @@ export const App = () => {
       activeFomodOptionId: null,
       layoutPreview: null,
       modName: fallbackName,
+      modOrderPlacement: placement,
       existingModMode: 0,
       placementOverrides: {},
       draggedSourcePath: null,
@@ -5042,7 +5051,7 @@ export const App = () => {
       return true;
     }
 
-    const showBusy = options.showBusy ?? true;
+    const showBusy = options.showBusy ?? false;
     const hasCurrentRows = downloadsWorkspace.items.length > 0;
     const showLoading = options.showLoading ?? !hasCurrentRows;
     const resetScroll = options.resetScroll ?? true;
@@ -5298,7 +5307,10 @@ export const App = () => {
     });
   };
 
-  const installDownload = async (entry: FluxoraDownloadEntry | null = selectedDownloadItem) => {
+  const installDownload = async (
+    entry: FluxoraDownloadEntry | null = selectedDownloadItem,
+    placement: InstallModOrderPlacement | null = null
+  ) => {
     if (!selectedProject || !entry) {
       return;
     }
@@ -5314,7 +5326,121 @@ export const App = () => {
       displayName: downloadTitle(entry),
       fileName: entry.fileName || fileNameFromPath(downloadPath(entry))
     };
-    await startInstallFlow(source);
+    await startInstallFlow(source, placement);
+  };
+
+  const downloadInstallEntryFromDrag = (
+    dataTransfer: DataTransfer
+  ): FluxoraDownloadEntry | null => {
+    const entryId =
+      dataTransferText(dataTransfer, downloadInstallDragType) || draggedDownloadInstallId;
+    return downloadsWorkspace.items.find((entry) => entry.id === entryId) ?? null;
+  };
+
+  const isDownloadInstallDrag = (dataTransfer: DataTransfer): boolean =>
+    Boolean(draggedDownloadInstallId) ||
+    Array.from(dataTransfer.types).includes(downloadInstallDragType);
+
+  const clearDownloadInstallDrag = () => {
+    setDraggedDownloadInstallId(null);
+    setDownloadInstallDropTarget(null);
+  };
+
+  const handleDownloadInstallDragStart = (
+    event: ReactDragEvent<HTMLDivElement>,
+    entry: FluxoraDownloadEntry
+  ) => {
+    if (!entry.canInstall || Boolean(downloadsBusyLabel)) {
+      event.preventDefault();
+      return;
+    }
+
+    dispatchDownloadsWorkspace({ type: 'selected', id: entry.id });
+    setDraggedDownloadInstallId(entry.id);
+    setDownloadInstallDropTarget(null);
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData(downloadInstallDragType, entry.id);
+  };
+
+  const handleDownloadInstallDragEnd = () => {
+    clearDownloadInstallDrag();
+  };
+
+  const modInstallPlacementForDrag = (
+    event: ReactDragEvent<HTMLDivElement>,
+    item: FluxoraModOrderItem
+  ): InstallModOrderPlacement | null => {
+    if (isModOverwriteItem(item)) {
+      return null;
+    }
+
+    return {
+      targetOrderId: item.orderId,
+      placement: rowDropPlacementFromPointer(event.currentTarget, event.clientY)
+    };
+  };
+
+  const handleModInstallDragOver = (
+    event: ReactDragEvent<HTMLDivElement>,
+    item: FluxoraModOrderItem
+  ) => {
+    if (!isDownloadInstallDrag(event.dataTransfer)) {
+      return;
+    }
+
+    const placement = modInstallPlacementForDrag(event, item);
+    if (!placement) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+    setDownloadInstallDropTarget({
+      orderId: placement.targetOrderId,
+      placement: placement.placement
+    });
+  };
+
+  const handleModInstallDrop = async (
+    event: ReactDragEvent<HTMLDivElement>,
+    item: FluxoraModOrderItem
+  ) => {
+    if (!isDownloadInstallDrag(event.dataTransfer)) {
+      return;
+    }
+
+    const entry = downloadInstallEntryFromDrag(event.dataTransfer);
+    const placement = modInstallPlacementForDrag(event, item);
+    event.preventDefault();
+    event.stopPropagation();
+    clearDownloadInstallDrag();
+    if (entry && placement) {
+      await installDownload(entry, placement);
+    }
+  };
+
+  const handleModInstallSurfaceDragOver = (event: ReactDragEvent<HTMLElement>) => {
+    if (!isDownloadInstallDrag(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setDownloadInstallDropTarget(null);
+  };
+
+  const handleModInstallSurfaceDrop = async (event: ReactDragEvent<HTMLElement>) => {
+    if (!isDownloadInstallDrag(event.dataTransfer)) {
+      return;
+    }
+
+    const entry = downloadInstallEntryFromDrag(event.dataTransfer);
+    event.preventDefault();
+    clearDownloadInstallDrag();
+    if (entry) {
+      await installDownload(entry, null);
+    }
   };
 
   const downloadDeletionEntriesFor = (entry: FluxoraDownloadEntry): FluxoraDownloadEntry[] => {
@@ -5622,7 +5748,7 @@ export const App = () => {
     const selectedOptionIds = installFomodEvaluation.selectedOptionIds;
     const fallbackName =
       installDialog.fomodInstaller.moduleName.trim() ||
-      defaultInstallModName(installDialog.source.sourcePath, installDialog.source.displayName);
+      defaultInstallModName(installDialog.source.displayName, installDialog.source.sourcePath);
     setInstallDialogPatch({
       phase: 'options',
       layoutPreview: null,
@@ -5674,6 +5800,77 @@ export const App = () => {
         errorMessage: errorMessage(error)
       });
       return null;
+    }
+  };
+
+  const applyOptimisticInstalledMod = (
+    installed: FluxoraInstalledModSummary,
+    placement: InstallModOrderPlacement | null
+  ) => {
+    const optimistic = optimisticModInstallState(
+      installedMods,
+      modsWorkspace.items,
+      installed,
+      placement
+    );
+    setInstalledMods(optimistic.installedMods);
+    dispatchModsWorkspace({ type: 'items-loaded', items: optimistic.items });
+    dispatchModsWorkspace({ type: 'selected', orderId: optimistic.installedOrderId });
+  };
+
+  const reconcileInstalledModAfterInstall = async (
+    project: FluxoraProject,
+    profileName: string,
+    installed: FluxoraInstalledModSummary,
+    placement: InstallModOrderPlacement | null,
+    operationId: string
+  ) => {
+    try {
+      const snapshot = await window.fluxora.mods.getPersistedWorkspace(
+        project.projectDirectory,
+        profileName,
+        { operationId }
+      );
+      const reconciled = optimisticModInstallState(
+        snapshot.installedMods,
+        snapshot.modOrder,
+        installed,
+        placement
+      );
+      setInstalledMods(reconciled.installedMods);
+      dispatchModsWorkspace({ type: 'items-loaded', items: reconciled.items });
+      dispatchModsWorkspace({ type: 'selected', orderId: reconciled.installedOrderId });
+
+      if (!placement || reconciled.installedOrderId.startsWith('pending-install:')) {
+        return;
+      }
+
+      const targetIndex = targetIndexForDrop(
+        snapshot.modOrder,
+        reconciled.installedOrderId,
+        placement.targetOrderId,
+        placement.placement
+      );
+      if (targetIndex === null) {
+        return;
+      }
+
+      const confirmedOrder = await window.fluxora.mods.moveOrderItem(
+        project.projectDirectory,
+        profileName,
+        reconciled.installedOrderId,
+        targetIndex,
+        { operationId }
+      );
+      dispatchModsWorkspace({ type: 'items-loaded', items: confirmedOrder });
+      dispatchModsWorkspace({ type: 'selected', orderId: reconciled.installedOrderId });
+    } catch (error) {
+      void window.fluxora.ui.log({
+        level: 'warning',
+        category: 'ModInstall',
+        message: `Installed mod background reconciliation deferred: ${errorMessage(error)}`,
+        operationId
+      });
     }
   };
 
@@ -5737,6 +5934,11 @@ export const App = () => {
       });
       return;
     }
+
+    if (installSubmitInFlightRef.current === installDialog.operationId) {
+      return;
+    }
+    installSubmitInFlightRef.current = installDialog.operationId;
 
     const placementOverridesJson =
       placementOverrides.length > 0 ? JSON.stringify(placementOverrides) : undefined;
@@ -5806,16 +6008,21 @@ export const App = () => {
             ? `Merged ${installed.name}`
             : `Installed ${installed.name}`
       );
+      applyOptimisticInstalledMod(installed, installDialog.modOrderPlacement);
       setInstallDialog(null);
-      await loadDownloadsWorkspace(selectedProject, {
+      void loadDownloadsWorkspace(selectedProject, {
         operationId: installDialog.operationId,
+        resetScroll: false,
         showBusy: false,
         showLoading: false
       });
-      await loadModsWorkspace(selectedProject);
-      if (pluginCapabilities.bridgeAvailable && pluginCapabilities.projectSupported) {
-        await loadPluginsWorkspace(selectedProject);
-      }
+      void reconcileInstalledModAfterInstall(
+        selectedProject,
+        modWorkspaceProfileName,
+        installed,
+        installDialog.modOrderPlacement,
+        installDialog.operationId
+      );
     } catch (error) {
       setInstallDialogPatch({
         phase: 'error',
@@ -5823,6 +6030,9 @@ export const App = () => {
       });
       setMessage(errorMessage(error));
     } finally {
+      if (installSubmitInFlightRef.current === installDialog.operationId) {
+        installSubmitInFlightRef.current = null;
+      }
       setDownloadsBusyLabel(null);
     }
   };
@@ -8703,7 +8913,7 @@ export const App = () => {
       profileName: selectedProjectProfileName,
       resetScroll: false,
       showBusy: false,
-      showLoading: true
+      showLoading: false
     });
   };
 
@@ -8716,10 +8926,6 @@ export const App = () => {
     refreshInFlightRef.current = true;
     setProjectMenuId(null);
     setProjectMenuPosition(null);
-    setInterfaceRefreshSplash({
-      operationId: refreshOperationId,
-      buildName: selectedProject?.name ?? 'Fluxora'
-    });
     setMessage(null);
 
     try {
@@ -8825,9 +9031,6 @@ export const App = () => {
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
-      setInterfaceRefreshSplash((current) =>
-        current?.operationId === refreshOperationId ? null : current
-      );
       refreshInFlightRef.current = false;
     }
   };
@@ -9974,8 +10177,14 @@ export const App = () => {
               ? modSeparatorChildCount(modsWorkspace.items, item.orderId)
               : 0;
             const isDragging = draggedModOrderId === item.orderId;
-            const isDropTarget =
+            const isOrderDropTarget =
               modDropTarget?.orderId === item.orderId && draggedModOrderId !== item.orderId;
+            const isInstallDropTarget =
+              downloadInstallDropTarget?.orderId === item.orderId && !isOverwrite;
+            const isDropTarget = isOrderDropTarget || isInstallDropTarget;
+            const dropPlacement = isInstallDropTarget
+              ? downloadInstallDropTarget?.placement
+              : modDropTarget?.placement;
             const canDragModRow = !modsBusyLabel && !isOverwrite;
 
             return (
@@ -9995,7 +10204,8 @@ export const App = () => {
                 data-conflict-status={visibleConflictMarkerStates.join(' ')}
                 data-dragging={isDragging}
                 data-drop-target={isDropTarget}
-                data-drop-placement={isDropTarget ? modDropTarget?.placement : undefined}
+                data-drop-placement={isDropTarget ? dropPlacement : undefined}
+                data-install-drop-target={isInstallDropTarget}
                 data-reorder-disabled={!canDragModRow}
                 data-menu-open={isMenuOpen}
                 key={item.orderId}
@@ -10027,6 +10237,8 @@ export const App = () => {
 
                   void openModDetailsWindow(item);
                 }}
+                onDragOver={(event) => handleModInstallDragOver(event, item)}
+                onDrop={(event) => void handleModInstallDrop(event, item)}
                 onPointerDown={(event) => {
                   if (!beginRowReorderDrag(event, 'mod', item.orderId, canDragModRow)) {
                     return;
@@ -10044,7 +10256,7 @@ export const App = () => {
               >
                 {isDropTarget ? (
                   <span className="row-drop-target-chip" aria-hidden="true">
-                    Сюда
+                    {isInstallDropTarget ? 'Установить сюда' : 'Сюда'}
                   </span>
                 ) : null}
                 {isOverwrite ? (
@@ -10505,7 +10717,12 @@ export const App = () => {
 
     return (
       <section className="mods-layout" aria-label="Build mods workspace">
-        <section className="work-surface mods-surface">
+        <section
+          className="work-surface mods-surface"
+          data-download-install-active={Boolean(draggedDownloadInstallId)}
+          onDragOver={handleModInstallSurfaceDragOver}
+          onDrop={(event) => void handleModInstallSurfaceDrop(event)}
+        >
           <div className="surface-header">
             <div>
               <p className="eyebrow">Mods</p>
@@ -11278,8 +11495,10 @@ export const App = () => {
                 className="mod-row download-row"
                 role="row"
                 tabIndex={0}
+                draggable={entry.canInstall && !downloadsBusyLabel}
                 data-selected={isSelected}
                 data-ready={entry.canInstall}
+                data-dragging={draggedDownloadInstallId === entry.id}
                 data-menu-open={isMenuOpen}
                 key={entry.id}
                 aria-selected={isSelected}
@@ -11292,6 +11511,8 @@ export const App = () => {
                     void installDownload(entry);
                   }
                 }}
+                onDragStart={(event) => handleDownloadInstallDragStart(event, entry)}
+                onDragEnd={handleDownloadInstallDragEnd}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   if (!downloadsWorkspace.selectedIds.has(entry.id)) {
@@ -12012,14 +12233,45 @@ export const App = () => {
   };
 
   const renderProfileRows = () => {
-    if (profilesWorkspace.loadState === 'loading') {
+    if (profilesWorkspace.loadState === 'loading' && profilesWorkspace.items.length === 0) {
       return (
-        <EmptyState
-          icon={<RefreshCw size={18} aria-hidden="true" />}
-          title="Loading profiles"
-          description={selectedProject?.projectDirectory ?? 'Selected build'}
-          tone="loading"
-        />
+        <div
+          className="mod-table profile-table profile-table--loading"
+          role="table"
+          aria-label="Profiles"
+          aria-busy="true"
+        >
+          <div className="mod-row profile-row mod-row--head" role="row">
+            <span role="columnheader">Profile</span>
+            <span role="columnheader">Role</span>
+            <span role="columnheader">State</span>
+            <span role="columnheader">Actions</span>
+          </div>
+          <div className="mod-table__body" role="rowgroup">
+            {modLoadingSkeletonRows.slice(0, 4).map((index) => (
+              <div
+                className="mod-row profile-row profile-row--skeleton"
+                role="row"
+                aria-hidden="true"
+                key={`profile-skeleton-${index}`}
+              >
+                <div className="mod-row__main" role="cell">
+                  <span
+                    className="workspace-skeleton workspace-skeleton--title"
+                    style={{ width: skeletonWidth(index) }}
+                  />
+                  <span
+                    className="workspace-skeleton workspace-skeleton--meta"
+                    style={{ width: skeletonWidth(index, 1) }}
+                  />
+                </div>
+                <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
+                <span className="workspace-skeleton workspace-skeleton--status" role="cell" />
+                <span className="workspace-skeleton workspace-skeleton--action" role="cell" />
+              </div>
+            ))}
+          </div>
+        </div>
       );
     }
 
@@ -12317,14 +12569,47 @@ export const App = () => {
   };
 
   const renderExecutableRows = () => {
-    if (executablesWorkspace.loadState === 'loading') {
+    if (executablesWorkspace.loadState === 'loading' && executablesWorkspace.items.length === 0) {
       return (
-        <EmptyState
-          icon={<RefreshCw size={18} aria-hidden="true" />}
-          title="Loading executables"
-          description={selectedProject?.configPath ?? 'Selected build'}
-          tone="loading"
-        />
+        <div
+          className="mod-table executable-table executable-table--loading"
+          role="table"
+          aria-label="Executables"
+          aria-busy="true"
+        >
+          <div className="mod-row executable-row mod-row--head" role="row">
+            <span role="columnheader">Executable</span>
+            <span role="columnheader">Path</span>
+            <span role="columnheader">Arguments</span>
+            <span role="columnheader">Working directory</span>
+            <span role="columnheader">Actions</span>
+          </div>
+          <div className="mod-table__body" role="rowgroup">
+            {modLoadingSkeletonRows.slice(0, 4).map((index) => (
+              <div
+                className="mod-row executable-row executable-row--skeleton"
+                role="row"
+                aria-hidden="true"
+                key={`executable-skeleton-${index}`}
+              >
+                <div className="mod-row__main" role="cell">
+                  <span
+                    className="workspace-skeleton workspace-skeleton--title"
+                    style={{ width: skeletonWidth(index) }}
+                  />
+                  <span
+                    className="workspace-skeleton workspace-skeleton--meta"
+                    style={{ width: skeletonWidth(index, 2) }}
+                  />
+                </div>
+                <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
+                <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
+                <span className="workspace-skeleton workspace-skeleton--cell" role="cell" />
+                <span className="workspace-skeleton workspace-skeleton--action" role="cell" />
+              </div>
+            ))}
+          </div>
+        </div>
       );
     }
 
@@ -12801,18 +13086,6 @@ export const App = () => {
     />
   );
 
-  const renderInterfaceRefreshSplash = () => (
-    <LoadingSplash
-      buildName={interfaceRefreshSplash?.buildName}
-      detail="Interface refresh progress"
-      indeterminate
-      messages={interfaceRefreshMessages}
-      open={Boolean(interfaceRefreshSplash)}
-      subtitle={interfaceRefreshSplash?.buildName}
-      title="Обновляем интерфейс"
-    />
-  );
-
   const renderOverwriteClearSplash = () => (
     <LoadingSplash
       aria-label="Очистка override"
@@ -13052,7 +13325,13 @@ export const App = () => {
         />
 
         <section className="build-workbench" aria-label="Mod Organizer style workspace">
-          <section className="build-pane build-pane--mods" aria-label="Mods">
+          <section
+            className="build-pane build-pane--mods"
+            aria-label="Mods"
+            data-download-install-active={Boolean(draggedDownloadInstallId)}
+            onDragOver={handleModInstallSurfaceDragOver}
+            onDrop={(event) => void handleModInstallSurfaceDrop(event)}
+          >
             <header className="build-pane__header build-pane__header--mods">
               <div>
                 <h3>Моды</h3>
@@ -13606,7 +13885,6 @@ export const App = () => {
                 {renderOperationOverlay()}
                 {renderOverwriteClearSplash()}
                 {renderOpeningBuildSplash()}
-                {renderInterfaceRefreshSplash()}
                 {renderLaunchSplash()}
               </>
             )}

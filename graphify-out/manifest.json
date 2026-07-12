@@ -10,8 +10,8 @@
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/Core.hpp": {
-    "mtime": 1783574062.6135552,
-    "ast_hash": "cf31dea540330817a96ef80ea0d38b1d",
+    "mtime": 1783797314.8789203,
+    "ast_hash": "7c1559993da35512ed9e039419f8cc69",
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/FluxoraCoreApi.hpp": {
@@ -100,8 +100,8 @@
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/Services/DownloadService.hpp": {
-    "mtime": 1783709850.330207,
-    "ast_hash": "d30f441303f9541ca24c4cbb1d3dba7a",
+    "mtime": 1783798403.4796185,
+    "ast_hash": "4c3a17b5f9b3c2162a38f662207f18c3",
     "semantic_hash": ""
   },
   "backend/include/FluxoraCore/Services/ExecutableIconService.hpp": {
@@ -245,8 +245,8 @@
     "semantic_hash": ""
   },
   "backend/src/Core.cpp": {
-    "mtime": 1783741001.0540445,
-    "ast_hash": "048f4b8814410278b00b97f717cfa6b9",
+    "mtime": 1783797314.879921,
+    "ast_hash": "f83b505b4127b24242edc9345b0c7dad",
     "semantic_hash": ""
   },
   "backend/src/FluxoraCoreApi.cpp": {
@@ -315,8 +315,8 @@
     "semantic_hash": ""
   },
   "backend/src/Services/DownloadService.cpp": {
-    "mtime": 1783709850.3322072,
-    "ast_hash": "ab4b3f418fb28798324ce74c1b648c9c",
+    "mtime": 1783850549.238901,
+    "ast_hash": "a2b5b5eb799dd783dc83daf57152e8f6",
     "semantic_hash": ""
   },
   "backend/src/Services/ExecutableIconService.cpp": {
@@ -450,8 +450,8 @@
     "semantic_hash": ""
   },
   "backend/tests/DownloadServiceTests.cpp": {
-    "mtime": 1783708741.2348924,
-    "ast_hash": "cff47268da85128464341945c7639b11",
+    "mtime": 1783850517.2971518,
+    "ast_hash": "6d8ac344becac74815945eb5fe51de93",
     "semantic_hash": ""
   },
   "backend/tests/ExecutableServiceTests.cpp": {
@@ -460,8 +460,8 @@
     "semantic_hash": ""
   },
   "backend/tests/FluxPackServiceTests.cpp": {
-    "mtime": 1783713166.532982,
-    "ast_hash": "6dcabe81a602c9574b2eba9cfbeb0cec",
+    "mtime": 1783797418.6885517,
+    "ast_hash": "3ebe00dddc53c56bfc46227a6f768290",
     "semantic_hash": ""
   },
   "backend/tests/FomodInstallerServiceTests.cpp": {
@@ -515,8 +515,8 @@
     "semantic_hash": ""
   },
   "backend/tests/ModFileOperationsIntegrationTests.cpp": {
-    "mtime": 1783738872.3871057,
-    "ast_hash": "c8fa204781cfb7aeca97c17604961a72",
+    "mtime": 1783797483.2289512,
+    "ast_hash": "b09855eca8ac86d7b12f2d22929d4bee",
     "semantic_hash": ""
   },
   "backend/tests/ModOrganizerImportServiceTests.cpp": {
@@ -780,13 +780,13 @@
     "semantic_hash": ""
   },
   "backend/CMakeLists.txt": {
-    "mtime": 1783724048.4091618,
-    "ast_hash": "9f687672ceb0b73d1952fb0cf1eb2f99",
+    "mtime": 1783796505.7760193,
+    "ast_hash": "80d50911c7ee7d1f63b2a18ccb669ddd",
     "semantic_hash": ""
   },
   "backend/tests/CMakeLists.txt": {
-    "mtime": 1783724048.4081614,
-    "ast_hash": "a352a97585ff4f80622f7a5f481dc981",
+    "mtime": 1783796505.7805302,
+    "ast_hash": "60bd1599a6e38ebf2ebbe9e10ecf6dd5",
     "semantic_hash": ""
   },
   "backend/vfs/README.md": {
@@ -1085,8 +1085,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
-    "mtime": 1783738072.62953,
-    "ast_hash": "46d533a1d7bbbd7652e8a677501e49a6",
+    "mtime": 1783848434.113209,
+    "ast_hash": "4e7b3663b4afab3fa259c311da02dac1",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferMo2Page.tsx": {
@@ -1105,13 +1105,13 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/download-workspace-state.ts": {
-    "mtime": 1783500864.3660343,
-    "ast_hash": "c0b938e2927c8fcf9544f7788bf52f1e",
+    "mtime": 1783850549.239905,
+    "ast_hash": "ae0c08675e5edc3557ccc8a74dbb3b54",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/install-workspace-state.ts": {
-    "mtime": 1783595416.5509944,
-    "ast_hash": "158198f4e5c5a577d9f70ad578c1756f",
+    "mtime": 1783846692.5352492,
+    "ast_hash": "abfef3212d066d4dfdfe5278b193bf91",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/main.tsx": {
@@ -1125,8 +1125,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/mod-workspace-state.ts": {
-    "mtime": 1783731776.0758712,
-    "ast_hash": "fa30aa02c75d18e0647192a05b230c54",
+    "mtime": 1783846692.5352492,
+    "ast_hash": "5364d01ccd625d84175e7dc2f84ac5eb",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/plugin-workspace-state.ts": {
@@ -1135,8 +1135,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/profiles-executables-workspace-state.ts": {
-    "mtime": 1782303175.1487656,
-    "ast_hash": "1fe9462805b7b7a14884d9820fba24e5",
+    "mtime": 1783847097.2093158,
+    "ast_hash": "fb899b28de0a318f5741f6fd3b30ec63",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/project-catalog-state.ts": {
@@ -1190,7 +1190,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/.last-run.json": {
-    "mtime": 1783738988.864589,
+    "mtime": 1783850772.6084876,
     "ast_hash": "f196824657d8858bc7fa44eecbba38b1",
     "semantic_hash": ""
   },
@@ -1200,8 +1200,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/download-workspace-state.test.ts": {
-    "mtime": 1783501078.4157987,
-    "ast_hash": "29e2997d316f5304d7c2d3e7a6c7345f",
+    "mtime": 1783850443.0915055,
+    "ast_hash": "736903d6df4593bb1d70f1051d189ad0",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/install-workspace-state.test.ts": {
@@ -1215,8 +1215,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/mod-workspace-state.test.ts": {
-    "mtime": 1783731793.343662,
-    "ast_hash": "f2eda702c1b11bfb05dc19bcc4912860",
+    "mtime": 1783846538.526755,
+    "ast_hash": "721756cb9d5d87521bde8e42d8bdba25",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/parity-gate.test.ts": {
@@ -1230,8 +1230,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/profiles-executables-workspace-state.test.ts": {
-    "mtime": 1782303559.3520582,
-    "ast_hash": "0af8de9c40207ddd99b3d98da77747c3",
+    "mtime": 1783847077.334211,
+    "ast_hash": "fc4d3019b2649713974826f4b8655c82",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/project-catalog-state.test.ts": {
@@ -1640,18 +1640,18 @@
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/library-home.spec.ts": {
-    "mtime": 1783738501.1503048,
-    "ast_hash": "5fec007b9a1f58b19dffde0e4dbf1630",
+    "mtime": 1783850601.8139536,
+    "ast_hash": "eeda01c2c6e75fd64e494aacf2afb735",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/LibraryHome.tsx": {
-    "mtime": 1783708152.894622,
-    "ast_hash": "ec4cf7222dadad3aaeb02e6235b2f74e",
+    "mtime": 1783847904.6098626,
+    "ast_hash": "e5ff97c97f32cbf3dfc79ab712056145",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/library-home-redesign.test.ts": {
-    "mtime": 1783708124.8555775,
-    "ast_hash": "5ba40abfb533bada42e82ba8d65454af",
+    "mtime": 1783847939.899045,
+    "ast_hash": "168ed6220834566a3952836912f79401",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/build-detail-header.test.ts": {
@@ -1680,8 +1680,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/install/InstallDialog.tsx": {
-    "mtime": 1782987455.376339,
-    "ast_hash": "a12be7e51d187abda226c7efa4da980d",
+    "mtime": 1783846692.5362506,
+    "ast_hash": "499f1035f271ff83948561e7f803cc84",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/projectLibraryStats.ts": {
@@ -4280,8 +4280,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/build-refresh-loading.test.ts": {
-    "mtime": 1783730699.2780392,
-    "ast_hash": "e665951336a1d55fce11fd50e2a0916c",
+    "mtime": 1783848434.1112094,
+    "ast_hash": "7718b66fe28de9e00ae6e5d1061f08c0",
     "semantic_hash": ""
   },
   "Icons/MATERIAL-DESIGN-ICONS-LICENSE.txt": {
@@ -4335,13 +4335,13 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/install-dialog-flow.test.ts": {
-    "mtime": 1782987640.063332,
-    "ast_hash": "fdfcdae65c522d05fced4cf71806033d",
+    "mtime": 1783847666.6783526,
+    "ast_hash": "3f450dace253429d5f77bfb829517212",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/download-drop-ui.test.ts": {
-    "mtime": 1782989615.5587487,
-    "ast_hash": "e50c781a252e116bedba85812e8e7995",
+    "mtime": 1783846607.0816224,
+    "ast_hash": "6e3fed531974530ba274d8f35ea57894",
     "semantic_hash": ""
   },
   "docs/ai/mod-research-pipeline-gap-analysis.md": {
@@ -4620,8 +4620,8 @@
     "semantic_hash": ""
   },
   "backend/tests/BridgeHostProtocol.Tests.ps1": {
-    "mtime": 1783731481.965796,
-    "ast_hash": "0e04b77a3a8a5394ca54f85fdc4bf3ef",
+    "mtime": 1783793927.2492094,
+    "ast_hash": "f833d68013caf19148c391765980bb08",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/tauri-event-lifecycle.test.ts": {
@@ -4854,184 +4854,24 @@
     "ast_hash": "21e60dfddf25a23d39c107febf11e92c",
     "semantic_hash": ""
   },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-build-mods-1280x720.png": {
-    "mtime": 1783742913.1677997,
-    "ast_hash": "3951797f8e0ae3abc05b60ca87f1c688",
+  "backend/include/FluxoraCore/Services/DownloadTransferLimiter.hpp": {
+    "mtime": 1783797384.2135446,
+    "ast_hash": "2c0e8e6f424436e9d739de0000f43de3",
     "semantic_hash": ""
   },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-build-mods-1440x900.png": {
-    "mtime": 1783742913.1687994,
-    "ast_hash": "bbda396d36aeb9c6db6dc59b12bc1345",
+  "backend/src/Services/DownloadTransferLimiter.cpp": {
+    "mtime": 1783797384.2135446,
+    "ast_hash": "9f0821351dd485450b3f3a92a339d044",
     "semantic_hash": ""
   },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-build-mods-1920x1080.png": {
-    "mtime": 1783742913.1697996,
-    "ast_hash": "4c9443eca1f9b5a9a6e9cd6edbb4aebd",
+  "backend/tests/DownloadTransferLimiterTests.cpp": {
+    "mtime": 1783797626.1700149,
+    "ast_hash": "0431d541cd64104cf66698ee3d468c24",
     "semantic_hash": ""
   },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-build-mods-2560x1080.png": {
-    "mtime": 1783742913.1707995,
-    "ast_hash": "8468bc9327f32fc1d670aa89f5f0efa6",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-compression-menu-1280x720.png": {
-    "mtime": 1783742913.1718,
-    "ast_hash": "d4bf66dc380e5ff3237a31f24d4bee02",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-compression-menu-1440x900.png": {
-    "mtime": 1783742913.1718,
-    "ast_hash": "b532337dd4674099d4f6dc0c085d083c",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-compression-menu-1920x1080.png": {
-    "mtime": 1783742913.1733055,
-    "ast_hash": "8a4f0cad82741e1a455d617ba2a7a547",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-compression-menu-2560x1080.png": {
-    "mtime": 1783742913.174308,
-    "ast_hash": "6e24384b4a29974eeb0137ac38a784bd",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-dialog-1280x720.png": {
-    "mtime": 1783742913.1753075,
-    "ast_hash": "7db118cdcbb0568ef34f684860ca36db",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-dialog-1440x900.png": {
-    "mtime": 1783742913.1753075,
-    "ast_hash": "d9d2ee9a164c454fd4c35541797e603a",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-dialog-1920x1080.png": {
-    "mtime": 1783742913.1763074,
-    "ast_hash": "e53d1211a496b9cd13132145cb9a6a2b",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-dialog-2560x1080.png": {
-    "mtime": 1783742913.1773074,
-    "ast_hash": "784e974eb428cd810c27d8b4d137081e",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fomod-wizard-1280x720.png": {
-    "mtime": 1783742913.1783075,
-    "ast_hash": "ca08199df9204ddc8bc235a8324471fd",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fomod-wizard-1440x900.png": {
-    "mtime": 1783742913.1783075,
-    "ast_hash": "f821faeb5bb16d7da682f91fb80e8872",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fomod-wizard-1920x1080.png": {
-    "mtime": 1783742913.1803112,
-    "ast_hash": "975bff2e06cdbaff33841ceadb66cd00",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fomod-wizard-2560x1080.png": {
-    "mtime": 1783742913.1803112,
-    "ast_hash": "0e82584ac3f8c0348213534d39bab62f",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-home-library-1280x720.png": {
-    "mtime": 1783742913.1813064,
-    "ast_hash": "bddb189ae9b1efe1728b2d294377293f",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-home-library-1440x900.png": {
-    "mtime": 1783742913.1813064,
-    "ast_hash": "417f3adb4b8a88dd8f1da94f8eaf1ed8",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-home-library-1920x1080.png": {
-    "mtime": 1783742913.1813064,
-    "ast_hash": "782f552855126a3403c9e77a6881b89b",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-home-library-2560x1080.png": {
-    "mtime": 1783742913.1828103,
-    "ast_hash": "abb39ff4c86cec0694d1ecdfc27e9973",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-install-dialog-1280x720.png": {
-    "mtime": 1783742913.1838143,
-    "ast_hash": "be24d538ff9830d4717b7b793572f664",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-install-dialog-1440x900.png": {
-    "mtime": 1783742913.1838143,
-    "ast_hash": "90e0677f6d21a015f0e5d299702df388",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-install-dialog-1920x1080.png": {
-    "mtime": 1783742913.184816,
-    "ast_hash": "e2757b34ea63050fa05c5e73f679c706",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-install-dialog-2560x1080.png": {
-    "mtime": 1783742913.1858137,
-    "ast_hash": "509d3feff2a7a10bc73b35dce0067c4b",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-operation-overlay-1280x720.png": {
-    "mtime": 1783742913.1868157,
-    "ast_hash": "648aa3502b104b697b351f8213767d85",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-operation-overlay-1440x900.png": {
-    "mtime": 1783742913.1868157,
-    "ast_hash": "df5817ca1f0f519a21175344dec185e5",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-operation-overlay-1920x1080.png": {
-    "mtime": 1783742913.1878169,
-    "ast_hash": "b997e5e76c9f0ac8c7c1a5c9d7006103",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-operation-overlay-2560x1080.png": {
-    "mtime": 1783742913.1878169,
-    "ast_hash": "956e632eafda4eb4b1a5ad55e60e145f",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-plugins-right-pane-1280x720.png": {
-    "mtime": 1783742913.1888154,
-    "ast_hash": "252ab9c82f4d3bcb73316ed8cd2b68b2",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-plugins-right-pane-1440x900.png": {
-    "mtime": 1783742913.1898155,
-    "ast_hash": "8aea0a52f5074ffd2f7bd03bca0e8ad9",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-plugins-right-pane-1920x1080.png": {
-    "mtime": 1783742913.1908152,
-    "ast_hash": "9c52f1e77e410664c5fefa688175d5df",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-plugins-right-pane-2560x1080.png": {
-    "mtime": 1783742913.191815,
-    "ast_hash": "f147297ca5db331673cc25facb327415",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-settings-1280x720.png": {
-    "mtime": 1783742913.191815,
-    "ast_hash": "e907963c993e6d82ee4d318fcb01381a",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-settings-1440x900.png": {
-    "mtime": 1783742913.1928148,
-    "ast_hash": "d88ffa228086a06390e935b341ed13c0",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-settings-1920x1080.png": {
-    "mtime": 1783742913.193323,
-    "ast_hash": "61f004209cbb3e88ee1fdd53f7898216",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-settings-2560x1080.png": {
-    "mtime": 1783742913.1943254,
-    "ast_hash": "8a65113dfabb200cb13611b98ee723ea",
+  "docs/modlist-installer/IMPLEMENTATION-TRACKER.md": {
+    "mtime": 1783802005.5789542,
+    "ast_hash": "3eb9e8cf6bdb7460489b294fc3b6ec6b",
     "semantic_hash": ""
   }
 }
