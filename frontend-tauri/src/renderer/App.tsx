@@ -113,6 +113,7 @@ import {
 import { BuildPathsInspector } from './features/build/BuildPathsInspector';
 import { BuildSettingsWorkspace } from './features/build/BuildSettingsWorkspace';
 import { BuildDetailHeader } from './features/build/BuildDetailHeader';
+import { watchLaunchProcessSession } from './features/executables/launch-process-session';
 import {
   FluxPackExportDialog,
   type FluxPackExportOptions
@@ -4713,7 +4714,9 @@ export const App = () => {
           ready.state === 'timeout'
             ? `Fluxora не обнаружила ${processName} до истечения времени запуска.`
             : `${processName} завершился до того, как Fluxora смогла отследить процесс.`;
-        await loadModsWorkspace(selectedProject, {
+        setLaunchSplash((current) => (current?.operationId === operationId ? null : current));
+        setExecutablesBusyLabel(null);
+        void loadModsWorkspace(selectedProject, {
           resetScroll: false,
           showBusy: false,
           showLoading: false
@@ -4722,7 +4725,6 @@ export const App = () => {
         return;
       }
 
-      const trackedProcessName = ready.processName || processName;
       void window.fluxora.ui
         .log({
           level: 'info',
@@ -4733,26 +4735,50 @@ export const App = () => {
           operationId
         })
         .catch(() => undefined);
-      setLaunchSplash((current) =>
-        current?.operationId === operationId
-          ? {
-              ...current,
-              appName: trackedProcessName,
-              detail: 'Процесс запущен',
-              state: 'running',
-              subtitle: 'Закройте процесс, чтобы продолжить работу в Mod Manager.',
-              title: 'Процесс запущен'
-            }
-          : current
-      );
-      setMessage('Процесс запущен. Закройте процесс, чтобы продолжить работу в Mod Manager.');
-      await window.fluxora.processes.waitForExit(ready.processId, { operationId });
-      await loadModsWorkspace(selectedProject, {
+      const knownProcesses = [
+        {
+          displayName: result.displayName || selectedExecutableItem.displayName,
+          executableName: fileNameFromPath(result.resolvedExecutablePath),
+          processId: result.processId
+        },
+        ...result.expectedChildProcessNames.map((executableName) => ({
+          displayName: result.handoffDisplayName || executableName.replace(/\.exe$/i, ''),
+          executableName
+        }))
+      ];
+      let trackedProcessLabel = processName;
+      await watchLaunchProcessSession({
+        activeProcess: ready,
+        knownProcesses,
+        onActiveProcess: (active) => {
+          trackedProcessLabel = active.label;
+          setLaunchSplash((current) =>
+            current?.operationId === operationId
+              ? {
+                  ...current,
+                  appName: active.label,
+                  detail: `Процесс запущен — ${active.label}`,
+                  state: 'running',
+                  subtitle: 'Закройте процесс, чтобы продолжить работу в Mod Manager.',
+                  title: `Процесс запущен — ${active.label}`
+                }
+              : current
+          );
+          setMessage(
+            `Процесс запущен — ${active.label}. Закройте процесс, чтобы продолжить работу в Mod Manager.`
+          );
+        },
+        operationId,
+        waitForExit: window.fluxora.processes.waitForExit
+      });
+      setLaunchSplash((current) => (current?.operationId === operationId ? null : current));
+      setExecutablesBusyLabel(null);
+      setMessage(`${trackedProcessLabel} закрыт. Можно продолжить работу в Mod Manager.`);
+      void loadModsWorkspace(selectedProject, {
         resetScroll: false,
         showBusy: false,
         showLoading: false
       });
-      setMessage(`${trackedProcessName} закрыт. Можно продолжить работу в Mod Manager.`);
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {

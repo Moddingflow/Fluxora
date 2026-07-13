@@ -895,31 +895,6 @@
   text-align: left;
 }
 
-.flx-loading-splash__lock {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 24px;
-  padding: 0 12px;
-  border: var(--border-w) solid var(--border-accent);
-  border-radius: var(--radius-pill);
-  color: var(--text-body);
-  background: var(--flx-accent-soft);
-  font-size: var(--fs-micro);
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--ls-label);
-  text-transform: uppercase;
-}
-
-.flx-loading-splash__lock::before {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-pill);
-  background: var(--flx-accent);
-  box-shadow: 0 0 8px 1px rgba(var(--flx-accent-rgb), 0.6);
-  content: "";
-}
-
 @keyframes flx-splash-rotate {
   to {
     transform: rotate(360deg);

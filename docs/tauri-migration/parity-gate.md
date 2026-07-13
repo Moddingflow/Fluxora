@@ -60,7 +60,7 @@ Required unit anchors:
 - `plugin-workspace-state.test.ts` covers plugin/load-order UI state.
 - `download-workspace-state.test.ts` covers download filtering, state labels and row actions.
 - `install-workspace-state.test.ts` covers mod-name validation, archive placement overrides and FOMOD wizard state.
-- `profiles-executables-workspace-state.test.ts` covers profile and executable UI state.
+- `profiles-executables-workspace-state.test.ts`, `launch-process-session.test.ts` and `launch-process-watch.test.ts` cover profile/executable UI state, readable process labels, VFS-holder handoff, native exit-signal wiring and fallback polling.
 - `settings-workspace-state.test.ts` covers settings sections, single-theme normalization, language and MO2 transfer validation state.
 - `build-workspace-state.test.ts`, `fluxpack-export-dialog.test.ts`, `fluxpack-install-target.test.ts`, `fluxpack-install-dialogs.test.ts` and `operation-overlays.test.ts` cover build paths, full-vs-recipe export selection, same-name targeting, manual Nexus archive collection and provider-segmented FluxPack progress. Backend tests prove that full export produces no acquisition plan and restores remote-origin plus generated mods from the package payload.
 - `facade-api.test.ts` covers the typed `window.fluxora` surface and allowlisted command routes.
@@ -78,7 +78,7 @@ Required unit anchors:
 | Downloads/install | Partial automated | Playwright imports a local archive and checks download row install affordance; full archive install is covered by API/backend tests and still needs a real archive e2e fixture |
 | FOMOD | Partial automated | Vitest covers wizard state and facade routes expose FOMOD calls; a real FOMOD archive e2e fixture remains a fixture-hardening item |
 | Profiles | Automated | Playwright create/clone/rename/delete profile flow |
-| Executables | Automated | Playwright save/rename/delete executable flow and launch capability state |
+| Executables | Automated | Playwright save/rename/delete executable flow, launch capability state, readable running-process label, removal of the screen-lock badge and dynamic VFS-holder handoff |
 | Settings | Automated | Playwright settings sections, language/Nexus/MO2 transfer surfaces; theme customization is absent while the single dark theme is supported |
 | MO2 transfer | Automated validation smoke | Playwright opens MO2 transfer and verifies required-field validation; full import needs a real MO2 fixture |
 | FluxPack | Automated | Playwright full/recipe export selection, inspect/install flow, visible Library entry, same-name choice, manual Nexus action and in-place Delta target/reuse evidence; backend tests cover autonomous full restore, acquisition planning, Premium gating and archive identity validation |

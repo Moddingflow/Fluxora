@@ -76,6 +76,8 @@ const PROCESS_WATCH_DEFAULT_POLL_MS: u64 = 1_000;
 const PROCESS_WATCH_MIN_POLL_MS: u64 = 250;
 const PROCESS_WATCH_MAX_POLL_MS: u64 = 5_000;
 const PROCESS_WATCH_DEFAULT_HANDOFF_MS: u64 = 30_000;
+const PROCESS_WATCH_FALLBACK_POLL_MS: u64 = 250;
+const FLUXORA_VFS_MODULE_NAME: &str = "FluxoraVfs.dll";
 const OPERATION_PROGRESS_CACHE_LIMIT: usize = 100;
 const RECENT_OPERATION_LOG_MAX_LIMIT: usize = 80;
 const RECENT_OPERATION_LOG_TAIL_BYTES: u64 = 512 * 1024;
@@ -104,168 +106,7 @@ fn stable_label_suffix(value: &str) -> String {
     format!("{hash:016x}")
 }
 
-fn normalized_process_name(value: &str) -> String {
-    value
-        .rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(value)
-        .trim()
-        .to_ascii_lowercase()
-}
-
-#[cfg(windows)]
-mod process_platform {
-    use super::normalized_process_name;
-    use std::ffi::{c_void, OsString};
-    use std::mem::{size_of, zeroed};
-    use std::os::windows::ffi::OsStringExt;
-
-    type Handle = *mut c_void;
-
-    const INVALID_HANDLE_VALUE: Handle = -1isize as Handle;
-    const PROCESS_TERMINATE: u32 = 0x0001;
-    const SYNCHRONIZE: u32 = 0x0010_0000;
-    const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
-    const WAIT_TIMEOUT: u32 = 0x0000_0102;
-
-    #[repr(C)]
-    struct ProcessEntry32W {
-        dw_size: u32,
-        cnt_usage: u32,
-        th32_process_id: u32,
-        th32_default_heap_id: usize,
-        th32_module_id: u32,
-        cnt_threads: u32,
-        th32_parent_process_id: u32,
-        pc_pri_class_base: i32,
-        dw_flags: u32,
-        sz_exe_file: [u16; 260],
-    }
-
-    extern "system" {
-        fn OpenProcess(dw_desired_access: u32, b_inherit_handle: i32, dw_process_id: u32)
-            -> Handle;
-        fn TerminateProcess(h_process: Handle, u_exit_code: u32) -> i32;
-        fn WaitForSingleObject(h_handle: Handle, dw_milliseconds: u32) -> u32;
-        fn CloseHandle(h_object: Handle) -> i32;
-        fn CreateToolhelp32Snapshot(dw_flags: u32, th32_process_id: u32) -> Handle;
-        fn Process32FirstW(h_snapshot: Handle, lppe: *mut ProcessEntry32W) -> i32;
-        fn Process32NextW(h_snapshot: Handle, lppe: *mut ProcessEntry32W) -> i32;
-    }
-
-    fn process_name(entry: &ProcessEntry32W) -> String {
-        let end = entry
-            .sz_exe_file
-            .iter()
-            .position(|character| *character == 0)
-            .unwrap_or(entry.sz_exe_file.len());
-        OsString::from_wide(&entry.sz_exe_file[..end])
-            .to_string_lossy()
-            .to_string()
-    }
-
-    pub fn is_process_running(process_id: u32) -> bool {
-        if process_id == 0 {
-            return false;
-        }
-
-        let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, process_id) };
-        if handle.is_null() {
-            return false;
-        }
-
-        let wait_result = unsafe { WaitForSingleObject(handle, 0) };
-        unsafe {
-            CloseHandle(handle);
-        }
-        wait_result == WAIT_TIMEOUT
-    }
-
-    pub fn terminate_process(process_id: u32) -> bool {
-        if process_id == 0 {
-            return false;
-        }
-
-        let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
-        if handle.is_null() {
-            return false;
-        }
-        let terminated = unsafe { TerminateProcess(handle, 1) } != 0;
-        unsafe {
-            CloseHandle(handle);
-        }
-        terminated
-    }
-
-    pub fn find_process_by_names(names: &[String]) -> Option<(u32, String)> {
-        if names.is_empty() {
-            return None;
-        }
-
-        let wanted: Vec<String> = names
-            .iter()
-            .map(|name| normalized_process_name(name))
-            .filter(|name| !name.is_empty())
-            .collect();
-        if wanted.is_empty() {
-            return None;
-        }
-
-        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-        if snapshot == INVALID_HANDLE_VALUE {
-            return None;
-        }
-
-        let mut entry: ProcessEntry32W = unsafe { zeroed() };
-        entry.dw_size = size_of::<ProcessEntry32W>() as u32;
-        let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
-        while has_entry {
-            let name = process_name(&entry);
-            if wanted
-                .iter()
-                .any(|wanted_name| normalized_process_name(&name) == *wanted_name)
-            {
-                unsafe {
-                    CloseHandle(snapshot);
-                }
-                return Some((entry.th32_process_id, name));
-            }
-
-            has_entry = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
-        }
-
-        unsafe {
-            CloseHandle(snapshot);
-        }
-        None
-    }
-}
-
-#[cfg(not(windows))]
-mod process_platform {
-    use std::process::Command;
-
-    pub fn is_process_running(process_id: u32) -> bool {
-        process_id != 0
-            && std::path::Path::new("/proc")
-                .join(process_id.to_string())
-                .exists()
-    }
-
-    pub fn find_process_by_names(_names: &[String]) -> Option<(u32, String)> {
-        None
-    }
-
-    pub fn terminate_process(process_id: u32) -> bool {
-        process_id != 0
-            && Command::new("kill")
-                .arg("-TERM")
-                .arg(process_id.to_string())
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false)
-    }
-}
+mod process_platform;
 
 fn operation_progress_payload(envelope: &Value) -> Value {
     let mut payload = envelope.get("params").cloned().unwrap_or(Value::Null);
@@ -4090,6 +3931,47 @@ fn launch_process_display_name(
         .unwrap_or_else(|| "launched process".to_string())
 }
 
+async fn wait_for_native_process_exit(process_id: u32) -> process_platform::NativeExitWait {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let spawn_result = std::thread::Builder::new()
+        .name(format!("fluxora-process-wait-{process_id}"))
+        .spawn(move || {
+            let _ = sender.send(process_platform::wait_for_exit_signal(process_id));
+        });
+    if spawn_result.is_err() {
+        return process_platform::NativeExitWait::Unavailable;
+    }
+
+    receiver
+        .await
+        .unwrap_or(process_platform::NativeExitWait::Unavailable)
+}
+
+async fn find_remaining_vfs_process(exited_process_id: u32) -> Option<process_platform::ProcessInfo> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let spawn_result = std::thread::Builder::new()
+        .name("fluxora-vfs-process-probe".to_string())
+        .spawn(move || {
+            let holder = process_platform::find_processes_using_module(FLUXORA_VFS_MODULE_NAME)
+                .into_iter()
+                .find(|process| {
+                    process.process_id != exited_process_id
+                        && process_platform::is_process_running(process.process_id)
+                });
+            let _ = sender.send(holder);
+        });
+    if spawn_result.is_err() {
+        return process_platform::find_processes_using_module(FLUXORA_VFS_MODULE_NAME)
+            .into_iter()
+            .find(|process| {
+                process.process_id != exited_process_id
+                    && process_platform::is_process_running(process.process_id)
+            });
+    }
+
+    receiver.await.unwrap_or(None)
+}
+
 #[tauri::command]
 async fn fluxora_wait_for_launch_ready(
     app: AppHandle,
@@ -4226,20 +4108,59 @@ async fn fluxora_wait_for_process_exit(
 ) -> Result<ProcessWatchResult, String> {
     let request = process_watch_request(request, None, "process_wait_exit");
     let operation_id = operation_id(Some(&request), "process_wait_exit");
-    let poll_interval = Duration::from_millis(PROCESS_WATCH_DEFAULT_POLL_MS);
-
     let _ = write_log(
         &app,
         "main",
         "info",
         "LaunchProcess",
-        &format!("Waiting for process exit. pid={}", process_id),
+        &format!("Waiting for native process exit signal. pid={}", process_id),
         Some(&operation_id),
     )
     .await;
 
-    while process_platform::is_process_running(process_id) {
-        tokio::time::sleep(poll_interval).await;
+    let native_wait = wait_for_native_process_exit(process_id).await;
+    if native_wait == process_platform::NativeExitWait::Unavailable {
+        let _ = write_log(
+            &app,
+            "main",
+            "warning",
+            "LaunchProcess",
+            &format!(
+                "Native process exit signal unavailable; using fallback polling. pid={}",
+                process_id
+            ),
+            Some(&operation_id),
+        )
+        .await;
+        let poll_interval = Duration::from_millis(PROCESS_WATCH_FALLBACK_POLL_MS);
+        while process_platform::is_process_running(process_id) {
+            tokio::time::sleep(poll_interval).await;
+        }
+    }
+
+    let remaining_vfs_process = find_remaining_vfs_process(process_id).await;
+    if let Some(process) = remaining_vfs_process {
+        let _ = write_log(
+            &app,
+            "main",
+            "info",
+            "LaunchProcess",
+            &format!(
+                "Tracked process exited but a VFS holder remains. exitedPid={} holderPid={} holderName={}",
+                process_id,
+                process.process_id,
+                sanitize_log(&process.process_name)
+            ),
+            Some(&operation_id),
+        )
+        .await;
+        return Ok(process_watch_result(
+            process.process_id,
+            process.process_name,
+            "running",
+            "vfsHolder",
+            operation_id,
+        ));
     }
 
     let _ = write_log(
@@ -4247,7 +4168,15 @@ async fn fluxora_wait_for_process_exit(
         "main",
         "info",
         "LaunchProcess",
-        &format!("Tracked launch process exited. pid={}", process_id),
+        &format!(
+            "Tracked launch process exited and no VFS holder remains. pid={} watcher={}",
+            process_id,
+            if native_wait == process_platform::NativeExitWait::Signaled {
+                "nativeSignal"
+            } else {
+                "fallbackPolling"
+            }
+        ),
         Some(&operation_id),
     )
     .await;

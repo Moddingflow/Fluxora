@@ -15,21 +15,36 @@ describe('launch process watch wiring', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const facade = readText('frontend-tauri', 'src', 'tauri', 'fluxora-api.ts');
     const shared = readText('frontend-tauri', 'src', 'shared', 'fluxora-api.ts');
+    const rustShell = readText('frontend-tauri', 'src-tauri', 'src', 'lib.rs');
+    const processPlatform = readText(
+      'frontend-tauri',
+      'src-tauri',
+      'src',
+      'process_platform.rs'
+    );
+    const launchFlow = app.slice(
+      app.indexOf('const launchExecutable = async () =>'),
+      app.indexOf('const requestGrassCacheGeneration = () =>')
+    );
 
     expect(shared).toContain('processesWatchLaunchReady');
     expect(shared).toContain('processesWaitForExit');
     expect(facade).toContain('fluxora_wait_for_launch_ready');
     expect(facade).toContain('fluxora_wait_for_process_exit');
-    expect(app).toContain('window.fluxora.processes.waitForLaunchReady');
-    expect(app).toContain('window.fluxora.processes.waitForExit');
-    expect(app).toContain('Процесс запускается');
-    expect(app).toContain('Процесс запущен');
-    expect(app).toContain('Закройте процесс, чтобы продолжить работу в Mod Manager.');
-    expect(app).toMatch(
-      /ready\.state !== 'running'[\s\S]*await loadModsWorkspace\(selectedProject, \{\s*resetScroll: false,\s*showBusy: false,\s*showLoading: false\s*\}\);/
+    expect(launchFlow).toContain('window.fluxora.processes.waitForLaunchReady');
+    expect(launchFlow).toContain('watchLaunchProcessSession');
+    expect(launchFlow).toContain('Процесс запускается');
+    expect(launchFlow).toContain('Процесс запущен');
+    expect(launchFlow).toContain('Закройте процесс, чтобы продолжить работу в Mod Manager.');
+    expect(processPlatform).toContain('WaitForSingleObject(handle, INFINITE)');
+    expect(processPlatform).toContain('find_processes_using_module');
+    expect(rustShell).toContain('Native process exit signal unavailable; using fallback polling');
+    expect(rustShell).toContain('Tracked process exited but a VFS holder remains');
+    expect(launchFlow).toMatch(
+      /ready\.state !== 'running'[\s\S]*setLaunchSplash\(\(current\) => \(current\?\.operationId === operationId \? null : current\)\);[\s\S]*void loadModsWorkspace\(selectedProject, \{\s*resetScroll: false,\s*showBusy: false,\s*showLoading: false\s*\}\);/
     );
-    expect(app).toMatch(
-      /await window\.fluxora\.processes\.waitForExit\(ready\.processId, \{ operationId \}\);[\s\S]*await loadModsWorkspace\(selectedProject, \{\s*resetScroll: false,\s*showBusy: false,\s*showLoading: false\s*\}\);/
+    expect(launchFlow).toMatch(
+      /await watchLaunchProcessSession\([\s\S]*setLaunchSplash\(\(current\) =>[\s\S]*current\?\.operationId === operationId \? null : current[\s\S]*void loadModsWorkspace\(selectedProject, \{\s*resetScroll: false,\s*showBusy: false,\s*showLoading: false\s*\}\);/
     );
   });
 });

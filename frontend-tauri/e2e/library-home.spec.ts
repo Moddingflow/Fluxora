@@ -116,6 +116,7 @@ test.beforeEach(async ({ page }) => {
       new Promise<void>((resolve) =>
         setTimeout(resolve, Number((window as any).__fluxoraPersistedWorkspaceDelayMs ?? 0))
       );
+    let processExitWaitCount = 0;
     const waitForNexusStatus = () =>
       new Promise<void>((resolve) =>
         setTimeout(resolve, Number((window as any).__fluxoraNexusStatusDelayMs ?? 0))
@@ -770,10 +771,19 @@ test.beforeEach(async ({ page }) => {
           calls.push({ method: 'executables.launch', payload: { configPath, executableId, operation, profileName } });
           await waitForOperationPaint();
           return {
+            arguments: '-forcesteamloader',
             displayName: 'SKSE',
+            executablePath: 'C:\\Games\\Skyrim\\skse64_loader.exe',
+            expectedChildProcessNames: [],
+            handoffDisplayName: '',
+            handoffTimeoutMs: 0,
+            iconPath: '',
             launchTrackingKind: 'direct',
             operationId: 'op_launch',
-            processId: 4_242
+            processId: 4_242,
+            resolvedExecutablePath: 'C:\\Games\\Skyrim\\skse64_loader.exe',
+            resolvedWorkingDirectory: 'C:\\Games\\Skyrim',
+            workingDirectory: 'C:\\Games\\Skyrim'
           };
         },
         list: async () => [
@@ -1291,12 +1301,22 @@ test.beforeEach(async ({ page }) => {
         waitForExit: async (processId: any, operation: any) => {
           calls.push({ method: 'processes.waitForExit', payload: { operation, processId } });
           await waitForOperationPaint();
+          processExitWaitCount += 1;
+          if (processExitWaitCount % 2 === 1) {
+            return {
+              operationId: operation?.operationId ?? 'op_launch_holder',
+              processId: 4_343,
+              processName: 'CrashLogger.exe',
+              state: 'running',
+              trackedKind: 'vfsHolder'
+            };
+          }
           return {
             operationId: operation?.operationId ?? 'op_launch_exit',
             processId,
-            processName: 'SKSE',
+            processName: 'CrashLogger.exe',
             state: 'exited',
-            trackedKind: 'direct'
+            trackedKind: 'vfsHolder'
           };
         }
       },
@@ -2927,6 +2947,9 @@ test('does not reuse exact mods while a watcher invalidation remains unresolved'
 
 test('runs build package, check and launch actions through the facade', async ({ page }) => {
   await page.goto(baseUrl);
+  await page.evaluate(() => {
+    (window as any).__fluxoraOperationDelayMs = 500;
+  });
 
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
@@ -2967,6 +2990,14 @@ test('runs build package, check and launch actions through the facade', async ({
       )
     )
     .toContain('processes.waitForExit');
+  const launchSplashMessage = page.locator('.flx-loading-splash__message');
+  await expect(launchSplashMessage).toHaveText(
+    'Процесс запущен — SKSE (skse64_loader.exe)'
+  );
+  await expect(page.getByText('Screen locked', { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByText('Процесс запущен — CrashLogger (CrashLogger.exe)', { exact: true })
+  ).toBeVisible();
   await expect(page.getByText('Процесс запускается', { exact: true })).toBeHidden();
 
   await actionsTrigger.click();

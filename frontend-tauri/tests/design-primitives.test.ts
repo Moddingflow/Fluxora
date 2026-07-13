@@ -252,6 +252,19 @@ describe('redesign primitives', () => {
     expect(primitiveCss).toContain('font-weight: 800;');
   });
 
+  it('does not render a screen-locked badge for a running process', () => {
+    const splash = renderToStaticMarkup(
+      React.createElement(LoadingSplash, {
+        state: 'running',
+        title: 'Процесс запущен — Skyrim Special Edition (SkyrimSE.exe)'
+      })
+    );
+
+    expect(splash).toContain('Процесс запущен — Skyrim Special Edition (SkyrimSE.exe)');
+    expect(splash).not.toContain('Screen locked');
+    expect(splash).not.toContain('flx-loading-splash__lock');
+  });
+
   it('renders the custom select as a renderer-only combobox shell', () => {
     const combo = renderToStaticMarkup(
       React.createElement(CustomSelect, {

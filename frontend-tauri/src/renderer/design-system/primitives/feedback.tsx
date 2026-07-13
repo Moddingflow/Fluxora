@@ -252,9 +252,7 @@ export function LoadingSplash({
             />
             <strong className="flx-loading-splash__percent">{percentLabel}</strong>
           </div>
-        ) : (
-          <span className="flx-loading-splash__lock">Screen locked</span>
-        )}
+        ) : null}
       </div>
     </div>
   );

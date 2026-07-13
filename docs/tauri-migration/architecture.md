@@ -96,7 +96,9 @@ Phase 10 extends `fluxora.bridge.v1` to WPF-parity profile management and execut
 
 - Native host routes `profiles.list`, `profiles.create`, `profiles.clone`, `profiles.rename`, `profiles.delete`, `executables.list`, `executables.save`, `executables.getIcon` and `executables.launch` to existing C++ C ABI functions backed by `ProfileService` and `ExecutableService`.
 - Tauri Rust shell/facade expose typed `window.fluxora.profiles.*` and `window.fluxora.executables.*` calls only; renderer still has no Node.js, filesystem, shell, native module or raw command access.
+- Tauri Rust shell owns `window.fluxora.processes.waitForLaunchReady` and `waitForExit`. On Windows, process exit uses the signaled process handle as the primary path (`WaitForSingleObject` with an infinite wait on a dedicated native-wait thread); a 250 ms process-presence poll is retained only when the native wait cannot be established. After each exit, the shell enumerates live processes with `FluxoraVfs.dll` loaded and returns the next holder as `trackedKind: "vfsHolder"`, so the renderer keeps the launch splash attached to the process that still owns the active VFS session.
 - Renderer owns profile/executable search, selected-row state, in-app edit controls, two-step destructive confirmation state, icon/launch status display and capability explanations only.
+- Renderer closes the launch splash as soon as the final tracked/VFS process exits and refreshes the mods workspace asynchronously afterward; a slow workspace read must not extend the process-locking screen.
 - C++ core remains the owner of profile folder/state mutations, executable metadata persistence, icon resolving, launch cache preparation and process launch behavior.
 - Executable management and executable launch are exposed as separate capability flags so non-Windows bridge builds can still edit launch entries while honestly disabling launch.
 
