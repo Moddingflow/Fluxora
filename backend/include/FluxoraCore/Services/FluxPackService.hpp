@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace fluxora
@@ -15,6 +16,14 @@ namespace fluxora
     class DownloadService;
     class Logger;
     class ProjectService;
+
+    enum class FluxPackPackageType
+    {
+        Full = 1,
+        Recipe = 2
+    };
+
+    [[nodiscard]] std::wstring_view fluxPackPackageTypeId(FluxPackPackageType type) noexcept;
 
     struct FluxPackExportProgress
     {
@@ -35,7 +44,7 @@ namespace fluxora
         std::filesystem::path outputPath;
         bool includeGeneratedAssets{false};
         std::function<void(const FluxPackExportProgress&)> progress;
-        FluxPackCompressionMode compressionMode{FluxPackCompressionMode::Optimal};
+        FluxPackPackageType packageType{FluxPackPackageType::Recipe};
     };
 
     struct FluxPackSummary
@@ -45,12 +54,14 @@ namespace fluxora
         int formatVersion{1};
         std::uintmax_t manifestBytes{0};
         std::uintmax_t sourceArchiveCount{0};
+        std::uintmax_t bundledModCount{0};
         std::uintmax_t generatedAssetCount{0};
         std::uintmax_t customPatchCount{0};
         std::uintmax_t customConfigCount{0};
         std::uintmax_t installStepCount{0};
         bool generatedAssetsIncluded{false};
         bool installPlanAvailable{false};
+        std::wstring packageType{L"recipe"};
         std::wstring compressionMode{L"none"};
         std::uintmax_t logicalPayloadBytes{0};
         std::uintmax_t uniquePayloadBytes{0};

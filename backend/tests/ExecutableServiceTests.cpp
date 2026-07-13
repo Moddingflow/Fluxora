@@ -727,7 +727,7 @@ namespace fluxora::tests
             config,
             "{"
             "\"schemaVersion\":\"1\","
-            "\"name\":\"Parallax Build\","
+            "\"name\":\"Foundation: Edition?\","
             "\"templateId\":\"skyrimse\","
             "\"gameName\":\"Skyrim Special Edition\","
             "\"gamePath\":\"Stock Game\","
@@ -764,7 +764,7 @@ namespace fluxora::tests
         ExecutableIconService iconService(logger);
         ExecutableService service(logger, iconService, pathSettings);
 
-        const std::wstring expectedName = L"Parallax Build \x2014 ParallaxGen Output";
+        const std::wstring expectedName = L"PGPatcher Output";
         const std::filesystem::path outputMod = mods / std::filesystem::path(expectedName);
         writeTextFile(outputMod / L".flow" / L"manifest.json", "{}");
 
@@ -774,9 +774,16 @@ namespace fluxora::tests
         EXPECT_FALSE(std::filesystem::exists(outputMod / L".flow"));
         EXPECT_TRUE(resolved.requiresParallaxGenMo2VfsCompatibilityFlag);
         EXPECT_EQ(resolved.commandLine.find(L"--ignore-mo2vfscheck"), std::wstring::npos);
-        ASSERT_EQ(resolved.activeProfileMods.size(), 4U);
-        EXPECT_EQ(normalized(resolved.activeProfileMods.back().path), normalized(outputMod));
-        EXPECT_EQ(resolved.activeProfileMods.back().name, expectedName);
+        ASSERT_EQ(resolved.activeProfileMods.size(), 3U);
+        EXPECT_EQ(
+            std::find_if(
+                resolved.activeProfileMods.begin(),
+                resolved.activeProfileMods.end(),
+                [&outputMod](const ExecutableLaunchMod& mod)
+                {
+                    return normalized(mod.path) == normalized(outputMod);
+                }),
+            resolved.activeProfileMods.end());
 
         const ResolvedExecutableLaunch repeated = service.resolveExecutable(config, L"pg");
         ASSERT_EQ(repeated.activeProfileMods.size(), resolved.activeProfileMods.size());
@@ -897,7 +904,7 @@ namespace fluxora::tests
         EXPECT_TRUE(resolved.gameId.empty());
         EXPECT_FALSE(resolved.requiresParallaxGenMo2VfsCompatibilityFlag);
         EXPECT_FALSE(std::filesystem::exists(
-            project / L"mods" / L"Unknown PG Build \x2014 ParallaxGen Output"));
+            project / L"mods" / L"PGPatcher Output"));
         EXPECT_FALSE(std::filesystem::exists(project / L".flow" / L"pgpatcher-mo2"));
 
         const JsonValue settings = JsonReader::parse(fromUtf8(readTextFile(parallaxGenSettings)));

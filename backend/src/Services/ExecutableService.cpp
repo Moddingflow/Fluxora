@@ -41,8 +41,7 @@ namespace fluxora
         constexpr std::wstring_view skyrimGameId = L"skyrimse";
         constexpr int parallaxGenSkyrimSeGameType = 0;
         constexpr int parallaxGenModOrganizer2Type = 2;
-        constexpr std::wstring_view parallaxGenOutputSuffix =
-            L" \x2014 ParallaxGen Output";
+        constexpr std::wstring_view parallaxGenOutputModFolderName = L"PGPatcher Output";
         constexpr std::wstring_view parallaxGenShadowInstanceRoot = L"pgpatcher-mo2";
         constexpr std::wstring_view parallaxGenShadowProfileName = L"Fluxora";
         constexpr std::wstring_view parallaxGenGeneratedProvider = L"generated-pgpatcher";
@@ -3470,32 +3469,6 @@ namespace fluxora
                 equalsIgnoreCase(id, L"pgpatcher");
         }
 
-        std::wstring validateOutputModName(std::wstring value)
-        {
-            value = trim(std::move(value));
-            if (value.empty())
-            {
-                throw std::invalid_argument("ParallaxGen output mod name is required.");
-            }
-            if (containsInvalidFileNameCharacter(value))
-            {
-                throw std::invalid_argument("ParallaxGen output mod name contains invalid path characters.");
-            }
-            if (isReservedDeviceName(value))
-            {
-                throw std::invalid_argument("ParallaxGen output mod name is reserved by Windows.");
-            }
-            return value;
-        }
-
-        std::wstring parallaxGenOutputModName(const JsonValue& manifest)
-        {
-            const std::wstring buildName = trim(readStringOrDefault(manifest, L"name", L"Build"));
-            return validateOutputModName(
-                (buildName.empty() ? std::wstring(L"Build") : buildName) +
-                std::wstring(parallaxGenOutputSuffix));
-        }
-
         std::filesystem::path ensureParallaxGenOutputMod(
             const ProjectExecutableContext& context,
             Logger& logger)
@@ -3509,7 +3482,7 @@ namespace fluxora
                 throw std::invalid_argument("Mods directory is required for ParallaxGen output.");
             }
 
-            const std::wstring modName = parallaxGenOutputModName(context.manifest);
+            const std::wstring modName(parallaxGenOutputModFolderName);
             const std::filesystem::path outputMod = context.modsDirectory / std::filesystem::path(modName);
 
             const PathSafetyService safety;
@@ -3646,7 +3619,17 @@ namespace fluxora
                     context.modsDirectory);
             if (activeProfileMods != nullptr)
             {
-                *activeProfileMods = activeProfileLaunchModsFromRecords(context, order);
+                std::vector<ProfileOrderItemRecord> inputOrder;
+                inputOrder.reserve(order.size());
+                std::copy_if(
+                    order.begin(),
+                    order.end(),
+                    std::back_inserter(inputOrder),
+                    [&outputMod, &outputModFolderName](const ProfileOrderItemRecord& item)
+                    {
+                        return !isOutputModRecord(item, outputMod, outputModFolderName);
+                    });
+                *activeProfileMods = activeProfileLaunchModsFromRecords(context, inputOrder);
             }
 
             std::string text;

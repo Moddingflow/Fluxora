@@ -475,6 +475,36 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(InstanceMetadataStoreTests, GeneratedPgPatcherFileSummaryDoesNotCreatePortableManifest)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path output = mods / L"PGPatcher Output";
+        const std::filesystem::path generatedMesh = output / L"meshes" / L"generated.nif";
+        writeTextFile(generatedMesh, "generated");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMod(
+            project,
+            output,
+            L"PGPatcher Output",
+            {},
+            ModSourceRecord{L"generated-pgpatcher"});
+        ASSERT_FALSE(std::filesystem::exists(portableManifestPath(output)));
+
+        InstanceMetadataStore::invalidateModFileCaches(project, {generatedMesh}, mods);
+        const ModFileSummary summary =
+            InstanceMetadataStore::summarizeModFiles(project, output, mods);
+
+        EXPECT_EQ(summary.fileCount, 1);
+        EXPECT_FALSE(std::filesystem::exists(portableManifestPath(output)));
+#endif
+    }
+
     TEST(InstanceMetadataStoreTests, RegisterInstalledModsCanDeferContentFingerprintUntilFileSummary)
     {
 #ifndef _WIN32

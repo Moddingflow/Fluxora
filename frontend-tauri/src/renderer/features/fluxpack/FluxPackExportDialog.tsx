@@ -1,18 +1,18 @@
 import { PackageOpen, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import type { FluxoraFluxPackCompressionMode } from '../../../shared/fluxora-api';
+import type { FluxoraFluxPackPackageType } from '../../../shared/fluxora-api';
 import { Checkbox } from '../../design-system';
-import { FluxPackCompressionSelect } from './FluxPackCompressionSelect';
+import { FluxPackPackageTypeSelect } from './FluxPackPackageTypeSelect';
 
 export interface FluxPackExportOptions {
-  compressionMode: FluxoraFluxPackCompressionMode;
+  packageType: FluxoraFluxPackPackageType;
   includeGeneratedAssets: boolean;
 }
 
 export interface FluxPackExportDialogProps {
   buildName: string;
-  defaultCompressionMode: FluxoraFluxPackCompressionMode;
+  defaultPackageType: FluxoraFluxPackPackageType;
   onCancel: () => void;
   onConfirm: (options: FluxPackExportOptions) => void;
   outputPath: string;
@@ -20,14 +20,15 @@ export interface FluxPackExportDialogProps {
 
 export function FluxPackExportDialog({
   buildName,
-  defaultCompressionMode,
+  defaultPackageType,
   onCancel,
   onConfirm,
   outputPath
 }: FluxPackExportDialogProps) {
-  const [compressionMode, setCompressionMode] =
-    useState<FluxoraFluxPackCompressionMode>(defaultCompressionMode);
+  const [packageType, setPackageType] =
+    useState<FluxoraFluxPackPackageType>(defaultPackageType);
   const [includeGeneratedAssets, setIncludeGeneratedAssets] = useState(false);
+  const isFullPackage = packageType === 'full';
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -68,10 +69,19 @@ export function FluxPackExportDialog({
             <strong>{buildName}</strong>
             <span title={outputPath}>{outputPath}</span>
           </div>
-          <FluxPackCompressionSelect onChange={setCompressionMode} value={compressionMode} />
+          <FluxPackPackageTypeSelect onChange={setPackageType} value={packageType} />
+          <div className="fluxpack-export-dialog__package-hint">
+            {isFullPackage ? (
+              <span>Полная — все моды и локальные файлы внутри одного автономного FluxPack.</span>
+            ) : (
+              <span>Рецепт — моды загружаются из Nexus Mods и других указанных источников.</span>
+            )}
+            <span>Максимальное сжатие применяется автоматически.</span>
+          </div>
           <Checkbox
-            checked={includeGeneratedAssets}
+            checked={isFullPackage || includeGeneratedAssets}
             className="fluxpack-export-dialog__generated-assets"
+            disabled={isFullPackage}
             label={
               <>
                 <strong>Добавить сгенерированные файлы</strong>
@@ -89,7 +99,12 @@ export function FluxPackExportDialog({
           <button
             autoFocus
             className="primary-button"
-            onClick={() => onConfirm({ compressionMode, includeGeneratedAssets })}
+            onClick={() =>
+              onConfirm({
+                packageType,
+                includeGeneratedAssets: isFullPackage || includeGeneratedAssets
+              })
+            }
             type="button"
           >
             Упаковать

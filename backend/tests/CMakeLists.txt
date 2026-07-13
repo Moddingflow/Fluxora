@@ -22,6 +22,7 @@ add_executable(FluxoraCoreTests
     DownloadTransferLimiterTests.cpp
     EffectiveFileTreeServiceTests.cpp
     ExecutableServiceTests.cpp
+    PgPatcherExecutableServiceTests.cpp
     GameDetectionHealthServiceTests.cpp
     GameDefinitionLoaderTests.cpp
     GameSupportRegistryTests.cpp

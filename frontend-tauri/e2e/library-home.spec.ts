@@ -806,7 +806,8 @@ test.beforeEach(async ({ page }) => {
           await new Promise<void>((resolve) => setTimeout(resolve, 500));
           return {
             buildName: 'Skyrim graphics overhaul',
-            compressionMode: request.compressionMode,
+            bundledModCount: request.packageType === 'full' ? 4 : 0,
+            compressionMode: 'smallest',
             customConfigCount: 1,
             customPatchCount: 0,
             deduplicatedPayloadBytes: 524288,
@@ -820,6 +821,7 @@ test.beforeEach(async ({ page }) => {
             manifestBytes: 2048,
             operationId,
             outputPath: request.outputPath,
+            packageType: request.packageType,
             sourceArchiveCount: 4,
             storedPayloadBytes: 1572864,
             uniqueChunkCount: 12,
@@ -1439,26 +1441,25 @@ const openSkyrimBuild = async (page: Page) => {
 
 const submitFluxPackExportDialog = async (
   page: Page,
-  compressionMode: 'fast' | 'optimal' | 'smallest' = 'optimal',
+  packageType: 'full' | 'recipe' = 'recipe',
   includeGeneratedAssets = false
 ) => {
-  const compressionLabels = {
-    fast: 'Быстро',
-    optimal: 'Оптимально',
-    smallest: 'Минимальный размер'
+  const packageTypeLabels = {
+    full: 'Полная',
+    recipe: 'Рецепт'
   } as const;
   const dialog = page.getByRole('dialog', { name: 'Упаковать сборку' });
   await expect(dialog).toBeVisible();
-  const compressionSelect = dialog.getByRole('combobox', { name: 'Режим сжатия FluxPack' });
-  await compressionSelect.click();
-  const compressionMenu = page.getByRole('listbox');
-  await expect(compressionMenu).toBeVisible();
-  await expect(compressionMenu).toHaveAttribute('data-open', 'true');
-  await compressionMenu
-    .getByRole('option', { name: compressionLabels[compressionMode], exact: true })
+  const packageTypeSelect = dialog.getByRole('combobox', { name: 'Тип упаковки FluxPack' });
+  await packageTypeSelect.click();
+  const packageTypeMenu = page.getByRole('listbox');
+  await expect(packageTypeMenu).toBeVisible();
+  await expect(packageTypeMenu).toHaveAttribute('data-open', 'true');
+  await packageTypeMenu
+    .getByRole('option', { name: packageTypeLabels[packageType], exact: true })
     .click();
-  await expect(compressionSelect).toContainText(compressionLabels[compressionMode]);
-  if (includeGeneratedAssets) {
+  await expect(packageTypeSelect).toContainText(packageTypeLabels[packageType]);
+  if (includeGeneratedAssets && packageType === 'recipe') {
     const generatedAssetsCheckbox = dialog.getByRole('checkbox', {
       name: /Добавить сгенерированные файлы/
     });
@@ -2971,7 +2972,7 @@ test('runs build package, check and launch actions through the facade', async ({
   await actionsTrigger.click();
   actionsMenu = page.getByRole('menu', { name: 'Действия со сборкой' });
   await actionsMenu.getByRole('menuitem', { name: 'Упаковать' }).click();
-  await submitFluxPackExportDialog(page, 'smallest', true);
+  await submitFluxPackExportDialog(page, 'full', true);
   await expect(page.getByRole('status', { name: 'Упаковываем сборку' })).toBeVisible();
   await expect(
     page.getByRole('progressbar', { name: 'Упаковываем сборку: прогресс' })
@@ -2989,9 +2990,9 @@ test('runs build package, check and launch actions through the facade', async ({
     )
     .toContain('fluxPack.export');
   const selectedExportPayload = (await latestCallPayload(page, 'fluxPack.export')) as {
-    request?: { compressionMode?: string; includeGeneratedAssets?: boolean };
+    request?: { packageType?: string; includeGeneratedAssets?: boolean };
   } | null;
-  expect(selectedExportPayload?.request?.compressionMode).toBe('smallest');
+  expect(selectedExportPayload?.request?.packageType).toBe('full');
   expect(selectedExportPayload?.request?.includeGeneratedAssets).toBe(true);
 });
 
@@ -3020,7 +3021,7 @@ test('packages the build from the mods search-row three-dot menu', async ({ page
 
   const exportPayload = (await latestCallPayload(page, 'fluxPack.export')) as {
     request?: {
-      compressionMode?: string;
+      packageType?: string;
       configPath?: string;
       includeGeneratedAssets?: boolean;
       outputPath?: string;
@@ -3028,7 +3029,7 @@ test('packages the build from the mods search-row three-dot menu', async ({ page
   } | null;
   expect(exportPayload?.request?.outputPath).toBe('D:\\Fluxora\\Exports\\skyrim.fluxpack');
   expect(exportPayload?.request?.configPath).toBe('D:\\Fluxora\\Configs\\skyrim-main.json');
-  expect(exportPayload?.request?.compressionMode).toBe('optimal');
+  expect(exportPayload?.request?.packageType).toBe('recipe');
   expect(exportPayload?.request?.includeGeneratedAssets).toBe(false);
 
   await menu.waitFor({ state: 'detached' });
@@ -3078,17 +3079,17 @@ test('keeps the FluxPack export dialog cohesive in a compact viewport', async ({
   const confirmBox = await actionButtons.nth(1).boundingBox();
   expect(Math.abs((cancelBox?.height ?? 0) - (confirmBox?.height ?? 0))).toBeLessThanOrEqual(1);
 
-  const compressionSelect = dialog.getByRole('combobox', { name: 'Режим сжатия FluxPack' });
-  await compressionSelect.click();
-  const compressionMenu = page.getByRole('listbox');
-  await expect(compressionMenu).toBeVisible();
-  await expect(compressionMenu).toHaveAttribute('data-open', 'true');
+  const packageTypeSelect = dialog.getByRole('combobox', { name: 'Тип упаковки FluxPack' });
+  await packageTypeSelect.click();
+  const packageTypeMenu = page.getByRole('listbox');
+  await expect(packageTypeMenu).toBeVisible();
+  await expect(packageTypeMenu).toHaveAttribute('data-open', 'true');
   await expect
-    .poll(() => compressionMenu.evaluate((element) => window.getComputedStyle(element).opacity))
+    .poll(() => packageTypeMenu.evaluate((element) => window.getComputedStyle(element).opacity))
     .toBe('1');
-  await expect(compressionMenu.getByRole('option')).toHaveCount(3);
-  const menuBox = await compressionMenu.boundingBox();
-  const menuBackground = await compressionMenu.evaluate(
+  await expect(packageTypeMenu.getByRole('option')).toHaveCount(2);
+  const menuBox = await packageTypeMenu.boundingBox();
+  const menuBackground = await packageTypeMenu.evaluate(
     (element) => window.getComputedStyle(element).backgroundColor
   );
   expect(menuBox).not.toBeNull();
@@ -3103,7 +3104,7 @@ test('keeps the FluxPack export dialog cohesive in a compact viewport', async ({
   expect(menuBackground).not.toBe('rgb(255, 255, 255)');
 
   await page.keyboard.press('Escape');
-  await expect(compressionMenu).toBeHidden();
+  await expect(packageTypeMenu).toBeHidden();
   await expect(dialog).toBeVisible();
 });
 
@@ -4229,22 +4230,22 @@ test('captures phase 13 visual acceptance surfaces across desktop sizes', async 
       size.height + 1
     );
     await capturePhase13Screenshot(page, testInfo, 'fluxpack-export-dialog', size);
-    const fluxPackCompressionSelect = fluxPackDialog.getByRole('combobox', {
-      name: 'Режим сжатия FluxPack'
+    const fluxPackPackageTypeSelect = fluxPackDialog.getByRole('combobox', {
+      name: 'Тип упаковки FluxPack'
     });
-    await fluxPackCompressionSelect.click();
-    const fluxPackCompressionMenu = page.getByRole('listbox');
-    await expect(fluxPackCompressionMenu).toBeVisible();
-    await expect(fluxPackCompressionMenu).toHaveAttribute('data-open', 'true');
+    await fluxPackPackageTypeSelect.click();
+    const fluxPackPackageTypeMenu = page.getByRole('listbox');
+    await expect(fluxPackPackageTypeMenu).toBeVisible();
+    await expect(fluxPackPackageTypeMenu).toHaveAttribute('data-open', 'true');
     await expect
       .poll(() =>
-        fluxPackCompressionMenu.evaluate((element) => window.getComputedStyle(element).opacity)
+        fluxPackPackageTypeMenu.evaluate((element) => window.getComputedStyle(element).opacity)
       )
       .toBe('1');
-    await capturePhase13Screenshot(page, testInfo, 'fluxpack-export-compression-menu', size);
+    await capturePhase13Screenshot(page, testInfo, 'fluxpack-export-package-type-menu', size);
     await page.keyboard.press('Escape');
     await expect(fluxPackDialog).toBeVisible();
-    await submitFluxPackExportDialog(page, 'fast');
+    await submitFluxPackExportDialog(page, 'full');
     await expect(page.getByRole('status', { name: 'Упаковываем сборку' })).toBeVisible();
     await expect(page.getByRole('progressbar', { name: 'Упаковываем сборку: прогресс' })).toBeVisible();
     await capturePhase13Screenshot(page, testInfo, 'operation-overlay', size);

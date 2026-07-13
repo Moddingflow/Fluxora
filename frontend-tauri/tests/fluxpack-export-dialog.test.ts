@@ -8,7 +8,7 @@ describe('FluxPackExportDialog', () => {
     const markup = renderToStaticMarkup(
       React.createElement(FluxPackExportDialog, {
         buildName: 'Foundation Edition',
-        defaultCompressionMode: 'smallest',
+        defaultPackageType: 'recipe',
         onCancel: () => undefined,
         onConfirm: () => undefined,
         outputPath: 'C:\\Users\\Валера\\Downloads\\Foundation Edition.fluxpack'
@@ -19,11 +19,26 @@ describe('FluxPackExportDialog', () => {
     expect(markup).toContain('fluxpack-export-dialog__title');
     expect(markup).toContain('role="combobox"');
     expect(markup).toContain('flx-custom-select');
-    expect(markup).toContain('Минимальный размер');
+    expect(markup).toContain('Рецепт');
+    expect(markup).toContain('Максимальное сжатие применяется автоматически');
     expect(markup).toContain('class="tool-button"');
     expect(markup).toContain('Добавить сгенерированные файлы');
     expect(markup).toContain('Nemesis, DynDOLOD и другие');
     expect(markup).not.toContain('<select');
     expect(markup).not.toContain('secondary-button');
+
+    const fullMarkup = renderToStaticMarkup(
+      React.createElement(FluxPackExportDialog, {
+        buildName: 'Foundation Edition',
+        defaultPackageType: 'full',
+        onCancel: () => undefined,
+        onConfirm: () => undefined,
+        outputPath: 'C:\\Exports\\Foundation Edition.fluxpack'
+      })
+    );
+    expect(fullMarkup).toContain('Полная');
+    expect(fullMarkup).toContain('автономного FluxPack');
+    expect(fullMarkup).toContain('checked=""');
+    expect(fullMarkup).toContain('disabled=""');
   });
 });

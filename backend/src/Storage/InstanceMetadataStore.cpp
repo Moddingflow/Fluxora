@@ -3459,7 +3459,10 @@ namespace fluxora
             update.bindText(2, record.updatedAt);
             update.bindInt64(3, record.id);
             update.stepDone();
-            writePortableManifest(record);
+            if (portableManifestNeedsWrite(record, false))
+            {
+                writePortableManifest(record);
+            }
         }
 
         void ensureFileCachePrepared(

@@ -1200,41 +1200,37 @@ namespace
             includeGeneratedAssetsField != nullptr &&
             includeGeneratedAssetsField->type() == fluxora::JsonValue::Type::Boolean &&
             includeGeneratedAssetsField->asBoolean();
-        const fluxora::JsonValue* compressionModeField =
-            findObjectField(params, L"compressionMode");
-        if (compressionModeField != nullptr &&
-            !compressionModeField->isNull() &&
-            !compressionModeField->isString())
+        const fluxora::JsonValue* packageTypeField =
+            findObjectField(params, L"packageType");
+        if (packageTypeField != nullptr &&
+            !packageTypeField->isNull() &&
+            !packageTypeField->isString())
         {
             throw BridgeError{
                 L"bridge.invalidRequest",
-                L"compressionMode must be fast, optimal, or smallest.",
+                L"packageType must be full or recipe.",
                 ErrorCategory::Validation,
                 false
             };
         }
-        const std::wstring compressionMode =
-            compressionModeField != nullptr && compressionModeField->isString()
-                ? compressionModeField->asString()
-                : L"optimal";
-        int compressionModeValue = 0;
-        if (compressionMode == L"fast")
+        const std::wstring packageType =
+            packageTypeField != nullptr && packageTypeField->isString()
+                ? packageTypeField->asString()
+                : L"recipe";
+        int packageTypeValue = 0;
+        if (packageType == L"full")
         {
-            compressionModeValue = 1;
+            packageTypeValue = 1;
         }
-        else if (compressionMode == L"optimal")
+        else if (packageType == L"recipe")
         {
-            compressionModeValue = 2;
-        }
-        else if (compressionMode == L"smallest")
-        {
-            compressionModeValue = 3;
+            packageTypeValue = 2;
         }
         else
         {
             throw BridgeError{
                 L"bridge.invalidRequest",
-                L"compressionMode must be fast, optimal, or smallest.",
+                L"packageType must be full or recipe.",
                 ErrorCategory::Validation,
                 false
             };
@@ -1245,14 +1241,14 @@ namespace
             [&configPath,
              &outputPath,
              includeGeneratedAssets,
-             compressionModeValue,
+             packageTypeValue,
              &progressContext](wchar_t* buffer, int length)
             {
                 return fluxora_export_fluxpack_with_options_and_progress(
                     configPath.c_str(),
                     outputPath.c_str(),
                     includeGeneratedAssets ? 1 : 0,
-                    compressionModeValue,
+                    packageTypeValue,
                     emitOperationProgress,
                     &progressContext,
                     buffer,

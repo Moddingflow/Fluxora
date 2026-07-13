@@ -606,7 +606,7 @@ namespace fluxora
         case FluxPackCompressionMode::Fast:
             return 1;
         case FluxPackCompressionMode::Smallest:
-            return 19;
+            return ZSTD_maxCLevel();
         case FluxPackCompressionMode::Optimal:
         default:
             return 6;

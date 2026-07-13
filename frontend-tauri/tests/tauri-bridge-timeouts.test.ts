@@ -479,7 +479,7 @@ describe('Tauri bridge request timeouts', () => {
           configPath: 'C:\\Fluxora\\Builds\\Foundation.json',
           outputPath: 'E:\\Exports\\Foundation.fluxpack',
           includeGeneratedAssets: null as unknown as boolean,
-          compressionMode: null as unknown as 'optimal'
+          packageType: null as unknown as 'recipe'
         },
         request
       )
@@ -494,7 +494,7 @@ describe('Tauri bridge request timeouts', () => {
         configPath: 'C:\\Fluxora\\Builds\\Foundation.json',
         outputPath: 'E:\\Exports\\Foundation.fluxpack',
         includeGeneratedAssets: false,
-        compressionMode: 'optimal'
+        packageType: 'recipe'
       },
       request,
       timeoutMs: 7_200_000

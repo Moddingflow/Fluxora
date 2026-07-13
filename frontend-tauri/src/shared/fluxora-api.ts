@@ -1434,12 +1434,14 @@ export interface FluxoraFluxPackSummary {
   formatVersion: number;
   manifestBytes: number;
   sourceArchiveCount: number;
+  bundledModCount: number;
   generatedAssetCount: number;
   customPatchCount: number;
   customConfigCount: number;
   installStepCount: number;
   generatedAssetsIncluded: boolean;
   installPlanAvailable: boolean;
+  packageType: FluxoraFluxPackPackageType;
   compressionMode: FluxoraFluxPackCompressionMode | 'none';
   logicalPayloadBytes: number;
   uniquePayloadBytes: number;
@@ -1451,12 +1453,13 @@ export interface FluxoraFluxPackSummary {
 }
 
 export type FluxoraFluxPackCompressionMode = 'fast' | 'optimal' | 'smallest';
+export type FluxoraFluxPackPackageType = 'full' | 'recipe';
 
 export interface FluxoraFluxPackExportRequest {
   configPath: string;
   outputPath: string;
   includeGeneratedAssets: boolean;
-  compressionMode: FluxoraFluxPackCompressionMode;
+  packageType: FluxoraFluxPackPackageType;
 }
 
 export interface FluxoraFluxPackInstallRequest {

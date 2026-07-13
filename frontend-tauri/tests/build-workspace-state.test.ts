@@ -156,6 +156,7 @@ describe('build workspace state', () => {
   it('shows FluxPack v3 compression and deduplication statistics', () => {
     const summary: FluxoraFluxPackSummary = {
       buildName: 'Skyrim Main',
+      bundledModCount: 0,
       compressionMode: 'smallest',
       customConfigCount: 3,
       customPatchCount: 2,
@@ -170,6 +171,7 @@ describe('build workspace state', () => {
       manifestBytes: 4096,
       operationId: 'op_fluxpack',
       outputPath: 'D:\\Exports\\Skyrim.fluxpack',
+      packageType: 'recipe',
       sourceArchiveCount: 5,
       storedPayloadBytes: 2 * 1024 * 1024,
       uniqueChunkCount: 12,
@@ -178,6 +180,7 @@ describe('build workspace state', () => {
 
     expect(Object.fromEntries(fluxPackSummaryFacts(summary))).toMatchObject({
       Compression: 'Минимальный размер',
+      'Package type': 'Рецепт',
       Deduplicated: '1.0 MB',
       Stored: '2.0 MB',
       Chunks: '12'

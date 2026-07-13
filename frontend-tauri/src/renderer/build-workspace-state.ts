@@ -374,11 +374,13 @@ const fluxPackCompressionLabel = (mode: FluxoraFluxPackSummary['compressionMode'
 export const fluxPackSummaryFacts = (summary: FluxoraFluxPackSummary): Array<[string, string]> => [
   ['Build', summary.buildName || '-'],
   ['Format', String(summary.formatVersion)],
+  ['Package type', summary.packageType === 'full' ? 'Полная' : 'Рецепт'],
   ['Compression', fluxPackCompressionLabel(summary.compressionMode)],
   ['Stored', formatFluxPackBytes(summary.storedPayloadBytes)],
   ['Deduplicated', formatFluxPackBytes(summary.deduplicatedPayloadBytes)],
   ['Chunks', String(summary.uniqueChunkCount ?? 0)],
   ['Sources', String(summary.sourceArchiveCount)],
+  ['Bundled mods', String(summary.bundledModCount ?? 0)],
   ['Generated assets', String(summary.generatedAssetCount)],
   ['Configs', String(summary.customConfigCount)],
   ['Install steps', String(summary.installStepCount)]

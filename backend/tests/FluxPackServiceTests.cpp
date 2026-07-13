@@ -298,6 +298,7 @@ namespace fluxora::tests
 
     TEST(FluxPackPackageTests, AppliesCompressionModesAndSkipsIncompressibleArchives)
     {
+        EXPECT_EQ(fluxPackCompressionLevel(FluxPackCompressionMode::Smallest), 22);
         TempDirectory temp;
         const std::filesystem::path compressible = temp.path() / L"large.txt";
         const std::filesystem::path precompressed = temp.path() / L"texture.dds";
@@ -534,6 +535,8 @@ namespace fluxora::tests
 
         EXPECT_EQ(exported.buildName, L"FluxPack Test Build");
         EXPECT_EQ(exported.sourceArchiveCount, 1U);
+        EXPECT_EQ(exported.bundledModCount, 0U);
+        EXPECT_EQ(exported.packageType, L"recipe");
         EXPECT_EQ(exported.generatedAssetCount, 1U);
         EXPECT_EQ(exported.customPatchCount, 1U);
         EXPECT_GE(exported.customConfigCount, 3U);
@@ -547,7 +550,8 @@ namespace fluxora::tests
         EXPECT_NE(manifest.find("\"formatVersion\":3"), std::string::npos);
         EXPECT_NE(manifest.find("\"contentStore\""), std::string::npos);
         EXPECT_NE(manifest.find("\"algorithm\":\"fastcdc\""), std::string::npos);
-        EXPECT_NE(manifest.find("\"compressionMode\":\"optimal\""), std::string::npos);
+        EXPECT_NE(manifest.find("\"compressionMode\":\"smallest\""), std::string::npos);
+        EXPECT_NE(manifest.find("\"packageType\":\"recipe\""), std::string::npos);
         EXPECT_NE(manifest.find("\"gamePath\""), std::string::npos);
         EXPECT_NE(manifest.find("\"sourceArchives\""), std::string::npos);
         EXPECT_NE(manifest.find("\"generatedAssets\""), std::string::npos);
@@ -569,6 +573,54 @@ namespace fluxora::tests
         EXPECT_EQ(inspected.installStepCount, 4U);
         EXPECT_TRUE(inspected.generatedAssetsIncluded);
         EXPECT_TRUE(inspected.installPlanAvailable);
+
+        const std::filesystem::path fullOutput = temp.path() / L"FluxPack Test Build Full.fluxpack";
+        const FluxPackSummary full = service.exportProject(FluxPackExportRequest{
+            config,
+            fullOutput,
+            false,
+            {},
+            FluxPackPackageType::Full
+        });
+        EXPECT_EQ(full.packageType, L"full");
+        EXPECT_EQ(full.compressionMode, L"smallest");
+        EXPECT_EQ(full.sourceArchiveCount, 0U);
+        EXPECT_EQ(full.bundledModCount, 1U);
+        EXPECT_TRUE(full.generatedAssetsIncluded);
+
+        const std::string fullManifest = FluxPackPackageReader(fullOutput).readManifest();
+        EXPECT_NE(fullManifest.find("\"packageType\":\"full\""), std::string::npos);
+        EXPECT_NE(fullManifest.find("\"bundledMods\""), std::string::npos);
+        EXPECT_NE(fullManifest.find("interface/skyui.swf"), std::string::npos);
+        EXPECT_EQ(fullManifest.find("\"requiresDownload\":true"), std::string::npos);
+
+        const FluxPackInstallPlan fullPlan = service.planInstall(FluxPackInstallPlanRequest{fullOutput, {}});
+        EXPECT_TRUE(fullPlan.sources.empty());
+        EXPECT_EQ(fullPlan.automaticDownloadCount, 0U);
+        EXPECT_EQ(fullPlan.manualDownloadCount, 0U);
+
+        const FluxPackInstallResult fullInstalled = service.installFluxPack(FluxPackInstallRequest{
+            fullOutput,
+            temp.path() / L"Full Installed"
+        });
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            fullInstalled.projectDirectory / L"mods" / L"SkyUI" / L"interface" / L"skyui.swf"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            fullInstalled.projectDirectory / L"mods" / L"Nemesis Output" / L"meshes" / L"actors" / L"behavior.hkx"));
+        EXPECT_FALSE(fullInstalled.hasWarnings);
+        const std::vector<InstalledModRecord> fullInstalledMods = InstanceMetadataStore::listInstalledMods(
+            fullInstalled.projectDirectory,
+            fullInstalled.projectDirectory / L"mods");
+        const auto restoredSkyUi = std::find_if(
+            fullInstalledMods.begin(),
+            fullInstalledMods.end(),
+            [](const InstalledModRecord& mod)
+            {
+                return mod.folderName == L"SkyUI";
+            });
+        ASSERT_NE(restoredSkyUi, fullInstalledMods.end());
+        EXPECT_FALSE(restoredSkyUi->isLocal);
+        EXPECT_EQ(restoredSkyUi->source.remoteFileId, L"123");
 
         service.shutdown();
         downloadService.shutdown();
@@ -720,7 +772,7 @@ namespace fluxora::tests
         EXPECT_EQ(exported.sourceArchiveCount, 0U);
         EXPECT_EQ(exported.customPatchCount, 2U);
         EXPECT_EQ(exported.formatVersion, 3);
-        EXPECT_EQ(exported.compressionMode, L"optimal");
+        EXPECT_EQ(exported.compressionMode, L"smallest");
         EXPECT_GT(exported.deduplicatedPayloadBytes, 0U);
         EXPECT_LT(exported.uniquePayloadBytes, exported.logicalPayloadBytes);
         EXPECT_LT(

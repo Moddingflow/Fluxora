@@ -149,6 +149,7 @@ namespace fluxora
             std::filesystem::path projectDirectoryHint;
             std::wstring defaultProfile;
             std::vector<FluxPackSourceReference> sourceArchives;
+            std::vector<FluxPackEmbeddedModReference> bundledMods;
             std::vector<FluxPackEmbeddedModReference> generatedAssets;
             std::vector<FluxPackEmbeddedModReference> customPatches;
             std::vector<FluxPackConfigReference> customConfigs;
@@ -1367,7 +1368,8 @@ namespace fluxora
             JsonWriter& writer,
             const ProjectOpenResult& project,
             const std::vector<ProfileOrderItemRecord>& profileOrder,
-            bool includeGeneratedAssets)
+            bool includeGeneratedAssets,
+            FluxPackPackageType packageType)
         {
             const std::wstring defaultProfile = project.resolvedTemplate.defaultProfileName.empty()
                 ? L"Default"
@@ -1379,9 +1381,12 @@ namespace fluxora
             writer.key(L"stages").beginArray();
 
             writer.beginObject();
-            writer.field(L"id", L"source-archives");
-            writer.field(L"title", L"Download and verify source archives");
-            writer.field(L"policy", L"reference-only");
+            const bool fullPackage = packageType == FluxPackPackageType::Full;
+            writer.field(L"id", fullPackage ? L"bundled-mods" : L"source-archives");
+            writer.field(
+                L"title",
+                fullPackage ? L"Restore bundled mods" : L"Download and verify source archives");
+            writer.field(L"policy", fullPackage ? L"package-payload" : L"reference-only");
             writer.stringArray(L"requires", {});
             writer.endObject();
 
@@ -1389,14 +1394,14 @@ namespace fluxora
             writer.field(L"id", L"generated-assets");
             writer.field(L"title", L"Restore approved generated assets");
             writer.field(L"policy", includeGeneratedAssets ? L"approved-manifest" : L"user-confirmation-required");
-            writer.stringArray(L"requires", {L"source-archives"});
+            writer.stringArray(L"requires", {fullPackage ? L"bundled-mods" : L"source-archives"});
             writer.endObject();
 
             writer.beginObject();
             writer.field(L"id", L"custom-patches");
             writer.field(L"title", L"Restore custom patches");
             writer.field(L"policy", L"project-local-manifest");
-            writer.stringArray(L"requires", {L"source-archives"});
+            writer.stringArray(L"requires", {fullPackage ? L"bundled-mods" : L"source-archives"});
             writer.endObject();
 
             writer.beginObject();
@@ -1463,19 +1468,22 @@ namespace fluxora
             const ProjectOpenResult& project,
             const BuildPathSettings& paths,
             const std::vector<PackModReference>& sourceArchives,
+            const std::vector<PackModReference>& bundledMods,
             const std::vector<PackModReference>& generatedAssets,
             const std::vector<PackModReference>& customPatches,
             const std::vector<FileManifestEntry>& customConfigs,
             const std::vector<ProfileOrderItemRecord>& profileOrder,
             const std::vector<FluxPackStoredChunk>& contentChunks,
             const FluxPackContentStoreStatistics& contentStoreStatistics,
-            bool includeGeneratedAssets)
+            bool includeGeneratedAssets,
+            FluxPackPackageType packageType)
         {
             JsonWriter writer;
             writer.beginObject();
             writer.field(L"format", packageFormat);
             writer.field(L"formatVersion", packageFormatVersion);
             writer.field(L"createdAtUtc", nowUtcText());
+            writer.field(L"packageType", fluxPackPackageTypeId(packageType));
             writer.key(L"build").beginObject();
             writer.field(L"name", project.project.name);
             writer.field(L"templateId", project.project.templateId);
@@ -1488,7 +1496,12 @@ namespace fluxora
             writer.endObject();
 
             writer.key(L"policies").beginObject();
-            writer.field(L"sourceArchives", L"reference-only");
+            writer.field(
+                L"sourceArchives",
+                packageType == FluxPackPackageType::Full ? L"not-required" : L"reference-only");
+            writer.field(
+                L"bundledMods",
+                packageType == FluxPackPackageType::Full ? L"package-payload" : L"not-included");
             writer.field(L"generatedAssets", includeGeneratedAssets ? L"approved-manifest" : L"confirm-before-including");
             writer.field(L"customPatches", L"project-local-manifest");
             writer.field(L"customConfigs", L"package-payload");
@@ -1499,6 +1512,8 @@ namespace fluxora
 
             writer.key(L"sourceArchives");
             writeModReferences(writer, sourceArchives, false, true);
+            writer.key(L"bundledMods");
+            writeModReferences(writer, bundledMods, true, false);
             writer.key(L"generatedAssets");
             writeModReferences(
                 writer,
@@ -1510,7 +1525,7 @@ namespace fluxora
             writer.key(L"customConfigs");
             writeFileEntries(writer, customConfigs);
             writer.key(L"installPlan");
-            writeInstallPlan(writer, project, profileOrder, includeGeneratedAssets);
+            writeInstallPlan(writer, project, profileOrder, includeGeneratedAssets, packageType);
             writer.endObject();
             return writer.str();
         }
@@ -1541,10 +1556,16 @@ namespace fluxora
             summary.formatVersion = static_cast<int>(formatVersion);
             summary.manifestBytes = manifestBytes;
             summary.sourceArchiveCount = arraySize(root, L"sourceArchives");
+            summary.bundledModCount = arraySize(root, L"bundledMods");
             summary.generatedAssetCount = arraySize(root, L"generatedAssets");
             summary.customPatchCount = arraySize(root, L"customPatches");
             summary.customConfigCount = arraySize(root, L"customConfigs");
             summary.installStepCount = 0;
+            summary.packageType = readStringOrDefault(root, L"packageType", L"recipe");
+            if (summary.packageType != L"full" && summary.packageType != L"recipe")
+            {
+                throw std::invalid_argument("FluxPack package type is not supported.");
+            }
             if (const JsonValue* installPlan = root.find(L"installPlan");
                 installPlan != nullptr && installPlan->isObject())
             {
@@ -2092,6 +2113,12 @@ namespace fluxora
             }
 
             manifest.sourceArchives = readSourceReferences(root);
+            manifest.bundledMods = readEmbeddedModReferences(root, L"bundledMods");
+            if (manifest.summary.packageType == L"full" && !manifest.sourceArchives.empty())
+            {
+                throw std::invalid_argument(
+                    "Full FluxPack must not require remote source archives.");
+            }
             manifest.generatedAssets = readEmbeddedModReferences(root, L"generatedAssets");
             manifest.customPatches = readEmbeddedModReferences(root, L"customPatches");
             manifest.customConfigs = readCustomConfigReferences(root);
@@ -2879,7 +2906,7 @@ namespace fluxora
                 import.version = mod.version;
                 import.isEnabled = mod.enabled;
                 import.source = mod.source;
-                import.isLocal = true;
+                import.isLocal = !sourceHasRemoteIdentity(mod.source);
                 import.isPatch = markAsPatch;
                 imports.push_back(std::move(import));
             }
@@ -2981,6 +3008,11 @@ namespace fluxora
         }
     }
 
+    std::wstring_view fluxPackPackageTypeId(FluxPackPackageType type) noexcept
+    {
+        return type == FluxPackPackageType::Full ? L"full" : L"recipe";
+    }
+
     FluxPackService::FluxPackService(
         Logger& logger,
         ProjectService& projects,
@@ -3027,6 +3059,8 @@ namespace fluxora
             throw std::invalid_argument("FluxPack output path is required.");
         }
 
+        const bool fullPackage = request.packageType == FluxPackPackageType::Full;
+        const bool includeGeneratedAssets = fullPackage || request.includeGeneratedAssets;
         FluxPackExportProgressReporter progress(request.progress);
         progress.publish(
             L"analyzing",
@@ -3048,7 +3082,8 @@ namespace fluxora
             "FluxPack",
             "FluxPack export requested. configPath=\"" + pathForLog(request.configPath) +
                 "\", outputPath=\"" + pathForLog(request.outputPath) +
-                "\", includeGeneratedAssets=" + (request.includeGeneratedAssets ? "true" : "false"));
+                "\", packageType=" + toUtf8(std::wstring(fluxPackPackageTypeId(request.packageType))) +
+                ", includeGeneratedAssets=" + (includeGeneratedAssets ? "true" : "false"));
 
         const ProjectOpenResult project = projects_.readProjectConfigSummary(request.configPath);
         BuildPathSettings paths{
@@ -3091,6 +3126,7 @@ namespace fluxora
             4);
         std::vector<DownloadSourceFile> downloads = buildDownloadIndex(paths.downloadsDirectory);
         std::vector<PackModReference> sourceArchives;
+        std::vector<PackModReference> bundledMods;
         std::vector<PackModReference> generatedAssets;
         std::vector<PackModReference> customPatches;
         const std::vector<std::filesystem::path> payloadExclusions{
@@ -3122,7 +3158,7 @@ namespace fluxora
 
             if (isGeneratedAssetMod(mod))
             {
-                if (request.includeGeneratedAssets)
+                if (includeGeneratedAssets)
                 {
                     const std::optional<std::filesystem::path> logicalFolder =
                         safeArchiveFileName(mod.folderName);
@@ -3140,7 +3176,25 @@ namespace fluxora
             }
             else if (sourceHasRemoteIdentity(mod.source))
             {
-                sourceArchives.push_back(std::move(reference));
+                if (fullPackage)
+                {
+                    const std::optional<std::filesystem::path> logicalFolder =
+                        safeArchiveFileName(mod.folderName);
+                    if (!logicalFolder.has_value())
+                    {
+                        throw std::invalid_argument("FluxPack mod folder name is unsafe.");
+                    }
+                    reference.files = scanPayloadFiles(
+                        mod.path,
+                        project.project.projectDirectory / L"mods" / logicalFolder.value(),
+                        project.project.projectDirectory,
+                        false);
+                    bundledMods.push_back(std::move(reference));
+                }
+                else
+                {
+                    sourceArchives.push_back(std::move(reference));
+                }
             }
             else
             {
@@ -3305,6 +3359,10 @@ namespace fluxora
         {
             countPayloadFiles(reference.files);
         }
+        for (const PackModReference& reference : bundledMods)
+        {
+            countPayloadFiles(reference.files);
+        }
         for (const PackModReference& reference : customPatches)
         {
             countPayloadFiles(reference.files);
@@ -3376,7 +3434,7 @@ namespace fluxora
             absoluteOutput,
             [&](const std::filesystem::path& temporaryPath)
             {
-                FluxPackPackageWriter package(temporaryPath, request.compressionMode);
+                FluxPackPackageWriter package(temporaryPath, FluxPackCompressionMode::Smallest);
                 const auto packagingPercent = [&]()
                 {
                     return totalPayloadBytes > 0
@@ -3395,6 +3453,10 @@ namespace fluxora
                 };
 
                 for (PackModReference& reference : generatedAssets)
+                {
+                    collectFiles(reference.files);
+                }
+                for (PackModReference& reference : bundledMods)
                 {
                     collectFiles(reference.files);
                 }
@@ -3498,13 +3560,15 @@ namespace fluxora
                     project,
                     paths,
                     sourceArchives,
+                    bundledMods,
                     generatedAssets,
                     customPatches,
                     customConfigs,
                     profileOrder,
                     package.contentChunks(),
                     contentStoreStatistics,
-                    request.includeGeneratedAssets);
+                    includeGeneratedAssets,
+                    request.packageType);
                 const std::string manifestUtf8 = toUtf8(manifest);
                 manifestBytes = manifestUtf8.size();
                 package.finish(manifestUtf8);
@@ -3528,13 +3592,15 @@ namespace fluxora
         summary.formatVersion = packageFormatVersion;
         summary.manifestBytes = manifestBytes;
         summary.sourceArchiveCount = sourceArchives.size();
+        summary.bundledModCount = bundledMods.size();
         summary.generatedAssetCount = generatedAssets.size();
         summary.customPatchCount = customPatches.size();
         summary.customConfigCount = customConfigs.size();
         summary.installStepCount = 4;
-        summary.generatedAssetsIncluded = request.includeGeneratedAssets;
+        summary.generatedAssetsIncluded = includeGeneratedAssets;
         summary.installPlanAvailable = true;
-        summary.compressionMode = std::wstring(fluxPackCompressionModeId(request.compressionMode));
+        summary.packageType = std::wstring(fluxPackPackageTypeId(request.packageType));
+        summary.compressionMode = std::wstring(fluxPackCompressionModeId(FluxPackCompressionMode::Smallest));
         summary.logicalPayloadBytes = contentStoreStatistics.logicalBytes;
         summary.uniquePayloadBytes = contentStoreStatistics.uniqueBytes;
         summary.storedPayloadBytes = contentStoreStatistics.storedBytes;
@@ -3558,6 +3624,7 @@ namespace fluxora
             LogLevel::Info,
             "FluxPack",
             "FluxPack export completed. sourceArchives=" + std::to_string(sourceArchives.size()) +
+                ", bundledMods=" + std::to_string(bundledMods.size()) +
                 ", generatedAssets=" + std::to_string(generatedAssets.size()) +
                 ", customPatches=" + std::to_string(customPatches.size()) +
                 ", customConfigs=" + std::to_string(customConfigs.size()) +
@@ -3567,6 +3634,7 @@ namespace fluxora
                 ", storedBytes=" + std::to_string(contentStoreStatistics.storedBytes) +
                 ", deduplicatedBytes=" + std::to_string(contentStoreStatistics.deduplicatedBytes) +
                 ", compressionMode=" + toUtf8(summary.compressionMode) +
+                ", packageType=" + toUtf8(summary.packageType) +
                 ", manifestBytes=" + std::to_string(manifestBytes) +
                 ", formatVersion=" + std::to_string(packageFormatVersion));
 
@@ -4310,6 +4378,13 @@ namespace fluxora
         const FluxPackPackageReader* packageReaderPointer =
             packageReader.has_value() ? &packageReader.value() : nullptr;
         FluxPackDeltaApplyStatistics deltaStatistics;
+        applyEmbeddedMods(
+            project.projectDirectory,
+            manifest.bundledMods,
+            packageReaderPointer,
+            logger_,
+            false,
+            deltaStatistics);
         applyEmbeddedMods(
             project.projectDirectory,
             manifest.customPatches,

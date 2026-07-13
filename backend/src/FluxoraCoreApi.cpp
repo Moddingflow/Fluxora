@@ -708,12 +708,14 @@ namespace
         writer.field(L"formatVersion", summary.formatVersion);
         writer.field(L"manifestBytes", summary.manifestBytes);
         writer.field(L"sourceArchiveCount", summary.sourceArchiveCount);
+        writer.field(L"bundledModCount", summary.bundledModCount);
         writer.field(L"generatedAssetCount", summary.generatedAssetCount);
         writer.field(L"customPatchCount", summary.customPatchCount);
         writer.field(L"customConfigCount", summary.customConfigCount);
         writer.field(L"installStepCount", summary.installStepCount);
         writer.field(L"generatedAssetsIncluded", summary.generatedAssetsIncluded);
         writer.field(L"installPlanAvailable", summary.installPlanAvailable);
+        writer.field(L"packageType", summary.packageType);
         writer.field(L"compressionMode", summary.compressionMode);
         writer.field(L"logicalPayloadBytes", summary.logicalPayloadBytes);
         writer.field(L"uniquePayloadBytes", summary.uniquePayloadBytes);
@@ -3215,7 +3217,7 @@ extern "C"
             configPath,
             outputPath,
             includeGeneratedAssets,
-            static_cast<int>(fluxora::FluxPackCompressionMode::Optimal),
+            static_cast<int>(fluxora::FluxPackPackageType::Recipe),
             progressCallback,
             progressUserData,
             jsonBuffer,
@@ -3226,7 +3228,7 @@ extern "C"
         const wchar_t* configPath,
         const wchar_t* outputPath,
         int includeGeneratedAssets,
-        int compressionMode,
+        int packageType,
         FluxoraCoreProgressCallback progressCallback,
         void* progressUserData,
         wchar_t* jsonBuffer,
@@ -3240,20 +3242,17 @@ extern "C"
                 return FluxoraCoreResultInvalidArgument;
             }
 
-            fluxora::FluxPackCompressionMode resolvedCompressionMode;
-            switch (compressionMode)
+            fluxora::FluxPackPackageType resolvedPackageType;
+            switch (packageType)
             {
-            case static_cast<int>(fluxora::FluxPackCompressionMode::Fast):
-                resolvedCompressionMode = fluxora::FluxPackCompressionMode::Fast;
+            case static_cast<int>(fluxora::FluxPackPackageType::Full):
+                resolvedPackageType = fluxora::FluxPackPackageType::Full;
                 break;
-            case static_cast<int>(fluxora::FluxPackCompressionMode::Optimal):
-                resolvedCompressionMode = fluxora::FluxPackCompressionMode::Optimal;
-                break;
-            case static_cast<int>(fluxora::FluxPackCompressionMode::Smallest):
-                resolvedCompressionMode = fluxora::FluxPackCompressionMode::Smallest;
+            case static_cast<int>(fluxora::FluxPackPackageType::Recipe):
+                resolvedPackageType = fluxora::FluxPackPackageType::Recipe;
                 break;
             default:
-                lastError = L"FluxPack compression mode must be 1 (fast), 2 (optimal), or 3 (smallest).";
+                lastError = L"FluxPack package type must be 1 (full) or 2 (recipe).";
                 return FluxoraCoreResultInvalidArgument;
             }
 
@@ -3271,7 +3270,7 @@ extern "C"
                             progressCallback(json.c_str(), progressUserData);
                         }
                     },
-                    resolvedCompressionMode
+                    resolvedPackageType
                 });
             return writeToBuffer(serializeFluxPackSummary(summary), jsonBuffer, jsonBufferLength);
         }

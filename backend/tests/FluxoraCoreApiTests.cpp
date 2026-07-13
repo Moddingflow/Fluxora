@@ -238,7 +238,7 @@ namespace fluxora::tests
         }
     }
 
-    TEST(FluxoraCoreApiTests, RejectsUnknownFluxPackCompressionModeBeforeExport)
+    TEST(FluxoraCoreApiTests, RejectsUnknownFluxPackPackageTypeBeforeExport)
     {
         fluxora_core_shutdown();
         std::array<wchar_t, 256> output{};
@@ -253,7 +253,7 @@ namespace fluxora::tests
                 output.data(),
                 static_cast<int>(output.size())),
             FluxoraCoreResultInvalidArgument);
-        EXPECT_NE(lastCoreError().find(L"compression mode"), std::wstring::npos);
+        EXPECT_NE(lastCoreError().find(L"package type"), std::wstring::npos);
     }
 
     TEST(FluxoraCoreApiTests, ListProjectConfigsReturnsLightCatalogPayload)

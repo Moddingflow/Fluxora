@@ -62,7 +62,7 @@ Required unit anchors:
 - `install-workspace-state.test.ts` covers mod-name validation, archive placement overrides and FOMOD wizard state.
 - `profiles-executables-workspace-state.test.ts` covers profile and executable UI state.
 - `settings-workspace-state.test.ts` covers settings sections, single-theme normalization, language and MO2 transfer validation state.
-- `build-workspace-state.test.ts`, `fluxpack-install-target.test.ts`, `fluxpack-install-dialogs.test.ts` and `operation-overlays.test.ts` cover build paths, same-name targeting, manual Nexus archive collection and provider-segmented FluxPack progress.
+- `build-workspace-state.test.ts`, `fluxpack-export-dialog.test.ts`, `fluxpack-install-target.test.ts`, `fluxpack-install-dialogs.test.ts` and `operation-overlays.test.ts` cover build paths, full-vs-recipe export selection, same-name targeting, manual Nexus archive collection and provider-segmented FluxPack progress. Backend tests prove that full export produces no acquisition plan and restores remote-origin plus generated mods from the package payload.
 - `facade-api.test.ts` covers the typed `window.fluxora` surface and allowlisted command routes.
 - `bridge-protocol-client.test.ts` covers JSON-RPC metadata, error envelopes and progress events.
 - `ui-performance.test.ts` covers renderer virtual window bounds.
@@ -81,7 +81,7 @@ Required unit anchors:
 | Executables | Automated | Playwright save/rename/delete executable flow and launch capability state |
 | Settings | Automated | Playwright settings sections, language/Nexus/MO2 transfer surfaces; theme customization is absent while the single dark theme is supported |
 | MO2 transfer | Automated validation smoke | Playwright opens MO2 transfer and verifies required-field validation; full import needs a real MO2 fixture |
-| FluxPack | Automated | Playwright export/inspect/install flow, visible Library entry, same-name choice, manual Nexus action and in-place Delta target/reuse evidence; backend tests cover acquisition planning, Premium gating and archive identity validation |
+| FluxPack | Automated | Playwright full/recipe export selection, inspect/install flow, visible Library entry, same-name choice, manual Nexus action and in-place Delta target/reuse evidence; backend tests cover autonomous full restore, acquisition planning, Premium gating and archive identity validation |
 
 ## Backend gate
 

@@ -127,8 +127,8 @@ extern "C"
         int jsonBufferLength);
 
     // Writes a FluxPack v3 content store with FastCDC-style chunking, SHA-256
-    // content addressing and adaptive Zstandard compression. Direct remote/source
-    // archives remain references. Legacy entry points default to optimal mode.
+    // content addressing and adaptive maximum-level Zstandard compression.
+    // Legacy entry points export a recipe package.
     FLUXORA_CORE_API int fluxora_export_fluxpack(
         const wchar_t* configPath,
         const wchar_t* outputPath,
@@ -145,19 +145,18 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
-    // compressionMode: 1 = fast, 2 = optimal, 3 = smallest.
+    // packageType: 1 = full/autonomous, 2 = recipe/source-backed.
     FLUXORA_CORE_API int fluxora_export_fluxpack_with_options_and_progress(
         const wchar_t* configPath,
         const wchar_t* outputPath,
         int includeGeneratedAssets,
-        int compressionMode,
+        int packageType,
         FluxoraCoreProgressCallback progressCallback,
         void* progressUserData,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
-    // Reads a FluxPack recipe and returns a lightweight summary for the install
-    // flow.
+    // Reads a full or recipe FluxPack and returns a lightweight install summary.
     FLUXORA_CORE_API int fluxora_inspect_fluxpack(
         const wchar_t* fluxPackPath,
         wchar_t* jsonBuffer,
@@ -172,8 +171,8 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
-    // Creates a Fluxora build from a FluxPack recipe, downloads installable
-    // source archives, applies embedded configs/profile order and returns:
+    // Creates a Fluxora build from a FluxPack. Recipe packages acquire referenced
+    // sources; full packages restore bundled content without network downloads.
     //   { "configPath", "projectDirectory", "buildName", source counters, ... }
     FLUXORA_CORE_API int fluxora_install_fluxpack(
         const wchar_t* fluxPackPath,

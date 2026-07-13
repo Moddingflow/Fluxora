@@ -3460,7 +3460,7 @@ input::placeholder {
   padding: 0 10px;
 }
 
-.fluxpack-compression-control {
+.fluxpack-package-type-control {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -3471,12 +3471,12 @@ input::placeholder {
   font-weight: 700;
 }
 
-.fluxpack-compression-control .flx-select {
+.fluxpack-package-type-control .flx-select {
   width: 158px;
   min-height: 30px;
 }
 
-.fluxpack-compression-control .flx-custom-select {
+.fluxpack-package-type-control .flx-custom-select {
   width: 158px;
 }
 
@@ -7405,16 +7405,16 @@ body.row-reorder-active * {
 
 .fluxpack-export-dialog__body {
   display: grid;
-  gap: 16px;
+  gap: 10px;
   min-width: 0;
-  padding: 18px 22px;
+  padding: 13px 22px;
 }
 
 .fluxpack-export-dialog__target {
   display: grid;
   gap: 4px;
   min-width: 0;
-  padding-bottom: 12px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--line-soft);
 }
 
@@ -7435,7 +7435,7 @@ body.row-reorder-active * {
   font-size: 11px;
 }
 
-.fluxpack-export-dialog .fluxpack-compression-control {
+.fluxpack-export-dialog .fluxpack-package-type-control {
   display: grid;
   grid-template-columns: 96px minmax(0, 1fr);
   align-items: center;
@@ -7443,8 +7443,20 @@ body.row-reorder-active * {
   margin-right: 0;
 }
 
-.fluxpack-export-dialog .fluxpack-compression-control .flx-custom-select {
+.fluxpack-export-dialog .fluxpack-package-type-control .flx-custom-select {
   width: 100%;
+}
+
+.fluxpack-export-dialog__package-hint {
+  display: grid;
+  gap: 3px;
+  padding: 6px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--flx-panel-soft);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 .fluxpack-export-dialog__generated-assets {

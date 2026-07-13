@@ -334,7 +334,7 @@ import type {
   FluxoraFomodInstaller,
   FluxoraFluxPackInstallResult,
   FluxoraFluxPackManualSourceArchive,
-  FluxoraFluxPackCompressionMode,
+  FluxoraFluxPackPackageType,
   FluxoraFluxPackSourceInstallPlan,
   FluxoraFluxPackSummary,
   FluxoraGameTemplate,
@@ -1401,8 +1401,8 @@ export const App = () => {
   const [buildPathsBusyLabel, setBuildPathsBusyLabel] = useState<string | null>(null);
   const [buildPathsError, setBuildPathsError] = useState<string | null>(null);
   const [fluxPackSummary, setFluxPackSummary] = useState<FluxoraFluxPackSummary | null>(null);
-  const [fluxPackCompressionMode, setFluxPackCompressionMode] =
-    useState<FluxoraFluxPackCompressionMode>('optimal');
+  const [fluxPackPackageType, setFluxPackPackageType] =
+    useState<FluxoraFluxPackPackageType>('recipe');
   const [fluxPackExportPath, setFluxPackExportPath] = useState<string | null>(null);
   const [fluxPackInstallConflict, setFluxPackInstallConflict] =
     useState<FluxPackInstallConflictState | null>(null);
@@ -8209,7 +8209,7 @@ export const App = () => {
   };
 
   const confirmFluxPackExport = async ({
-    compressionMode,
+    packageType,
     includeGeneratedAssets
   }: FluxPackExportOptions) => {
     if (!selectedProject || !fluxPackExportPath) {
@@ -8217,7 +8217,7 @@ export const App = () => {
     }
 
     const outputPath = fluxPackExportPath;
-    setFluxPackCompressionMode(compressionMode);
+    setFluxPackPackageType(packageType);
     setFluxPackExportPath(null);
     const operationId = createRendererOperationId('fluxpack_export');
     beginOperationOverlay({
@@ -8236,7 +8236,7 @@ export const App = () => {
           configPath: selectedProject.configPath,
           outputPath,
           includeGeneratedAssets,
-          compressionMode
+          packageType
         },
         { operationId }
       );
@@ -12099,7 +12099,7 @@ export const App = () => {
     fluxPackExportPath && selectedProject ? (
       <FluxPackExportDialog
         buildName={selectedProject.name}
-        defaultCompressionMode={fluxPackCompressionMode}
+        defaultPackageType={fluxPackPackageType}
         onCancel={() => setFluxPackExportPath(null)}
         onConfirm={(options) => void confirmFluxPackExport(options)}
         outputPath={fluxPackExportPath}
