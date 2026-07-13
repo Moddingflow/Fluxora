@@ -1085,8 +1085,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
-    "mtime": 1783923929.275927,
-    "ast_hash": "f560e6325f74eb0b1601f6b786e65818",
+    "mtime": 1783939658.3210478,
+    "ast_hash": "3cf21f33f95ddd3e35bc1ebac3c3be98",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferMo2Page.tsx": {
@@ -1190,7 +1190,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/.last-run.json": {
-    "mtime": 1783923805.4242654,
+    "mtime": 1783939899.4490836,
     "ast_hash": "5970244f4baa12f805a34ee49fa86ab5",
     "semantic_hash": ""
   },
@@ -1640,8 +1640,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/library-home.spec.ts": {
-    "mtime": 1783923605.950287,
-    "ast_hash": "48342bfeeb42f8e2759daf518fb8297d",
+    "mtime": 1783939626.5900223,
+    "ast_hash": "795c4ba2aad0608fb130eecb961dfe1d",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/LibraryHome.tsx": {
@@ -4875,182 +4875,182 @@
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-build-mods-1280x720.png": {
-    "mtime": 1783923805.4252658,
+    "mtime": 1783939899.4510875,
     "ast_hash": "3951797f8e0ae3abc05b60ca87f1c688",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-build-mods-1440x900.png": {
-    "mtime": 1783923805.4262671,
+    "mtime": 1783939899.4520867,
     "ast_hash": "bbda396d36aeb9c6db6dc59b12bc1345",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-build-mods-1920x1080.png": {
-    "mtime": 1783923805.4262671,
+    "mtime": 1783939899.453087,
     "ast_hash": "4c9443eca1f9b5a9a6e9cd6edbb4aebd",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-build-mods-2560x1080.png": {
-    "mtime": 1783923805.42777,
+    "mtime": 1783939899.4540875,
     "ast_hash": "8468bc9327f32fc1d670aa89f5f0efa6",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-compression-menu-1280x720.png": {
-    "mtime": 1783923805.4287732,
+    "mtime": 1783939899.4540875,
     "ast_hash": "d4bf66dc380e5ff3237a31f24d4bee02",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-compression-menu-1440x900.png": {
-    "mtime": 1783923805.429773,
+    "mtime": 1783939899.4550877,
     "ast_hash": "b532337dd4674099d4f6dc0c085d083c",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-compression-menu-1920x1080.png": {
-    "mtime": 1783923805.430773,
+    "mtime": 1783939899.4560888,
     "ast_hash": "8a4f0cad82741e1a455d617ba2a7a547",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-compression-menu-2560x1080.png": {
-    "mtime": 1783923805.430773,
+    "mtime": 1783939899.457089,
     "ast_hash": "6e24384b4a29974eeb0137ac38a784bd",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-dialog-1280x720.png": {
-    "mtime": 1783923805.4317737,
+    "mtime": 1783939899.4580874,
     "ast_hash": "7db118cdcbb0568ef34f684860ca36db",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-dialog-1440x900.png": {
-    "mtime": 1783923805.4332767,
+    "mtime": 1783939899.4580874,
     "ast_hash": "d9d2ee9a164c454fd4c35541797e603a",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-dialog-1920x1080.png": {
-    "mtime": 1783923805.4332767,
+    "mtime": 1783939899.459591,
     "ast_hash": "e53d1211a496b9cd13132145cb9a6a2b",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fluxpack-export-dialog-2560x1080.png": {
-    "mtime": 1783923805.4342802,
+    "mtime": 1783939899.459591,
     "ast_hash": "784e974eb428cd810c27d8b4d137081e",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fomod-wizard-1280x720.png": {
-    "mtime": 1783923805.4352808,
+    "mtime": 1783939899.460593,
     "ast_hash": "ca08199df9204ddc8bc235a8324471fd",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fomod-wizard-1440x900.png": {
-    "mtime": 1783923805.4362798,
+    "mtime": 1783939899.4615922,
     "ast_hash": "f821faeb5bb16d7da682f91fb80e8872",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fomod-wizard-1920x1080.png": {
-    "mtime": 1783923805.4372804,
+    "mtime": 1783939899.4625921,
     "ast_hash": "975bff2e06cdbaff33841ceadb66cd00",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-fomod-wizard-2560x1080.png": {
-    "mtime": 1783923805.4382818,
+    "mtime": 1783939899.463592,
     "ast_hash": "0e82584ac3f8c0348213534d39bab62f",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-home-library-1280x720.png": {
-    "mtime": 1783923805.4382818,
+    "mtime": 1783939899.463592,
     "ast_hash": "bddb189ae9b1efe1728b2d294377293f",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-home-library-1440x900.png": {
-    "mtime": 1783923805.4392805,
+    "mtime": 1783939899.4645915,
     "ast_hash": "417f3adb4b8a88dd8f1da94f8eaf1ed8",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-home-library-1920x1080.png": {
-    "mtime": 1783923805.4392805,
+    "mtime": 1783939899.4645915,
     "ast_hash": "782f552855126a3403c9e77a6881b89b",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-home-library-2560x1080.png": {
-    "mtime": 1783923805.440281,
+    "mtime": 1783939899.4655945,
     "ast_hash": "abb39ff4c86cec0694d1ecdfc27e9973",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-install-dialog-1280x720.png": {
-    "mtime": 1783923805.441282,
+    "mtime": 1783939899.4665942,
     "ast_hash": "be24d538ff9830d4717b7b793572f664",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-install-dialog-1440x900.png": {
-    "mtime": 1783923805.441282,
+    "mtime": 1783939899.4665942,
     "ast_hash": "90e0677f6d21a015f0e5d299702df388",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-install-dialog-1920x1080.png": {
-    "mtime": 1783923805.4422827,
+    "mtime": 1783939899.4675925,
     "ast_hash": "e2757b34ea63050fa05c5e73f679c706",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-install-dialog-2560x1080.png": {
-    "mtime": 1783923805.4432797,
+    "mtime": 1783939899.4675925,
     "ast_hash": "509d3feff2a7a10bc73b35dce0067c4b",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-operation-overlay-1280x720.png": {
-    "mtime": 1783923805.4437835,
+    "mtime": 1783939899.469095,
     "ast_hash": "648aa3502b104b697b351f8213767d85",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-operation-overlay-1440x900.png": {
-    "mtime": 1783923805.4447856,
+    "mtime": 1783939899.470099,
     "ast_hash": "df5817ca1f0f519a21175344dec185e5",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-operation-overlay-1920x1080.png": {
-    "mtime": 1783923805.4447856,
+    "mtime": 1783939899.470099,
     "ast_hash": "b997e5e76c9f0ac8c7c1a5c9d7006103",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-operation-overlay-2560x1080.png": {
-    "mtime": 1783923805.4457853,
+    "mtime": 1783939899.4710984,
     "ast_hash": "956e632eafda4eb4b1a5ad55e60e145f",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-plugins-right-pane-1280x720.png": {
-    "mtime": 1783923805.4467852,
+    "mtime": 1783939899.472098,
     "ast_hash": "252ab9c82f4d3bcb73316ed8cd2b68b2",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-plugins-right-pane-1440x900.png": {
-    "mtime": 1783923805.4467852,
+    "mtime": 1783939899.473098,
     "ast_hash": "8aea0a52f5074ffd2f7bd03bca0e8ad9",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-plugins-right-pane-1920x1080.png": {
-    "mtime": 1783923805.447785,
+    "mtime": 1783939899.473098,
     "ast_hash": "9c52f1e77e410664c5fefa688175d5df",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-plugins-right-pane-2560x1080.png": {
-    "mtime": 1783923805.4487846,
+    "mtime": 1783939899.474098,
     "ast_hash": "f147297ca5db331673cc25facb327415",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-settings-1280x720.png": {
-    "mtime": 1783923805.4497848,
+    "mtime": 1783939899.475098,
     "ast_hash": "e907963c993e6d82ee4d318fcb01381a",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-settings-1440x900.png": {
-    "mtime": 1783923805.4497848,
+    "mtime": 1783939899.475098,
     "ast_hash": "d88ffa228086a06390e935b341ed13c0",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-settings-1920x1080.png": {
-    "mtime": 1783923805.450785,
+    "mtime": 1783939899.4760976,
     "ast_hash": "61f004209cbb3e88ee1fdd53f7898216",
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/library-home-captures-phas-c4ce5-rfaces-across-desktop-sizes/phase13-settings-2560x1080.png": {
-    "mtime": 1783923805.450785,
+    "mtime": 1783939899.4760976,
     "ast_hash": "8a65113dfabb200cb13611b98ee723ea",
     "semantic_hash": ""
   },

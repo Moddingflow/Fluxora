@@ -1546,6 +1546,91 @@ test('renders mod and download popup menus without scrollbars', async ({ page })
   await expectRowContextMenuWithoutScrollbar(downloadMenu);
 });
 
+test('positions the overwrite context menu at the right-click point within the viewport', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1180, height: 500 });
+  await openSkyrimBuild(page);
+
+  const overwriteRow = page.getByRole('row', {
+    name: /Skyrim graphics overhaul .* Output files folder overwrite folder/
+  });
+  await overwriteRow.scrollIntoViewIfNeeded();
+
+  const rowBox = await overwriteRow.boundingBox();
+  expect(rowBox).not.toBeNull();
+
+  const clickOffset = {
+    x: Math.round(rowBox!.width * 0.45),
+    y: Math.round(rowBox!.height / 2)
+  };
+  const clickPoint = {
+    x: rowBox!.x + clickOffset.x,
+    y: rowBox!.y + clickOffset.y
+  };
+
+  await overwriteRow.click({ button: 'right', position: clickOffset });
+
+  const overwriteMenu = page.getByRole('menu', { name: /Output files folder actions/ });
+  await expect(overwriteMenu).toBeVisible();
+  const menuBox = await overwriteMenu.boundingBox();
+  const viewport = page.viewportSize();
+  expect(menuBox).not.toBeNull();
+  expect(viewport).not.toBeNull();
+
+  const expectedLeft = Math.max(
+    8,
+    Math.min(clickPoint.x, viewport!.width - menuBox!.width - 8)
+  );
+  const expectedTop = Math.max(
+    8,
+    Math.min(clickPoint.y, viewport!.height - menuBox!.height - 8)
+  );
+
+  expect(Math.abs(menuBox!.x - expectedLeft)).toBeLessThanOrEqual(3);
+  expect(Math.abs(menuBox!.y - expectedTop)).toBeLessThanOrEqual(3);
+});
+
+test('stacks the overwrite context menu above the mod list rows it overlaps', async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 500 });
+  await openSkyrimBuild(page);
+
+  const overwriteRow = page.getByRole('row', {
+    name: /Skyrim graphics overhaul .* Output files folder overwrite folder/
+  });
+  await overwriteRow.scrollIntoViewIfNeeded();
+
+  const rowBox = await overwriteRow.boundingBox();
+  expect(rowBox).not.toBeNull();
+
+  const clickOffset = {
+    x: Math.round(rowBox!.width * 0.45),
+    y: Math.round(rowBox!.height / 2)
+  };
+  const overlapPoint = {
+    x: rowBox!.x + clickOffset.x + 4,
+    y: rowBox!.y + clickOffset.y + 4
+  };
+  const rowIsTopBeforeMenu = await overwriteRow.evaluate((row, point) => {
+    const topElement = document.elementFromPoint(point.x, point.y);
+    return topElement !== null && (topElement === row || row.contains(topElement));
+  }, overlapPoint);
+  expect(rowIsTopBeforeMenu).toBe(true);
+
+  await overwriteRow.click({
+    button: 'right',
+    position: clickOffset
+  });
+
+  const overwriteMenu = page.getByRole('menu', { name: /Output files folder actions/ });
+  await expect(overwriteMenu).toBeVisible();
+  const menuIsTopAfterOpen = await overwriteMenu.evaluate((menu, point) => {
+    const topElement = document.elementFromPoint(point.x, point.y);
+    return topElement !== null && (topElement === menu || menu.contains(topElement));
+  }, overlapPoint);
+  expect(menuIsTopAfterOpen).toBe(true);
+});
+
 test('asks for in-app confirmation before deleting mods, builds and downloaded files', async ({
   page
 }) => {

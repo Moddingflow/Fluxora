@@ -1085,6 +1085,18 @@ const downloadRowMenuEstimatedHeight = (entry: FluxoraDownloadEntry): number => 
   return rowContextMenuPaddingY + itemCount * rowContextMenuItemHeight;
 };
 
+const modRowMenuEstimatedHeight = (
+  item: FluxoraModOrderItem,
+  selectedOrderIds: ReadonlySet<string>
+): number | undefined => {
+  if (!isModOverwriteItem(item)) {
+    return undefined;
+  }
+
+  const itemCount = selectedOrderIds.has(item.orderId) && selectedOrderIds.size > 1 ? 1 : 2;
+  return rowContextMenuPaddingY + itemCount * rowContextMenuItemHeight;
+};
+
 const isInteractiveRowDragTarget = (target: EventTarget | null): boolean => {
   if (!(target instanceof Element)) {
     return false;
@@ -4028,7 +4040,10 @@ export const App = () => {
         dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
       }
       setModMenuPosition(
-        rowContextMenuPositionFromAnchor(event.currentTarget.getBoundingClientRect())
+        rowContextMenuPositionFromAnchor(
+          event.currentTarget.getBoundingClientRect(),
+          modRowMenuEstimatedHeight(item, modsWorkspace.selectedOrderIds)
+        )
       );
       setModMenuOrderId(item.orderId);
     }
@@ -10252,7 +10267,11 @@ export const App = () => {
                     dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
                   }
                   setModMenuPosition(
-                    rowContextMenuPositionFromPointer(event.clientX, event.clientY)
+                    rowContextMenuPositionFromPointer(
+                      event.clientX,
+                      event.clientY,
+                      modRowMenuEstimatedHeight(item, modsWorkspace.selectedOrderIds)
+                    )
                   );
                   setModMenuOrderId(item.orderId);
                 }}
