@@ -458,4 +458,72 @@ namespace fluxora::tests
         EXPECT_EQ(lowConflicts.overwritten.front().conflictState, L"overwritten");
         EXPECT_EQ(lowConflicts.totalOverwritten, 1);
     }
+
+    TEST_F(EffectiveFileTreeServiceTests, ModDetailsContentReturnsEveryDirectoryAndConflictInOneSnapshot)
+    {
+        const InstalledModEntry low = mods_.createEmptyMod(project_, L"Low Details");
+        const InstalledModEntry high = mods_.createEmptyMod(project_, L"High Details");
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project_,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"mod", L"Low Details", {}},
+                ProfileOrderImportItemRecord{L"mod", L"High Details", {}}
+            });
+
+        writeTextFile(low.id / L"textures" / L"shared.dds", "low");
+        writeTextFile(high.id / L"textures" / L"shared.dds", "high");
+        writeTextFile(high.id / L"SKSE" / L"Plugins" / L"SprintFix.dll", "plugin");
+        static_cast<void>(profileOrder_.listModOrder(project_, L"Default"));
+
+        const ModDetailsContent content = mods_.getModDetailsContent(project_, high.id);
+        const auto findDirectory = [&content](std::wstring_view relativePath)
+        {
+            return std::find_if(
+                content.directories.begin(),
+                content.directories.end(),
+                [relativePath](const ModFileTreeDirectory& directory)
+                {
+                    return directory.relativePath == relativePath;
+                });
+        };
+
+        EXPECT_EQ(content.modPath, high.id);
+        const auto root = findDirectory(L"");
+        const auto skse = findDirectory(L"SKSE");
+        const auto plugins = findDirectory(L"SKSE/Plugins");
+        const auto textures = findDirectory(L"textures");
+        ASSERT_NE(root, content.directories.end());
+        ASSERT_NE(skse, content.directories.end());
+        ASSERT_NE(plugins, content.directories.end());
+        ASSERT_NE(textures, content.directories.end());
+        EXPECT_TRUE(std::any_of(
+            root->entries.begin(),
+            root->entries.end(),
+            [](const ModFileTreeEntry& entry)
+            {
+                return entry.relativePath == L"SKSE" && entry.isDirectory && entry.hasChildren;
+            }));
+        EXPECT_TRUE(std::any_of(
+            skse->entries.begin(),
+            skse->entries.end(),
+            [](const ModFileTreeEntry& entry)
+            {
+                return entry.relativePath == L"SKSE/Plugins" && entry.isDirectory && entry.hasChildren;
+            }));
+        EXPECT_TRUE(std::any_of(
+            plugins->entries.begin(),
+            plugins->entries.end(),
+            [](const ModFileTreeEntry& entry)
+            {
+                return entry.relativePath == L"SKSE/Plugins/SprintFix.dll" && !entry.isDirectory;
+            }));
+
+        ASSERT_EQ(content.conflictTree.overwrites.size(), 1U);
+        EXPECT_EQ(content.conflictTree.overwrites.front().relativePath, L"textures/shared.dds");
+        EXPECT_EQ(content.conflictTree.totalOverwrites, 1);
+        EXPECT_EQ(content.conflictTree.totalOverwritten, 0);
+        EXPECT_EQ(content.conflictTree.limit, 1);
+        EXPECT_TRUE(content.conflictTree.nextCursor.empty());
+    }
 }

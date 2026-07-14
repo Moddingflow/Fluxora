@@ -43,6 +43,7 @@ const supportedNifBlocks = [
   'BSMeshLODTriShape',
   'BSSubIndexTriShape',
   'BSTriShape',
+  'BSDynamicTriShape',
   'NiTriShapeData',
   'NiSkinPartition',
   'BSLightingShaderProperty',
@@ -60,6 +61,13 @@ const skinnedBlockNames = [
   'BSSkin::Instance'
 ] as const;
 
+const staticBsTriShapeBlockNames = new Set([
+  'BSTriShape',
+  'BSSegmentedTriShape',
+  'BSMeshLODTriShape',
+  'BSSubIndexTriShape'
+]);
+
 interface NifBlockSlice {
   typeName: string;
   data: Uint8Array;
@@ -69,6 +77,8 @@ interface NifBlockSlice {
 interface NifDocument {
   blocks: NifBlockSlice[];
   stringTable: string[];
+  userVersion: number;
+  streamVersion: number;
 }
 
 interface NifBlockTypeTable {
@@ -90,6 +100,36 @@ const isNumberArray = (value: unknown): value is number[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'number' && Number.isFinite(item));
 
 const uniqueStrings = (values: string[]): string[] => Array.from(new Set(values.filter(Boolean)));
+
+const nifTextDecoder = new TextDecoder('utf-8', { fatal: false });
+
+const scanPrintableBytes = (bytes: Uint8Array): string => {
+  const fragments: string[] = [];
+  let start = -1;
+  const flush = (end: number) => {
+    if (start >= 0 && end - start >= 4) {
+      fragments.push(nifTextDecoder.decode(bytes.subarray(start, end)));
+    }
+    start = -1;
+  };
+
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = bytes[index];
+    const printable = byte === 9 || byte === 10 || byte === 13 || (byte >= 32 && byte <= 126);
+    if (printable) {
+      if (start < 0) {
+        start = index;
+      }
+    } else {
+      flush(index);
+    }
+  }
+  flush(bytes.length);
+  return fragments.join('\n');
+};
+
+const scanPrintableNifText = (buffer: ArrayBuffer): string =>
+  scanPrintableBytes(new Uint8Array(buffer));
 
 const isTexturePath = (value: string): boolean =>
   /\.(?:dds|png|jpe?g)$/i.test(value);
@@ -120,6 +160,7 @@ const validIndices = (indices: number[], vertexCount: number): boolean =>
   indices.every((index) => Number.isInteger(index) && index >= 0 && index < vertexCount);
 
 const hasNonDegenerateTriangle = (positions: number[], indices: number[]): boolean => {
+  const minimumRelativeAreaSquared = 1e-12;
   for (let offset = 0; offset < indices.length; offset += 3) {
     const a = indices[offset] * 3;
     const b = indices[offset + 1] * 3;
@@ -133,44 +174,24 @@ const hasNonDegenerateTriangle = (positions: number[], indices: number[]): boole
     const crossX = aby * acz - abz * acy;
     const crossY = abz * acx - abx * acz;
     const crossZ = abx * acy - aby * acx;
-    if (crossX * crossX + crossY * crossY + crossZ * crossZ > 1e-12) {
+    const bcx = positions[c] - positions[b];
+    const bcy = positions[c + 1] - positions[b + 1];
+    const bcz = positions[c + 2] - positions[b + 2];
+    const maximumEdgeSquared = Math.max(
+      abx * abx + aby * aby + abz * abz,
+      acx * acx + acy * acy + acz * acz,
+      bcx * bcx + bcy * bcy + bcz * bcz
+    );
+    const areaSquared = crossX * crossX + crossY * crossY + crossZ * crossZ;
+    if (
+      maximumEdgeSquared > 0 &&
+      areaSquared > maximumEdgeSquared * maximumEdgeSquared * minimumRelativeAreaSquared
+    ) {
       return true;
     }
   }
   return false;
 };
-
-const fallbackMesh = (): ParsedNifMesh => ({
-  name: 'Unsupported static preview fallback',
-  positions: [
-    -0.6, -0.45, 0.35,
-    0.6, -0.45, 0.35,
-    0.6, 0.45, 0.35,
-    -0.6, 0.45, 0.35,
-    -0.42, -0.3, -0.35,
-    0.42, -0.3, -0.35,
-    0.42, 0.3, -0.35,
-    -0.42, 0.3, -0.35
-  ],
-  indices: [
-    0, 1, 2, 0, 2, 3,
-    4, 6, 5, 4, 7, 6,
-    0, 4, 5, 0, 5, 1,
-    1, 5, 6, 1, 6, 2,
-    2, 6, 7, 2, 7, 3,
-    3, 7, 4, 3, 4, 0
-  ],
-  uvs: [
-    0, 0,
-    1, 0,
-    1, 1,
-    0, 1,
-    0, 0,
-    1, 0,
-    1, 1,
-    0, 1
-  ]
-});
 
 const scanSupportedBlocks = (text: string): string[] =>
   supportedNifBlocks.filter((block) => text.includes(block));
@@ -305,8 +326,8 @@ class BinaryReader {
     if (length > this.remaining) {
       throw new Error('NIF string table is truncated.');
     }
-    const value = new TextDecoder('utf-8', { fatal: false })
-      .decode(this.bytes.slice(this.offset, this.offset + length))
+    const value = nifTextDecoder
+      .decode(this.bytes.subarray(this.offset, this.offset + length))
       .replace(/\u0000/g, '');
     this.offset += length;
     return value;
@@ -351,8 +372,8 @@ const parseBlockTypeTableAt = (bytes: Uint8Array, offset: number): NifBlockTypeT
     }
 
     cursor += 4;
-    const value = new TextDecoder('utf-8', { fatal: false })
-      .decode(bytes.slice(cursor, cursor + length))
+    const value = nifTextDecoder
+      .decode(bytes.subarray(cursor, cursor + length))
       .replace(/\u0000/g, '');
     if (!isPlausibleBlockTypeName(value)) {
       return null;
@@ -455,7 +476,8 @@ const parseNiTriShapeDataCandidate = (
   view: DataView,
   name: string,
   startOffset: number,
-  flagBytes: number
+  flagBytes: number,
+  materialCrcBytes: number
 ): ParsedNifMesh | null => {
   if (startOffset + 3 + flagBytes > view.byteLength) {
     return null;
@@ -482,7 +504,7 @@ const parseNiTriShapeDataCandidate = (
   let uvs: number[] | undefined;
   try {
     const uvSetFlags = view.getUint16(offset, true);
-    offset += 2;
+    offset += 2 + materialCrcBytes;
     const uvSetCount = uvSetFlags & 0x3f;
     if (uvSetCount > 8) {
       return null;
@@ -497,7 +519,7 @@ const parseNiTriShapeDataCandidate = (
       }
       normals = parsedNormals;
       offset += vertexCount * 12;
-      if ((uvSetFlags & 0x1040) !== 0) {
+      if ((uvSetFlags & 0x1000) !== 0) {
         offset += vertexCount * 24;
       }
     }
@@ -548,9 +570,17 @@ const parseNiTriShapeDataBlock = (block: NifBlockSlice): ParsedNifMesh[] => {
   const meshName = `${block.typeName} ${block.index + 1}`;
   for (const startOffset of [0, 4, 8, 12, 16]) {
     for (const flagBytes of [2, 0]) {
-      const mesh = parseNiTriShapeDataCandidate(view, meshName, startOffset, flagBytes);
-      if (mesh) {
-        return [mesh];
+      for (const materialCrcBytes of [4, 0]) {
+        const mesh = parseNiTriShapeDataCandidate(
+          view,
+          meshName,
+          startOffset,
+          flagBytes,
+          materialCrcBytes
+        );
+        if (mesh) {
+          return [mesh];
+        }
       }
     }
   }
@@ -884,7 +914,7 @@ const parseNifDocument = (buffer: ArrayBuffer): NifDocument | null => {
     return null;
   }
 
-  const header = new TextDecoder('utf-8', { fatal: false }).decode(bytes.slice(0, newlineIndex)).trim();
+  const header = nifTextDecoder.decode(bytes.subarray(0, newlineIndex)).trim();
   if (!nifHeaderPattern.test(header)) {
     return null;
   }
@@ -895,18 +925,14 @@ const parseNifDocument = (buffer: ArrayBuffer): NifDocument | null => {
     if (version >= 0x14000004) {
       reader.readUint8();
     }
-    if (version >= 0x0a010000) {
-      reader.readUint32();
-    }
+    const userVersion = version >= 0x0a010000 ? reader.readUint32() : 0;
 
     const blockCount = reader.readUint32();
     if (!Number.isInteger(blockCount) || blockCount < 1 || blockCount > 100_000) {
       return null;
     }
 
-    if (version >= 0x14020007) {
-      reader.readUint32();
-    }
+    const streamVersion = version >= 0x14020007 ? reader.readUint32() : 0;
     const blockTypeTable = findBlockTypeTable(bytes, reader.position);
     if (!blockTypeTable) {
       return null;
@@ -948,13 +974,15 @@ const parseNifDocument = (buffer: ArrayBuffer): NifDocument | null => {
       blocks.push({
         typeName,
         index,
-        data: bytes.slice(offset, offset + size)
+        data: bytes.subarray(offset, offset + size)
       });
       offset += size;
     }
     return {
       blocks,
-      stringTable
+      stringTable,
+      userVersion,
+      streamVersion
     };
   } catch {
     return null;
@@ -970,6 +998,7 @@ const shaderPropertyBlocks = new Set([
 const geometryBlocks = new Set([
   'NiTriShape',
   'BSTriShape',
+  'BSDynamicTriShape',
   'BSSegmentedTriShape',
   'BSMeshLODTriShape',
   'BSSubIndexTriShape'
@@ -986,8 +1015,7 @@ const skinInstanceBlocks = new Set([
   'BSSkin::Instance'
 ]);
 
-const blockText = (block: NifBlockSlice): string =>
-  new TextDecoder('utf-8', { fatal: false }).decode(block.data);
+const blockText = (block: NifBlockSlice): string => scanPrintableBytes(block.data);
 
 const blockReferenceIndices = (
   block: NifBlockSlice,
@@ -1177,8 +1205,553 @@ const applyAssociatedTexturePath = (
   return meshes.map((mesh) => mesh.texturePath ? mesh : { ...mesh, texturePath });
 };
 
-const parseBinaryNifMeshes = (buffer: ArrayBuffer): ParsedNifMesh[] => {
-  const document = parseNifDocument(buffer);
+interface SseBsTriShapeLayout {
+  skinInstanceIndex: number;
+  vertexAttributes: number;
+  vertexStride: number;
+  triangleCount: number;
+  vertexCount: number;
+  dataSize: number;
+  vertexDataOffset: number;
+  dynamicDataSizeOffset: number;
+}
+
+interface SseVertexAttributes {
+  positions?: number[];
+  normals?: number[];
+  uvs?: number[];
+}
+
+interface SseSkinPartitionGeometry extends SseVertexAttributes {
+  indices: number[];
+}
+
+const parseSseBsTriShapeLayout = (
+  block: NifBlockSlice,
+  streamVersion: number
+): SseBsTriShapeLayout | null => {
+  const view = new DataView(block.data.buffer, block.data.byteOffset, block.data.byteLength);
+  try {
+    if (view.byteLength < 120) {
+      return null;
+    }
+
+    const extraDataCount = view.getUint32(4, true);
+    if (extraDataCount > 1_024) {
+      return null;
+    }
+
+    let offset = 8 + extraDataCount * 4;
+    offset += 4; // Controller reference.
+    offset += 4; // NiAVObject flags.
+    offset += 12 + 36 + 4; // Translation, rotation and scale.
+    offset += 4; // Collision reference.
+    offset += 16; // Bounding sphere.
+    if (streamVersion > 139) {
+      offset += 24;
+    }
+    if (offset + 28 > view.byteLength) {
+      return null;
+    }
+
+    const skinInstanceIndex = view.getInt32(offset, true);
+    offset += 12; // Skin, shader and alpha property references.
+    const descriptor = view.getBigUint64(offset, true);
+    const vertexStride = Number(descriptor & 0x0fn) * 4;
+    const vertexAttributes = Number((descriptor >> 44n) & 0xfffn);
+    offset += 8;
+
+    const triangleCount = view.getUint16(offset, true);
+    const vertexCount = view.getUint16(offset + 2, true);
+    let dataSize = view.getUint32(offset + 4, true);
+    const vertexDataOffset = offset + 8;
+    if (
+      (triangleCount > 0 && !validVertexCount(vertexCount)) ||
+      (triangleCount === 0 && vertexCount > maxStaticPreviewVertices) ||
+      triangleCount > maxStaticPreviewTriangles ||
+      vertexStride > 128
+    ) {
+      return null;
+    }
+
+    if (vertexDataOffset + dataSize + 4 > view.byteLength) {
+      const inferredDataSize = vertexCount * vertexStride + triangleCount * 6;
+      if (
+        vertexStride < 4 ||
+        vertexDataOffset + inferredDataSize + 4 > view.byteLength
+      ) {
+        return null;
+      }
+      dataSize = inferredDataSize;
+    }
+
+    const particleDataSizeOffset = vertexDataOffset + dataSize;
+    const particleDataSize = view.getUint32(particleDataSizeOffset, true);
+    const dynamicDataSizeOffset = particleDataSizeOffset + 4 + particleDataSize * 2;
+    if (
+      dynamicDataSizeOffset > view.byteLength ||
+      (block.typeName === 'BSDynamicTriShape' && dynamicDataSizeOffset + 4 > view.byteLength)
+    ) {
+      return null;
+    }
+
+    return {
+      skinInstanceIndex,
+      vertexAttributes,
+      vertexStride,
+      triangleCount,
+      vertexCount,
+      dataSize,
+      vertexDataOffset,
+      dynamicDataSizeOffset
+    };
+  } catch {
+    return null;
+  }
+};
+
+const parseSseVertexAttributes = (
+  view: DataView,
+  vertexDataOffset: number,
+  vertexCount: number,
+  vertexStride: number,
+  vertexAttributes: number
+): SseVertexAttributes | null => {
+  if (
+    vertexStride <= 0 ||
+    vertexStride > 128 ||
+    vertexDataOffset < 0 ||
+    vertexDataOffset + vertexCount * vertexStride > view.byteLength
+  ) {
+    return null;
+  }
+
+  let positionOffset = -1;
+  let uvOffset = -1;
+  let normalOffset = -1;
+  let fieldOffset = 0;
+  if ((vertexAttributes & 0x1) !== 0) {
+    positionOffset = fieldOffset;
+    fieldOffset += 16;
+  }
+  if ((vertexAttributes & 0x2) !== 0) {
+    uvOffset = fieldOffset;
+    fieldOffset += 4;
+  }
+  if ((vertexAttributes & 0x8) !== 0) {
+    normalOffset = fieldOffset;
+    fieldOffset += 4;
+    if ((vertexAttributes & 0x10) !== 0) {
+      fieldOffset += 4;
+    }
+  }
+  if ((vertexAttributes & 0x20) !== 0) {
+    fieldOffset += 4;
+  }
+  if ((vertexAttributes & 0x40) !== 0) {
+    fieldOffset += 12;
+  }
+  if ((vertexAttributes & 0x100) !== 0) {
+    fieldOffset += 4;
+  }
+  if (fieldOffset > vertexStride) {
+    return null;
+  }
+
+  const positions = positionOffset >= 0 ? [] as number[] : undefined;
+  const uvs = uvOffset >= 0 ? [] as number[] : undefined;
+  const normals = normalOffset >= 0 ? [] as number[] : undefined;
+  for (let vertex = 0; vertex < vertexCount; vertex += 1) {
+    const base = vertexDataOffset + vertex * vertexStride;
+    if (positions) {
+      positions.push(
+        view.getFloat32(base + positionOffset, true),
+        view.getFloat32(base + positionOffset + 4, true),
+        view.getFloat32(base + positionOffset + 8, true)
+      );
+    }
+    if (uvs) {
+      uvs.push(
+        halfToFloat(view.getUint16(base + uvOffset, true)),
+        halfToFloat(view.getUint16(base + uvOffset + 2, true))
+      );
+    }
+    if (normals) {
+      normals.push(
+        view.getUint8(base + normalOffset) / 127.5 - 1,
+        view.getUint8(base + normalOffset + 1) / 127.5 - 1,
+        view.getUint8(base + normalOffset + 2) / 127.5 - 1
+      );
+    }
+  }
+
+  if (
+    (positions && !finiteArray(positions)) ||
+    (uvs && !finiteArray(uvs)) ||
+    (normals && !finiteArray(normals))
+  ) {
+    return null;
+  }
+  return { positions, uvs, normals };
+};
+
+const parseSseStaticBsTriShapeBlock = (
+  document: NifDocument,
+  block: NifBlockSlice
+): ParsedNifMesh[] => {
+  if (document.userVersion !== 12 || document.streamVersion !== 100) {
+    return [];
+  }
+
+  const layout = parseSseBsTriShapeLayout(block, document.streamVersion);
+  if (!layout) {
+    return [];
+  }
+
+  const vertexBytes = layout.vertexCount * layout.vertexStride;
+  const triangleBytes = layout.triangleCount * 6;
+  if (vertexBytes <= 0 || layout.dataSize < vertexBytes + triangleBytes) {
+    return [];
+  }
+
+  const view = new DataView(block.data.buffer, block.data.byteOffset, block.data.byteLength);
+  const attributes = parseSseVertexAttributes(
+    view,
+    layout.vertexDataOffset,
+    layout.vertexCount,
+    layout.vertexStride,
+    layout.vertexAttributes
+  );
+  if (!attributes?.positions) {
+    return [];
+  }
+
+  const triangleOffset = layout.vertexDataOffset + vertexBytes;
+  const indices: number[] = [];
+  for (let index = 0; index < layout.triangleCount * 3; index += 1) {
+    indices.push(view.getUint16(triangleOffset + index * 2, true));
+  }
+  if (
+    !validIndices(indices, layout.vertexCount) ||
+    !hasNonDegenerateTriangle(attributes.positions, indices)
+  ) {
+    return [];
+  }
+
+  return [{
+    name: `${block.typeName} ${block.index + 1}`,
+    positions: attributes.positions,
+    indices,
+    normals: attributes.normals,
+    uvs: attributes.uvs
+  }];
+};
+
+const hasOnlyEmptySseTriShapes = (document: NifDocument): boolean => {
+  if (document.userVersion !== 12 || document.streamVersion !== 100) {
+    return false;
+  }
+
+  if (document.blocks.some((block) =>
+    block.typeName === 'NiTriShapeData' ||
+    block.typeName === 'NiSkinPartition' ||
+    block.typeName === 'BSDynamicTriShape'
+  )) {
+    return false;
+  }
+
+  const shapeBlocks = document.blocks.filter((block) =>
+    staticBsTriShapeBlockNames.has(block.typeName)
+  );
+  return shapeBlocks.length > 0 && shapeBlocks.every((block) => {
+    const layout = parseSseBsTriShapeLayout(block, document.streamVersion);
+    return Boolean(
+      layout &&
+      layout.vertexCount === 0 &&
+      layout.triangleCount === 0 &&
+      layout.dataSize === 0
+    );
+  });
+};
+
+const parseSseSkinPartitionGeometry = (
+  block: NifBlockSlice,
+  expectedVertexCount: number
+): SseSkinPartitionGeometry | null => {
+  const view = new DataView(block.data.buffer, block.data.byteOffset, block.data.byteLength);
+  if (view.byteLength < 20) {
+    return null;
+  }
+
+  try {
+    const partitionCount = view.getUint32(0, true);
+    const vertexDataSize = view.getUint32(4, true);
+    const vertexStride = view.getUint32(8, true);
+    const descriptor = view.getBigUint64(12, true);
+    const vertexAttributes = Number((descriptor >> 44n) & 0xfffn);
+    if (
+      partitionCount < 1 ||
+      partitionCount > 128 ||
+      vertexStride < 4 ||
+      vertexStride > 128 ||
+      vertexDataSize % vertexStride !== 0 ||
+      vertexDataSize / vertexStride !== expectedVertexCount ||
+      20 + vertexDataSize > view.byteLength
+    ) {
+      return null;
+    }
+
+    const attributes = parseSseVertexAttributes(
+      view,
+      20,
+      expectedVertexCount,
+      vertexStride,
+      vertexAttributes
+    );
+    if (!attributes) {
+      return null;
+    }
+
+    let cursor = 20 + vertexDataSize;
+    const requireBytes = (count: number) => {
+      if (count < 0 || cursor + count > view.byteLength) {
+        throw new Error('NIF skin partition is truncated.');
+      }
+    };
+    const skip = (count: number) => {
+      requireBytes(count);
+      cursor += count;
+    };
+    const readU8 = () => {
+      requireBytes(1);
+      const value = view.getUint8(cursor);
+      cursor += 1;
+      return value;
+    };
+    const readU16 = () => {
+      requireBytes(2);
+      const value = view.getUint16(cursor, true);
+      cursor += 2;
+      return value;
+    };
+    const readU16Array = (count: number): number[] => {
+      const values: number[] = [];
+      for (let index = 0; index < count; index += 1) {
+        values.push(readU16());
+      }
+      return values;
+    };
+
+    const indices: number[] = [];
+    for (let partition = 0; partition < partitionCount; partition += 1) {
+      const partitionVertexCount = readU16();
+      const triangleCount = readU16();
+      const boneCount = readU16();
+      const stripCount = readU16();
+      const weightsPerVertex = readU16();
+      const emptyPartition = partitionVertexCount === 0 && triangleCount === 0;
+      if (
+        (!emptyPartition && partitionVertexCount < 3) ||
+        partitionVertexCount > expectedVertexCount ||
+        triangleCount > maxStaticPreviewTriangles ||
+        boneCount > 1_024 ||
+        stripCount > 4_096 ||
+        weightsPerVertex > 16 ||
+        indices.length + triangleCount * 3 > maxStaticPreviewTriangles * 3
+      ) {
+        return null;
+      }
+
+      skip(boneCount * 2);
+      if (readU8() !== 0) {
+        for (let vertex = 0; vertex < partitionVertexCount; vertex += 1) {
+          if (readU16() >= expectedVertexCount) {
+            return null;
+          }
+        }
+      }
+      if (readU8() !== 0) {
+        skip(partitionVertexCount * weightsPerVertex * 4);
+      }
+
+      const stripLengths = readU16Array(stripCount);
+      if (readU8() !== 0) {
+        const faceIndexCount = stripCount > 0
+          ? stripLengths.reduce((sum, length) => sum + length, 0)
+          : triangleCount * 3;
+        if (faceIndexCount > maxStaticPreviewTriangles * 3) {
+          return null;
+        }
+        skip(faceIndexCount * 2);
+      }
+
+      if (readU8() !== 0) {
+        skip(partitionVertexCount * weightsPerVertex);
+      }
+      readU8(); // LOD level.
+      readU8(); // Global vertex buffer flag.
+      skip(8); // Partition vertex descriptor.
+      const triangleCopy = readU16Array(triangleCount * 3);
+      // SSE's trailing triangle copy is already in shape/global vertex space.
+      // Vertex Map belongs to the skinning weights and must not be applied to
+      // these indices (nifly calls this the non-mapped-index layout).
+      for (const index of triangleCopy) {
+        if (!Number.isInteger(index) || index < 0 || index >= expectedVertexCount) {
+          return null;
+        }
+        indices.push(index);
+      }
+    }
+
+    return validIndices(indices, expectedVertexCount)
+      ? { ...attributes, indices }
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const parseSseSkinPartitionBlock = (block: NifBlockSlice): ParsedNifMesh[] => {
+  const view = new DataView(block.data.buffer, block.data.byteOffset, block.data.byteLength);
+  if (view.byteLength < 20) {
+    return [];
+  }
+
+  try {
+    const vertexDataSize = view.getUint32(4, true);
+    const vertexStride = view.getUint32(8, true);
+    if (
+      vertexStride < 4 ||
+      vertexStride > 128 ||
+      vertexDataSize % vertexStride !== 0
+    ) {
+      return [];
+    }
+    const vertexCount = vertexDataSize / vertexStride;
+    if (!validVertexCount(vertexCount)) {
+      return [];
+    }
+
+    const geometry = parseSseSkinPartitionGeometry(block, vertexCount);
+    if (
+      !geometry?.positions ||
+      !hasNonDegenerateTriangle(geometry.positions, geometry.indices)
+    ) {
+      return [];
+    }
+    return [{
+      name: `${block.typeName} ${block.index + 1}`,
+      positions: geometry.positions,
+      indices: geometry.indices,
+      normals: geometry.normals,
+      uvs: geometry.uvs
+    }];
+  } catch {
+    return [];
+  }
+};
+
+const parseSseDynamicTriShapeBlock = (
+  document: NifDocument,
+  block: NifBlockSlice
+): ParsedNifMesh[] => {
+  if (document.userVersion !== 12 || document.streamVersion !== 100) {
+    return [];
+  }
+
+  const layout = parseSseBsTriShapeLayout(block, document.streamVersion);
+  if (!layout) {
+    return [];
+  }
+
+  const view = new DataView(block.data.buffer, block.data.byteOffset, block.data.byteLength);
+  const expectedDynamicBytes = layout.vertexCount * 16;
+  const dynamicBytes = view.getUint32(layout.dynamicDataSizeOffset, true);
+  const dynamicDataOffset = layout.dynamicDataSizeOffset + 4;
+  if (
+    dynamicBytes !== expectedDynamicBytes ||
+    dynamicDataOffset + dynamicBytes !== view.byteLength
+  ) {
+    return [];
+  }
+
+  const positions: number[] = [];
+  for (let vertex = 0; vertex < layout.vertexCount; vertex += 1) {
+    const offset = dynamicDataOffset + vertex * 16;
+    positions.push(
+      view.getFloat32(offset, true),
+      view.getFloat32(offset + 4, true),
+      view.getFloat32(offset + 8, true)
+    );
+  }
+  if (!finiteArray(positions)) {
+    return [];
+  }
+
+  let attributes: SseVertexAttributes | null = null;
+  let indices: number[] = [];
+  const baseVertexBytes = layout.vertexCount * layout.vertexStride;
+  if (
+    layout.dataSize >= baseVertexBytes + layout.triangleCount * 6 &&
+    baseVertexBytes > 0
+  ) {
+    attributes = parseSseVertexAttributes(
+      view,
+      layout.vertexDataOffset,
+      layout.vertexCount,
+      layout.vertexStride,
+      layout.vertexAttributes
+    );
+    const triangleOffset = layout.vertexDataOffset + baseVertexBytes;
+    for (let index = 0; index < layout.triangleCount * 3; index += 1) {
+      indices.push(view.getUint16(triangleOffset + index * 2, true));
+    }
+  }
+
+  const skinInstance = document.blocks[layout.skinInstanceIndex];
+  if (skinInstance?.data.byteLength >= 8) {
+    const skinView = new DataView(
+      skinInstance.data.buffer,
+      skinInstance.data.byteOffset,
+      skinInstance.data.byteLength
+    );
+    const partitionIndex = skinView.getInt32(4, true);
+    const partition = document.blocks[partitionIndex];
+    if (partition?.typeName === 'NiSkinPartition') {
+      const skinGeometry = parseSseSkinPartitionGeometry(partition, layout.vertexCount);
+      if (skinGeometry) {
+        if (!validIndices(indices, layout.vertexCount)) {
+          indices = skinGeometry.indices;
+        }
+        attributes = {
+          positions: attributes?.positions ?? skinGeometry.positions,
+          normals: attributes?.normals ?? skinGeometry.normals,
+          uvs: attributes?.uvs ?? skinGeometry.uvs
+        };
+      }
+    }
+  }
+
+  if (
+    !validIndices(indices, layout.vertexCount) ||
+    !hasNonDegenerateTriangle(positions, indices)
+  ) {
+    return [];
+  }
+
+  return [{
+    name: `${block.typeName} ${block.index + 1}`,
+    positions,
+    indices,
+    normals: attributes?.normals,
+    uvs: attributes?.uvs
+  }];
+};
+
+const parseBinaryNifMeshes = (
+  buffer: ArrayBuffer,
+  document: NifDocument | null = parseNifDocument(buffer)
+): ParsedNifMesh[] => {
   const blocks = document?.blocks ?? [];
   const geometryTexturePaths = document ? buildGeometryTexturePathMap(document) : new Map<number, string>();
   const staticMeshes = blocks.flatMap((block) => {
@@ -1186,13 +1759,20 @@ const parseBinaryNifMeshes = (buffer: ArrayBuffer): ParsedNifMesh[] => {
     if (block.typeName === 'NiTriShapeData') {
       return applyAssociatedTexturePath(parseNiTriShapeDataBlock(block), associatedTexturePath);
     }
-    if (
-      block.typeName === 'BSTriShape' ||
-      block.typeName === 'BSSegmentedTriShape' ||
-      block.typeName === 'BSMeshLODTriShape' ||
-      block.typeName === 'BSSubIndexTriShape'
-    ) {
-      return applyAssociatedTexturePath(parseBsTriShapeBlock(block), associatedTexturePath);
+    if (block.typeName === 'BSDynamicTriShape' && document) {
+      return applyAssociatedTexturePath(
+        parseSseDynamicTriShapeBlock(document, block),
+        associatedTexturePath
+      );
+    }
+    if (staticBsTriShapeBlockNames.has(block.typeName)) {
+      const sseMeshes = document
+        ? parseSseStaticBsTriShapeBlock(document, block)
+        : [];
+      return applyAssociatedTexturePath(
+        sseMeshes.length > 0 ? sseMeshes : parseBsTriShapeBlock(block),
+        associatedTexturePath
+      );
     }
     return [];
   });
@@ -1200,9 +1780,15 @@ const parseBinaryNifMeshes = (buffer: ArrayBuffer): ParsedNifMesh[] => {
     return staticMeshes;
   }
 
-  const skinMeshes = blocks.flatMap((block) => block.typeName === 'NiSkinPartition'
-    ? applyAssociatedTexturePath(parseNiSkinPartitionBlock(block), geometryTexturePaths.get(block.index))
-    : []);
+  const skinMeshes = blocks.flatMap((block) => {
+    if (block.typeName !== 'NiSkinPartition') {
+      return [];
+    }
+    const meshes = document?.userVersion === 12 && document.streamVersion === 100
+      ? parseSseSkinPartitionBlock(block)
+      : parseNiSkinPartitionBlock(block);
+    return applyAssociatedTexturePath(meshes, geometryTexturePaths.get(block.index));
+  });
   return skinMeshes.length > 0 ? skinMeshes : parseGlobalBsTriShapeMeshes(buffer);
 };
 
@@ -1218,10 +1804,11 @@ export const createStaticNifFixture = (fixture: StaticNifFixture): ArrayBuffer =
     .buffer;
 
 export const parseNifModel = (buffer: ArrayBuffer): ParsedNifModel => {
-  const text = new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+  const text = scanPrintableNifText(buffer);
   const supportedBlocks = scanSupportedBlocks(text);
   const warnings = scanWarnings(text, supportedBlocks);
   let meshes: ParsedNifMesh[] = [];
+  let document: NifDocument | null = null;
 
   try {
     meshes = parseStaticFixture(text) ?? [];
@@ -1230,12 +1817,16 @@ export const parseNifModel = (buffer: ArrayBuffer): ParsedNifModel => {
   }
 
   if (meshes.length === 0) {
-    meshes = parseBinaryNifMeshes(buffer);
+    document = parseNifDocument(buffer);
+    meshes = parseBinaryNifMeshes(buffer, document);
   }
 
   if (meshes.length === 0) {
-    meshes = [fallbackMesh()];
-    warnings.push('Static geometry for the supported NIF subset was not found; rendering a neutral fallback shape.');
+    if (document && hasOnlyEmptySseTriShapes(document)) {
+      warnings.push('NIF contains no renderable triangle geometry; the preview is intentionally empty.');
+    } else {
+      throw new Error('NIF geometry could not be decoded. This model uses an unsupported geometry layout.');
+    }
   }
 
   const texturePaths = prioritizeDiffuseTexturePaths([
@@ -1243,7 +1834,7 @@ export const parseNifModel = (buffer: ArrayBuffer): ParsedNifModel => {
     ...scanTexturePaths(text)
   ]);
 
-  if (texturePaths.length === 0) {
+  if (meshes.length > 0 && texturePaths.length === 0) {
     warnings.push('No diffuse texture path was found; fallback material will be used.');
   }
 

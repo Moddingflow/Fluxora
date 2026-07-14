@@ -331,6 +331,36 @@ if ($modCacheInvalidationRouteResponse.error.code -ne 'bridge.invalidRequest') {
     throw "Expected mods.invalidateFileCaches validation rejection, received: $($modCacheInvalidationRouteResponse | ConvertTo-Json -Depth 10 -Compress)"
 }
 
+foreach ($nifPreviewMethod in @(
+    'mods.startNifPreview',
+    'mods.prepareNifPreviewVariant',
+    'mods.prepareNifPreviewTextures'
+)) {
+    $nifPreviewRouteResponse = Invoke-BridgeHostRequest -Request @{
+        jsonrpc = '2.0'
+        id = ($nifPreviewMethod -replace '\.', '_')
+        method = $nifPreviewMethod
+        params = @{}
+        meta = $requestMeta
+    }
+    if ($nifPreviewRouteResponse.error.code -ne 'bridge.invalidRequest') {
+        throw "Expected $nifPreviewMethod validation rejection, received: $($nifPreviewRouteResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+}
+
+foreach ($removedPreviewMethod in @('mods.listPreviewVariants', 'mods.readPreviewAsset')) {
+    $removedPreviewRouteResponse = Invoke-BridgeHostRequest -Request @{
+        jsonrpc = '2.0'
+        id = ($removedPreviewMethod -replace '\.', '_')
+        method = $removedPreviewMethod
+        params = @{}
+        meta = $requestMeta
+    }
+    if ($removedPreviewRouteResponse.error.code -ne 'bridge.methodNotFound') {
+        throw "Expected removed route $removedPreviewMethod to be unavailable, received: $($removedPreviewRouteResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+}
+
 $protocolTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $persistedPluginsFixtureRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $protocolTempRoot ("fluxora-bridge-persisted-plugins-{0}" -f ([guid]::NewGuid().ToString('N'))))

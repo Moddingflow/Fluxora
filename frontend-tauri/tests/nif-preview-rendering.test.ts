@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 
 import {
+  computeNifPreviewCameraFrame,
   createNifPreviewGeometry,
   selectNifPreviewTexturePath,
   transformNifVectorArrayForPreview
@@ -16,6 +17,19 @@ const baseModel = (texturePaths: string[]): ParsedNifModel => ({
 });
 
 describe('nif preview rendering helpers', () => {
+  it('frames very small geometry at its own scale instead of a unit-size floor', () => {
+    const bounds = new THREE.Box3(
+      new THREE.Vector3(0, -50.824932, -0.0001),
+      new THREE.Vector3(0.0001, -50.824932, 0)
+    );
+
+    const frame = computeNifPreviewCameraFrame(bounds);
+
+    expect(frame.position.distanceTo(frame.target)).toBeLessThan(0.001);
+    expect(frame.near).toBeLessThan(0.0001);
+    expect(frame.far).toBeGreaterThan(0.0001);
+  });
+
   it('converts NIF Z-up vectors into the Three.js Y-up preview space', () => {
     expect(transformNifVectorArrayForPreview([
       0, 0, 0,

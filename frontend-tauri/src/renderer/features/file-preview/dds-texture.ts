@@ -13,7 +13,7 @@ const DDPF_FOURCC = 0x4;
 const DDPF_RGB = 0x40;
 const DDPF_ALPHAPIXELS = 0x1;
 
-type DdsFormat =
+export type DdsFormat =
   | 'bc1'
   | 'bc2'
   | 'bc3'
@@ -23,16 +23,30 @@ type DdsFormat =
   | 'rgb24'
   | 'rgba32';
 
-interface DdsHeader {
+export interface DdsHeader {
   width: number;
   height: number;
   format: DdsFormat;
   dataOffset: number;
+  mipMapCount: number;
   rgbBitCount: number;
   rMask: number;
   gMask: number;
   bMask: number;
   aMask: number;
+}
+
+export interface DdsGpuSupport {
+  s3tc: boolean;
+  rgtc: boolean;
+  bptc: boolean;
+}
+
+export interface DdsPreviewTextureOptions {
+  gpuSupport?: DdsGpuSupport;
+  decodedRgba?: Uint8Array;
+  anisotropy?: number;
+  srgb?: boolean;
 }
 
 const blockBytesForFormat = (format: DdsFormat): number => {
@@ -48,6 +62,45 @@ const blockBytesForFormat = (format: DdsFormat): number => {
     default:
       return 0;
   }
+};
+
+interface DdsMipLayout {
+  offset: number;
+  dataLength: number;
+  width: number;
+  height: number;
+}
+
+const readDdsMipLayouts = (
+  bytes: Uint8Array,
+  header: DdsHeader
+): DdsMipLayout[] => {
+  const blockBytes = blockBytesForFormat(header.format);
+  const sourceBytesPerPixel = header.rgbBitCount / 8;
+  let width = header.width;
+  let height = header.height;
+  let offset = header.dataOffset;
+  const mipmaps: DdsMipLayout[] = [];
+
+  for (let level = 0; level < header.mipMapCount; level += 1) {
+    const dataLength = blockBytes > 0
+      ? Math.max(1, Math.ceil(width / 4)) * Math.max(1, Math.ceil(height / 4)) * blockBytes
+      : width * height * sourceBytesPerPixel;
+    if (!Number.isSafeInteger(dataLength) || dataLength < 1 || offset + dataLength > bytes.byteLength) {
+      throw new Error('DDS texture payload is truncated.');
+    }
+    mipmaps.push({
+      offset,
+      dataLength,
+      width,
+      height
+    });
+    offset += dataLength;
+    width = Math.max(1, Math.floor(width / 2));
+    height = Math.max(1, Math.floor(height / 2));
+  }
+
+  return mipmaps;
 };
 
 const rgb565 = (value: number): [number, number, number] => [
@@ -281,6 +334,7 @@ export const readDdsHeader = (buffer: ArrayBuffer): DdsHeader => {
 
   const height = view.getUint32(12, true);
   const width = view.getUint32(16, true);
+  const mipMapCount = Math.max(1, view.getUint32(28, true));
   const pixelFlags = view.getUint32(80, true);
   const fourCc = view.getUint32(84, true);
   const rgbBitCount = view.getUint32(88, true);
@@ -336,6 +390,7 @@ export const readDdsHeader = (buffer: ArrayBuffer): DdsHeader => {
     height,
     format,
     dataOffset,
+    mipMapCount,
     rgbBitCount,
     rMask,
     gMask,
@@ -344,49 +399,151 @@ export const readDdsHeader = (buffer: ArrayBuffer): DdsHeader => {
   };
 };
 
-const createDataTexture = (rgba: Uint8Array, width: number, height: number): THREE.DataTexture => {
-  const texture = new THREE.DataTexture(rgba, width, height, THREE.RGBAFormat);
-  texture.colorSpace = THREE.SRGBColorSpace;
+const configurePreviewTexture = (
+  texture: THREE.Texture,
+  options: DdsPreviewTextureOptions
+): void => {
+  texture.colorSpace = options.srgb === false ? THREE.NoColorSpace : THREE.SRGBColorSpace;
   texture.magFilter = THREE.LinearFilter;
-  texture.minFilter = THREE.LinearFilter;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.flipY = false;
+  texture.anisotropy = Math.min(Math.max(options.anisotropy ?? 1, 1), 8);
   texture.needsUpdate = true;
+};
+
+const createDataTexture = (
+  rgba: Uint8Array,
+  width: number,
+  height: number,
+  options: DdsPreviewTextureOptions
+): THREE.DataTexture => {
+  const texture = new THREE.DataTexture(rgba, width, height, THREE.RGBAFormat);
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  configurePreviewTexture(texture, options);
   return texture;
 };
 
-const createBc7Texture = (bytes: Uint8Array, header: DdsHeader): THREE.CompressedTexture => {
-  const blocksX = Math.ceil(header.width / 4);
-  const blocksY = Math.ceil(header.height / 4);
-  const dataLength = blocksX * blocksY * blockBytesForFormat(header.format);
-  if (header.dataOffset + dataLength > bytes.byteLength) {
-    throw new Error('DDS texture payload is truncated.');
+const threeCompressedFormat = (format: DdsFormat): THREE.CompressedPixelFormat => {
+  switch (format) {
+    case 'bc1':
+      return THREE.RGBA_S3TC_DXT1_Format;
+    case 'bc2':
+      return THREE.RGBA_S3TC_DXT3_Format;
+    case 'bc3':
+      return THREE.RGBA_S3TC_DXT5_Format;
+    case 'bc4':
+      return THREE.RED_RGTC1_Format;
+    case 'bc5':
+      return THREE.RED_GREEN_RGTC2_Format;
+    case 'bc7':
+      return THREE.RGBA_BPTC_Format;
+    default:
+      throw new Error('DDS texture is not GPU-compressed.');
   }
+};
+
+const createCompressedTexture = (
+  bytes: Uint8Array,
+  header: DdsHeader,
+  options: DdsPreviewTextureOptions
+): THREE.CompressedTexture => {
+  const mipmaps = readDdsMipLayouts(bytes, header).map((mip) => ({
+    data: bytes.subarray(mip.offset, mip.offset + mip.dataLength),
+    width: mip.width,
+    height: mip.height
+  }));
 
   const texture = new THREE.CompressedTexture(
-    [{
-      data: bytes.slice(header.dataOffset, header.dataOffset + dataLength),
-      width: header.width,
-      height: header.height
-    }],
+    mipmaps,
     header.width,
     header.height,
-    THREE.RGBA_BPTC_Format
+    threeCompressedFormat(header.format)
   );
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.magFilter = THREE.LinearFilter;
-  texture.minFilter = THREE.LinearFilter;
-  texture.needsUpdate = true;
+  texture.minFilter = mipmaps.length > 1 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  configurePreviewTexture(texture, options);
   return texture;
 };
 
-export const createDdsPreviewTexture = (buffer: ArrayBuffer): THREE.Texture => {
+const supportsCompressedFormat = (format: DdsFormat, support: DdsGpuSupport): boolean => {
+  if (format === 'bc1' || format === 'bc2' || format === 'bc3') {
+    return support.s3tc;
+  }
+  if (format === 'bc4' || format === 'bc5') {
+    return support.rgtc;
+  }
+  return format === 'bc7' && support.bptc;
+};
+
+export const detectDdsGpuSupport = (renderer: THREE.WebGLRenderer): DdsGpuSupport => {
+  const context = renderer.getContext();
+  return {
+    s3tc: Boolean(
+      context.getExtension('WEBGL_compressed_texture_s3tc')
+      || context.getExtension('MOZ_WEBGL_compressed_texture_s3tc')
+      || context.getExtension('WEBKIT_WEBGL_compressed_texture_s3tc')
+    ),
+    rgtc: Boolean(context.getExtension('EXT_texture_compression_rgtc')),
+    bptc: Boolean(context.getExtension('EXT_texture_compression_bptc'))
+  };
+};
+
+export const createDdsPreviewTexture = (
+  buffer: ArrayBuffer,
+  options: DdsPreviewTextureOptions = {}
+): THREE.Texture => {
   const header = readDdsHeader(buffer);
   const bytes = new Uint8Array(buffer);
+  readDdsMipLayouts(bytes, header);
+  const support = options.gpuSupport ?? {
+    s3tc: false,
+    rgtc: false,
+    bptc: false
+  };
+  if (blockBytesForFormat(header.format) > 0 && supportsCompressedFormat(header.format, support)) {
+    return createCompressedTexture(bytes, header, options);
+  }
   if (header.format === 'bc7') {
-    return createBc7Texture(bytes, header);
+    throw new Error('BC7 preview requires EXT_texture_compression_bptc.');
   }
 
-  const rgba = header.format === 'rgb24' || header.format === 'rgba32'
+  const rgba = options.decodedRgba ?? (header.format === 'rgb24' || header.format === 'rgba32'
     ? decodeUncompressedDds(bytes, header)
-    : decodeCompressedDds(bytes, header);
-  return createDataTexture(rgba, header.width, header.height);
+    : decodeCompressedDds(bytes, header));
+  if (rgba.byteLength !== header.width * header.height * 4) {
+    throw new Error('DDS decoded pixel payload has an invalid size.');
+  }
+  return createDataTexture(rgba, header.width, header.height, options);
+};
+
+export const createDecodedDdsPreviewTexture = (
+  decoded: { width: number; height: number; rgba: Uint8Array },
+  options: DdsPreviewTextureOptions = {}
+): THREE.DataTexture => createDataTexture(
+  decoded.rgba,
+  decoded.width,
+  decoded.height,
+  options
+);
+
+export const decodeDdsBaseLevel = (buffer: ArrayBuffer): {
+  width: number;
+  height: number;
+  rgba: Uint8Array;
+} => {
+  const header = readDdsHeader(buffer);
+  if (header.format === 'bc7') {
+    throw new Error('BC7 software decoding is unsupported.');
+  }
+  const bytes = new Uint8Array(buffer);
+  readDdsMipLayouts(bytes, header);
+  return {
+    width: header.width,
+    height: header.height,
+    rgba: header.format === 'rgb24' || header.format === 'rgba32'
+      ? decodeUncompressedDds(bytes, header)
+      : decodeCompressedDds(bytes, header)
+  };
 };

@@ -1,6 +1,6 @@
 # Fluxora Tauri + C++ bridge architecture
 
-Дата решения: 2026-06-24
+Дата решения: 2026-06-24; NIF preview transport update: 2026-07-13
 
 Статус: Phase 14 Bridge/API surface and cross-platform capability model implemented on top of the Phase 1 decision. This document is the bridge/source-of-truth companion to `docs/tauri-migration/wpf-ui-inventory.md` and `docs/tauri-migration/cross-platform-support.md`.
 
@@ -48,14 +48,28 @@ Phase 5 extends the first bridge slice to cover the build catalog and creation e
 
 Phase 6 extends `fluxora.bridge.v1` to the installed-mod workspace:
 
-- Native host routes `mods.listInstalled`, `mods.getOrder`, the interactive aggregate read `mods.getPersistedWorkspace`, the reconciling aggregate read `mods.getWorkspace`, watcher-driven `mods.invalidateFileCaches`, `mods.createSeparator`, `mods.deleteSeparator`, `mods.moveOrderItem`, `mods.deleteInstalled`, `mods.createEmpty`, `mods.setEnabled`, `mods.setAllEnabled`, `mods.checkUpdates`, `mods.clearOverwrite`, `mods.getFileTree`, `mods.getEffectiveFileTree`, `mods.getEffectiveFileTreeRoot`, `mods.getEffectiveFileTreeChildren`, `mods.getModDetailsSummary`, `mods.getModConflictTree`, `mods.listPreviewVariants` and `mods.readPreviewAsset` to existing C++ C ABI functions.
+- Native host routes `mods.listInstalled`, `mods.getOrder`, the interactive aggregate read `mods.getPersistedWorkspace`, the reconciling aggregate read `mods.getWorkspace`, watcher-driven `mods.invalidateFileCaches`, `mods.createSeparator`, `mods.deleteSeparator`, `mods.moveOrderItem`, `mods.deleteInstalled`, `mods.createEmpty`, `mods.setEnabled`, `mods.setAllEnabled`, `mods.checkUpdates`, `mods.clearOverwrite`, `mods.getFileTree`, `mods.getModDetailsContent`, `mods.getEffectiveFileTree`, `mods.getEffectiveFileTreeRoot`, `mods.getEffectiveFileTreeChildren`, `mods.getModDetailsSummary`, `mods.getModConflictTree`, `mods.startNifPreview`, `mods.prepareNifPreviewVariant` and `mods.prepareNifPreviewTextures` to C++ C ABI functions.
 - Tauri Rust shell/facade expose typed `window.fluxora.mods.*` calls only; renderer still has no Node.js, filesystem or raw command access.
 - Renderer owns local mod search, selection, row action menus, scroll windowing and expanded file-tree state.
 - C++ core remains the owner of installed mod records, profile order, enabled state, separator persistence, update checks, file tree indexing and filesystem mutations.
-- Selected-mod file tree is lazy by `relativeDirectory` so large mods do not require one unbounded payload.
+- The regular selected-mod file tree in the main workspace remains lazy by `relativeDirectory`. The dedicated mod-properties window uses the explicit `mods.getModDetailsContent` read instead: C++ returns all directory pages and both conflict groups from the prepared SQLite file index in one immutable snapshot. The renderer starts this read on the first row click, treats the second rapid click as the open gesture, and deduplicates both calls. Tauri routes this one interactive read through a separate `BridgeProcess` lane so it cannot wait behind long main-lane reconciliation such as `mods.getWorkspace`; both bridge processes are shut down through the same lifecycle command. The Rust shell then injects the completed snapshot before the properties webview parses its application scripts. This keeps filesystem/index ownership in C++, removes per-folder and bridge-queue races, and lets the Files and Conflicts tabs render without intermediate loading states.
 - Effective game-root Data pages are lazy on cold cache: `mods.getEffectiveFileTreeRoot` and `mods.getEffectiveFileTreeChildren` return shallow bounded pages without preparing a full recursive index. Full `mods.getEffectiveFileTree` and `build.prepareWorkspaceIndexes` remain explicit heavy index operations with a long bridge timeout and are not run during build open.
 - `mods.getPersistedWorkspace` returns installed rows and profile order from the last durable file-index generation with zero live inventory synchronization. It is the normal T3 renderer path and may expose deferred (`fileCount = -1`) summaries for never-indexed mods. An absent or incomplete persisted snapshot triggers one exact `mods.getWorkspace` fallback before T3; otherwise `mods.getWorkspace` performs exact offline file-index reconciliation in T4. The build-content watcher is installed before the first workspace read, remains active across same-project reopens, and turns setup errors, event-sequence gaps, or watcher errors into conservative reconciliation instead of trusting a potentially incomplete delta.
 - `mods.invalidateFileCaches` accepts deduplicated affected mod-folder paths, clears per-mod file-index generation state plus VFS placement/plugin discovery caches, and must complete before watcher-triggered workspace/effective-tree reads. Failed invalidation batches remain queued and retry autonomously with a bounded delay even when no later watcher event arrives. These calls carry an operation id and keep bridge/UI/core performance logging separate.
+
+### NIF preview session transport
+
+The public renderer contract is session-based: `startNifPreview`, `prepareNifPreviewVariant`, `prepareNifPreviewTextures`, `readNifPreviewAssetBytes` and `endNifPreview`. The old `mods.readPreviewAsset` Base64/JSON response and `mods.listPreviewVariants` route do not exist. Public handles contain only an opaque token, byte size, MIME type, relative path, display source and content fingerprint. Absolute filesystem paths remain private between C++ and the Rust shell.
+
+C++ resolves all requested textures in one case-insensitive batch using overwrite, enabled profile mods in reverse priority, and Game Data. BSA/BA2 indexes are cached by canonical path + size + mtime fingerprint. Extracted archive assets are finalized atomically in the versioned 512 MiB local LRU; a changed archive fingerprint invalidates both its index and extracted assets.
+
+Tauri Rust owns opaque session/variant/asset tokens and serves asset bytes with `tauri::ipc::Response`, outside JSON serialization. Every token is bound to the preview window label that created it; another window cannot prepare, read or end that session. NIF methods use the interactive bridge lane and retain one `operationId` for the complete session. Limits are 64 paths per batch, 64 MiB per asset and 256 MiB per session. Sessions end explicitly when the preview source changes or unmounts, on preview-window close, or after 15 minutes idle.
+
+The file-preview window receives the project directory directly from the typed `window.fluxora.windowControls.openFilePreview` call. Preview startup therefore does not depend on the secondary renderer reloading or matching the global project catalog before it can call `startNifPreview`.
+
+The renderer transfers NIF parsing and BC1-BC5 software fallback decoding to a Web Worker. It swaps in neutral geometry before requesting one texture batch, reads prepared assets with concurrency 3 and applies textures progressively. Generation tokens reject stale variant work while the previous model remains visible until replacement geometry is ready. The renderer LRU is bounded to 64 textures and 256 MiB raw bytes.
+
+The complete preview path is local-only: it adds no upload, telemetry, account data or external service. Archive indexes, extracted assets and renderer caches stay on the user's device, so this change does not require a privacy policy or terms update.
 
 ## Phase 7 Plugins/Load Order MVP
 
@@ -191,13 +205,15 @@ Implemented MVP methods:
 - `mods.checkUpdates`
 - `mods.clearOverwrite`
 - `mods.getFileTree`
+- `mods.getModDetailsContent`
 - `mods.getEffectiveFileTree`
 - `mods.getEffectiveFileTreeRoot`
 - `mods.getEffectiveFileTreeChildren`
 - `mods.getModDetailsSummary`
 - `mods.getModConflictTree`
-- `mods.listPreviewVariants`
-- `mods.readPreviewAsset`
+- `mods.startNifPreview`
+- `mods.prepareNifPreviewVariant`
+- `mods.prepareNifPreviewTextures`
 - `plugins.list`
 - `plugins.move`
 - `plugins.createSeparator`
@@ -770,13 +786,15 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 - `mods.checkUpdates`
 - `mods.clearOverwrite`
 - `mods.getFileTree`
+- `mods.getModDetailsContent`
 - `mods.getEffectiveFileTree`
 - `mods.getEffectiveFileTreeRoot`
 - `mods.getEffectiveFileTreeChildren`
 - `mods.getModDetailsSummary`
 - `mods.getModConflictTree`
-- `mods.listPreviewVariants`
-- `mods.readPreviewAsset`
+- `mods.startNifPreview`
+- `mods.prepareNifPreviewVariant`
+- `mods.prepareNifPreviewTextures`
 - `grassCache.generate`
 
 `mods.listInstalled` and `mods.getOrder` return conflict count fields plus directed
@@ -901,6 +919,17 @@ Renderer displays this matrix as capability state. It must not hardcode "Windows
 - Linux needs xdg desktop file and MIME/URL scheme registration.
 - macOS needs URL scheme registration through app bundle metadata and signing/notarization review.
 
+## Text editor workbench boundary
+
+The active text/code editor is documented in `docs/tauri-migration/text-editor-workbench.md`. Its VS Code-style workbench and Monaco lifecycle remain renderer concerns, while file access stays on the existing typed facade:
+
+- mod exploration/read/save uses `mods.getFileTree`, `mods.readTextFile` and `mods.saveTextFile`;
+- standalone file selection/read/save uses native dialogs plus `textFiles.read` and `textFiles.save`;
+- `windowControls.openTextEditor` passes the selected build's opaque `configPath` and already-known `projectDirectory` into a dedicated `TextEditorWindow` entrypoint, so editor startup does not depend on the main renderer's catalog/Nexus bootstrap;
+- atomic writes, path validation, UTF-8 persistence, operation ids and native logging remain outside the renderer;
+- Monaco workers are local bundled assets and do not create a network or CDN dependency;
+- workspace-wide indexing, language-service hosts, source control, terminals and debugging require explicit future core/shell contracts and must not be emulated by renderer-only controls.
+
 ## Logging and observability
 
 Required log flow for user-triggered operations:
@@ -927,7 +956,8 @@ Current WPF `CoreBridgeService` serializes native calls because the native core 
 
 - One mutating operation at a time per host.
 - Read operations can be serialized initially.
-- Parallel reads require explicit core approval and tests.
+- Allowlisted latency-sensitive reads may use the separate interactive bridge-host lane when they are safe to run independently and have focused routing/isolation tests. Text editor file/tree reads use this lane; editor save calls remain on the serialized main lane.
+- Other parallel reads require explicit core approval and tests.
 - Renderer can remain responsive because requests are asynchronous and progress/event driven.
 - The 10-second bridge timeout is reserved for short control/read calls.
   Recursive project/mod cleanup, overwrite cleanup, local download import,

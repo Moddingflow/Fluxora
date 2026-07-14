@@ -82,3 +82,158 @@ test('shows redesigned titlebar chrome without Node exposure', async ({ page }) 
     require: 'undefined'
   });
 });
+
+test('keeps secondary window titles responsive with only the custom close control', async ({
+  page
+}) => {
+  const modName =
+    'Security Overhaul SKSE - Extra Locks - 11 New Locks - Complete Edition With Compatibility Patch';
+
+  await page.setViewportSize({ width: 520, height: 700 });
+  await page.goto(`${baseUrl}/?window=mod-details&name=${encodeURIComponent(modName)}`);
+
+  const titlebar = page.getByLabel('Fluxora settings window chrome');
+  const title = titlebar.locator('.titlebar__brand-name');
+  const closeButton = titlebar.getByLabel('Close');
+
+  await expect(title).toHaveText(modName);
+  await expect(title).toHaveAttribute('title', modName);
+  await expect(title).toHaveCSS('overflow', 'hidden');
+  await expect(title).toHaveCSS('text-overflow', 'ellipsis');
+  await expect(title).toHaveCSS('white-space', 'nowrap');
+  await expect(titlebar.getByLabel('Minimize')).toHaveCount(0);
+  await expect(titlebar.getByLabel('Maximize')).toHaveCount(0);
+  await expect(closeButton.locator('svg')).toBeVisible();
+
+  const narrowTitleWidth = await title.evaluate((element) => element.clientWidth);
+  expect(await title.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+
+  await closeButton.hover();
+  expect(await closeButton.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(
+    'rgb(196, 43, 28)'
+  );
+
+  await page.setViewportSize({ width: 1200, height: 700 });
+  await expect.poll(() => title.evaluate((element) => element.clientWidth)).toBeGreaterThan(narrowTitleWidth);
+  expect(await title.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+test('renders preloaded mod files and conflicts without loading placeholders', async ({ page }) => {
+  const bootstrapKey = 'playwright-ready-mod-details';
+  const modPath = 'D:\\Fluxora\\Builds\\Foundation Edition\\mods\\Sprint Fix';
+  await page.addInitScript(
+    ({ key, path }) => {
+      (window as typeof window & { __FLUXORA_MOD_DETAILS_BOOTSTRAP__?: unknown })
+        .__FLUXORA_MOD_DETAILS_BOOTSTRAP__ = {
+        key,
+        projectId: 'foundation-edition',
+        projectName: 'Foundation Edition',
+        projectDirectory: 'D:\\Fluxora\\Builds\\Foundation Edition',
+        configPath: 'D:\\Fluxora\\Configs\\foundation-edition.json',
+        profileName: 'Default',
+        modPath: path,
+        item: {
+          id: path,
+          orderId: 'mod_sprint_fix',
+          kind: 'mod',
+          order: 1,
+          isSeparator: false,
+          isMod: true,
+          modUuid: 'sprint-fix',
+          separatorTitle: '',
+          name: 'Sprint Fix',
+          version: '1.0',
+          latestVersion: '1.0',
+          lastCheckedAt: '',
+          updateStatus: '',
+          conflictStatus: '',
+          fileCount: 2,
+          conflictingFileCount: 1,
+          overwrittenFileCount: 0,
+          overwritingFileCount: 1,
+          isEnabled: true,
+          canCheckUpdates: false,
+          hasUpdate: false,
+          sourceIsNexus: false,
+          sourceIsModdingFlow: false,
+          isLocal: true,
+          isTranslation: false,
+          isPatch: false,
+          overwritesModIds: [],
+          overwrittenByModIds: []
+        },
+        rootFileTree: [],
+        content: {
+          modPath: path,
+          directories: [
+            {
+              relativePath: '',
+              entries: [
+                {
+                  name: 'SKSE',
+                  relativePath: 'SKSE',
+                  isDirectory: true,
+                  hasChildren: true,
+                  size: 0,
+                  conflictState: '',
+                  conflictOwners: []
+                }
+              ]
+            },
+            {
+              relativePath: 'SKSE',
+              entries: [
+                {
+                  name: 'SprintFix.dll',
+                  relativePath: 'SKSE/SprintFix.dll',
+                  isDirectory: false,
+                  hasChildren: false,
+                  size: 128,
+                  conflictState: 'overwrites',
+                  conflictOwners: ['Sprint Fix', 'Old Sprint Fix']
+                }
+              ]
+            }
+          ],
+          conflictTree: {
+            modPath: path,
+            totalOverwrites: 1,
+            totalOverwritten: 0,
+            limit: 1,
+            nextCursor: null,
+            overwrites: [
+              {
+                name: 'SprintFix.dll',
+                relativePath: 'SKSE/SprintFix.dll',
+                isDirectory: false,
+                hasChildren: false,
+                size: 128,
+                conflictState: 'overwrites',
+                conflictOwners: ['Sprint Fix', 'Old Sprint Fix']
+              }
+            ],
+            overwritten: []
+          }
+        },
+        createdAt: Date.now()
+      };
+    },
+    { key: bootstrapKey, path: modPath }
+  );
+
+  await page.goto(
+    `${baseUrl}/?window=mod-details&project=foundation-edition&mod=${encodeURIComponent(modPath)}&name=Sprint%20Fix&profile=Default&bootstrap=${bootstrapKey}`
+  );
+
+  const tree = page.getByRole('tree', { name: 'Mod file tree' });
+  await expect(tree).toBeVisible();
+  await expect(page.getByText('Loading tree', { exact: true })).toHaveCount(0);
+  await tree.getByTitle('Open SKSE').click();
+  await expect(tree.getByText('SprintFix.dll', { exact: true })).toBeVisible();
+  await expect(tree.getByText('Loading', { exact: true })).toHaveCount(0);
+
+  await page.getByRole('tab', { name: 'Конфликты' }).click();
+  await expect(page.getByText('Scanning files', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('SKSE/SprintFix.dll', { exact: true })).toBeVisible();
+  await expect(page.getByText('Sprint Fix · Old Sprint Fix', { exact: true })).toBeVisible();
+});

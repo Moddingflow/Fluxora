@@ -116,6 +116,19 @@ namespace fluxora
         std::vector<ModFileTreeEntry> overwritten;
     };
 
+    struct ModFileTreeDirectory
+    {
+        std::wstring relativePath;
+        std::vector<ModFileTreeEntry> entries;
+    };
+
+    struct ModDetailsContent
+    {
+        std::filesystem::path modPath;
+        std::vector<ModFileTreeDirectory> directories;
+        ModConflictTreePage conflictTree;
+    };
+
     struct ProfileOrderItemRecord
     {
         std::wstring id;
@@ -369,6 +382,11 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modPath,
             std::wstring_view relativeDirectory,
+            const std::filesystem::path& modsDirectory = {});
+
+        [[nodiscard]] static ModDetailsContent getModDetailsContent(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modPath,
             const std::filesystem::path& modsDirectory = {});
 
         [[nodiscard]] static ModConflictTreePage listModConflictTree(

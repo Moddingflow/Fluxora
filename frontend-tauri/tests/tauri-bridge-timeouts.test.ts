@@ -456,6 +456,40 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('routes one complete mod details content snapshot on the long index timeout', async () => {
+    const request: OperationRequest = { operationId: 'op_mod_details_content' };
+    invokeMock.mockResolvedValue({
+      modPath: 'E:\\Fluxora Builds\\Foundation Edition\\mods\\SkyUI',
+      directories: [{ relativePath: '', entries: [] }],
+      conflictTree: {
+        modPath: 'E:\\Fluxora Builds\\Foundation Edition\\mods\\SkyUI',
+        totalOverwrites: 0,
+        totalOverwritten: 0,
+        limit: 0,
+        nextCursor: null,
+        overwrites: [],
+        overwritten: []
+      }
+    });
+
+    const api = createTauriFluxoraApi();
+    await api.mods.getModDetailsContent(
+      project().projectDirectory,
+      'E:\\Fluxora Builds\\Foundation Edition\\mods\\SkyUI',
+      request
+    );
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'mods.getModDetailsContent',
+      params: {
+        projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition',
+        modPath: 'E:\\Fluxora Builds\\Foundation Edition\\mods\\SkyUI'
+      },
+      request,
+      timeoutMs: 120_000
+    });
+  });
+
   it('normalizes FluxPack export options and keeps packaging on a long timeout', async () => {
     const request: OperationRequest = { operationId: 'op_fluxpack_export' };
     invokeMock.mockResolvedValue({

@@ -1463,7 +1463,8 @@ namespace fluxora
         const BuildPathSettingsService& pathSettings) noexcept
         : logger_(logger),
           settings_(settings),
-          pathSettings_(pathSettings)
+          pathSettings_(pathSettings),
+          nifPreviewResolver_(logger, pathSettings)
     {
     }
 
@@ -1632,6 +1633,16 @@ namespace fluxora
             pathSettings_.modsDirectory(projectDirectory));
     }
 
+    ModDetailsContent ModService::getModDetailsContent(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modPath) const
+    {
+        return InstanceMetadataStore::getModDetailsContent(
+            projectDirectory,
+            modPath,
+            pathSettings_.modsDirectory(projectDirectory));
+    }
+
     ModConflictTreePage ModService::listModConflictTree(
         const std::filesystem::path& projectDirectory,
         const std::filesystem::path& modPath,
@@ -1742,44 +1753,41 @@ namespace fluxora
         std::wstring_view profileName,
         std::wstring_view relativePath) const
     {
-        if (projectDirectory.empty())
-        {
-            throw std::invalid_argument("Project directory is required.");
-        }
+        return nifPreviewResolver_.listVariants(projectDirectory, profileName, relativePath);
+    }
 
-        const std::filesystem::path requested = validateRelativePreviewPath(relativePath, L"nif");
-        const std::wstring normalizedRelative = requested.generic_wstring();
-        const std::filesystem::path modsRoot = pathSettings_.modsDirectory(projectDirectory);
-        const std::vector<ProfileOrderItemRecord> order =
-            InstanceMetadataStore::listProfileOrderItems(projectDirectory, profileName, modsRoot);
+    NifPreviewStartResult ModService::startNifPreview(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName,
+        const std::filesystem::path& activeModPath,
+        std::wstring_view relativePath) const
+    {
+        return nifPreviewResolver_.start(
+            projectDirectory,
+            profileName,
+            activeModPath,
+            relativePath);
+    }
 
-        std::vector<ModPreviewVariant> variants;
-        for (const ProfileOrderItemRecord& item : order)
-        {
-            if (item.kind != L"mod" || !item.hasMod)
-            {
-                continue;
-            }
+    NifPreviewPreparedAsset ModService::prepareNifPreviewVariant(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modPath,
+        std::wstring_view relativePath) const
+    {
+        return nifPreviewResolver_.prepareVariant(projectDirectory, modPath, relativePath);
+    }
 
-            PathSafetyService safety;
-            safety.validateContainedPath(modsRoot, item.mod.path).throwIfUnsafe("Installed mod folder");
-            const std::filesystem::path candidate = containedPreviewPath(item.mod.path, requested);
-            if (!regularFileExists(candidate))
-            {
-                continue;
-            }
-
-            variants.push_back(ModPreviewVariant{
-                item.mod.path,
-                displayNameForModRecord(item.mod),
-                item.position,
-                item.mod.state != L"disabled",
-                normalizedRelative,
-                fileSizeOrZero(candidate)
-            });
-        }
-
-        return variants;
+    NifPreviewTextureBatchResult ModService::prepareNifPreviewTextures(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName,
+        const std::filesystem::path& modelModPath,
+        const std::vector<std::wstring>& texturePaths) const
+    {
+        return nifPreviewResolver_.prepareTextures(
+            projectDirectory,
+            profileName,
+            modelModPath,
+            texturePaths);
     }
 
     ModPreviewAsset ModService::readPreviewAsset(

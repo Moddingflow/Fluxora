@@ -141,14 +141,16 @@ import {
   type ModCreationDialogState
 } from './features/mods/ModCreationDialog';
 import {
+  createModDetailsContentCache,
+  modDetailsContentCacheKey,
+  modDetailsContentFileTree
+} from './features/mods/mod-details-content';
+import {
   OperationOverlay,
   type OperationOverlayState
 } from './features/operations/OperationOverlay';
 import { SettingsWorkspace } from './features/settings/SettingsWorkspace';
-import {
-  isTextEditorFileName,
-  TextEditorWorkspace
-} from './features/text-editor/TextEditorWorkspace';
+import { isTextEditorFileName } from './features/text-editor/text-editor-model';
 import { previewKindForFile } from './features/file-preview/preview-kind-registry';
 import {
   emptyProjectDraft,
@@ -349,6 +351,7 @@ import type {
   FluxoraEffectiveFileTreeSnapshot,
   FluxoraModConflictTreePage,
   FluxoraModDetailsBootstrap,
+  FluxoraModDetailsContent,
   FluxoraModFileTreeEntry,
   FluxoraModOrderItem,
   FluxoraNexusModsAuthStatus,
@@ -612,11 +615,18 @@ const modDetailsBootstrapStoragePrefix = 'fluxora.mod-details.bootstrap.';
 const modDetailsBootstrapStorageKey = (key: string): string =>
   `${modDetailsBootstrapStoragePrefix}${key}`;
 
+type ModDetailsBootstrapWindow = Window & {
+  __FLUXORA_MOD_DETAILS_BOOTSTRAP__?: FluxoraModDetailsBootstrap;
+};
+
+let modDetailsBootstrapReadCache: FluxoraModDetailsBootstrap | null = null;
+
 const writeModDetailsBootstrap = (bootstrap: FluxoraModDetailsBootstrap): void => {
   try {
+    const storageFallback: FluxoraModDetailsBootstrap = { ...bootstrap, content: undefined };
     window.localStorage.setItem(
       modDetailsBootstrapStorageKey(bootstrap.key),
-      JSON.stringify(bootstrap)
+      JSON.stringify(storageFallback)
     );
   } catch {
     // Bootstrap is an optimization. The window can still load through the bridge.
@@ -628,6 +638,18 @@ const readModDetailsBootstrap = (key: string): FluxoraModDetailsBootstrap | null
     return null;
   }
 
+  if (modDetailsBootstrapReadCache?.key === key) {
+    return modDetailsBootstrapReadCache;
+  }
+
+  const bootstrapWindow = window as ModDetailsBootstrapWindow;
+  const injected = bootstrapWindow.__FLUXORA_MOD_DETAILS_BOOTSTRAP__;
+  if (injected?.key === key) {
+    modDetailsBootstrapReadCache = injected;
+    delete bootstrapWindow.__FLUXORA_MOD_DETAILS_BOOTSTRAP__;
+    return injected;
+  }
+
   const storageKey = modDetailsBootstrapStorageKey(key);
   try {
     const raw = window.localStorage.getItem(storageKey);
@@ -637,7 +659,11 @@ const readModDetailsBootstrap = (key: string): FluxoraModDetailsBootstrap | null
     }
 
     const parsed = JSON.parse(raw) as Partial<FluxoraModDetailsBootstrap>;
-    return parsed && typeof parsed.key === 'string' && parsed.item ? parsed as FluxoraModDetailsBootstrap : null;
+    modDetailsBootstrapReadCache =
+      parsed && typeof parsed.key === 'string' && parsed.item
+        ? (parsed as FluxoraModDetailsBootstrap)
+        : null;
+    return modDetailsBootstrapReadCache;
   } catch {
     window.localStorage.removeItem(storageKey);
     return null;
@@ -1127,13 +1153,11 @@ export const App = () => {
   const isSettingsWindow = windowMode === 'settings';
   const isBuildSettingsWindow = windowMode === 'build-settings';
   const isModDetailsWindow = windowMode === 'mod-details';
-  const isTextEditorWindow = windowMode === 'text-editor';
   const isFilePreviewWindow = windowMode === 'file-preview';
   const isSecondaryWindow =
     isSettingsWindow ||
     isBuildSettingsWindow ||
     isModDetailsWindow ||
-    isTextEditorWindow ||
     isFilePreviewWindow;
   const buildSettingsProjectId = windowParameters.get('project');
   const buildSettingsInitialName = windowParameters.get('name')?.trim() ?? '';
@@ -1150,11 +1174,8 @@ export const App = () => {
     () => (isModDetailsWindow ? readModDetailsBootstrap(modDetailsBootstrapKey) : null),
     [isModDetailsWindow, modDetailsBootstrapKey]
   );
-  const textEditorProjectId = windowParameters.get('project');
-  const textEditorModId = windowParameters.get('mod')?.trim() ?? '';
-  const textEditorInitialPath = windowParameters.get('path')?.trim() ?? '';
-  const textEditorInitialName = windowParameters.get('name')?.trim() ?? '';
   const filePreviewProjectId = windowParameters.get('project');
+  const filePreviewProjectDirectory = windowParameters.get('directory')?.trim() ?? '';
   const filePreviewModId = windowParameters.get('mod')?.trim() ?? '';
   const filePreviewInitialPath = windowParameters.get('path')?.trim() ?? '';
   const filePreviewInitialName = windowParameters.get('name')?.trim() ?? '';
@@ -1163,7 +1184,7 @@ export const App = () => {
   const [activeRoute, setActiveRoute] = useState<RouteId>(() =>
     isSettingsWindow
       ? 'settings'
-      : isModDetailsWindow || isTextEditorWindow || isFilePreviewWindow
+      : isModDetailsWindow || isFilePreviewWindow
         ? 'mods'
         : 'home'
   );
@@ -1305,6 +1326,9 @@ export const App = () => {
     useState<RowDropTargetState | null>(null);
   const [fileTreeCache, setFileTreeCache] = useState<Record<string, FluxoraModFileTreeEntry[]>>(
     () => {
+      if (initialModDetailsBootstrap?.content) {
+        return modDetailsContentFileTree(initialModDetailsBootstrap.content);
+      }
       if (initialModDetailsBootstrap?.rootFileTree) {
         return { '': initialModDetailsBootstrap.rootFileTree };
       }
@@ -1312,11 +1336,14 @@ export const App = () => {
       return {} as Record<string, FluxoraModFileTreeEntry[]>;
     }
   );
+  const modDetailsContentCacheRef = useRef(createModDetailsContentCache());
   const [expandedFileTree, setExpandedFileTree] = useState<Record<string, boolean>>({});
   const [fileTreeState, setFileTreeState] = useState<'idle' | 'loading' | 'ready' | 'error'>(
-    'idle'
+    () =>
+      initialModDetailsBootstrap?.content || initialModDetailsBootstrap?.rootFileTree
+        ? 'ready'
+        : 'idle'
   );
-  const [fileTreeLoadingPath, setFileTreeLoadingPath] = useState<string | null>(null);
   const [effectiveFileTreeSnapshot, setEffectiveFileTreeSnapshot] =
     useState<FluxoraEffectiveFileTreeSnapshot | null>(null);
   const effectiveFileTreeSnapshotRef = useRef<FluxoraEffectiveFileTreeSnapshot | null>(null);
@@ -1342,11 +1369,13 @@ export const App = () => {
     () => initialModDetailsBootstrap?.item ?? null
   );
   const [modDetailsConflictPage, setModDetailsConflictPage] =
-    useState<FluxoraModConflictTreePage | null>(null);
+    useState<FluxoraModConflictTreePage | null>(
+      () => initialModDetailsBootstrap?.content?.conflictTree ?? null
+    );
   const [modDetailsTab, setModDetailsTab] = useState<ModDetailsTabId>('files');
   const [modDetailsConflictScanState, setModDetailsConflictScanState] = useState<
     'idle' | 'loading' | 'ready' | 'error'
-  >('idle');
+  >(() => (initialModDetailsBootstrap?.content ? 'ready' : 'idle'));
   effectiveFileTreeSnapshotRef.current = effectiveFileTreeSnapshot;
   const [pluginsWorkspace, dispatchPluginsWorkspace] = useReducer(
     pluginWorkspaceReducer,
@@ -1509,11 +1538,7 @@ export const App = () => {
     }
 
     if (isModDetailsWindow) {
-      return `Mod · ${modDetailsInitialName || 'Details'}`;
-    }
-
-    if (isTextEditorWindow) {
-      return `Editor · ${textEditorInitialName || 'Text file'}`;
+      return modDetailsInitialName || 'Details';
     }
 
     if (isFilePreviewWindow) {
@@ -1528,10 +1553,8 @@ export const App = () => {
     isBuildSettingsWindow,
     isModDetailsWindow,
     isSettingsWindow,
-    isTextEditorWindow,
     modDetailsInitialName,
-    selectedProject?.name,
-    textEditorInitialName
+    selectedProject?.name
   ]);
 
   const deferredSearchText = useDeferredValue(searchText);
@@ -2418,11 +2441,10 @@ export const App = () => {
     const projectDirectory =
       selectedProject?.projectDirectory ?? initialModDetailsBootstrap?.projectDirectory ?? '';
     if (!projectDirectory || !item?.isMod) {
-      return;
+      return false;
     }
 
     const operationId = createRendererOperationId('mods_file_tree');
-    setFileTreeLoadingPath(relativeDirectory);
     setFileTreeState((current) => (relativeDirectory ? current : 'loading'));
 
     try {
@@ -2434,11 +2456,11 @@ export const App = () => {
       );
       setFileTreeCache((current) => ({ ...current, [relativeDirectory]: entries }));
       setFileTreeState('ready');
+      return true;
     } catch (error) {
       setFileTreeState('error');
       setMessage(errorMessage(error));
-    } finally {
-      setFileTreeLoadingPath(null);
+      return false;
     }
   };
 
@@ -3240,14 +3262,32 @@ export const App = () => {
     }
   };
 
+  const preloadModDetailsContent = (
+    item: FluxoraModOrderItem,
+    project: FluxoraProject | null = selectedProject
+  ): Promise<FluxoraModDetailsContent> => {
+    if (!project || !item.isMod) {
+      return Promise.reject(new Error('Mod details require an installed mod and an open build.'));
+    }
+
+    const cacheKey = modDetailsContentCacheKey(project.projectDirectory, item.id);
+    return modDetailsContentCacheRef.current.load(cacheKey, () =>
+      window.fluxora.mods.getModDetailsContent(project.projectDirectory, item.id, {
+        operationId: createRendererOperationId('mods_details_content')
+      })
+    );
+  };
+
   const openModDetailsWindow = async (item: FluxoraModOrderItem) => {
     if (!selectedProject || !item.isMod) {
       return;
     }
 
     try {
+      const content = await preloadModDetailsContent(item, selectedProject);
+      const preloadedFileTree = modDetailsContentFileTree(content);
       const bootstrapKey = createRendererOperationId('mod_details_bootstrap');
-      writeModDetailsBootstrap({
+      const bootstrap: FluxoraModDetailsBootstrap = {
         key: bootstrapKey,
         projectId: selectedProject.id,
         projectName: selectedProject.name,
@@ -3256,15 +3296,20 @@ export const App = () => {
         profileName: modWorkspaceProfileName,
         modPath: item.id,
         item,
-        rootFileTree: fileTreeCache[''],
+        rootFileTree: preloadedFileTree[''],
+        content,
         createdAt: Date.now()
+      };
+      writeModDetailsBootstrap({
+        ...bootstrap
       });
       await window.fluxora.windowControls.openModDetails(
         selectedProject.configPath,
         item.id,
         modItemTitle(item),
         modWorkspaceProfileName,
-        bootstrapKey
+        bootstrapKey,
+        bootstrap
       );
     } catch (error) {
       setMessage(errorMessage(error));
@@ -3359,20 +3404,41 @@ export const App = () => {
     }
 
     const isExpanded = Boolean(expandedFileTree[entry.relativePath]);
-    setExpandedFileTree((current) => ({
-      ...current,
-      [entry.relativePath]: !isExpanded
-    }));
-
-    if (!isExpanded && !fileTreeCache[entry.relativePath]) {
-      await loadModFileTree(entry.relativePath);
+    if (isExpanded) {
+      setExpandedFileTree((current) => ({ ...current, [entry.relativePath]: false }));
+      return;
     }
+
+    const item =
+      selectedModItem?.isMod
+        ? selectedModItem
+        : isModDetailsWindow && modDetailsSummary?.isMod
+          ? modDetailsSummary
+          : null;
+    if (!fileTreeCache[entry.relativePath]) {
+      const loaded = await loadModFileTree(entry.relativePath, item);
+      if (!loaded) {
+        return;
+      }
+    }
+
+    setExpandedFileTree((current) => ({ ...current, [entry.relativePath]: true }));
   };
 
   const openTextEditorForFile = async (entry: FluxoraModFileTreeEntry) => {
+    const item =
+      selectedModItem?.isMod
+        ? selectedModItem
+        : isModDetailsWindow && modDetailsSummary?.isMod
+          ? modDetailsSummary
+          : null;
+    const configPath = selectedProject?.configPath ?? initialModDetailsBootstrap?.configPath ?? '';
+    const projectDirectory =
+      selectedProject?.projectDirectory ?? initialModDetailsBootstrap?.projectDirectory ?? '';
     if (
-      !selectedProject ||
-      !selectedModItem?.isMod ||
+      !configPath ||
+      !projectDirectory ||
+      !item?.isMod ||
       entry.isDirectory ||
       !isTextEditorFileName(entry.name)
     ) {
@@ -3381,8 +3447,9 @@ export const App = () => {
 
     try {
       await window.fluxora.windowControls.openTextEditor(
-        selectedProject.configPath,
-        selectedModItem.id,
+        configPath,
+        projectDirectory,
+        item.id,
         entry.relativePath,
         entry.name
       );
@@ -3393,9 +3460,19 @@ export const App = () => {
 
   const openFilePreviewForFile = async (entry: FluxoraModFileTreeEntry) => {
     const previewKind = previewKindForFile(entry.name);
+    const item =
+      selectedModItem?.isMod
+        ? selectedModItem
+        : isModDetailsWindow && modDetailsSummary?.isMod
+          ? modDetailsSummary
+          : null;
+    const configPath = selectedProject?.configPath ?? initialModDetailsBootstrap?.configPath ?? '';
+    const projectDirectory =
+      selectedProject?.projectDirectory ?? initialModDetailsBootstrap?.projectDirectory ?? '';
     if (
-      !selectedProject ||
-      !selectedModItem?.isMod ||
+      !configPath ||
+      !projectDirectory ||
+      !item?.isMod ||
       entry.isDirectory ||
       previewKind === null
     ) {
@@ -3404,8 +3481,9 @@ export const App = () => {
 
     try {
       await window.fluxora.windowControls.openFilePreview(
-        selectedProject.configPath,
-        selectedModItem.id,
+        configPath,
+        projectDirectory,
+        item.id,
         entry.relativePath,
         entry.name,
         modWorkspaceProfileName,
@@ -6205,10 +6283,6 @@ export const App = () => {
       setSelectedProjectId(modDetailsProjectId);
     }
 
-    if (isTextEditorWindow && textEditorProjectId) {
-      setSelectedProjectId(textEditorProjectId);
-    }
-
     if (isFilePreviewWindow && filePreviewProjectId) {
       setSelectedProjectId(filePreviewProjectId);
     }
@@ -6218,9 +6292,7 @@ export const App = () => {
     isBuildSettingsWindow,
     isFilePreviewWindow,
     isModDetailsWindow,
-    isTextEditorWindow,
-    modDetailsProjectId,
-    textEditorProjectId
+    modDetailsProjectId
   ]);
 
   useEffect(() => {
@@ -6481,7 +6553,12 @@ export const App = () => {
   }, [bridgeStatus?.ready, draft.projectName, draft.installRootDirectory]);
 
   useEffect(() => {
+    modDetailsContentCacheRef.current.clear();
+  }, [selectedProject?.projectDirectory]);
+
+  useEffect(() => {
     if (
+      isModDetailsWindow ||
       (activeRoute !== 'build' && activeRoute !== 'mods') ||
       !selectedProject ||
       !bridgeStatus?.ready ||
@@ -6495,6 +6572,7 @@ export const App = () => {
   }, [
     activeRoute,
     bridgeStatus?.ready,
+    isModDetailsWindow,
     selectedProject?.projectDirectory,
     modWorkspaceProfileName
   ]);
@@ -6529,7 +6607,13 @@ export const App = () => {
   }, [isModDetailsWindow, selectedModItem?.id, selectedModItem?.orderId]);
 
   useEffect(() => {
-    if (!isModDetailsWindow || !bridgeStatus?.ready || !modDetailsModId) {
+    const bootstrapItem = initialModDetailsBootstrap?.item;
+    if (
+      !isModDetailsWindow ||
+      !bridgeStatus?.ready ||
+      !modDetailsModId ||
+      (bootstrapItem?.isMod && modOrderItemMatchesLookup(bootstrapItem, modDetailsModId))
+    ) {
       return;
     }
 
@@ -6563,6 +6647,8 @@ export const App = () => {
     };
   }, [
     bridgeStatus?.ready,
+    initialModDetailsBootstrap?.item?.id,
+    initialModDetailsBootstrap?.item?.orderId,
     initialModDetailsBootstrap?.projectDirectory,
     isModDetailsWindow,
     modDetailsModId,
@@ -6907,6 +6993,7 @@ export const App = () => {
         selectedProject?.projectDirectory === event.projectDirectory ? selectedProject : null;
       let currentEventReconciled = false;
       if (eventProjectAtReceipt) {
+        modDetailsContentCacheRef.current.clear();
         effectiveFileTreeCacheRef.current = {};
         effectiveFileTreeFailedRequestKeyRef.current = null;
         setEffectiveFileTreeError(null);
@@ -7407,25 +7494,37 @@ export const App = () => {
         : isModDetailsWindow && modDetailsSummary?.isMod
           ? modDetailsSummary
           : null;
-    setFileTreeCache(
-      isModDetailsWindow &&
-        initialModDetailsBootstrap?.rootFileTree &&
-        fileTreeItem?.id === initialModDetailsBootstrap.modPath
-        ? { '': initialModDetailsBootstrap.rootFileTree }
-        : {}
-    );
+    const bootstrapMatches =
+      isModDetailsWindow && fileTreeItem?.id === initialModDetailsBootstrap?.modPath;
+    const bootstrapFileTree =
+      bootstrapMatches && initialModDetailsBootstrap?.content
+        ? modDetailsContentFileTree(initialModDetailsBootstrap.content)
+        : bootstrapMatches && initialModDetailsBootstrap?.rootFileTree
+          ? { '': initialModDetailsBootstrap.rootFileTree }
+          : null;
+    setFileTreeCache(bootstrapFileTree ?? {});
     setExpandedFileTree({});
-    setModDetailsConflictScanState('idle');
-    setModDetailsConflictPage(null);
+    setModDetailsConflictScanState(
+      bootstrapMatches && initialModDetailsBootstrap?.content ? 'ready' : 'idle'
+    );
+    setModDetailsConflictPage(
+      bootstrapMatches ? (initialModDetailsBootstrap?.content?.conflictTree ?? null) : null
+    );
 
     if ((activeRoute !== 'build' && activeRoute !== 'mods') || !fileTreeItem?.isMod) {
       setFileTreeState('idle');
       return;
     }
 
+    if (bootstrapFileTree && Object.hasOwn(bootstrapFileTree, '')) {
+      setFileTreeState('ready');
+      return;
+    }
+
     void loadModFileTree('', fileTreeItem);
   }, [
     activeRoute,
+    initialModDetailsBootstrap?.content,
     initialModDetailsBootstrap?.modPath,
     initialModDetailsBootstrap?.rootFileTree,
     isModDetailsWindow,
@@ -7482,7 +7581,6 @@ export const App = () => {
           : null;
     if (
       !isModDetailsWindow ||
-      modDetailsTab !== 'conflicts' ||
       modDetailsConflictScanState !== 'idle' ||
       !conflictItem?.isMod
     ) {
@@ -7493,7 +7591,6 @@ export const App = () => {
   }, [
     isModDetailsWindow,
     modDetailsConflictScanState,
-    modDetailsTab,
     modDetailsSummary?.id,
     modDetailsSummary?.orderId,
     selectedModItem?.orderId,
@@ -10258,8 +10355,17 @@ export const App = () => {
                     return;
                   }
 
+                  const shouldOpenModDetails =
+                    event.detail === 2 && !isInteractiveRowDragTarget(event.target);
                   event.currentTarget.focus({ preventScroll: true });
                   handleModRowSelection(event, item);
+                  if (item.isMod && !isOverwrite) {
+                    if (shouldOpenModDetails) {
+                      void openModDetailsWindow(item);
+                    } else {
+                      void preloadModDetailsContent(item).catch(() => undefined);
+                    }
+                  }
                 }}
                 onContextMenu={(event) => {
                   event.preventDefault();
@@ -10274,13 +10380,6 @@ export const App = () => {
                     )
                   );
                   setModMenuOrderId(item.orderId);
-                }}
-                onDoubleClick={(event) => {
-                  if (isInteractiveRowDragTarget(event.target)) {
-                    return;
-                  }
-
-                  void openModDetailsWindow(item);
                 }}
                 onDragOver={(event) => handleModInstallDragOver(event, item)}
                 onDrop={(event) => void handleModInstallDrop(event, item)}
@@ -10440,7 +10539,6 @@ export const App = () => {
     const entries = fileTreeCache[relativeDirectory] ?? [];
     return entries.flatMap((entry) => {
       const isExpanded = Boolean(expandedFileTree[entry.relativePath]);
-      const isLoading = fileTreeLoadingPath === entry.relativePath;
       const previewKind = entry.isDirectory ? null : previewKindForFile(entry.name);
       const canEditFile = !entry.isDirectory && isTextEditorFileName(entry.name);
       const canPreviewFile = !entry.isDirectory && previewKind !== null;
@@ -10503,7 +10601,7 @@ export const App = () => {
             </button>
           )}
           <span className="file-tree-row__meta">
-            <strong>{isLoading ? 'Loading' : formatFileSize(entry.size)}</strong>
+            <strong>{formatFileSize(entry.size)}</strong>
             {canEditFile ? (
               <button
                 className="icon-button file-tree-row__action"
@@ -10639,9 +10737,19 @@ export const App = () => {
     const modReady = modItem !== null;
     const modTitle = modItem ? modItemTitle(modItem) : modDetailsInitialName || 'Mod';
     const overwrite = modItem ? modOverwriteView(modItem) : null;
-    const fileCount = modItem ? modItem.fileCount : 0;
-    const overwritesCount = modItem ? modItem.overwritingFileCount : 0;
-    const overwrittenCount = modItem ? modItem.overwrittenFileCount : 0;
+    const fileCount = initialModDetailsBootstrap?.content
+      ? initialModDetailsBootstrap.content.directories.reduce(
+          (total, directory) =>
+            total + directory.entries.filter((entry) => !entry.isDirectory).length,
+          0
+        )
+      : modItem
+        ? modItem.fileCount
+        : 0;
+    const overwritesCount =
+      modDetailsConflictPage?.totalOverwrites ?? (modItem ? modItem.overwritingFileCount : 0);
+    const overwrittenCount =
+      modDetailsConflictPage?.totalOverwritten ?? (modItem ? modItem.overwrittenFileCount : 0);
     const projectTitle = selectedProject?.name ?? initialModDetailsBootstrap?.projectName ?? 'Build';
 
     return (
@@ -10696,11 +10804,11 @@ export const App = () => {
             <div className="file-tree mod-details-file-tree" role="tree" aria-label="Mod file tree">
               {!modReady ? (
                 <span className="file-tree-empty">Mod unavailable.</span>
-              ) : fileTreeState === 'loading' ? (
-                <span className="file-tree-empty">Loading tree</span>
               ) : fileTreeState === 'error' ? (
                 <span className="file-tree-empty">File tree unavailable.</span>
-              ) : (fileTreeCache[''] ?? []).length === 0 ? (
+              ) : fileTreeState === 'loading' && (fileTreeCache[''] ?? []).length === 0 ? null : (
+                fileTreeCache[''] ?? []
+              ).length === 0 ? (
                 <span className="file-tree-empty">No files indexed yet.</span>
               ) : (
                 renderFileTreeEntries()
@@ -10713,11 +10821,9 @@ export const App = () => {
                   <strong>Перезаписывает:</strong>
                   <span>{overwritesCount}</span>
                 </header>
-                {modDetailsConflictScanState === 'loading' ? (
-                  <span className="mod-details-empty">Scanning files</span>
-                ) : modDetailsConflictScanState === 'error' ? (
+                {modDetailsConflictScanState === 'error' ? (
                   <span className="mod-details-empty">Conflicts unavailable.</span>
-                ) : (
+                ) : modDetailsConflictScanState === 'loading' && !modDetailsConflictPage ? null : (
                   renderModDetailsConflictList(
                     modDetailsConflictEntries.overwrites,
                     'No overwritten files loaded.'
@@ -10729,11 +10835,9 @@ export const App = () => {
                   <strong>Перезаписывается:</strong>
                   <span>{overwrittenCount}</span>
                 </header>
-                {modDetailsConflictScanState === 'loading' ? (
-                  <span className="mod-details-empty">Scanning files</span>
-                ) : modDetailsConflictScanState === 'error' ? (
+                {modDetailsConflictScanState === 'error' ? (
                   <span className="mod-details-empty">Conflicts unavailable.</span>
-                ) : (
+                ) : modDetailsConflictScanState === 'loading' && !modDetailsConflictPage ? null : (
                   renderModDetailsConflictList(
                     modDetailsConflictEntries.overwritten,
                     'No overwriting files loaded.'
@@ -13839,20 +13943,6 @@ export const App = () => {
     );
   }
 
-  if (isTextEditorWindow) {
-    return (
-      <main className="desktop-shell desktop-shell--settings-window desktop-shell--text-editor-window">
-        {renderTitlebar(false)}
-        <TextEditorWorkspace
-          project={selectedProject}
-          initialModPath={textEditorModId}
-          initialRelativePath={textEditorInitialPath}
-          initialFileName={textEditorInitialName}
-        />
-      </main>
-    );
-  }
-
   if (isFilePreviewWindow) {
     return (
       <main className="desktop-shell desktop-shell--settings-window desktop-shell--file-preview-window">
@@ -13863,7 +13953,7 @@ export const App = () => {
           }
         >
           <FilePreviewWorkspace
-            project={selectedProject}
+            projectDirectory={filePreviewProjectDirectory || selectedProject?.projectDirectory || ''}
             initialModPath={filePreviewModId}
             initialRelativePath={filePreviewInitialPath}
             initialFileName={filePreviewInitialName}

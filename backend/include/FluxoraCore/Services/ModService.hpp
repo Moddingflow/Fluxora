@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FluxoraCore/Services/IService.hpp"
+#include "FluxoraCore/Services/NifPreviewResolver.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
 #include <cstdint>
@@ -82,16 +83,6 @@ namespace fluxora
         bool truncated{false};
     };
 
-    struct ModPreviewVariant
-    {
-        std::filesystem::path modPath;
-        std::wstring modName;
-        int order{0};
-        bool enabled{false};
-        std::wstring relativePath;
-        std::uintmax_t size{0};
-    };
-
     struct ModPreviewAsset
     {
         std::wstring kind;
@@ -130,6 +121,9 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modPath,
             std::wstring_view relativeDirectory) const;
+        [[nodiscard]] ModDetailsContent getModDetailsContent(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modPath) const;
         [[nodiscard]] ModConflictTreePage listModConflictTree(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modPath,
@@ -153,6 +147,20 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             std::wstring_view profileName,
             std::wstring_view relativePath) const;
+        [[nodiscard]] NifPreviewStartResult startNifPreview(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName,
+            const std::filesystem::path& activeModPath,
+            std::wstring_view relativePath) const;
+        [[nodiscard]] NifPreviewPreparedAsset prepareNifPreviewVariant(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modPath,
+            std::wstring_view relativePath) const;
+        [[nodiscard]] NifPreviewTextureBatchResult prepareNifPreviewTextures(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName,
+            const std::filesystem::path& modelModPath,
+            const std::vector<std::wstring>& texturePaths) const;
         [[nodiscard]] ModPreviewAsset readPreviewAsset(
             const std::filesystem::path& projectDirectory,
             std::wstring_view profileName,
@@ -180,6 +188,7 @@ namespace fluxora
         Logger& logger_;
         AppSettingsService& settings_;
         const BuildPathSettingsService& pathSettings_;
+        NifPreviewResolver nifPreviewResolver_;
         std::vector<ModDescriptor> mods_;
         bool initialized_{false};
     };

@@ -1,6 +1,6 @@
 # Fluxora redesign renderer architecture
 
-Дата решения: 2026-06-25
+Дата решения: 2026-06-25; NIF preview worker update: 2026-07-13
 
 Статус: Фаза 1 redesign roadmap закрыта как архитектурная раскладка. Фаза 12 начала production cleanup: крупные Tauri UI surfaces вынесены из `App.tsx` в feature-owned компоненты без изменения bridge/runtime поведения.
 
@@ -30,6 +30,8 @@ Graphify query for the broad redesign split returned backend-heavy noise around 
 | Library/home/catalog | `features/library/LibraryHome.tsx`, `features/library/projectLibraryStats.ts`, `App.tsx`, `project-catalog-state.ts`, `services/project-catalog-service.ts` | Project list/search, create/open/rename/delete, visible FluxPack install entry, template filtering, catalog loading and compact project metrics. |
 | Build workspace | `App.tsx`, `features/build/BuildDetailHeader.tsx`, `features/build/BuildPathsInspector.tsx`, `features/fluxpack/*`, `build-workspace-state.ts` | Build header actions, build path drawer, FluxPack inspect/plan/conflict/manual-download orchestration and summary state. |
 | Mods table/tree | `App.tsx`, `mod-workspace-state.ts`, `ui-performance.ts` | Mod list/order/search, row menus, virtual windowing, file tree expansion and bridge calls. |
+| Text/code editor | `main.tsx`, `features/text-editor/TextEditorWindow.tsx`, `features/text-editor/*` | Lightweight secondary-window bootstrap, Monaco lifecycle, document tabs/view state, Explorer/search/Problems/palette/status UI and guarded save orchestration over typed facade calls. The editor does not execute generic `App.tsx` startup. |
+| NIF file preview | `features/file-preview/FilePreviewWorkspace.tsx`, worker client/protocol/codec, DDS texture service and bounded resource cache | Opaque session orchestration, neutral geometry first, progressive texture application, WebGL resource disposal. |
 | Plugins/load order | `App.tsx`, `plugin-workspace-state.ts`, `ui-performance.ts` | Plugin list/order/search, row menus, virtual windowing, selected-plugin details and capability state. |
 | Downloads/install entry | `App.tsx`, `download-workspace-state.ts` | Download list/search, row context menu, import/archive/NXM actions and selected-download details. |
 | Install/FOMOD/details | `features/install/InstallDialog.tsx`, `App.tsx`, `install-workspace-state.ts` | Dialog state, analyze/install flow, FOMOD selections, placement overrides and virtualized details tree. |
@@ -75,6 +77,8 @@ frontend-tauri/src/renderer/
     install/
     settings/
     operations/
+    text-editor/
+    file-preview/
   services/
 ```
 
@@ -87,6 +91,7 @@ frontend-tauri/src/renderer/
 | `design-system/` | Pure typed primitives, token imports, icon wrapper and accessibility defaults. | No bridge calls. | Project/mod/download/install business rules, raw Tauri invoke, filesystem or shell behavior. |
 | `components/chrome/` | Titlebar, window controls, app chrome visual composition and `data-tauri-drag-region`. | `window.fluxora.windowControls.*` only for chrome actions. | Domain state, bridge host lifecycle or C++ behavior. |
 | `features/library/` | Home/library route, project rows, create wizard UI state and catalog hooks. | `window.fluxora.projects.*`, `window.fluxora.templates.*`, dialogs/shell through facade. | Project filesystem rules or template resolution logic beyond display/orchestration. |
+| `features/text-editor/` | Workbench composition, Monaco models/view state, open-document search, language labels, command/menu UI and unsaved-change guards. | Typed `window.fluxora.mods`, `window.fluxora.textFiles` and native dialog facade methods. | Raw filesystem access, shell processes, workspace indexing, compiler/LSP ownership or domain save rules. |
 | `features/build/` | Build detail shell, header actions, build path drawer, executable picker affordances and FluxPack UI state. | `buildPaths`, `executables`, `fluxPack`, dialogs and operation overlay helpers through facade/services. | FluxPack recipe rules, executable launch rules or path persistence logic. |
 | `features/mods/` | Mods pane, mod rows, grouping, search, local selection, file-tree display and virtual list state. | `window.fluxora.mods.*`, shared `createVirtualWindow`. | Mod installation, load-order persistence, filesystem mutation or conflict truth. |
 | `features/plugins/` | Plugins tab/pane, load-order rows, selected-plugin detail and capability messages. | `window.fluxora.plugins.*`, selected build capability data. | Plugin detection, master validation or load-order mutation rules. |

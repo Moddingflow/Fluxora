@@ -1,5 +1,6 @@
 @import "./design-system/tokens/foundations.css";
 @import "./design-system/primitives/primitives.css";
+@import "./features/text-editor/text-editor-workbench.css";
 
 
 * {
@@ -215,6 +216,14 @@ button:disabled {
   background: var(--flx-panel-soft);
 }
 
+.titlebar--settings-window .titlebar__brand {
+  right: calc(var(--flx-titlebar-caption-width) + 8px);
+  left: calc(var(--flx-titlebar-caption-width) + 8px);
+  width: auto;
+  max-width: none;
+  transform: none;
+}
+
 .titlebar__brand {
   position: absolute;
   top: 0;
@@ -251,12 +260,18 @@ button:disabled {
 }
 
 .titlebar__brand-name {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
   margin-left: 0;
+  overflow: hidden;
   color: var(--text-strong);
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0;
   line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .titlebar__subtitle {
@@ -333,6 +348,21 @@ button:disabled {
   font-weight: 400;
   line-height: 1;
   -webkit-font-smoothing: antialiased;
+}
+
+.titlebar__caption-button--custom-close {
+  align-self: center;
+  width: calc(var(--flx-titlebar-caption-width) - 12px);
+  height: calc(var(--flx-titlebar-height) - 8px);
+  margin-right: 6px;
+  color: var(--text-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.titlebar__caption-button--custom-close:active {
+  color: var(--text-strong);
+  background: var(--surface-hover);
 }
 
 .titlebar__shortcut:hover,

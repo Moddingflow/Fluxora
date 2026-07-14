@@ -450,6 +450,12 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_get_mod_details_content(
+        const wchar_t* projectDirectory,
+        const wchar_t* modPath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_get_mod_conflict_tree(
         const wchar_t* projectDirectory,
         const wchar_t* modPath,
@@ -494,19 +500,26 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
-    FLUXORA_CORE_API int fluxora_list_mod_preview_variants(
+    FLUXORA_CORE_API int fluxora_start_nif_preview(
         const wchar_t* projectDirectory,
         const wchar_t* profileName,
+        const wchar_t* initialModPath,
         const wchar_t* relativePath,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
-    FLUXORA_CORE_API int fluxora_read_mod_preview_asset(
+    FLUXORA_CORE_API int fluxora_prepare_nif_preview_variant(
         const wchar_t* projectDirectory,
-        const wchar_t* profileName,
         const wchar_t* modPath,
         const wchar_t* relativePath,
-        const wchar_t* kind,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_prepare_nif_preview_textures(
+        const wchar_t* projectDirectory,
+        const wchar_t* profileName,
+        const wchar_t* modelModPath,
+        const wchar_t* texturePathsJson,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 

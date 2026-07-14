@@ -58,6 +58,11 @@ describe('redesign app chrome titlebar', () => {
     expect(markup).toContain('Fluxora settings window chrome');
     expect(markup).not.toContain('aria-label="Home"');
     expect(markup).not.toContain('aria-label="Open settings"');
+    expect(markup).not.toContain('aria-label="Minimize"');
+    expect(markup).not.toContain('aria-label="Maximize"');
+    expect(markup).toContain('titlebar__caption-button--custom-close');
+    expect(markup).toContain('<svg');
+    expect(markup).toContain('M18 6 6 18');
   });
 
   it('keeps chrome styling aligned with the compact UI-kit titlebar', () => {
@@ -74,6 +79,10 @@ describe('redesign app chrome titlebar', () => {
     expect(styles).toContain('--flx-titlebar-close-hover: #c42b1c;');
     expect(styles).toContain('.titlebar__caption-button--close:hover');
     expect(styles).toContain('background: var(--flx-titlebar-close-hover);');
+    expect(styles).toContain('.titlebar--settings-window .titlebar__brand');
+    expect(styles).toContain('text-overflow: ellipsis;');
+    expect(styles).toContain('white-space: nowrap;');
+    expect(styles).toContain('.titlebar__caption-button--custom-close');
   });
 
   it('preserves the Tauri window-control facade boundary', () => {
@@ -95,5 +104,16 @@ describe('redesign app chrome titlebar', () => {
     expect(app).toContain('document.documentElement.dataset.platform = chromePlatform;');
     expect(chrome).not.toContain('@tauri-apps/api');
     expect(chrome).not.toContain('window.fluxora');
+  });
+
+  it('disables minimize and maximize for every secondary Tauri window', () => {
+    const rustShell = readText('frontend-tauri', 'src-tauri', 'src', 'lib.rs');
+    const secondaryWindowBuilderCount = rustShell.match(/WebviewWindowBuilder::new/g)?.length ?? 0;
+    const disabledMinimizeCount = rustShell.match(/\.minimizable\(false\)/g)?.length ?? 0;
+    const disabledMaximizeCount = rustShell.match(/\.maximizable\(false\)/g)?.length ?? 0;
+
+    expect(secondaryWindowBuilderCount).toBeGreaterThan(0);
+    expect(disabledMinimizeCount).toBe(secondaryWindowBuilderCount);
+    expect(disabledMaximizeCount).toBe(secondaryWindowBuilderCount);
   });
 });

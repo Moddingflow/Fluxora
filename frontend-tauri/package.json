@@ -17,11 +17,12 @@
     "test:ai-gate": "vitest run tests/ai-evaluation-suite.test.ts",
     "test:parity": "vitest run tests/parity-gate.test.ts",
     "parity:gate": "npm run typecheck && npm test && npm run test:e2e",
-    "test:e2e": "npm run build:frontend && playwright test --pass-with-no-tests"
+    "test:e2e": "npm run build:frontend && node node_modules/@playwright/test/cli.js test --pass-with-no-tests"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
     "lucide-react": "^1.21.0",
+    "monaco-editor": "0.55.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "three": "^0.185.1"

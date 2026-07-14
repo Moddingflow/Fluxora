@@ -278,6 +278,19 @@ test.beforeEach(async ({ page }) => {
         deleteInstalled: async () => ({}),
         deleteSeparator: async () => [],
         getFileTree: async () => [],
+        getModDetailsContent: async (_projectDirectory: string, modPath: string) => ({
+          modPath,
+          directories: [{ relativePath: '', entries: [] }],
+          conflictTree: {
+            modPath,
+            totalOverwrites: 0,
+            totalOverwritten: 0,
+            limit: 0,
+            nextCursor: null,
+            overwrites: [],
+            overwritten: []
+          }
+        }),
         getOrder: async () => [],
         getWorkspace: async () => ({ installedMods: [], modOrder: [] }),
         invalidateFileCaches: async (_projectDirectory: string, changedPaths: string[]) => ({

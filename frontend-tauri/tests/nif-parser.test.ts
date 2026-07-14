@@ -4,6 +4,13 @@ import {
   createStaticNifFixture,
   parseNifModel
 } from '../src/renderer/features/file-preview/nif-parser';
+import {
+  createSseDynamicTriShapeNifFixture,
+  createSseEmptyEffectTriShapesNifFixture,
+  createSseMismatchedDataSizeTriShapeNifFixture,
+  createSseSkinnedTriShapeNifFixture,
+  createSseTinyScaleTriShapeNifFixture
+} from './fixtures/sse-dynamic-nif-fixture';
 
 const concatBytes = (...parts: Uint8Array[]): Uint8Array => {
   const totalLength = parts.reduce((sum, part) => sum + part.byteLength, 0);
@@ -110,7 +117,7 @@ const createBinaryNifFixtureWithBlocks = (
   );
 };
 
-const createBinaryNiTriShapeDataFixture = (): ArrayBuffer => {
+const createBinaryNiTriShapeDataFixture = (sseMetadata = false): ArrayBuffer => {
   const positions = [
     0, 0, 0,
     1, 0, 0,
@@ -122,12 +129,14 @@ const createBinaryNiTriShapeDataFixture = (): ArrayBuffer => {
     0, 1
   ];
   const block = concatBytes(
+    ...(sseMetadata ? [i32(0)] : []),
     u16(3),
     u8(0),
     u8(0),
     u8(1),
     ...positions.map(f32),
     u16(1),
+    ...(sseMetadata ? [u32(0x12345678)] : []),
     u8(0),
     f32(0.5),
     f32(0.5),
@@ -322,6 +331,18 @@ describe('nif parser', () => {
     );
   });
 
+  it('parses Skyrim NiTriShapeData with group id and material CRC fields', () => {
+    const model = parseNifModel(createBinaryNiTriShapeDataFixture(true));
+
+    expect(model.meshes).toHaveLength(1);
+    expect(model.meshes[0].positions).toEqual([
+      0, 0, 0,
+      1, 0, 0,
+      0, 1, 0
+    ]);
+    expect(model.meshes[0].indices).toEqual([0, 1, 2]);
+  });
+
   it('parses binary BSTriShape static geometry', () => {
     const model = parseNifModel(createBinaryBsTriShapeFixture());
 
@@ -337,6 +358,42 @@ describe('nif parser', () => {
     expect(model.texturePaths).toContain('textures/traps/plate.dds');
     expect(model.warnings).not.toContain(
       'Static geometry for the supported NIF subset was not found; rendering a neutral fallback shape.'
+    );
+  });
+
+  it('preserves valid BSTriShape triangles at very small model scales', () => {
+    const fixture = createSseTinyScaleTriShapeNifFixture();
+
+    const model = parseNifModel(fixture);
+
+    expect(model.meshes).toHaveLength(1);
+    expect(model.meshes[0].indices).toEqual([0, 1, 2]);
+    expect(model.meshes[0].positions).toEqual([
+      0, 0, expect.closeTo(-50.824932),
+      expect.closeTo(0.0001), 0, expect.closeTo(-50.824932),
+      0, expect.closeTo(0.0001), expect.closeTo(-50.824932)
+    ]);
+  });
+
+  it('recovers SSE BSTriShape data when the stored payload size is corrupt', () => {
+    const model = parseNifModel(createSseMismatchedDataSizeTriShapeNifFixture());
+
+    expect(model.meshes).toHaveLength(1);
+    expect(model.meshes[0].positions).toEqual([
+      -1, -1, 0,
+      1, -1, 0,
+      1, 1, 0,
+      -1, 1, 0
+    ]);
+    expect(model.meshes[0].indices).toEqual([0, 1, 2, 0, 2, 3]);
+  });
+
+  it('opens a valid SSE effect container whose shape blocks are intentionally empty', () => {
+    const model = parseNifModel(createSseEmptyEffectTriShapesNifFixture());
+
+    expect(model.meshes).toEqual([]);
+    expect(model.warnings).toContain(
+      'NIF contains no renderable triangle geometry; the preview is intentionally empty.'
     );
   });
 
@@ -442,6 +499,48 @@ describe('nif parser', () => {
     );
   });
 
+  it('parses BSDynamicTriShape positions with SSE NiSkinPartition topology', () => {
+    const model = parseNifModel(createSseDynamicTriShapeNifFixture());
+
+    expect(model.meshes).toHaveLength(1);
+    expect(model.meshes[0].name).toBe('BSDynamicTriShape 2');
+    expect(model.meshes[0].positions).toEqual([
+      0, 0, 0,
+      1, 0, 0,
+      0, 1, 0
+    ]);
+    expect(model.meshes[0].indices).toEqual([0, 1, 2]);
+    expect(model.meshes[0].uvs).toEqual([0, 0, 1, 0, 0, 1]);
+    expect(model.meshes[0].texturePath).toBe('textures/actors/character/facegendetail.dds');
+    expect(model.supportedBlocks).toContain('BSDynamicTriShape');
+  });
+
+  it('parses a regular SSE skinned shape from its NiSkinPartition bind pose', () => {
+    const model = parseNifModel(createSseSkinnedTriShapeNifFixture());
+
+    expect(model.meshes).toHaveLength(1);
+    expect(model.meshes[0].name).toBe('NiSkinPartition 4');
+    expect(model.meshes[0].positions).toEqual([
+      0, 0, 0,
+      1, 0, 0,
+      0, 1, 0
+    ]);
+    expect(model.meshes[0].indices).toEqual([0, 1, 2]);
+    expect(model.meshes[0].uvs).toEqual([0, 0, 1, 0, 0, 1]);
+    expect(model.meshes[0].texturePath).toBe('textures/actors/character/body.dds');
+  });
+
+  it('accepts empty SSE skin partitions around a populated partition', () => {
+    const model = parseNifModel(createSseSkinnedTriShapeNifFixture({
+      before: 1,
+      after: 1
+    }));
+
+    expect(model.meshes).toHaveLength(1);
+    expect(model.meshes[0].name).toBe('NiSkinPartition 4');
+    expect(model.meshes[0].indices).toEqual([0, 1, 2]);
+  });
+
   it('associates skinned NiSkinPartition meshes through their skin instance owner', () => {
     const correctDiffuse = 'textures\\clutter\\containers\\miscpouch.dds';
     const model = parseNifModel(createBinaryNifFixtureWithBlocks(
@@ -505,19 +604,13 @@ describe('nif parser', () => {
     expect(model.warnings).toContain('No diffuse texture path was found; fallback material will be used.');
   });
 
-  it('warns for skinned blocks and still returns a nonempty static fallback', () => {
+  it('rejects unsupported geometry instead of returning a placeholder mesh', () => {
     const bytes = new TextEncoder().encode(
       'Gamebryo File Format, Version 20.2.0.7\nNiNode NiSkinInstance BSDismemberSkinInstance'
     ).buffer;
 
-    const model = parseNifModel(bytes);
-
-    expect(model.meshes.length).toBeGreaterThan(0);
-    expect(model.warnings).toContain(
-      'Skinned NIF blocks are rendered as static bind-pose geometry; animation is not previewed.'
-    );
-    expect(model.warnings).toContain(
-      'Static geometry for the supported NIF subset was not found; rendering a neutral fallback shape.'
+    expect(() => parseNifModel(bytes)).toThrow(
+      'NIF geometry could not be decoded. This model uses an unsupported geometry layout.'
     );
   });
 });

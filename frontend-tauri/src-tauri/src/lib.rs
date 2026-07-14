@@ -11,7 +11,7 @@ use notify_debouncer_full::{
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -20,7 +20,10 @@ use std::sync::{
     Arc, OnceLock,
 };
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    ipc::Response, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
@@ -83,6 +86,11 @@ const RECENT_OPERATION_LOG_MAX_LIMIT: usize = 80;
 const RECENT_OPERATION_LOG_TAIL_BYTES: u64 = 512 * 1024;
 const DOWNLOADS_FOLDER_WATCH_DEBOUNCE_MS: u64 = 650;
 const BUILD_CONTENT_WATCH_DEBOUNCE_MS: u64 = 900;
+const NIF_PREVIEW_MAX_BATCH_ASSETS: usize = 64;
+const NIF_PREVIEW_MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
+const NIF_PREVIEW_MAX_SESSION_BYTES: u64 = 256 * 1024 * 1024;
+const NIF_PREVIEW_IDLE_TIMEOUT_MS: u128 = 15 * 60 * 1_000;
+const NIF_PREVIEW_CLEANUP_INTERVAL_MS: u64 = 60 * 1_000;
 
 fn encode_query_component(value: &str) -> String {
     let mut encoded = String::new();
@@ -204,6 +212,73 @@ async fn record_operation_progress(app: &AppHandle, payload: &Value) {
 #[derive(Default)]
 struct BridgeState {
     process: Mutex<BridgeProcess>,
+    interactive_process: Mutex<BridgeProcess>,
+}
+
+#[derive(Clone)]
+struct NifPreviewAssetRecord {
+    asset_id: String,
+    resolved_path: PathBuf,
+    size: u64,
+    mime_type: String,
+    relative_path: String,
+    source: String,
+    content_key: String,
+}
+
+impl NifPreviewAssetRecord {
+    fn public_value(&self) -> Value {
+        json!({
+            "assetId": self.asset_id,
+            "size": self.size,
+            "mimeType": self.mime_type,
+            "relativePath": self.relative_path,
+            "source": self.source,
+            "contentKey": self.content_key
+        })
+    }
+}
+
+#[derive(Clone)]
+struct NifPreviewVariantRecord {
+    variant_id: String,
+    mod_path: String,
+    mod_name: String,
+    order: i64,
+    enabled: bool,
+    relative_path: String,
+    size: u64,
+}
+
+impl NifPreviewVariantRecord {
+    fn public_value(&self) -> Value {
+        json!({
+            "variantId": self.variant_id,
+            "modName": self.mod_name,
+            "order": self.order,
+            "enabled": self.enabled,
+            "relativePath": self.relative_path,
+            "size": self.size
+        })
+    }
+}
+
+struct NifPreviewSession {
+    window_label: String,
+    project_directory: String,
+    profile_name: String,
+    operation_id: String,
+    variants: Vec<NifPreviewVariantRecord>,
+    active_index: usize,
+    assets: HashMap<String, NifPreviewAssetRecord>,
+    total_bytes: u64,
+    last_access_ms: u128,
+}
+
+#[derive(Default)]
+struct NifPreviewSessionState {
+    sessions: Mutex<HashMap<String, NifPreviewSession>>,
+    sequence: AtomicU64,
 }
 
 #[derive(Default)]
@@ -3437,10 +3512,201 @@ async fn fluxora_ai_chat_respond(app: AppHandle, request: Value) -> Result<Value
     }
 }
 
-fn bridge_queue_performance_message(method: &str, queue_wait_us: u128) -> String {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BridgeLane {
+    Main,
+    Interactive,
+}
+
+impl BridgeLane {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Main => "main",
+            Self::Interactive => "interactive",
+        }
+    }
+}
+
+fn bridge_lane_for_method(method: &str) -> BridgeLane {
+    match method {
+        "mods.getFileTree"
+        | "mods.getModDetailsContent"
+        | "mods.readTextFile"
+        | "mods.startNifPreview"
+        | "mods.prepareNifPreviewVariant"
+        | "mods.prepareNifPreviewTextures"
+        | "textFiles.read" => BridgeLane::Interactive,
+        _ => BridgeLane::Main,
+    }
+}
+
+fn nif_preview_required_string(value: &Value, key: &str) -> Result<String, String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| format!("NIF preview response field {key} is missing."))
+}
+
+fn nif_preview_required_size(value: &Value, key: &str) -> Result<u64, String> {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("NIF preview response field {key} is invalid."))
+}
+
+fn nif_preview_public_asset(asset_id: &str, prepared: &Value) -> Result<Value, String> {
+    let size = nif_preview_required_size(prepared, "size")?;
+    if size > NIF_PREVIEW_MAX_ASSET_BYTES {
+        return Err("NIF preview asset exceeds the 64 MiB limit.".to_string());
+    }
+
+    Ok(json!({
+        "assetId": asset_id,
+        "size": size,
+        "mimeType": nif_preview_required_string(prepared, "mimeType")?,
+        "relativePath": nif_preview_required_string(prepared, "relativePath")?,
+        "source": nif_preview_required_string(prepared, "source")?,
+        "contentKey": nif_preview_required_string(prepared, "contentKey")?
+    }))
+}
+
+fn nif_preview_asset_record(asset_id: String, prepared: &Value) -> Result<NifPreviewAssetRecord, String> {
+    let public = nif_preview_public_asset(&asset_id, prepared)?;
+    let resolved_path = PathBuf::from(nif_preview_required_string(prepared, "resolvedPath")?);
+    if !resolved_path.is_absolute() {
+        return Err("NIF preview core returned a non-absolute asset path.".to_string());
+    }
+
+    Ok(NifPreviewAssetRecord {
+        asset_id,
+        resolved_path,
+        size: public["size"].as_u64().unwrap_or_default(),
+        mime_type: public["mimeType"].as_str().unwrap_or_default().to_string(),
+        relative_path: public["relativePath"].as_str().unwrap_or_default().to_string(),
+        source: public["source"].as_str().unwrap_or_default().to_string(),
+        content_key: public["contentKey"].as_str().unwrap_or_default().to_string(),
+    })
+}
+
+fn next_nif_preview_token(
+    state: &NifPreviewSessionState,
+    prefix: &str,
+    seed: &str,
+) -> String {
+    let sequence = state.sequence.fetch_add(1, Ordering::Relaxed);
+    let digest = stable_label_suffix(&format!(
+        "{}:{}:{}:{}",
+        std::process::id(),
+        now_millis(),
+        sequence,
+        seed
+    ));
+    format!("{prefix}_{digest}")
+}
+
+fn parse_nif_preview_variant(
+    variant_id: String,
+    value: &Value,
+) -> Result<NifPreviewVariantRecord, String> {
+    Ok(NifPreviewVariantRecord {
+        variant_id,
+        mod_path: nif_preview_required_string(value, "modPath")?,
+        mod_name: nif_preview_required_string(value, "modName")?,
+        order: value
+            .get("order")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| "NIF preview variant order is invalid.".to_string())?,
+        enabled: value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "NIF preview variant enabled state is invalid.".to_string())?,
+        relative_path: nif_preview_required_string(value, "relativePath")?,
+        size: nif_preview_required_size(value, "size")?,
+    })
+}
+
+fn register_nif_preview_assets(
+    state: &NifPreviewSessionState,
+    session: &mut NifPreviewSession,
+    prepared_assets: &[Value],
+) -> Result<Vec<Value>, String> {
+    let mut new_records = Vec::<NifPreviewAssetRecord>::new();
+    let mut output_content_keys = Vec::<String>::with_capacity(prepared_assets.len());
+
+    for prepared in prepared_assets {
+        let content_key = nif_preview_required_string(prepared, "contentKey")?;
+        output_content_keys.push(content_key.clone());
+        if session
+            .assets
+            .values()
+            .any(|asset| asset.content_key == content_key)
+            || new_records
+                .iter()
+                .any(|asset| asset.content_key == content_key)
+        {
+            continue;
+        }
+
+        let asset_id = next_nif_preview_token(state, "nif_asset", &content_key);
+        new_records.push(nif_preview_asset_record(asset_id, prepared)?);
+    }
+
+    let added_bytes = new_records
+        .iter()
+        .try_fold(0u64, |total, asset| total.checked_add(asset.size))
+        .ok_or_else(|| "NIF preview session byte count overflowed.".to_string())?;
+    if session.total_bytes > NIF_PREVIEW_MAX_SESSION_BYTES.saturating_sub(added_bytes) {
+        return Err("NIF preview session exceeds the 256 MiB limit.".to_string());
+    }
+
+    session.total_bytes += added_bytes;
+    for asset in new_records {
+        session.assets.insert(asset.asset_id.clone(), asset);
+    }
+
+    output_content_keys
+        .iter()
+        .map(|content_key| {
+            session
+                .assets
+                .values()
+                .find(|asset| asset.content_key == *content_key)
+                .map(NifPreviewAssetRecord::public_value)
+                .ok_or_else(|| "NIF preview asset registration failed.".to_string())
+        })
+        .collect()
+}
+
+fn purge_expired_nif_preview_sessions(
+    sessions: &mut HashMap<String, NifPreviewSession>,
+    now: u128,
+) -> usize {
+    let previous_len = sessions.len();
+    sessions.retain(|_, session| {
+        now.saturating_sub(session.last_access_ms) < NIF_PREVIEW_IDLE_TIMEOUT_MS
+    });
+    previous_len.saturating_sub(sessions.len())
+}
+
+fn ensure_nif_preview_window(
+    session: &NifPreviewSession,
+    window_label: &str,
+) -> Result<(), String> {
+    if session.window_label != window_label {
+        return Err("NIF preview session belongs to another window.".to_string());
+    }
+    Ok(())
+}
+
+fn bridge_queue_performance_message(method: &str, queue_wait_us: u128, lane: BridgeLane) -> String {
     format!(
-        "bridgeQueue method={} queueWaitUs={}",
-        method, queue_wait_us
+        "bridgeQueue lane={} method={} queueWaitUs={}",
+        lane.label(),
+        method,
+        queue_wait_us
     )
 }
 
@@ -3477,20 +3743,33 @@ async fn fluxora_bridge_request(
     let operation_id = operation_id(Some(&request), &method);
     clear_operation_cancel_marker(&app, &operation_id).await;
     let state = bridge_state(&app);
+    let lane = bridge_lane_for_method(&method);
     let queue_started_at = Instant::now();
-    let mut bridge = state.process.lock().await;
-    let queue_wait_us = queue_started_at.elapsed().as_micros();
     let timeout_ms = timeout_ms.unwrap_or(BRIDGE_TIMEOUT_MS);
-    let result = bridge
-        .request(&app, &method, params, request, timeout_ms)
-        .await;
-    drop(bridge);
+    let (result, queue_wait_us) = match lane {
+        BridgeLane::Main => {
+            let mut bridge = state.process.lock().await;
+            let queue_wait_us = queue_started_at.elapsed().as_micros();
+            let result = bridge
+                .request(&app, &method, params, request, timeout_ms)
+                .await;
+            (result, queue_wait_us)
+        }
+        BridgeLane::Interactive => {
+            let mut bridge = state.interactive_process.lock().await;
+            let queue_wait_us = queue_started_at.elapsed().as_micros();
+            let result = bridge
+                .request(&app, &method, params, request, timeout_ms)
+                .await;
+            (result, queue_wait_us)
+        }
+    };
 
     let log_app = app.clone();
     let log_method = method.clone();
     let log_operation_id = operation_id.clone();
     tauri::async_runtime::spawn(async move {
-        let message = bridge_queue_performance_message(&log_method, queue_wait_us);
+        let message = bridge_queue_performance_message(&log_method, queue_wait_us, lane);
         let _ = write_log(
             &log_app,
             "main-bridge",
@@ -3502,6 +3781,398 @@ async fn fluxora_bridge_request(
         .await;
     });
     result
+}
+
+#[tauri::command]
+async fn fluxora_start_nif_preview(
+    app: AppHandle,
+    window: WebviewWindow,
+    project_directory: String,
+    profile_name: String,
+    initial_mod_path: String,
+    relative_path: String,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    if project_directory.trim().is_empty()
+        || initial_mod_path.trim().is_empty()
+        || relative_path.trim().is_empty()
+    {
+        return Err("Project directory, initial mod path and NIF path are required.".to_string());
+    }
+
+    let started_at = Instant::now();
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, "nif_preview")),
+    });
+    let operation_id = operation_id(Some(&request), "nif_preview");
+    let payload = fluxora_bridge_request(
+        app.clone(),
+        "mods.startNifPreview".to_string(),
+        json!({
+            "projectDirectory": project_directory,
+            "profileName": profile_name,
+            "initialModPath": initial_mod_path,
+            "relativePath": relative_path
+        }),
+        Some(request),
+        Some(BRIDGE_TIMEOUT_MS),
+    )
+    .await?;
+
+    let state = app.state::<NifPreviewSessionState>();
+    let variants_payload = payload
+        .get("variants")
+        .and_then(Value::as_array)
+        .filter(|variants| !variants.is_empty())
+        .ok_or_else(|| "NIF preview core returned no variants.".to_string())?;
+    let active_index = payload
+        .get("activeIndex")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+        .filter(|index| *index < variants_payload.len())
+        .ok_or_else(|| "NIF preview core returned an invalid active variant.".to_string())?;
+
+    let mut variants = Vec::with_capacity(variants_payload.len());
+    for variant in variants_payload {
+        let variant_seed = format!(
+            "{}:{}",
+            nif_preview_required_string(variant, "modPath")?,
+            nif_preview_required_string(variant, "relativePath")?
+        );
+        let variant_id = next_nif_preview_token(&state, "nif_variant", &variant_seed);
+        variants.push(parse_nif_preview_variant(variant_id, variant)?);
+    }
+
+    let model = payload
+        .get("model")
+        .ok_or_else(|| "NIF preview core returned no model handle.".to_string())?;
+    let session_id = next_nif_preview_token(
+        &state,
+        "nif_session",
+        &format!("{}:{}", project_directory, relative_path),
+    );
+    let mut session = NifPreviewSession {
+        window_label: window.label().to_string(),
+        project_directory,
+        profile_name,
+        operation_id: operation_id.clone(),
+        variants,
+        active_index,
+        assets: HashMap::new(),
+        total_bytes: 0,
+        last_access_ms: now_millis(),
+    };
+    let model_handle = register_nif_preview_assets(&state, &mut session, std::slice::from_ref(model))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "NIF preview model registration failed.".to_string())?;
+    let public_variants = session
+        .variants
+        .iter()
+        .map(NifPreviewVariantRecord::public_value)
+        .collect::<Vec<_>>();
+
+    {
+        let mut sessions = state.sessions.lock().await;
+        purge_expired_nif_preview_sessions(&mut sessions, now_millis());
+        sessions.insert(session_id.clone(), session);
+    }
+
+    let _ = write_log(
+        &app,
+        "main-bridge",
+        "info",
+        "NifPreview",
+        &format!(
+            "sessionStarted sessionId={} variants={} prepareMs={}",
+            sanitize_log(&session_id),
+            public_variants.len(),
+            started_at.elapsed().as_millis()
+        ),
+        Some(&operation_id),
+    )
+    .await;
+
+    Ok(json!({
+        "sessionId": session_id,
+        "variants": public_variants,
+        "activeIndex": active_index,
+        "modelHandle": model_handle
+    }))
+}
+
+#[tauri::command]
+async fn fluxora_prepare_nif_preview_variant(
+    app: AppHandle,
+    window: WebviewWindow,
+    session_id: String,
+    variant_id: String,
+) -> Result<Value, String> {
+    let state = app.state::<NifPreviewSessionState>();
+    let (project_directory, operation_id, variant, variant_index) = {
+        let mut sessions = state.sessions.lock().await;
+        purge_expired_nif_preview_sessions(&mut sessions, now_millis());
+        let session = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| "NIF preview session is missing or expired.".to_string())?;
+        ensure_nif_preview_window(session, window.label())?;
+        let variant_index = session
+            .variants
+            .iter()
+            .position(|variant| variant.variant_id == variant_id)
+            .ok_or_else(|| "NIF preview variant token is invalid.".to_string())?;
+        session.last_access_ms = now_millis();
+        (
+            session.project_directory.clone(),
+            session.operation_id.clone(),
+            session.variants[variant_index].clone(),
+            variant_index,
+        )
+    };
+
+    let prepared = fluxora_bridge_request(
+        app.clone(),
+        "mods.prepareNifPreviewVariant".to_string(),
+        json!({
+            "projectDirectory": project_directory,
+            "modPath": variant.mod_path,
+            "relativePath": variant.relative_path
+        }),
+        Some(OperationRequest {
+            operation_id: Some(operation_id.clone()),
+        }),
+        Some(BRIDGE_TIMEOUT_MS),
+    )
+    .await?;
+
+    let handle = {
+        let mut sessions = state.sessions.lock().await;
+        let session = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| "NIF preview session ended while preparing a variant.".to_string())?;
+        ensure_nif_preview_window(session, window.label())?;
+        let handle = register_nif_preview_assets(
+            &state,
+            session,
+            std::slice::from_ref(&prepared),
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "NIF preview variant registration failed.".to_string())?;
+        session.active_index = variant_index;
+        session.last_access_ms = now_millis();
+        handle
+    };
+
+    let _ = write_log(
+        &app,
+        "main-bridge",
+        "info",
+        "NifPreview",
+        &format!(
+            "variantPrepared sessionId={} variantId={}",
+            sanitize_log(&session_id),
+            sanitize_log(&variant_id)
+        ),
+        Some(&operation_id),
+    )
+    .await;
+    Ok(handle)
+}
+
+#[tauri::command]
+async fn fluxora_prepare_nif_preview_textures(
+    app: AppHandle,
+    window: WebviewWindow,
+    session_id: String,
+    texture_paths: Vec<String>,
+) -> Result<Value, String> {
+    if texture_paths.len() > NIF_PREVIEW_MAX_BATCH_ASSETS {
+        return Err("NIF preview texture batch exceeds the 64-item limit.".to_string());
+    }
+
+    let mut seen = HashSet::<String>::new();
+    let mut deduplicated = Vec::<String>::new();
+    for texture_path in texture_paths {
+        let texture_path = texture_path.trim();
+        if texture_path.is_empty() {
+            return Err("NIF preview texture paths must not be empty.".to_string());
+        }
+        let key = texture_path.replace('\\', "/").to_ascii_lowercase();
+        if seen.insert(key) {
+            deduplicated.push(texture_path.to_string());
+        }
+    }
+
+    let state = app.state::<NifPreviewSessionState>();
+    let (project_directory, profile_name, model_mod_path, operation_id) = {
+        let mut sessions = state.sessions.lock().await;
+        purge_expired_nif_preview_sessions(&mut sessions, now_millis());
+        let session = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| "NIF preview session is missing or expired.".to_string())?;
+        ensure_nif_preview_window(session, window.label())?;
+        session.last_access_ms = now_millis();
+        (
+            session.project_directory.clone(),
+            session.profile_name.clone(),
+            session.variants[session.active_index].mod_path.clone(),
+            session.operation_id.clone(),
+        )
+    };
+
+    if deduplicated.is_empty() {
+        return Ok(json!({ "assets": [], "missing": [] }));
+    }
+
+    let prepared = fluxora_bridge_request(
+        app.clone(),
+        "mods.prepareNifPreviewTextures".to_string(),
+        json!({
+            "projectDirectory": project_directory,
+            "profileName": profile_name,
+            "modelModPath": model_mod_path,
+            "texturePaths": deduplicated
+        }),
+        Some(OperationRequest {
+            operation_id: Some(operation_id.clone()),
+        }),
+        Some(BRIDGE_TIMEOUT_MS),
+    )
+    .await?;
+    let prepared_assets = prepared
+        .get("assets")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "NIF preview texture response has no assets array.".to_string())?;
+    if prepared_assets.len() > NIF_PREVIEW_MAX_BATCH_ASSETS {
+        return Err("NIF preview core returned too many texture assets.".to_string());
+    }
+    let missing = prepared
+        .get("missing")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "NIF preview texture response has no missing array.".to_string())?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| "NIF preview missing entry is invalid.".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let assets = {
+        let mut sessions = state.sessions.lock().await;
+        let session = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| "NIF preview session ended while preparing textures.".to_string())?;
+        ensure_nif_preview_window(session, window.label())?;
+        let assets = register_nif_preview_assets(&state, session, prepared_assets)?;
+        session.last_access_ms = now_millis();
+        assets
+    };
+
+    let _ = write_log(
+        &app,
+        "main-bridge",
+        "info",
+        "NifPreview",
+        &format!(
+            "texturesPrepared sessionId={} assets={} missing={} bytes={} archiveIndexHits={} archiveIndexMisses={} archiveAssetCacheHits={} archiveAssetCacheMisses={}",
+            sanitize_log(&session_id),
+            assets.len(),
+            missing.len(),
+            prepared.get("totalBytes").and_then(Value::as_u64).unwrap_or_default(),
+            prepared.get("archiveIndexHits").and_then(Value::as_u64).unwrap_or_default(),
+            prepared.get("archiveIndexMisses").and_then(Value::as_u64).unwrap_or_default(),
+            prepared.get("archiveAssetCacheHits").and_then(Value::as_u64).unwrap_or_default(),
+            prepared.get("archiveAssetCacheMisses").and_then(Value::as_u64).unwrap_or_default()
+        ),
+        Some(&operation_id),
+    )
+    .await;
+    Ok(json!({ "assets": assets, "missing": missing }))
+}
+
+#[tauri::command]
+async fn fluxora_read_nif_preview_asset_bytes(
+    app: AppHandle,
+    window: WebviewWindow,
+    session_id: String,
+    asset_id: String,
+) -> Result<Response, String> {
+    let state = app.state::<NifPreviewSessionState>();
+    let (asset, operation_id) = {
+        let mut sessions = state.sessions.lock().await;
+        purge_expired_nif_preview_sessions(&mut sessions, now_millis());
+        let session = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| "NIF preview session is missing or expired.".to_string())?;
+        ensure_nif_preview_window(session, window.label())?;
+        let asset = session
+            .assets
+            .get(&asset_id)
+            .cloned()
+            .ok_or_else(|| "NIF preview asset token is invalid for this session.".to_string())?;
+        session.last_access_ms = now_millis();
+        (asset, session.operation_id.clone())
+    };
+
+    let metadata = tokio::fs::metadata(&asset.resolved_path)
+        .await
+        .map_err(|error| format!("NIF preview asset is unavailable: {error}"))?;
+    if !metadata.is_file()
+        || metadata.len() != asset.size
+        || metadata.len() > NIF_PREVIEW_MAX_ASSET_BYTES
+    {
+        return Err("NIF preview asset changed or exceeds its prepared limit.".to_string());
+    }
+    let bytes = tokio::fs::read(&asset.resolved_path)
+        .await
+        .map_err(|error| format!("NIF preview asset read failed: {error}"))?;
+
+    let _ = write_log(
+        &app,
+        "main-bridge",
+        "info",
+        "NifPreview",
+        &format!(
+            "assetReadRaw sessionId={} assetId={} bytes={}",
+            sanitize_log(&session_id),
+            sanitize_log(&asset_id),
+            bytes.len()
+        ),
+        Some(&operation_id),
+    )
+    .await;
+    Ok(Response::new(bytes))
+}
+
+#[tauri::command]
+async fn fluxora_end_nif_preview(
+    app: AppHandle,
+    window: WebviewWindow,
+    session_id: String,
+) -> Result<(), String> {
+    let state = app.state::<NifPreviewSessionState>();
+    let removed = {
+        let mut sessions = state.sessions.lock().await;
+        if let Some(session) = sessions.get(&session_id) {
+            ensure_nif_preview_window(session, window.label())?;
+        }
+        sessions.remove(&session_id)
+    };
+    if let Some(session) = removed {
+        let _ = write_log(
+            &app,
+            "main-bridge",
+            "info",
+            "NifPreview",
+            &format!("sessionEnded sessionId={}", sanitize_log(&session_id)),
+            Some(&session.operation_id),
+        )
+        .await;
+    }
+    Ok(())
 }
 
 fn bridge_status_failure(
@@ -3860,15 +4531,18 @@ async fn fluxora_shutdown_bridge(
     request: Option<OperationRequest>,
 ) -> Result<(), String> {
     let state = bridge_state(&app);
-    let mut bridge = state.process.lock().await;
-    bridge
-        .shutdown(
-            &app,
-            request.unwrap_or(OperationRequest {
-                operation_id: Some(operation_id(None, "bridge_shutdown")),
-            }),
-        )
-        .await
+    let request = request.unwrap_or(OperationRequest {
+        operation_id: Some(operation_id(None, "bridge_shutdown")),
+    });
+    let main_result = {
+        let mut bridge = state.process.lock().await;
+        bridge.shutdown(&app, request.clone()).await
+    };
+    let interactive_result = {
+        let mut bridge = state.interactive_process.lock().await;
+        bridge.shutdown(&app, request).await
+    };
+    main_result.and(interactive_result)
 }
 
 fn process_watch_request(
@@ -4477,6 +5151,8 @@ async fn fluxora_open_settings_window(app: AppHandle) -> Result<(), String> {
     .inner_size(980.0, 700.0)
     .min_inner_size(860.0, 620.0)
     .resizable(true)
+    .minimizable(false)
+    .maximizable(false)
     .decorations(false)
     .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
     .center()
@@ -4524,6 +5200,8 @@ async fn fluxora_open_build_settings_window(
         .inner_size(980.0, 700.0)
         .min_inner_size(860.0, 620.0)
         .resizable(true)
+        .minimizable(false)
+        .maximizable(false)
         .decorations(false)
         .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
         .center()
@@ -4540,6 +5218,7 @@ async fn fluxora_open_mod_details_window(
     mod_name: String,
     profile_name: Option<String>,
     bootstrap_key: Option<String>,
+    bootstrap: Option<Value>,
 ) -> Result<(), String> {
     let config_path = config_path.trim();
     if config_path.is_empty() {
@@ -4586,11 +5265,35 @@ async fn fluxora_open_mod_details_window(
         url.push_str(&encode_query_component(bootstrap_key));
     }
 
-    WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()))
-        .title(format!("Mod \u{00B7} {mod_title}"))
+    let initialization_script = bootstrap
+        .as_ref()
+        .map(|value| {
+            serde_json::to_string(value)
+                .map(|serialized| {
+                    serialized
+                        .replace('\u{2028}', "\\u2028")
+                        .replace('\u{2029}', "\\u2029")
+                })
+                .map(|serialized| {
+                    format!(
+                        "if (new URLSearchParams(globalThis.location.search).get('window') === 'mod-details') {{ globalThis.__FLUXORA_MOD_DETAILS_BOOTSTRAP__ = {serialized}; }}"
+                    )
+                })
+        })
+        .transpose()
+        .map_err(|error| format!("Mod details bootstrap could not be serialized: {error}"))?;
+    let mut builder = WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()));
+    if let Some(script) = initialization_script {
+        builder = builder.initialization_script(script);
+    }
+
+    builder
+        .title(mod_title)
         .inner_size(1120.0, 760.0)
         .min_inner_size(900.0, 620.0)
         .resizable(true)
+        .minimizable(false)
+        .maximizable(false)
         .decorations(false)
         .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
         .center()
@@ -4599,10 +5302,28 @@ async fn fluxora_open_mod_details_window(
     Ok(())
 }
 
+fn text_editor_window_url(
+    config_path: &str,
+    project_directory: &str,
+    mod_path: &str,
+    relative_path: &str,
+    file_name: &str,
+) -> String {
+    format!(
+        "/?window=text-editor&project={}&directory={}&mod={}&path={}&name={}",
+        encode_query_component(config_path),
+        encode_query_component(project_directory),
+        encode_query_component(mod_path),
+        encode_query_component(relative_path),
+        encode_query_component(file_name)
+    )
+}
+
 #[tauri::command]
 async fn fluxora_open_text_editor_window(
     app: AppHandle,
     config_path: String,
+    project_directory: String,
     mod_path: Option<String>,
     relative_path: Option<String>,
     file_name: Option<String>,
@@ -4610,6 +5331,10 @@ async fn fluxora_open_text_editor_window(
     let config_path = config_path.trim();
     if config_path.is_empty() {
         return Err("Text editor requires a project config path.".to_string());
+    }
+    let project_directory = project_directory.trim();
+    if project_directory.is_empty() {
+        return Err("Text editor requires a project directory.".to_string());
     }
 
     let mod_path = mod_path
@@ -4636,7 +5361,9 @@ async fn fluxora_open_text_editor_window(
 
     let label = format!(
         "{TEXT_EDITOR_WINDOW_LABEL_PREFIX}:{}",
-        stable_label_suffix(&format!("{config_path}\u{0}{mod_path}\u{0}{relative_path}"))
+        stable_label_suffix(&format!(
+            "{config_path}\u{0}{project_directory}\u{0}{mod_path}\u{0}{relative_path}"
+        ))
     );
     if let Some(window) = app.get_webview_window(&label) {
         let _ = window.unminimize();
@@ -4645,12 +5372,12 @@ async fn fluxora_open_text_editor_window(
         return Ok(());
     }
 
-    let url = format!(
-        "/?window=text-editor&project={}&mod={}&path={}&name={}",
-        encode_query_component(config_path),
-        encode_query_component(mod_path),
-        encode_query_component(relative_path),
-        encode_query_component(file_name)
+    let url = text_editor_window_url(
+        config_path,
+        project_directory,
+        mod_path,
+        relative_path,
+        file_name,
     );
 
     WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()))
@@ -4658,6 +5385,8 @@ async fn fluxora_open_text_editor_window(
         .inner_size(1344.0, 912.0)
         .min_inner_size(1080.0, 720.0)
         .resizable(true)
+        .minimizable(false)
+        .maximizable(false)
         .decorations(false)
         .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
         .center()
@@ -4666,10 +5395,32 @@ async fn fluxora_open_text_editor_window(
     Ok(())
 }
 
+fn file_preview_window_url(
+    config_path: &str,
+    project_directory: &str,
+    mod_path: &str,
+    relative_path: &str,
+    file_title: &str,
+    profile_name: &str,
+    preview_kind: &str,
+) -> String {
+    format!(
+        "/?window=file-preview&project={}&directory={}&mod={}&path={}&name={}&profile={}&kind={}",
+        encode_query_component(config_path),
+        encode_query_component(project_directory),
+        encode_query_component(mod_path),
+        encode_query_component(relative_path),
+        encode_query_component(file_title),
+        encode_query_component(profile_name),
+        encode_query_component(preview_kind)
+    )
+}
+
 #[tauri::command]
 async fn fluxora_open_file_preview_window(
     app: AppHandle,
     config_path: String,
+    project_directory: String,
     mod_path: String,
     relative_path: String,
     file_name: String,
@@ -4679,6 +5430,11 @@ async fn fluxora_open_file_preview_window(
     let config_path = config_path.trim();
     if config_path.is_empty() {
         return Err("File preview requires a project config path.".to_string());
+    }
+
+    let project_directory = project_directory.trim();
+    if project_directory.is_empty() {
+        return Err("File preview requires a project directory.".to_string());
     }
 
     let mod_path = mod_path.trim();
@@ -4718,14 +5474,14 @@ async fn fluxora_open_file_preview_window(
         return Ok(());
     }
 
-    let url = format!(
-        "/?window=file-preview&project={}&mod={}&path={}&name={}&profile={}&kind={}",
-        encode_query_component(config_path),
-        encode_query_component(mod_path),
-        encode_query_component(relative_path),
-        encode_query_component(file_title),
-        encode_query_component(profile_name),
-        encode_query_component(preview_kind)
+    let url = file_preview_window_url(
+        config_path,
+        project_directory,
+        mod_path,
+        relative_path,
+        file_title,
+        profile_name,
+        preview_kind,
     );
 
     WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()))
@@ -4733,6 +5489,8 @@ async fn fluxora_open_file_preview_window(
         .inner_size(1344.0, 912.0)
         .min_inner_size(1080.0, 720.0)
         .resizable(true)
+        .minimizable(false)
+        .maximizable(false)
         .decorations(false)
         .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
         .center()
@@ -5148,11 +5906,37 @@ pub fn run() {
         .manage(OperationStatusState::default())
         .manage(DownloadsFolderWatchState::default())
         .manage(BuildContentWatchState::default())
+        .manage(NifPreviewSessionState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app = app.handle().clone();
             handle_nxm_activation_args(app.clone(), std::env::args().collect(), "startup");
+            let cleanup_app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_millis(
+                    NIF_PREVIEW_CLEANUP_INTERVAL_MS,
+                ));
+                loop {
+                    interval.tick().await;
+                    let state = cleanup_app.state::<NifPreviewSessionState>();
+                    let removed = {
+                        let mut sessions = state.sessions.lock().await;
+                        purge_expired_nif_preview_sessions(&mut sessions, now_millis())
+                    };
+                    if removed > 0 {
+                        let _ = write_log(
+                            &cleanup_app,
+                            "main-bridge",
+                            "info",
+                            "NifPreview",
+                            &format!("expiredSessionsRemoved count={removed}"),
+                            None,
+                        )
+                        .await;
+                    }
+                }
+            });
             tauri::async_runtime::spawn(async move {
                 let log_directory = logs_dir(&app);
                 let _ = write_log(
@@ -5169,6 +5953,24 @@ pub fn run() {
                 .await;
             });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if !matches!(
+                event,
+                WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
+            ) {
+                return;
+            }
+            let app = window.app_handle().clone();
+            let window_label = window.label().to_string();
+            tauri::async_runtime::spawn(async move {
+                let state = app.state::<NifPreviewSessionState>();
+                state
+                    .sessions
+                    .lock()
+                    .await
+                    .retain(|_, session| session.window_label != window_label);
+            });
         })
         .invoke_handler(tauri::generate_handler![
             fluxora_app_info,
@@ -5187,6 +5989,11 @@ pub fn run() {
             fluxora_ai_estimate_context,
             fluxora_ai_chat_respond,
             fluxora_bridge_request,
+            fluxora_start_nif_preview,
+            fluxora_prepare_nif_preview_variant,
+            fluxora_prepare_nif_preview_textures,
+            fluxora_read_nif_preview_asset_bytes,
+            fluxora_end_nif_preview,
             fluxora_bridge_status,
             fluxora_operations_get_status,
             fluxora_recent_operation_logs,
@@ -5908,9 +6715,167 @@ mod tests {
     #[test]
     fn bridge_queue_performance_log_is_machine_readable() {
         assert_eq!(
-            bridge_queue_performance_message("mods.getWorkspace", 12_345),
-            "bridgeQueue method=mods.getWorkspace queueWaitUs=12345"
+            bridge_lane_for_method("mods.getModDetailsContent"),
+            BridgeLane::Interactive
         );
+        assert_eq!(
+            bridge_lane_for_method("mods.getWorkspace"),
+            BridgeLane::Main
+        );
+        assert_eq!(
+            bridge_queue_performance_message(
+                "mods.getModDetailsContent",
+                12_345,
+                BridgeLane::Interactive
+            ),
+            "bridgeQueue lane=interactive method=mods.getModDetailsContent queueWaitUs=12345"
+        );
+    }
+
+    #[test]
+    fn nif_preview_commands_use_the_interactive_bridge_lane() {
+        for method in [
+            "mods.startNifPreview",
+            "mods.prepareNifPreviewVariant",
+            "mods.prepareNifPreviewTextures",
+        ] {
+            assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);
+        }
+    }
+
+    #[test]
+    fn text_editor_reads_are_not_queued_behind_background_workspace_work() {
+        for method in ["mods.getFileTree", "mods.readTextFile", "textFiles.read"] {
+            assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);
+        }
+    }
+
+    #[test]
+    fn nif_preview_asset_public_shape_never_contains_a_native_path() {
+        let prepared = json!({
+            "resolvedPath": "C:/private/mods/example/meshes/example.nif",
+            "kind": "nif",
+            "relativePath": "meshes/example.nif",
+            "fileName": "example.nif",
+            "size": 4096,
+            "mimeType": "application/x-nif",
+            "source": "Example Mod",
+            "contentKey": "model-fingerprint"
+        });
+
+        let public = nif_preview_public_asset("asset-token", &prepared).expect("public handle");
+
+        assert_eq!(public["assetId"], "asset-token");
+        assert!(public.get("resolvedPath").is_none());
+        assert!(public.get("fileName").is_none());
+        assert!(public.get("kind").is_none());
+    }
+
+    #[test]
+    fn nif_preview_session_limits_and_idle_expiration_are_enforced() {
+        let state = NifPreviewSessionState::default();
+        let mut session = NifPreviewSession {
+            window_label: "file-preview:test".to_string(),
+            project_directory: "C:/Build".to_string(),
+            profile_name: "Default".to_string(),
+            operation_id: "op_preview".to_string(),
+            variants: Vec::new(),
+            active_index: 0,
+            assets: HashMap::new(),
+            total_bytes: 0,
+            last_access_ms: now_millis(),
+        };
+        for index in 0..4 {
+            let prepared = json!({
+                "resolvedPath": format!("C:/Build/cache/{index}.dds"),
+                "size": NIF_PREVIEW_MAX_ASSET_BYTES,
+                "mimeType": "image/vnd-ms.dds",
+                "relativePath": format!("textures/{index}.dds"),
+                "source": "Test",
+                "contentKey": format!("texture-{index}")
+            });
+            register_nif_preview_assets(&state, &mut session, &[prepared]).expect("within limit");
+        }
+        let overflow = json!({
+            "resolvedPath": "C:/Build/cache/overflow.dds",
+            "size": 1,
+            "mimeType": "image/vnd-ms.dds",
+            "relativePath": "textures/overflow.dds",
+            "source": "Test",
+            "contentKey": "texture-overflow"
+        });
+
+        assert!(register_nif_preview_assets(&state, &mut session, &[overflow]).is_err());
+        assert_eq!(session.total_bytes, NIF_PREVIEW_MAX_SESSION_BYTES);
+
+        session.last_access_ms = now_millis().saturating_sub(NIF_PREVIEW_IDLE_TIMEOUT_MS + 1);
+        let mut sessions = HashMap::from([("session".to_string(), session)]);
+        assert_eq!(purge_expired_nif_preview_sessions(&mut sessions, now_millis()), 1);
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn nif_preview_session_tokens_are_owned_by_the_creating_window() {
+        let session = NifPreviewSession {
+            window_label: "file-preview:owner".to_string(),
+            project_directory: "C:/Build".to_string(),
+            profile_name: "Default".to_string(),
+            operation_id: "op_preview".to_string(),
+            variants: Vec::new(),
+            active_index: 0,
+            assets: HashMap::new(),
+            total_bytes: 0,
+            last_access_ms: now_millis(),
+        };
+
+        assert!(ensure_nif_preview_window(&session, "file-preview:owner").is_ok());
+        assert_eq!(
+            ensure_nif_preview_window(&session, "main").unwrap_err(),
+            "NIF preview session belongs to another window."
+        );
+    }
+
+    #[test]
+    fn file_preview_window_url_carries_project_directory_without_catalog_lookup() {
+        let url = file_preview_window_url(
+            "C:\\Users\\Tester\\AppData\\Roaming\\Fluxora\\Builds\\Foundation Edition.json",
+            "E:\\Fluxora Builds\\Foundation Edition",
+            "E:\\Fluxora Builds\\Foundation Edition\\mods\\PGPatcher Output",
+            "meshes/traps/pressureplate/trapstonepressureplate01.nif",
+            "trapstonepressureplate01.nif",
+            "Default",
+            "nif",
+        );
+
+        assert!(url.contains("&directory=E%3A%5CFluxora%20Builds%5CFoundation%20Edition&mod="));
+        assert!(url.contains("&path=meshes%2Ftraps%2Fpressureplate%2Ftrapstonepressureplate01.nif"));
+    }
+
+    #[test]
+    fn text_editor_window_url_carries_project_directory_without_catalog_lookup() {
+        let url = text_editor_window_url(
+            "C:\\Users\\Tester\\AppData\\Roaming\\Fluxora\\Builds\\Foundation Edition.json",
+            "E:\\Fluxora Builds\\Foundation Edition",
+            "E:\\Fluxora Builds\\Foundation Edition\\mods\\SSE Display Tweaks",
+            "SKSE/Plugins/SSEDisplayTweaks.ini",
+            "SSEDisplayTweaks.ini",
+        );
+
+        assert!(url.contains("window=text-editor"));
+        assert!(url.contains("&directory=E%3A%5CFluxora%20Builds%5CFoundation%20Edition&mod="));
+        assert!(url.contains("&path=SKSE%2FPlugins%2FSSEDisplayTweaks.ini"));
+    }
+
+    #[test]
+    fn interactive_bridge_lane_does_not_wait_for_the_main_lane_lock() {
+        tauri::async_runtime::block_on(async {
+            let state = BridgeState::default();
+            let _main_lane = state.process.lock().await;
+            let interactive_lane =
+                timeout(Duration::from_millis(50), state.interactive_process.lock()).await;
+
+            assert!(interactive_lane.is_ok());
+        });
     }
 
     #[cfg(windows)]

@@ -616,13 +616,15 @@ namespace
                 L"checkUpdates",
                 L"clearOverwrite",
                 L"getFileTree",
+                L"getModDetailsContent",
                 L"getEffectiveFileTree",
                 L"getEffectiveFileTreeRoot",
                 L"getEffectiveFileTreeChildren",
                 L"getModDetailsSummary",
                 L"getModConflictTree",
-                L"listPreviewVariants",
-                L"readPreviewAsset",
+                L"startNifPreview",
+                L"prepareNifPreviewVariant",
+                L"prepareNifPreviewTextures",
                 L"readTextFile",
                 L"saveTextFile"
             });
@@ -1796,6 +1798,23 @@ namespace
             });
     }
 
+    std::wstring payloadGetModDetailsContent(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring modPath = requiredStringField(params, L"modPath");
+        return payloadFromCoreJson(
+            L"core.modDetailsContentFailed",
+            [&projectDirectory, &modPath](wchar_t* buffer, int length)
+            {
+                return fluxora_get_mod_details_content(
+                    projectDirectory.c_str(),
+                    modPath.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadGetModConflictTree(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -1899,43 +1918,65 @@ namespace
             });
     }
 
-    std::wstring payloadListModPreviewVariants(const BridgeRequest& request)
+    std::wstring payloadStartNifPreview(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
         const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
         const std::wstring profileName = optionalStringField(&params, L"profileName");
+        const std::wstring initialModPath = requiredStringField(params, L"initialModPath");
         const std::wstring relativePath = requiredStringField(params, L"relativePath");
         return payloadFromCoreJson(
-            L"core.modPreviewVariantsFailed",
-            [&projectDirectory, &profileName, &relativePath](wchar_t* buffer, int length)
+            L"core.nifPreviewStartFailed",
+            [&projectDirectory, &profileName, &initialModPath, &relativePath](wchar_t* buffer, int length)
             {
-                return fluxora_list_mod_preview_variants(
+                return fluxora_start_nif_preview(
                     projectDirectory.c_str(),
                     profileName.empty() ? nullptr : profileName.c_str(),
+                    initialModPath.c_str(),
                     relativePath.c_str(),
                     buffer,
                     length);
             });
     }
 
-    std::wstring payloadReadModPreviewAsset(const BridgeRequest& request)
+    std::wstring payloadPrepareNifPreviewVariant(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring modPath = requiredStringField(params, L"modPath");
+        const std::wstring relativePath = requiredStringField(params, L"relativePath");
+        return payloadFromCoreJson(
+            L"core.nifPreviewVariantPrepareFailed",
+            [&projectDirectory, &modPath, &relativePath](wchar_t* buffer, int length)
+            {
+                return fluxora_prepare_nif_preview_variant(
+                    projectDirectory.c_str(),
+                    modPath.c_str(),
+                    relativePath.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadPrepareNifPreviewTextures(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
         const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
         const std::wstring profileName = optionalStringField(&params, L"profileName");
-        const std::wstring modPath = requiredStringField(params, L"modPath");
-        const std::wstring relativePath = requiredStringField(params, L"relativePath");
-        const std::wstring kind = requiredStringField(params, L"kind");
+        const std::wstring modelModPath = requiredStringField(params, L"modelModPath");
+        const std::wstring texturePathsJson = serializeStringArray(
+            requiredStringArrayField(params, L"texturePaths"));
         return payloadFromCoreJson(
-            L"core.modPreviewAssetReadFailed",
-            [&projectDirectory, &profileName, &modPath, &relativePath, &kind](wchar_t* buffer, int length)
+            L"core.nifPreviewTexturesPrepareFailed",
+            [&projectDirectory, &profileName, &modelModPath, &texturePathsJson](
+                wchar_t* buffer,
+                int length)
             {
-                return fluxora_read_mod_preview_asset(
+                return fluxora_prepare_nif_preview_textures(
                     projectDirectory.c_str(),
                     profileName.empty() ? nullptr : profileName.c_str(),
-                    modPath.c_str(),
-                    relativePath.c_str(),
-                    kind.c_str(),
+                    modelModPath.c_str(),
+                    texturePathsJson.c_str(),
                     buffer,
                     length);
             });
@@ -2847,6 +2888,10 @@ namespace
         {
             return payloadGetModFileTree(request);
         }
+        if (request.method == L"mods.getModDetailsContent")
+        {
+            return payloadGetModDetailsContent(request);
+        }
         if (request.method == L"mods.getModConflictTree")
         {
             return payloadGetModConflictTree(request);
@@ -2867,13 +2912,17 @@ namespace
         {
             return payloadGetEffectiveFileTreeChildren(request);
         }
-        if (request.method == L"mods.listPreviewVariants")
+        if (request.method == L"mods.startNifPreview")
         {
-            return payloadListModPreviewVariants(request);
+            return payloadStartNifPreview(request);
         }
-        if (request.method == L"mods.readPreviewAsset")
+        if (request.method == L"mods.prepareNifPreviewVariant")
         {
-            return payloadReadModPreviewAsset(request);
+            return payloadPrepareNifPreviewVariant(request);
+        }
+        if (request.method == L"mods.prepareNifPreviewTextures")
+        {
+            return payloadPrepareNifPreviewTextures(request);
         }
         if (request.method == L"mods.readTextFile")
         {

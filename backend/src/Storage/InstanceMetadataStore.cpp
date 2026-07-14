@@ -328,6 +328,14 @@ namespace fluxora
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
 
+    ModDetailsContent InstanceMetadataStore::getModDetailsContent(
+        const std::filesystem::path&,
+        const std::filesystem::path&,
+        const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
     ModConflictTreePage InstanceMetadataStore::listModConflictTree(
         const std::filesystem::path&,
         const std::filesystem::path&,
@@ -5762,6 +5770,133 @@ namespace fluxora
         }
 
         return entries;
+    }
+
+    ModDetailsContent InstanceMetadataStore::getModDetailsContent(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modPath,
+        const std::filesystem::path& modsRoot)
+    {
+        if (projectDirectory.empty() || modPath.empty())
+        {
+            throw std::invalid_argument("Project directory and mod path are required.");
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        const std::filesystem::path resolvedModsRoot = modsRoot.empty() ? modPath.parent_path() : modsRoot;
+        InstalledModRecord record =
+            readRecordByFolder(database, projectDirectory, modPath.filename().wstring(), resolvedModsRoot);
+        ensureFileCachePrepared(database, record);
+
+        struct CachedDetailsRow
+        {
+            std::wstring parentPath;
+            std::wstring parentKey;
+            std::wstring pathKey;
+            ModFileTreeEntry entry;
+        };
+
+        Statement statement = database.prepare(
+            "SELECT name, relative_path, kind, size, path_key, parent_key "
+            "FROM mod_files "
+            "WHERE mod_id = ? "
+            "ORDER BY parent_key COLLATE NOCASE, "
+            "CASE kind WHEN 'directory' THEN 0 ELSE 1 END, name COLLATE NOCASE;");
+        statement.bindInt64(1, record.id);
+
+        std::vector<CachedDetailsRow> rows;
+        std::set<std::wstring> pathKeysWithChildren;
+        while (statement.stepRow())
+        {
+            const std::wstring relativePath = statement.columnText(1);
+            std::wstring parentPath = normalizeRelativePath(
+                std::filesystem::path(relativePath).parent_path());
+            if (parentPath == L".")
+            {
+                parentPath.clear();
+            }
+
+            const std::wstring kind = statement.columnText(2);
+            const std::wstring parentKey = statement.columnText(5);
+            pathKeysWithChildren.insert(parentKey);
+            rows.push_back(CachedDetailsRow{
+                std::move(parentPath),
+                parentKey,
+                statement.columnText(4),
+                ModFileTreeEntry{
+                    statement.columnText(0),
+                    relativePath,
+                    kind == L"directory",
+                    false,
+                    static_cast<std::uintmax_t>(statement.columnInt64(3) < 0 ? 0 : statement.columnInt64(3)),
+                    {},
+                    {}
+                }
+            });
+        }
+
+        const ConflictOwnerGroups ownersByPath = conflictOwnersForCachedModFiles(database, record.id);
+        std::map<std::wstring, std::vector<ModFileTreeEntry>> entriesByDirectory;
+        entriesByDirectory[L""];
+
+        ModDetailsContent content;
+        content.modPath = record.path;
+        content.conflictTree.modPath = record.path;
+        for (CachedDetailsRow& row : rows)
+        {
+            if (row.entry.isDirectory)
+            {
+                row.entry.hasChildren = pathKeysWithChildren.contains(row.pathKey);
+            }
+            else
+            {
+                const auto owners = ownersByPath.find(row.pathKey);
+                if (owners != ownersByPath.end())
+                {
+                    row.entry.conflictState = conflictStateForOwners(owners->second, record.id);
+                    row.entry.conflictOwners = ownerNames(owners->second);
+                }
+
+                if (row.entry.conflictState == L"overwrites" || row.entry.conflictState == L"conflict")
+                {
+                    ++content.conflictTree.totalOverwrites;
+                    content.conflictTree.overwrites.push_back(row.entry);
+                }
+                if (row.entry.conflictState == L"overwritten" || row.entry.conflictState == L"conflict")
+                {
+                    ++content.conflictTree.totalOverwritten;
+                    content.conflictTree.overwritten.push_back(row.entry);
+                }
+            }
+
+            entriesByDirectory[row.parentPath].push_back(std::move(row.entry));
+        }
+
+        const auto sortByRelativePath = [](std::vector<ModFileTreeEntry>& entries)
+        {
+            std::stable_sort(
+                entries.begin(),
+                entries.end(),
+                [](const ModFileTreeEntry& left, const ModFileTreeEntry& right)
+                {
+                    return toLower(left.relativePath) < toLower(right.relativePath);
+                });
+        };
+        sortByRelativePath(content.conflictTree.overwrites);
+        sortByRelativePath(content.conflictTree.overwritten);
+        content.conflictTree.limit = (std::max)(
+            content.conflictTree.totalOverwrites,
+            content.conflictTree.totalOverwritten);
+
+        content.directories.reserve(entriesByDirectory.size());
+        for (auto& [relativePath, entries] : entriesByDirectory)
+        {
+            content.directories.push_back(ModFileTreeDirectory{
+                relativePath,
+                std::move(entries)
+            });
+        }
+        return content;
     }
 
     ModConflictTreePage InstanceMetadataStore::listModConflictTree(

@@ -52,6 +52,7 @@ Checked on 2026-06-24:
 | Bridge DTO mapping | Automated | `frontend-tauri/tests/bridge-protocol-client.test.ts`, facade API route assertions |
 | Validation helpers | Automated | project draft validation, install mod-name validation, profile/executable state tests |
 | Wizard state machines | Automated | create-project step validation, FOMOD selection/evaluation, MO2 transfer validation state |
+| Text editor document model | Automated | `frontend-tauri/tests/text-editor-model.test.ts` covers language/file recognition, dirty baselines, line endings, bounded search and lazy tree flattening |
 
 Required unit anchors:
 
@@ -80,6 +81,7 @@ Required unit anchors:
 | Profiles | Automated | Playwright create/clone/rename/delete profile flow |
 | Executables | Automated | Playwright save/rename/delete executable flow, launch capability state, readable running-process label, removal of the screen-lock badge and dynamic VFS-holder handoff |
 | Settings | Automated | Playwright settings sections, language/Nexus/MO2 transfer surfaces; theme customization is absent while the single dark theme is supported |
+| Text/code editor | Automated | Playwright delays generic startup, opens a mod JSON file through the lightweight Monaco entrypoint, expands Explorer, invokes Command Palette, verifies stable EOF/`Ctrl+Delete`, repeats focused `Ctrl+S`, edits, verifies guarded close, saves through the typed facade and searches open editors |
 | MO2 transfer | Automated validation smoke | Playwright opens MO2 transfer and verifies required-field validation; full import needs a real MO2 fixture |
 | FluxPack | Automated | Playwright full/recipe export selection, inspect/install flow, visible Library entry, same-name choice, manual Nexus action and in-place Delta target/reuse evidence; backend tests cover autonomous full restore, acquisition planning, Premium gating and archive identity validation |
 
@@ -112,6 +114,7 @@ Bridge API changes must also update the Tauri facade/Rust shell tests and add ba
 Automated Tauri checks:
 
 - Playwright captures desktop screenshots for 1280x720, 1440x900, 1920x1080 and 2560x1080.
+- Playwright captures the Monaco text-editor workbench after real edit/save/search interaction at 1344x912.
 - Playwright verifies no renderer Node exposure.
 - `parity-gate.test.ts` blocks `sendSync` and synchronous filesystem/process APIs in Tauri source.
 - `ui-performance.test.ts` keeps virtual list/tree windowing bounded.

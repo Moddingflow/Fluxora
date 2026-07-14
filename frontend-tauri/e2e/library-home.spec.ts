@@ -3,8 +3,18 @@ import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import {
+  createSseDynamicTriShapeNifFixture,
+  createSseTinyScaleTriShapeNifFixture
+} from '../tests/fixtures/sse-dynamic-nif-fixture';
 
 const distRoot = path.resolve(__dirname, '..', 'dist');
+const sseDynamicNifFixtureBase64 = Buffer
+  .from(createSseDynamicTriShapeNifFixture())
+  .toString('base64');
+const sseTinyScaleNifFixtureBase64 = Buffer
+  .from(createSseTinyScaleTriShapeNifFixture())
+  .toString('base64');
 
 const contentTypes: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -58,6 +68,15 @@ test.afterAll(async () => {
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     const calls: Array<{ method: string; payload?: unknown }> = [];
+    const previewProbe = () => {
+      const scope = window as any;
+      scope.__fluxoraPreviewProbe ??= {
+        peakHeapBytes: 0,
+        textureReadCompleted: false,
+        variantPrepareStarted: false
+      };
+      return scope.__fluxoraPreviewProbe as any;
+    };
     const skyrimProject = {
       id: 'skyrim-main',
       name: 'Skyrim graphics overhaul',
@@ -685,9 +704,36 @@ test.beforeEach(async ({ page }) => {
         pickExecutable: async () => ({ canceled: true }),
         pickFluxPack: async () => ({ canceled: true }),
         pickFolder: async () => ({ canceled: true }),
+        pickTextFile: async () => ({ canceled: true }),
         saveFluxPack: async (defaultFileName: any, title: any) => {
           calls.push({ method: 'dialogs.saveFluxPack', payload: { defaultFileName, title } });
           return { canceled: false, path: 'D:\\Fluxora\\Exports\\skyrim.fluxpack' };
+        },
+        saveTextFile: async (defaultFileName: any, title: any) => {
+          calls.push({ method: 'dialogs.saveTextFile', payload: { defaultFileName, title } });
+          return { canceled: false, path: 'D:\\Fluxora\\Exports\\BugFixesSSE.json' };
+        }
+      },
+      textFiles: {
+        read: async (filePath: any, operation: any) => {
+          calls.push({ method: 'textFiles.read', payload: { filePath, operation } });
+          const content = '{\n  "standalone": true\n}\n';
+          return {
+            path: filePath,
+            fileName: String(filePath).split(/[\\/]/).pop(),
+            content,
+            size: content.length,
+            operationId: operation?.operationId ?? 'op_text_file_read'
+          };
+        },
+        save: async (filePath: any, content: any, operation: any) => {
+          calls.push({ method: 'textFiles.save', payload: { content, filePath, operation } });
+          return {
+            path: filePath,
+            fileName: String(filePath).split(/[\\/]/).pop(),
+            size: String(content).length,
+            operationId: operation?.operationId ?? 'op_text_file_save'
+          };
         }
       },
       fileDrop: {
@@ -879,8 +925,52 @@ test.beforeEach(async ({ page }) => {
           });
           return [];
         },
-        getFileTree: async () => [
-          {
+        getFileTree: async (_projectDirectory: any, modPath: any, relativeDirectory: any) => {
+          if (String(modPath).includes('Bug Fixes SSE')) {
+            if (String(relativeDirectory || '').replaceAll('\\', '/') === 'SKSE') {
+              return [{
+                name: 'Plugins',
+                relativePath: 'SKSE/Plugins',
+                isDirectory: true,
+                hasChildren: true,
+                size: 0,
+                conflictState: 'none',
+                conflictOwners: []
+              }];
+            }
+            if (String(relativeDirectory || '').replaceAll('\\', '/') === 'SKSE/Plugins') {
+              return [{
+                name: 'BugFixesSSE.json',
+                relativePath: 'SKSE/Plugins/BugFixesSSE.json',
+                isDirectory: false,
+                hasChildren: false,
+                size: 49,
+                conflictState: 'none',
+                conflictOwners: []
+              }];
+            }
+            return [
+              {
+                name: 'SKSE',
+                relativePath: 'SKSE',
+                isDirectory: true,
+                hasChildren: true,
+                size: 0,
+                conflictState: 'none',
+                conflictOwners: []
+              },
+              {
+                name: 'README.md',
+                relativePath: 'README.md',
+                isDirectory: false,
+                hasChildren: false,
+                size: 24,
+                conflictState: 'none',
+                conflictOwners: []
+              }
+            ];
+          }
+          return [{
             name: 'scripts',
             relativePath: 'scripts',
             isDirectory: true,
@@ -888,8 +978,72 @@ test.beforeEach(async ({ page }) => {
             size: 0,
             conflictState: 'none',
             conflictOwners: []
-          }
-        ],
+          }];
+        },
+        getModDetailsContent: async (projectDirectory: any, modPath: any, operation: any) => {
+          calls.push({ method: 'mods.getModDetailsContent', payload: { modPath, operation, projectDirectory } });
+          return {
+            modPath,
+            directories: [
+              {
+                relativePath: '',
+                entries: [
+                  {
+                    name: 'scripts',
+                    relativePath: 'scripts',
+                    isDirectory: true,
+                    hasChildren: false,
+                    size: 0,
+                    conflictState: 'none',
+                    conflictOwners: []
+                  }
+                ]
+              }
+            ],
+            conflictTree: {
+              modPath,
+              totalOverwrites: 0,
+              totalOverwritten: 0,
+              limit: 0,
+              nextCursor: null,
+              overwrites: [],
+              overwritten: []
+            }
+          };
+        },
+        readTextFile: async (projectDirectory: any, modPath: any, relativePath: any, operation: any) => {
+          calls.push({
+            method: 'mods.readTextFile',
+            payload: { modPath, operation, projectDirectory, relativePath }
+          });
+          const content = (window as typeof window & { __fluxoraNumericEditorFixture?: boolean })
+            .__fluxoraNumericEditorFixture
+            ? '{"value": 51}\n'
+            : String(relativePath).toLowerCase().endsWith('.md')
+              ? '# Bug Fixes SSE\n\nLocal configuration.'
+              : '{\n  "fixes": {\n    "animationLoadSignedCrash": true\n  }\n}\n';
+          return {
+            path: relativePath,
+            fileName: String(relativePath).split(/[\\/]/).pop(),
+            content,
+            size: content.length,
+            relativePath,
+            operationId: operation?.operationId ?? 'op_text_editor_read'
+          };
+        },
+        saveTextFile: async (projectDirectory: any, modPath: any, relativePath: any, content: any, operation: any) => {
+          calls.push({
+            method: 'mods.saveTextFile',
+            payload: { content, modPath, operation, projectDirectory, relativePath }
+          });
+          return {
+            path: relativePath,
+            fileName: String(relativePath).split(/[\\/]/).pop(),
+            size: String(content).length,
+            relativePath,
+            operationId: operation?.operationId ?? 'op_text_editor_save'
+          };
+        },
         getEffectiveFileTree: async (projectDirectory: any, profileName: any, operation: any) => {
           calls.push({
             method: 'mods.getEffectiveFileTree',
@@ -1109,45 +1263,118 @@ test.beforeEach(async ({ page }) => {
             ]
           };
         },
-        listPreviewVariants: async () => [
-          {
-            modPath: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Low Model',
-            modName: 'Low Model',
-            order: 0,
-            enabled: true,
+        startNifPreview: async (...args: any[]) => {
+          calls.push({ method: 'mods.startNifPreview', payload: { args } });
+          previewProbe().sessionStartedAt = performance.now();
+          return {
+            sessionId: 'playwright-preview-session',
+            variants: [
+              {
+                variantId: 'playwright-low-variant',
+                modName: 'Low Model',
+                order: 0,
+                enabled: true,
+                relativePath: 'meshes/armor/cuirass.nif',
+                size: 512
+              },
+              {
+                variantId: 'playwright-selected-variant',
+                modName: 'Selected Model',
+                order: 1,
+                enabled: true,
+                relativePath: 'meshes/armor/cuirass.nif',
+                size: 512
+              }
+            ],
+            activeIndex: 1,
+            modelHandle: {
+              assetId: 'playwright-model-selected',
+              size: 512,
+              mimeType: 'application/x-nif',
+              relativePath: 'meshes/armor/cuirass.nif',
+              source: 'Selected Model',
+              contentKey: 'playwright-model-selected-v1'
+            }
+          };
+        },
+        prepareNifPreviewVariant: async (sessionId: any, variantId: any) => {
+          calls.push({
+            method: 'mods.prepareNifPreviewVariant',
+            payload: { sessionId, variantId }
+          });
+          const probe = previewProbe();
+          probe.variantPrepareStarted = true;
+          await new Promise((resolve) => setTimeout(resolve, probe.variantDelayMs ?? 0));
+          const low = variantId === 'playwright-low-variant';
+          return {
+            assetId: low ? 'playwright-model-low' : 'playwright-model-selected',
+            size: 512,
+            mimeType: 'application/x-nif',
             relativePath: 'meshes/armor/cuirass.nif',
-            size: 512
-          },
-          {
-            modPath: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Selected Model',
-            modName: 'Selected Model',
-            order: 1,
-            enabled: true,
-            relativePath: 'meshes/armor/cuirass.nif',
-            size: 512
+            source: low ? 'Low Model' : 'Selected Model',
+            contentKey: low ? 'playwright-model-low-v1' : 'playwright-model-selected-v1'
+          };
+        },
+        prepareNifPreviewTextures: async (sessionId: any, texturePaths: any) => {
+          calls.push({
+            method: 'mods.prepareNifPreviewTextures',
+            payload: { sessionId, texturePaths }
+          });
+          const mode = previewProbe().textureMode;
+          if (mode === 'missing') {
+            return { assets: [], missing: ['textures/armor/cuirass.png'] };
           }
-        ],
-        readPreviewAsset: async (_projectDirectory: any, _profileName: any, modPath: any, relativePath: any, kind: any) => {
+          return {
+            assets: [{
+              assetId: mode === 'corrupt' ? 'playwright-texture-corrupt' : 'playwright-texture',
+              size: mode === 'corrupt' ? 4 : 68,
+              mimeType: 'image/png',
+              relativePath: 'textures/armor/cuirass.png',
+              source: 'Selected Model',
+              contentKey: mode === 'corrupt'
+                ? 'playwright-texture-corrupt-v1'
+                : 'playwright-texture-v1'
+            }],
+            missing: []
+          };
+        },
+        readNifPreviewAssetBytes: async (_sessionId: any, assetId: any) => {
+          calls.push({
+            method: 'mods.readNifPreviewAssetBytes',
+            payload: { assetId, sessionId: _sessionId }
+          });
+          const probe = previewProbe();
+          if (assetId === 'playwright-texture-corrupt') {
+            return new Uint8Array([0, 1, 2, 3]).buffer;
+          }
+          if (assetId === 'playwright-texture') {
+            await new Promise((resolve) => setTimeout(resolve, probe.textureDelayMs ?? 700));
+            probe.textureReadCompleted = true;
+            const encoded = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZxWQAAAAASUVORK5CYII=');
+            return Uint8Array.from(encoded, (character) => character.charCodeAt(0)).buffer;
+          }
+          if (probe.modelFixtureBase64) {
+            const encoded = atob(probe.modelFixtureBase64);
+            return Uint8Array.from(encoded, (character) => character.charCodeAt(0)).buffer;
+          }
           const fixture = JSON.stringify({
             meshes: [
               {
                 name: 'Playwright preview triangle',
                 positions: [0, 0, 0, 1, 0, 0, 0, 1, 0],
                 indices: [0, 1, 2],
-                uvs: [0, 0, 1, 0, 0, 1]
+                uvs: [0, 0, 1, 0, 0, 1],
+                texturePath: 'textures/armor/cuirass.png'
               }
             ]
           });
-          return {
-            kind,
-            modPath,
-            modName: String(modPath).includes('Selected Model') ? 'Selected Model' : 'Low Model',
-            relativePath,
-            fileName: String(relativePath).split(/[\\/]/).pop() || 'cuirass.nif',
-            size: fixture.length,
-            mimeType: 'application/octet-stream',
-            contentBase64: btoa(`Gamebryo File Format, Version 20.2.0.7\nNiNode NiTriShape NiTriShapeData BSLightingShaderProperty BSShaderTextureSet NiAlphaProperty\nFLUXORA_STATIC_MESH_JSON:${fixture}`)
-          };
+          return new TextEncoder().encode(
+            `Gamebryo File Format, Version 20.2.0.7\nNiNode NiTriShape NiTriShapeData BSLightingShaderProperty BSShaderTextureSet NiAlphaProperty\nFLUXORA_STATIC_MESH_JSON:${fixture}`
+          ).buffer;
+        },
+        endNifPreview: async (sessionId: any) => {
+          calls.push({ method: 'mods.endNifPreview', payload: { sessionId } });
+          return undefined;
         },
         getOrder: async (projectDirectory: any) =>
           String(projectDirectory).includes('Playwright build') ||
@@ -1348,7 +1575,7 @@ test.beforeEach(async ({ page }) => {
           buildConfigsDirectory: 'D:\\Fluxora\\Configs',
           defaultInstallRootDirectory: 'D:\\Fluxora\\Builds',
           operationId: 'op_projects_list',
-          projects
+          projects: (window as any).__fluxoraEmptyProjectCatalog ? [] : projects
         }),
         openConfig: async (configPath: any, operation: any) => {
           calls.push({ method: 'projects.openConfig', payload: { configPath, operation } });
@@ -1416,7 +1643,12 @@ test.beforeEach(async ({ page }) => {
         }
       },
       ui: {
-        log: async () => undefined
+        log: async (payload: any) => {
+          if (payload?.category === 'NifPreview.Performance') {
+            calls.push({ method: 'ui.log.NifPreview.Performance', payload });
+          }
+          return undefined;
+        }
       },
       windowControls: {
         close: async () => {
@@ -1426,7 +1658,10 @@ test.beforeEach(async ({ page }) => {
         minimize: async () => undefined,
         openBuildSettings: async () => undefined,
         openFilePreview: async () => undefined,
-        openModDetails: async () => undefined,
+        openModDetails: async (...args: any[]) => {
+          calls.push({ method: 'window.openModDetails', payload: { args } });
+          return undefined;
+        },
         openSettings: async () => undefined,
         openTextEditor: async () => undefined,
         toggleMaximize: async () => undefined
@@ -2195,6 +2430,54 @@ test('continues exact T4 reconciliation when deferred downloads fail', async ({ 
       )
     )
     .toBe(true);
+});
+
+test('opens mod properties from the second rapid click without waiting for row selection', async ({
+  page
+}) => {
+  await openSkyrimBuild(page);
+
+  const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+  await modRow.dispatchEvent('click', { detail: 1 });
+  await modRow.dispatchEvent('click', { detail: 2 });
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const calls =
+          (window as typeof window & {
+            __fluxoraCalls?: Array<{ method: string; payload?: { args?: unknown[] } }>;
+          }).__fluxoraCalls ?? [];
+        return {
+          contentCalls: calls.filter((call) => call.method === 'mods.getModDetailsContent').length,
+          contentIndex: calls.findIndex((call) => call.method === 'mods.getModDetailsContent'),
+          openIndex: calls.findIndex((call) => call.method === 'window.openModDetails'),
+          bootstrap: calls.find((call) => call.method === 'window.openModDetails')?.payload?.args?.[5]
+        };
+      })
+    )
+    .toMatchObject({
+      contentCalls: 1,
+      contentIndex: expect.any(Number),
+      openIndex: expect.any(Number),
+      bootstrap: {
+        content: {
+          directories: expect.any(Array),
+          conflictTree: expect.any(Object)
+        }
+      }
+    });
+
+  const callOrder = await page.evaluate(() => {
+    const calls =
+      (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls ?? [];
+    return {
+      contentIndex: calls.findIndex((call) => call.method === 'mods.getModDetailsContent'),
+      openIndex: calls.findIndex((call) => call.method === 'window.openModDetails')
+    };
+  });
+  expect(callOrder.contentIndex).toBeGreaterThanOrEqual(0);
+  expect(callOrder.openIndex).toBeGreaterThan(callOrder.contentIndex);
 });
 
 test('uses one exact mod fallback before T3 when the persisted snapshot is unprepared', async ({ page }) => {
@@ -4427,12 +4710,164 @@ test('captures mods pane visual review sizes', async ({ page }, testInfo) => {
   }
 });
 
-test('file preview window renders a nonblank nif canvas and source mod label', async ({ page }) => {
+test('text editor provides a VS Code-style workbench and protects dirty files', async ({ page }, testInfo) => {
+  const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+  const projectDirectory = encodeURIComponent('D:\\Fluxora\\Builds\\Skyrim graphics overhaul');
+  const mod = encodeURIComponent('D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Bug Fixes SSE');
+  const relativePath = encodeURIComponent('SKSE/Plugins/BugFixesSSE.json');
+
+  await page.addInitScript(() => {
+    (window as typeof window & { __fluxoraNexusStatusDelayMs?: number })
+      .__fluxoraNexusStatusDelayMs = 60_000;
+  });
+
+  await page.setViewportSize({ width: 1344, height: 912 });
+  await page.goto(
+    `${baseUrl}/?window=text-editor&project=${project}&directory=${projectDirectory}&mod=${mod}&path=${relativePath}&name=BugFixesSSE.json`
+  );
+
+  await expect(page.getByLabel('Fluxora code editor')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Explorer' })).toHaveAttribute('aria-pressed', 'true');
+  const codeEditor = page.locator('.monaco-editor').first();
+  await expect(codeEditor).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('.view-lines')).toContainText('animationLoadSignedCrash');
+  await expect(page.getByRole('button', { name: 'Command Palette' })).toBeVisible();
+
+  await page.getByRole('treeitem', { name: /SKSE/ }).click();
+  await page.getByRole('treeitem', { name: /Plugins/ }).click();
+  await expect(page.getByRole('treeitem', { name: /BugFixesSSE\.json/ })).toBeVisible();
+
+  await page.keyboard.press('Control+Shift+P');
+  await expect(page.getByRole('dialog', { name: 'Command Palette' })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  await codeEditor.click();
+  await page.keyboard.press('Control+End');
+  await expect(page.locator('.text-editor-statusbar')).toContainText('Ln 6, Col 1');
+  await page.keyboard.press('Control+Delete');
+  await expect(page.locator('.text-editor-statusbar')).toContainText('Ln 6, Col 1');
+
+  await page.keyboard.press('Control+S');
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string }>;
+    }).__fluxoraCalls ?? [];
+    return calls.filter((call) => call.method === 'mods.saveTextFile').length;
+  })).toBe(1);
+  await page.keyboard.press('Control+S');
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string }>;
+    }).__fluxoraCalls ?? [];
+    return calls.filter((call) => call.method === 'mods.saveTextFile').length;
+  })).toBe(2);
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: { content?: string } }>;
+    }).__fluxoraCalls ?? [];
+    return calls.filter((call) => call.method === 'mods.saveTextFile').at(-1)?.payload?.content;
+  })).toBe('{\n  "fixes": {\n    "animationLoadSignedCrash": true\n  }\n}\n');
+  await expect(page.locator('.text-editor-statusbar')).toContainText('Ln 6, Col 1');
+
+  await page.keyboard.type(' ');
+  await expect(page.getByLabel('Unsaved').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Save changes?');
+  await page.getByRole('button', { name: 'Cancel' }).click();
+
+  await page.keyboard.press('Control+S');
+  await expect(page.locator('.text-editor-statusbar')).toContainText('Saved BugFixesSSE.json');
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string }>;
+    }).__fluxoraCalls ?? [];
+    return calls.filter((call) => call.method === 'mods.saveTextFile').length;
+  })).toBe(3);
+
+  await page.keyboard.press('Control+Shift+S');
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string }>;
+    }).__fluxoraCalls ?? [];
+    return calls.some((call) => call.method === 'textFiles.save');
+  })).toBe(true);
+
+  await page.keyboard.press('Control+Shift+F');
+  const searchInput = page.locator('input[aria-label="Search open editors"]');
+  await searchInput.fill('animationLoadSignedCrash');
+  await expect(page.locator('.text-editor-search-result')).toHaveCount(1);
+  await expect(page.locator('.text-editor-statusbar')).toContainText('JSON');
+  await expectNoDocumentHorizontalOverflow(page);
+
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath('text-editor-workbench.png')
+  });
+
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string }>;
+    }).__fluxoraCalls ?? [];
+    return calls.some((call) => call.method === 'window.close');
+  })).toBe(true);
+});
+
+test('text editor deletes the numeric character selected by a mouse-positioned caret', async ({ page }) => {
+  const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+  const projectDirectory = encodeURIComponent('D:\\Fluxora\\Builds\\Skyrim graphics overhaul');
+  const mod = encodeURIComponent('D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Bug Fixes SSE');
+  const relativePath = encodeURIComponent('SKSE/Plugins/BugFixesSSE.json');
+
+  await page.addInitScript(() => {
+    (window as typeof window & { __fluxoraNumericEditorFixture?: boolean })
+      .__fluxoraNumericEditorFixture = true;
+  });
+  await page.route(/IBMPlexMono-Regular-.*\.woff2$/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    await route.continue();
+  });
+  await page.goto(
+    `${baseUrl}/?window=text-editor&project=${project}&directory=${projectDirectory}&mod=${mod}&path=${relativePath}&name=BugFixesSSE.json`
+  );
+
+  const codeEditor = page.locator('.monaco-editor').first();
+  const numericToken = page.locator('.view-line span').filter({ hasText: /^51$/ }).last();
+  await expect(codeEditor).toBeVisible({ timeout: 5_000 });
+  await expect(numericToken).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+
+  const tokenBox = await numericToken.boundingBox();
+  expect(tokenBox).not.toBeNull();
+  await page.mouse.click(
+    tokenBox!.x + tokenBox!.width * 0.51,
+    tokenBox!.y + tokenBox!.height / 2
+  );
+
+  await expect(page.locator('.text-editor-statusbar')).toContainText('Ln 1, Col 12');
+  const cursorBox = await page.locator('.cursor').last().boundingBox();
+  expect(cursorBox).not.toBeNull();
+  const caretCenter = cursorBox!.x + cursorBox!.width / 2;
+  const digitBoundary = tokenBox!.x + tokenBox!.width / 2;
+  expect(Math.abs(caretCenter - digitBoundary)).toBeLessThan(0.5);
+  await page.keyboard.press('Delete');
+  await expect(page.locator('.view-lines')).toContainText('{"value": 5}');
+});
+
+test('file preview progressively renders geometry, textures, and variant replacement', async ({ page }) => {
   const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
   const mod = encodeURIComponent('D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Selected Model');
   const relativePath = encodeURIComponent('meshes/armor/cuirass.nif');
 
   await page.setViewportSize({ width: 1344, height: 912 });
+  await page.addInitScript(() => {
+    (window as any).__fluxoraPreviewProbe = {
+      textureReadCompleted: false,
+      variantDelayMs: 500,
+      variantPrepareStarted: false
+    };
+  });
   await page.goto(
     `${baseUrl}/?window=file-preview&project=${project}&mod=${mod}&path=${relativePath}&name=cuirass.nif&profile=Default&kind=nif`
   );
@@ -4443,6 +4878,11 @@ test('file preview window renders a nonblank nif canvas and source mod label', a
   await expect(page.getByRole('button', { name: 'Previous mod variant' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Next mod variant' })).toBeDisabled();
   await expect(page.getByTestId('file-preview-canvas')).toBeVisible();
+  await expect(page.getByText('Loading preview')).toHaveCount(0);
+  await expect(page.locator('.file-preview-canvas-host')).toHaveAttribute('data-state', 'ready');
+  await expect.poll(() => page.evaluate(
+    () => (window as any).__fluxoraPreviewProbe.textureReadCompleted
+  )).toBe(false);
 
   await page.waitForFunction(() => {
     const canvas = document.querySelector('[data-testid="file-preview-canvas"]') as HTMLCanvasElement | null;
@@ -4465,4 +4905,233 @@ test('file preview window renders a nonblank nif canvas and source mod label', a
     );
     return pixels.some((value) => value !== 0);
   });
+
+  await expect.poll(() => page.evaluate(
+    () => (window as any).__fluxoraPreviewProbe.textureReadCompleted
+  )).toBe(true);
+  await expect(page.locator('.file-preview-canvas-host')).toHaveAttribute('data-state', 'ready');
+
+  await page.getByRole('button', { name: 'Previous mod variant' }).click();
+  await expect.poll(() => page.evaluate(
+    () => (window as any).__fluxoraPreviewProbe.variantPrepareStarted
+  )).toBe(true);
+  await expect(page.locator('.file-preview-canvas-host')).toHaveAttribute('data-state', 'loading');
+  await expect(page.getByTestId('file-preview-canvas')).toBeVisible();
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector('[data-testid="file-preview-canvas"]') as HTMLCanvasElement | null;
+    const gl = canvas?.getContext('webgl2') ?? canvas?.getContext('webgl');
+    if (!canvas || !gl) {
+      return false;
+    }
+    const pixels = new Uint8Array(4);
+    gl.readPixels(
+      Math.floor(canvas.width / 2),
+      Math.floor(canvas.height / 2),
+      1,
+      1,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      pixels
+    );
+    return pixels.some((value) => value !== 0);
+  });
+  await expect(page.locator('.file-preview-canvas-host')).toHaveAttribute('data-state', 'ready');
+  await expect(page.getByTestId('file-preview-source-mod')).toContainText('Low Model');
+});
+
+test('file preview renders BSDynamicTriShape through the instant worker pipeline', async ({ page }) => {
+  const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+  const mod = encodeURIComponent('D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Selected Model');
+  const relativePath = encodeURIComponent('meshes/actors/character/face.nif');
+
+  await page.addInitScript((modelFixtureBase64) => {
+    (window as any).__fluxoraPreviewProbe = {
+      modelFixtureBase64,
+      textureMode: 'missing',
+      textureReadCompleted: false,
+      variantPrepareStarted: false
+    };
+  }, sseDynamicNifFixtureBase64);
+  await page.goto(
+    `${baseUrl}/?window=file-preview&project=${project}&mod=${mod}&path=${relativePath}&name=face.nif&profile=Default&kind=nif`
+  );
+
+  await expect(page.locator('.file-preview-canvas-host')).toHaveAttribute('data-state', 'ready');
+  await expect(page.getByText(
+    'NIF geometry could not be decoded. This model uses an unsupported geometry layout.'
+  )).toHaveCount(0);
+  await expect(page.getByTestId('file-preview-canvas')).toBeVisible();
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector('[data-testid="file-preview-canvas"]') as HTMLCanvasElement | null;
+    const gl = canvas?.getContext('webgl2') ?? canvas?.getContext('webgl');
+    if (!canvas || !gl) {
+      return false;
+    }
+    const pixels = new Uint8Array(4);
+    gl.readPixels(
+      Math.floor(canvas.width / 2),
+      Math.floor(canvas.height / 2),
+      1,
+      1,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      pixels
+    );
+    return pixels.some((value) => value !== 0);
+  });
+});
+
+test('file preview renders tiny BSTriShape geometry through the instant worker pipeline', async ({ page }) => {
+  const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+  const mod = encodeURIComponent('D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Selected Model');
+  const relativePath = encodeURIComponent('meshes/furniture/smallcookingpotnohandleinv.nif');
+
+  await page.addInitScript((modelFixtureBase64) => {
+    (window as any).__fluxoraPreviewProbe = {
+      modelFixtureBase64,
+      textureMode: 'missing',
+      textureReadCompleted: false,
+      variantPrepareStarted: false
+    };
+  }, sseTinyScaleNifFixtureBase64);
+  await page.goto(
+    `${baseUrl}/?window=file-preview&project=${project}&mod=${mod}&path=${relativePath}&name=smallcookingpotnohandleinv.nif&profile=Default&kind=nif`
+  );
+
+  await expect(page.locator('.file-preview-canvas-host')).toHaveAttribute('data-state', 'ready');
+  await expect(page.getByText(
+    'NIF geometry could not be decoded. This model uses an unsupported geometry layout.'
+  )).toHaveCount(0);
+  await expect(page.getByTestId('file-preview-canvas')).toBeVisible();
+});
+
+test('file preview starts from direct project context when the project catalog is unavailable', async ({ page }) => {
+  const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+  const projectDirectory = 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul';
+  const directory = encodeURIComponent(projectDirectory);
+  const mod = encodeURIComponent(`${projectDirectory}\\mods\\Selected Model`);
+  const relativePath = encodeURIComponent('meshes/armor/cuirass.nif');
+
+  await page.addInitScript(() => {
+    (window as any).__fluxoraEmptyProjectCatalog = true;
+  });
+  await page.goto(
+    `${baseUrl}/?window=file-preview&project=${project}&directory=${directory}&mod=${mod}&path=${relativePath}&name=cuirass.nif&profile=Default&kind=nif`
+  );
+
+  await expect(page.getByText('Preview source is unavailable.')).toHaveCount(0);
+  await expect(page.locator('.file-preview-canvas-host')).toHaveAttribute('data-state', 'ready');
+  await expect(page.getByTestId('file-preview-source-mod')).toContainText('Selected Model');
+  await expect.poll(() => page.evaluate(() => {
+    const calls = (window as any).__fluxoraCalls as Array<{ method: string; payload?: any }>;
+    const start = calls.find((call) => call.method === 'mods.startNifPreview');
+    return start?.payload?.args?.[0] ?? '';
+  })).toBe(projectDirectory);
+});
+
+for (const textureMode of ['missing', 'corrupt'] as const) {
+  test(`file preview keeps neutral geometry when a texture is ${textureMode}`, async ({ page }) => {
+    const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+    const mod = encodeURIComponent('D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Selected Model');
+    const relativePath = encodeURIComponent('meshes/armor/cuirass.nif');
+
+    await page.addInitScript((mode) => {
+      (window as any).__fluxoraPreviewProbe = {
+        textureMode: mode,
+        textureReadCompleted: false,
+        variantPrepareStarted: false
+      };
+    }, textureMode);
+    await page.goto(
+      `${baseUrl}/?window=file-preview&project=${project}&mod=${mod}&path=${relativePath}&name=cuirass.nif&profile=Default&kind=nif`
+    );
+
+    await expect(page.locator('.file-preview-canvas-host')).toHaveAttribute('data-state', 'ready');
+    await expect(page.getByTestId('file-preview-canvas')).toBeVisible();
+    await expect(page.locator('.file-preview-warnings')).toBeVisible();
+    await expect(page.locator('.file-preview-warnings')).toContainText(
+      textureMode === 'missing' ? 'Texture not found' : 'Texture could not be decoded'
+    );
+    await expect(page.locator('.file-preview-canvas-host')).toHaveAttribute('data-state', 'ready');
+  });
+}
+
+test('file preview performance probe records bounded raw cold and warm runs', async ({ page }) => {
+  const project = encodeURIComponent('D:\\Fluxora\\Configs\\skyrim-main.json');
+  const mod = encodeURIComponent('D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Selected Model');
+  const relativePath = encodeURIComponent('meshes/armor/cuirass.nif');
+  const url = `${baseUrl}/?window=file-preview&project=${project}&mod=${mod}&path=${relativePath}&name=cuirass.nif&profile=Default&kind=nif`;
+
+  await page.addInitScript(() => {
+    const probe = (window as any).__fluxoraPreviewProbe = {
+      peakHeapBytes: 0,
+      textureDelayMs: 40,
+      textureReadCompleted: false,
+      variantPrepareStarted: false
+    };
+    const sampleHeap = () => {
+      const memory = (performance as any).memory;
+      if (memory?.usedJSHeapSize) {
+        probe.peakHeapBytes = Math.max(probe.peakHeapBytes, memory.usedJSHeapSize);
+      }
+      window.requestAnimationFrame(sampleHeap);
+    };
+    window.requestAnimationFrame(sampleHeap);
+  });
+
+  const collectRun = async () => {
+    await expect(page.locator('.file-preview-canvas-host')).toHaveAttribute('data-state', 'ready');
+    await expect.poll(() => page.evaluate(
+      () => (window as any).__fluxoraPreviewProbe.textureReadCompleted
+    )).toBe(true);
+    await expect.poll(() => page.evaluate(() => (
+      ((window as any).__fluxoraCalls as Array<{ method: string; payload?: any }>).some(
+        (call) => call.method === 'ui.log.NifPreview.Performance'
+          && String(call.payload?.message).startsWith('texturesReady ')
+      )
+    ))).toBe(true);
+    return page.evaluate(() => {
+      const calls = (window as any).__fluxoraCalls as Array<{ method: string; payload?: any }>;
+      const messages = calls
+        .filter((call) => call.method === 'ui.log.NifPreview.Performance')
+        .map((call) => String(call.payload?.message ?? ''));
+      const duration = (prefix: string) => {
+        const message = messages.find((candidate) => candidate.startsWith(`${prefix} `)) ?? '';
+        return Number(/durationMs=(\d+)/.exec(message)?.[1] ?? Number.NaN);
+      };
+      const count = (method: string) => calls.filter((call) => call.method === method).length;
+      return {
+        firstFrameMs: duration('firstFrame'),
+        texturesReadyMs: duration('texturesReady'),
+        peakHeapBytes: (window as any).__fluxoraPreviewProbe.peakHeapBytes as number,
+        startCalls: count('mods.startNifPreview'),
+        textureBatchCalls: count('mods.prepareNifPreviewTextures'),
+        rawReadCalls: count('mods.readNifPreviewAssetBytes'),
+        operationIds: Array.from(new Set(calls
+          .filter((call) => call.method === 'ui.log.NifPreview.Performance')
+          .map((call) => call.payload?.operationId)
+          .filter(Boolean))),
+        serializedCalls: JSON.stringify(calls)
+      };
+    });
+  };
+
+  await page.goto(url);
+  const cold = await collectRun();
+  await page.reload();
+  const warm = await collectRun();
+
+  expect(cold.firstFrameMs).toBeLessThan(1_000);
+  expect(cold.texturesReadyMs).toBeLessThan(3_000);
+  expect(warm.firstFrameMs).toBeLessThan(500);
+  expect(warm.texturesReadyMs).toBeLessThan(1_500);
+  expect(cold.peakHeapBytes).toBeGreaterThan(0);
+  expect(warm.peakHeapBytes).toBeGreaterThan(0);
+  for (const run of [cold, warm]) {
+    expect(run.startCalls).toBe(1);
+    expect(run.textureBatchCalls).toBe(1);
+    expect(run.rawReadCalls).toBe(2);
+    expect(run.operationIds).toHaveLength(1);
+    expect(run.serializedCalls).not.toContain('contentBase64');
+  }
 });

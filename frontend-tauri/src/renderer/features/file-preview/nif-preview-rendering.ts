@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 import type { ParsedNifMesh, ParsedNifModel } from './nif-parser';
+import type { WorkerNifMesh, WorkerNifModel } from './nif-preview-worker-protocol';
 
 const genericPathTokens = new Set([
   'architecture',
@@ -43,6 +44,33 @@ const commonPrefixLength = (left: string, right: string): number => {
 
 const cleanZero = (value: number): number => Object.is(value, -0) ? 0 : value;
 
+export interface NifPreviewCameraFrame {
+  target: THREE.Vector3;
+  position: THREE.Vector3;
+  near: number;
+  far: number;
+}
+
+export const computeNifPreviewCameraFrame = (bounds: THREE.Box3): NifPreviewCameraFrame => {
+  const size = new THREE.Vector3();
+  const target = new THREE.Vector3();
+  bounds.getSize(size);
+  bounds.getCenter(target);
+  const span = Math.max(size.x, size.y, size.z, 1e-6);
+  const near = Math.max(span / 100, 1e-8);
+
+  return {
+    target,
+    position: new THREE.Vector3(
+      target.x + span * 1.25,
+      target.y + span * 0.85,
+      target.z + span * 1.75
+    ),
+    near,
+    far: Math.max(span * 100, near * 1_000)
+  };
+};
+
 const scoreTexturePathForModel = (texturePath: string, modelRelativePath: string): number => {
   const textureName = comparableName(texturePath.split('/').pop() ?? texturePath);
   const modelName = comparableName(modelRelativePath.split(/[\\/]/).pop() ?? modelRelativePath);
@@ -73,7 +101,7 @@ export const transformNifVectorForPreview = (x: number, y: number, z: number): [
   cleanZero(-y)
 ];
 
-export const transformNifVectorArrayForPreview = (values: number[]): number[] => {
+export const transformNifVectorArrayForPreview = (values: ArrayLike<number>): number[] => {
   const transformed: number[] = [];
   for (let index = 0; index + 2 < values.length; index += 3) {
     transformed.push(...transformNifVectorForPreview(values[index], values[index + 1], values[index + 2]));
@@ -81,33 +109,49 @@ export const transformNifVectorArrayForPreview = (values: number[]): number[] =>
   return transformed;
 };
 
-export const createNifPreviewGeometry = (mesh: ParsedNifMesh): THREE.BufferGeometry => {
+export const createNifPreviewGeometry = (
+  mesh: ParsedNifMesh | WorkerNifMesh
+): THREE.BufferGeometry => {
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    'position',
-    new THREE.Float32BufferAttribute(transformNifVectorArrayForPreview(mesh.positions), 3)
-  );
+  const isWorkerMesh = 'previewCoordinates' in mesh && mesh.previewCoordinates;
+  geometry.setAttribute('position', isWorkerMesh
+    ? new THREE.BufferAttribute(mesh.positions, 3)
+    : new THREE.Float32BufferAttribute(transformNifVectorArrayForPreview(mesh.positions), 3));
   if (mesh.indices?.length) {
-    geometry.setIndex(mesh.indices);
+    geometry.setIndex(mesh.indices instanceof Uint32Array
+      ? new THREE.BufferAttribute(mesh.indices, 1)
+      : mesh.indices);
   }
   if (mesh.normals?.length === mesh.positions.length) {
-    geometry.setAttribute(
-      'normal',
-      new THREE.Float32BufferAttribute(transformNifVectorArrayForPreview(mesh.normals), 3)
-    );
+    geometry.setAttribute('normal', isWorkerMesh
+      ? new THREE.BufferAttribute(mesh.normals as Float32Array, 3)
+      : new THREE.Float32BufferAttribute(transformNifVectorArrayForPreview(mesh.normals), 3));
   } else {
     geometry.computeVertexNormals();
   }
   if (mesh.uvs?.length) {
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(mesh.uvs, 2));
+    geometry.setAttribute('uv', mesh.uvs instanceof Float32Array
+      ? new THREE.BufferAttribute(mesh.uvs, 2)
+      : new THREE.Float32BufferAttribute(mesh.uvs, 2));
   }
-  geometry.computeBoundingSphere();
+  if (isWorkerMesh) {
+    geometry.boundingBox = new THREE.Box3(
+      new THREE.Vector3(...mesh.bounds.min),
+      new THREE.Vector3(...mesh.bounds.max)
+    );
+    geometry.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3(...mesh.bounds.center),
+      mesh.bounds.radius
+    );
+  } else {
+    geometry.computeBoundingSphere();
+  }
   return geometry;
 };
 
 export const selectNifPreviewTexturePath = (
-  mesh: ParsedNifMesh,
-  model: ParsedNifModel,
+  mesh: ParsedNifMesh | WorkerNifMesh,
+  model: ParsedNifModel | WorkerNifModel,
   modelRelativePath: string
 ): string | undefined => {
   if (mesh.texturePath) {

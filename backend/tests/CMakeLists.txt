@@ -76,6 +76,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/ModOrganizerExecutableImportService.cpp
     ../src/Services/ModOrganizerImportService.cpp
     ../src/Services/ModService.cpp
+    ../src/Services/NifPreviewResolver.cpp
     ../src/Services/NexusModsAuthService.cpp
     ../src/Services/ModOrganizerPluginGroupService.cpp
     ../src/Services/ModOrganizerProfileOrderService.cpp

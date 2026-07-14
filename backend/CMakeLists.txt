@@ -158,6 +158,7 @@ add_library(FluxoraCore SHARED
     src/Services/GrassCacheService.cpp
     src/Services/Logger.cpp
     src/Services/ModService.cpp
+    src/Services/NifPreviewResolver.cpp
     src/Services/ModOrganizerExecutableImportService.cpp
     src/Services/ModOrganizerImportService.cpp
     src/Services/ModOrganizerPluginGroupService.cpp

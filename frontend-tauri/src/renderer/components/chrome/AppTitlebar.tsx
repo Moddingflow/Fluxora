@@ -60,7 +60,9 @@ export function AppTitlebar({
         ) : (
           <img className="titlebar__mark" src={fluxoraLogo} alt="" />
         )}
-        <span className="titlebar__brand-name">{titleText}</span>
+        <span className="titlebar__brand-name" title={titleText}>
+          {titleText}
+        </span>
       </div>
 
       <div className="titlebar__drag" data-tauri-drag-region />
@@ -114,38 +116,55 @@ export function AppTitlebar({
       ) : null}
 
       <div aria-label="Window controls" className="titlebar__window-controls">
-        <button
-          aria-label="Minimize"
-          className="titlebar__caption-button"
-          title="Minimize"
-          type="button"
-          onClick={() => runTitlebarAction(onMinimize)}
-        >
-          <span aria-hidden="true" className="titlebar__caption-glyph">
-            {windowsCaptionGlyphs.minimize}
-          </span>
-        </button>
-        <button
-          aria-label="Maximize"
-          className="titlebar__caption-button"
-          title="Maximize"
-          type="button"
-          onClick={() => runTitlebarAction(onToggleMaximize)}
-        >
-          <span aria-hidden="true" className="titlebar__caption-glyph">
-            {windowsCaptionGlyphs.maximize}
-          </span>
-        </button>
+        {!isSettingsWindow ? (
+          <>
+            <button
+              aria-label="Minimize"
+              className="titlebar__caption-button"
+              title="Minimize"
+              type="button"
+              onClick={() => runTitlebarAction(onMinimize)}
+            >
+              <span aria-hidden="true" className="titlebar__caption-glyph">
+                {windowsCaptionGlyphs.minimize}
+              </span>
+            </button>
+            <button
+              aria-label="Maximize"
+              className="titlebar__caption-button"
+              title="Maximize"
+              type="button"
+              onClick={() => runTitlebarAction(onToggleMaximize)}
+            >
+              <span aria-hidden="true" className="titlebar__caption-glyph">
+                {windowsCaptionGlyphs.maximize}
+              </span>
+            </button>
+          </>
+        ) : null}
         <button
           aria-label="Close"
-          className="titlebar__caption-button titlebar__caption-button--close"
+          className={`titlebar__caption-button ${
+            isSettingsWindow
+              ? 'titlebar__caption-button--custom-close'
+              : 'titlebar__caption-button--close'
+          }`}
           title="Close"
           type="button"
           onClick={() => runTitlebarAction(onClose)}
         >
-          <span aria-hidden="true" className="titlebar__caption-glyph">
-            {windowsCaptionGlyphs.close}
-          </span>
+          {isSettingsWindow ? (
+            <Icon
+              className="titlebar__custom-close-icon"
+              name="window-close"
+              size={15}
+              strokeWidth={1.8}
+            />
+          ) : (
+            <span aria-hidden="true" className="titlebar__caption-glyph">
+              {windowsCaptionGlyphs.close}
+            </span>
+          )}
         </button>
       </div>
     </header>

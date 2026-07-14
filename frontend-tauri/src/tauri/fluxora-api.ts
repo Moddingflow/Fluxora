@@ -61,11 +61,16 @@ import type {
   FluxoraEffectiveFileTreePage,
   FluxoraEffectiveFileTreeSnapshot,
   FluxoraModConflictTreePage,
+  FluxoraModDetailsBootstrap,
+  FluxoraModDetailsContent,
   FluxoraModFileTreeEntry,
   FluxoraModFileCacheInvalidationResult,
   FluxoraModMutationResult,
   FluxoraModOrderItem,
   FluxoraModWorkspaceSnapshot,
+  FluxoraNifPreviewAssetHandle,
+  FluxoraNifPreviewStartResult,
+  FluxoraNifPreviewTextureBatchResult,
   FluxoraNxmInboundLinksCaptured,
   FluxoraNxmProtocolResult,
   FluxoraNexusModsAuthStatus,
@@ -75,9 +80,6 @@ import type {
   FluxoraOperationsStatus,
   FluxoraProcessWatchResult,
   FluxoraPluginOrderItem,
-  FluxoraPreviewAsset,
-  FluxoraPreviewAssetKind,
-  FluxoraPreviewVariant,
   FluxoraProject,
   FluxoraProjectCatalog,
   FluxoraProjectDirectoryPreview,
@@ -124,6 +126,25 @@ const invokeTyped = async <T>(
   ...args: unknown[]
 ): Promise<T> => {
   return (await ipc.invoke(channel, ...args)) as T;
+};
+
+const toArrayBuffer = (value: unknown): ArrayBuffer => {
+  if (value instanceof ArrayBuffer) {
+    return value;
+  }
+  if (ArrayBuffer.isView(value) && value.buffer instanceof ArrayBuffer) {
+    if (value.byteOffset === 0 && value.byteLength === value.buffer.byteLength) {
+      return value.buffer;
+    }
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice().buffer;
+  }
+  if (
+    Array.isArray(value)
+    && value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 0xff)
+  ) {
+    return Uint8Array.from(value).buffer;
+  }
+  throw new Error('NIF preview returned invalid binary asset data.');
 };
 
 const fluxPackExportRequestParams = (rawRequest: unknown): Record<string, unknown> => {
@@ -523,6 +544,18 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         relativeDirectory,
         request
       ),
+    getModDetailsContent: (
+      projectDirectory: string,
+      modPath: string,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraModDetailsContent>(
+        ipc,
+        FluxoraIpcChannels.modsGetModDetailsContent,
+        projectDirectory,
+        modPath,
+        request
+      ),
     getModConflictTree: (
       projectDirectory: string,
       modPath: string,
@@ -599,38 +632,45 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         limit,
         request
       ),
-    listPreviewVariants: (
+    startNifPreview: (
       projectDirectory: string,
       profileName: string,
+      initialModPath: string,
       relativePath: string,
       request?: OperationRequest
     ) =>
-      invokeTyped<FluxoraPreviewVariant[]>(
+      invokeTyped<FluxoraNifPreviewStartResult>(
         ipc,
-        FluxoraIpcChannels.modsListPreviewVariants,
+        FluxoraIpcChannels.modsStartNifPreview,
         projectDirectory,
         profileName,
+        initialModPath,
         relativePath,
         request
       ),
-    readPreviewAsset: (
-      projectDirectory: string,
-      profileName: string,
-      modPath: string,
-      relativePath: string,
-      kind: FluxoraPreviewAssetKind,
-      request?: OperationRequest
-    ) =>
-      invokeTyped<FluxoraPreviewAsset>(
+    prepareNifPreviewVariant: (sessionId: string, variantId: string) =>
+      invokeTyped<FluxoraNifPreviewAssetHandle>(
         ipc,
-        FluxoraIpcChannels.modsReadPreviewAsset,
-        projectDirectory,
-        profileName,
-        modPath,
-        relativePath,
-        kind,
-        request
+        FluxoraIpcChannels.modsPrepareNifPreviewVariant,
+        sessionId,
+        variantId
       ),
+    prepareNifPreviewTextures: (sessionId: string, texturePaths: string[]) =>
+      invokeTyped<FluxoraNifPreviewTextureBatchResult>(
+        ipc,
+        FluxoraIpcChannels.modsPrepareNifPreviewTextures,
+        sessionId,
+        texturePaths
+      ),
+    readNifPreviewAssetBytes: (sessionId: string, assetId: string) =>
+      invokeTyped<unknown>(
+        ipc,
+        FluxoraIpcChannels.modsReadNifPreviewAssetBytes,
+        sessionId,
+        assetId
+      ).then(toArrayBuffer),
+    endNifPreview: (sessionId: string) =>
+      invokeTyped<void>(ipc, FluxoraIpcChannels.modsEndNifPreview, sessionId),
     readTextFile: (
       projectDirectory: string,
       modPath: string,
@@ -1385,7 +1425,8 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
       modPath: string,
       modName: string,
       profileName?: string,
-      bootstrapKey?: string
+      bootstrapKey?: string,
+      bootstrap?: FluxoraModDetailsBootstrap
     ) =>
       invokeTyped<void>(
         ipc,
@@ -1394,10 +1435,12 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         modPath,
         modName,
         profileName,
-        bootstrapKey
+        bootstrapKey,
+        bootstrap
       ),
     openFilePreview: (
       configPath: string,
+      projectDirectory: string,
       modPath: string,
       relativePath: string,
       fileName: string,
@@ -1408,6 +1451,7 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         ipc,
         FluxoraIpcChannels.windowOpenFilePreview,
         configPath,
+        projectDirectory,
         modPath,
         relativePath,
         fileName,
@@ -1417,6 +1461,7 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
     openSettings: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowOpenSettings),
     openTextEditor: (
       configPath: string,
+      projectDirectory: string,
       modPath?: string,
       relativePath?: string,
       fileName?: string
@@ -1425,6 +1470,7 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         ipc,
         FluxoraIpcChannels.windowOpenTextEditor,
         configPath,
+        projectDirectory,
         modPath,
         relativePath,
         fileName
@@ -2225,31 +2271,46 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
         } satisfies FluxoraTextFileDocument;
       }
 
-      case FluxoraIpcChannels.modsListPreviewVariants:
-        return [
-          {
-            modPath: optionalString(args[2]) || 'preview-mod',
+      case FluxoraIpcChannels.modsStartNifPreview:
+        return {
+          sessionId: 'browser-preview-session',
+          variants: [{
+            variantId: 'browser-preview-variant',
             modName: 'Preview Mod',
             order: 0,
             enabled: true,
-            relativePath: optionalString(args[2]),
+            relativePath: optionalString(args[3]),
             size: 0
+          }],
+          activeIndex: 0,
+          modelHandle: {
+            assetId: 'browser-preview-model',
+            size: 0,
+            mimeType: 'application/x-nif',
+            relativePath: optionalString(args[3]),
+            source: 'Preview Mod',
+            contentKey: 'browser-preview-model'
           }
-        ] satisfies FluxoraPreviewVariant[];
+        } satisfies FluxoraNifPreviewStartResult;
 
-      case FluxoraIpcChannels.modsReadPreviewAsset: {
-        const kind = optionalString(args[4]) === 'texture' ? 'texture' : 'nif';
+      case FluxoraIpcChannels.modsPrepareNifPreviewVariant:
         return {
-          kind,
-          modPath: optionalString(args[2]),
-          modName: 'Preview Mod',
-          relativePath: optionalString(args[3]),
-          fileName: optionalString(args[3]).split(/[\\/]/).pop() ?? 'preview.nif',
+          assetId: 'browser-preview-model',
           size: 0,
-          mimeType: kind === 'texture' ? 'image/png' : 'application/octet-stream',
-          contentBase64: ''
-        } satisfies FluxoraPreviewAsset;
-      }
+          mimeType: 'application/x-nif',
+          relativePath: '',
+          source: 'Preview Mod',
+          contentKey: 'browser-preview-model'
+        } satisfies FluxoraNifPreviewAssetHandle;
+
+      case FluxoraIpcChannels.modsPrepareNifPreviewTextures:
+        return { assets: [], missing: args[1] as string[] } satisfies FluxoraNifPreviewTextureBatchResult;
+
+      case FluxoraIpcChannels.modsReadNifPreviewAssetBytes:
+        return new ArrayBuffer(0);
+
+      case FluxoraIpcChannels.modsEndNifPreview:
+        return undefined;
 
       case FluxoraIpcChannels.modsSaveTextFile:
       case FluxoraIpcChannels.textFilesSave: {
@@ -2637,25 +2698,28 @@ const createTauriInvoker = (): IpcInvoker => ({
           modPath: optionalString(args[1]),
           modName: optionalString(args[2]),
           profileName: optionalString(args[3]),
-          bootstrapKey: optionalString(args[4])
+          bootstrapKey: optionalString(args[4]),
+          bootstrap: args[5] ?? null
         });
 
       case FluxoraIpcChannels.windowOpenFilePreview:
         return invoke('fluxora_open_file_preview_window', {
           configPath: optionalString(args[0]),
-          modPath: optionalString(args[1]),
-          relativePath: optionalString(args[2]),
-          fileName: optionalString(args[3]),
-          profileName: optionalString(args[4]),
-          kind: optionalString(args[5])
+          projectDirectory: optionalString(args[1]),
+          modPath: optionalString(args[2]),
+          relativePath: optionalString(args[3]),
+          fileName: optionalString(args[4]),
+          profileName: optionalString(args[5]),
+          kind: optionalString(args[6])
         });
 
       case FluxoraIpcChannels.windowOpenTextEditor:
         return invoke('fluxora_open_text_editor_window', {
           configPath: optionalString(args[0]),
-          modPath: optionalString(args[1]),
-          relativePath: optionalString(args[2]),
-          fileName: optionalString(args[3])
+          projectDirectory: optionalString(args[1]),
+          modPath: optionalString(args[2]),
+          relativePath: optionalString(args[3]),
+          fileName: optionalString(args[4])
         });
 
       case FluxoraIpcChannels.windowOpenSettings:
@@ -2953,6 +3017,14 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.modsGetFileTree:
         return bridgeRequest('mods.getFileTree', { projectDirectory: args[0], modPath: args[1], relativeDirectory: optionalString(args[2]) }, requestWithOperationId(args[3], 'mods_get_file_tree'));
 
+      case FluxoraIpcChannels.modsGetModDetailsContent:
+        return bridgeRequest(
+          'mods.getModDetailsContent',
+          { projectDirectory: args[0], modPath: args[1] },
+          requestWithOperationId(args[2], 'mods_get_mod_details_content'),
+          effectiveFileTreeIndexTimeoutMs
+        );
+
       case FluxoraIpcChannels.modsGetModConflictTree:
         return bridgeRequest(
           'mods.getModConflictTree',
@@ -3005,25 +3077,35 @@ const createTauriInvoker = (): IpcInvoker => ({
           requestWithOperationId(args[6], 'mods_get_effective_file_tree_children')
         );
 
-      case FluxoraIpcChannels.modsListPreviewVariants:
-        return bridgeRequest(
-          'mods.listPreviewVariants',
-          { projectDirectory: args[0], profileName: args[1], relativePath: args[2] },
-          requestWithOperationId(args[3], 'mods_list_preview_variants')
-        );
+      case FluxoraIpcChannels.modsStartNifPreview:
+        return invoke<FluxoraNifPreviewStartResult>('fluxora_start_nif_preview', {
+          projectDirectory: args[0],
+          profileName: args[1],
+          initialModPath: args[2],
+          relativePath: args[3],
+          request: args[4]
+        });
 
-      case FluxoraIpcChannels.modsReadPreviewAsset:
-        return bridgeRequest(
-          'mods.readPreviewAsset',
-          {
-            projectDirectory: args[0],
-            profileName: args[1],
-            modPath: args[2],
-            relativePath: args[3],
-            kind: args[4]
-          },
-          requestWithOperationId(args[5], 'mods_read_preview_asset')
-        );
+      case FluxoraIpcChannels.modsPrepareNifPreviewVariant:
+        return invoke<FluxoraNifPreviewAssetHandle>('fluxora_prepare_nif_preview_variant', {
+          sessionId: args[0],
+          variantId: args[1]
+        });
+
+      case FluxoraIpcChannels.modsPrepareNifPreviewTextures:
+        return invoke<FluxoraNifPreviewTextureBatchResult>('fluxora_prepare_nif_preview_textures', {
+          sessionId: args[0],
+          texturePaths: args[1]
+        });
+
+      case FluxoraIpcChannels.modsReadNifPreviewAssetBytes:
+        return invoke<unknown>('fluxora_read_nif_preview_asset_bytes', {
+          sessionId: args[0],
+          assetId: args[1]
+        });
+
+      case FluxoraIpcChannels.modsEndNifPreview:
+        return invoke<void>('fluxora_end_nif_preview', { sessionId: args[0] });
 
       case FluxoraIpcChannels.modsReadTextFile: {
         const request = requestWithOperationId(args[3], 'mods_read_text_file');

@@ -5,12 +5,23 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cwctype>
 #include <fstream>
+#include <functional>
+#include <iomanip>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <iterator>
 #include <limits>
+#include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
+#include <unordered_map>
+#include <variant>
 
 namespace fluxora
 {
@@ -963,6 +974,594 @@ namespace fluxora
             }
             return std::nullopt;
         }
+
+        struct IndexedBsaEntry
+        {
+            std::uint32_t version{0};
+            std::uint32_t archiveFlags{0};
+            std::uint32_t storedSize{0};
+            std::uint32_t offset{0};
+            bool compressed{false};
+        };
+
+        struct IndexedBa2GeneralEntry
+        {
+            Ba2GeneralRecord record;
+        };
+
+        struct IndexedBa2TextureEntry
+        {
+            Ba2TextureRecord record;
+        };
+
+        using IndexedArchiveEntry = std::variant<
+            IndexedBsaEntry,
+            IndexedBa2GeneralEntry,
+            IndexedBa2TextureEntry>;
+
+        struct ArchiveFingerprint
+        {
+            std::string canonicalKey;
+            std::string value;
+            std::string sourceHash;
+            std::string fingerprintHash;
+        };
+
+        struct CachedArchiveIndex
+        {
+            std::filesystem::path archivePath;
+            ArchiveFingerprint fingerprint;
+            std::unordered_map<std::string, IndexedArchiveEntry> entries;
+        };
+
+        constexpr std::size_t maxPreviewArchiveEntries = 1'000'000;
+        constexpr std::uintmax_t maxPreviewArchiveCacheBytes = 512ULL * 1024ULL * 1024ULL;
+        std::mutex archiveIndexMutex;
+        std::unordered_map<std::string, std::shared_ptr<CachedArchiveIndex>> archiveIndexes;
+
+        std::string pathUtf8(const std::filesystem::path& path)
+        {
+            const auto utf8 = path.generic_u8string();
+            return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+        }
+
+        std::string hashHex(std::string_view value)
+        {
+            std::uint64_t hash = 1469598103934665603ULL;
+            for (unsigned char character : value)
+            {
+                hash ^= character;
+                hash *= 1099511628211ULL;
+            }
+            std::ostringstream stream;
+            stream << std::hex << std::setw(16) << std::setfill('0') << hash;
+            return stream.str();
+        }
+
+        ArchiveFingerprint fingerprintForArchive(const std::filesystem::path& archivePath)
+        {
+            std::error_code canonicalError;
+            std::filesystem::path canonical = std::filesystem::weakly_canonical(archivePath, canonicalError);
+            if (canonicalError)
+            {
+                canonical = archivePath.lexically_normal();
+            }
+            std::string canonicalKey = pathUtf8(canonical);
+#ifdef _WIN32
+            std::transform(canonicalKey.begin(), canonicalKey.end(), canonicalKey.begin(), [](unsigned char value)
+            {
+                return static_cast<char>(std::tolower(value));
+            });
+#endif
+            std::error_code sizeError;
+            const std::uintmax_t size = std::filesystem::file_size(archivePath, sizeError);
+            if (sizeError)
+            {
+                throw std::invalid_argument("Preview archive size could not be read.");
+            }
+            std::error_code timeError;
+            const auto modified = std::filesystem::last_write_time(archivePath, timeError);
+            if (timeError)
+            {
+                throw std::invalid_argument("Preview archive timestamp could not be read.");
+            }
+            const std::string value = canonicalKey + ':' + std::to_string(size) + ':' +
+                std::to_string(modified.time_since_epoch().count());
+            return ArchiveFingerprint{
+                canonicalKey,
+                value,
+                hashHex(canonicalKey),
+                hashHex(value)
+            };
+        }
+
+        std::shared_ptr<CachedArchiveIndex> buildBsaIndex(
+            const std::filesystem::path& archivePath,
+            ArchiveFingerprint fingerprint)
+        {
+            BinaryFile file(archivePath);
+            if (file.readString(4) != std::string("BSA", 3) + '\0')
+            {
+                return std::make_shared<CachedArchiveIndex>(CachedArchiveIndex{
+                    archivePath,
+                    std::move(fingerprint),
+                    {}});
+            }
+            const std::uint32_t version = file.readU32();
+            if (version != 103 && version != 104 && version != 105)
+            {
+                return std::make_shared<CachedArchiveIndex>(CachedArchiveIndex{
+                    archivePath,
+                    std::move(fingerprint),
+                    {}});
+            }
+            (void)file.readU32();
+            const std::uint32_t archiveFlags = file.readU32();
+            const std::uint32_t directoryCount = file.readU32();
+            const std::uint32_t fileCount = file.readU32();
+            (void)file.readU32();
+            (void)file.readU32();
+            (void)file.readU32();
+            if (directoryCount > maxPreviewArchiveEntries || fileCount > maxPreviewArchiveEntries)
+            {
+                throw std::invalid_argument("Preview archive index is too large.");
+            }
+
+            std::vector<BsaDirectoryRecord> directories;
+            directories.reserve(directoryCount);
+            for (std::uint32_t index = 0; index < directoryCount; ++index)
+            {
+                (void)file.readU64();
+                BsaDirectoryRecord record{};
+                record.fileCount = file.readU32();
+                if (version >= 105)
+                {
+                    (void)file.readU32();
+                    (void)file.readU64();
+                }
+                else
+                {
+                    (void)file.readU32();
+                }
+                directories.push_back(record);
+            }
+
+            std::vector<BsaFileRecord> records;
+            records.reserve(fileCount);
+            for (const BsaDirectoryRecord& directory : directories)
+            {
+                std::string directoryName;
+                if ((archiveFlags & 0x001U) != 0)
+                {
+                    const std::uint64_t length = file.readVarInt();
+                    if (length > 4096)
+                    {
+                        throw std::invalid_argument("Preview archive directory name is too long.");
+                    }
+                    directoryName = pathKeyFromUtf8(file.readString(static_cast<std::size_t>(length)));
+                }
+                for (std::uint32_t index = 0; index < directory.fileCount; ++index)
+                {
+                    (void)file.readU64();
+                    BsaFileRecord record{};
+                    record.directoryName = directoryName;
+                    record.size = file.readU32();
+                    record.offset = file.readU32();
+                    records.push_back(std::move(record));
+                }
+            }
+
+            std::vector<std::string> fileNames;
+            fileNames.reserve(fileCount);
+            if ((archiveFlags & 0x002U) != 0)
+            {
+                for (std::uint32_t index = 0; index < fileCount; ++index)
+                {
+                    fileNames.push_back(pathKeyFromUtf8(file.readCString()));
+                }
+            }
+
+            auto result = std::make_shared<CachedArchiveIndex>();
+            result->archivePath = archivePath;
+            result->fingerprint = std::move(fingerprint);
+            result->entries.reserve(records.size());
+            for (std::size_t index = 0; index < records.size(); ++index)
+            {
+                const std::string fileName = index < fileNames.size() ? fileNames[index] : std::string{};
+                const std::string entryPath = records[index].directoryName.empty()
+                    ? fileName
+                    : records[index].directoryName + '/' + fileName;
+                if (entryPath.empty())
+                {
+                    continue;
+                }
+                const bool sizeFlag = (records[index].size & bsaCompressedMask) != 0;
+                result->entries.emplace(
+                    entryPath,
+                    IndexedBsaEntry{
+                        version,
+                        archiveFlags,
+                        records[index].size & bsaSizeMask,
+                        records[index].offset,
+                        ((archiveFlags & bsaFilesCompressedFlag) != 0) != sizeFlag
+                    });
+            }
+            return result;
+        }
+
+        std::shared_ptr<CachedArchiveIndex> buildBa2Index(
+            const std::filesystem::path& archivePath,
+            ArchiveFingerprint fingerprint)
+        {
+            BinaryFile file(archivePath);
+            if (file.readString(4) != "BTDX")
+            {
+                return std::make_shared<CachedArchiveIndex>(CachedArchiveIndex{
+                    archivePath,
+                    std::move(fingerprint),
+                    {}});
+            }
+            (void)file.readU32();
+            const std::string type = file.readString(4);
+            const std::uint32_t fileCount = file.readU32();
+            const std::uint64_t namesOffset = file.readU64();
+            if (fileCount > maxPreviewArchiveEntries)
+            {
+                throw std::invalid_argument("Preview archive index is too large.");
+            }
+
+            auto result = std::make_shared<CachedArchiveIndex>();
+            result->archivePath = archivePath;
+            result->fingerprint = std::move(fingerprint);
+            result->entries.reserve(fileCount);
+            if (type == "GNRL")
+            {
+                std::vector<Ba2GeneralRecord> records;
+                records.reserve(fileCount);
+                for (std::uint32_t index = 0; index < fileCount; ++index)
+                {
+                    (void)file.readU32();
+                    (void)file.readString(4);
+                    (void)file.readU32();
+                    (void)file.readU32();
+                    Ba2GeneralRecord record{};
+                    record.offset = file.readU64();
+                    record.packedSize = file.readU32();
+                    record.unpackedSize = file.readU32();
+                    (void)file.readU32();
+                    records.push_back(record);
+                }
+                file.seek(namesOffset);
+                for (std::uint32_t index = 0; index < fileCount; ++index)
+                {
+                    result->entries.emplace(readBa2Name(file), IndexedBa2GeneralEntry{records[index]});
+                }
+                return result;
+            }
+            if (type != "DX10")
+            {
+                return result;
+            }
+
+            std::vector<Ba2TextureRecord> records;
+            records.reserve(fileCount);
+            for (std::uint32_t index = 0; index < fileCount; ++index)
+            {
+                (void)file.readU32();
+                (void)file.readString(4);
+                (void)file.readU32();
+                (void)file.readU8();
+                const std::uint8_t chunkCount = file.readU8();
+                const std::uint16_t chunkHeaderSize = file.readU16();
+                Ba2TextureRecord record{};
+                record.height = file.readU16();
+                record.width = file.readU16();
+                record.mipCount = file.readU8();
+                record.format = file.readU8();
+                record.flags = file.readU16();
+                record.chunks.reserve(chunkCount);
+                for (std::uint8_t chunk = 0; chunk < chunkCount; ++chunk)
+                {
+                    Ba2TextureChunk item{};
+                    item.offset = file.readU64();
+                    item.packedSize = file.readU32();
+                    item.unpackedSize = file.readU32();
+                    (void)file.readU16();
+                    (void)file.readU16();
+                    (void)file.readU32();
+                    if (chunkHeaderSize > 24)
+                    {
+                        (void)file.readString(chunkHeaderSize - 24);
+                    }
+                    record.chunks.push_back(item);
+                }
+                records.push_back(std::move(record));
+            }
+            file.seek(namesOffset);
+            for (std::uint32_t index = 0; index < fileCount; ++index)
+            {
+                result->entries.emplace(readBa2Name(file), IndexedBa2TextureEntry{std::move(records[index])});
+            }
+            return result;
+        }
+
+        std::shared_ptr<CachedArchiveIndex> buildArchiveIndex(
+            const std::filesystem::path& archivePath,
+            ArchiveFingerprint fingerprint)
+        {
+            std::wstring extension = archivePath.extension().wstring();
+            std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t character)
+            {
+                return static_cast<wchar_t>(std::towlower(character));
+            });
+            if (extension == L".bsa")
+            {
+                return buildBsaIndex(archivePath, std::move(fingerprint));
+            }
+            return buildBa2Index(archivePath, std::move(fingerprint));
+        }
+
+        void invalidateArchiveAssetCache(
+            const std::filesystem::path& cacheDirectory,
+            const ArchiveFingerprint& fingerprint)
+        {
+            std::error_code directoryError;
+            if (!std::filesystem::is_directory(cacheDirectory, directoryError) || directoryError)
+            {
+                return;
+            }
+            const std::string sourcePrefix = fingerprint.sourceHash + '-';
+            const std::string currentPrefix = sourcePrefix + fingerprint.fingerprintHash + '-';
+            std::error_code iterateError;
+            for (const auto& entry : std::filesystem::directory_iterator(cacheDirectory, iterateError))
+            {
+                if (iterateError)
+                {
+                    break;
+                }
+                const std::string name = pathUtf8(entry.path().filename());
+                if (name.starts_with(sourcePrefix) && !name.starts_with(currentPrefix))
+                {
+                    std::error_code removeError;
+                    std::filesystem::remove(entry.path(), removeError);
+                }
+            }
+        }
+
+        std::shared_ptr<CachedArchiveIndex> cachedArchiveIndex(
+            const std::filesystem::path& archivePath,
+            const std::filesystem::path& cacheDirectory,
+            PreviewArchiveBatchResult& stats)
+        {
+            ArchiveFingerprint fingerprint = fingerprintForArchive(archivePath);
+            std::scoped_lock lock(archiveIndexMutex);
+            const auto found = archiveIndexes.find(fingerprint.canonicalKey);
+            if (found != archiveIndexes.end() && found->second->fingerprint.value == fingerprint.value)
+            {
+                ++stats.indexHits;
+                return found->second;
+            }
+
+            ++stats.indexMisses;
+            invalidateArchiveAssetCache(cacheDirectory, fingerprint);
+            std::shared_ptr<CachedArchiveIndex> built = buildArchiveIndex(archivePath, std::move(fingerprint));
+            archiveIndexes[built->fingerprint.canonicalKey] = built;
+            return built;
+        }
+
+        std::vector<std::uint8_t> extractIndexedArchiveEntry(
+            const CachedArchiveIndex& index,
+            const IndexedArchiveEntry& entry)
+        {
+            BinaryFile file(index.archivePath);
+            if (const auto* bsa = std::get_if<IndexedBsaEntry>(&entry))
+            {
+                std::vector<std::uint8_t> payload = file.readAt(bsa->offset, bsa->storedSize);
+                if ((bsa->archiveFlags & bsaFilesPrefixedFlag) != 0)
+                {
+                    payload = trimBsaEmbeddedNamePrefix(std::move(payload));
+                }
+                if (bsa->compressed)
+                {
+                    if (payload.size() < 4)
+                    {
+                        throw std::invalid_argument("Preview archive compressed payload is truncated.");
+                    }
+                    const std::uint32_t expectedSize = readU32FromBytes(payload, 0);
+                    const std::vector<std::uint8_t> compressed(payload.begin() + 4, payload.end());
+                    payload = bsa->version >= 105
+                        ? decompressLz4Frame(compressed, expectedSize)
+                        : decompressZlib(compressed, expectedSize);
+                }
+                return payload;
+            }
+            if (const auto* general = std::get_if<IndexedBa2GeneralEntry>(&entry))
+            {
+                return readBa2Payload(
+                    file,
+                    general->record.offset,
+                    general->record.packedSize,
+                    general->record.unpackedSize);
+            }
+
+            const auto& texture = std::get<IndexedBa2TextureEntry>(entry).record;
+            std::vector<std::uint8_t> dds = buildDdsHeader(texture);
+            for (const Ba2TextureChunk& chunk : texture.chunks)
+            {
+                std::vector<std::uint8_t> payload = readBa2Payload(
+                    file,
+                    chunk.offset,
+                    chunk.packedSize,
+                    chunk.unpackedSize);
+                if (dds.size() + payload.size() > maxPreviewArchiveAssetBytes)
+                {
+                    throw std::invalid_argument("Preview archive asset is too large.");
+                }
+                dds.insert(dds.end(), payload.begin(), payload.end());
+            }
+            return dds;
+        }
+
+        std::filesystem::path archiveAssetCachePath(
+            const std::filesystem::path& cacheDirectory,
+            const CachedArchiveIndex& index,
+            const std::filesystem::path& relativePath)
+        {
+            std::wstring extension = relativePath.extension().wstring();
+            std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t character)
+            {
+                return static_cast<wchar_t>(std::towlower(character));
+            });
+            return cacheDirectory /
+                std::filesystem::path(
+                    index.fingerprint.sourceHash + '-' +
+                    index.fingerprint.fingerprintHash + '-' +
+                    hashHex(pathKeyFromWide(relativePath.generic_wstring())) +
+                    pathUtf8(std::filesystem::path(extension)));
+        }
+
+        void pruneArchiveAssetCache(
+            const std::filesystem::path& cacheDirectory,
+            std::uintmax_t maxBytes)
+        {
+            struct CacheFile
+            {
+                std::filesystem::path path;
+                std::uintmax_t size{0};
+                std::filesystem::file_time_type modified{};
+            };
+            std::vector<CacheFile> files;
+            std::uintmax_t total = 0;
+            std::error_code iterateError;
+            for (const auto& entry : std::filesystem::directory_iterator(cacheDirectory, iterateError))
+            {
+                if (iterateError)
+                {
+                    break;
+                }
+                std::error_code typeError;
+                if (!entry.is_regular_file(typeError) || typeError)
+                {
+                    continue;
+                }
+                const std::string name = pathUtf8(entry.path().filename());
+                if (name.find(".tmp-") != std::string::npos)
+                {
+                    std::error_code removeError;
+                    std::filesystem::remove(entry.path(), removeError);
+                    continue;
+                }
+                std::error_code sizeError;
+                std::error_code timeError;
+                const std::uintmax_t size = entry.file_size(sizeError);
+                const auto modified = entry.last_write_time(timeError);
+                if (sizeError || timeError)
+                {
+                    continue;
+                }
+                total += size;
+                files.push_back(CacheFile{entry.path(), size, modified});
+            }
+            std::sort(files.begin(), files.end(), [](const CacheFile& left, const CacheFile& right)
+            {
+                return left.modified < right.modified;
+            });
+            for (const CacheFile& file : files)
+            {
+                if (total <= maxBytes)
+                {
+                    break;
+                }
+                std::error_code removeError;
+                if (std::filesystem::remove(file.path, removeError) && !removeError)
+                {
+                    total -= file.size;
+                }
+            }
+        }
+
+        void writeArchiveCacheFileAtomically(
+            const std::filesystem::path& target,
+            const std::vector<std::uint8_t>& bytes)
+        {
+            if (bytes.size() > maxPreviewArchiveAssetBytes)
+            {
+                throw std::invalid_argument("Preview archive asset is too large.");
+            }
+            std::filesystem::create_directories(target.parent_path());
+            const std::string nonce = hashHex(
+                std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ':' +
+                std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())));
+            std::filesystem::path temporary = target;
+            temporary += std::filesystem::path(".tmp-" + nonce);
+            {
+                std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+                if (!file)
+                {
+                    throw std::runtime_error("Preview archive cache file could not be created.");
+                }
+                if (!bytes.empty())
+                {
+                    file.write(
+                        reinterpret_cast<const char*>(bytes.data()),
+                        static_cast<std::streamsize>(bytes.size()));
+                }
+                file.flush();
+                if (!file)
+                {
+                    throw std::runtime_error("Preview archive cache file could not be written.");
+                }
+            }
+            std::error_code renameError;
+            std::filesystem::rename(temporary, target, renameError);
+            if (renameError)
+            {
+                std::error_code existsError;
+                if (!std::filesystem::is_regular_file(target, existsError) || existsError)
+                {
+                    std::error_code removeError;
+                    std::filesystem::remove(temporary, removeError);
+                    throw std::runtime_error("Preview archive cache file could not be finalized.");
+                }
+                std::error_code removeError;
+                std::filesystem::remove(temporary, removeError);
+            }
+            pruneArchiveAssetCache(target.parent_path(), maxPreviewArchiveCacheBytes);
+        }
+
+        std::vector<std::filesystem::path> sortedPreviewArchives(
+            const std::filesystem::path& rootDirectory)
+        {
+            std::vector<std::filesystem::path> archives;
+            std::error_code iterateError;
+            for (const auto& entry : std::filesystem::directory_iterator(rootDirectory, iterateError))
+            {
+                if (iterateError)
+                {
+                    break;
+                }
+                std::error_code typeError;
+                if (entry.is_regular_file(typeError) && !typeError && isSupportedArchivePath(entry.path()))
+                {
+                    archives.push_back(entry.path());
+                }
+            }
+            std::sort(archives.begin(), archives.end(), [](const auto& left, const auto& right)
+            {
+                std::wstring leftName = left.filename().wstring();
+                std::wstring rightName = right.filename().wstring();
+                std::transform(leftName.begin(), leftName.end(), leftName.begin(), [](wchar_t character)
+                {
+                    return static_cast<wchar_t>(std::towlower(character));
+                });
+                std::transform(rightName.begin(), rightName.end(), rightName.begin(), [](wchar_t character)
+                {
+                    return static_cast<wchar_t>(std::towlower(character));
+                });
+                return leftName < rightName;
+            });
+            return archives;
+        }
     }
 
     std::optional<PreviewArchiveAsset> readPreviewAssetFromBethesdaArchives(
@@ -1033,5 +1632,120 @@ namespace fluxora
         }
 
         return std::nullopt;
+    }
+
+    PreviewArchiveBatchResult preparePreviewAssetsFromBethesdaArchives(
+        const std::filesystem::path& rootDirectory,
+        const std::vector<std::wstring>& relativePaths,
+        const std::filesystem::path& cacheDirectory)
+    {
+        PreviewArchiveBatchResult result;
+        if (rootDirectory.empty() || relativePaths.empty() || cacheDirectory.empty())
+        {
+            return result;
+        }
+        std::error_code rootError;
+        if (!std::filesystem::is_directory(rootDirectory, rootError) || rootError)
+        {
+            return result;
+        }
+
+        std::map<std::string, std::filesystem::path> unresolved;
+        for (const std::wstring& relativePath : relativePaths)
+        {
+            const std::filesystem::path path(relativePath);
+            unresolved.try_emplace(pathKeyFromWide(relativePath), path);
+        }
+
+        for (const std::filesystem::path& archive : sortedPreviewArchives(rootDirectory))
+        {
+            if (unresolved.empty())
+            {
+                break;
+            }
+            try
+            {
+                const std::shared_ptr<CachedArchiveIndex> index =
+                    cachedArchiveIndex(archive, cacheDirectory, result);
+                for (auto item = unresolved.begin(); item != unresolved.end();)
+                {
+                    const auto found = index->entries.find(item->first);
+                    if (found == index->entries.end())
+                    {
+                        ++item;
+                        continue;
+                    }
+
+                    const std::filesystem::path target =
+                        archiveAssetCachePath(cacheDirectory, *index, item->second);
+                    std::error_code targetError;
+                    bool cacheHit = std::filesystem::is_regular_file(target, targetError) && !targetError;
+                    if (cacheHit)
+                    {
+                        std::error_code sizeError;
+                        const std::uintmax_t cachedSize = std::filesystem::file_size(target, sizeError);
+                        cacheHit = !sizeError && cachedSize <= maxPreviewArchiveAssetBytes;
+                    }
+                    if (cacheHit)
+                    {
+                        ++result.assetCacheHits;
+                        std::error_code touchError;
+                        std::filesystem::last_write_time(
+                            target,
+                            std::filesystem::file_time_type::clock::now(),
+                            touchError);
+                    }
+                    else
+                    {
+                        ++result.assetCacheMisses;
+                        const std::vector<std::uint8_t> bytes =
+                            extractIndexedArchiveEntry(*index, found->second);
+                        writeArchiveCacheFileAtomically(target, bytes);
+                    }
+                    std::error_code sizeError;
+                    const std::uintmax_t size = std::filesystem::file_size(target, sizeError);
+                    if (sizeError || size > maxPreviewArchiveAssetBytes)
+                    {
+                        throw std::runtime_error("Prepared preview archive asset is invalid.");
+                    }
+                    const std::string assetHash = hashHex(item->first);
+                    result.assets.push_back(PreparedPreviewArchiveAsset{
+                        target,
+                        archive,
+                        archiveDisplayName(archive),
+                        item->second.generic_wstring(),
+                        L"preview-archive-v1-" +
+                            std::wstring(
+                                index->fingerprint.fingerprintHash.begin(),
+                                index->fingerprint.fingerprintHash.end()) +
+                            L"-" +
+                            std::wstring(assetHash.begin(), assetHash.end()),
+                        size
+                    });
+                    item = unresolved.erase(item);
+                }
+            }
+            catch (const std::exception&)
+            {
+                continue;
+            }
+        }
+        return result;
+    }
+
+    void enforcePreviewArchiveCacheLimit(
+        const std::filesystem::path& cacheDirectory,
+        std::uintmax_t maxBytes)
+    {
+        if (cacheDirectory.empty())
+        {
+            return;
+        }
+        std::error_code directoryError;
+        if (!std::filesystem::is_directory(cacheDirectory, directoryError) || directoryError)
+        {
+            return;
+        }
+        pruneArchiveAssetCache(cacheDirectory, maxBytes);
     }
 }

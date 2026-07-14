@@ -82,17 +82,21 @@ export const FluxoraIpcChannels = {
   modsGetEffectiveFileTreeChildren: 'fluxora:mods:get-effective-file-tree-children',
   modsGetEffectiveFileTreeRoot: 'fluxora:mods:get-effective-file-tree-root',
   modsGetFileTree: 'fluxora:mods:get-file-tree',
+  modsGetModDetailsContent: 'fluxora:mods:get-mod-details-content',
   modsGetModConflictTree: 'fluxora:mods:get-mod-conflict-tree',
   modsGetModDetailsSummary: 'fluxora:mods:get-mod-details-summary',
   modsGetOrder: 'fluxora:mods:get-order',
   modsGetPersistedWorkspace: 'fluxora:mods:get-persisted-workspace',
   modsGetWorkspace: 'fluxora:mods:get-workspace',
   modsInvalidateFileCaches: 'fluxora:mods:invalidate-file-caches',
-  modsListPreviewVariants: 'fluxora:mods:list-preview-variants',
+  modsStartNifPreview: 'fluxora:mods:start-nif-preview',
+  modsPrepareNifPreviewVariant: 'fluxora:mods:prepare-nif-preview-variant',
+  modsPrepareNifPreviewTextures: 'fluxora:mods:prepare-nif-preview-textures',
+  modsReadNifPreviewAssetBytes: 'fluxora:mods:read-nif-preview-asset-bytes',
+  modsEndNifPreview: 'fluxora:mods:end-nif-preview',
   modsListInstalled: 'fluxora:mods:list-installed',
   modsMoveOrderItem: 'fluxora:mods:move-order-item',
   modsPreviewTextFile: 'fluxora:mods:preview-text-file',
-  modsReadPreviewAsset: 'fluxora:mods:read-preview-asset',
   modsReadTextFile: 'fluxora:mods:read-text-file',
   modsSaveTextFile: 'fluxora:mods:save-text-file',
   modsSetAllEnabled: 'fluxora:mods:set-all-enabled',
@@ -1630,6 +1634,17 @@ export interface FluxoraModConflictTreePage {
   overwritten: FluxoraModFileTreeEntry[];
 }
 
+export interface FluxoraModFileTreeDirectory {
+  relativePath: string;
+  entries: FluxoraModFileTreeEntry[];
+}
+
+export interface FluxoraModDetailsContent {
+  modPath: string;
+  directories: FluxoraModFileTreeDirectory[];
+  conflictTree: FluxoraModConflictTreePage;
+}
+
 export type FluxoraEffectiveFileTreeSourceKind = 'game' | 'mod' | 'overwrite' | 'virtual';
 
 export interface FluxoraEffectiveFileTreeEntry {
@@ -1683,13 +1698,21 @@ export interface FluxoraModDetailsBootstrap {
   modPath: string;
   item: FluxoraModOrderItem;
   rootFileTree?: FluxoraModFileTreeEntry[];
+  content?: FluxoraModDetailsContent;
   createdAt: number;
 }
 
-export type FluxoraPreviewAssetKind = 'nif' | 'texture';
+export interface FluxoraNifPreviewAssetHandle {
+  assetId: string;
+  size: number;
+  mimeType: string;
+  relativePath: string;
+  source: string;
+  contentKey: string;
+}
 
-export interface FluxoraPreviewVariant {
-  modPath: string;
+export interface FluxoraNifPreviewVariant {
+  variantId: string;
   modName: string;
   order: number;
   enabled: boolean;
@@ -1697,15 +1720,16 @@ export interface FluxoraPreviewVariant {
   size: number;
 }
 
-export interface FluxoraPreviewAsset {
-  kind: FluxoraPreviewAssetKind;
-  modPath: string;
-  modName: string;
-  relativePath: string;
-  fileName: string;
-  size: number;
-  mimeType: string;
-  contentBase64: string;
+export interface FluxoraNifPreviewStartResult {
+  sessionId: string;
+  variants: FluxoraNifPreviewVariant[];
+  activeIndex: number;
+  modelHandle: FluxoraNifPreviewAssetHandle;
+}
+
+export interface FluxoraNifPreviewTextureBatchResult {
+  assets: FluxoraNifPreviewAssetHandle[];
+  missing: string[];
 }
 
 export interface FluxoraTextFileDocument {
@@ -2463,6 +2487,11 @@ export interface FluxoraApi {
       relativeDirectory?: string,
       request?: OperationRequest
     ) => Promise<FluxoraModFileTreeEntry[]>;
+    getModDetailsContent: (
+      projectDirectory: string,
+      modPath: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraModDetailsContent>;
     getModConflictTree: (
       projectDirectory: string,
       modPath: string,
@@ -2496,20 +2525,26 @@ export interface FluxoraApi {
       limit?: number,
       request?: OperationRequest
     ) => Promise<FluxoraEffectiveFileTreePage>;
-    listPreviewVariants: (
+    startNifPreview: (
       projectDirectory: string,
       profileName: string,
+      initialModPath: string,
       relativePath: string,
       request?: OperationRequest
-    ) => Promise<FluxoraPreviewVariant[]>;
-    readPreviewAsset: (
-      projectDirectory: string,
-      profileName: string,
-      modPath: string,
-      relativePath: string,
-      kind: FluxoraPreviewAssetKind,
-      request?: OperationRequest
-    ) => Promise<FluxoraPreviewAsset>;
+    ) => Promise<FluxoraNifPreviewStartResult>;
+    prepareNifPreviewVariant: (
+      sessionId: string,
+      variantId: string
+    ) => Promise<FluxoraNifPreviewAssetHandle>;
+    prepareNifPreviewTextures: (
+      sessionId: string,
+      texturePaths: string[]
+    ) => Promise<FluxoraNifPreviewTextureBatchResult>;
+    readNifPreviewAssetBytes: (
+      sessionId: string,
+      assetId: string
+    ) => Promise<ArrayBuffer>;
+    endNifPreview: (sessionId: string) => Promise<void>;
     readTextFile: (
       projectDirectory: string,
       modPath: string,
@@ -2873,6 +2908,7 @@ export interface FluxoraApi {
     openBuildSettings: (configPath: string, buildName: string) => Promise<void>;
     openFilePreview: (
       configPath: string,
+      projectDirectory: string,
       modPath: string,
       relativePath: string,
       fileName: string,
@@ -2884,11 +2920,13 @@ export interface FluxoraApi {
       modPath: string,
       modName: string,
       profileName?: string,
-      bootstrapKey?: string
+      bootstrapKey?: string,
+      bootstrap?: FluxoraModDetailsBootstrap
     ) => Promise<void>;
     openSettings: () => Promise<void>;
     openTextEditor: (
       configPath: string,
+      projectDirectory: string,
       modPath?: string,
       relativePath?: string,
       fileName?: string

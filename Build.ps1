@@ -20,6 +20,14 @@ $ProjectRoot = $PSScriptRoot
 $BackendSource = Join-Path $ProjectRoot 'backend'
 $BackendBuild = Join-Path $ProjectRoot 'build\backend'
 $TauriProject = Join-Path $ProjectRoot 'frontend-tauri'
+$TauriUsesPnpm = Test-Path -LiteralPath (Join-Path $TauriProject 'pnpm-lock.yaml')
+$TauriPackageManager = if ($TauriUsesPnpm) { 'pnpm' } else { 'npm' }
+$TauriInstallArguments = if ($TauriUsesPnpm) {
+    @('install', '--frozen-lockfile')
+}
+else {
+    @('install', '--no-fund')
+}
 $TauriNativeResourcesRoot = Join-Path $ProjectRoot 'build\tauri-native'
 $TauriNativeResourcesDir = Join-Path $TauriProject 'src-tauri\resources\native'
 $TauriExecutableName = 'Fluxora.exe'
@@ -791,7 +799,7 @@ function Write-FluxoraPayloadPackage {
 Assert-Command 'cmake'
 Assert-Command 'ctest'
 Assert-Command 'dotnet'
-Assert-Command 'npm'
+Assert-Command $TauriPackageManager
 
 if ($Target -eq 'Release' -and [string]::IsNullOrWhiteSpace($Runtime)) {
     throw "Installer publish requires a runtime because FluxoraSetup.exe is self-contained. Example: -Runtime win-x64"
@@ -935,7 +943,7 @@ Invoke-BuildStep "Preparing Tauri native resources ($($tauriTarget.Platform)/$($
 Invoke-BuildStep "Installing Tauri dependencies" {
         Push-Location $TauriProject
         try {
-            Invoke-CheckedCommand -FilePath 'npm' -Arguments @('install', '--no-fund')
+            Invoke-CheckedCommand -FilePath $TauriPackageManager -Arguments $TauriInstallArguments
         }
         finally {
             Pop-Location
@@ -945,7 +953,7 @@ Invoke-BuildStep "Installing Tauri dependencies" {
 Invoke-BuildStep "Packaging Tauri app ($($tauriTarget.Platform)/$($tauriTarget.Arch))" {
         Push-Location $TauriProject
         try {
-            Invoke-CheckedCommand -FilePath 'npm' -Arguments @('run', 'build')
+            Invoke-CheckedCommand -FilePath $TauriPackageManager -Arguments @('run', 'build')
         }
         finally {
             Pop-Location

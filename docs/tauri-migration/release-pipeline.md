@@ -88,7 +88,7 @@ Phase 15 reviewed these data-processing surfaces for German/EU transparency expe
 - Downloads: user-triggered network requests to mod hosting URLs or Nexus Mods. FluxPack may automatically fetch Nexus sources only for a linked account whose native status is Premium; free-account flow opens the user-selected Nexus page and imports a user-selected local archive. This adds no telemetry or automatic upload.
 - Support logs: sent only when the user manually shares them.
 - Telemetry/analytics: none is enabled in Phase 15. Adding it later requires explicit opt-in/legal review.
-- Third-party components: Tauri, the platform webview runtime, React, Three.js, Lucide, Vite, TypeScript, Tauri bundler, Playwright/Vitest test tooling, spdlog, Microsoft Detours where VFS is built, SharpVectors for the installer UI, and GoogleTest for backend tests.
+- Third-party components: Tauri, the platform webview runtime, React, Monaco Editor, Three.js, Lucide, Vite, TypeScript, Tauri bundler, Playwright/Vitest test tooling, spdlog, Microsoft Detours where VFS is built, SharpVectors for the installer UI, and GoogleTest for backend tests.
 
 Bundled legal resources live under `installer/Fluxora.Installer/Resources/Legal/`. The Phase 15 update keeps privacy/terms aligned with the Tauri architecture and adds third-party notice files. Final public distribution should still receive owner/legal review before publishing.
 

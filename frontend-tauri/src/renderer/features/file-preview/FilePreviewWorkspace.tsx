@@ -1,24 +1,37 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import type {
-  FluxoraPreviewAsset,
-  FluxoraPreviewVariant,
-  FluxoraProject
+  FluxoraNifPreviewAssetHandle,
+  FluxoraNifPreviewVariant
 } from '../../../shared/fluxora-api';
-import { createDdsPreviewTexture, isDdsBuffer } from './dds-texture';
 import {
+  createDecodedDdsPreviewTexture,
+  createDdsPreviewTexture,
+  detectDdsGpuSupport,
+  isDdsBuffer,
+  readDdsHeader
+} from './dds-texture';
+import {
+  computeNifPreviewCameraFrame,
   createNifPreviewGeometry,
   selectNifPreviewTexturePath
 } from './nif-preview-rendering';
-import { parseNifModel } from './nif-parser';
+import {
+  deduplicateNifPreviewPaths,
+  mapNifPreviewWithConcurrency,
+  nextNifPreviewGeneration
+} from './nif-preview-pipeline';
+import { NifPreviewResourceCache } from './nif-preview-resource-cache';
+import { NifPreviewWorkerClient } from './nif-preview-worker-client';
+import type { WorkerNifModel } from './nif-preview-worker-protocol';
 import { previewKindById } from './preview-kind-registry';
 
 interface FilePreviewWorkspaceProps {
-  project: FluxoraProject | null;
+  projectDirectory: string;
   initialModPath: string;
   initialRelativePath: string;
   initialFileName: string;
@@ -26,154 +39,112 @@ interface FilePreviewWorkspaceProps {
   initialKind: string;
 }
 
-type PreviewLoadState = 'idle' | 'loading' | 'ready' | 'error';
+type PreviewRenderState = 'idle' | 'loading' | 'ready' | 'error';
 
-const createPreviewOperationId = (scope: string): string =>
-  `op_${new Date().toISOString().replace(/[-:.TZ]/g, '')}_${scope}_${Math.random()
+const createPreviewOperationId = (): string =>
+  `op_${new Date().toISOString().replace(/[-:.TZ]/g, '')}_nif_preview_${Math.random()
     .toString(16)
     .slice(2, 10)}`;
 
-const base64ToArrayBuffer = (contentBase64: string): ArrayBuffer => {
-  if (!contentBase64) {
-    return new ArrayBuffer(0);
-  }
+const pathKey = (value: string): string => value.replace(/\\/g, '/').toLowerCase();
 
-  const binary = window.atob(contentBase64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes.buffer;
+const isColorTexture = (value: string): boolean =>
+  !/(?:_n|_msn|_s|_sk|_g|_glow|_e|_em|_m|_p)\.(?:dds|png|jpe?g)$/i.test(value);
+
+const unique = (values: string[]): string[] => Array.from(new Set(values.filter(Boolean)));
+
+const nextFrame = (): Promise<void> => new Promise((resolve) => {
+  window.requestAnimationFrame(() => resolve());
+});
+
+const disposeMaterial = (material: THREE.Material | THREE.Material[]): void => {
+  (Array.isArray(material) ? material : [material]).forEach((item) => item.dispose());
 };
 
-const textureMimeType = (asset: FluxoraPreviewAsset): string => {
-  if (asset.mimeType) {
-    return asset.mimeType;
-  }
-
-  const lowerName = asset.fileName.toLowerCase();
-  if (lowerName.endsWith('.dds')) {
-    return 'image/vnd-ms.dds';
-  }
-  if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) {
-    return 'image/jpeg';
-  }
-  return 'image/png';
-};
-
-const loadTextureAsset = (asset: FluxoraPreviewAsset): Promise<THREE.Texture> =>
-  new Promise((resolve, reject) => {
-    if (!asset.contentBase64) {
-      reject(new Error('Texture asset was empty.'));
-      return;
-    }
-
-    const buffer = base64ToArrayBuffer(asset.contentBase64);
-    if (isDdsBuffer(buffer)) {
-      try {
-        const texture = createDdsPreviewTexture(buffer);
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.RepeatWrapping;
-        texture.flipY = false;
-        texture.needsUpdate = true;
-        resolve(texture);
-      } catch (error) {
-        reject(error);
-      }
-      return;
-    }
-
-    const source = `data:${textureMimeType(asset)};base64,${asset.contentBase64}`;
-    const loader = new THREE.TextureLoader();
-    loader.load(
-      source,
-      (texture) => {
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.wrapS = THREE.RepeatWrapping;
-        texture.wrapT = THREE.RepeatWrapping;
-        texture.flipY = false;
-        texture.needsUpdate = true;
-        resolve(texture);
-      },
-      undefined,
-      reject
-    );
-  });
-
-const disposeMaterial = (
-  material: THREE.Material | THREE.Material[],
-  disposedTextures = new Set<THREE.Texture>()
-) => {
-  const materials = Array.isArray(material) ? material : [material];
-  materials.forEach((item) => {
-    const textured = item as THREE.Material & {
-      map?: THREE.Texture | null;
-      normalMap?: THREE.Texture | null;
-      roughnessMap?: THREE.Texture | null;
-    };
-    [textured.map, textured.normalMap, textured.roughnessMap].forEach((texture) => {
-      if (texture && !disposedTextures.has(texture)) {
-        disposedTextures.add(texture);
-        texture.dispose();
-      }
-    });
-    item.dispose();
-  });
-};
-
-const clearGroup = (group: THREE.Group) => {
-  const disposedTextures = new Set<THREE.Texture>();
+const clearGroup = (group: THREE.Group): void => {
   group.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (mesh.isMesh) {
       mesh.geometry.dispose();
-      disposeMaterial(mesh.material, disposedTextures);
+      disposeMaterial(mesh.material);
     }
   });
   group.clear();
+};
+
+const disposeMeshes = (meshes: THREE.Mesh[]): void => {
+  meshes.forEach((mesh) => {
+    mesh.geometry.dispose();
+    disposeMaterial(mesh.material);
+  });
 };
 
 const fitCameraToGroup = (
   camera: THREE.PerspectiveCamera,
   controls: OrbitControls | null,
   group: THREE.Group
-) => {
+): void => {
   const box = new THREE.Box3().setFromObject(group);
   if (box.isEmpty()) {
     return;
   }
 
-  const size = new THREE.Vector3();
-  const center = new THREE.Vector3();
-  box.getSize(size);
-  box.getCenter(center);
-  const radius = Math.max(size.x, size.y, size.z, 1);
-  camera.near = Math.max(radius / 100, 0.01);
-  camera.far = Math.max(radius * 100, 100);
-  camera.position.set(center.x + radius * 1.25, center.y + radius * 0.85, center.z + radius * 1.75);
-  camera.lookAt(center);
+  const frame = computeNifPreviewCameraFrame(box);
+  camera.near = frame.near;
+  camera.far = frame.far;
+  camera.position.copy(frame.position);
+  camera.lookAt(frame.target);
   camera.updateProjectionMatrix();
   if (controls) {
-    controls.target.copy(center);
+    controls.target.copy(frame.target);
     controls.update();
   }
 };
 
-const fallbackVariant = (
-  modPath: string,
-  fileName: string,
-  relativePath: string
-): FluxoraPreviewVariant => ({
-  modPath,
-  modName: fileName || 'Preview source',
-  order: 0,
-  enabled: true,
-  relativePath,
-  size: 0
+const loadBrowserTexture = (
+  buffer: ArrayBuffer,
+  mimeType: string,
+  anisotropy: number
+): Promise<THREE.Texture> => new Promise((resolve, reject) => {
+  const objectUrl = URL.createObjectURL(new Blob([buffer], { type: mimeType }));
+  new THREE.TextureLoader().load(
+    objectUrl,
+    (texture) => {
+      URL.revokeObjectURL(objectUrl);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.flipY = false;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = true;
+      texture.anisotropy = anisotropy;
+      texture.needsUpdate = true;
+      resolve(texture);
+    },
+    undefined,
+    (error) => {
+      URL.revokeObjectURL(objectUrl);
+      reject(error);
+    }
+  );
 });
 
+const canUploadCompressed = (
+  format: ReturnType<typeof readDdsHeader>['format'],
+  support: ReturnType<typeof detectDdsGpuSupport>
+): boolean => {
+  if (format === 'bc1' || format === 'bc2' || format === 'bc3') {
+    return support.s3tc;
+  }
+  if (format === 'bc4' || format === 'bc5') {
+    return support.rgtc;
+  }
+  return format === 'bc7' && support.bptc;
+};
+
 export const FilePreviewWorkspace = ({
-  project,
+  projectDirectory,
   initialModPath,
   initialRelativePath,
   initialFileName,
@@ -182,17 +153,23 @@ export const FilePreviewWorkspace = ({
 }: FilePreviewWorkspaceProps) => {
   const descriptor = previewKindById(initialKind);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
-  const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const modelGroupRef = useRef<THREE.Group | null>(null);
   const animationRef = useRef<number | null>(null);
-  const [variants, setVariants] = useState<FluxoraPreviewVariant[]>([]);
+  const workerRef = useRef<NifPreviewWorkerClient | null>(null);
+  const cacheRef = useRef<NifPreviewResourceCache | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const operationIdRef = useRef<string | null>(null);
+  const generationRef = useRef(0);
+  if (!cacheRef.current) {
+    cacheRef.current = new NifPreviewResourceCache();
+  }
+
+  const [variants, setVariants] = useState<FluxoraNifPreviewVariant[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [modelAsset, setModelAsset] = useState<FluxoraPreviewAsset | null>(null);
-  const [loadState, setLoadState] = useState<PreviewLoadState>('idle');
-  const [renderState, setRenderState] = useState<PreviewLoadState>('idle');
+  const [renderState, setRenderState] = useState<PreviewRenderState>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
 
@@ -204,12 +181,18 @@ export const FilePreviewWorkspace = ({
   const canGoNext = activeIndex < variants.length - 1;
   const variantPosition = variants.length ? `${activeIndex + 1} / ${variants.length}` : '0 / 0';
   const iconStyle = useMemo(
-    () =>
-      ({
-        '--asset-icon': `url("${descriptor.icon}")`
-      }) as CSSProperties,
+    () => ({ '--asset-icon': `url("${descriptor.icon}")` }) as CSSProperties,
     [descriptor.icon]
   );
+
+  const logPerformance = useCallback((message: string) => {
+    void window.fluxora.ui.log({
+      level: 'info',
+      category: 'NifPreview.Performance',
+      message,
+      operationId: operationIdRef.current ?? undefined
+    });
+  }, []);
 
   useEffect(() => {
     const host = canvasHostRef.current;
@@ -243,16 +226,13 @@ export const FilePreviewWorkspace = ({
     grid.material.transparent = true;
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.setClearColor(0x101317, 1);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.domElement.dataset.testid = 'file-preview-canvas';
     renderer.domElement.className = 'file-preview-canvas';
 
     scene.add(ambient, keyLight, fillLight, grid, modelGroup);
     host.appendChild(renderer.domElement);
-    sceneRef.current = scene;
     cameraRef.current = camera;
     controlsRef.current = controls;
     rendererRef.current = renderer;
@@ -287,7 +267,6 @@ export const FilePreviewWorkspace = ({
       disposeMaterial(grid.material);
       renderer.dispose();
       renderer.domElement.remove();
-      sceneRef.current = null;
       cameraRef.current = null;
       controlsRef.current = null;
       rendererRef.current = null;
@@ -296,195 +275,320 @@ export const FilePreviewWorkspace = ({
   }, []);
 
   useEffect(() => {
-    if (!project || !initialRelativePath || !initialModPath) {
-      setVariants([]);
-      setLoadState('error');
-      setMessage('Preview source is unavailable.');
+    const worker = new NifPreviewWorkerClient();
+    workerRef.current = worker;
+    return () => {
+      worker.dispose();
+      workerRef.current = null;
+      cacheRef.current?.dispose();
+    };
+  }, []);
+
+  const readAssetBytes = useCallback(async (
+    sessionId: string,
+    handle: FluxoraNifPreviewAssetHandle
+  ): Promise<ArrayBuffer> => {
+    const cache = cacheRef.current as NifPreviewResourceCache;
+    const cached = cache.getRaw(handle.contentKey);
+    if (cached) {
+      return cached;
+    }
+    const bytes = await window.fluxora.mods.readNifPreviewAssetBytes(sessionId, handle.assetId);
+    cache.setRaw(handle.contentKey, bytes);
+    return bytes;
+  }, []);
+
+  const loadTexture = useCallback(async (
+    sessionId: string,
+    handle: FluxoraNifPreviewAssetHandle,
+    generation: number
+  ): Promise<THREE.Texture | null> => {
+    const cache = cacheRef.current as NifPreviewResourceCache;
+    const cached = cache.getTexture(handle.contentKey);
+    if (cached) {
+      return cached;
+    }
+
+    const renderer = rendererRef.current;
+    const worker = workerRef.current;
+    if (!renderer || !worker) {
+      throw new Error('Preview renderer is unavailable.');
+    }
+    const support = detectDdsGpuSupport(renderer);
+    const anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
+    const srgb = isColorTexture(handle.relativePath);
+    const bytes = await readAssetBytes(sessionId, handle);
+    if (generation !== generationRef.current) {
+      return null;
+    }
+
+    let texture: THREE.Texture;
+    if (isDdsBuffer(bytes)) {
+      const prepareStartedAt = performance.now();
+      const header = readDdsHeader(bytes);
+      if (canUploadCompressed(header.format, support)) {
+        texture = createDdsPreviewTexture(bytes, { gpuSupport: support, anisotropy, srgb });
+      } else if (header.format === 'bc7') {
+        throw new Error('BC7 texture skipped because EXT_texture_compression_bptc is unavailable.');
+      } else {
+        const transferable = cache.takeRaw(handle.contentKey) ?? bytes;
+        const decoded = await worker.decodeDds(transferable, generation);
+        if (decoded.generation !== generation || generation !== generationRef.current) {
+          return null;
+        }
+        texture = createDecodedDdsPreviewTexture(decoded, { anisotropy, srgb });
+      }
+      logPerformance(
+        `ddsPrepare relativePath=${handle.relativePath} format=${header.format} mipmaps=${header.mipMapCount} durationMs=${Math.round(performance.now() - prepareStartedAt)}`
+      );
+    } else {
+      texture = await loadBrowserTexture(bytes, handle.mimeType, anisotropy);
+    }
+
+    cache.setTexture(handle.contentKey, texture);
+    return texture;
+  }, [logPerformance, readAssetBytes]);
+
+  const prepareTextures = useCallback(async (
+    sessionId: string,
+    model: WorkerNifModel,
+    modelRelativePath: string,
+    meshes: THREE.Mesh[],
+    generation: number,
+    baseWarnings: string[]
+  ): Promise<void> => {
+    const bindings = new Map<string, THREE.Mesh[]>();
+    const requestedPaths = new Map<string, string>();
+    const nextWarnings = [...baseWarnings];
+    model.meshes.forEach((mesh, index) => {
+      const texturePath = selectNifPreviewTexturePath(mesh, model, modelRelativePath);
+      if (!texturePath && model.texturePaths.length > 1) {
+        nextWarnings.push(`Texture could not be matched confidently for ${mesh.name}.`);
+      }
+      if (!texturePath) {
+        return;
+      }
+      const key = pathKey(texturePath);
+      requestedPaths.set(key, requestedPaths.get(key) ?? texturePath);
+      const bound = bindings.get(key) ?? [];
+      bound.push(meshes[index]);
+      bindings.set(key, bound);
+    });
+    const texturePaths = deduplicateNifPreviewPaths(Array.from(requestedPaths.values()));
+    if (!texturePaths.length || generation !== generationRef.current) {
+      setWarnings(unique(nextWarnings));
       return;
     }
 
-    let cancelled = false;
-    setLoadState('loading');
-    setMessage(null);
-    setWarnings([]);
-    void window.fluxora.mods
-      .listPreviewVariants(project.projectDirectory, activeProfileName, initialRelativePath, {
-        operationId: createPreviewOperationId('mods_list_preview_variants')
-      })
-      .then((items) => {
-        if (cancelled) {
-          return;
-        }
-        const nextVariants = items.length
-          ? items
-          : [fallbackVariant(initialModPath, visibleFileName, initialRelativePath)];
-        const clickedIndex = Math.max(
-          nextVariants.findIndex((item) => item.modPath === initialModPath),
-          0
-        );
-        setVariants(nextVariants);
-        setActiveIndex(clickedIndex);
-        setLoadState('ready');
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        setVariants([fallbackVariant(initialModPath, visibleFileName, initialRelativePath)]);
-        setActiveIndex(0);
-        setLoadState('error');
-        setMessage(error instanceof Error ? error.message : 'Preview variants could not be loaded.');
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeProfileName, initialModPath, initialRelativePath, project, visibleFileName]);
-
-  useEffect(() => {
-    if (!project || !activeVariant) {
-      setModelAsset(null);
+    const startedAt = performance.now();
+    const batch = await window.fluxora.mods.prepareNifPreviewTextures(sessionId, texturePaths);
+    if (generation !== generationRef.current) {
       return;
     }
+    batch.missing.forEach((missing) => {
+      nextWarnings.push(`Texture not found: ${missing}`);
+    });
 
-    let cancelled = false;
-    setLoadState('loading');
-    setMessage(null);
-    void window.fluxora.mods
-      .readPreviewAsset(
-        project.projectDirectory,
-        activeProfileName,
-        activeVariant.modPath,
-        activeVariant.relativePath || initialRelativePath,
-        'nif',
-        { operationId: createPreviewOperationId('mods_read_preview_asset') }
-      )
-      .then((asset) => {
-        if (cancelled) {
+    await mapNifPreviewWithConcurrency(batch.assets, 3, async (handle) => {
+      try {
+        const texture = await loadTexture(sessionId, handle, generation);
+        if (!texture || generation !== generationRef.current) {
           return;
         }
-        setModelAsset(asset);
-        setLoadState('ready');
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        setModelAsset(null);
-        setLoadState('error');
-        setMessage(error instanceof Error ? error.message : 'Preview asset could not be loaded.');
-      });
+        (bindings.get(pathKey(handle.relativePath)) ?? []).forEach((mesh) => {
+          const material = mesh.material as THREE.MeshStandardMaterial;
+          material.map = texture;
+          material.color.set(0xffffff);
+          material.needsUpdate = true;
+        });
+      } catch (error) {
+        nextWarnings.push(error instanceof Error
+          ? `${handle.relativePath}: ${error.message}`
+          : `Texture could not be decoded: ${handle.relativePath}`);
+      }
+    });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [activeProfileName, activeVariant, initialRelativePath, project]);
+    if (generation === generationRef.current) {
+      setWarnings(unique(nextWarnings));
+      logPerformance(
+        `texturesReady requested=${texturePaths.length} loaded=${batch.assets.length} missing=${batch.missing.length} durationMs=${Math.round(performance.now() - startedAt)}`
+      );
+    }
+  }, [loadTexture, logPerformance]);
 
-  useEffect(() => {
+  const renderPreparedModel = useCallback(async (
+    sessionId: string,
+    handle: FluxoraNifPreviewAssetHandle,
+    modelRelativePath: string,
+    generation: number
+  ): Promise<void> => {
     const group = modelGroupRef.current;
     const camera = cameraRef.current;
-    if (!group || !camera || !project || !activeVariant || !modelAsset) {
+    const worker = workerRef.current;
+    const cache = cacheRef.current as NifPreviewResourceCache;
+    if (!group || !camera || !worker) {
+      throw new Error('Preview renderer is unavailable.');
+    }
+
+    const modelStartedAt = performance.now();
+    const bytes = await readAssetBytes(sessionId, handle);
+    if (generation !== generationRef.current) {
+      return;
+    }
+    const transferable = cache.takeRaw(handle.contentKey) ?? bytes;
+    const parseStartedAt = performance.now();
+    const parsed = await worker.parseNif(transferable, generation);
+    logPerformance(
+      `nifParse relativePath=${handle.relativePath} durationMs=${Math.round(performance.now() - parseStartedAt)} meshes=${parsed.model.meshes.length}`
+    );
+    if (parsed.generation !== generation || generation !== generationRef.current) {
+      return;
+    }
+
+    const renderedMeshes: THREE.Mesh[] = [];
+    let sliceStartedAt = performance.now();
+    for (const mesh of parsed.model.meshes) {
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xaeb9c7,
+        metalness: 0.04,
+        roughness: 0.74,
+        transparent: typeof mesh.alpha === 'number' && mesh.alpha < 1,
+        opacity: mesh.alpha ?? 1,
+        side: THREE.DoubleSide
+      });
+      const previewMesh = new THREE.Mesh(createNifPreviewGeometry(mesh), material);
+      previewMesh.name = mesh.name;
+      renderedMeshes.push(previewMesh);
+      if (performance.now() - sliceStartedAt >= 8) {
+        await nextFrame();
+        sliceStartedAt = performance.now();
+      }
+      if (generation !== generationRef.current) {
+        disposeMeshes(renderedMeshes);
+        return;
+      }
+    }
+
+    clearGroup(group);
+    renderedMeshes.forEach((mesh) => group.add(mesh));
+    fitCameraToGroup(camera, controlsRef.current, group);
+    setWarnings(unique(parsed.model.warnings));
+    setRenderState('ready');
+    setMessage(null);
+    void nextFrame().then(() => {
+      if (generation === generationRef.current) {
+        logPerformance(
+          `firstFrame relativePath=${handle.relativePath} durationMs=${Math.round(performance.now() - modelStartedAt)}`
+        );
+      }
+    });
+
+    void prepareTextures(
+      sessionId,
+      parsed.model,
+      modelRelativePath,
+      renderedMeshes,
+      generation,
+      parsed.model.warnings
+    ).catch((error) => {
+      if (generation === generationRef.current) {
+        setWarnings((current) => unique([
+          ...current,
+          error instanceof Error ? error.message : 'Textures could not be prepared.'
+        ]));
+      }
+    });
+  }, [logPerformance, prepareTextures, readAssetBytes]);
+
+  useEffect(() => {
+    if (!projectDirectory || !initialRelativePath || !initialModPath) {
+      setVariants([]);
+      setRenderState('error');
+      setMessage('Preview source is unavailable.');
       return undefined;
     }
 
     let cancelled = false;
+    let ownedSessionId: string | null = null;
+    const generation = nextNifPreviewGeneration(generationRef);
+    const operationId = createPreviewOperationId();
+    operationIdRef.current = operationId;
+    cacheRef.current?.dispose();
     setRenderState('loading');
     setMessage(null);
+    setWarnings([]);
 
-    const applyModel = async () => {
-      const parsed = parseNifModel(base64ToArrayBuffer(modelAsset.contentBase64));
-      const nextWarnings = [...parsed.warnings];
-      const textureCache = new Map<string, THREE.Texture | null>();
-      const modelRelativePath = modelAsset.relativePath || activeVariant.relativePath || initialRelativePath;
-
-      const textureForPath = async (texturePath: string): Promise<THREE.Texture | null> => {
-        if (textureCache.has(texturePath)) {
-          return textureCache.get(texturePath) ?? null;
-        }
-
-        let texture: THREE.Texture | null = null;
-        try {
-          const textureAsset = await window.fluxora.mods.readPreviewAsset(
-            project.projectDirectory,
-            activeProfileName,
-            activeVariant.modPath,
-            texturePath,
-            'texture',
-            { operationId: createPreviewOperationId('mods_read_preview_texture') }
-          );
-          texture = await loadTextureAsset(textureAsset);
-        } catch {
-          nextWarnings.push(`Texture not found or could not be decoded: ${texturePath}`);
-        }
-        textureCache.set(texturePath, texture);
-        return texture;
-      };
-
-      const renderedMeshes: THREE.Mesh[] = [];
-      for (const mesh of parsed.meshes) {
-        const texturePath = selectNifPreviewTexturePath(mesh, parsed, modelRelativePath);
-        if (!texturePath && parsed.texturePaths.length > 1) {
-          nextWarnings.push(`Texture could not be matched confidently for ${mesh.name}.`);
-        }
-
-        const texture = texturePath ? await textureForPath(texturePath) : null;
-        const material = new THREE.MeshStandardMaterial({
-          color: texture ? 0xffffff : 0xaeb9c7,
-          map: texture,
-          metalness: 0.04,
-          roughness: 0.74,
-          transparent: typeof mesh.alpha === 'number' && mesh.alpha < 1,
-          opacity: mesh.alpha ?? 1,
-          side: THREE.DoubleSide
-        });
-        const previewMesh = new THREE.Mesh(createNifPreviewGeometry(mesh), material);
-        previewMesh.name = mesh.name;
-        renderedMeshes.push(previewMesh);
-      }
-
-      if (cancelled) {
-        const disposedTextures = new Set<THREE.Texture>();
-        Array.from(new Set(textureCache.values())).forEach((texture) => {
-          if (texture) {
-            disposedTextures.add(texture);
-            texture.dispose();
-          }
-        });
-        renderedMeshes.forEach((mesh) => {
-          mesh.geometry.dispose();
-          disposeMaterial(mesh.material, disposedTextures);
-        });
+    void window.fluxora.mods.startNifPreview(
+      projectDirectory,
+      activeProfileName,
+      initialModPath,
+      initialRelativePath,
+      { operationId }
+    ).then(async (result) => {
+      ownedSessionId = result.sessionId;
+      if (cancelled || generation !== generationRef.current) {
+        await window.fluxora.mods.endNifPreview(result.sessionId);
         return;
       }
-
-      clearGroup(group);
-      renderedMeshes.forEach((mesh) => group.add(mesh));
-
-      fitCameraToGroup(camera, controlsRef.current, group);
-      setWarnings(Array.from(new Set(nextWarnings)));
-      setRenderState('ready');
-    };
-
-    void applyModel().catch((error) => {
-      if (cancelled) {
-        return;
+      sessionIdRef.current = result.sessionId;
+      setVariants(result.variants);
+      setActiveIndex(result.activeIndex);
+      await renderPreparedModel(
+        result.sessionId,
+        result.modelHandle,
+        result.variants[result.activeIndex]?.relativePath ?? initialRelativePath,
+        generation
+      );
+    }).catch((error) => {
+      if (!cancelled && generation === generationRef.current) {
+        setRenderState('error');
+        setMessage(error instanceof Error ? error.message : 'Preview could not be started.');
       }
-      setRenderState('error');
-      setMessage(error instanceof Error ? error.message : 'Model could not be rendered.');
     });
 
     return () => {
       cancelled = true;
+      nextNifPreviewGeneration(generationRef);
+      if (ownedSessionId) {
+        void window.fluxora.mods.endNifPreview(ownedSessionId);
+      }
+      if (sessionIdRef.current === ownedSessionId) {
+        sessionIdRef.current = null;
+      }
     };
-  }, [activeProfileName, activeVariant, modelAsset, project]);
+  }, [
+    activeProfileName,
+    initialModPath,
+    initialRelativePath,
+    projectDirectory,
+    renderPreparedModel
+  ]);
 
-  const goPrevious = () => {
-    setActiveIndex((current) => Math.max(0, current - 1));
-  };
+  const switchVariant = useCallback((nextIndex: number) => {
+    const sessionId = sessionIdRef.current;
+    const variant = variants[nextIndex];
+    if (!sessionId || !variant || nextIndex === activeIndex) {
+      return;
+    }
 
-  const goNext = () => {
-    setActiveIndex((current) => Math.min(variants.length - 1, current + 1));
-  };
+    const generation = nextNifPreviewGeneration(generationRef);
+    setActiveIndex(nextIndex);
+    setRenderState('loading');
+    setMessage(null);
+    void window.fluxora.mods.prepareNifPreviewVariant(sessionId, variant.variantId)
+      .then((handle) => renderPreparedModel(
+        sessionId,
+        handle,
+        variant.relativePath || initialRelativePath,
+        generation
+      ))
+      .catch((error) => {
+        if (generation === generationRef.current) {
+          setRenderState('error');
+          setMessage(error instanceof Error ? error.message : 'Preview variant could not be prepared.');
+        }
+      });
+  }, [activeIndex, initialRelativePath, renderPreparedModel, variants]);
 
   return (
     <section className="file-preview-window" aria-label={descriptor.title}>
@@ -502,7 +606,7 @@ export const FilePreviewWorkspace = ({
             aria-label="Previous mod variant"
             className="icon-button"
             disabled={!canGoPrevious}
-            onClick={goPrevious}
+            onClick={() => switchVariant(Math.max(0, activeIndex - 1))}
             title="Previous mod variant"
             type="button"
           >
@@ -513,7 +617,7 @@ export const FilePreviewWorkspace = ({
             aria-label="Next mod variant"
             className="icon-button"
             disabled={!canGoNext}
-            onClick={goNext}
+            onClick={() => switchVariant(Math.min(variants.length - 1, activeIndex + 1))}
             title="Next mod variant"
             type="button"
           >
@@ -523,9 +627,6 @@ export const FilePreviewWorkspace = ({
       </header>
 
       <div className="file-preview-canvas-host" data-state={renderState} ref={canvasHostRef}>
-        {loadState === 'loading' || renderState === 'loading' ? (
-          <span className="file-preview-status">Loading preview</span>
-        ) : null}
         {message ? <span className="file-preview-status file-preview-status--error">{message}</span> : null}
       </div>
 
@@ -537,9 +638,7 @@ export const FilePreviewWorkspace = ({
 
       {warnings.length ? (
         <ul className="file-preview-warnings" aria-label="Preview warnings">
-          {warnings.slice(0, 4).map((warning) => (
-            <li key={warning}>{warning}</li>
-          ))}
+          {warnings.slice(0, 4).map((warning) => <li key={warning}>{warning}</li>)}
         </ul>
       ) : null}
     </section>

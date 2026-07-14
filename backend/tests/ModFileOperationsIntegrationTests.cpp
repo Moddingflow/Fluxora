@@ -6,6 +6,7 @@
 #include "FluxoraCore/Services/ProfileService.hpp"
 #include "FluxoraCore/Services/ProfileOrderService.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
+#include "../src/Services/PreviewArchiveReader.hpp"
 #include "TestFilesystem.hpp"
 
 #include <zlib.h>
@@ -1033,6 +1034,223 @@ namespace fluxora::tests
         EXPECT_EQ(variants.front().modName, L"Only Mesh");
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, NifPreviewStartsWithActiveVariantAndFileBackedModelHandle)
+    {
+        const InstalledModEntry first = mods_.createEmptyMod(project_, L"Armor A");
+        const InstalledModEntry active = mods_.createEmptyMod(project_, L"Armor B");
+        const std::wstring relativePath = L"meshes/armor/cuirass.nif";
+        writeTextFile(first.id / relativePath, "first-nif");
+        writeTextFile(active.id / relativePath, "active-nif");
+
+        const NifPreviewStartResult preview =
+            mods_.startNifPreview(project_, L"Default", active.id, relativePath);
+
+        ASSERT_EQ(preview.variants.size(), 2U);
+        EXPECT_EQ(preview.activeIndex, 1);
+        EXPECT_EQ(preview.model.kind, L"nif");
+        EXPECT_EQ(preview.model.relativePath, relativePath);
+        EXPECT_EQ(preview.model.source, L"Armor B");
+        EXPECT_EQ(preview.model.size, 10U);
+        EXPECT_EQ(preview.model.resolvedPath, active.id / relativePath);
+        EXPECT_FALSE(preview.model.contentKey.empty());
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, NifPreviewTextureBatchDeduplicatesAndKeepsMissingAssets)
+    {
+        const InstalledModEntry selected = mods_.createEmptyMod(project_, L"Selected Model");
+        const InstalledModEntry high = mods_.createEmptyMod(project_, L"Final Texture");
+        const InstalledModEntry disabled = mods_.createEmptyMod(project_, L"Disabled Texture");
+        const std::wstring texturePath = L"textures/armor/cuirass.dds";
+        const std::vector<ProfileModOrderItem> initialOrder =
+            profileOrder_.listModOrder(project_, L"Default");
+        const ProfileModOrderItem* selectedOrder = findModOrderItem(initialOrder, L"Selected Model");
+        const ProfileModOrderItem* highOrder = findModOrderItem(initialOrder, L"Final Texture");
+        const ProfileModOrderItem* disabledOrder = findModOrderItem(initialOrder, L"Disabled Texture");
+        ASSERT_NE(selectedOrder, nullptr);
+        ASSERT_NE(highOrder, nullptr);
+        ASSERT_NE(disabledOrder, nullptr);
+        (void)profileOrder_.moveModOrderItem(project_, L"Default", selectedOrder->orderId, 0);
+        (void)profileOrder_.moveModOrderItem(project_, L"Default", highOrder->orderId, 1);
+        (void)profileOrder_.moveModOrderItem(project_, L"Default", disabledOrder->orderId, 2);
+        writeTextFile(selected.id / L"meshes/armor/cuirass.nif", "selected-nif");
+        writeTextFile(selected.id / texturePath, "selected-texture");
+        writeTextFile(high.id / texturePath, "high-texture");
+        writeTextFile(disabled.id / texturePath, "disabled-texture");
+        mods_.setInstalledModEnabled(project_, disabled.id, false);
+
+        const NifPreviewTextureBatchResult batch = mods_.prepareNifPreviewTextures(
+            project_,
+            L"Default",
+            selected.id,
+            {
+                texturePath,
+                L"TEXTURES\\ARMOR\\CUIRASS.DDS",
+                L"textures/armor/missing.dds"
+            });
+
+        ASSERT_EQ(batch.assets.size(), 1U);
+        EXPECT_EQ(batch.assets.front().relativePath, texturePath);
+        EXPECT_EQ(batch.assets.front().source, L"Final Texture");
+        EXPECT_EQ(batch.assets.front().resolvedPath, high.id / texturePath);
+        EXPECT_EQ(batch.assets.front().size, 12U);
+        ASSERT_EQ(batch.missing.size(), 1U);
+        EXPECT_EQ(batch.missing.front(), L"textures/armor/missing.dds");
+        EXPECT_EQ(batch.totalBytes, 12U);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, NifPreviewTextureBatchUsesOverwriteThenEnabledModsThenGameData)
+    {
+        const InstalledModEntry selected = mods_.createEmptyMod(project_, L"Selected Model");
+        const InstalledModEntry high = mods_.createEmptyMod(project_, L"Final Texture");
+        const std::wstring texturePath = L"textures/armor/cuirass.dds";
+        const std::filesystem::path gameData = project_ / L"stock game" / L"Data";
+        writeTextFile(project_ / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(gameData / L"Skyrim.esm", "master");
+        writeTextFile(
+            project_ / L".fluxora" / L"paths.json",
+            "{"
+            "\"gameDirectory\":\"stock game\","
+            "\"modsDirectory\":\"mods\","
+            "\"profilesDirectory\":\"profiles\","
+            "\"downloadsDirectory\":\"downloads\","
+            "\"overwriteDirectory\":\"overwrite\""
+            "}");
+        writeTextFile(selected.id / L"meshes/armor/cuirass.nif", "selected-model");
+        writeTextFile(high.id / texturePath, "mod-texture");
+        writeTextFile(gameData / texturePath, "game-texture");
+
+        NifPreviewTextureBatchResult batch = mods_.prepareNifPreviewTextures(
+            project_, L"Default", selected.id, {texturePath});
+        ASSERT_EQ(batch.assets.size(), 1U);
+        EXPECT_EQ(batch.assets.front().source, L"Final Texture");
+        EXPECT_EQ(readTextFile(batch.assets.front().resolvedPath), "mod-texture");
+
+        writeTextFile(overwriteDirectory() / texturePath, "overwrite-texture");
+        batch = mods_.prepareNifPreviewTextures(project_, L"Default", selected.id, {texturePath});
+        ASSERT_EQ(batch.assets.size(), 1U);
+        EXPECT_EQ(batch.assets.front().source, L"Overwrite");
+        EXPECT_EQ(readTextFile(batch.assets.front().resolvedPath), "overwrite-texture");
+
+        std::error_code removeError;
+        std::filesystem::remove(overwriteDirectory() / texturePath, removeError);
+        ASSERT_FALSE(removeError);
+        mods_.setInstalledModEnabled(project_, high.id, false);
+        batch = mods_.prepareNifPreviewTextures(project_, L"Default", selected.id, {texturePath});
+        ASSERT_EQ(batch.assets.size(), 1U);
+        EXPECT_EQ(batch.assets.front().source, L"Game Data");
+        EXPECT_EQ(readTextFile(batch.assets.front().resolvedPath), "game-texture");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, NifPreviewPreparesTenTexturesInOneOrderedBatch)
+    {
+        const InstalledModEntry selected = mods_.createEmptyMod(project_, L"Ten Texture Model");
+        std::vector<std::wstring> texturePaths;
+        for (int index = 0; index < 10; ++index)
+        {
+            const std::wstring path = L"textures/armor/part" + std::to_wstring(index) + L".dds";
+            texturePaths.push_back(path);
+            writeTextFile(selected.id / path, "texture-" + std::to_string(index));
+        }
+
+        const NifPreviewTextureBatchResult batch = mods_.prepareNifPreviewTextures(
+            project_, L"Default", selected.id, texturePaths);
+
+        ASSERT_EQ(batch.assets.size(), 10U);
+        EXPECT_TRUE(batch.missing.empty());
+        for (std::size_t index = 0; index < texturePaths.size(); ++index)
+        {
+            EXPECT_EQ(batch.assets[index].relativePath, texturePaths[index]);
+            EXPECT_EQ(batch.assets[index].source, L"Ten Texture Model");
+        }
+
+        texturePaths.resize(65, L"textures/armor/overflow.dds");
+        EXPECT_THROW(
+            (void)mods_.prepareNifPreviewTextures(project_, L"Default", selected.id, texturePaths),
+            std::invalid_argument);
+        EXPECT_THROW(
+            (void)mods_.prepareNifPreviewTextures(
+                project_, L"Default", selected.id, {L"../textures/armor/part0.dds"}),
+            std::invalid_argument);
+        EXPECT_THROW(
+            (void)mods_.prepareNifPreviewTextures(
+                project_, L"Default", selected.id, {L"textures/armor/part0.bmp"}),
+            std::invalid_argument);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, NifPreviewArchiveIndexAndAssetCacheReuseAndInvalidateByFingerprint)
+    {
+        const InstalledModEntry selected = mods_.createEmptyMod(project_, L"Archive Model");
+        const std::wstring modelPath = L"meshes/armor/cuirass.nif";
+        const std::wstring texturePath = L"textures/armor/cuirass.dds";
+        const std::filesystem::path gameData = project_ / L"stock game" / L"Data";
+        const std::filesystem::path archive = gameData / L"Textures.bsa";
+        writeTextFile(project_ / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(project_ / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(
+            project_ / L".fluxora" / L"paths.json",
+            "{"
+            "\"gameDirectory\":\"stock game\","
+            "\"modsDirectory\":\"mods\","
+            "\"profilesDirectory\":\"profiles\","
+            "\"downloadsDirectory\":\"downloads\","
+            "\"overwriteDirectory\":\"overwrite\""
+            "}");
+        writeTextFile(selected.id / modelPath, "selected-model");
+        writePreviewBsaArchive(archive, texturePath, bytesFromString("archive-v1"));
+
+        const NifPreviewTextureBatchResult cold = mods_.prepareNifPreviewTextures(
+            project_, L"Default", selected.id, {texturePath});
+        ASSERT_EQ(cold.assets.size(), 1U);
+        EXPECT_EQ(cold.archiveIndexMisses, 1U);
+        EXPECT_EQ(cold.archiveAssetCacheMisses, 1U);
+        EXPECT_EQ(readTextFile(cold.assets.front().resolvedPath), "archive-v1");
+
+        const NifPreviewTextureBatchResult warm = mods_.prepareNifPreviewTextures(
+            project_, L"Default", selected.id, {texturePath});
+        ASSERT_EQ(warm.assets.size(), 1U);
+        EXPECT_EQ(warm.archiveIndexHits, 1U);
+        EXPECT_EQ(warm.archiveAssetCacheHits, 1U);
+        EXPECT_EQ(warm.assets.front().resolvedPath, cold.assets.front().resolvedPath);
+
+        writePreviewBsaArchive(archive, texturePath, bytesFromString("archive-version-two"));
+        const NifPreviewTextureBatchResult changed = mods_.prepareNifPreviewTextures(
+            project_, L"Default", selected.id, {texturePath});
+        ASSERT_EQ(changed.assets.size(), 1U);
+        EXPECT_EQ(changed.archiveIndexMisses, 1U);
+        EXPECT_EQ(changed.archiveAssetCacheMisses, 1U);
+        EXPECT_NE(changed.assets.front().resolvedPath, cold.assets.front().resolvedPath);
+        EXPECT_EQ(readTextFile(changed.assets.front().resolvedPath), "archive-version-two");
+
+        const std::filesystem::path cacheDirectory =
+            project_ / L".fluxora" / L"cache" / L"nif-preview" / L"v1";
+        ASSERT_TRUE(std::filesystem::is_directory(cacheDirectory));
+        for (const auto& entry : std::filesystem::directory_iterator(cacheDirectory))
+        {
+            EXPECT_NE(entry.path().extension(), L".tmp");
+        }
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, NifPreviewArchiveCacheEvictsLeastRecentlyUsedFiles)
+    {
+        const std::filesystem::path cacheDirectory =
+            project_ / L".fluxora" / L"cache" / L"nif-preview" / L"v1";
+        const std::filesystem::path oldAsset = cacheDirectory / L"old.dds";
+        const std::filesystem::path recentAsset = cacheDirectory / L"recent.dds";
+        writeTextFile(oldAsset, "123456");
+        writeTextFile(recentAsset, "abcdef");
+        std::filesystem::last_write_time(
+            oldAsset,
+            std::filesystem::file_time_type::clock::now() - std::chrono::hours(2));
+        std::filesystem::last_write_time(
+            recentAsset,
+            std::filesystem::file_time_type::clock::now() - std::chrono::hours(1));
+
+        enforcePreviewArchiveCacheLimit(cacheDirectory, 6);
+
+        EXPECT_FALSE(std::filesystem::exists(oldAsset));
+        EXPECT_TRUE(std::filesystem::exists(recentAsset));
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, ModPreviewAssetRejectsTraversalAndUnsupportedExtensions)
     {
         const InstalledModEntry created = mods_.createEmptyMod(project_, L"Preview Safety");
@@ -1226,7 +1444,7 @@ namespace fluxora::tests
         EXPECT_EQ(bytesToString(winner.bytes), "DDS prefixed-bsa-texture");
     }
 
-    TEST_F(ModFileOperationsIntegrationTests, ModPreviewTextureResolutionReadsGameDataBa2Archives)
+    TEST_F(ModFileOperationsIntegrationTests, NifPreviewTextureBatchReadsGameDataBa2Archives)
     {
         const std::wstring texturePath =
             L"textures/creationclub/bgssse025/critters/FXButterflyGreen.dds";
@@ -1252,13 +1470,17 @@ namespace fluxora::tests
             texturePath,
             texturePayload);
 
-        const ModPreviewAsset winner =
-            mods_.readPreviewAsset(project_, L"Default", selected.id, texturePath, L"texture");
+        const NifPreviewTextureBatchResult batch = mods_.prepareNifPreviewTextures(
+            project_, L"Default", selected.id, {texturePath});
 
-        ASSERT_GE(winner.bytes.size(), 128U + texturePayload.size());
-        EXPECT_EQ(winner.sourceModName, L"Game Data Archive: CreationClubTextures.ba2");
-        EXPECT_EQ(std::string(winner.bytes.begin(), winner.bytes.begin() + 4), "DDS ");
-        EXPECT_TRUE(std::equal(texturePayload.begin(), texturePayload.end(), winner.bytes.end() - texturePayload.size()));
+        ASSERT_EQ(batch.assets.size(), 1U);
+        EXPECT_EQ(batch.assets.front().source, L"Game Data Archive: CreationClubTextures.ba2");
+        const std::string bytes = readTextFile(batch.assets.front().resolvedPath);
+        ASSERT_GE(bytes.size(), 128U + texturePayload.size());
+        EXPECT_EQ(bytes.substr(0, 4), "DDS ");
+        EXPECT_TRUE(std::equal(texturePayload.begin(), texturePayload.end(), bytes.end() - texturePayload.size()));
+        EXPECT_EQ(batch.archiveIndexMisses, 1U);
+        EXPECT_EQ(batch.archiveAssetCacheMisses, 1U);
     }
 
     TEST_F(ModFileOperationsIntegrationTests, ClearOverwriteFolderDeletesGeneratedFilesAndKeepsFolder)
