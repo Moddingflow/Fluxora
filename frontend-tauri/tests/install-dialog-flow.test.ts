@@ -33,7 +33,7 @@ describe('install dialog flow', () => {
     expect(installDownload).not.toContain("phase: 'installing'");
   });
 
-  it('keeps the MO2-style install actions visible in the dialog chrome', () => {
+  it('keeps the MO2-style install actions visible after a dedicated analysis state', () => {
     const dialog = readText(
       'frontend-tauri',
       'src',
@@ -49,8 +49,8 @@ describe('install dialog flow', () => {
     expect(dialog).toContain('Подробнее');
     expect(dialog).toContain('Установить');
     expect(dialog).toContain("onPatch({ phase: 'details' })");
-    expect(dialog).not.toContain('Analyzing archive');
-    expect(dialog).not.toContain("| 'analyzing'");
+    expect(dialog).toContain('Analyzing installer');
+    expect(dialog).toContain("| 'analyzing'");
   });
 
   it('keeps the simple install step focused on actionable controls only', () => {
@@ -83,7 +83,7 @@ describe('install dialog flow', () => {
     expect(dialog).not.toContain('installCategoryLabel');
   });
 
-  it('opens install options immediately and moves archive analysis into the background', () => {
+  it('shows neutral analysis progress until the archive installer kind is known', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const startInstallFlow = sliceBetween(
       app,
@@ -91,14 +91,17 @@ describe('install dialog flow', () => {
       '  const loadDownloadsWorkspace = async'
     );
 
-    expect(startInstallFlow).toContain("phase: 'options'");
+    expect(startInstallFlow).toContain("phase: 'analyzing'");
     expect(startInstallFlow).toContain(
       'defaultInstallModName(source.displayName, source.sourcePath)'
     );
     expect(startInstallFlow).toContain('const analysisPromise = (async (): Promise<InstallAnalysisResult>');
     expect(startInstallFlow).toContain('watchInstallAnalysis(operationId, analysisPromise)');
-    expect(startInstallFlow).not.toContain("phase: 'analyzing'");
-    expect(startInstallFlow).not.toContain('Analyzing archive');
+    expect(startInstallFlow).toContain('void refreshInstalledModNamesForInstall(project, operationId)');
+    expect(startInstallFlow).not.toContain('await refreshInstalledModNamesForInstall(project, operationId)');
+    expect(startInstallFlow.indexOf('await window.fluxora.downloads.analyzeFomod')).toBeLessThan(
+      startInstallFlow.indexOf('void refreshInstalledModNamesForInstall(project, operationId)')
+    );
   });
 
   it('keeps Details usable before the background placement preview resolves', () => {

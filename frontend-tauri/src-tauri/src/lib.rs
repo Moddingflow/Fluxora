@@ -3535,6 +3535,9 @@ fn bridge_lane_for_method(method: &str) -> BridgeLane {
         | "mods.startNifPreview"
         | "mods.prepareNifPreviewVariant"
         | "mods.prepareNifPreviewTextures"
+        | "downloads.analyzeFomod"
+        | "downloads.analyzeContentLayout"
+        | "downloads.analyzeFomodContentLayout"
         | "nexus.connect"
         | "textFiles.read" => BridgeLane::Interactive,
         _ => BridgeLane::Main,
@@ -6750,6 +6753,17 @@ mod tests {
             bridge_lane_for_method("nexus.connect"),
             BridgeLane::Interactive
         );
+    }
+
+    #[test]
+    fn install_analysis_uses_the_interactive_bridge_lane() {
+        for method in [
+            "downloads.analyzeFomod",
+            "downloads.analyzeContentLayout",
+            "downloads.analyzeFomodContentLayout",
+        ] {
+            assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);
+        }
     }
 
     #[test]

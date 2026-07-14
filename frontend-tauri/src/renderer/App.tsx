@@ -5113,7 +5113,7 @@ export const App = () => {
     setDownloadMenuId(null);
     setMessage(null);
     setInstallDialog({
-      phase: 'options',
+      phase: 'analyzing',
       source,
       operationId,
       isFomod: false,
@@ -5132,7 +5132,6 @@ export const App = () => {
     });
 
     const analysisPromise = (async (): Promise<InstallAnalysisResult> => {
-      await refreshInstalledModNamesForInstall(project, operationId);
       const fomodInstaller = await window.fluxora.downloads.analyzeFomod(
         project.projectDirectory,
         source.sourcePath,
@@ -5140,6 +5139,7 @@ export const App = () => {
       );
 
       if (fomodInstaller.isFomod) {
+        void refreshInstalledModNamesForInstall(project, operationId);
         return {
           kind: 'fomod',
           fallbackName,
@@ -5148,6 +5148,7 @@ export const App = () => {
       }
 
       const layoutPreview = await analyzeInstallLayout(source, operationId, [], project);
+      void refreshInstalledModNamesForInstall(project, operationId);
       return {
         kind: 'layout',
         fallbackName,

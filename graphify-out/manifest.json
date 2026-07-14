@@ -1070,8 +1070,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/lib.rs": {
-    "mtime": 1784025092.9619105,
-    "ast_hash": "0524323ba60ef8bbbc7acdc63691b7a5",
+    "mtime": 1784027370.0344326,
+    "ast_hash": "46dedfbe571febffa9e5788447393c23",
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/main.rs": {
@@ -1085,8 +1085,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
-    "mtime": 1784022187.275,
-    "ast_hash": "a9cbd020a18f5be981cffe6661eb6119",
+    "mtime": 1784027037.8912559,
+    "ast_hash": "cc177ea15a309c587bf215bc698c9f63",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferMo2Page.tsx": {
@@ -1190,7 +1190,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/.last-run.json": {
-    "mtime": 1784025682.2045019,
+    "mtime": 1784027271.0726798,
     "ast_hash": "f196824657d8858bc7fa44eecbba38b1",
     "semantic_hash": ""
   },
@@ -1640,8 +1640,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/library-home.spec.ts": {
-    "mtime": 1784024853.0866923,
-    "ast_hash": "050a84634850ded5de164d387154d47d",
+    "mtime": 1784027255.8585756,
+    "ast_hash": "d7b1ae6476bb68a5051f4fd8e7035480",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/LibraryHome.tsx": {
@@ -1680,8 +1680,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/install/InstallDialog.tsx": {
-    "mtime": 1784025599.6670651,
-    "ast_hash": "4f8a7fa468b1e98530623a7522e56d31",
+    "mtime": 1784027037.8882568,
+    "ast_hash": "cabeaddb66363ca2e83663df25d37203",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/projectLibraryStats.ts": {
@@ -4335,8 +4335,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/install-dialog-flow.test.ts": {
-    "mtime": 1783847666.6783526,
-    "ast_hash": "3f450dace253429d5f77bfb829517212",
+    "mtime": 1784027464.1759682,
+    "ast_hash": "481c98733554fb3d4e5d0b0a9c0574d2",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/download-drop-ui.test.ts": {
@@ -5052,11 +5052,6 @@
   "frontend-tauri/tests/fomod-preview-url.test.ts": {
     "mtime": 1784025118.5035994,
     "ast_hash": "f8c69285f80d72e0e6b6363fffbcb575",
-    "semantic_hash": ""
-  },
-  "frontend-tauri/test-results/library-home-text-editor-p-161a9-ch-and-protects-dirty-files/text-editor-workbench.png": {
-    "mtime": 1784026128.3240118,
-    "ast_hash": "dfbbe961f744b729c9892c342f04dc49",
     "semantic_hash": ""
   }
 }

@@ -775,7 +775,14 @@ test.beforeEach(async ({ page }) => {
           return installPreview;
         },
         analyzeFomod: async (projectDirectory: any, sourcePath: any, operation: any) => {
-          calls.push({ method: 'downloads.analyzeFomod', payload: { operation, projectDirectory, sourcePath } });
+          const delayMs = Number(window.localStorage.getItem('fluxora.test.fomodAnalyzeDelayMs') ?? '0');
+          calls.push({
+            method: 'downloads.analyzeFomod',
+            payload: { delayMs, operation, projectDirectory, sourcePath }
+          });
+          if (delayMs > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+          }
           return String(sourcePath).includes('NaturalVisionFomod')
             ? fomodInstaller
             : { ...fomodInstaller, isFomod: false, steps: [] };
@@ -1415,11 +1422,18 @@ test.beforeEach(async ({ page }) => {
           invalidated: changedPaths.length > 0,
           changedPathCount: changedPaths.length
         }),
-        listInstalled: async (projectDirectory: any) =>
-          String(projectDirectory).includes('Playwright build') ||
-          String(projectDirectory).includes('Fallout test lab')
+        listInstalled: async (projectDirectory: any, operation: any) => {
+          const delayMs = String(operation?.operationId ?? '').includes('install_flow')
+            ? Number(window.localStorage.getItem('fluxora.test.installListDelayMs') ?? '0')
+            : 0;
+          if (delayMs > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+          }
+          return String(projectDirectory).includes('Playwright build') ||
+            String(projectDirectory).includes('Fallout test lab')
             ? []
-            : modRows.filter((item) => item.isMod),
+            : modRows.filter((item) => item.isMod);
+        },
         moveOrderItem: async (projectDirectory: any, profileName: any, orderId: any, targetIndex: any, operation: any) => {
           calls.push({
             method: 'mods.moveOrderItem',
@@ -4361,11 +4375,22 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
   );
   expect(downloadInstallCall?.payload?.request?.existingModMode).toBe(2);
 
+  await page.evaluate(() => {
+    window.localStorage.setItem('fluxora.test.fomodAnalyzeDelayMs', '1200');
+    window.localStorage.setItem('fluxora.test.installListDelayMs', '4000');
+  });
+  const analyzingDialog = page.locator('.install-dialog[data-phase="analyzing"]');
+  const analyzingDialogVisible = analyzingDialog.waitFor({ state: 'visible' });
   await rightPane.getByRole('button', { name: 'Archive' }).click();
+  await analyzingDialogVisible;
+  await expect(analyzingDialog.getByRole('status')).toContainText('Analyzing installer');
+  await expect(analyzingDialog.getByLabel('Mod name')).toHaveCount(0);
+  await expect(analyzingDialog.getByRole('button', { name: 'Установить' })).toHaveCount(0);
+  await expect.poll(() => latestCallPayload(page, 'downloads.analyzeFomod')).toMatchObject({ delayMs: 1_200 });
   const fomodDialog = page.getByRole('dialog', { name: /Natural Vision Of Tamriel/ });
   await expect(fomodDialog.getByText('Natural Vision Of Tamriel').first()).toBeVisible();
   const stepSidebar = fomodDialog.locator('.install-step-sidebar');
-  await expect(stepSidebar).toBeVisible();
+  await expect(stepSidebar).toBeVisible({ timeout: 2_500 });
   await expect(fomodDialog.locator('.install-step-ribbon')).toHaveCount(0);
   await expect(fomodDialog.getByText('choose one', { exact: true })).toHaveCount(0);
   await expect(fomodDialog.getByText('Previously selected', { exact: true })).toBeVisible();

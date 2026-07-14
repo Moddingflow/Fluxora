@@ -7238,6 +7238,14 @@ body.row-reorder-active * {
   min-height: 100%;
 }
 
+.install-dialog[data-phase="analyzing"] {
+  min-height: 240px;
+}
+
+.install-dialog[data-phase="analyzing"] .install-progress {
+  min-height: 190px;
+}
+
 .install-dialog[data-phase="options"],
 .install-dialog[data-phase="conflict"] {
   min-height: auto;

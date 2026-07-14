@@ -34,6 +34,7 @@ import type {
 } from '../../../shared/fluxora-api';
 
 export type InstallDialogPhase =
+  | 'analyzing'
   | 'fomod'
   | 'options'
   | 'conflict'
@@ -573,6 +574,8 @@ export function InstallDialog({
   const dialogAriaLabel =
     installDialog.phase === 'installing'
       ? `Installing ${dialogTitle}`
+      : installDialog.phase === 'analyzing'
+        ? `Analyzing ${dialogTitle}`
       : `Install ${dialogTitle}`;
 
   return (
@@ -607,6 +610,13 @@ export function InstallDialog({
           </header>
 
           <div className="install-dialog-body">
+            {installDialog.phase === 'analyzing' ? (
+              <div className="install-progress" role="status">
+                <RefreshCw size={18} aria-hidden="true" />
+                <strong>Analyzing installer</strong>
+                <span>Detecting FOMOD metadata and archive layout</span>
+              </div>
+            ) : null}
             {installDialog.phase === 'installing' ? (
               <div className="install-progress" role="status">
                 <RefreshCw size={18} aria-hidden="true" />
