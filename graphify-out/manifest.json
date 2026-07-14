@@ -1070,8 +1070,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/lib.rs": {
-    "mtime": 1784027370.0344326,
-    "ast_hash": "46dedfbe571febffa9e5788447393c23",
+    "mtime": 1784028614.377127,
+    "ast_hash": "5c438d7a4683900bf8e4c5d371781f2f",
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/main.rs": {
@@ -1085,8 +1085,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
-    "mtime": 1784027037.8912559,
-    "ast_hash": "cc177ea15a309c587bf215bc698c9f63",
+    "mtime": 1784058845.9021366,
+    "ast_hash": "2dd184f8fe41f4977534f1202dc45241",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferMo2Page.tsx": {
@@ -1190,7 +1190,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/.last-run.json": {
-    "mtime": 1784027271.0726798,
+    "mtime": 1784058962.873464,
     "ast_hash": "f196824657d8858bc7fa44eecbba38b1",
     "semantic_hash": ""
   },
@@ -1640,8 +1640,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/library-home.spec.ts": {
-    "mtime": 1784027255.8585756,
-    "ast_hash": "d7b1ae6476bb68a5051f4fd8e7035480",
+    "mtime": 1784058954.598964,
+    "ast_hash": "3978de692560d16abeb4be3db8a34bdf",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/LibraryHome.tsx": {
@@ -1680,8 +1680,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/install/InstallDialog.tsx": {
-    "mtime": 1784027037.8882568,
-    "ast_hash": "cabeaddb66363ca2e83663df25d37203",
+    "mtime": 1784028614.375616,
+    "ast_hash": "cc90b5787dea622825c2f097f0e6304c",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/projectLibraryStats.ts": {
@@ -4335,8 +4335,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/install-dialog-flow.test.ts": {
-    "mtime": 1784027464.1759682,
-    "ast_hash": "481c98733554fb3d4e5d0b0a9c0574d2",
+    "mtime": 1784028495.0173614,
+    "ast_hash": "6ba5c17980740bbf7ca76e033148e6c9",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/download-drop-ui.test.ts": {

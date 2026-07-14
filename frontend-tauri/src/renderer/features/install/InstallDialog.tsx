@@ -330,7 +330,7 @@ export function InstallDialog({
               ) : (
                 <>
                   <CheckCircle2 size={16} aria-hidden="true" />
-                  Review install
+                  Установить
                 </>
               )}
             </button>

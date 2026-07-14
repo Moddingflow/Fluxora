@@ -3535,9 +3535,14 @@ fn bridge_lane_for_method(method: &str) -> BridgeLane {
         | "mods.startNifPreview"
         | "mods.prepareNifPreviewVariant"
         | "mods.prepareNifPreviewTextures"
+        | "mods.listInstalled"
         | "downloads.analyzeFomod"
         | "downloads.analyzeContentLayout"
         | "downloads.analyzeFomodContentLayout"
+        | "downloads.install"
+        | "downloads.installFomod"
+        | "archives.install"
+        | "archives.installFomod"
         | "nexus.connect"
         | "textFiles.read" => BridgeLane::Interactive,
         _ => BridgeLane::Main,
@@ -6756,11 +6761,16 @@ mod tests {
     }
 
     #[test]
-    fn install_analysis_uses_the_interactive_bridge_lane() {
+    fn install_preflight_and_mutations_use_the_interactive_bridge_lane() {
         for method in [
+            "mods.listInstalled",
             "downloads.analyzeFomod",
             "downloads.analyzeContentLayout",
             "downloads.analyzeFomodContentLayout",
+            "downloads.install",
+            "downloads.installFomod",
+            "archives.install",
+            "archives.installFomod",
         ] {
             assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);
         }

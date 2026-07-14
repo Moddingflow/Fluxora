@@ -4677,7 +4677,8 @@ input::placeholder {
 }
 
 .mod-list-row[data-reorder-disabled="true"],
-.plugin-row[data-reorder-disabled="true"] {
+.plugin-row[data-reorder-disabled="true"],
+.download-row[data-reorder-disabled="true"] {
   cursor: not-allowed;
 }
 
@@ -5246,7 +5247,7 @@ body.row-reorder-active * {
   grid-template-columns: minmax(250px, 1.45fr) minmax(260px, 1.22fr) minmax(84px, 0.38fr) minmax(128px, 0.62fr);
 }
 
-.download-row[draggable="true"] {
+.download-row[data-reorder-disabled="false"] {
   cursor: grab;
 }
 

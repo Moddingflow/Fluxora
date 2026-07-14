@@ -1426,13 +1426,25 @@ test.beforeEach(async ({ page }) => {
           const delayMs = String(operation?.operationId ?? '').includes('install_flow')
             ? Number(window.localStorage.getItem('fluxora.test.installListDelayMs') ?? '0')
             : 0;
+          calls.push({ method: 'mods.listInstalled', payload: { delayMs, operation, projectDirectory } });
           if (delayMs > 0) {
             await new Promise((resolve) => window.setTimeout(resolve, delayMs));
           }
-          return String(projectDirectory).includes('Playwright build') ||
+          const rows = String(projectDirectory).includes('Playwright build') ||
             String(projectDirectory).includes('Fallout test lab')
             ? []
             : modRows.filter((item) => item.isMod);
+          return window.localStorage.getItem('fluxora.test.fomodExistingMod') === 'true'
+            ? [
+                ...rows,
+                {
+                  ...modRows.find((item) => item.isMod),
+                  id: 'natural-vision-existing',
+                  name: 'Natural Vision Of Tamriel',
+                  path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Natural Vision Of Tamriel'
+                }
+              ]
+            : rows;
         },
         moveOrderItem: async (projectDirectory: any, profileName: any, orderId: any, targetIndex: any, operation: any) => {
           calls.push({
@@ -1974,7 +1986,8 @@ const moveRowDragToSlot = async (
   page: Page,
   source: Locator,
   target: Locator,
-  placement: 'before' | 'after'
+  placement: 'before' | 'after',
+  dropChipText = 'Сюда'
 ) => {
   const sourceBox = await source.boundingBox();
   const targetBox = await target.boundingBox();
@@ -1995,7 +2008,7 @@ const moveRowDragToSlot = async (
   await page.mouse.move(targetX, targetY, { steps: 8 });
   await expect(target).toHaveAttribute('data-drop-target', 'true');
   await expect(target).toHaveAttribute('data-drop-placement', placement);
-  await expect(target.locator('.row-drop-target-chip')).toHaveText('Сюда');
+  await expect(target.locator('.row-drop-target-chip')).toHaveText(dropChipText);
 };
 
 const dragRowToSlot = async (
@@ -2005,6 +2018,21 @@ const dragRowToSlot = async (
   placement: 'before' | 'after'
 ) => {
   await moveRowDragToSlot(page, source, target, placement);
+  await page.mouse.up();
+};
+
+const dragDownloadToModSlot = async (
+  page: Page,
+  source: Locator,
+  target: Locator,
+  placement: 'before' | 'after'
+) => {
+  await page.evaluate(() => {
+    document.addEventListener('dragstart', (event) => event.preventDefault(), { capture: true });
+  });
+  await moveRowDragToSlot(page, source, target, placement, 'Установить сюда');
+  await expect(source).toHaveAttribute('data-dragging', 'true');
+  await expect(target).toHaveAttribute('data-install-drop-target', 'true');
   await page.mouse.up();
 };
 
@@ -3896,26 +3924,7 @@ test('installs a dragged download immediately at the chosen mod position', async
 
   const source = rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ });
   const target = page.getByRole('row', { name: /SkyUI mod/ });
-  const targetBox = await target.boundingBox();
-  expect(targetBox).not.toBeNull();
-
-  const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
-  await source.dispatchEvent('dragstart', { dataTransfer });
-  await expect(source).toHaveAttribute('data-dragging', 'true');
-  await target.dispatchEvent('dragover', {
-    clientX: targetBox!.x + targetBox!.width / 2,
-    clientY: targetBox!.y + 2,
-    dataTransfer
-  });
-  await expect(target).toHaveAttribute('data-install-drop-target', 'true');
-  await expect(target).toHaveAttribute('data-drop-placement', 'before');
-  await target.dispatchEvent('drop', {
-    clientX: targetBox!.x + targetBox!.width / 2,
-    clientY: targetBox!.y + 2,
-    dataTransfer
-  });
-  await source.dispatchEvent('dragend', { dataTransfer });
-  await dataTransfer.dispose();
+  await dragDownloadToModSlot(page, source, target, 'before');
 
   const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
   await expect(installDialog).toBeVisible();
@@ -3955,6 +3964,38 @@ test('installs a dragged download immediately at the chosen mod position', async
       })
     )
     .toEqual({ installedIndex: 2, targetIndex: 3 });
+});
+
+test('installs a dragged download as the first mod inside a separator', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+
+  const source = rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ });
+  const separator = page.getByRole('row', { name: /Core fixes separator/ });
+  await dragDownloadToModSlot(page, source, separator, 'after');
+
+  const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
+  await expect(installDialog).toBeVisible();
+  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+
+  const installedRow = page.getByRole('row', { name: /Aetherius - A Race Overhaul mod/ });
+  await expect(installedRow).toBeVisible();
+  await expect(installedRow).toHaveAttribute('data-in-separator', 'true');
+  await expect
+    .poll(() => latestCallPayload(page, 'mods.moveOrderItem'))
+    .toMatchObject({
+      orderId: 'mod_aetherius_a_race_overhaul',
+      targetIndex: 1
+    });
+  await expect
+    .poll(() =>
+      page.locator('.mod-list-row[data-order-id]').evaluateAll((rows) =>
+        rows.slice(0, 3).map((row) => row.getAttribute('data-order-id'))
+      )
+    )
+    .toEqual(['sep_core', 'mod_aetherius_a_race_overhaul', 'mod_ussep']);
 });
 
 test('keeps downloads rows visible during delayed refresh', async ({ page }) => {
@@ -4375,9 +4416,14 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
   );
   expect(downloadInstallCall?.payload?.request?.existingModMode).toBe(2);
 
+  const listCallsBeforeFomod = await page.evaluate(() =>
+    (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+      ?.filter((call) => call.method === 'mods.listInstalled').length ?? 0
+  );
   await page.evaluate(() => {
     window.localStorage.setItem('fluxora.test.fomodAnalyzeDelayMs', '1200');
-    window.localStorage.setItem('fluxora.test.installListDelayMs', '4000');
+    window.localStorage.setItem('fluxora.test.installListDelayMs', '500');
+    window.localStorage.setItem('fluxora.test.fomodExistingMod', 'true');
   });
   const analyzingDialog = page.locator('.install-dialog[data-phase="analyzing"]');
   const analyzingDialogVisible = analyzingDialog.waitFor({ state: 'visible' });
@@ -4419,17 +4465,24 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
   await fomodDialog.getByRole('button', { name: 'Preset', exact: true }).click();
   await expect(fullRadio).toBeChecked();
   await fomodDialog.getByRole('button', { name: 'Patches', exact: true }).click();
-  await fomodDialog.getByRole('button', { name: 'Review install' }).click();
-  await expect(
-    page
-      .getByRole('dialog', { name: /Natural Vision Of Tamriel/ })
-      .getByText('Natural Vision Of Tamriel', { exact: true })
-      .first()
-  ).toBeVisible();
-  await page
-    .getByRole('dialog', { name: /Natural Vision Of Tamriel/ })
-    .getByRole('button', { name: 'Установить', exact: true })
-    .click();
+  await fomodDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await expect(fomodDialog.getByLabel(/Mod name/)).toHaveCount(0);
+  await expect(fomodDialog.getByText('Уже есть мод с таким же названием')).toBeVisible({
+    timeout: 2_500
+  });
+  expect(
+    await page.evaluate(() =>
+      (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+        ?.filter((call) => call.method === 'mods.listInstalled').length ?? 0
+    )
+  ).toBe(listCallsBeforeFomod + 1);
+  expect(
+    await page.evaluate(() =>
+      (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+        ?.map((call) => call.method) ?? []
+    )
+  ).not.toContain('archives.installFomod');
+  await fomodDialog.getByRole('button', { name: /Заменить/ }).click();
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -4438,6 +4491,12 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
       )
     )
     .toContain('archives.installFomod');
+  const fomodInstallCall = await page.evaluate(() =>
+    (window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: { request?: { existingModMode?: number } } }>;
+    }).__fluxoraCalls?.find((call) => call.method === 'archives.installFomod')
+  );
+  expect(fomodInstallCall?.payload?.request?.existingModMode).toBe(1);
 });
 
 test('renders Settings Nexus status instantly while native auth status is delayed', async ({ page }) => {
