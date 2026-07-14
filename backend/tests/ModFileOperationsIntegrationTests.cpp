@@ -2245,6 +2245,82 @@ namespace fluxora::tests
         EXPECT_FALSE(std::filesystem::exists(modPath / L"skse64_loader.exe"));
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, InstallFomodDownloadRemembersAppliedChoiceForNextAnalysis)
+    {
+        const DownloadEntry download = importArchive(
+            L"Remembered FOMOD Choice.fomod",
+            {
+                {L"fomod/ModuleConfig.xml", R"xml(<config>
+  <moduleName>Remembered FOMOD Choice</moduleName>
+  <installSteps order="Explicit">
+    <installStep name="Variant">
+      <optionalFileGroups order="Explicit">
+        <group name="Edition" type="SelectExactlyOne">
+          <plugins order="Explicit">
+            <plugin name="Standard">
+              <files>
+                <file source="standard/Remembered.esp" destination="Remembered.esp" />
+              </files>
+              <typeDescriptor><type name="Recommended" /></typeDescriptor>
+            </plugin>
+            <plugin name="Alternate">
+              <files>
+                <file source="alternate/Remembered.esp" destination="Remembered.esp" />
+              </files>
+              <typeDescriptor><type name="Optional" /></typeDescriptor>
+            </plugin>
+          </plugins>
+        </group>
+      </optionalFileGroups>
+    </installStep>
+  </installSteps>
+</config>)xml"},
+                {L"fomod/info.xml", R"xml(<fomod><Name>Remembered FOMOD Choice</Name><Version>1.0.0</Version><Id>remembered-choice</Id></fomod>)xml"},
+                {L"standard/Remembered.esp", "standard"},
+                {L"alternate/Remembered.esp", "alternate"}
+            });
+
+        FomodInstallerDescriptor descriptor;
+        try
+        {
+            descriptor = downloads_.analyzeFomodDownload(project_, download.localPath);
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+
+            throw;
+        }
+
+        ASSERT_TRUE(descriptor.isFomod);
+        ASSERT_EQ(descriptor.steps.size(), 1U);
+        ASSERT_EQ(descriptor.steps[0].groups.size(), 1U);
+        ASSERT_EQ(descriptor.steps[0].groups[0].options.size(), 2U);
+        const std::wstring rememberedOptionId = descriptor.steps[0].groups[0].options[1].id;
+
+        const InstalledMod installed = downloads_.installFomodDownload(
+            project_,
+            download.localPath,
+            L"Remembered FOMOD Choice",
+            ExistingModInstallMode::FailIfExists,
+            {rememberedOptionId});
+        EXPECT_FALSE(installed.id.empty());
+
+        const FomodInstallerDescriptor replayed = downloads_.analyzeFomodDownload(
+            project_,
+            download.localPath);
+        ASSERT_TRUE(replayed.hasPreviousSelection);
+        EXPECT_NE(
+            std::find(
+                replayed.previousSelectedOptionIds.begin(),
+                replayed.previousSelectedOptionIds.end(),
+                rememberedOptionId),
+            replayed.previousSelectedOptionIds.end());
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, AnalyzeFomodContentLayoutReturnsSelectedOutputPlanWithoutInstalling)
     {
         const DownloadEntry download = importArchive(

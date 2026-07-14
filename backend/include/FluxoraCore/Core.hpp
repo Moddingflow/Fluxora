@@ -68,12 +68,12 @@ namespace fluxora
         std::unique_ptr<PluginService> plugins_;
         std::unique_ptr<ProfileOrderService> profileOrder_;
         std::unique_ptr<ProfileService> profiles_;
+        std::unique_ptr<NexusModsAuthService> nexusModsAuth_;
         std::unique_ptr<DownloadTransferLimiter> downloadTransferLimiter_;
         std::unique_ptr<DownloadService> downloads_;
         std::unique_ptr<EffectiveFileTreeService> effectiveFileTree_;
         std::unique_ptr<ExecutableIconService> executableIcons_;
         std::unique_ptr<ExecutableService> executables_;
-        std::unique_ptr<NexusModsAuthService> nexusModsAuth_;
         std::unique_ptr<TemplateService> templates_;
         std::unique_ptr<ProjectService> projects_;
         std::unique_ptr<FluxPackService> fluxPacks_;

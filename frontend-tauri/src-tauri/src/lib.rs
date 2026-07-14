@@ -2910,7 +2910,7 @@ fn fluxora_security_state(allowed_channels: Vec<String>) -> Value {
         "sandbox": true,
         "remoteModule": false,
         "allowedIpcChannels": allowed_channels,
-        "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+        "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
     })
 }
 
@@ -3535,6 +3535,7 @@ fn bridge_lane_for_method(method: &str) -> BridgeLane {
         | "mods.startNifPreview"
         | "mods.prepareNifPreviewVariant"
         | "mods.prepareNifPreviewTextures"
+        | "nexus.connect"
         | "textFiles.read" => BridgeLane::Interactive,
         _ => BridgeLane::Main,
     }
@@ -6741,6 +6742,14 @@ mod tests {
         ] {
             assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);
         }
+    }
+
+    #[test]
+    fn nexus_oauth_uses_the_interactive_bridge_lane() {
+        assert_eq!(
+            bridge_lane_for_method("nexus.connect"),
+            BridgeLane::Interactive
+        );
     }
 
     #[test]

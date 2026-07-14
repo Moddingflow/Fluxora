@@ -121,13 +121,15 @@ export function SettingsWorkspace({
     const accountText = nexusConnectionSummary(nexusStatus);
     const canToggleNexus = nexusCanToggle(nexusStatus, settingsCapabilities.nexusAvailable);
     const actionText = nexusActionLabel(nexusStatus);
-    const connectionStatus = !nexusStatus || !nexusIsVerified(nexusStatus)
-      ? 'checking'
-      : nexusIsVerifiedLinked(nexusStatus)
-        ? 'ready'
-        : nexusStatus.isConfigured
-          ? 'checking'
-          : 'error';
+    const connectionStatus = nexusStatus?.verificationState === 'unavailable'
+      ? 'error'
+      : !nexusStatus || !nexusIsVerified(nexusStatus)
+        ? 'checking'
+        : nexusIsVerifiedLinked(nexusStatus)
+          ? 'ready'
+          : nexusStatus.isConfigured
+            ? 'checking'
+            : 'error';
 
     return (
       <div className="settings-panel settings-panel--connections" aria-label="Connections settings">

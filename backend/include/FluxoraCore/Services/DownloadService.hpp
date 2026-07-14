@@ -20,6 +20,7 @@ namespace fluxora
     class AppSettingsService;
     class BuildPathSettingsService;
     class Logger;
+    class NexusModsAuthService;
 
     struct DownloadEntry
     {
@@ -65,6 +66,12 @@ namespace fluxora
             AppSettingsService& settings,
             const BuildPathSettingsService& pathSettings,
             DownloadTransferLimiter& transferLimiter) noexcept;
+        DownloadService(
+            Logger& logger,
+            AppSettingsService& settings,
+            const BuildPathSettingsService& pathSettings,
+            DownloadTransferLimiter& transferLimiter,
+            NexusModsAuthService& nexusAuth) noexcept;
         ~DownloadService() override;
 
         void initialize() override;
@@ -183,6 +190,7 @@ namespace fluxora
         Logger& logger_;
         AppSettingsService& settings_;
         const BuildPathSettingsService& pathSettings_;
+        NexusModsAuthService* nexusAuth_{nullptr};
         mutable std::mutex nxmShutdownMutex_;
         mutable std::mutex nxmQueueMutex_;
         mutable std::condition_variable nxmQueueCv_;

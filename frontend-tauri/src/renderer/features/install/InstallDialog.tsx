@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -10,15 +11,13 @@ import {
   RefreshCw,
   X
 } from 'lucide-react';
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 
 import installModIcon from '../../../../../Icons/package-plus.svg';
 import {
   buildArchivePlacementRows,
   createPlacementOverrideForDrop,
-  fomodGroupTypeLabel,
   normalizeInstallModName,
-  previousFomodSelection,
   toggleFomodOption,
   validateInstallModName,
   type EvaluatedFomodWizard,
@@ -80,6 +79,51 @@ const archiveTreeVisibleRows = 32;
 const archiveTreeOverscanRows = 10;
 type InstallIconStyle = CSSProperties & { '--install-icon': string };
 
+const useFomodImageSource = (imagePath: string) => {
+  const normalizedPath = imagePath.trim();
+  const [failedPath, setFailedPath] = useState('');
+  let source = '';
+
+  if (normalizedPath && failedPath !== normalizedPath) {
+    try {
+      source = window.fluxora.downloads.toFomodPreviewImageUrl(normalizedPath);
+    } catch {
+      source = '';
+    }
+  }
+
+  return {
+    source,
+    markFailed: () => setFailedPath(normalizedPath)
+  };
+};
+
+function FomodOptionImage({ imagePath }: { imagePath: string }) {
+  const image = useFomodImageSource(imagePath);
+  if (!image.source) {
+    return null;
+  }
+
+  return (
+    <span className="fomod-option__thumb" aria-hidden="true">
+      <img src={image.source} alt="" onError={image.markFailed} />
+    </span>
+  );
+}
+
+function FomodPreviewImage({ imagePath }: { imagePath: string }) {
+  const image = useFomodImageSource(imagePath);
+  if (!image.source) {
+    return null;
+  }
+
+  return (
+    <div className="install-fomod-preview__image">
+      <img src={image.source} alt="" onError={image.markFailed} />
+    </div>
+  );
+}
+
 export function InstallDialog({
   archiveTreeScrollTop,
   evaluation,
@@ -97,16 +141,67 @@ export function InstallDialog({
     return null;
   }
 
+  const renderInstallFomodSidebar = () => {
+    if (!installDialog.fomodInstaller || !evaluation || evaluation.visibleSteps.length === 0) {
+      return null;
+    }
+
+    const currentStepIndex = Math.min(
+      installDialog.fomodStepIndex,
+      evaluation.visibleSteps.length - 1
+    );
+
+    return (
+      <nav className="install-step-sidebar" aria-label="FOMOD steps">
+        <header className="install-step-sidebar__header">
+          <strong>Installation steps</strong>
+        </header>
+        <div className="install-step-sidebar__list">
+          {evaluation.visibleSteps.map((step, index) => {
+            const isActive = index === currentStepIndex;
+            const isComplete = index < currentStepIndex && step.isSelectionValid;
+            return (
+              <button
+                key={`${step.stepIndex}:${step.stepName}`}
+                type="button"
+                aria-current={isActive ? 'step' : undefined}
+                data-active={isActive}
+                data-complete={isComplete}
+                onClick={() =>
+                  onPatch({
+                    fomodStepIndex: index,
+                    activeFomodOptionId: null,
+                    validationMessage: null
+                  })
+                }
+              >
+                <span aria-hidden="true">
+                  {isComplete ? <Check size={14} /> : isActive ? <ChevronRight size={14} /> : null}
+                </span>
+                <strong>{step.stepName}</strong>
+              </button>
+            );
+          })}
+        </div>
+        <footer className="install-step-sidebar__footer">
+          Step {currentStepIndex + 1} of {evaluation.visibleSteps.length}
+        </footer>
+      </nav>
+    );
+  };
+
   const renderInstallFomodStep = () => {
     if (!installDialog.fomodInstaller || !evaluation) {
       return null;
     }
 
-    const currentStep =
-      evaluation.visibleSteps[installDialog.fomodStepIndex] ??
-      evaluation.visibleSteps[0];
     const visibleStepCount = evaluation.visibleSteps.length;
-    const canMoveNext = installDialog.fomodStepIndex < visibleStepCount - 1;
+    const currentStepIndex = Math.min(
+      installDialog.fomodStepIndex,
+      Math.max(visibleStepCount - 1, 0)
+    );
+    const currentStep = evaluation.visibleSteps[currentStepIndex];
+    const canMoveNext = currentStepIndex < visibleStepCount - 1;
     const stepOptions = currentStep?.groups.flatMap((group) => group.options) ?? [];
     const activeOption =
       stepOptions.find((option) => option.option.id === installDialog.activeFomodOptionId) ?? null;
@@ -117,49 +212,10 @@ export function InstallDialog({
 
     return (
       <div className="install-fomod-wizard">
-        <nav className="install-step-ribbon" aria-label="FOMOD steps">
-          {evaluation.visibleSteps.map((step, index) => (
-            <button
-              key={`${step.stepIndex}:${step.stepName}`}
-              type="button"
-              data-active={index === installDialog.fomodStepIndex}
-              data-complete={index < installDialog.fomodStepIndex && step.isSelectionValid}
-              onClick={() => {
-                if (index <= installDialog.fomodStepIndex) {
-                  onPatch({ fomodStepIndex: index, validationMessage: null });
-                }
-              }}
-            >
-              <span>{step.visibleNumber}</span>
-              <strong>{step.stepName}</strong>
-            </button>
-          ))}
-        </nav>
-
         <div className="install-fomod-body">
           <section className="install-fomod-options">
             <div className="install-section-heading">
-              <div>
-                <p className="eyebrow">FOMOD</p>
-                <h3>{currentStep?.stepName ?? 'Options'}</h3>
-              </div>
-              {installDialog.fomodInstaller.hasPreviousSelection ? (
-                <button
-                  className="tool-button"
-                  type="button"
-                  onClick={() =>
-                    onPatch({
-                      selectedFomodOptionIds: previousFomodSelection(installDialog.fomodInstaller!),
-                      fomodStepIndex: 0,
-                      activeFomodOptionId: null,
-                      validationMessage: null
-                    })
-                  }
-                >
-                  <RefreshCw size={15} aria-hidden="true" />
-                  Previous choices
-                </button>
-              ) : null}
+              <h3>{currentStep?.stepName ?? 'Options'}</h3>
             </div>
 
             {installDialog.validationMessage ? (
@@ -178,7 +234,6 @@ export function InstallDialog({
                 >
                   <header>
                     <strong>{group.group.name || 'Options'}</strong>
-                    <span>{fomodGroupTypeLabel(group.group.type || 'SelectAny')}</span>
                   </header>
                   <div className="fomod-options">
                     {group.options.map((option) => {
@@ -192,6 +247,7 @@ export function InstallDialog({
                           data-selected={option.isSelected}
                           data-disabled={!option.canToggle}
                           data-highlighted={detailsOption?.option.id === option.option.id}
+                          data-previous={option.wasPreviouslySelected}
                           onMouseEnter={() =>
                             onPatch({ activeFomodOptionId: option.option.id })
                           }
@@ -217,17 +273,13 @@ export function InstallDialog({
                               })
                             }
                           />
-                          <span className="fomod-option__thumb" aria-hidden="true">
-                            {option.option.imagePath ? (
-                              <img src={option.option.imagePath} alt="" />
-                            ) : null}
-                          </span>
+                          <FomodOptionImage imagePath={option.option.imagePath} />
                           <span className="fomod-option__text">
                             <strong>{option.option.name || 'Option'}</strong>
-                            <small>
-                              {option.effectiveType}
-                              {option.wasPreviouslySelected ? ' · previous' : ''}
-                            </small>
+                            <small>{option.effectiveType}</small>
+                            {option.wasPreviouslySelected ? (
+                              <small className="fomod-option__previous">Previously selected</small>
+                            ) : null}
                           </span>
                           {option.isSelected ? <CheckCircle2 size={15} aria-hidden="true" /> : null}
                         </label>
@@ -240,9 +292,7 @@ export function InstallDialog({
           </section>
 
           <aside className="install-fomod-preview" aria-label="FOMOD option details">
-            <div className="install-fomod-preview__image">
-              {previewImage ? <img src={previewImage} alt="" /> : <span>option</span>}
-            </div>
+            <FomodPreviewImage imagePath={previewImage} />
             <div className="install-fomod-preview__copy">
               <p className="eyebrow">{activeOption ? 'Option details' : 'Current choice'}</p>
               <strong>{detailsOption?.option.name ?? installDialog.fomodInstaller.moduleName}</strong>
@@ -256,25 +306,11 @@ export function InstallDialog({
         </div>
 
         <footer className="install-dialog-actions install-grid-actions">
-          <div className="install-step-count" aria-label={`Step ${installDialog.fomodStepIndex + 1} of ${visibleStepCount}`}>
-            <span>
-              Step {installDialog.fomodStepIndex + 1} of {visibleStepCount}
-            </span>
-            <div aria-hidden="true">
-              {evaluation.visibleSteps.map((step, index) => (
-                <i
-                  key={`${step.stepIndex}:dot`}
-                  data-active={index === installDialog.fomodStepIndex}
-                  data-complete={index < installDialog.fomodStepIndex}
-                />
-              ))}
-            </div>
-          </div>
           <div className="install-dialog-action-group">
             <button
               className="tool-button"
               type="button"
-              disabled={installDialog.fomodStepIndex === 0}
+              disabled={currentStepIndex === 0}
               onClick={() => onMoveFomodStep(-1)}
             >
               <ChevronLeft size={16} aria-hidden="true" />
@@ -542,94 +578,97 @@ export function InstallDialog({
   return (
     <div className="install-modal-backdrop" role="presentation">
       <section
-        className="install-dialog"
+        className="install-modal-layout"
         data-phase={installDialog.phase}
         role="dialog"
         aria-modal="true"
         aria-label={dialogAriaLabel}
       >
-        <header className="install-dialog-header">
-          <div className="install-dialog-title">
-            <span
-              className="install-dialog-title-icon"
-              aria-hidden="true"
-              style={{ '--install-icon': `url("${installModIcon}")` } as InstallIconStyle}
-            />
-            <strong>{dialogTitle}</strong>
+        {installDialog.phase === 'fomod' ? renderInstallFomodSidebar() : null}
+        <div className="install-dialog" data-phase={installDialog.phase}>
+          <header className="install-dialog-header">
+            <div className="install-dialog-title">
+              <span
+                className="install-dialog-title-icon"
+                aria-hidden="true"
+                style={{ '--install-icon': `url("${installModIcon}")` } as InstallIconStyle}
+              />
+              <strong>{dialogTitle}</strong>
+            </div>
+            <button
+              className="icon-button"
+              type="button"
+              title="Закрыть окно установки"
+              disabled={installDialog.phase === 'installing'}
+              onClick={onClose}
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </header>
+
+          <div className="install-dialog-body">
+            {installDialog.phase === 'installing' ? (
+              <div className="install-progress" role="status">
+                <RefreshCw size={18} aria-hidden="true" />
+                <strong>Installing mod</strong>
+                <span>{shortPath(installDialog.source.sourcePath)}</span>
+              </div>
+            ) : null}
+            {installDialog.phase === 'fomod' ? renderInstallFomodStep() : null}
+            {installDialog.phase === 'options' ? renderInstallOptions() : null}
+            {installDialog.phase === 'conflict' ? renderExistingModConflict() : null}
+            {installDialog.phase === 'details' ? renderInstallDetails() : null}
+            {installDialog.phase === 'error' ? (
+              <div className="install-error" role="alert">
+                <AlertTriangle size={20} aria-hidden="true" />
+                <strong>Install flow failed</strong>
+                <span>{installDialog.errorMessage ?? 'Operation failed.'}</span>
+              </div>
+            ) : null}
           </div>
-          <button
-            className="icon-button"
-            type="button"
-            title="Закрыть окно установки"
-            disabled={installDialog.phase === 'installing'}
-            onClick={onClose}
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        </header>
 
-        <div className="install-dialog-body">
-          {installDialog.phase === 'installing' ? (
-            <div className="install-progress" role="status">
-              <RefreshCw size={18} aria-hidden="true" />
-              <strong>Installing mod</strong>
-              <span>{shortPath(installDialog.source.sourcePath)}</span>
-            </div>
-          ) : null}
-          {installDialog.phase === 'fomod' ? renderInstallFomodStep() : null}
-          {installDialog.phase === 'options' ? renderInstallOptions() : null}
-          {installDialog.phase === 'conflict' ? renderExistingModConflict() : null}
-          {installDialog.phase === 'details' ? renderInstallDetails() : null}
-          {installDialog.phase === 'error' ? (
-            <div className="install-error" role="alert">
-              <AlertTriangle size={20} aria-hidden="true" />
-              <strong>Install flow failed</strong>
-              <span>{installDialog.errorMessage ?? 'Operation failed.'}</span>
-            </div>
-          ) : null}
-        </div>
-
-        {installDialog.phase === 'options' || installDialog.phase === 'error' ? (
-          <footer className="install-dialog-actions">
-            {installDialog.phase === 'options' ? (
-              <button
-                className="tool-button"
-                type="button"
-                onClick={() => {
-                  onArchiveTreeScrollTopChange(0);
-                  onPatch({ phase: 'details' });
-                }}
-              >
-                <FolderTree size={15} aria-hidden="true" />
-                Подробнее
-              </button>
-            ) : (
-              <span />
-            )}
-            <div className="install-dialog-action-group">
-              {installDialog.phase === 'error' ? (
+          {installDialog.phase === 'options' || installDialog.phase === 'error' ? (
+            <footer className="install-dialog-actions">
+              {installDialog.phase === 'options' ? (
                 <button
                   className="tool-button"
                   type="button"
-                  onClick={onClose}
+                  onClick={() => {
+                    onArchiveTreeScrollTopChange(0);
+                    onPatch({ phase: 'details' });
+                  }}
                 >
-                  Close
+                  <FolderTree size={15} aria-hidden="true" />
+                  Подробнее
                 </button>
-              ) : null}
-              {installDialog.phase === 'options' ? (
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={Boolean(validateInstallModName(installDialog.modName))}
-                  onClick={onSubmitInstallOptions}
-                >
-                  <Play size={16} aria-hidden="true" />
-                  Установить
-                </button>
-              ) : null}
-            </div>
-          </footer>
-        ) : null}
+              ) : (
+                <span />
+              )}
+              <div className="install-dialog-action-group">
+                {installDialog.phase === 'error' ? (
+                  <button
+                    className="tool-button"
+                    type="button"
+                    onClick={onClose}
+                  >
+                    Close
+                  </button>
+                ) : null}
+                {installDialog.phase === 'options' ? (
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={Boolean(validateInstallModName(installDialog.modName))}
+                    onClick={onSubmitInstallOptions}
+                  >
+                    <Play size={16} aria-hidden="true" />
+                    Установить
+                  </button>
+                ) : null}
+              </div>
+            </footer>
+          ) : null}
+        </div>
       </section>
     </div>
   );

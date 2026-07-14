@@ -5,6 +5,7 @@
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/ContentLayoutService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
+#include "FluxoraCore/Services/NexusModsAuthService.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
@@ -41,7 +42,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <bcrypt.h>
-#include <wincrypt.h>
 #include <winhttp.h>
 #endif
 
@@ -606,122 +606,24 @@ namespace fluxora
             return value.substr(first, last - first + 1);
         }
 
-#ifdef _WIN32
-        unsigned char hexNibble(wchar_t character)
+        std::wstring nexusRequestHeaders(NexusModsAuthService* nexusAuth)
         {
-            if (character >= L'0' && character <= L'9')
+            if (nexusAuth == nullptr)
             {
-                return static_cast<unsigned char>(character - L'0');
-            }
-            if (character >= L'a' && character <= L'f')
-            {
-                return static_cast<unsigned char>(10 + character - L'a');
-            }
-            if (character >= L'A' && character <= L'F')
-            {
-                return static_cast<unsigned char>(10 + character - L'A');
+                throw std::runtime_error("NexusMods authentication service is unavailable.");
             }
 
-            throw std::runtime_error("Invalid protected NexusMods OAuth token.");
-        }
-
-        std::vector<unsigned char> hexToBytes(std::wstring_view value)
-        {
-            if (value.size() % 2 != 0)
+            const NexusModsApiAuthHeader authHeader = nexusAuth->apiAuthHeader();
+            if (!authHeader.isAvailable || authHeader.headerName.empty() || authHeader.headerValue.empty())
             {
-                throw std::runtime_error("Invalid protected NexusMods OAuth token.");
+                const std::string message = toUtf8(authHeader.message);
+                throw std::runtime_error(
+                    message.empty()
+                        ? "NexusMods authentication token is unavailable."
+                        : message);
             }
 
-            std::vector<unsigned char> bytes(value.size() / 2);
-            for (std::size_t index = 0; index < bytes.size(); ++index)
-            {
-                bytes[index] = static_cast<unsigned char>(
-                    (hexNibble(value[index * 2]) << 4) |
-                    hexNibble(value[index * 2 + 1]));
-            }
-
-            return bytes;
-        }
-#endif
-
-        std::wstring unprotectSecret(std::wstring_view protectedValue)
-        {
-            if (protectedValue.empty())
-            {
-                return {};
-            }
-
-#ifdef _WIN32
-            std::vector<unsigned char> bytes = hexToBytes(protectedValue);
-
-            DATA_BLOB input{};
-            input.pbData = bytes.data();
-            input.cbData = static_cast<DWORD>(bytes.size());
-
-            DATA_BLOB output{};
-            if (!CryptUnprotectData(
-                    &input,
-                    nullptr,
-                    nullptr,
-                    nullptr,
-                    nullptr,
-                    CRYPTPROTECT_UI_FORBIDDEN,
-                    &output))
-            {
-                throw std::runtime_error("Failed to unprotect NexusMods OAuth token.");
-            }
-
-            std::wstring value(
-                reinterpret_cast<wchar_t*>(output.pbData),
-                output.cbData / sizeof(wchar_t));
-            LocalFree(output.pbData);
-            return value;
-#else
-            return std::wstring(protectedValue);
-#endif
-        }
-
-        std::string nexusAuthUnavailableMessage(const AppSettingsService& settings)
-        {
-            const NexusModsStoredAuth auth = settings.loadNexusModsAuth();
-            if (!auth.linked || (auth.protectedAccessToken.empty() && auth.protectedApiKey.empty()))
-            {
-                return "NexusMods account is not linked. Connect NexusMods in settings.";
-            }
-
-            return "NexusMods authentication token is not available. Reconnect NexusMods in settings and try again.";
-        }
-
-        std::wstring buildNexusAuthHeader(const AppSettingsService& settings)
-        {
-            const NexusModsStoredAuth auth = settings.loadNexusModsAuth();
-            if (!auth.linked)
-            {
-                return {};
-            }
-
-            if (!auth.protectedApiKey.empty())
-            {
-                const std::wstring apiKey = unprotectSecret(auth.protectedApiKey);
-                if (!apiKey.empty())
-                {
-                    return L"apikey: " + apiKey + L"\r\n";
-                }
-            }
-
-            const std::wstring accessToken = unprotectSecret(auth.protectedAccessToken);
-            if (accessToken.empty())
-            {
-                return {};
-            }
-
-            std::wstring tokenType = trimWhitespace(auth.tokenType);
-            if (tokenType.empty())
-            {
-                tokenType = L"Bearer";
-            }
-
-            return L"Authorization: " + tokenType + L" " + accessToken + L"\r\n";
+            return authHeader.headerName + L": " + authHeader.headerValue + L"\r\n";
         }
 
         std::wstring sanitizeFileName(std::wstring_view value)
@@ -6447,7 +6349,7 @@ namespace fluxora
 
         std::wstring fetchNexusModName(
             const NxmDownloadRequest& request,
-            const AppSettingsService& settings)
+            std::wstring_view authHeader)
         {
             if (request.gameDomain.empty() || request.modId.empty())
             {
@@ -6455,12 +6357,11 @@ namespace fluxora
             }
 
 #ifndef _WIN32
-            (void)settings;
+            (void)authHeader;
             return {};
 #else
             try
             {
-                const std::wstring authHeader = buildNexusAuthHeader(settings);
                 if (authHeader.empty())
                 {
                     return {};
@@ -6495,7 +6396,7 @@ namespace fluxora
 
         NexusFileInfo fetchNexusFileInfo(
             const NxmDownloadRequest& request,
-            const AppSettingsService& settings)
+            std::wstring_view authHeader)
         {
             if (request.gameDomain.empty() || request.modId.empty() || request.fileId.empty())
             {
@@ -6503,13 +6404,12 @@ namespace fluxora
             }
 
 #ifndef _WIN32
-            (void)settings;
+            (void)authHeader;
             return {};
 #else
             NexusFileInfo info;
             try
             {
-                const std::wstring authHeader = buildNexusAuthHeader(settings);
                 if (authHeader.empty())
                 {
                     return {};
@@ -6576,7 +6476,7 @@ namespace fluxora
 
         std::wstring resolveNexusDownloadUri(
             const NxmDownloadRequest& request,
-            const AppSettingsService& settings)
+            std::wstring_view authHeader)
         {
             if (request.gameDomain.empty() ||
                 request.modId.empty() ||
@@ -6599,10 +6499,9 @@ namespace fluxora
                     L"&expires=" + percentEncode(request.expires);
             }
 
-            const std::wstring authHeader = buildNexusAuthHeader(settings);
             if (authHeader.empty())
             {
-                throw std::runtime_error(nexusAuthUnavailableMessage(settings));
+                throw std::runtime_error("NexusMods authentication token is unavailable.");
             }
 
             const std::string body = winHttpGet(endpoint, authHeader);
@@ -6729,7 +6628,7 @@ namespace fluxora
         NexusDownloadedFile downloadNxm(
             const std::filesystem::path& directory,
             const NxmDownloadRequest& request,
-            const AppSettingsService& settings,
+            NexusModsAuthService* nexusAuth,
             const std::filesystem::path& progressPath,
             DownloadMetadata progressMetadata,
             DownloadTransferLimiter& transferLimiter)
@@ -6766,6 +6665,11 @@ namespace fluxora
             progressMetadata.status = L"Подготовка загрузки";
             writeMetadata(progressPath, progressMetadata);
             throwIfCancellationRequested();
+            std::wstring authHeader;
+            if (nexusAuth != nullptr)
+            {
+                authHeader = nexusRequestHeaders(nexusAuth);
+            }
 #ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
             if (transferHook)
             {
@@ -6781,19 +6685,23 @@ namespace fluxora
 #ifndef _WIN32
             throw std::runtime_error("Nexus downloads are currently implemented for Windows builds.");
 #else
-            const std::wstring downloadUri = resolveNexusDownloadUri(request, settings);
+            if (authHeader.empty())
+            {
+                authHeader = nexusRequestHeaders(nexusAuth);
+            }
+            const std::wstring downloadUri = resolveNexusDownloadUri(request, authHeader);
             throwIfCancellationRequested();
             if (downloadUri.empty())
             {
                 return result;
             }
 
-            result.nexusModName = fetchNexusModName(request, settings);
+            result.nexusModName = fetchNexusModName(request, authHeader);
             throwIfCancellationRequested();
             progressMetadata.nexusModName = result.nexusModName;
             writeMetadata(progressPath, progressMetadata);
 
-            const NexusFileInfo fileInfo = fetchNexusFileInfo(request, settings);
+            const NexusFileInfo fileInfo = fetchNexusFileInfo(request, authHeader);
             throwIfCancellationRequested();
             result.version = fileInfo.version;
             result.latestVersion = fileInfo.version;
@@ -7082,6 +6990,20 @@ namespace fluxora
     {
     }
 
+    DownloadService::DownloadService(
+        Logger& logger,
+        AppSettingsService& settings,
+        const BuildPathSettingsService& pathSettings,
+        DownloadTransferLimiter& transferLimiter,
+        NexusModsAuthService& nexusAuth) noexcept
+        : logger_(logger),
+          settings_(settings),
+          pathSettings_(pathSettings),
+          nexusAuth_(&nexusAuth),
+          transferLimiter_(transferLimiter)
+    {
+    }
+
     DownloadService::~DownloadService()
     {
         (void)stopNxmDownloadWorker();
@@ -7133,7 +7055,7 @@ namespace fluxora
             NexusDownloadedFile downloadedFile = downloadNxm(
                 job.directory,
                 request,
-                settings_,
+                nexusAuth_,
                 job.pendingPath,
                 progressMetadata,
                 transferLimiter_);
@@ -7749,7 +7671,7 @@ namespace fluxora
             const NexusDownloadedFile downloadedFile = downloadNxm(
                 directory,
                 request,
-                settings_,
+                nexusAuth_,
                 pendingPath,
                 progressMetadata,
                 transferLimiter_);

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview, type DragDropEvent as TauriDragDropEvent } from '@tauri-apps/api/webview';
 
@@ -145,6 +145,17 @@ const toArrayBuffer = (value: unknown): ArrayBuffer => {
     return Uint8Array.from(value).buffer;
   }
   throw new Error('NIF preview returned invalid binary asset data.');
+};
+
+const toFomodPreviewImageUrl = (imagePath: string): string => {
+  const normalizedPath = imagePath.trim();
+  if (!normalizedPath || /^(?:asset|blob|data|https?):/i.test(normalizedPath)) {
+    return normalizedPath;
+  }
+
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+    ? convertFileSrc(normalizedPath)
+    : normalizedPath;
 };
 
 const fluxPackExportRequestParams = (rawRequest: unknown): Record<string, unknown> => {
@@ -988,6 +999,7 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
       )
   },
   downloads: {
+    toFomodPreviewImageUrl,
     list: (projectDirectory: string, request?: OperationRequest) =>
       invokeTyped<FluxoraDownloadEntry[]>(
         ipc,
@@ -1501,6 +1513,7 @@ const fileMutationTimeoutMs = 2 * 60 * 60 * 1000;
 const transferImportTimeoutMs = 2 * 60 * 60 * 1000;
 const grassCacheGenerationTimeoutMs = 6 * 60 * 60 * 1000;
 const nexusDownloadTimeoutMs = 6 * 60 * 60 * 1000;
+const nexusOAuthTimeoutMs = 180_000;
 
 const createOperationId = (scope: string): string =>
   `op_${new Date().toISOString().replace(/[-:.TZ]/g, '')}_${scope}_${crypto.randomUUID().slice(0, 8)}`;
@@ -2780,7 +2793,8 @@ const createTauriInvoker = (): IpcInvoker => ({
         };
         const [method, scope] = simpleMap[channel]!;
         const request = requestWithOperationId(args[0], scope);
-        const data = await bridgeRequest<Record<string, unknown>>(method, {}, request);
+        const timeoutMs = channel === FluxoraIpcChannels.nexusConnect ? nexusOAuthTimeoutMs : undefined;
+        const data = await bridgeRequest<Record<string, unknown>>(method, {}, request, timeoutMs);
         return channel === FluxoraIpcChannels.templatesList ? data : withOperationId(data, request, scope);
       }
 

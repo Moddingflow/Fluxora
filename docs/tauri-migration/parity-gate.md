@@ -1,6 +1,6 @@
 # Fluxora Tauri parity gate
 
-Дата обновления: 2026-06-24
+Дата обновления: 2026-07-14
 
 Статус: Phase 17 deprecation and removal is in place. The automated Windows-local gate was green on 2026-06-24, and the old C# WPF product frontend has now been removed from the active repository/build/release path.
 
@@ -60,9 +60,9 @@ Required unit anchors:
 - `mod-workspace-state.test.ts` covers mod list state, row/windowing helpers and mod UI formatting.
 - `plugin-workspace-state.test.ts` covers plugin/load-order UI state.
 - `download-workspace-state.test.ts` covers download filtering, state labels and row actions.
-- `install-workspace-state.test.ts` covers mod-name validation, archive placement overrides and FOMOD wizard state.
+- `install-workspace-state.test.ts` covers mod-name validation, archive placement overrides, FOMOD wizard state and automatic restoration of remembered choices. `fomod-preview-url.test.ts` covers typed conversion of native preview-cache paths, while `ai-security-hardening.test.ts` keeps the Tauri asset scope restricted to `.fomod-previews`.
 - `profiles-executables-workspace-state.test.ts`, `launch-process-session.test.ts` and `launch-process-watch.test.ts` cover profile/executable UI state, readable process labels, VFS-holder handoff, native exit-signal wiring and fallback polling.
-- `settings-workspace-state.test.ts` covers settings sections, single-theme normalization, language and MO2 transfer validation state.
+- `settings-workspace-state.test.ts` and `nexus-auth-workflow.test.ts` cover settings sections, single-theme normalization, language/MO2 transfer state, retryable Nexus status failures and independent auth/API-limit settlement.
 - `build-workspace-state.test.ts`, `fluxpack-export-dialog.test.ts`, `fluxpack-install-target.test.ts`, `fluxpack-install-dialogs.test.ts` and `operation-overlays.test.ts` cover build paths, full-vs-recipe export selection, same-name targeting, manual Nexus archive collection and provider-segmented FluxPack progress. Backend tests prove that full export produces no acquisition plan and restores remote-origin plus generated mods from the package payload.
 - `facade-api.test.ts` covers the typed `window.fluxora` surface and allowlisted command routes.
 - `bridge-protocol-client.test.ts` covers JSON-RPC metadata, error envelopes and progress events.
@@ -77,10 +77,10 @@ Required unit anchors:
 | Mod list operations | Automated | Playwright creates a mod/separator, searches, toggles enablement and expands file tree |
 | Plugin operations | Automated | Playwright creates a plugin separator, searches and toggles plugin enablement |
 | Downloads/install | Partial automated | Playwright imports a local archive and checks download row install affordance; full archive install is covered by API/backend tests and still needs a real archive e2e fixture |
-| FOMOD | Partial automated | Vitest covers wizard state and facade routes expose FOMOD calls; a real FOMOD archive e2e fixture remains a fixture-hardening item |
+| FOMOD | Partial automated | Vitest covers remembered wizard state and preview URL conversion; Playwright covers the separate scrollable step panel, step switching without selection loss, real-image/absent-image rendering and round radio focus state; backend integration proves successful installs persist the applied choice for the next analysis. A real FOMOD archive e2e fixture remains a fixture-hardening item |
 | Profiles | Automated | Playwright create/clone/rename/delete profile flow |
 | Executables | Automated | Playwright save/rename/delete executable flow, launch capability state, readable running-process label, removal of the screen-lock badge and dynamic VFS-holder handoff |
-| Settings | Automated | Playwright settings sections, language/Nexus/MO2 transfer surfaces; theme customization is absent while the single dark theme is supported |
+| Settings | Automated | Playwright settings sections, language/Nexus/MO2 transfer surfaces and recovery from a transient Nexus status failure without accidentally starting connect/disconnect; theme customization is absent while the single dark theme is supported |
 | Text/code editor | Automated | Playwright delays generic startup, opens a mod JSON file through the lightweight Monaco entrypoint, expands Explorer, invokes Command Palette, verifies stable EOF/`Ctrl+Delete`, repeats focused `Ctrl+S`, edits, verifies guarded close, saves through the typed facade and searches open editors |
 | MO2 transfer | Automated validation smoke | Playwright opens MO2 transfer and verifies required-field validation; full import needs a real MO2 fixture |
 | FluxPack | Automated | Playwright full/recipe export selection, inspect/install flow, visible Library entry, same-name choice, manual Nexus action and in-place Delta target/reuse evidence; backend tests cover autonomous full restore, acquisition planning, Premium gating and archive identity validation |

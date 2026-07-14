@@ -9,9 +9,11 @@
 #include <ctime>
 #include <cctype>
 #include <cwctype>
+#include <functional>
 #include <iomanip>
 #include <initializer_list>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -59,6 +61,11 @@ namespace fluxora
         constexpr int callbackTimeoutSeconds = 120;
         constexpr int callbackClientReadTimeoutMilliseconds = 3000;
         constexpr int supabaseCredentialTimeoutMilliseconds = 4000;
+
+#ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
+        std::mutex nexusTokenRequestHookMutex;
+        std::function<std::string(std::string_view)> nexusTokenRequestHook;
+#endif
 
         struct OAuthConfig
         {
@@ -1407,6 +1414,17 @@ namespace fluxora
 
         std::string postTokenRequest(const std::string& body)
         {
+#ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
+            std::function<std::string(std::string_view)> requestHook;
+            {
+                std::lock_guard hookLock(nexusTokenRequestHookMutex);
+                requestHook = nexusTokenRequestHook;
+            }
+            if (requestHook)
+            {
+                return requestHook(body);
+            }
+#endif
 #ifdef _WIN32
             HINTERNET session = WinHttpOpen(
                 L"Fluxora/0.1",
@@ -2379,6 +2397,12 @@ namespace fluxora
 #ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
     namespace test_hooks
     {
+        void setNexusTokenRequestHook(std::function<std::string(std::string_view)> hook)
+        {
+            std::lock_guard hookLock(nexusTokenRequestHookMutex);
+            nexusTokenRequestHook = std::move(hook);
+        }
+
         std::string buildNexusTokenRequestBodyForTest(
             const std::wstring& clientId,
             const std::wstring& clientSecret,
@@ -2544,48 +2568,53 @@ namespace fluxora
         {
             if (accessTokenRequiresRefresh(auth))
             {
-                if (auth.protectedRefreshToken.empty())
+                std::lock_guard refreshLock(refreshMutex_);
+                auth = settings_.loadNexusModsAuth();
+                if (accessTokenRequiresRefresh(auth))
                 {
-                    return unavailable(
-                        L"NexusMods OAuth token expired and no refresh token is available. Reconnect NexusMods in settings.");
-                }
-
-                const std::wstring refreshToken = unprotectSecret(auth.protectedRefreshToken);
-                if (refreshToken.empty())
-                {
-                    return unavailable(
-                        L"NexusMods OAuth token expired and the refresh token could not be read. Reconnect NexusMods in settings.");
-                }
-
-                try
-                {
-                    const OAuthConfig config = loadConfig(true);
-                    if (config.clientId.empty())
+                    if (auth.protectedRefreshToken.empty())
                     {
-                        throw std::runtime_error("NexusMods OAuth client_id is missing.");
+                        return unavailable(
+                            L"NexusMods OAuth token expired and no refresh token is available. Reconnect NexusMods in settings.");
                     }
 
-                    const TokenResponse tokens = parseTokenResponse(
-                        postTokenRequest(buildRefreshTokenRequestBody(config, refreshToken)));
-                    auth.protectedAccessToken = protectSecret(tokens.accessToken);
-                    auth.protectedRefreshToken = tokens.refreshToken.empty()
-                        ? auth.protectedRefreshToken
-                        : protectSecret(tokens.refreshToken);
-                    auth.tokenType = tokens.tokenType.empty() ? L"Bearer" : tokens.tokenType;
-                    auth.expiresAtUtc = tokens.expiresInSeconds > 0
-                        ? formatUtcExpiry(tokens.expiresInSeconds)
-                        : L"";
-                    auth.isPremium = parseJwtUser(tokens.accessToken).isPremium;
-                    settings_.saveNexusModsAuth(auth);
-                    logger_.write(LogLevel::Info, "NexusMods OAuth token refreshed for trusted native services.");
-                }
-                catch (const std::exception& error)
-                {
-                    logger_.write(
-                        LogLevel::Warning,
-                        std::string("NexusMods OAuth token refresh failed: ") + error.what());
-                    return unavailable(
-                        L"NexusMods OAuth token expired and refresh failed. Reconnect NexusMods or retry when Nexus is reachable.");
+                    const std::wstring refreshToken = unprotectSecret(auth.protectedRefreshToken);
+                    if (refreshToken.empty())
+                    {
+                        return unavailable(
+                            L"NexusMods OAuth token expired and the refresh token could not be read. Reconnect NexusMods in settings.");
+                    }
+
+                    try
+                    {
+                        const OAuthConfig config = loadConfig(true);
+                        if (config.clientId.empty())
+                        {
+                            throw std::runtime_error("NexusMods OAuth client_id is missing.");
+                        }
+
+                        const TokenResponse tokens = parseTokenResponse(
+                            postTokenRequest(buildRefreshTokenRequestBody(config, refreshToken)));
+                        auth.protectedAccessToken = protectSecret(tokens.accessToken);
+                        auth.protectedRefreshToken = tokens.refreshToken.empty()
+                            ? auth.protectedRefreshToken
+                            : protectSecret(tokens.refreshToken);
+                        auth.tokenType = tokens.tokenType.empty() ? L"Bearer" : tokens.tokenType;
+                        auth.expiresAtUtc = tokens.expiresInSeconds > 0
+                            ? formatUtcExpiry(tokens.expiresInSeconds)
+                            : L"";
+                        auth.isPremium = parseJwtUser(tokens.accessToken).isPremium;
+                        settings_.saveNexusModsAuth(auth);
+                        logger_.write(LogLevel::Info, "NexusMods OAuth token refreshed for trusted native services.");
+                    }
+                    catch (const std::exception& error)
+                    {
+                        logger_.write(
+                            LogLevel::Warning,
+                            std::string("NexusMods OAuth token refresh failed: ") + error.what());
+                        return unavailable(
+                            L"NexusMods OAuth token expired and refresh failed. Reconnect NexusMods or retry when Nexus is reachable.");
+                    }
                 }
             }
 

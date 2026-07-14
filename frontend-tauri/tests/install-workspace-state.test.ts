@@ -7,7 +7,6 @@ import {
   createPlacementOverrides,
   evaluateFomodWizard,
   findExistingInstalledModName,
-  fomodGroupTypeLabel,
   installCategoryLabel,
   installDestinationPreview,
   installSourceLabel,
@@ -233,6 +232,16 @@ describe('install workspace state', () => {
     expect(coerceFomodSelection(fomod, [])).toContain('mcm');
   });
 
+  it('restores a valid remembered FOMOD choice instead of replacing it with defaults', () => {
+    const remembered = {
+      ...fomod,
+      previousSelectedOptionIds: ['classic']
+    };
+
+    expect(initialFomodSelection(remembered)).toEqual(['classic']);
+    expect(evaluateFomodWizard(remembered, initialFomodSelection(remembered)).visibleSteps).toHaveLength(1);
+  });
+
   it('detects existing mods case-insensitively for replace merge UX', () => {
     expect(findExistingInstalledModName(['SkyUI', 'RaceMenu'], 'skyui')).toBe('SkyUI');
     expect(findExistingInstalledModName(['SkyUI'], 'SmoothCam')).toBeNull();
@@ -253,6 +262,5 @@ describe('install workspace state', () => {
     expect(installCategoryLabel(preview, true)).toBe(
       'Skyrim Special Edition · FOMOD · blocked'
     );
-    expect(fomodGroupTypeLabel('SelectExactlyOne')).toBe('choose one');
   });
 });

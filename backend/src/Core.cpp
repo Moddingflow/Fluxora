@@ -32,16 +32,17 @@ namespace fluxora
           plugins_(std::make_unique<PluginService>(*logger_, *buildPathSettings_)),
           profileOrder_(std::make_unique<ProfileOrderService>(*logger_, *mods_, *buildPathSettings_)),
           profiles_(std::make_unique<ProfileService>(*logger_, *buildPathSettings_)),
+          nexusModsAuth_(std::make_unique<NexusModsAuthService>(*logger_, *settings_)),
           downloadTransferLimiter_(std::make_unique<DownloadTransferLimiter>()),
           downloads_(std::make_unique<DownloadService>(
               *logger_,
               *settings_,
               *buildPathSettings_,
-              *downloadTransferLimiter_)),
+              *downloadTransferLimiter_,
+              *nexusModsAuth_)),
           effectiveFileTree_(std::make_unique<EffectiveFileTreeService>(*logger_, *profileOrder_, *buildPathSettings_)),
           executableIcons_(std::make_unique<ExecutableIconService>(*logger_)),
           executables_(std::make_unique<ExecutableService>(*logger_, *executableIcons_, *buildPathSettings_)),
-          nexusModsAuth_(std::make_unique<NexusModsAuthService>(*logger_, *settings_)),
           templates_(std::make_unique<TemplateService>(*logger_)),
           projects_(std::make_unique<ProjectService>(*logger_, *templates_)),
           fluxPacks_(std::make_unique<FluxPackService>(*logger_, *projects_, *downloads_, *buildPathSettings_)),
@@ -78,11 +79,11 @@ namespace fluxora
         plugins_->initialize();
         profileOrder_->initialize();
         profiles_->initialize();
+        nexusModsAuth_->initialize();
         downloads_->initialize();
         effectiveFileTree_->initialize();
         executableIcons_->initialize();
         executables_->initialize();
-        nexusModsAuth_->initialize();
         templates_->initialize();
         projects_->initialize();
         fluxPacks_->initialize();
@@ -107,11 +108,11 @@ namespace fluxora
         fluxPacks_->shutdown();
         projects_->shutdown();
         templates_->shutdown();
-        nexusModsAuth_->shutdown();
         executables_->shutdown();
         executableIcons_->shutdown();
         effectiveFileTree_->shutdown();
         downloads_->shutdown();
+        nexusModsAuth_->shutdown();
         profiles_->shutdown();
         profileOrder_->shutdown();
         plugins_->shutdown();

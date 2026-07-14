@@ -159,6 +159,13 @@ describe('AI security hardening', () => {
     ) as {
       app: {
         security: {
+          assetProtocol: {
+            enable: boolean;
+            scope: {
+              allow: string[];
+              requireLiteralLeadingDot: boolean;
+            };
+          };
           capabilities: string[];
           csp: string;
           devCsp: string;
@@ -166,6 +173,7 @@ describe('AI security hardening', () => {
         withGlobalTauri: boolean;
       };
     };
+    const cargoManifest = readText('frontend-tauri', 'src-tauri', 'Cargo.toml');
     const capabilities = JSON.parse(
       readText('frontend-tauri', 'src-tauri', 'capabilities', 'main.json')
     ) as {
@@ -180,8 +188,18 @@ describe('AI security hardening', () => {
     expect(tauriConfig.app.security.csp).toContain("script-src 'self'");
     expect(tauriConfig.app.security.csp).toContain("object-src 'none'");
     expect(tauriConfig.app.security.csp).toContain("base-uri 'none'");
+    expect(tauriConfig.app.security.csp).toContain('asset:');
+    expect(tauriConfig.app.security.csp).toContain('http://asset.localhost');
     expect(tauriConfig.app.security.csp).not.toContain('unsafe-eval');
     expect(tauriConfig.app.security.devCsp).not.toContain('unsafe-eval');
+    expect(tauriConfig.app.security.assetProtocol).toEqual({
+      enable: true,
+      scope: {
+        allow: ['**/.fomod-previews/**/*'],
+        requireLiteralLeadingDot: true
+      }
+    });
+    expect(cargoManifest).toMatch(/tauri\s*=\s*\{[^\n]*features\s*=\s*\[[^\]]*"protocol-asset"/);
     expect(capabilities.permissions.join('\n')).not.toMatch(/opener|shell|dialog|fs/);
     expect(capabilities.windows).toEqual([
       'main',

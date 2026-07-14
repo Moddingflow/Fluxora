@@ -5,6 +5,7 @@ import {
   apiLimitProviderSummary,
   createCheckingNexusAuthStatus,
   createInstantNexusAuthStatus,
+  createUnavailableNexusAuthStatus,
   createVerifiedNexusAuthStatus,
   formatApiLimitReset,
   formatApiLimitUsage,
@@ -324,6 +325,19 @@ describe('settings workspace state', () => {
     expect(nexusActionLabel(checkingStatus)).toBe('Checking Nexus Mods');
     expect(nexusCanToggle(checkingStatus, true)).toBe(false);
     expect(nexusIsVerifiedLinked(checkingStatus)).toBe(false);
+
+    const unavailableStatus = createUnavailableNexusAuthStatus(
+      checkingStatus,
+      'Native Nexus status request timed out.'
+    );
+    expect(unavailableStatus.verificationState).toBe('unavailable');
+    expect(unavailableStatus.message).toBe('Native Nexus status request timed out.');
+    expect(nexusConnectionSummary(unavailableStatus)).toBe(
+      'Unavailable - last linked as Valerii'
+    );
+    expect(nexusActionLabel(unavailableStatus)).toBe('Retry Nexus Mods status');
+    expect(nexusCanToggle(unavailableStatus, true)).toBe(true);
+    expect(nexusIsVerifiedLinked(unavailableStatus)).toBe(false);
   });
 
   it('formats API limit providers from reported quota windows only', () => {

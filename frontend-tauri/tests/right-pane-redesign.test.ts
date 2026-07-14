@@ -146,6 +146,12 @@ describe('right pane redesign', () => {
     expect(app).not.toContain('@tauri-apps/api');
   });
 
+  it('exposes the complete download status when the visible row text is truncated', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+
+    expect(app).toContain('<small title={status.text}>{status.text}</small>');
+  });
+
   it('keeps the plugin table free of noisy type, state and action columns', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const pluginTableHeader =

@@ -7203,10 +7203,31 @@ body.row-reorder-active * {
   backdrop-filter: blur(4px) brightness(0.72) saturate(0.94);
 }
 
-.install-dialog {
+.install-modal-layout {
+  display: grid;
   width: min(560px, 100%);
-  min-height: min(520px, 100%);
+  min-width: 0;
+  min-height: 0;
   max-height: min(820px, 100%);
+}
+
+.install-modal-layout[data-phase="fomod"] {
+  grid-template-columns: 220px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+  width: min(1312px, 100%);
+  height: min(720px, 100%);
+}
+
+.install-modal-layout[data-phase="details"] {
+  width: min(960px, 100%);
+}
+
+.install-dialog {
+  width: 100%;
+  height: 100%;
+  min-height: min(520px, 100%);
+  max-height: 100%;
   border-color: rgba(var(--flx-accent-rgb), 0.26);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -7214,8 +7235,7 @@ body.row-reorder-active * {
 }
 
 .install-dialog[data-phase="fomod"] {
-  width: min(1080px, 100%);
-  min-height: min(650px, 100%);
+  min-height: 100%;
 }
 
 .install-dialog[data-phase="options"],
@@ -7288,6 +7308,108 @@ body.row-reorder-active * {
   justify-content: flex-end;
   gap: 10px;
   min-width: 0;
+}
+
+.install-step-sidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(var(--flx-accent-rgb), 0.26);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-popup);
+}
+
+.install-step-sidebar__header,
+.install-step-sidebar__footer {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--muted);
+  background: var(--flx-panel-soft);
+}
+
+.install-step-sidebar__header {
+  min-height: 46px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.install-step-sidebar__header strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.install-step-sidebar__list {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.install-step-sidebar__list button {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.install-step-sidebar__list button:hover,
+.install-step-sidebar__list button:focus-visible {
+  color: var(--text);
+  border-color: var(--line);
+  background: var(--flx-panel-hover);
+}
+
+.install-step-sidebar__list button[data-active="true"] {
+  color: var(--accent);
+  border-color: rgba(var(--flx-accent-rgb), 0.36);
+  background: rgba(var(--flx-accent-rgb), 0.09);
+}
+
+.install-step-sidebar__list button[data-complete="true"] {
+  color: var(--text);
+}
+
+.install-step-sidebar__list button span {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+
+.install-step-sidebar__list button strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.install-step-sidebar__footer {
+  min-height: 58px;
+  padding: 0 14px;
+  border-top: 1px solid var(--line);
+  font-size: 10.5px;
+  font-weight: 800;
 }
 
 .delete-confirmation-backdrop {
@@ -7959,71 +8081,10 @@ body.row-reorder-active * {
 
 .install-fomod-wizard {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   height: 100%;
   min-width: 0;
   min-height: 0;
-}
-
-.install-step-ribbon {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(150px, 1fr);
-  min-width: 0;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--line);
-  background: var(--flx-panel-soft);
-}
-
-.install-step-ribbon button {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  align-items: center;
-  gap: 9px;
-  min-height: 46px;
-  min-width: 0;
-  padding: 0 16px;
-  border: 0;
-  border-right: 1px solid var(--line);
-  color: var(--muted);
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-
-.install-step-ribbon button[data-active="true"] {
-  color: var(--accent);
-  background: rgba(var(--flx-accent-rgb), 0.1);
-  box-shadow: inset 0 -2px 0 var(--accent);
-}
-
-.install-step-ribbon button[data-complete="true"] {
-  color: var(--text);
-}
-
-.install-step-ribbon button span {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.install-step-ribbon button[data-active="true"] span,
-.install-step-ribbon button[data-complete="true"] span {
-  border-color: rgba(var(--flx-accent-rgb), 0.5);
-}
-
-.install-step-ribbon button strong {
-  min-width: 0;
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .install-fomod-body {
@@ -8034,12 +8095,19 @@ body.row-reorder-active * {
 }
 
 .install-fomod-options {
-  align-content: stretch;
+  display: flex;
+  flex-direction: column;
+  align-content: start;
   gap: 14px;
   min-width: 0;
   min-height: 0;
   padding: 18px 20px;
-  overflow: auto;
+  overflow: hidden;
+}
+
+.install-fomod-options .fomod-group-list {
+  flex: 1 1 auto;
+  align-content: start;
 }
 
 .fomod-group {
@@ -8054,27 +8122,22 @@ body.row-reorder-active * {
   margin-bottom: 2px;
 }
 
-.fomod-group header span {
-  padding: 2px 7px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--surface-soft);
-  font-size: 10px;
-  font-weight: 700;
-}
-
 .fomod-options {
   gap: 8px;
 }
 
 .fomod-option {
-  grid-template-columns: 18px 42px minmax(0, 1fr) 16px;
+  grid-template-columns: 18px minmax(0, 1fr) 16px;
   min-height: 66px;
   padding: 10px 13px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
   cursor: pointer;
+}
+
+.fomod-option:has(.fomod-option__thumb) {
+  grid-template-columns: 18px 42px minmax(0, 1fr) 16px;
 }
 
 .fomod-option:hover,
@@ -8088,6 +8151,47 @@ body.row-reorder-active * {
   background: rgba(var(--flx-accent-rgb), 0.08);
 }
 
+.fomod-option__previous {
+  color: var(--accent);
+}
+
+.fomod-option input {
+  appearance: none;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  box-shadow: none;
+}
+
+.fomod-option input[type="radio"] {
+  border-radius: 999px;
+}
+
+.fomod-option input[type="checkbox"] {
+  border-radius: 3px;
+}
+
+.fomod-option input[type="radio"]:checked {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 3px, transparent 4px);
+}
+
+.fomod-option input[type="checkbox"]:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.fomod-option input:focus,
+.fomod-option input:focus-visible {
+  border-color: var(--accent);
+  outline: 0;
+  box-shadow: 0 0 0 2px rgba(var(--flx-accent-rgb), 0.28);
+}
+
 .fomod-option__thumb {
   display: grid;
   place-items: center;
@@ -8095,15 +8199,7 @@ body.row-reorder-active * {
   height: 42px;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm);
-  background:
-    repeating-linear-gradient(
-      135deg,
-      rgba(255, 255, 255, 0.03) 0,
-      rgba(255, 255, 255, 0.03) 5px,
-      transparent 5px,
-      transparent 11px
-    ),
-    var(--surface-soft);
+  background: var(--surface-soft);
   overflow: hidden;
 }
 
@@ -8132,11 +8228,15 @@ body.row-reorder-active * {
 
 .install-fomod-preview {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   border-left: 1px solid var(--line);
   background: var(--flx-panel-soft);
+}
+
+.install-fomod-preview:has(.install-fomod-preview__image) {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .install-fomod-preview__image {
@@ -8146,16 +8246,7 @@ body.row-reorder-active * {
   margin: 18px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  color: var(--accent);
-  background:
-    repeating-linear-gradient(
-      135deg,
-      rgba(var(--flx-accent-rgb), 0.1) 0,
-      rgba(var(--flx-accent-rgb), 0.1) 7px,
-      rgba(var(--flx-bg-rgb), 0.16) 7px,
-      rgba(var(--flx-bg-rgb), 0.16) 14px
-    ),
-    var(--surface-soft);
+  background: var(--surface-soft);
   overflow: hidden;
 }
 
@@ -8165,12 +8256,6 @@ body.row-reorder-active * {
   object-fit: contain;
 }
 
-.install-fomod-preview__image span {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 800;
-}
-
 .install-fomod-preview__copy {
   display: grid;
   align-content: start;
@@ -8178,7 +8263,11 @@ body.row-reorder-active * {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 0 18px 18px;
+  padding: 18px;
+}
+
+.install-fomod-preview:has(.install-fomod-preview__image) .install-fomod-preview__copy {
+  padding-top: 0;
 }
 
 .install-fomod-preview__copy strong {
@@ -8195,45 +8284,12 @@ body.row-reorder-active * {
 }
 
 .install-grid-actions {
-  justify-content: space-between;
-}
-
-.install-step-count {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  color: var(--muted);
-  font-size: 10.5px;
-  font-weight: 800;
-}
-
-.install-step-count div {
-  display: flex;
-  gap: 4px;
-}
-
-.install-step-count i {
-  display: block;
-  width: 7px;
-  height: 5px;
-  border-radius: 999px;
-  background: var(--line);
-  transition: width var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard);
-}
-
-.install-step-count i[data-active="true"] {
-  width: 18px;
-  background: var(--accent);
-}
-
-.install-step-count i[data-complete="true"] {
-  background: rgba(var(--flx-accent-rgb), 0.42);
+  justify-content: flex-end;
 }
 
 @media (max-width: 900px) {
-  .install-dialog[data-phase="fomod"] {
-    width: min(720px, 100%);
+  .install-modal-layout[data-phase="fomod"] {
+    grid-template-columns: 180px minmax(0, 1fr);
   }
 
   .install-fomod-body {

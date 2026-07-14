@@ -5,7 +5,12 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <functional>
 #include <map>
+#include <string_view>
+#include <thread>
+#include <vector>
 
 #ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
 namespace fluxora::test_hooks
@@ -36,6 +41,7 @@ namespace fluxora::test_hooks
     std::wstring extractSupabaseCredentialValueForTest(const std::wstring& json);
     std::wstring resolvedNexusClientSecretForTest();
     std::wstring protectNexusSecretForTest(const std::wstring& value);
+    void setNexusTokenRequestHook(std::function<std::string(std::string_view)> hook);
     ApiLimitProvider nexusApiLimitProviderFromHeadersForTest(
         const std::map<std::wstring, std::wstring>& headers,
         unsigned long statusCode);
@@ -46,6 +52,27 @@ namespace fluxora::tests
 {
 #ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
     namespace nexus_auth_test_hooks = ::fluxora::test_hooks;
+
+    namespace
+    {
+        class ScopedNexusTokenRequestHook final
+        {
+        public:
+            explicit ScopedNexusTokenRequestHook(
+                std::function<std::string(std::string_view)> hook)
+            {
+                nexus_auth_test_hooks::setNexusTokenRequestHook(std::move(hook));
+            }
+
+            ScopedNexusTokenRequestHook(const ScopedNexusTokenRequestHook&) = delete;
+            ScopedNexusTokenRequestHook& operator=(const ScopedNexusTokenRequestHook&) = delete;
+
+            ~ScopedNexusTokenRequestHook()
+            {
+                nexus_auth_test_hooks::setNexusTokenRequestHook({});
+            }
+        };
+    }
 #endif
 
     TEST(NexusModsAuthServiceTests, OAuthTokenWithoutLegacyApiKeyIsLinked)
@@ -217,6 +244,52 @@ namespace fluxora::tests
         EXPECT_FALSE(header.isAvailable);
         EXPECT_TRUE(header.headerValue.empty());
         EXPECT_NE(header.message.find(L"expired"), std::wstring::npos);
+
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, ConcurrentApiAuthRequestsRefreshExpiredOAuthTokenOnce)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        ScopedEnvironmentVariable clientSecret(L"FLUXORA_NEXUS_CLIENT_SECRET", L"test-client-secret");
+
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.tokenType = L"Bearer";
+        auth.expiresAtUtc = L"2000-01-01T00:00:00Z";
+        auth.protectedAccessToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"expired-access-token");
+        auth.protectedRefreshToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"refresh-token");
+        settings.saveNexusModsAuth(auth);
+
+        std::atomic_int requestCount{0};
+        const ScopedNexusTokenRequestHook tokenRequestHook(
+            [&](std::string_view requestBody)
+            {
+                ++requestCount;
+                EXPECT_NE(requestBody.find("grant_type=refresh_token"), std::string_view::npos);
+                return std::string(
+                    R"({"access_token":"refreshed-access-token","refresh_token":"rotated-refresh-token","token_type":"Bearer","expires_in":3600})");
+            });
+
+        NexusModsAuthService service(logger, settings);
+        std::vector<NexusModsApiAuthHeader> headers(2);
+        std::thread first([&]() { headers[0] = service.apiAuthHeader(); });
+        std::thread second([&]() { headers[1] = service.apiAuthHeader(); });
+        first.join();
+        second.join();
+
+        EXPECT_EQ(requestCount.load(), 1);
+        for (const NexusModsApiAuthHeader& header : headers)
+        {
+            EXPECT_TRUE(header.isAvailable);
+            EXPECT_EQ(header.headerName, L"Authorization");
+            EXPECT_EQ(header.headerValue, L"Bearer refreshed-access-token");
+        }
 
         settings.shutdown();
     }

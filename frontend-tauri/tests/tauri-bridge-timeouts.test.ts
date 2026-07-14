@@ -181,6 +181,31 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('allows the interactive Nexus OAuth callback window to outlive the default bridge timeout', async () => {
+    const request: OperationRequest = { operationId: 'op_nexus_connect' };
+    invokeMock.mockResolvedValue({
+      isConfigured: true,
+      isLinked: true,
+      isPremium: true,
+      hasApiKey: false,
+      displayName: 'Playwright user',
+      userId: 'playwright',
+      message: 'Linked',
+      clientId: 'fluxora',
+      redirectUri: 'http://127.0.0.1:8089/callback'
+    });
+
+    const api = createTauriFluxoraApi();
+    await api.nexus.connect(request);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'nexus.connect',
+      params: {},
+      request,
+      timeoutMs: 180_000
+    });
+  });
+
   it('gives executable launches enough time for VFS preparation', async () => {
     const executable: FluxoraExecutable = {
       id: 'skse',

@@ -134,7 +134,7 @@ const defaultNexusClientId = 'fluxora';
 const defaultNexusRedirectUri = 'http://127.0.0.1:8089/callback';
 const instantNexusStatusOperationId = 'renderer_instant_nexus_status';
 
-export type NexusAuthVerificationState = 'checking' | 'stale' | 'verified';
+export type NexusAuthVerificationState = 'checking' | 'stale' | 'unavailable' | 'verified';
 
 export interface NexusAuthViewStatus extends FluxoraNexusModsAuthStatus {
   verificationState: NexusAuthVerificationState;
@@ -230,12 +230,22 @@ export const createCheckingNexusAuthStatus = (
     clientId: status?.clientId || defaultNexusClientId,
     redirectUri: status?.redirectUri || defaultNexusRedirectUri,
     operationId,
-    verificationState: lastKnownLinked ? 'stale' : 'checking',
+    verificationState: 'checking',
     lastKnownLinked,
     lastKnownDisplayName,
     lastKnownUserId
   };
 };
+
+export const createUnavailableNexusAuthStatus = (
+  status: FluxoraNexusModsAuthStatus | NexusAuthViewStatus | null | undefined,
+  message: string,
+  operationId = status?.operationId || instantNexusStatusOperationId
+): NexusAuthViewStatus => ({
+  ...createCheckingNexusAuthStatus(status, operationId),
+  message: message.trim() || 'Nexus Mods status is temporarily unavailable. Retry the status check.',
+  verificationState: 'unavailable'
+});
 
 const cachedString = (
   value: Record<string, unknown>,
@@ -328,6 +338,9 @@ export const nexusConnectionSummary = (
     const accountName =
       ('lastKnownDisplayName' in status ? status.lastKnownDisplayName : '') ||
       ('lastKnownUserId' in status ? status.lastKnownUserId : '');
+    if (statusVerificationState(status) === 'unavailable') {
+      return accountName ? `Unavailable - last linked as ${accountName}` : 'Status unavailable - retry';
+    }
     if (accountName) {
       return `Checking - last linked as ${accountName}`;
     }
@@ -350,6 +363,10 @@ export const nexusConnectionSummary = (
 export const nexusActionLabel = (
   status: FluxoraNexusModsAuthStatus | NexusAuthViewStatus | null
 ): string => {
+  if (status && statusVerificationState(status) === 'unavailable') {
+    return 'Retry Nexus Mods status';
+  }
+
   if (status && !nexusIsVerified(status)) {
     return 'Checking Nexus Mods';
   }
@@ -360,11 +377,17 @@ export const nexusActionLabel = (
 export const nexusCanToggle = (
   status: FluxoraNexusModsAuthStatus | NexusAuthViewStatus | null,
   nexusAvailable: boolean
-): boolean =>
-  nexusAvailable &&
-  Boolean(status) &&
-  nexusIsVerified(status) &&
-  (Boolean(status?.isLinked) || Boolean(status?.isConfigured));
+): boolean => {
+  if (!nexusAvailable || !status || statusVerificationState(status) === 'checking') {
+    return false;
+  }
+
+  if (!nexusIsVerified(status)) {
+    return statusVerificationState(status) === 'stale' || statusVerificationState(status) === 'unavailable';
+  }
+
+  return Boolean(status.isLinked) || Boolean(status.isConfigured);
+};
 
 export const apiLimitProviderSummary = (provider: FluxoraApiLimitProvider): string => {
   if (provider.windows.length > 0) {

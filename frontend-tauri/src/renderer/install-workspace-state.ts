@@ -427,23 +427,6 @@ export const installCategoryLabel = (
   return [game, isFomod ? 'FOMOD' : 'simple archive', state].join(' · ');
 };
 
-export const fomodGroupTypeLabel = (type: string): string => {
-  switch (type.toLocaleLowerCase()) {
-    case 'selectexactlyone':
-      return 'choose one';
-    case 'selectatleastone':
-      return 'one or more';
-    case 'selectatmostone':
-      return 'zero or one';
-    case 'selectall':
-      return 'required set';
-    case 'selectany':
-      return 'several allowed';
-    default:
-      return type || 'options';
-  }
-};
-
 const normalizeDependencyFile = (file: string): string => file.trim().replace(/\//g, '\\').replace(/^\\+/, '');
 
 const isDependencySatisfied = (
@@ -666,7 +649,10 @@ export const coerceFomodSelection = (
 };
 
 export const initialFomodSelection = (installer: FluxoraFomodInstaller): string[] =>
-  coerceFomodSelection(installer, []);
+  coerceFomodSelection(
+    installer,
+    installer.hasPreviousSelection ? installer.previousSelectedOptionIds : []
+  );
 
 export const previousFomodSelection = (installer: FluxoraFomodInstaller): string[] =>
   coerceFomodSelection(installer, installer.previousSelectedOptionIds);

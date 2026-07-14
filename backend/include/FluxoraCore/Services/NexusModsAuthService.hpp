@@ -2,6 +2,7 @@
 
 #include "FluxoraCore/Services/IService.hpp"
 
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -79,6 +80,7 @@ namespace fluxora
     private:
         Logger& logger_;
         AppSettingsService& settings_;
+        mutable std::mutex refreshMutex_;
         bool initialized_{false};
     };
 }

@@ -2,12 +2,14 @@
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
+#include "FluxoraCore/Services/NexusModsAuthService.hpp"
 #include "TestFilesystem.hpp"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -23,6 +25,8 @@
 #ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
 namespace fluxora::test_hooks
 {
+    std::wstring protectNexusSecretForTest(const std::wstring& value);
+
     void withExistingDownloadOutputPathReservationForTest(
         const std::filesystem::path& path,
         const std::function<void()>& action);
@@ -274,6 +278,74 @@ namespace fluxora::tests
         EXPECT_TRUE(entries.front().isDownloading);
         EXPECT_FALSE(entries.front().hasKnownProgress);
         EXPECT_EQ(entries.front().progressPercent, 0);
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+#endif
+    }
+
+    TEST(DownloadServiceTests, ExpiredOAuthTokenIsRejectedBeforeQueuedNexusTransfer)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Nexus downloads are implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.isPremium = true;
+        auth.tokenType = L"Bearer";
+        auth.expiresAtUtc = L"2000-01-01T00:00:00Z";
+        auth.protectedAccessToken = test_hooks::protectNexusSecretForTest(L"expired-access-token");
+        settings.saveNexusModsAuth(auth);
+
+        NexusModsAuthService nexusAuth(logger, settings);
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        std::atomic_int transferCalls{0};
+        const ScopedNexusArchiveTransferHooks transferHooks(
+            {},
+            [&](const std::filesystem::path& directory, const std::filesystem::path&, std::wstring_view)
+            {
+                ++transferCalls;
+                const std::filesystem::path archivePath = directory / L"unexpected-transfer.zip";
+                writeTextFile(archivePath, "fixture archive");
+                return archivePath;
+            });
+
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter, nexusAuth);
+        downloads.initialize();
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        downloads.captureNxmLinks(
+            projectDirectory,
+            {L"nxm://skyrimspecialedition/mods/3863/files/123"});
+
+        std::vector<DownloadEntry> entries;
+        for (int attempt = 0; attempt < 100; ++attempt)
+        {
+            entries = downloads.listDownloads(projectDirectory);
+            if (!entries.empty() && !entries.front().isDownloading)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        ASSERT_EQ(entries.size(), 1U);
+        EXPECT_FALSE(entries.front().isDownloading);
+        EXPECT_FALSE(entries.front().canInstall);
+        EXPECT_NE(entries.front().status.find(L"expired"), std::wstring::npos);
+        EXPECT_EQ(transferCalls.load(), 0);
 
         downloads.shutdown();
         pathSettings.shutdown();

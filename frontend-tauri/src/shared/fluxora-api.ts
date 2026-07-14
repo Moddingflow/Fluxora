@@ -2691,6 +2691,7 @@ export interface FluxoraApi {
     ) => Promise<FluxoraProcessWatchResult>;
   };
   downloads: {
+    toFomodPreviewImageUrl: (imagePath: string) => string;
     list: (
       projectDirectory: string,
       request?: OperationRequest

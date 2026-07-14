@@ -460,6 +460,8 @@ test.beforeEach(async ({ page }) => {
       explanationSummary: 'Fluxora built a safe archive placement plan.',
       explanationDetails: []
     };
+    const fomodPreviewImage =
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23f6bd3b'/%3E%3Cpath d='M16 42 28 28l8 9 6-7 8 12H16Z' fill='%23101317'/%3E%3C/svg%3E";
     const fomodInstaller = {
       isFomod: true,
       moduleName: 'Natural Vision Of Tamriel',
@@ -467,8 +469,8 @@ test.beforeEach(async ({ page }) => {
       moduleId: 'nvt',
       moduleImagePath: '',
       memoryKey: 'nvt',
-      hasPreviousSelection: false,
-      previousSelectedOptionIds: [],
+      hasPreviousSelection: true,
+      previousSelectedOptionIds: ['weather'],
       fileDependencies: [],
       requiredFiles: [],
       conditionalFilePatterns: [],
@@ -497,7 +499,7 @@ test.beforeEach(async ({ page }) => {
                   id: 'weather',
                   name: 'Weather only',
                   description: 'Only weather and sky files.',
-                  imagePath: '',
+                  imagePath: fomodPreviewImage,
                   type: 'Optional',
                   defaultType: 'Optional',
                   flags: [{ name: 'variant', value: 'weather' }],
@@ -535,17 +537,25 @@ test.beforeEach(async ({ page }) => {
     };
     let language = 'en-us';
     let nexusLinked = false;
-    const nexusStatus = () => ({
-      clientId: 'test-client',
-      displayName: nexusLinked ? 'Playwright user' : '',
-      hasApiKey: nexusLinked,
-      isConfigured: true,
-      isLinked: nexusLinked,
-      message: nexusLinked ? 'Linked' : 'Not linked',
-      operationId: 'op_nexus',
-      redirectUri: 'http://127.0.0.1/callback',
-      userId: nexusLinked ? 'playwright' : ''
-    });
+    let nexusInitialStateApplied = false;
+    const nexusStatus = () => {
+      const initialState = (window as any).__fluxoraNexusInitiallyLinked;
+      if (!nexusInitialStateApplied && typeof initialState === 'boolean') {
+        nexusLinked = initialState;
+        nexusInitialStateApplied = true;
+      }
+      return {
+        clientId: 'test-client',
+        displayName: nexusLinked ? 'Playwright user' : '',
+        hasApiKey: nexusLinked,
+        isConfigured: true,
+        isLinked: nexusLinked,
+        message: nexusLinked ? 'Linked' : 'Not linked',
+        operationId: 'op_nexus',
+        redirectUri: 'http://127.0.0.1/callback',
+        userId: nexusLinked ? 'playwright' : ''
+      };
+    };
     const apiLimitStatus = () => ({
       generatedAtUtc: '2026-07-07T10:00:00Z',
       operationId: 'op_api_limits',
@@ -759,6 +769,7 @@ test.beforeEach(async ({ page }) => {
         }
       },
       downloads: {
+        toFomodPreviewImageUrl: (imagePath: any) => String(imagePath),
         analyzeContentLayout: async (request: any, operation: any) => {
           calls.push({ method: 'downloads.analyzeContentLayout', payload: { operation, request } });
           return installPreview;
@@ -1449,6 +1460,12 @@ test.beforeEach(async ({ page }) => {
         getAuthStatus: async (operation: any) => {
           calls.push({ method: 'nexus.getAuthStatus', payload: { operation } });
           await waitForNexusStatus();
+          const scope = window as any;
+          const failuresRemaining = Number(scope.__fluxoraNexusStatusFailuresRemaining ?? 0);
+          if (failuresRemaining > 0) {
+            scope.__fluxoraNexusStatusFailuresRemaining = failuresRemaining - 1;
+            throw new Error('Nexus status temporarily unavailable');
+          }
           return nexusStatus();
         }
       },
@@ -4347,10 +4364,36 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
   await rightPane.getByRole('button', { name: 'Archive' }).click();
   const fomodDialog = page.getByRole('dialog', { name: /Natural Vision Of Tamriel/ });
   await expect(fomodDialog.getByText('Natural Vision Of Tamriel').first()).toBeVisible();
-  await expect(fomodDialog.getByRole('button', { name: /Preset/ })).toBeVisible();
+  const stepSidebar = fomodDialog.locator('.install-step-sidebar');
+  await expect(stepSidebar).toBeVisible();
+  await expect(fomodDialog.locator('.install-step-ribbon')).toHaveCount(0);
+  await expect(fomodDialog.getByText('choose one', { exact: true })).toHaveCount(0);
+  await expect(fomodDialog.getByText('Previously selected', { exact: true })).toBeVisible();
+  await expect(fomodDialog.locator('.fomod-option__thumb')).toHaveCount(1);
+  await expect(fomodDialog.locator('.install-fomod-preview__image img')).toHaveCount(1);
+
+  const sidebarBox = await stepSidebar.boundingBox();
+  const dialogBox = await fomodDialog.locator('.install-dialog').boundingBox();
+  expect(sidebarBox).not.toBeNull();
+  expect(dialogBox).not.toBeNull();
+  expect(Math.abs((sidebarBox?.height ?? 0) - (dialogBox?.height ?? 0))).toBeLessThanOrEqual(1);
+  expect(await stepSidebar.locator('.install-step-sidebar__list').evaluate((element) => getComputedStyle(element).overflowY)).toBe('auto');
+
+  const weatherRadio = fomodDialog.getByRole('radio', { name: /Weather only/ });
+  await expect(weatherRadio).toBeChecked();
   await expect(fomodDialog.getByText('Full install').first()).toBeVisible();
-  await fomodDialog.getByRole('button', { name: 'Next' }).click();
-  await expect(fomodDialog.getByRole('button', { name: /Patches/ })).toBeVisible();
+  const fullRadio = fomodDialog.getByRole('radio', { name: /Full install/ });
+  await fullRadio.click();
+  await expect(fullRadio).toBeChecked();
+  expect(await fullRadio.evaluate((element) => getComputedStyle(element).borderRadius)).toBe('999px');
+  await expect(fomodDialog.locator('.install-fomod-preview__image')).toHaveCount(0);
+  await expect(fomodDialog.getByText('option', { exact: true })).toHaveCount(0);
+
+  await fomodDialog.getByRole('button', { name: 'Patches', exact: true }).click();
+  await expect(fomodDialog.getByText('Lux patch').first()).toBeVisible();
+  await fomodDialog.getByRole('button', { name: 'Preset', exact: true }).click();
+  await expect(fullRadio).toBeChecked();
+  await fomodDialog.getByRole('button', { name: 'Patches', exact: true }).click();
   await fomodDialog.getByRole('button', { name: 'Review install' }).click();
   await expect(
     page
@@ -4406,6 +4449,54 @@ test('renders Settings Nexus status instantly while native auth status is delaye
       )
     )
     .toContain('nexus.getAuthStatus');
+});
+
+test('recovers an unavailable Nexus status without starting a new OAuth action', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      'fluxora.settings.nexusStatus',
+      JSON.stringify({
+        isConfigured: true,
+        isLinked: true,
+        displayName: 'Cached Playwright user',
+        userId: 'cached-playwright',
+        clientId: 'fluxora',
+        redirectUri: 'http://127.0.0.1:8089/callback',
+        operationId: 'op_cached_nexus'
+      })
+    );
+    const scope = window as typeof window & {
+      __fluxoraNexusInitiallyLinked?: boolean;
+      __fluxoraNexusStatusFailuresRemaining?: number;
+    };
+    scope.__fluxoraNexusInitiallyLinked = true;
+    scope.__fluxoraNexusStatusFailuresRemaining = 2;
+  });
+
+  await page.goto(`${baseUrl}/?window=settings`);
+
+  await expect(page.getByText('Unavailable - last linked as Cached Playwright user')).toBeVisible();
+  const nexusSwitch = page.getByRole('switch', { name: 'Nexus Mods account' });
+  await expect(nexusSwitch).toBeEnabled();
+
+  const callsBeforeRetry = await page.evaluate(() =>
+    (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+      ?.map((call) => call.method) ?? []
+  );
+  expect(callsBeforeRetry).not.toContain('nexus.connect');
+  expect(callsBeforeRetry).not.toContain('nexus.disconnect');
+
+  await nexusSwitch.click();
+
+  await expect(page.getByText('Linked - Playwright user')).toBeVisible();
+  await expect(nexusSwitch).toBeChecked();
+  const callsAfterRetry = await page.evaluate(() =>
+    (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
+      ?.map((call) => call.method) ?? []
+  );
+  expect(callsAfterRetry.filter((method) => method === 'nexus.getAuthStatus')).toHaveLength(3);
+  expect(callsAfterRetry).not.toContain('nexus.connect');
+  expect(callsAfterRetry).not.toContain('nexus.disconnect');
 });
 
 test('uses the redesigned Settings window for Nexus, language and MO2 transfer actions', async ({ page }) => {

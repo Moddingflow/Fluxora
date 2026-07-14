@@ -256,9 +256,11 @@ import {
 } from './profiles-executables-workspace-state';
 import {
   createCheckingNexusAuthStatus,
+  createUnavailableNexusAuthStatus,
   createVerifiedNexusAuthStatus,
   loadCachedNexusAuthStatus,
   nexusCanToggle,
+  nexusIsVerified,
   nexusIsVerifiedLinked,
   normalizeThemeMode,
   selectPreferredTransferDrive,
@@ -270,6 +272,7 @@ import {
   type NexusAuthViewStatus,
   type SettingsSectionId
 } from './settings-workspace-state';
+import { loadNexusStatusAndLimits } from './nexus-auth-workflow';
 import {
   type TransferStepId
 } from './TransferSettingsPanel';
@@ -2158,6 +2161,11 @@ export const App = () => {
   };
   const markNexusStatusChecking = () => {
     setNexusStatus((currentStatus) => createCheckingNexusAuthStatus(currentStatus));
+  };
+  const markNexusStatusUnavailable = (error: unknown, operationId?: string) => {
+    setNexusStatus((currentStatus) =>
+      createUnavailableNexusAuthStatus(currentStatus, errorMessage(error), operationId)
+    );
   };
   const nexusVerifiedLinked = nexusIsVerifiedLinked(nexusStatus);
 
@@ -5790,10 +5798,12 @@ export const App = () => {
         project.projectDirectory,
         { operationId }
       );
-      const nextDownloads = await window.fluxora.downloads.list(project.projectDirectory, {
-        operationId
+      await loadDownloadsWorkspace(project, {
+        operationId,
+        resetScroll: false,
+        showBusy: false,
+        showLoading: false
       });
-      dispatchDownloadsWorkspace({ type: 'items-loaded', items: nextDownloads });
       setMessage(
         imported.length === 0
           ? 'No inbound NXM links found.'
@@ -6188,9 +6198,9 @@ export const App = () => {
             if (isMounted) {
               rememberNexusStatus(nextNexusStatus);
             }
-          } catch {
+          } catch (error) {
             if (isMounted) {
-              setNexusStatus((currentStatus) => createCheckingNexusAuthStatus(currentStatus));
+              markNexusStatusUnavailable(error, operationId);
             }
           }
           await loadCatalog();
@@ -6219,18 +6229,19 @@ export const App = () => {
       const operationId = createRendererOperationId('nexus_online_retry');
       markNexusStatusChecking();
       setApiLimitsBusy(true);
-      void Promise.all([
-        window.fluxora.nexus.getAuthStatus({ operationId }),
-        window.fluxora.apiLimits.list({ operationId })
-      ]).then(
-        ([nextNexusStatus, nextApiLimits]) => {
-          rememberNexusStatus(nextNexusStatus);
-          rememberApiLimitProviders(nextApiLimits.providers);
-        },
-        () => {
-          markNexusStatusChecking();
+      void loadNexusStatusAndLimits({
+        getAuthStatus: () => window.fluxora.nexus.getAuthStatus({ operationId }),
+        listApiLimits: () => window.fluxora.apiLimits.list({ operationId })
+      }).then((result) => {
+        if (result.authStatus) {
+          rememberNexusStatus(result.authStatus);
+        } else {
+          markNexusStatusUnavailable(result.authError, operationId);
         }
-      ).finally(() => setApiLimitsBusy(false));
+        if (result.apiLimitProviders) {
+          rememberApiLimitProviders(result.apiLimitProviders);
+        }
+      }).finally(() => setApiLimitsBusy(false));
     };
 
     window.addEventListener('online', handleOnline);
@@ -8927,25 +8938,50 @@ export const App = () => {
     const operationId = createRendererOperationId('settings_load');
     setMessage(null);
     setApiLimitsBusy(true);
+    markNexusStatusChecking();
 
     try {
-      const [nextStatus, nextNexusStatus, nextApiLimits] = await Promise.all([
+      const [bridgeResult, nexusResult] = await Promise.allSettled([
         window.fluxora.bridge.getStatus({ operationId }),
-        window.fluxora.nexus.getAuthStatus({ operationId }),
-        window.fluxora.apiLimits.list({ operationId })
+        loadNexusStatusAndLimits({
+          getAuthStatus: () => window.fluxora.nexus.getAuthStatus({ operationId }),
+          listApiLimits: () => window.fluxora.apiLimits.list({ operationId })
+        })
       ]);
-      const nextThemeMode = normalizeThemeMode(nextStatus.theme);
-      setBridgeStatus({
-        ...nextStatus,
-        theme: nextThemeMode,
-        operationId
-      });
-      setThemeMode(nextThemeMode);
-      rememberNexusStatus(nextNexusStatus);
-      rememberApiLimitProviders(nextApiLimits.providers);
-    } catch (error) {
-      markNexusStatusChecking();
-      setMessage(errorMessage(error));
+
+      const failures: unknown[] = [];
+      if (bridgeResult.status === 'fulfilled') {
+        const nextThemeMode = normalizeThemeMode(bridgeResult.value.theme);
+        setBridgeStatus({
+          ...bridgeResult.value,
+          theme: nextThemeMode,
+          operationId
+        });
+        setThemeMode(nextThemeMode);
+      } else {
+        failures.push(bridgeResult.reason);
+      }
+
+      if (nexusResult.status === 'fulfilled') {
+        if (nexusResult.value.authStatus) {
+          rememberNexusStatus(nexusResult.value.authStatus);
+        } else {
+          markNexusStatusUnavailable(nexusResult.value.authError, operationId);
+          failures.push(nexusResult.value.authError);
+        }
+        if (nexusResult.value.apiLimitProviders) {
+          rememberApiLimitProviders(nexusResult.value.apiLimitProviders);
+        } else if (nexusResult.value.apiLimitsError) {
+          failures.push(nexusResult.value.apiLimitsError);
+        }
+      } else {
+        markNexusStatusUnavailable(nexusResult.reason, operationId);
+        failures.push(nexusResult.reason);
+      }
+
+      if (failures.length > 0) {
+        setMessage(errorMessage(failures[0]));
+      }
     } finally {
       setApiLimitsBusy(false);
     }
@@ -8956,21 +8992,35 @@ export const App = () => {
       return;
     }
 
+    const shouldRetryStatus = !nexusIsVerified(nexusStatus);
     const shouldDisconnect = nexusIsVerifiedLinked(nexusStatus);
-    const operationId = createRendererOperationId(shouldDisconnect ? 'nexus_disconnect' : 'nexus_connect');
+    const operationId = createRendererOperationId(
+      shouldRetryStatus ? 'nexus_status_retry' : shouldDisconnect ? 'nexus_disconnect' : 'nexus_connect'
+    );
     setNexusBusy(true);
     setApiLimitsBusy(true);
     setMessage(null);
+    markNexusStatusChecking();
 
     try {
-      const status = shouldDisconnect
-        ? await window.fluxora.nexus.disconnect({ operationId })
-        : await window.fluxora.nexus.connect({ operationId });
-      const nextApiLimits = await window.fluxora.apiLimits.list({ operationId });
+      const status = shouldRetryStatus
+        ? await window.fluxora.nexus.getAuthStatus({ operationId })
+        : shouldDisconnect
+          ? await window.fluxora.nexus.disconnect({ operationId })
+          : await window.fluxora.nexus.connect({ operationId });
       rememberNexusStatus(status);
-      rememberApiLimitProviders(nextApiLimits.providers);
-      setMessage(status.message || (status.isLinked ? 'Nexus Mods connected.' : 'Nexus Mods disconnected.'));
+      const successMessage =
+        status.message || (status.isLinked ? 'Nexus Mods connected.' : 'Nexus Mods disconnected.');
+
+      try {
+        const nextApiLimits = await window.fluxora.apiLimits.list({ operationId });
+        rememberApiLimitProviders(nextApiLimits.providers);
+        setMessage(successMessage);
+      } catch (error) {
+        setMessage(`${successMessage} API limits unavailable: ${errorMessage(error)}`);
+      }
     } catch (error) {
+      markNexusStatusUnavailable(error, operationId);
       setMessage(errorMessage(error));
     } finally {
       setNexusBusy(false);
@@ -11689,7 +11739,7 @@ export const App = () => {
                       <span style={{ width: `${entry.hasKnownProgress ? status.progressValue : 0}%` }} />
                     </div>
                   ) : null}
-                  <small>{status.text}</small>
+                  <small title={status.text}>{status.text}</small>
                 </div>
                 <span role="cell">{entry.sizeText || '-'}</span>
                 <span role="cell">{entry.source || 'local'}</span>
