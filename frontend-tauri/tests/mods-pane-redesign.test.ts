@@ -28,6 +28,10 @@ describe('mods pane redesign', () => {
     expect(app).toContain('modConflictMarkerStatesForHighlight(highlight)');
     expect(app).toContain('modConflictMarkerStatesForHighlight(conflictHighlight)');
     expect(app).toContain('className="mod-list-row__status mod-separator-status"');
+    expect(app).toContain('className="mod-list__head-priority"');
+    expect(app).toContain('className="mod-list-row__priority"');
+    expect(app).toContain('className="workspace-skeleton workspace-skeleton--priority"');
+    expect(app).toContain('modPriorityByOrderId(modsWorkspace.items)');
     expect(app).toContain('className="separator-toggle-button mod-separator-toggle-button"');
     expect(app).toContain('className="mod-separator-count"');
     expect(app).toContain('label={status.overwrite.title}');
@@ -157,7 +161,11 @@ describe('mods pane redesign', () => {
     expect(styles).not.toMatch(/\.pane-search:focus-within\s*\{[^}]*box-shadow:/);
     expect(styles).toContain('.mods-pane-toolbar');
     expect(styles).toContain('.mod-list__head');
-    expect(styles).toContain('grid-template-columns: minmax(180px, 1fr) minmax(78px, 88px) minmax(78px, 88px) minmax(88px, 112px);');
+    expect(styles).toContain('--mod-list-columns: 68px minmax(180px, 1fr)');
+    expect(styles).toContain('grid-template-columns: var(--mod-list-columns);');
+    expect(styles).toContain('.mod-list__head-priority');
+    expect(styles).toContain('.mod-list-row__priority');
+    expect(styles).toContain('.workspace-skeleton--priority');
     expect(styles).toContain('height: 48px;');
     expect(styles).toContain('.mod-separator-cell');
     expect(styles).toContain('.mod-separator-toggle-button');
@@ -185,7 +193,7 @@ describe('mods pane redesign', () => {
     expect(iconsReadme).toContain('exclamation-lg.svg');
     expect(iconsReadme).toContain('BOOTSTRAP-ICONS-LICENSE.txt');
     expect(iconsReadme).toContain('commercial use');
-    expect(styles).toMatch(/\.mod-separator-status\s*\{[^}]*grid-column: 4 \/ 5;[^}]*\}/);
+    expect(styles).toMatch(/\.mod-separator-status\s*\{[^}]*grid-column: 5 \/ 6;[^}]*\}/);
     expect(styles).not.toContain('.mod-conflict-markers > span');
     expect(styles).not.toContain('.mod-status-chip');
     expect(primitives).toContain('.flx-status-dot[data-state="none"]');

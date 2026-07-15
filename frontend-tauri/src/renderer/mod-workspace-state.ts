@@ -136,6 +136,24 @@ export const modItemTitle = (item: FluxoraModOrderItem): string =>
       ? item.separatorTitle || 'Separator'
       : item.name || item.id;
 
+export const modPriorityByOrderId = (
+  items: readonly FluxoraModOrderItem[]
+): ReadonlyMap<string, number> => {
+  const priorities = new Map<string, number>();
+  let priority = 0;
+
+  for (const item of items) {
+    if (!item.isMod) {
+      continue;
+    }
+
+    priority += 1;
+    priorities.set(item.orderId, priority);
+  }
+
+  return priorities;
+};
+
 export const removeModOrderItems = (
   items: readonly FluxoraModOrderItem[],
   orderIds: ReadonlySet<string>

@@ -1991,6 +1991,21 @@ test.describe('deletes selected mods with Del', () => {
     expect(await callMethods(page)).not.toContain('mods.deleteInstalled');
   });
 
+  test('focuses the delete action and confirms it with Enter', async ({ page }) => {
+    await openSkyrimBuild(page);
+
+    const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+    await modRow.click();
+    await modRow.press('Delete');
+
+    const dialog = page.getByRole('dialog', { name: 'Удаление мода' });
+    const deleteButton = dialog.getByRole('button', { name: 'Удалить' });
+    await expect(deleteButton).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    await expect.poll(() => callMethods(page)).toContain('mods.deleteInstalled');
+  });
+
   test('reopens confirmation with Del after dismissing it', async ({ page }) => {
     await openSkyrimBuild(page);
 
@@ -4013,6 +4028,17 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
 
   const modOrderTable = page.getByRole('table', { name: 'Mod order' });
   await expect(modOrderTable).toBeVisible();
+  const priorityHeader = modOrderTable.getByRole('columnheader', { name: 'Приоритет' });
+  await expect(priorityHeader).toBeVisible();
+  await expect
+    .poll(() =>
+      priorityHeader.evaluate((header) => {
+        const textRange = document.createRange();
+        textRange.selectNodeContents(header);
+        return textRange.getBoundingClientRect().width <= header.clientWidth;
+      })
+    )
+    .toBe(true);
   await expect(modOrderTable.getByRole('columnheader', { name: 'Название' })).toBeVisible();
   await expect(modOrderTable.getByRole('columnheader', { name: 'Версия' })).toBeVisible();
   await expect(modOrderTable.getByRole('columnheader', { name: 'Latest' })).toBeVisible();
@@ -4041,6 +4067,7 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await expect(separatorRow).toBeVisible();
   await expect(separatorRow).toHaveAttribute('data-conflict-highlight', 'none');
   await expect(separatorRow).toHaveAttribute('data-conflict-status', '');
+  await expect(separatorRow.locator('.mod-list-row__priority')).toHaveText('');
   await expect(separatorRow.locator('.mod-separator-status .flx-status-dot')).toHaveCount(0);
   await expect(separatorRow.locator('.mod-separator-status .mod-separator-count')).toHaveText('2 mods');
   await expect(separatorRow.locator('.mod-separator-cell .mod-separator-count')).toHaveCount(0);
@@ -4060,6 +4087,8 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await expect(separatorRow.locator('.mod-separator-status .flx-status-dot')).toHaveCount(0);
   const nestedModRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
   await expect(nestedModRow).toBeVisible();
+  await expect(nestedModRow.locator('.mod-list-row__priority')).toHaveText('1');
+  await expect(page.getByRole('row', { name: /SkyUI mod/ }).locator('.mod-list-row__priority')).toHaveText('2');
   await expect
     .poll(() => nestedModRow.evaluate((row) => window.getComputedStyle(row, '::before').content))
     .toBe('none');
@@ -4164,6 +4193,8 @@ test('drags mod order rows with pointer placement feedback', async ({ page }) =>
       orderId: 'mod_ussep',
       targetIndex: 2
     });
+  await expect(source.locator('.mod-list-row__priority')).toHaveText('2');
+  await expect(target.locator('.mod-list-row__priority')).toHaveText('1');
 });
 
 test('continuously scrolls the mod list while a dragged row stays at either edge', async ({ page }) => {
@@ -4663,6 +4694,61 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
       )
   )
     .toEqual(expect.arrayContaining(['downloads.importFile', 'nxm.importInboundDownloads']));
+});
+
+test('keeps both build panes at the full available height as their lists change', async ({ page }) => {
+  await page.goto(baseUrl);
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const buildPage = page.locator('.build-page');
+  const workbench = page.locator('.build-workbench');
+  const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
+  const rightPane = page.getByRole('region', { name: 'Right pane', exact: true });
+
+  await expect(modsPane).toBeVisible();
+  await expect(rightPane).toBeVisible();
+
+  const paneGeometry = async () => {
+    const [buildPageBox, workbenchBox, modsPaneBox, rightPaneBox] = await Promise.all([
+      buildPage.boundingBox(),
+      workbench.boundingBox(),
+      modsPane.boundingBox(),
+      rightPane.boundingBox()
+    ]);
+
+    if (!buildPageBox || !workbenchBox || !modsPaneBox || !rightPaneBox) {
+      throw new Error('Build pane geometry is unavailable');
+    }
+
+    return {
+      buildPageBottom: buildPageBox.y + buildPageBox.height,
+      workbenchBottom: workbenchBox.y + workbenchBox.height,
+      workbenchHeight: workbenchBox.height,
+      modsPaneHeight: modsPaneBox.height,
+      rightPaneHeight: rightPaneBox.height
+    };
+  };
+
+  const before = await paneGeometry();
+  expect(Math.abs(before.buildPageBottom - before.workbenchBottom)).toBeLessThanOrEqual(1);
+  expect(Math.abs(before.modsPaneHeight - before.rightPaneHeight)).toBeLessThanOrEqual(1);
+
+  await page.getByLabel('Search mods').fill('no-matching-mods');
+  await expect(modsPane.getByText(/0 visible/)).toBeVisible();
+  const downloadsTab = rightPane.getByRole('tab', { name: 'Загрузки', exact: true });
+  await downloadsTab.click();
+  await expect(downloadsTab).toHaveAttribute('aria-selected', 'true');
+  await rightPane.getByLabel('Search downloads').fill('no-matching-downloads');
+  await expect(rightPane.getByText('No matching downloads')).toBeVisible();
+
+  const after = await paneGeometry();
+  expect(Math.abs(after.buildPageBottom - after.workbenchBottom)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after.modsPaneHeight - after.rightPaneHeight)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after.workbenchHeight - before.workbenchHeight)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after.modsPaneHeight - before.modsPaneHeight)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after.rightPaneHeight - before.rightPaneHeight)).toBeLessThanOrEqual(1);
 });
 
 test('does not auto-loop failed effective Data tree loads', async ({ page }) => {

@@ -959,6 +959,7 @@ Current WPF `CoreBridgeService` serializes native calls because the native core 
 - One mutating operation at a time per host.
 - Read operations can be serialized initially.
 - Allowlisted latency-sensitive reads and bounded user-interactive waits may use the separate interactive bridge-host lane when they are safe to run independently and have focused routing/isolation tests. Text editor file/tree reads and the `nexus.connect` loopback callback wait use this lane; editor save calls remain on the serialized main lane.
+- The NXM download lifecycle is process-affine: `nxm.captureLinks`, `nxm.importInboundDownloads`, `downloads.list`, `downloads.cancel`, `downloads.resume`, and `downloads.delete` use the same interactive bridge-host lane. The queued worker and active-download registry live in that host process, so splitting these calls across lanes can misclassify a live transfer as canceled and expose its open `.part` file to deletion.
 - Other parallel reads require explicit core approval and tests.
 - Renderer can remain responsive because requests are asynchronous and progress/event driven.
 - The 10-second bridge timeout is reserved for short control/read calls.

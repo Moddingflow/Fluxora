@@ -71,7 +71,7 @@ export function DeletionConfirmationDialog({
   onCancel,
   onConfirm
 }: DeletionConfirmationDialogProps) {
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const confirmButtonRef = useRef<HTMLButtonElement | null>(null);
   const hasMultipleItems = Boolean(itemCount && itemCount > 1);
   const title = hasMultipleItems ? pluralTitleByKind[kind] : titleByKind[kind];
   const subject = deletionSubjectLabel(kind, itemName, itemCount);
@@ -79,7 +79,7 @@ export function DeletionConfirmationDialog({
   useEffect(() => {
     const previouslyFocusedElement =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    closeButtonRef.current?.focus({ preventScroll: true });
+    confirmButtonRef.current?.focus({ preventScroll: true });
 
     return () => {
       if (previouslyFocusedElement?.isConnected) {
@@ -122,7 +122,6 @@ export function DeletionConfirmationDialog({
           <button
             aria-label="Закрыть окно удаления"
             className="icon-button"
-            ref={closeButtonRef}
             title="Закрыть окно удаления"
             type="button"
             onClick={onCancel}
@@ -136,7 +135,12 @@ export function DeletionConfirmationDialog({
         </div>
 
         <footer className="delete-confirmation-dialog__actions">
-          <button className="danger-button" type="button" onClick={onConfirm}>
+          <button
+            className="danger-button"
+            ref={confirmButtonRef}
+            type="button"
+            onClick={onConfirm}
+          >
             Удалить
           </button>
         </footer>

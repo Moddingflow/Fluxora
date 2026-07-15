@@ -1265,7 +1265,7 @@ async fn queue_inbound_nxm_links(app: AppHandle, links: Vec<String>, source: &'s
 
     let result = {
         let state = bridge_state(&app);
-        let mut bridge = state.process.lock().await;
+        let mut bridge = state.interactive_process.lock().await;
         bridge
             .request(&app, "nxm.captureLinks", params, request, BRIDGE_TIMEOUT_MS)
             .await
@@ -3545,10 +3545,14 @@ fn bridge_lane_for_method(method: &str) -> BridgeLane {
         | "downloads.analyzeFomod"
         | "downloads.analyzeContentLayout"
         | "downloads.analyzeFomodContentLayout"
+        | "downloads.cancel"
         | "downloads.delete"
         | "downloads.list"
+        | "downloads.resume"
         | "downloads.install"
         | "downloads.installFomod"
+        | "nxm.captureLinks"
+        | "nxm.importInboundDownloads"
         | "archives.install"
         | "archives.installFomod"
         | "nexus.connect"
@@ -6795,8 +6799,15 @@ mod tests {
     }
 
     #[test]
-    fn download_delete_refresh_does_not_return_to_the_main_bridge_lane() {
-        for method in ["downloads.delete", "downloads.list"] {
+    fn nexus_download_lifecycle_uses_one_interactive_bridge_host() {
+        for method in [
+            "nxm.captureLinks",
+            "nxm.importInboundDownloads",
+            "downloads.list",
+            "downloads.cancel",
+            "downloads.resume",
+            "downloads.delete",
+        ] {
             assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);
         }
     }

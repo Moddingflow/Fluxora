@@ -14,6 +14,7 @@ import {
   modItemConflictHighlight,
   modLatestVersionText,
   modOrderItemMatchesLookup,
+  modPriorityByOrderId,
   optimisticModInstallState,
   modStatusText,
   modOverwriteView,
@@ -118,6 +119,22 @@ describe('mod workspace state', () => {
     expect(filterModOrderItems(items, 'visuals')).toEqual([items[0]]);
     expect(filterModOrderItems(items, 'update available')).toEqual([items[1]]);
     expect(filterModOrderItems(items, '')).toEqual(items);
+  });
+
+  it('assigns one-based priorities to mods without counting separators or overwrite rows', () => {
+    const overwrite = createOverwriteOrderItem(
+      'Skyrim Graphics',
+      'C:\\Builds\\Skyrim\\overwrite',
+      'en-us'
+    );
+    const priorities = modPriorityByOrderId([...items, overwrite]);
+
+    expect([...priorities]).toEqual([
+      ['mod_skyui', 1],
+      ['mod_smoothcam', 2]
+    ]);
+    expect(priorities.has('sep_visuals')).toBe(false);
+    expect(priorities.has(overwrite.orderId)).toBe(false);
   });
 
   it('appends localized overwrite output folder row after visible mods only', () => {

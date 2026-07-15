@@ -187,6 +187,7 @@ import {
   modLatestVersionText,
   modOverwriteView,
   modOrderItemMatchesLookup,
+  modPriorityByOrderId,
   modRowConflictHighlight,
   modSeparatorChildCount,
   modStatusText,
@@ -1600,6 +1601,11 @@ export const App = () => {
         modsWorkspace.collapsedSeparatorOrderIds
       ),
     [modsWorkspace.items, deferredModSearchText, modsWorkspace.collapsedSeparatorOrderIds]
+  );
+
+  const modPrioritiesByOrderId = useMemo(
+    () => modPriorityByOrderId(modsWorkspace.items),
+    [modsWorkspace.items]
   );
 
   const overwriteModItem = useMemo(
@@ -10340,6 +10346,9 @@ export const App = () => {
         Loading mods
       </span>
       <div className="mod-list__head" role="row">
+        <span className="mod-list__head-priority" role="columnheader">
+          Приоритет
+        </span>
         <span className="mod-list__head-name" role="columnheader">
           Название
         </span>
@@ -10355,6 +10364,7 @@ export const App = () => {
             key={`mod-skeleton-${index}`}
             role="row"
           >
+            <span className="workspace-skeleton workspace-skeleton--priority" role="cell" />
             <div className="mod-list-row__identity" role="cell">
               <span className="workspace-skeleton workspace-skeleton--toggle" />
               <div className="mod-list-row__title">
@@ -10410,6 +10420,9 @@ export const App = () => {
     return (
       <div className="mod-list mod-list--table" role="table" aria-label="Mod order">
         <div className="mod-list__head" role="row">
+          <span className="mod-list__head-priority" role="columnheader">
+            Приоритет
+          </span>
           <span className="mod-list__head-name" role="columnheader">
             Название
           </span>
@@ -10451,6 +10464,7 @@ export const App = () => {
             const separatorModCount = item.isSeparator
               ? modSeparatorChildCount(modsWorkspace.items, item.orderId)
               : 0;
+            const priority = modPrioritiesByOrderId.get(item.orderId);
             const isDragging = draggedModOrderId === item.orderId;
             const isOrderDropTarget =
               modDropTarget?.orderId === item.orderId && draggedModOrderId !== item.orderId;
@@ -10561,6 +10575,7 @@ export const App = () => {
                   </>
                 ) : item.isSeparator ? (
                   <>
+                    <span className="mod-list-row__priority" role="cell" />
                     <div className="mod-separator-cell" role="cell">
                       <button
                         className="separator-toggle-button mod-separator-toggle-button"
@@ -10598,6 +10613,9 @@ export const App = () => {
                   </>
                 ) : (
                   <>
+                    <span className="mod-list-row__priority" role="cell">
+                      {priority}
+                    </span>
                     <div className="mod-list-row__identity" role="cell">
                       <label
                         className="mod-enable-checkbox"
