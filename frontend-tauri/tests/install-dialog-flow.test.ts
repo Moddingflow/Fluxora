@@ -33,7 +33,7 @@ describe('install dialog flow', () => {
     expect(installDownload).not.toContain("phase: 'installing'");
   });
 
-  it('keeps the MO2-style install actions visible after a dedicated analysis state', () => {
+  it('keeps the MO2-style install actions visible without loading-only phases', () => {
     const dialog = readText(
       'frontend-tauri',
       'src',
@@ -48,9 +48,10 @@ describe('install dialog flow', () => {
     expect(dialog).toContain('Закрыть окно установки');
     expect(dialog).toContain('Подробнее');
     expect(dialog).toContain('Установить');
-    expect(dialog).toContain("onPatch({ phase: 'details' })");
-    expect(dialog).toContain('Analyzing installer');
-    expect(dialog).toContain("| 'analyzing'");
+    expect(dialog).not.toContain('Analyzing installer');
+    expect(dialog).not.toContain('Installing mod</strong>');
+    expect(dialog).not.toContain("| 'analyzing'");
+    expect(dialog).not.toContain("| 'installing'");
   });
 
   it('keeps the simple install step focused on actionable controls only', () => {
@@ -83,25 +84,43 @@ describe('install dialog flow', () => {
     expect(dialog).not.toContain('installCategoryLabel');
   });
 
-  it('shows neutral analysis progress until the archive installer kind is known', () => {
+  it('opens actionable install controls immediately while installer detection stays in the background', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const startInstallFlow = sliceBetween(
       app,
       'const startInstallFlow = async',
-      '  const loadDownloadsWorkspace = async'
+      '  const resolveInstallDialogKind = async'
     );
 
-    expect(startInstallFlow).toContain("phase: 'analyzing'");
+    expect(startInstallFlow).toContain("phase: 'options'");
+    expect(startInstallFlow).toContain("installerKind: 'pending'");
+    expect(startInstallFlow).not.toContain("phase: 'analyzing'");
     expect(startInstallFlow).toContain(
       'defaultInstallModName(source.displayName, source.sourcePath)'
     );
     expect(startInstallFlow).toContain('const analysisPromise = (async (): Promise<InstallAnalysisResult>');
     expect(startInstallFlow).toContain('watchInstallAnalysis(operationId, analysisPromise)');
-    expect(startInstallFlow).toContain('void primeInstalledModNamesForInstall(project, operationId)');
-    expect(startInstallFlow).not.toContain('await primeInstalledModNamesForInstall(project, operationId)');
-    expect(startInstallFlow.indexOf('await window.fluxora.downloads.analyzeFomod')).toBeLessThan(
-      startInstallFlow.indexOf('void primeInstalledModNamesForInstall(project, operationId)')
+    expect(startInstallFlow).toContain('await window.fluxora.downloads.analyzeFomod');
+    expect(startInstallFlow).not.toContain('analyzeInstallLayout(');
+    expect(startInstallFlow).not.toContain('primeInstalledModNamesForInstall');
+  });
+
+  it('keeps an active installation non-visual while blocking another install action', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const submitInstallDialog = sliceBetween(
+      app,
+      'async function submitInstallDialog(',
+      '  const submitInstallOptions = async'
     );
+
+    expect(app).toContain(
+      'const downloadsActionsBusy = Boolean(downloadsBusyLabel) || installMutationInFlight;'
+    );
+    expect(submitInstallDialog).toContain('setInstallMutationInFlight(true)');
+    expect(submitInstallDialog).toContain('setInstallMutationInFlight(false)');
+    expect(submitInstallDialog).not.toContain('setDownloadsBusyLabel');
+    expect(submitInstallDialog).not.toContain('Updating in background');
+    expect(submitInstallDialog).not.toContain('Installing in background');
   });
 
   it('submits the final FOMOD choices without reopening the simple verification step', () => {
@@ -117,7 +136,7 @@ describe('install dialog flow', () => {
     const continueFromFomod = sliceBetween(
       app,
       'const continueFromFomod = async',
-      '  const waitForInstallLayoutPreview = async'
+      '  const applyOptimisticInstalledMod = ('
     );
     const fomodStep = sliceBetween(
       dialog,
@@ -125,8 +144,10 @@ describe('install dialog flow', () => {
       'const renderInstallOptions'
     );
 
-    expect(continueFromFomod).toContain("phase: 'installing'");
     expect(continueFromFomod).toContain('await submitInstallDialog(fomodDialog)');
+    expect(continueFromFomod).toContain("installerKind: 'fomod'");
+    expect(continueFromFomod).not.toContain("phase: 'installing'");
+    expect(continueFromFomod).not.toContain('analyzeInstallLayout(');
     expect(continueFromFomod).not.toContain("phase: 'options'");
     expect(fomodStep).toContain('Установить');
     expect(fomodStep).not.toContain('Review install');
@@ -181,7 +202,7 @@ describe('install dialog flow', () => {
     expect(styles).toContain('.install-existing-mod__choices');
   });
 
-  it('deduplicates the conflict snapshot and claims submit before async preflight', () => {
+  it('uses the loaded workspace conflict snapshot and dismisses the dialog before async detection', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const submitInstallDialog = sliceBetween(
       app,
@@ -189,31 +210,27 @@ describe('install dialog flow', () => {
       '  const submitInstallOptions = async'
     );
 
-    expect(app).toContain('const installModNamesLookupRef = useRef<InstallModNamesLookup | null>(null)');
-    expect(app).toContain('const primeInstalledModNamesForInstall = (');
-    expect(app).toContain('const resolveExistingModNameForInstall = async');
-    expect(app).toContain('const waitForInstallLayoutPreview = async');
+    expect(app).not.toContain('installModNamesLookupRef');
+    expect(app).not.toContain('primeInstalledModNamesForInstall');
+    expect(app).not.toContain('resolveExistingModNameForInstall');
+    expect(app).toContain('const resolveInstallDialogKind = async');
     expect(app).toContain('existingModMode: 0,');
     expect(app).toContain('onResolveExistingMod={(mode) => void submitInstallOptions(mode)}');
-    expect(submitInstallDialog).toContain(
-      'const layoutPreview = await waitForInstallLayoutPreview(installDialog);'
-    );
-    expect(submitInstallDialog).toContain(
-      'const existingModNameForPrompt = await resolveExistingModNameForInstall'
-    );
+    expect(submitInstallDialog).toContain('const resolvedDialog = await resolveInstallDialogKind');
+    expect(submitInstallDialog).toContain('const existingModNameForPrompt = findExistingInstalledModName(');
+    expect(submitInstallDialog).toContain('installedModNames,');
     expect(submitInstallDialog).toContain("phase: 'conflict'");
     expect(submitInstallDialog).toContain(
       'const existingModMode: FluxoraExistingModInstallMode = selectedExistingModMode ?? 0;'
     );
     expect(submitInstallDialog.indexOf('installSubmitInFlightRef.current = installDialog.operationId')).toBeLessThan(
-      submitInstallDialog.indexOf('waitForInstallLayoutPreview')
+      submitInstallDialog.indexOf('setInstallDialog((current) =>')
     );
-    expect(submitInstallDialog.indexOf('waitForInstallLayoutPreview')).toBeLessThan(
-      submitInstallDialog.indexOf('resolveExistingModNameForInstall')
+    expect(submitInstallDialog.indexOf('setInstallDialog((current) =>')).toBeLessThan(
+      submitInstallDialog.indexOf('resolveInstallDialogKind')
     );
-    expect(submitInstallDialog.indexOf('resolveExistingModNameForInstall')).toBeLessThan(
-      submitInstallDialog.lastIndexOf("phase: 'installing'")
-    );
+    expect(submitInstallDialog).not.toContain("phase: 'installing'");
+    expect(submitInstallDialog).not.toContain('mods.listInstalled');
   });
 
   it('commits the installed row immediately and reconciles native state in the background', () => {
@@ -225,8 +242,10 @@ describe('install dialog flow', () => {
     );
 
     expect(submitInstallDialog).toContain('installSubmitInFlightRef.current');
+    expect(submitInstallDialog).toContain('setInstallDialog((current) =>');
     expect(submitInstallDialog).toContain('applyOptimisticInstalledMod(');
     expect(submitInstallDialog).toContain('void reconcileInstalledModAfterInstall(');
+    expect(submitInstallDialog).not.toContain("phase: 'installing'");
     expect(submitInstallDialog).not.toContain('await loadModsWorkspace(selectedProject)');
     expect(submitInstallDialog).not.toContain('await loadPluginsWorkspace(selectedProject)');
   });

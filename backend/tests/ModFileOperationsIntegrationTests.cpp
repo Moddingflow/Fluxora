@@ -2854,6 +2854,19 @@ namespace fluxora::tests
         EXPECT_EQ(movedFirst->overwritesModIds[0], movedSecond->id.wstring());
         ASSERT_EQ(movedSecond->overwrittenByModIds.size(), 1U);
         EXPECT_EQ(movedSecond->overwrittenByModIds[0], movedFirst->id.wstring());
+
+        const ModWorkspaceSnapshot persistedSnapshot =
+            profileOrder_.persistedWorkspaceSnapshot(project_, L"Default");
+        const ProfileModOrderItem* persistedFirst =
+            findModOrderItem(persistedSnapshot.modOrder, L"Armor A");
+        const ProfileModOrderItem* persistedSecond =
+            findModOrderItem(persistedSnapshot.modOrder, L"Armor B");
+        ASSERT_NE(persistedFirst, nullptr);
+        ASSERT_NE(persistedSecond, nullptr);
+        EXPECT_EQ(persistedFirst->overwrittenFileCount, 0);
+        EXPECT_EQ(persistedFirst->overwritingFileCount, 1);
+        EXPECT_EQ(persistedSecond->overwrittenFileCount, 1);
+        EXPECT_EQ(persistedSecond->overwritingFileCount, 0);
     }
 
     TEST_F(ModFileOperationsIntegrationTests, CachedModOrderMarksFullyOverwrittenModsForLaunch)

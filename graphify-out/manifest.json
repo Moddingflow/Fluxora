@@ -310,13 +310,13 @@
     "semantic_hash": ""
   },
   "backend/src/Services/ContentLayoutService.cpp": {
-    "mtime": 1782145481.7159662,
-    "ast_hash": "a12b4af5eddec9e01c31e373248cf21a",
+    "mtime": 1784094088.6991668,
+    "ast_hash": "fe4b2a4ddaa9603a2a604b6843e32d51",
     "semantic_hash": ""
   },
   "backend/src/Services/DownloadService.cpp": {
-    "mtime": 1784021812.995943,
-    "ast_hash": "36a95cb3640d7682a7a54a4e13e6cffd",
+    "mtime": 1784097874.7395537,
+    "ast_hash": "44f8225a820d19c41e0719ad586a4466",
     "semantic_hash": ""
   },
   "backend/src/Services/ExecutableIconService.cpp": {
@@ -390,8 +390,8 @@
     "semantic_hash": ""
   },
   "backend/src/Services/ProfileOrderService.cpp": {
-    "mtime": 1783740357.8275678,
-    "ast_hash": "de5df06ddeddb5f9c6533a0c5c5777f2",
+    "mtime": 1784101320.5317593,
+    "ast_hash": "4774ca6464a782c70571cb8ed0e4c209",
     "semantic_hash": ""
   },
   "backend/src/Services/ProjectService.cpp": {
@@ -445,13 +445,13 @@
     "semantic_hash": ""
   },
   "backend/tests/ContentLayoutServiceTests.cpp": {
-    "mtime": 1782145492.2190142,
-    "ast_hash": "0ff38f61d0b7a7ff9a9a066adc67f30e",
+    "mtime": 1784094119.1417356,
+    "ast_hash": "a1bf86176230504a2f0d2e07e9122e3a",
     "semantic_hash": ""
   },
   "backend/tests/DownloadServiceTests.cpp": {
-    "mtime": 1784021470.0186498,
-    "ast_hash": "03b3345f013c38aa8f051bcea4763c90",
+    "mtime": 1784098050.7527003,
+    "ast_hash": "bdce4d2ba199b841fd56f97ca647aa79",
     "semantic_hash": ""
   },
   "backend/tests/ExecutableServiceTests.cpp": {
@@ -515,8 +515,8 @@
     "semantic_hash": ""
   },
   "backend/tests/ModFileOperationsIntegrationTests.cpp": {
-    "mtime": 1784025361.7731764,
-    "ast_hash": "6471a7663609b0baa773f18b9748c8d2",
+    "mtime": 1784101220.4836855,
+    "ast_hash": "04db14b849d6c77c1e8a6a683ad0dafd",
     "semantic_hash": ""
   },
   "backend/tests/ModOrganizerImportServiceTests.cpp": {
@@ -1070,8 +1070,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/lib.rs": {
-    "mtime": 1784028614.377127,
-    "ast_hash": "5c438d7a4683900bf8e4c5d371781f2f",
+    "mtime": 1784098012.106941,
+    "ast_hash": "037be5ce54d89f320044e7e51e9d35ab",
     "semantic_hash": ""
   },
   "frontend-tauri/src-tauri/src/main.rs": {
@@ -1085,8 +1085,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/App.tsx": {
-    "mtime": 1784058845.9021366,
-    "ast_hash": "2dd184f8fe41f4977534f1202dc45241",
+    "mtime": 1784100276.153916,
+    "ast_hash": "5353243d54fd1b5a4025c076a1f5107a",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/TransferMo2Page.tsx": {
@@ -1105,8 +1105,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/download-workspace-state.ts": {
-    "mtime": 1783850549.239905,
-    "ast_hash": "ae0c08675e5edc3557ccc8a74dbb3b54",
+    "mtime": 1784097960.6509056,
+    "ast_hash": "a8f1bb8deea69d6b740cf4f2c118a740",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/install-workspace-state.ts": {
@@ -1190,7 +1190,7 @@
     "semantic_hash": ""
   },
   "frontend-tauri/test-results/.last-run.json": {
-    "mtime": 1784058962.873464,
+    "mtime": 1784102405.485977,
     "ast_hash": "f196824657d8858bc7fa44eecbba38b1",
     "semantic_hash": ""
   },
@@ -1200,8 +1200,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/download-workspace-state.test.ts": {
-    "mtime": 1783850443.0915055,
-    "ast_hash": "736903d6df4593bb1d70f1051d189ad0",
+    "mtime": 1784097937.1943874,
+    "ast_hash": "a855559ecf2ba95191f787e44fe71179",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/install-workspace-state.test.ts": {
@@ -1640,8 +1640,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/e2e/library-home.spec.ts": {
-    "mtime": 1784058954.598964,
-    "ast_hash": "3978de692560d16abeb4be3db8a34bdf",
+    "mtime": 1784102080.007708,
+    "ast_hash": "03dbbb08c185d50692be5e450e2d5e5a",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/LibraryHome.tsx": {
@@ -1680,8 +1680,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/install/InstallDialog.tsx": {
-    "mtime": 1784028614.375616,
-    "ast_hash": "cc90b5787dea622825c2f097f0e6304c",
+    "mtime": 1784090113.6764731,
+    "ast_hash": "97d04dcba9c58bb48a327e2d1a661da7",
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/library/projectLibraryStats.ts": {
@@ -1790,8 +1790,8 @@
     "semantic_hash": ""
   },
   "backend/tests/FluxoraCoreApiTests.cpp": {
-    "mtime": 1783874351.4106038,
-    "ast_hash": "1ad303801a4956ea83ff548dfcde3f0d",
+    "mtime": 1784098095.2830684,
+    "ast_hash": "ff77008933c15a6eac8774552e02859d",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/tauri-bridge-timeouts.test.ts": {
@@ -4325,8 +4325,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/app-nxm-inbound.test.ts": {
-    "mtime": 1784021889.3798811,
-    "ast_hash": "a88bb3a3dcf1850fe1e4a6804bbf0ac5",
+    "mtime": 1784097960.6539052,
+    "ast_hash": "334895d7d285bb9accff35e70247f853",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/download-progress-refresh.test.ts": {
@@ -4335,13 +4335,13 @@
     "semantic_hash": ""
   },
   "frontend-tauri/tests/install-dialog-flow.test.ts": {
-    "mtime": 1784028495.0173614,
-    "ast_hash": "6ba5c17980740bbf7ca76e033148e6c9",
+    "mtime": 1784090912.5956137,
+    "ast_hash": "d074ae1d86288af6cc19b96ff5f3add8",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/download-drop-ui.test.ts": {
-    "mtime": 1783846607.0816224,
-    "ast_hash": "6e3fed531974530ba274d8f35ea57894",
+    "mtime": 1784098462.3613002,
+    "ast_hash": "0ddf8e9e16832d14f07b5a6c34509f32",
     "semantic_hash": ""
   },
   "docs/ai/mod-research-pipeline-gap-analysis.md": {
@@ -4525,8 +4525,8 @@
     "semantic_hash": ""
   },
   "frontend-tauri/src/renderer/features/deletion/DeletionConfirmationDialog.tsx": {
-    "mtime": 1783500933.9920902,
-    "ast_hash": "e0f04c13e884f86f83050df075301217",
+    "mtime": 1784102126.1731954,
+    "ast_hash": "62a446a092a317e6f4ebb809ece356bb",
     "semantic_hash": ""
   },
   "frontend-tauri/tests/deletion-confirmation-dialog.test.ts": {

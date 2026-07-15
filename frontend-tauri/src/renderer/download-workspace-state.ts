@@ -31,6 +31,7 @@ export type DownloadWorkspaceAction =
   | { type: 'load-started'; silent?: boolean }
   | { type: 'load-failed'; message: string; silent?: boolean }
   | { type: 'items-loaded'; items: FluxoraDownloadEntry[] }
+  | { type: 'items-upserted'; items: FluxoraDownloadEntry[] }
   | { type: 'search-changed'; searchText: string }
   | { type: 'selected'; id: string | null }
   | { type: 'selection-toggled'; id: string; orderedIds: readonly string[] }
@@ -327,6 +328,13 @@ export const downloadWorkspaceReducer = (
         loadState: 'ready',
         errorMessage: null
       };
+    }
+    case 'items-upserted': {
+      const incomingIds = new Set(action.items.map((entry) => entry.id));
+      return downloadWorkspaceReducer(state, {
+        type: 'items-loaded',
+        items: [...action.items, ...state.items.filter((entry) => !incomingIds.has(entry.id))]
+      });
     }
     case 'search-changed':
       return {

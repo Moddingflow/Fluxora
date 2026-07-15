@@ -350,6 +350,29 @@ namespace fluxora
                 });
         }
 
+        [[nodiscard]] bool hasRecognizedContentRootAfterWrapper(
+            const std::filesystem::path& path,
+            const ContentLayoutSupportRules& rules,
+            std::wstring_view rootFileWrapperDirectory)
+        {
+            if ((hasLeadingSegment(path, rules.dataFolder) ||
+                 (!rootFileWrapperDirectory.empty() &&
+                  hasLeadingSegment(path, rootFileWrapperDirectory))) &&
+                segmentCount(path) > 1)
+            {
+                return true;
+            }
+            if (isKnownGameDataDirectory(path, rules) ||
+                (segmentCount(path) == 1 && isScriptExtenderLoader(path, rules)))
+            {
+                return true;
+            }
+
+            const NormalizedExtension extension = normalizedExtension(path);
+            return extensionIn(extension, rules.pluginExtensions, rules.pluginExtensionKeys) ||
+                extensionIn(extension, rules.archiveExtensions, rules.archiveExtensionKeys);
+        }
+
         [[nodiscard]] ContentLayoutClassification classifyDataRelativePath(
             const std::filesystem::path& path,
             const ContentLayoutSupportRules& rules)
@@ -1148,6 +1171,47 @@ namespace fluxora
             return cachePlan(std::move(plan));
         }
 
+        std::wstring automaticContentWrapper;
+        if (!selectedSubfolder.has_value())
+        {
+            const std::wstring candidate = firstSegment(files.front().analysisPath);
+            const std::filesystem::path candidatePath(candidate);
+            const bool candidateIsLayoutRoot =
+                equalsIgnoreCase(candidate, rules.dataFolder) ||
+                (!plan.rootFileWrapperDirectory.empty() &&
+                 equalsIgnoreCase(candidate, plan.rootFileWrapperDirectory)) ||
+                isKnownGameDataDirectory(candidatePath, rules);
+            const bool everyFileUsesCandidate = !candidate.empty() &&
+                std::all_of(
+                    files.begin(),
+                    files.end(),
+                    [&candidate](const SafeEntry& entry)
+                    {
+                        return segmentCount(entry.analysisPath) > 1 &&
+                            equalsIgnoreCase(firstSegment(entry.analysisPath), candidate);
+                    });
+            const bool exposesRecognizedContentRoot = everyFileUsesCandidate &&
+                std::any_of(
+                    files.begin(),
+                    files.end(),
+                    [&rules, &plan](const SafeEntry& entry)
+                    {
+                        return hasRecognizedContentRootAfterWrapper(
+                            stripFirstSegment(entry.analysisPath),
+                            rules,
+                            plan.rootFileWrapperDirectory);
+                    });
+
+            if (!candidateIsLayoutRoot && exposesRecognizedContentRoot)
+            {
+                automaticContentWrapper = candidate;
+                for (SafeEntry& file : files)
+                {
+                    file.analysisPath = stripFirstSegment(file.analysisPath);
+                }
+            }
+        }
+
         const bool hasDataWrapper = std::any_of(
             files.begin(),
             files.end(),
@@ -1165,7 +1229,9 @@ namespace fluxora
             std::filesystem::path sourceForClassification = file.analysisPath;
             PlacementTarget target = PlacementTarget::Data;
             ContentArea area = ContentArea::Data;
-            std::wstring reason;
+            std::wstring reason = automaticContentWrapper.empty()
+                ? std::wstring{}
+                : L"Fluxora stripped the archive's single content wrapper because it contains a recognized game-data layout.";
 
             if (!plan.rootFileWrapperDirectory.empty() &&
                 hasLeadingSegment(sourceForClassification, plan.rootFileWrapperDirectory) &&

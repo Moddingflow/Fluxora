@@ -520,15 +520,9 @@ namespace fluxora
 
         ModWorkspaceSnapshot snapshot;
         snapshot.installedMods = mods_.listPersistedInstalledMods(projectDirectory);
-        // T3 reuses the durable installed-summary snapshot for row decoration.
-        // Profile-specific conflict projection is reconciled by workspaceSnapshot
-        // at T4; ordering/enabled state still comes from the requested profile.
-        snapshot.modOrder = buildModOrder(
-            InstanceMetadataStore::listCachedProfileOrderItems(
-                projectDirectory,
-                profileName,
-                pathSettings_.modsDirectory(projectDirectory)),
-            snapshot.installedMods);
+        // Keep this snapshot disk-free, but decorate rows with the requested
+        // profile's priority instead of the unrelated installation order.
+        snapshot.modOrder = listCachedModOrder(projectDirectory, profileName);
         return snapshot;
     }
 

@@ -805,7 +805,12 @@ fn is_transient_downloads_watch_path(path: &Path) -> bool {
     }
 
     let lower = file_name.to_ascii_lowercase();
-    if matches!(lower.as_str(), ".ds_store" | "thumbs.db" | "desktop.ini") {
+    let is_compact_atomic_backup = lower
+        .strip_prefix(".fb")
+        .is_some_and(|token| token.len() == 8 && token.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    if matches!(lower.as_str(), ".ds_store" | "thumbs.db" | "desktop.ini")
+        || is_compact_atomic_backup
+    {
         return true;
     }
     if lower.starts_with("~$") || lower.starts_with(".~") {
@@ -3536,9 +3541,12 @@ fn bridge_lane_for_method(method: &str) -> BridgeLane {
         | "mods.prepareNifPreviewVariant"
         | "mods.prepareNifPreviewTextures"
         | "mods.listInstalled"
+        | "mods.deleteInstalled"
         | "downloads.analyzeFomod"
         | "downloads.analyzeContentLayout"
         | "downloads.analyzeFomodContentLayout"
+        | "downloads.delete"
+        | "downloads.list"
         | "downloads.install"
         | "downloads.installFomod"
         | "archives.install"
@@ -6339,6 +6347,9 @@ mod tests {
         assert!(is_transient_downloads_watch_path(Path::new(
             "C:/Downloads/~$lock.tmp"
         )));
+        assert!(is_transient_downloads_watch_path(Path::new(
+            "C:/Downloads/.fb16ecc071"
+        )));
         assert!(!is_transient_downloads_watch_path(Path::new(
             "C:/Downloads/mod.7z"
         )));
@@ -6772,6 +6783,20 @@ mod tests {
             "archives.install",
             "archives.installFomod",
         ] {
+            assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);
+        }
+    }
+
+    #[test]
+    fn delete_mutations_use_the_interactive_bridge_lane() {
+        for method in ["mods.deleteInstalled", "downloads.delete"] {
+            assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);
+        }
+    }
+
+    #[test]
+    fn download_delete_refresh_does_not_return_to_the_main_bridge_lane() {
+        for method in ["downloads.delete", "downloads.list"] {
             assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);
         }
     }

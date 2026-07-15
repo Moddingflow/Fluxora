@@ -168,6 +168,7 @@ namespace fluxora
 
         struct NexusFileInfo
         {
+            std::wstring displayName;
             std::wstring fileName;
             std::wstring version;
             std::wstring payloadJson;
@@ -326,13 +327,15 @@ namespace fluxora
 
         void writeTextFile(const std::filesystem::path& path, const std::string& content)
         {
+            AtomicFileWriteOptions options{
+                L"generated download metadata",
+                ProjectStateValidation::Utf8Text
+            };
+            options.keepBackup = false;
             AtomicFileStore().writeTextFile(
                 path,
                 content,
-                AtomicFileWriteOptions{
-                    L"generated download metadata",
-                    ProjectStateValidation::Utf8Text
-                });
+                options);
         }
 
         bool tryWriteVolatileTextFile(const std::filesystem::path& path, const std::string& content)
@@ -1660,6 +1663,35 @@ namespace fluxora
                 isHex8(std::wstring_view(name).substr(3));
         }
 
+        std::size_t removeDownloadStateBackupFiles(const std::filesystem::path& directory)
+        {
+            std::size_t removed = 0;
+            std::error_code iterateError;
+            for (const auto& entry : std::filesystem::directory_iterator(
+                     directory,
+                     std::filesystem::directory_options::skip_permission_denied,
+                     iterateError))
+            {
+                if (iterateError)
+                {
+                    break;
+                }
+
+                std::error_code statusError;
+                if (!entry.is_regular_file(statusError) || !isAtomicBackupFile(entry.path()))
+                {
+                    continue;
+                }
+
+                std::error_code removeError;
+                if (std::filesystem::remove(entry.path(), removeError))
+                {
+                    ++removed;
+                }
+            }
+            return removed;
+        }
+
         std::wstring cancelMarkerPath(const std::filesystem::path& path)
         {
             return path.wstring() + std::wstring(cancelMarkerExtension);
@@ -2256,6 +2288,22 @@ namespace fluxora
             }
 
             return L"download.zip";
+        }
+
+        std::wstring resolvedHttpDownloadFileName(
+            std::wstring_view persistedFileName,
+            std::wstring_view contentDisposition,
+            std::wstring_view fallbackFileName)
+        {
+            const std::wstring persistedName = trim(std::wstring(persistedFileName));
+            if (!persistedName.empty())
+            {
+                return sanitizeFileName(persistedName);
+            }
+
+            return chooseDownloadFileName(
+                fileNameFromContentDisposition(contentDisposition),
+                fallbackFileName);
         }
 
         std::wstring readSegmentAfter(const std::vector<std::wstring>& segments, std::wstring_view marker)
@@ -3732,17 +3780,10 @@ namespace fluxora
                     ? requestedOffset + *responsePlan.expectedResponseBytes
                     : progressMetadata.totalBytes);
 
-            std::wstring destinationFileName = trim(progressMetadata.destinationFileName);
-            if (destinationFileName.empty())
-            {
-                destinationFileName = chooseDownloadFileName(
-                    fileNameFromContentDisposition(contentDisposition),
-                    fallbackFileName);
-            }
-            else
-            {
-                destinationFileName = sanitizeFileName(destinationFileName);
-            }
+            std::wstring destinationFileName = resolvedHttpDownloadFileName(
+                progressMetadata.destinationFileName,
+                contentDisposition,
+                fallbackFileName);
             if (destinationFileName.empty())
             {
                 destinationFileName = chooseDownloadFileName({}, fallbackFileName);
@@ -6394,6 +6435,79 @@ namespace fluxora
 #endif
         }
 
+        NexusFileInfo parseNexusFileInfoPayload(std::wstring_view payloadJson)
+        {
+            NexusFileInfo info;
+            info.payloadJson = std::wstring(payloadJson);
+            const JsonValue root = JsonReader::parse(info.payloadJson);
+            if (!root.isObject())
+            {
+                return {};
+            }
+
+            for (const wchar_t* key : {L"version", L"Version", L"mod_version", L"file_version", L"fileVersion"})
+            {
+                if (const JsonValue* value = root.find(key); value != nullptr && value->isString())
+                {
+                    info.version = trim(value->asString());
+                    if (!info.version.empty())
+                    {
+                        break;
+                    }
+                }
+            }
+
+            for (const wchar_t* key : {L"name", L"Name"})
+            {
+                if (const JsonValue* value = root.find(key); value != nullptr && value->isString())
+                {
+                    info.displayName = trim(value->asString());
+                    if (!info.displayName.empty())
+                    {
+                        break;
+                    }
+                }
+            }
+
+            for (const wchar_t* key : {L"file_name", L"fileName", L"filename", L"file"})
+            {
+                if (const JsonValue* value = root.find(key); value != nullptr && value->isString())
+                {
+                    info.fileName = trim(value->asString());
+                    if (!info.fileName.empty())
+                    {
+                        break;
+                    }
+                }
+            }
+
+            return info;
+        }
+
+        std::wstring nexusDisplayArchiveFileName(
+            std::wstring_view displayName,
+            std::wstring_view downloadedFileName)
+        {
+            const std::wstring cleanDisplayName = trim(std::wstring(displayName));
+            if (cleanDisplayName.empty())
+            {
+                return {};
+            }
+            if (hasSupportedDownloadFileExtension(cleanDisplayName))
+            {
+                return sanitizeFileName(cleanDisplayName);
+            }
+
+            const std::wstring archiveExtension = archiveExtensionFromFileName(downloadedFileName);
+            if (archiveExtension.empty() || !hasSupportedDownloadFileExtension(
+                    L"download" + archiveExtension))
+            {
+                return {};
+            }
+
+            return sanitizeFileName(cleanDisplayName + archiveExtension);
+        }
+
         NexusFileInfo fetchNexusFileInfo(
             const NxmDownloadRequest& request,
             std::wstring_view authHeader)
@@ -6407,7 +6521,6 @@ namespace fluxora
             (void)authHeader;
             return {};
 #else
-            NexusFileInfo info;
             try
             {
                 if (authHeader.empty())
@@ -6420,57 +6533,12 @@ namespace fluxora
                     L"/mods/" + percentEncode(request.modId) +
                     L"/files/" + percentEncode(request.fileId) +
                     L".json";
-                info.payloadJson = fromUtf8(winHttpGet(endpoint, authHeader));
-                const JsonValue root = JsonReader::parse(info.payloadJson);
-                if (!root.isObject())
-                {
-                    return {};
-                }
-
-                for (const wchar_t* key : {L"version", L"Version", L"mod_version", L"file_version", L"fileVersion"})
-                {
-                    if (const JsonValue* value = root.find(key); value != nullptr && value->isString())
-                    {
-                        info.version = trim(value->asString());
-                        if (!info.version.empty())
-                        {
-                            break;
-                        }
-                    }
-                }
-
-                for (const wchar_t* key : {L"file_name", L"fileName", L"filename", L"file"})
-                {
-                    if (const JsonValue* value = root.find(key); value != nullptr && value->isString())
-                    {
-                        const std::wstring fileName = trim(value->asString());
-                        if (!fileName.empty())
-                        {
-                            info.fileName = fileName;
-                            return info;
-                        }
-                    }
-                }
-
-                for (const wchar_t* key : {L"name", L"Name"})
-                {
-                    if (const JsonValue* value = root.find(key); value != nullptr && value->isString())
-                    {
-                        const std::wstring fileName = trim(value->asString());
-                        if (hasSupportedArchiveExtension(fileName))
-                        {
-                            info.fileName = fileName;
-                            return info;
-                        }
-                    }
-                }
+                return parseNexusFileInfoPayload(fromUtf8(winHttpGet(endpoint, authHeader)));
             }
             catch (const std::exception&)
             {
                 return {};
             }
-
-            return info;
 #endif
         }
 
@@ -6557,6 +6625,9 @@ namespace fluxora
             std::filesystem::remove(metadataPath(path));
             removeDownloadProgressSidecar(path);
             std::filesystem::remove(cancelMarkerPath(path));
+            std::filesystem::remove(AtomicFileStore::backupPathFor(path));
+            std::filesystem::remove(AtomicFileStore::backupPathFor(metadataPath(path)));
+            std::filesystem::remove(AtomicFileStore::backupPathFor(cancelMarkerPath(path)));
         }
 
         void removePendingNxmForLink(const std::filesystem::path& directory, std::wstring_view link)
@@ -6714,7 +6785,12 @@ namespace fluxora
                 fileInfo.fileName.empty() ? fileNameFromUriPath(downloadUri) : fileInfo.fileName,
                 request,
                 result.nexusModName);
-            progressMetadata.destinationFileName = fallbackFileName;
+            const std::wstring nexusFileName = nexusDisplayArchiveFileName(
+                fileInfo.displayName,
+                fallbackFileName);
+            progressMetadata.destinationFileName = nexusFileName.empty()
+                ? fallbackFileName
+                : nexusFileName;
             progressMetadata.status = L"Скачивается";
             writeMetadata(progressPath, progressMetadata);
             result.path = winHttpDownloadToFile(
@@ -6740,6 +6816,30 @@ namespace fluxora
             request.modId = L"3863";
             request.fileId = L"123";
             return archiveFileNameOrFallback(suggestedName, request, nexusModName);
+        }
+
+        std::wstring resolvedHttpDownloadFileNameForTest(
+            std::wstring_view persistedFileName,
+            std::wstring_view contentDisposition,
+            std::wstring_view fallbackFileName)
+        {
+            return resolvedHttpDownloadFileName(
+                persistedFileName,
+                contentDisposition,
+                fallbackFileName);
+        }
+
+        std::wstring nexusDownloadFileNameFromApiPayloadForTest(std::wstring_view payloadJson)
+        {
+            const NexusFileInfo info = parseNexusFileInfoPayload(payloadJson);
+            const std::wstring fallbackFileName = archiveFileNameOrFallback(
+                info.fileName,
+                {},
+                {});
+            const std::wstring displayFileName = nexusDisplayArchiveFileName(
+                info.displayName,
+                fallbackFileName);
+            return displayFileName.empty() ? fallbackFileName : displayFileName;
         }
 
         void withExistingDownloadOutputPathReservationForTest(
@@ -7477,6 +7577,14 @@ namespace fluxora
     {
         const std::filesystem::path directory = pathSettings_.downloadsDirectory(projectDirectory);
         std::filesystem::create_directories(directory);
+        const std::size_t removedBackupCount = removeDownloadStateBackupFiles(directory);
+        if (removedBackupCount > 0)
+        {
+            logger_.write(
+                LogLevel::Info,
+                "Downloads",
+                "Removed stale download state backups: " + std::to_string(removedBackupCount));
+        }
 
         std::vector<DownloadFileCatalogEntry> files;
         for (const auto& entry : std::filesystem::directory_iterator(directory))
@@ -7631,9 +7739,7 @@ namespace fluxora
                 links.push_back(fromUtf8(content));
             }
 
-            std::filesystem::remove(entry.path());
-            std::filesystem::remove(metadataPath(entry.path()));
-            removeDownloadProgressSidecar(entry.path());
+            removePendingNxmFile(entry.path());
         }
 
         return captureNxmLinks(projectDirectory, links);

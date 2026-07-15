@@ -44,11 +44,11 @@ describe('downloads drag and drop affordance', () => {
   it('installs a ready download when its row is dropped at a mod-order position', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
 
-    expect(app).toContain("const downloadInstallDragType = 'application/x-fluxora-download-id'");
-    expect(app).toContain('handleDownloadInstallDragStart(event, entry)');
-    expect(app).toContain('handleModInstallDragOver(event, item)');
-    expect(app).toContain('handleModInstallDrop(event, item)');
-    expect(app).toContain('await installDownload(entry, placement)');
+    expect(app).toContain("type RowReorderKind = 'mod' | 'plugin' | 'download-install'");
+    expect(app).toContain('data-reorder-kind="download-install"');
+    expect(app).toContain("beginRowReorderDrag(");
+    expect(app).toContain("'download-install',");
+    expect(app).toContain('void installDownload(entry, { targetOrderId, placement })');
     expect(app).toContain('modOrderPlacement: placement');
   });
 });

@@ -594,6 +594,7 @@ test.beforeEach(async ({ page }) => {
 
     const buildContentChangedCallbacks = new Set<(event: any) => void>();
     let buildContentSequence = 0;
+    const inboundNxmCallbacks = new Set<(event: any) => void>();
     const operationProgressCallbacks = new Set<(event: any) => void>();
     (window as any).__fluxoraCalls = calls;
     (window as any).__emitFluxoraBuildContentChanged = (event: any = {}) => {
@@ -609,6 +610,16 @@ test.beforeEach(async ({ page }) => {
         ...event
       };
       for (const callback of buildContentChangedCallbacks) {
+        callback(payload);
+      }
+    };
+    (window as any).__emitFluxoraInboundNxm = (event: any = {}) => {
+      const payload = {
+        count: 1,
+        operationId: `op_test_nxm_${Date.now()}`,
+        ...event
+      };
+      for (const callback of inboundNxmCallbacks) {
         callback(payload);
       }
     };
@@ -631,10 +642,18 @@ test.beforeEach(async ({ page }) => {
       archives: {
         install: async (request: any, operation: any) => {
           calls.push({ method: 'archives.install', payload: { operation, request } });
+          const delayMs = Number(window.localStorage.getItem('fluxora.test.installDelayMs') ?? '0');
+          if (delayMs > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+          }
           return recordInstalledMod(request, operation, 'op_archive_install');
         },
         installFomod: async (request: any, operation: any) => {
           calls.push({ method: 'archives.installFomod', payload: { operation, request } });
+          const delayMs = Number(window.localStorage.getItem('fluxora.test.installDelayMs') ?? '0');
+          if (delayMs > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+          }
           return recordInstalledMod(request, operation, 'op_archive_fomod');
         }
       },
@@ -802,10 +821,18 @@ test.beforeEach(async ({ page }) => {
         },
         install: async (request: any, operation: any) => {
           calls.push({ method: 'downloads.install', payload: { operation, request } });
+          const delayMs = Number(window.localStorage.getItem('fluxora.test.installDelayMs') ?? '0');
+          if (delayMs > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+          }
           return recordInstalledMod(request, operation, 'op_download_install');
         },
         installFomod: async (request: any, operation: any) => {
           calls.push({ method: 'downloads.installFomod', payload: { operation, request } });
+          const delayMs = Number(window.localStorage.getItem('fluxora.test.installDelayMs') ?? '0');
+          if (delayMs > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+          }
           return recordInstalledMod(request, operation, 'op_download_fomod');
         },
         list: async (projectDirectory: any) => {
@@ -1413,8 +1440,21 @@ test.beforeEach(async ({ page }) => {
           const isEmptyBuild =
             String(projectDirectory).includes('Playwright build') ||
             String(projectDirectory).includes('Fallout test lab');
+          const installedMods = isEmptyBuild ? [] : modRows.filter((item) => item.isMod);
+          const installedModsWithFomod =
+            !isEmptyBuild && window.localStorage.getItem('fluxora.test.fomodExistingMod') === 'true'
+              ? [
+                  ...installedMods,
+                  {
+                    ...modRows.find((item) => item.isMod),
+                    id: 'natural-vision-existing',
+                    name: 'Natural Vision Of Tamriel',
+                    path: 'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Natural Vision Of Tamriel'
+                  }
+                ]
+              : installedMods;
           return {
-            installedMods: isEmptyBuild ? [] : modRows.filter((item) => item.isMod),
+            installedMods: installedModsWithFomod,
             modOrder: isEmptyBuild ? [] : modRows
           };
         },
@@ -1499,9 +1539,37 @@ test.beforeEach(async ({ page }) => {
         captureLinks: async () => [],
         importInboundDownloads: async (projectDirectory: any, operation: any) => {
           calls.push({ method: 'nxm.importInboundDownloads', payload: { operation, projectDirectory } });
-          return [];
+          return window.localStorage.getItem('fluxora.test.returnInboundDownload') === 'true'
+            ? [
+                {
+                  id: 'nxm_cabbage_cs_preset',
+                  name: 'Cabbage CS Preset',
+                  fileName: 'Cabbage CS Preset.7z',
+                  localPath:
+                    'D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\downloads\\Cabbage CS Preset.7z',
+                  source: 'Nexus Mods',
+                  status: 'Queued',
+                  sizeText: '',
+                  createdAtText: 'now',
+                  progressPercent: 0,
+                  progressText: '',
+                  etaText: '',
+                  downloadSpeedText: '',
+                  isDownloading: false,
+                  hasKnownProgress: false,
+                  canResume: false,
+                  canInstall: false,
+                  canDelete: true
+                }
+              ]
+            : [];
         },
-        onInboundLinksCaptured: () => () => undefined,
+        onInboundLinksCaptured: (callback: (event: any) => void) => {
+          inboundNxmCallbacks.add(callback);
+          return () => {
+            inboundNxmCallbacks.delete(callback);
+          };
+        },
         registerProtocol: async () => ({ operationId: 'op_nxm', registered: true })
       },
       operations: {
@@ -1820,7 +1888,7 @@ test('renders mod and download popup menus without scrollbars', async ({ page })
   const downloadMenu = page.getByRole('menu', { name: 'SkyUI actions' });
   await expect(downloadMenu.getByRole('menuitem', { name: 'Install' })).toBeVisible();
   await expect(downloadMenu.getByRole('menuitem', { name: 'Show in folder' })).toBeVisible();
-  await expect(downloadMenu.getByRole('menuitem', { name: 'Delete', exact: true })).toBeVisible();
+  await expect(downloadMenu.getByRole('menuitem', { name: 'Удалить', exact: true })).toBeVisible();
   await expectRowContextMenuWithoutScrollbar(downloadMenu);
 });
 
@@ -1909,6 +1977,188 @@ test('stacks the overwrite context menu above the mod list rows it overlaps', as
   expect(menuIsTopAfterOpen).toBe(true);
 });
 
+test.describe('deletes selected mods with Del', () => {
+  test('opens confirmation before deleting the focused mod', async ({ page }) => {
+    await openSkyrimBuild(page);
+
+    const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+    await modRow.click();
+    await modRow.press('Delete');
+
+    const dialog = page.getByRole('dialog', { name: 'Удаление мода' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('SkyUI', { exact: true })).toBeVisible();
+    expect(await callMethods(page)).not.toContain('mods.deleteInstalled');
+  });
+
+  test('reopens confirmation with Del after dismissing it', async ({ page }) => {
+    await openSkyrimBuild(page);
+
+    const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+    const dialog = page.getByRole('dialog', { name: 'Удаление мода' });
+    await modRow.click();
+    await modRow.press('Delete');
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByRole('button', { name: 'Закрыть окно удаления' }).click();
+    await expect(dialog).toHaveCount(0);
+    await page.keyboard.press('Delete');
+
+    await expect(dialog).toBeVisible();
+  });
+
+  test('confirms and deletes every mod in the focused row selection', async ({ page }) => {
+    await openSkyrimBuild(page);
+
+    const patchRow = page.getByRole('row', { name: /Unofficial Patch mod/ });
+    const skyuiRow = page.getByRole('row', { name: /SkyUI mod/ });
+    await patchRow.click();
+    await page.keyboard.down('Control');
+    await skyuiRow.click();
+    await page.keyboard.up('Control');
+    await skyuiRow.press('Delete');
+
+    const dialog = page.getByRole('dialog', { name: 'Удаление модов' });
+    await expect(dialog.getByText('2 мода', { exact: true })).toBeVisible();
+    expect((await callMethods(page)).filter((method) => method === 'mods.deleteInstalled')).toHaveLength(0);
+
+    await dialog.getByRole('button', { name: 'Удалить' }).click();
+    await expect
+      .poll(async () =>
+        (await callMethods(page)).filter((method) => method === 'mods.deleteInstalled').length
+      )
+      .toBe(2);
+  });
+
+  test('shows the Del hint without changing the delete menu item name', async ({ page }) => {
+    await openSkyrimBuild(page);
+
+    const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+    await modRow.click({ button: 'right' });
+
+    const deleteItem = page.getByRole('menuitem', { name: 'Удалить', exact: true });
+    const label = deleteItem.getByText('Удалить', { exact: true });
+    const shortcut = deleteItem.getByText('Del', { exact: true });
+    await expect(deleteItem).toBeVisible();
+    await expect(deleteItem).toHaveAccessibleName('Удалить');
+    await expect(deleteItem).toHaveAttribute('aria-keyshortcuts', 'Delete');
+    await expect(shortcut).toBeVisible();
+
+    const itemBox = await deleteItem.boundingBox();
+    const labelBox = await label.boundingBox();
+    const shortcutBox = await shortcut.boundingBox();
+    expect(itemBox).not.toBeNull();
+    expect(labelBox).not.toBeNull();
+    expect(shortcutBox).not.toBeNull();
+    expect(shortcutBox!.x).toBeGreaterThan(labelBox!.x + labelBox!.width);
+    expect(itemBox!.x + itemBox!.width - shortcutBox!.x - shortcutBox!.width).toBeLessThanOrEqual(10);
+  });
+
+  test('ignores Del outside real mod rows', async ({ page }) => {
+    await openSkyrimBuild(page);
+
+    const separatorRow = page.getByRole('row', { name: /Core fixes separator/ });
+    const overwriteRow = page.getByRole('row', {
+      name: /Skyrim graphics overhaul .* Output files folder overwrite folder/
+    });
+    const searchInput = page.getByLabel('Search mods');
+    const deletionDialog = page.getByRole('dialog', { name: /Удаление мод/ });
+
+    await separatorRow.focus();
+    await separatorRow.press('Delete');
+    await expect(deletionDialog).toHaveCount(0);
+
+    await overwriteRow.focus();
+    await overwriteRow.press('Delete');
+    await expect(deletionDialog).toHaveCount(0);
+
+    await searchInput.fill('SkyUI');
+    await searchInput.press('Delete');
+    await expect(deletionDialog).toHaveCount(0);
+    expect((await callMethods(page)).filter((method) => method === 'mods.deleteInstalled')).toHaveLength(0);
+  });
+});
+
+test.describe('deletes selected downloads with Del', () => {
+  test('opens confirmation before deleting the focused download', async ({ page }) => {
+    await openSkyrimBuild(page);
+
+    const rightPane = page.getByLabel('Right pane');
+    await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+    const downloadRow = rightPane.getByRole('row', { name: /SkyUI/ });
+    await downloadRow.click();
+    await downloadRow.press('Delete');
+
+    const dialog = page.getByRole('dialog', { name: 'Удаление файла' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('SkyUI', { exact: true })).toBeVisible();
+    expect(await callMethods(page)).not.toContain('downloads.delete');
+  });
+
+  test('confirms and deletes every download in the focused row selection', async ({ page }) => {
+    await openSkyrimBuild(page);
+
+    const rightPane = page.getByLabel('Right pane');
+    await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+    const skyuiRow = rightPane.getByRole('row', { name: /SkyUI/ });
+    const smoothcamRow = rightPane.getByRole('row', { name: /SmoothCam/ });
+    await skyuiRow.click();
+    await page.keyboard.down('Control');
+    await smoothcamRow.click();
+    await page.keyboard.up('Control');
+    await smoothcamRow.press('Delete');
+
+    const dialog = page.getByRole('dialog', { name: 'Удаление файлов' });
+    await expect(dialog.getByText('2 файла', { exact: true })).toBeVisible();
+    expect((await callMethods(page)).filter((method) => method === 'downloads.delete')).toHaveLength(0);
+
+    await dialog.getByRole('button', { name: 'Удалить' }).click();
+    await expect
+      .poll(async () =>
+        (await callMethods(page)).filter((method) => method === 'downloads.delete').length
+      )
+      .toBe(2);
+  });
+
+  test('shows the Del hint without changing the download delete menu item name', async ({ page }) => {
+    await openSkyrimBuild(page);
+
+    const rightPane = page.getByLabel('Right pane');
+    await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+    await rightPane.getByRole('row', { name: /SkyUI/ }).click({ button: 'right' });
+
+    const deleteItem = page.getByRole('menuitem', { name: 'Удалить', exact: true });
+    const label = deleteItem.getByText('Удалить', { exact: true });
+    const shortcut = deleteItem.getByText('Del', { exact: true });
+    await expect(deleteItem).toBeVisible();
+    await expect(deleteItem).toHaveAccessibleName('Удалить');
+    await expect(deleteItem).toHaveAttribute('aria-keyshortcuts', 'Delete');
+    await expect(shortcut).toBeVisible();
+
+    const itemBox = await deleteItem.boundingBox();
+    const labelBox = await label.boundingBox();
+    const shortcutBox = await shortcut.boundingBox();
+    expect(itemBox).not.toBeNull();
+    expect(labelBox).not.toBeNull();
+    expect(shortcutBox).not.toBeNull();
+    expect(shortcutBox!.x).toBeGreaterThan(labelBox!.x + labelBox!.width);
+    expect(itemBox!.x + itemBox!.width - shortcutBox!.x - shortcutBox!.width).toBeLessThanOrEqual(10);
+  });
+
+  test('ignores Del in the downloads search field', async ({ page }) => {
+    await openSkyrimBuild(page);
+
+    const rightPane = page.getByLabel('Right pane');
+    await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+    const searchInput = rightPane.getByLabel('Search downloads');
+    await searchInput.fill('SkyUI');
+    await searchInput.press('Delete');
+
+    await expect(page.getByRole('dialog', { name: /Удаление файл/ })).toHaveCount(0);
+    expect((await callMethods(page)).filter((method) => method === 'downloads.delete')).toHaveLength(0);
+  });
+});
+
 test('asks for in-app confirmation before deleting mods, builds and downloaded files', async ({
   page
 }) => {
@@ -1917,7 +2167,7 @@ test('asks for in-app confirmation before deleting mods, builds and downloaded f
   const modRow = page.getByRole('row', { name: /SkyUI mod/ });
   await modRow.focus();
   await page.keyboard.press('Shift+F10');
-  await page.getByRole('menuitem', { name: 'Delete mod' }).click();
+  await page.getByRole('menuitem', { name: 'Удалить', exact: true }).click();
 
   const modDialog = page.getByRole('dialog', { name: 'Удаление мода' });
   await expect(modDialog).toBeVisible();
@@ -1931,7 +2181,7 @@ test('asks for in-app confirmation before deleting mods, builds and downloaded f
   await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
   const downloadRow = rightPane.getByRole('row', { name: /SkyUI/ });
   await downloadRow.click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Удалить', exact: true }).click();
 
   const downloadDialog = page.getByRole('dialog', { name: 'Удаление файла' });
   await expect(downloadDialog).toBeVisible();
@@ -3916,6 +4166,68 @@ test('drags mod order rows with pointer placement feedback', async ({ page }) =>
     });
 });
 
+test('continuously scrolls the mod list while a dragged row stays at either edge', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & { fluxora: any };
+    const expandWorkspace = (snapshot: { installedMods: any[]; modOrder: any[] }) => {
+      const rows = structuredClone(snapshot.modOrder);
+      const template = rows.find((item: any) => item.isMod);
+      for (let index = 0; template && index < 40; index += 1) {
+        rows.push({
+          ...template,
+          id: `D:\\Fluxora\\Builds\\Skyrim graphics overhaul\\mods\\Scroll fixture ${index}`,
+          orderId: `mod_scroll_fixture_${index}`,
+          order: rows.length,
+          modUuid: `mod_scroll_fixture_${index}`,
+          name: `Scroll fixture ${index}`
+        });
+      }
+      return {
+        installedMods: rows.filter((item: any) => item.isMod),
+        modOrder: rows
+      };
+    };
+    const getPersistedWorkspace = scope.fluxora.mods.getPersistedWorkspace;
+    const getWorkspace = scope.fluxora.mods.getWorkspace;
+    scope.fluxora.mods.getPersistedWorkspace = async (...args: unknown[]) =>
+      expandWorkspace(await getPersistedWorkspace(...args));
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) =>
+      expandWorkspace(await getWorkspace(...args));
+  });
+
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect(page.getByRole('row', { name: /Scroll fixture 39 mod/ })).toBeAttached();
+
+  const body = page.locator('.mod-list__body');
+  const source = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const sourceBox = await source.boundingBox();
+  const bodyBox = await body.boundingBox();
+  expect(sourceBox).not.toBeNull();
+  expect(bodyBox).not.toBeNull();
+
+  const sourceX = sourceBox!.x + Math.min(140, sourceBox!.width / 2);
+  const sourceY = sourceBox!.y + sourceBox!.height / 2;
+  const edgeX = bodyBox!.x + bodyBox!.width / 2;
+  await page.mouse.move(sourceX, sourceY);
+  await page.mouse.down();
+  await page.mouse.move(sourceX + 8, sourceY + 8);
+  await page.mouse.move(edgeX, bodyBox!.y + bodyBox!.height - 2);
+  await expect(source).toHaveAttribute('data-dragging', 'true');
+
+  await expect
+    .poll(() => body.evaluate((element) => element.scrollTop), { timeout: 2_000 })
+    .toBeGreaterThan(120);
+  const lowerEdgeScrollTop = await body.evaluate((element) => element.scrollTop);
+
+  await page.mouse.move(edgeX, bodyBox!.y + 2);
+  await expect
+    .poll(() => body.evaluate((element) => element.scrollTop), { timeout: 2_000 })
+    .toBeLessThan(lowerEdgeScrollTop - 100);
+  await page.mouse.up();
+});
+
 test('installs a dragged download immediately at the chosen mod position', async ({ page }) => {
   await openSkyrimBuild(page);
 
@@ -3966,6 +4278,77 @@ test('installs a dragged download immediately at the chosen mod position', async
     .toEqual({ installedIndex: 2, targetIndex: 3 });
 });
 
+test('keeps an immediately dragged installed mod ahead of a late install reconciliation', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __postInstallWorkspaceCaptured?: boolean;
+      __releasePostInstallWorkspace?: () => void;
+      fluxora: any;
+    };
+    const getPersistedWorkspace = scope.fluxora.mods.getPersistedWorkspace;
+    const getWorkspace = scope.fluxora.mods.getWorkspace;
+    scope.__postInstallWorkspaceCaptured = false;
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) =>
+      structuredClone(await getWorkspace(...args));
+    scope.fluxora.mods.getPersistedWorkspace = async (...args: unknown[]) => {
+      const snapshot = structuredClone(await getPersistedWorkspace(...args));
+      const request = args.at(-1) as { operationId?: string } | undefined;
+      if (!String(request?.operationId ?? '').includes('install_flow')) {
+        return snapshot;
+      }
+
+      scope.__postInstallWorkspaceCaptured = true;
+      await new Promise<void>((resolve) => {
+        scope.__releasePostInstallWorkspace = resolve;
+      });
+      return snapshot;
+    };
+  });
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
+
+  const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
+  await expect(installDialog).toBeVisible();
+  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+
+  const installedRow = page.getByRole('row', { name: /Aetherius - A Race Overhaul mod/ });
+  await expect(installedRow).toBeVisible();
+  await expect(installedRow).toHaveAttribute('data-order-id', /^pending-install:/);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__postInstallWorkspaceCaptured))
+    .toBe(true);
+
+  const target = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  await moveRowDragToSlot(page, installedRow, target, 'before');
+  await page.evaluate(() => (window as any).__releasePostInstallWorkspace?.());
+  await page.waitForTimeout(100);
+  await expect(installedRow).toHaveAttribute('data-dragging', 'true');
+  await page.mouse.up();
+
+  await expect
+    .poll(() => latestCallPayload(page, 'mods.moveOrderItem'))
+    .toMatchObject({
+      orderId: 'mod_aetherius_a_race_overhaul',
+      targetIndex: 1
+    });
+  await expect
+    .poll(() =>
+      page.locator('.mod-list-row[data-order-id]').evaluateAll((rows) => {
+        const orderIds = rows.map((row) => row.getAttribute('data-order-id'));
+        return {
+          installedIndex: orderIds.indexOf('mod_aetherius_a_race_overhaul'),
+          targetIndex: orderIds.indexOf('mod_ussep')
+        };
+      })
+    )
+    .toEqual({ installedIndex: 1, targetIndex: 2 });
+});
+
 test('installs a dragged download as the first mod inside a separator', async ({ page }) => {
   await openSkyrimBuild(page);
 
@@ -3996,6 +4379,40 @@ test('installs a dragged download as the first mod inside a separator', async ({
       )
     )
     .toEqual(['sep_core', 'mod_aetherius_a_race_overhaul', 'mod_ussep']);
+});
+
+test('shows an accepted inbound Nexus download before any native list refresh', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
+
+  const listCallsBeforeInbound = await page.evaluate(() => {
+    const scope = window as any;
+    scope.localStorage.setItem('fluxora.test.returnInboundDownload', 'true');
+    const count = scope.__fluxoraCalls.filter(
+      (call: { method: string }) => call.method === 'downloads.list'
+    ).length;
+    scope.__emitFluxoraInboundNxm({ operationId: 'op_test_inbound_download' });
+    return count;
+  });
+
+  await expect(
+    rightPane.getByRole('row', { name: /Cabbage CS Preset/ })
+  ).toBeVisible();
+  await expect
+    .poll(() => latestCallPayload(page, 'nxm.importInboundDownloads'))
+    .toMatchObject({ operation: { operationId: 'op_test_inbound_download' } });
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.filter(
+          (call: { method: string }) => call.method === 'downloads.list'
+        ).length
+      )
+    )
+    .toBe(listCallsBeforeInbound);
 });
 
 test('keeps downloads rows visible during delayed refresh', async ({ page }) => {
@@ -4359,8 +4776,9 @@ test('drags plugin rows without selecting text', async ({ page }) => {
     });
 });
 
-test('uses the redesigned install dialogs for downloads and FOMOD archives', async ({ page }) => {
+test('opens install controls immediately and keeps native installation non-modal', async ({ page }) => {
   await page.goto(baseUrl);
+  await page.evaluate(() => window.localStorage.setItem('fluxora.test.fomodExistingMod', 'true'));
 
   await clickSkyrimBuildSelectButton(page);
   await clickSkyrimBuildOpenButton(page);
@@ -4378,12 +4796,13 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
           ?.map((call) => call.method)
       )
     )
-    .toContain('downloads.analyzeContentLayout');
+    .toContain('downloads.analyzeFomod');
   const preflightCalls = await page.evaluate(() =>
     (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
       ?.map((call) => call.method) ?? []
   );
   expect(preflightCalls).toContain('downloads.analyzeFomod');
+  expect(preflightCalls).not.toContain('downloads.analyzeContentLayout');
   expect(preflightCalls).not.toContain('downloads.install');
 
   const skyuiDialog = page.getByRole('dialog', { name: /SkyUI/ });
@@ -4400,7 +4819,10 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
         ?.map((call) => call.method) ?? []
     )
   ).not.toContain('downloads.install');
+  await page.evaluate(() => window.localStorage.setItem('fluxora.test.installDelayMs', '1200'));
   await skyuiDialog.getByRole('button', { name: /Объединить/ }).click();
+  await expect(skyuiDialog).toHaveCount(0);
+  await expect(page.locator('.install-dialog[data-phase="installing"]')).toHaveCount(0);
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -4409,12 +4831,16 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
       )
     )
     .toContain('downloads.install');
+  expect(await rightPane.locator('.mod-busy-strip').count()).toBe(0);
+  expect(await rightPane.getByRole('button', { name: 'Archive' }).isDisabled()).toBe(true);
   const downloadInstallCall = await page.evaluate(() =>
     (window as typeof window & {
       __fluxoraCalls?: Array<{ method: string; payload?: { request?: { existingModMode?: number } } }>;
     }).__fluxoraCalls?.find((call) => call.method === 'downloads.install')
   );
   expect(downloadInstallCall?.payload?.request?.existingModMode).toBe(2);
+  await page.evaluate(() => window.localStorage.removeItem('fluxora.test.installDelayMs'));
+  await expect(rightPane.getByRole('button', { name: 'Archive' })).toBeEnabled();
 
   const listCallsBeforeFomod = await page.evaluate(() =>
     (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
@@ -4425,13 +4851,12 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
     window.localStorage.setItem('fluxora.test.installListDelayMs', '500');
     window.localStorage.setItem('fluxora.test.fomodExistingMod', 'true');
   });
-  const analyzingDialog = page.locator('.install-dialog[data-phase="analyzing"]');
-  const analyzingDialogVisible = analyzingDialog.waitFor({ state: 'visible' });
   await rightPane.getByRole('button', { name: 'Archive' }).click();
-  await analyzingDialogVisible;
-  await expect(analyzingDialog.getByRole('status')).toContainText('Analyzing installer');
-  await expect(analyzingDialog.getByLabel('Mod name')).toHaveCount(0);
-  await expect(analyzingDialog.getByRole('button', { name: 'Установить' })).toHaveCount(0);
+  const immediateDialog = page.getByRole('dialog', { name: /NaturalVisionFomod/ });
+  await expect(immediateDialog.getByLabel('Mod name')).toBeVisible({ timeout: 500 });
+  await expect(immediateDialog.getByRole('button', { name: 'Подробнее' })).toBeVisible();
+  await expect(immediateDialog.getByRole('button', { name: 'Установить', exact: true })).toBeVisible();
+  await expect(page.locator('.install-dialog[data-phase="analyzing"]')).toHaveCount(0);
   await expect.poll(() => latestCallPayload(page, 'downloads.analyzeFomod')).toMatchObject({ delayMs: 1_200 });
   const fomodDialog = page.getByRole('dialog', { name: /Natural Vision Of Tamriel/ });
   await expect(fomodDialog.getByText('Natural Vision Of Tamriel').first()).toBeVisible();
@@ -4466,6 +4891,7 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
   await expect(fullRadio).toBeChecked();
   await fomodDialog.getByRole('button', { name: 'Patches', exact: true }).click();
   await fomodDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await expect(fomodDialog.getByText('Installing mod', { exact: true })).toHaveCount(0);
   await expect(fomodDialog.getByLabel(/Mod name/)).toHaveCount(0);
   await expect(fomodDialog.getByText('Уже есть мод с таким же названием')).toBeVisible({
     timeout: 2_500
@@ -4475,14 +4901,17 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
       (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
         ?.filter((call) => call.method === 'mods.listInstalled').length ?? 0
     )
-  ).toBe(listCallsBeforeFomod + 1);
+  ).toBe(listCallsBeforeFomod);
   expect(
     await page.evaluate(() =>
       (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
         ?.map((call) => call.method) ?? []
     )
   ).not.toContain('archives.installFomod');
+  await page.evaluate(() => window.localStorage.setItem('fluxora.test.installDelayMs', '1200'));
   await fomodDialog.getByRole('button', { name: /Заменить/ }).click();
+  await expect(fomodDialog).toHaveCount(0);
+  await expect(page.locator('.install-dialog[data-phase="installing"]')).toHaveCount(0);
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -4497,6 +4926,7 @@ test('uses the redesigned install dialogs for downloads and FOMOD archives', asy
     }).__fluxoraCalls?.find((call) => call.method === 'archives.installFomod')
   );
   expect(fomodInstallCall?.payload?.request?.existingModMode).toBe(1);
+  await page.evaluate(() => window.localStorage.removeItem('fluxora.test.installDelayMs'));
 });
 
 test('renders Settings Nexus status instantly while native auth status is delayed', async ({ page }) => {

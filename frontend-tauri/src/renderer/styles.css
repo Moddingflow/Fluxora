@@ -5881,6 +5881,14 @@ body.row-reorder-active * {
   flex: 0 0 auto;
 }
 
+.mod-row-menu__shortcut {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 11px;
+  line-height: 1;
+}
+
 .mod-row-menu button.mod-row-menu__danger,
 .mod-row-menu button.project-row-menu__danger {
   color: var(--menu-item-danger-color);
@@ -6992,7 +7000,6 @@ body.row-reorder-active * {
 .install-layout-summary,
 .install-findings,
 .install-validation,
-.install-progress,
 .install-error {
   border: 1px solid var(--line-soft);
   border-radius: 8px;
@@ -7175,7 +7182,6 @@ body.row-reorder-active * {
   font-size: 11px;
 }
 
-.install-progress,
 .install-error {
   display: grid;
   place-items: center;
@@ -7188,7 +7194,6 @@ body.row-reorder-active * {
   text-align: center;
 }
 
-.install-progress strong,
 .install-error strong {
   color: var(--text);
 }
@@ -7239,14 +7244,6 @@ body.row-reorder-active * {
   min-height: 100%;
 }
 
-.install-dialog[data-phase="analyzing"] {
-  min-height: 240px;
-}
-
-.install-dialog[data-phase="analyzing"] .install-progress {
-  min-height: 190px;
-}
-
 .install-dialog[data-phase="options"],
 .install-dialog[data-phase="conflict"] {
   min-height: auto;
@@ -7257,7 +7254,6 @@ body.row-reorder-active * {
   min-height: min(640px, 100%);
 }
 
-.install-dialog[data-phase="installing"],
 .install-dialog[data-phase="error"] {
   width: min(560px, 100%);
 }

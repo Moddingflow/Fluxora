@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { useEffect, type CSSProperties } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 
 import trashIcon from '../../../../../Icons/trash.svg';
 
@@ -71,9 +71,22 @@ export function DeletionConfirmationDialog({
   onCancel,
   onConfirm
 }: DeletionConfirmationDialogProps) {
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const hasMultipleItems = Boolean(itemCount && itemCount > 1);
   const title = hasMultipleItems ? pluralTitleByKind[kind] : titleByKind[kind];
   const subject = deletionSubjectLabel(kind, itemName, itemCount);
+
+  useEffect(() => {
+    const previouslyFocusedElement =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus({ preventScroll: true });
+
+    return () => {
+      if (previouslyFocusedElement?.isConnected) {
+        previouslyFocusedElement.focus({ preventScroll: true });
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -109,6 +122,7 @@ export function DeletionConfirmationDialog({
           <button
             aria-label="Закрыть окно удаления"
             className="icon-button"
+            ref={closeButtonRef}
             title="Закрыть окно удаления"
             type="button"
             onClick={onCancel}

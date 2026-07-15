@@ -51,6 +51,13 @@ namespace fluxora::test_hooks
         std::wstring_view suggestedName,
         std::wstring_view nexusModName);
 
+    std::wstring resolvedHttpDownloadFileNameForTest(
+        std::wstring_view persistedFileName,
+        std::wstring_view contentDisposition,
+        std::wstring_view fallbackFileName);
+
+    std::wstring nexusDownloadFileNameFromApiPayloadForTest(std::wstring_view payloadJson);
+
     void setActiveDownloadForTest(const std::filesystem::path& path, bool active);
 
     std::filesystem::path downloadProgressSidecarPathForTest(const std::filesystem::path& path);
@@ -203,6 +210,36 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(DownloadServiceTests, FreshNexusDownloadUsesHttpResponseFileNameInsteadOfNumericFallback)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        EXPECT_EQ(
+            test_hooks::resolvedHttpDownloadFileNameForTest(
+                {},
+                L"attachment; filename=\"Cabbage CS Preset.7z\"",
+                L"Cabbage CS Preset 182366 5 2026-07-01T12-33Z Ks18n0uG9.7z"),
+            L"Cabbage CS Preset.7z");
+#endif
+    }
+
+    TEST(DownloadServiceTests, NexusApiDisplayNameReplacesGeneratedCdnSuffix)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        EXPECT_EQ(
+            test_hooks::nexusDownloadFileNameFromApiPayloadForTest(
+                LR"json({
+                    "name": "Disabled Reference Integrity Fix AE (SKSE)",
+                    "file_name": "Disabled Reference Integrity Fix AE (SKSE) 175062 1.3.1 2026-07-14T18-48Z OyYrPuXUe.7z",
+                    "version": "1.3.1"
+                })json"),
+            L"Disabled Reference Integrity Fix AE (SKSE).7z");
+#endif
+    }
+
     TEST(DownloadServiceTests, CaptureNxmLinkWithoutDownloadKeyQueuesAuthenticatedDownload)
     {
 #ifndef _WIN32
@@ -234,6 +271,75 @@ namespace fluxora::tests
         EXPECT_EQ(entries.front().progressPercent, 0);
 
         downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+#endif
+    }
+
+    TEST(DownloadServiceTests, CompletedQueuedNexusDownloadAppearsInPersistentDownloadList)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        const ScopedNexusArchiveTransferHooks transferHooks(
+            {},
+            [](const std::filesystem::path& directory,
+               const std::filesystem::path&,
+               std::wstring_view)
+            {
+                const std::filesystem::path archivePath = directory / L"Cabbage CS Preset.7z";
+                writeTextFile(archivePath, "fixture archive");
+                return archivePath;
+            });
+
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        const std::vector<DownloadEntry> accepted = downloads.captureNxmLinks(
+            projectDirectory,
+            {L"nxm://skyrimspecialedition/mods/182366/files/770345"});
+
+        ASSERT_EQ(accepted.size(), 1U);
+        EXPECT_EQ(accepted.front().localPath.extension(), L".nxm");
+
+        std::vector<DownloadEntry> completed;
+        for (int attempt = 0; attempt < 200; ++attempt)
+        {
+            completed = downloads.listDownloads(projectDirectory);
+            if (completed.size() == 1U && completed.front().canInstall)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        downloads.shutdown();
+        const std::vector<DownloadEntry> reloaded = downloads.listDownloads(projectDirectory);
+        const std::filesystem::path downloadsDirectory = pathSettings.downloadsDirectory(projectDirectory);
+
+        ASSERT_EQ(completed.size(), 1U);
+        EXPECT_EQ(completed.front().fileName, L"Cabbage CS Preset.7z");
+        EXPECT_TRUE(completed.front().canInstall);
+        ASSERT_EQ(reloaded.size(), 1U);
+        EXPECT_EQ(reloaded.front().fileName, L"Cabbage CS Preset.7z");
+        for (const auto& entry : std::filesystem::directory_iterator(downloadsDirectory))
+        {
+            const std::wstring name = entry.path().filename().wstring();
+            EXPECT_NE(entry.path().extension(), L".nxm");
+            EXPECT_FALSE(name.size() == 11 && name.rfind(L".fb", 0) == 0);
+        }
+
         pathSettings.shutdown();
         settings.shutdown();
         logger.shutdown();
@@ -354,7 +460,7 @@ namespace fluxora::tests
 #endif
     }
 
-    TEST(DownloadServiceTests, ListDownloadsSkipsAtomicBackupFiles)
+    TEST(DownloadServiceTests, ListDownloadsRemovesAtomicBackupFiles)
     {
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
@@ -378,6 +484,7 @@ namespace fluxora::tests
 
         ASSERT_EQ(entries.size(), 1U);
         EXPECT_EQ(entries.front().fileName, L"Ready.zip");
+        EXPECT_FALSE(std::filesystem::exists(downloadsDirectory / L".fb1234abcd"));
 
         downloads.shutdown();
         pathSettings.shutdown();

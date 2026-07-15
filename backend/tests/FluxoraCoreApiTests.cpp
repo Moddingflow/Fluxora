@@ -496,4 +496,32 @@ namespace fluxora::tests
         fluxora_core_shutdown();
 #endif
     }
+
+    TEST(FluxoraCoreApiTests, DownloadsApiReturnsVisibleArchiveAndCleansLegacyStateBackup)
+    {
+        fluxora_core_shutdown();
+
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        const std::filesystem::path projectDirectory = temp.path() / L"Build";
+        const std::filesystem::path downloadsDirectory = projectDirectory / L"downloads";
+        writeTextFile(downloadsDirectory / L"Cabbage CS Preset.7z", "archive");
+        writeTextFile(downloadsDirectory / L".fb16ecc071", "legacy download state backup");
+
+        std::array<wchar_t, 4> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_get_downloads(
+                projectDirectory.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+
+        const std::wstring json = copyBufferedApiOutput();
+        EXPECT_NE(json.find(L"\"fileName\":\"Cabbage CS Preset.7z\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"name\":\"Cabbage CS Preset\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"canInstall\":true"), std::wstring::npos);
+        EXPECT_FALSE(std::filesystem::exists(downloadsDirectory / L".fb16ecc071"));
+
+        fluxora_core_shutdown();
+    }
 }

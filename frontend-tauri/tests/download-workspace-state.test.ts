@@ -125,6 +125,31 @@ describe('download workspace state', () => {
     expect(selectedDownloadEntry(items, 'missing')?.id).toBe('skyui');
   });
 
+  it('upserts newly accepted NXM rows before the next native refresh', () => {
+    const ready = downloadWorkspaceReducer(emptyDownloadWorkspaceState(), {
+      type: 'items-loaded',
+      items: [items[0]]
+    });
+    const inbound = downloadEntry('nxm-inbound', 'Cabbage CS Preset.7z', {
+      status: 'Скачивается',
+      progressPercent: 0,
+      progressText: 'Подготовка загрузки',
+      isDownloading: true,
+      hasKnownProgress: false,
+      canInstall: false,
+      canDelete: false
+    });
+
+    const updated = downloadWorkspaceReducer(ready, {
+      type: 'items-upserted',
+      items: [inbound]
+    });
+
+    expect(updated.items.map((entry) => entry.id)).toEqual(['nxm-inbound', 'skyui']);
+    expect(updated.items[0]).toEqual(inbound);
+    expect(updated.loadState).toBe('ready');
+  });
+
   it('tracks ctrl, shift and select-all selection across visible downloads', () => {
     const ids = items.map((entry) => entry.id);
     let state = downloadWorkspaceReducer(emptyDownloadWorkspaceState(), {

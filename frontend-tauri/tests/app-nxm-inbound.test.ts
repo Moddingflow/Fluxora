@@ -36,7 +36,8 @@ describe('App NXM inbound handling', () => {
 
     expect(importer).toContain("const operationId = event.operationId || createRendererOperationId('nxm_inbound_event');");
     expect(importer).toContain('window.fluxora.nxm.importInboundDownloads');
-    expect(importer).toContain('await loadDownloadsWorkspace(project, {');
+    expect(importer).toContain("dispatchDownloadsWorkspace({ type: 'items-upserted', items: imported });");
+    expect(importer).not.toContain('await loadDownloadsWorkspace(project, {');
     expect(importer).not.toContain('window.fluxora.downloads.list');
   });
 });

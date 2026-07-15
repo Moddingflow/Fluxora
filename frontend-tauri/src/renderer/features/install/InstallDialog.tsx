@@ -25,7 +25,6 @@ import {
   type InstallSource,
   type PlacementOverrideMap
 } from '../../install-workspace-state';
-import { shortPath } from '../../services/path-display-service';
 import { createVirtualWindow } from '../../ui-performance';
 import type {
   FluxoraContentLayoutPreview,
@@ -34,19 +33,19 @@ import type {
 } from '../../../shared/fluxora-api';
 
 export type InstallDialogPhase =
-  | 'analyzing'
   | 'fomod'
   | 'options'
   | 'conflict'
   | 'details'
-  | 'installing'
   | 'error';
+
+export type InstallDialogInstallerKind = 'pending' | 'standard' | 'fomod';
 
 export interface InstallDialogState {
   phase: InstallDialogPhase;
   source: InstallSource;
   operationId: string;
-  isFomod: boolean;
+  installerKind: InstallDialogInstallerKind;
   fomodInstaller: FluxoraFomodInstaller | null;
   selectedFomodOptionIds: string[];
   fomodStepIndex: number;
@@ -70,6 +69,7 @@ interface InstallDialogProps {
   onClose: () => void;
   onContinueFromFomod: () => void;
   onMoveFomodStep: (direction: 1 | -1) => void;
+  onOpenDetails: () => void;
   onPatch: (patch: Partial<InstallDialogState>) => void;
   onResolveExistingMod: (mode: 1 | 2) => void;
   onSubmitInstallOptions: () => void;
@@ -134,6 +134,7 @@ export function InstallDialog({
   onClose,
   onContinueFromFomod,
   onMoveFomodStep,
+  onOpenDetails,
   onPatch,
   onResolveExistingMod,
   onSubmitInstallOptions
@@ -570,13 +571,8 @@ export function InstallDialog({
     normalizeInstallModName(installDialog.modName) ||
     installDialog.source.displayName ||
     installDialog.source.fileName ||
-    'Installing mod';
-  const dialogAriaLabel =
-    installDialog.phase === 'installing'
-      ? `Installing ${dialogTitle}`
-      : installDialog.phase === 'analyzing'
-        ? `Analyzing ${dialogTitle}`
-      : `Install ${dialogTitle}`;
+    'Install mod';
+  const dialogAriaLabel = `Install ${dialogTitle}`;
 
   return (
     <div className="install-modal-backdrop" role="presentation">
@@ -602,7 +598,6 @@ export function InstallDialog({
               className="icon-button"
               type="button"
               title="Закрыть окно установки"
-              disabled={installDialog.phase === 'installing'}
               onClick={onClose}
             >
               <X size={16} aria-hidden="true" />
@@ -610,20 +605,6 @@ export function InstallDialog({
           </header>
 
           <div className="install-dialog-body">
-            {installDialog.phase === 'analyzing' ? (
-              <div className="install-progress" role="status">
-                <RefreshCw size={18} aria-hidden="true" />
-                <strong>Analyzing installer</strong>
-                <span>Detecting FOMOD metadata and archive layout</span>
-              </div>
-            ) : null}
-            {installDialog.phase === 'installing' ? (
-              <div className="install-progress" role="status">
-                <RefreshCw size={18} aria-hidden="true" />
-                <strong>Installing mod</strong>
-                <span>{shortPath(installDialog.source.sourcePath)}</span>
-              </div>
-            ) : null}
             {installDialog.phase === 'fomod' ? renderInstallFomodStep() : null}
             {installDialog.phase === 'options' ? renderInstallOptions() : null}
             {installDialog.phase === 'conflict' ? renderExistingModConflict() : null}
@@ -645,7 +626,7 @@ export function InstallDialog({
                   type="button"
                   onClick={() => {
                     onArchiveTreeScrollTopChange(0);
-                    onPatch({ phase: 'details' });
+                    onOpenDetails();
                   }}
                 >
                   <FolderTree size={15} aria-hidden="true" />

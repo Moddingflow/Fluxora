@@ -203,6 +203,52 @@ namespace fluxora::tests
         EXPECT_EQ(skse->classification, ContentLayoutClassification::ScriptExtender);
     }
 
+    TEST_F(ContentLayoutServiceTests, SkyrimArchiveWithSingleContentWrapperNormalizesSksePluginPaths)
+    {
+        const PlacementPlan plan = service_.analyze(skyrimRequest({
+            {L"DisabledReferenceIntegrityFix/SKSE/Plugins/DisabledReferenceIntegrityFix.dll"},
+            {L"DisabledReferenceIntegrityFix/SKSE/Plugins/DisabledReferenceIntegrityFix.ini"}
+        }));
+
+        ASSERT_TRUE(plan.canInstall());
+        EXPECT_EQ(plan.summary.scriptExtenderEntries, 1U);
+
+        const PlacementPlanEntry* plugin = findEntry(
+            plan,
+            L"DisabledReferenceIntegrityFix/SKSE/Plugins/DisabledReferenceIntegrityFix.dll");
+        ASSERT_NE(plugin, nullptr);
+        EXPECT_EQ(plugin->classification, ContentLayoutClassification::ScriptExtender);
+        EXPECT_EQ(plugin->target, PlacementTarget::Data);
+        EXPECT_EQ(
+            plugin->targetRelativePath.path().generic_wstring(),
+            L"SKSE/Plugins/DisabledReferenceIntegrityFix.dll");
+
+        const PlacementPlanEntry* configuration = findEntry(
+            plan,
+            L"DisabledReferenceIntegrityFix/SKSE/Plugins/DisabledReferenceIntegrityFix.ini");
+        ASSERT_NE(configuration, nullptr);
+        EXPECT_EQ(configuration->target, PlacementTarget::Data);
+        EXPECT_EQ(
+            configuration->targetRelativePath.path().generic_wstring(),
+            L"SKSE/Plugins/DisabledReferenceIntegrityFix.ini");
+    }
+
+    TEST_F(ContentLayoutServiceTests, SingleWrapperDoesNotAuthorizeDllWithoutRecognizedGameLayout)
+    {
+        const PlacementPlan plan = service_.analyze(skyrimRequest({
+            {L"tools/helper.dll"}
+        }));
+
+        EXPECT_FALSE(plan.canInstall());
+        EXPECT_TRUE(plan.summary.hasBlockers);
+
+        const PlacementPlanEntry* helper = findEntry(plan, L"tools/helper.dll");
+        ASSERT_NE(helper, nullptr);
+        EXPECT_EQ(helper->classification, ContentLayoutClassification::ToolExecutable);
+        EXPECT_EQ(helper->target, PlacementTarget::Blocked);
+        EXPECT_EQ(helper->targetRelativePath.path().generic_wstring(), L"tools/helper.dll");
+    }
+
     TEST_F(ContentLayoutServiceTests, UnknownRootFilesAreReportedWithoutBlockingRecognizedContent)
     {
         const PlacementPlan plan = service_.analyze(skyrimRequest({
