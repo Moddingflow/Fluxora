@@ -652,6 +652,20 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    // Returns a FluxoraInstallPlan. The plan is short lived and must be supplied
+    // to one of the planned install exports below.
+    FLUXORA_CORE_API int fluxora_plan_download_install(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_plan_archive_install(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_install_download(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
@@ -681,6 +695,21 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    // identityDecision: 0 = use matched target, 1 = install as another mod.
+    // newNamePolicy: 0 = first free "Name (N)" suffix.
+    FLUXORA_CORE_API int fluxora_install_download_planned(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_install_archive_with_mode(
         const wchar_t* projectDirectory,
         const wchar_t* archivePath,
@@ -695,6 +724,19 @@ extern "C"
         const wchar_t* modName,
         int existingModMode,
         const wchar_t* placementOverridesJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_install_archive_planned(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
@@ -753,6 +795,34 @@ extern "C"
         int existingModMode,
         const wchar_t* selectedOptionIdsJson,
         const wchar_t* placementOverridesJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_install_fomod_download_planned(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_install_fomod_archive_planned(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 

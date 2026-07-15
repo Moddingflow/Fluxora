@@ -669,39 +669,56 @@ const installedModMatchesSummary = (
   normalizeModLookupValue(mod.id) === normalizeModLookupValue(installed.id) ||
   mod.name.trim().toLocaleLowerCase() === installed.name.trim().toLocaleLowerCase();
 
+const knownVersion = (value: string): boolean => {
+  const normalized = value.trim().toLocaleLowerCase();
+  return normalized.length > 0 && normalized !== 'unknown';
+};
+
 const optimisticInstalledMod = (
   installed: FluxoraInstalledModSummary,
   existing?: FluxoraInstalledMod
-): FluxoraInstalledMod => ({
-  id: installed.id,
-  name: installed.name,
-  version: installed.version,
-  installedAt: existing?.installedAt,
-  updatedAt: existing?.updatedAt,
-  latestVersion: existing?.latestVersion ?? '',
-  lastCheckedAt: existing?.lastCheckedAt ?? '',
-  updateStatus: existing?.updateStatus ?? '',
-  conflictStatus: existing?.conflictStatus ?? '',
-  fileCount: existing?.fileCount ?? -1,
-  conflictingFileCount: existing?.conflictingFileCount ?? 0,
-  overwrittenFileCount: existing?.overwrittenFileCount ?? 0,
-  overwritingFileCount: existing?.overwritingFileCount ?? 0,
-  isEnabled: installed.isEnabled,
-  canCheckUpdates: existing?.canCheckUpdates ?? false,
-  hasUpdate: existing?.hasUpdate ?? false,
-  sourceIsNexus: existing?.sourceIsNexus ?? false,
-  sourceIsModdingFlow: existing?.sourceIsModdingFlow ?? false,
-  sourceProvider: existing?.sourceProvider,
-  sourceGameDomain: existing?.sourceGameDomain,
-  sourceModId: existing?.sourceModId,
-  sourceFileId: existing?.sourceFileId,
-  sourceUrl: existing?.sourceUrl,
-  isLocal: existing?.isLocal ?? true,
-  isTranslation: existing?.isTranslation ?? false,
-  isPatch: existing?.isPatch ?? false,
-  overwritesModIds: existing?.overwritesModIds ?? [],
-  overwrittenByModIds: existing?.overwrittenByModIds ?? []
-});
+): FluxoraInstalledMod => {
+  const canCheckUpdates =
+    installed.sourceIsNexus &&
+    Boolean(installed.sourceGameDomain?.trim()) &&
+    Boolean(installed.sourceModId?.trim());
+  const hasUpdate =
+    knownVersion(installed.version) &&
+    knownVersion(installed.latestVersion) &&
+    installed.version.trim().toLocaleLowerCase() !==
+      installed.latestVersion.trim().toLocaleLowerCase();
+
+  return {
+    id: installed.id,
+    name: installed.name,
+    version: installed.version,
+    installedAt: existing?.installedAt,
+    updatedAt: existing?.updatedAt,
+    latestVersion: installed.latestVersion,
+    lastCheckedAt: existing?.lastCheckedAt ?? '',
+    updateStatus: existing?.updateStatus ?? '',
+    conflictStatus: existing?.conflictStatus ?? '',
+    fileCount: existing?.fileCount ?? -1,
+    conflictingFileCount: existing?.conflictingFileCount ?? 0,
+    overwrittenFileCount: existing?.overwrittenFileCount ?? 0,
+    overwritingFileCount: existing?.overwritingFileCount ?? 0,
+    isEnabled: installed.isEnabled,
+    canCheckUpdates,
+    hasUpdate,
+    sourceIsNexus: installed.sourceIsNexus,
+    sourceIsModdingFlow: installed.sourceIsModdingFlow,
+    sourceProvider: installed.sourceProvider,
+    sourceGameDomain: installed.sourceGameDomain,
+    sourceModId: installed.sourceModId,
+    sourceFileId: installed.sourceFileId,
+    sourceUrl: installed.sourceUrl,
+    isLocal: installed.isLocal,
+    isTranslation: installed.isTranslation,
+    isPatch: installed.isPatch,
+    overwritesModIds: existing?.overwritesModIds ?? [],
+    overwrittenByModIds: existing?.overwrittenByModIds ?? []
+  };
+};
 
 export const optimisticModInstallState = (
   installedMods: FluxoraInstalledMod[],

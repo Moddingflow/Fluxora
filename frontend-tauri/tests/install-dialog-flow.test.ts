@@ -84,25 +84,24 @@ describe('install dialog flow', () => {
     expect(dialog).not.toContain('installCategoryLabel');
   });
 
-  it('opens actionable install controls immediately while installer detection stays in the background', () => {
+  it('runs fast FOMOD detection separately from the background identity plan', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const startInstallFlow = sliceBetween(
       app,
       'const startInstallFlow = async',
-      '  const resolveInstallDialogKind = async'
+      '  const resolveInstallDialogPlan = async'
     );
 
-    expect(startInstallFlow).toContain("phase: 'options'");
+    expect(startInstallFlow).toContain("phase: 'detecting'");
     expect(startInstallFlow).toContain("installerKind: 'pending'");
-    expect(startInstallFlow).not.toContain("phase: 'analyzing'");
     expect(startInstallFlow).toContain(
       'defaultInstallModName(source.displayName, source.sourcePath)'
     );
-    expect(startInstallFlow).toContain('const analysisPromise = (async (): Promise<InstallAnalysisResult>');
-    expect(startInstallFlow).toContain('watchInstallAnalysis(operationId, analysisPromise)');
-    expect(startInstallFlow).toContain('await window.fluxora.downloads.analyzeFomod');
+    expect(startInstallFlow).toContain('const detectionPromise = window.fluxora.downloads.analyzeFomod(');
+    expect(startInstallFlow).toContain('const planPromise = planInstallSource(');
+    expect(startInstallFlow).toContain('watchInstallDetection(operationId, fallbackName, detectionPromise)');
+    expect(startInstallFlow).toContain('watchInstallPlan(operationId, planPromise)');
     expect(startInstallFlow).not.toContain('analyzeInstallLayout(');
-    expect(startInstallFlow).not.toContain('primeInstalledModNamesForInstall');
   });
 
   it('keeps an active installation non-visual while blocking another install action', () => {
@@ -196,13 +195,15 @@ describe('install dialog flow', () => {
     expect(conflictStep).toContain('Полностью заменяет мод.');
     expect(conflictStep).toContain('Объединить');
     expect(conflictStep).toContain('Перезаписывает только файлы с одинаковыми названиями.');
+    expect(conflictStep).toContain('Это другой мод');
     expect(conflictStep).toContain('onResolveExistingMod(1)');
     expect(conflictStep).toContain('onResolveExistingMod(2)');
+    expect(conflictStep).toContain("onResolveExistingMod('installNew')");
     expect(styles).toContain('.install-dialog[data-phase="conflict"]');
     expect(styles).toContain('.install-existing-mod__choices');
   });
 
-  it('uses the loaded workspace conflict snapshot and dismisses the dialog before async detection', () => {
+  it('uses the native identity plan for conflict choice and carries it into every mutation', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const submitInstallDialog = sliceBetween(
       app,
@@ -210,27 +211,44 @@ describe('install dialog flow', () => {
       '  const submitInstallOptions = async'
     );
 
-    expect(app).not.toContain('installModNamesLookupRef');
-    expect(app).not.toContain('primeInstalledModNamesForInstall');
-    expect(app).not.toContain('resolveExistingModNameForInstall');
-    expect(app).toContain('const resolveInstallDialogKind = async');
+    expect(app).not.toContain('findExistingInstalledModName');
+    expect(app).toContain('const resolveInstallDialogPlan = async');
     expect(app).toContain('existingModMode: 0,');
     expect(app).toContain('onResolveExistingMod={(mode) => void submitInstallOptions(mode)}');
-    expect(submitInstallDialog).toContain('const resolvedDialog = await resolveInstallDialogKind');
-    expect(submitInstallDialog).toContain('const existingModNameForPrompt = findExistingInstalledModName(');
-    expect(submitInstallDialog).toContain('installedModNames,');
+    expect(submitInstallDialog).toContain('const resolvedDialog = await resolveInstallDialogPlan');
+    expect(submitInstallDialog).toContain(
+      'const existingModNameForPrompt = installPlan.matchedTarget?.displayName ?? null;'
+    );
     expect(submitInstallDialog).toContain("phase: 'conflict'");
     expect(submitInstallDialog).toContain(
-      'const existingModMode: FluxoraExistingModInstallMode = selectedExistingModMode ?? 0;'
+      'const existingModMode: FluxoraExistingModInstallMode ='
     );
-    expect(submitInstallDialog.indexOf('installSubmitInFlightRef.current = installDialog.operationId')).toBeLessThan(
-      submitInstallDialog.indexOf('setInstallDialog((current) =>')
+    expect(submitInstallDialog).toContain('resolutionId: installPlan.resolutionId');
+    expect(submitInstallDialog).toContain(
+      "identityDecision: useMatchedTarget ? 'use-match' as const : 'install-new' as const"
     );
-    expect(submitInstallDialog.indexOf('setInstallDialog((current) =>')).toBeLessThan(
-      submitInstallDialog.indexOf('resolveInstallDialogKind')
+    expect(submitInstallDialog).toContain(
+      'targetModUuid: useMatchedTarget ? installPlan.matchedTarget!.modUuid : undefined'
     );
+    expect(submitInstallDialog).toContain("newNamePolicy: 'first-free-copy-suffix' as const");
+    expect(submitInstallDialog.match(/\.\.\.identitySelection/g)).toHaveLength(4);
     expect(submitInstallDialog).not.toContain("phase: 'installing'");
     expect(submitInstallDialog).not.toContain('mods.listInstalled');
+  });
+
+  it('replans a stale identity decision without overwriting a user-edited name', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const submitInstallDialog = sliceBetween(
+      app,
+      'async function submitInstallDialog',
+      '  const submitInstallOptions = async'
+    );
+
+    expect(submitInstallDialog).toContain("errorCode === 'install.identityPlanStale'");
+    expect(submitInstallDialog).toContain('await planInstallSource(');
+    expect(submitInstallDialog).toContain('applyInstallNameSuggestion(');
+    expect(submitInstallDialog).toContain('submissionDialog,');
+    expect(submitInstallDialog).toContain("submissionDialog.installerKind === 'fomod'");
   });
 
   it('commits the installed row immediately and reconciles native state in the background', () => {

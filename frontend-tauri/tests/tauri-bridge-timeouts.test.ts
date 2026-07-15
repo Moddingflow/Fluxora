@@ -783,10 +783,32 @@ describe('Tauri bridge request timeouts', () => {
       downloadPath: 'E:\\Fluxora Builds\\Foundation Edition\\downloads\\large-mod.7z',
       modName: 'Large Mod'
     };
-    invokeMock.mockResolvedValue({ id: 'large-mod', name: 'Large Mod' });
+    invokeMock.mockResolvedValue({
+      id: 'large-mod',
+      name: 'Large Mod',
+      version: '1.4.0',
+      isEnabled: true,
+      latestVersion: '1.4.0',
+      sourceIsNexus: true,
+      sourceIsModdingFlow: false,
+      sourceProvider: 'nexus',
+      sourceGameDomain: 'skyrimspecialedition',
+      sourceModId: '182366',
+      sourceFileId: '770345',
+      sourceUrl: 'nxm://skyrimspecialedition/mods/182366/files/770345',
+      isLocal: false,
+      isTranslation: false,
+      isPatch: false
+    });
 
     const api = createTauriFluxoraApi();
-    await api.downloads.install(installRequest, request);
+    await expect(api.downloads.install(installRequest, request)).resolves.toMatchObject({
+      latestVersion: '1.4.0',
+      sourceIsNexus: true,
+      sourceProvider: 'nexus',
+      isLocal: false,
+      operationId: request.operationId
+    });
 
     expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
       method: 'downloads.install',
@@ -796,6 +818,73 @@ describe('Tauri bridge request timeouts', () => {
         placementOverridesJson: ''
       },
       request,
+      timeoutMs: 7_200_000
+    });
+  });
+
+  it('plans install identity and forwards an opaque matched-target decision unchanged', async () => {
+    const planOperation: OperationRequest = { operationId: 'op_downloads_identity_plan' };
+    const installOperation: OperationRequest = { operationId: 'op_archives_identity_install' };
+    const projectDirectory = project().projectDirectory;
+    const downloadPath = `${projectDirectory}\\downloads\\SkyUI.7z`;
+    const archivePath = 'E:\\Incoming Mods\\SkyUI Update.7z';
+    const plan = {
+      suggestedModName: 'SkyUI',
+      resolutionKind: 'exact',
+      matchedTarget: {
+        modUuid: 'mod-skyui-uuid',
+        displayName: 'SkyUI',
+        folderName: 'SkyUI'
+      },
+      resolutionId: 'identity-resolution-1',
+      fomodInstaller: { isFomod: false },
+      evidenceCodes: ['source.stable'],
+      score: 100
+    };
+    invokeMock
+      .mockResolvedValueOnce(plan)
+      .mockResolvedValueOnce({ id: 'mod-skyui-uuid', name: 'SkyUI' });
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.downloads.planInstall(projectDirectory, downloadPath, planOperation)
+    ).resolves.toMatchObject(plan);
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'fluxora_bridge_request', {
+      method: 'downloads.planInstall',
+      params: { projectDirectory, downloadPath },
+      request: planOperation,
+      timeoutMs: 7_200_000
+    });
+
+    await api.archives.install(
+      {
+        projectDirectory,
+        archivePath,
+        modName: 'User edit is ignored for the matched target',
+        existingModMode: 1,
+        resolutionId: plan.resolutionId,
+        identityDecision: 'use-match',
+        targetModUuid: plan.matchedTarget.modUuid,
+        newNamePolicy: 'first-free-copy-suffix'
+      },
+      installOperation
+    );
+
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'fluxora_bridge_request', {
+      method: 'archives.install',
+      params: {
+        projectDirectory,
+        archivePath,
+        modName: 'User edit is ignored for the matched target',
+        existingModMode: 1,
+        resolutionId: 'identity-resolution-1',
+        identityDecision: 'use-match',
+        targetModUuid: 'mod-skyui-uuid',
+        newNamePolicy: 'first-free-copy-suffix',
+        placementOverridesJson: ''
+      },
+      request: installOperation,
       timeoutMs: 7_200_000
     });
   });

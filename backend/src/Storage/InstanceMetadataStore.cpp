@@ -1,6 +1,7 @@
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
+#include "FluxoraCore/Services/ModIdentityResolver.hpp"
 #include "FluxoraCore/Support/FilesystemPath.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
@@ -102,6 +103,67 @@ namespace fluxora
     std::vector<InstalledModRecord> InstanceMetadataStore::listInstalledMods(
         const std::filesystem::path&,
         const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    ModIdentityCatalogSnapshot InstanceMetadataStore::queryModIdentityCandidates(
+        const std::filesystem::path&,
+        const ModIdentityCatalogQuery&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::recordModIdentity(
+        const std::filesystem::path&,
+        const ModIdentityPersistenceUpdate&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    std::optional<ModIdentityContentCacheRecord> InstanceMetadataStore::modIdentityContentCache(
+        const std::filesystem::path&,
+        std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::recordModIdentityContentCache(
+        const std::filesystem::path&,
+        std::wstring_view,
+        const ModIdentityContentCacheRecord&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    std::optional<ModIdentityOnlineCacheRecord> InstanceMetadataStore::modIdentityOnlineCache(
+        const std::filesystem::path&,
+        std::wstring_view,
+        std::wstring_view,
+        std::wstring_view,
+        std::wstring_view,
+        std::wstring_view,
+        std::uintmax_t)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::recordModIdentityOnlineCache(
+        const std::filesystem::path&,
+        std::wstring_view,
+        const ModIdentityOnlineCacheRecord&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    std::uint64_t InstanceMetadataStore::modCatalogRevision(const std::filesystem::path&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    std::optional<InstalledModRecord> InstanceMetadataStore::installedModByUuid(
+        const std::filesystem::path&,
+        std::wstring_view)
     {
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
@@ -369,7 +431,7 @@ namespace fluxora
         constexpr std::wstring_view profilePluginOrderSeparatorKind = L"separator";
         constexpr std::wstring_view modInventoryRevisionKey = L"mod_inventory_revision";
         constexpr std::wstring_view generatedPgPatcherProvider = L"generated-pgpatcher";
-        constexpr int instanceDatabaseSchemaVersion = 6;
+        constexpr int instanceDatabaseSchemaVersion = 7;
         constexpr int fileCacheSchemaVersion = 2;
 
         using SqliteDestructor = void (*)(void*);
@@ -761,6 +823,24 @@ namespace fluxora
             }
 
             InstalledModRecord record;
+            if (const JsonValue* schemaVersion = root.find(L"schemaVersion"); schemaVersion != nullptr)
+            {
+                try
+                {
+                    if (schemaVersion->isNumber())
+                    {
+                        record.portableManifestSchemaVersion = std::stoi(schemaVersion->asNumber());
+                    }
+                    else if (schemaVersion->isString())
+                    {
+                        record.portableManifestSchemaVersion = std::stoi(schemaVersion->asString());
+                    }
+                }
+                catch (const std::exception&)
+                {
+                    record.portableManifestSchemaVersion = 0;
+                }
+            }
             record.uuid = readStringOrDefault(root, L"modUuid");
             record.gameId = readStringOrDefault(root, L"gameId");
             record.folderName = readStringOrDefault(root, L"folderName", modDirectory.filename().wstring());
@@ -777,6 +857,31 @@ namespace fluxora
             record.isPatch = readBoolOrDefault(root, L"isPatch");
             record.path = modDirectory;
             record.source = readSourceFromManifest(root);
+            if (const JsonValue* identity = root.find(L"identity"); identity != nullptr && identity->isObject())
+            {
+                record.fomodModuleId = readStringOrDefault(*identity, L"fomodModuleId");
+                if (const JsonValue* aliases = identity->find(L"aliases"); aliases != nullptr && aliases->isArray())
+                {
+                    for (const JsonValue& alias : aliases->asArray())
+                    {
+                        if (alias.isString())
+                        {
+                            record.identityAliases.push_back(alias.asString());
+                        }
+                    }
+                }
+                if (const JsonValue* exclusions = identity->find(L"excludedModUuids");
+                    exclusions != nullptr && exclusions->isArray())
+                {
+                    for (const JsonValue& exclusion : exclusions->asArray())
+                    {
+                        if (exclusion.isString())
+                        {
+                            record.identityExcludedModUuids.push_back(exclusion.asString());
+                        }
+                    }
+                }
+            }
             return record;
         }
 
@@ -795,7 +900,9 @@ namespace fluxora
             try
             {
                 const std::optional<InstalledModRecord> manifestRecord = readManifestRecord(record.path);
-                return !manifestRecord.has_value() || manifestRecord->state != record.state;
+                return !manifestRecord.has_value() ||
+                    manifestRecord->portableManifestSchemaVersion < 2 ||
+                    manifestRecord->state != record.state;
             }
             catch (const std::exception&)
             {
@@ -1425,6 +1532,56 @@ namespace fluxora
                 "latest_version TEXT NOT NULL DEFAULT ''"
                 ");");
             database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_identity_metadata ("
+                "mod_id INTEGER PRIMARY KEY NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
+                "fomod_module_id TEXT NOT NULL DEFAULT ''"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_identity_keys ("
+                "mod_id INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
+                "key_kind TEXT NOT NULL,"
+                "key_value TEXT NOT NULL,"
+                "created_at TEXT NOT NULL DEFAULT '',"
+                "PRIMARY KEY(mod_id, key_kind, key_value)"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_identity_tokens ("
+                "mod_id INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
+                "token TEXT NOT NULL,"
+                "weight INTEGER NOT NULL DEFAULT 1,"
+                "PRIMARY KEY(mod_id, token)"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_identity_aliases ("
+                "mod_id INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
+                "alias TEXT NOT NULL,"
+                "normalized_alias TEXT NOT NULL,"
+                "confirmed_at TEXT NOT NULL,"
+                "PRIMARY KEY(mod_id, normalized_alias)"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_identity_exclusions ("
+                "owner_mod_id INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
+                "source_key TEXT NOT NULL DEFAULT '',"
+                "incoming_name_key TEXT NOT NULL DEFAULT '',"
+                "rejected_mod_uuid TEXT NOT NULL,"
+                "created_at TEXT NOT NULL,"
+                "PRIMARY KEY(owner_mod_id, source_key, incoming_name_key, rejected_mod_uuid)"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_identity_cache ("
+                "archive_fingerprint TEXT PRIMARY KEY NOT NULL,"
+                "provider TEXT NOT NULL DEFAULT '',"
+                "game_domain TEXT NOT NULL DEFAULT '',"
+                "remote_mod_id TEXT NOT NULL DEFAULT '',"
+                "md5 TEXT NOT NULL DEFAULT '',"
+                "sha256 TEXT NOT NULL DEFAULT '',"
+                "archive_size INTEGER NOT NULL DEFAULT 0,"
+                "content_json TEXT NOT NULL DEFAULT '{}',"
+                "online_json TEXT NOT NULL DEFAULT '{}',"
+                "checked_at TEXT NOT NULL DEFAULT ''"
+                ");");
+            database.exec(
                 "CREATE TABLE IF NOT EXISTS mod_files ("
                 "mod_id INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
                 "relative_path TEXT NOT NULL,"
@@ -1555,6 +1712,11 @@ namespace fluxora
             database.exec("CREATE INDEX IF NOT EXISTS idx_mods_state ON mods(state);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mods_display_name ON mods(display_name COLLATE NOCASE);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_sources_remote ON mod_sources(provider, game_domain, remote_mod_id, remote_file_id);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_identity_keys_lookup ON mod_identity_keys(key_kind, key_value, mod_id);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_identity_tokens_lookup ON mod_identity_tokens(token, mod_id);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_identity_aliases_lookup ON mod_identity_aliases(normalized_alias, mod_id);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_identity_exclusions_lookup ON mod_identity_exclusions(source_key, incoming_name_key, rejected_mod_uuid);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_identity_cache_source ON mod_identity_cache(provider, game_domain, remote_mod_id, checked_at);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_files_path ON mod_files(path_key);");
             database.exec(
                 "CREATE INDEX IF NOT EXISTS idx_mod_files_relative_path "
@@ -1571,7 +1733,7 @@ namespace fluxora
             database.exec("CREATE INDEX IF NOT EXISTS idx_profile_order_profile_position ON profile_order_items(profile_name, position);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_profile_plugin_order_profile_position ON profile_plugin_order_items(profile_name, position);");
             database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_profile_plugin_order_unique_plugin ON profile_plugin_order_items(profile_name, plugin_name) WHERE kind = 'plugin';");
-            database.exec("PRAGMA user_version = 6;");
+            database.exec("PRAGMA user_version = 7;");
         }
 
         Database openInstanceDatabase(const std::filesystem::path& projectDirectory)
@@ -1619,6 +1781,201 @@ namespace fluxora
             bumpMetadataRevision(database, modInventoryRevisionKey);
         }
 
+        std::wstring identitySourceKey(
+            std::wstring_view provider,
+            std::wstring_view gameDomain,
+            std::wstring_view remoteModId)
+        {
+            const std::wstring normalizedProvider = toLower(trim(std::wstring(provider)));
+            const std::wstring normalizedGame = toLower(trim(std::wstring(gameDomain)));
+            const std::wstring normalizedModId = toLower(trim(std::wstring(remoteModId)));
+            if (normalizedProvider.empty() || normalizedGame.empty() || normalizedModId.empty())
+            {
+                return {};
+            }
+            return normalizedProvider + L"\x1f" + normalizedGame + L"\x1f" + normalizedModId;
+        }
+
+        void insertIdentityKey(
+            Database& database,
+            std::int64_t modId,
+            std::wstring_view kind,
+            std::wstring_view value,
+            std::wstring_view createdAt)
+        {
+            if (value.empty())
+            {
+                return;
+            }
+            Statement insert = database.prepare(
+                "INSERT OR IGNORE INTO mod_identity_keys(mod_id, key_kind, key_value, created_at) "
+                "VALUES(?, ?, ?, ?);");
+            insert.bindInt64(1, modId);
+            insert.bindText(2, kind);
+            insert.bindText(3, value);
+            insert.bindText(4, createdAt);
+            insert.stepDone();
+        }
+
+        void insertIdentityToken(
+            Database& database,
+            std::int64_t modId,
+            std::wstring_view token,
+            int weight)
+        {
+            if (token.empty())
+            {
+                return;
+            }
+            Statement insert = database.prepare(
+                "INSERT INTO mod_identity_tokens(mod_id, token, weight) VALUES(?, ?, ?) "
+                "ON CONFLICT(mod_id, token) DO UPDATE SET weight = MAX(weight, excluded.weight);");
+            insert.bindInt64(1, modId);
+            insert.bindText(2, token);
+            insert.bindInt(3, weight);
+            insert.stepDone();
+        }
+
+        std::vector<std::wstring> identityAliases(Database& database, std::int64_t modId)
+        {
+            Statement statement = database.prepare(
+                "SELECT alias FROM mod_identity_aliases WHERE mod_id = ? ORDER BY confirmed_at, alias;");
+            statement.bindInt64(1, modId);
+            std::vector<std::wstring> aliases;
+            while (statement.stepRow())
+            {
+                aliases.push_back(statement.columnText(0));
+            }
+            return aliases;
+        }
+
+        std::wstring identityFomodModuleId(Database& database, std::int64_t modId)
+        {
+            Statement statement = database.prepare(
+                "SELECT fomod_module_id FROM mod_identity_metadata WHERE mod_id = ? LIMIT 1;");
+            statement.bindInt64(1, modId);
+            return statement.stepRow() ? statement.columnText(0) : std::wstring{};
+        }
+
+        void syncIdentitySearchIndex(Database& database, InstalledModRecord& record)
+        {
+            if (record.id <= 0)
+            {
+                return;
+            }
+
+            if (!record.fomodModuleId.empty())
+            {
+                Statement metadata = database.prepare(
+                    "INSERT INTO mod_identity_metadata(mod_id, fomod_module_id) VALUES(?, ?) "
+                    "ON CONFLICT(mod_id) DO UPDATE SET fomod_module_id = "
+                    "CASE WHEN excluded.fomod_module_id = '' THEN mod_identity_metadata.fomod_module_id "
+                    "ELSE excluded.fomod_module_id END;");
+                metadata.bindInt64(1, record.id);
+                metadata.bindText(2, record.fomodModuleId);
+                metadata.stepDone();
+            }
+
+            for (const std::wstring& alias : record.identityAliases)
+            {
+                const std::wstring normalizedAlias = ModIdentityResolver::normalizedName(alias);
+                if (normalizedAlias.empty())
+                {
+                    continue;
+                }
+                Statement insert = database.prepare(
+                    "INSERT OR IGNORE INTO mod_identity_aliases(mod_id, alias, normalized_alias, confirmed_at) "
+                    "VALUES(?, ?, ?, ?);");
+                insert.bindInt64(1, record.id);
+                insert.bindText(2, alias);
+                insert.bindText(3, normalizedAlias);
+                insert.bindText(4, record.updatedAt.empty() ? nowUtcText() : record.updatedAt);
+                insert.stepDone();
+            }
+
+            const std::wstring exclusionSourceKey = identitySourceKey(
+                record.source.provider,
+                record.source.gameDomain,
+                record.source.remoteModId);
+            const std::wstring exclusionNameKey =
+                ModIdentityResolver::normalizedName(record.displayName);
+            for (const std::wstring& rejectedUuid : record.identityExcludedModUuids)
+            {
+                if (trim(rejectedUuid).empty() ||
+                    (exclusionSourceKey.empty() && exclusionNameKey.empty()))
+                {
+                    continue;
+                }
+                Statement insert = database.prepare(
+                    "INSERT OR IGNORE INTO mod_identity_exclusions("
+                    "owner_mod_id, source_key, incoming_name_key, rejected_mod_uuid, created_at"
+                    ") VALUES(?, ?, ?, ?, ?);");
+                insert.bindInt64(1, record.id);
+                insert.bindText(2, exclusionSourceKey);
+                insert.bindText(3, exclusionNameKey);
+                insert.bindText(4, trim(rejectedUuid));
+                insert.bindText(5, record.updatedAt.empty() ? nowUtcText() : record.updatedAt);
+                insert.stepDone();
+            }
+
+            Statement clearKeys = database.prepare("DELETE FROM mod_identity_keys WHERE mod_id = ?;");
+            clearKeys.bindInt64(1, record.id);
+            clearKeys.stepDone();
+            Statement clearTokens = database.prepare("DELETE FROM mod_identity_tokens WHERE mod_id = ?;");
+            clearTokens.bindInt64(1, record.id);
+            clearTokens.stepDone();
+
+            const std::wstring createdAt = record.updatedAt.empty() ? nowUtcText() : record.updatedAt;
+            const std::wstring displayKey = ModIdentityResolver::normalizedName(record.displayName);
+            const std::wstring folderKey = ModIdentityResolver::normalizedName(record.folderName);
+            insertIdentityKey(database, record.id, L"name", displayKey, createdAt);
+            insertIdentityKey(database, record.id, L"folder", folderKey, createdAt);
+            insertIdentityKey(
+                database,
+                record.id,
+                L"source",
+                identitySourceKey(
+                    record.source.provider,
+                    record.source.gameDomain,
+                    record.source.remoteModId),
+                createdAt);
+
+            record.fomodModuleId = identityFomodModuleId(database, record.id);
+            insertIdentityKey(
+                database,
+                record.id,
+                L"fomod",
+                toLower(trim(record.fomodModuleId)),
+                createdAt);
+
+            record.identityAliases = identityAliases(database, record.id);
+            for (const std::wstring& alias : record.identityAliases)
+            {
+                insertIdentityKey(
+                    database,
+                    record.id,
+                    L"alias",
+                    ModIdentityResolver::normalizedName(alias),
+                    createdAt);
+            }
+
+            for (const std::wstring& token : ModIdentityResolver::meaningfulTokens(record.displayName))
+            {
+                insertIdentityToken(database, record.id, token, 3);
+            }
+            for (const std::wstring& token : ModIdentityResolver::meaningfulTokens(record.folderName))
+            {
+                insertIdentityToken(database, record.id, token, 2);
+            }
+            for (const std::wstring& alias : record.identityAliases)
+            {
+                for (const std::wstring& token : ModIdentityResolver::meaningfulTokens(alias))
+                {
+                    insertIdentityToken(database, record.id, token, 2);
+                }
+            }
+        }
+
         std::wstring existingUuidForFolder(Database& database, std::wstring_view folderName)
         {
             Statement statement = database.prepare("SELECT uuid FROM mods WHERE folder_name = ? LIMIT 1;");
@@ -1630,7 +1987,7 @@ namespace fluxora
         {
             JsonWriter writer;
             writer.beginObject();
-            writer.field(L"schemaVersion", 1);
+            writer.field(L"schemaVersion", 2);
             writer.field(L"modUuid", record.uuid);
             writer.field(L"gameId", record.gameId);
             writer.field(L"folderName", record.folderName);
@@ -1653,6 +2010,11 @@ namespace fluxora
             writer.field(L"url", record.source.url);
             writer.field(L"lastCheckedAt", record.source.lastCheckedAt);
             writer.field(L"latestVersion", record.source.latestVersion);
+            writer.endObject();
+            writer.key(L"identity").beginObject();
+            writer.field(L"fomodModuleId", record.fomodModuleId);
+            writer.stringArray(L"aliases", record.identityAliases);
+            writer.stringArray(L"excludedModUuids", record.identityExcludedModUuids);
             writer.endObject();
             writer.endObject();
 
@@ -1865,6 +2227,7 @@ namespace fluxora
             source.bindText(8, record.source.latestVersion);
             source.stepDone();
 
+            syncIdentitySearchIndex(database, record);
             syncSystemTags(database, record);
             recordInstallHistory(database, record);
             bumpModInventoryRevision(database);
@@ -4373,6 +4736,554 @@ namespace fluxora
     {
         Database database = openInstanceDatabase(projectDirectory);
         return readInstalledRecords(database, projectDirectory, modsRoot);
+    }
+
+    ModIdentityCatalogSnapshot InstanceMetadataStore::queryModIdentityCandidates(
+        const std::filesystem::path& projectDirectory,
+        const ModIdentityCatalogQuery& query)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        {
+            Transaction transaction(database);
+            Statement missing = database.prepare(
+                "SELECT m.id, m.uuid, m.game_id, m.folder_name, m.display_name, m.version, "
+                "m.installed_at, m.updated_at, m.state, m.content_fingerprint, "
+                "m.source_is_nexus, m.source_is_moddingflow, m.is_local, m.is_translation, m.is_patch, "
+                "COALESCE(s.provider, ''), COALESCE(s.game_domain, ''), "
+                "COALESCE(s.remote_mod_id, ''), COALESCE(s.remote_file_id, ''), "
+                "COALESCE(s.url, ''), COALESCE(s.last_checked_at, ''), COALESCE(s.latest_version, '') "
+                "FROM mods m LEFT JOIN mod_sources s ON s.mod_id = m.id "
+                "WHERE m.state IN ('installed', 'disabled') AND NOT EXISTS("
+                "SELECT 1 FROM mod_identity_keys k WHERE k.mod_id = m.id) "
+                "ORDER BY m.id;");
+            while (missing.stepRow())
+            {
+                InstalledModRecord record;
+                record.id = std::stoll(missing.columnText(0));
+                record.uuid = missing.columnText(1);
+                record.gameId = missing.columnText(2);
+                record.folderName = missing.columnText(3);
+                record.displayName = missing.columnText(4);
+                record.version = missing.columnText(5);
+                record.installedAt = missing.columnText(6);
+                record.updatedAt = missing.columnText(7);
+                record.state = missing.columnText(8);
+                record.contentFingerprint = missing.columnText(9);
+                record.sourceIsNexus = missing.columnInt(10) != 0;
+                record.sourceIsModdingFlow = missing.columnInt(11) != 0;
+                record.isLocal = missing.columnInt(12) != 0;
+                record.isTranslation = missing.columnInt(13) != 0;
+                record.isPatch = missing.columnInt(14) != 0;
+                record.path = modsDirectory(projectDirectory) / record.folderName;
+                record.source = ModSourceRecord{
+                    missing.columnText(15),
+                    missing.columnText(16),
+                    missing.columnText(17),
+                    missing.columnText(18),
+                    missing.columnText(19),
+                    missing.columnText(20),
+                    missing.columnText(21)
+                };
+                syncIdentitySearchIndex(database, record);
+            }
+            transaction.commit();
+        }
+
+        const std::size_t requestedLimit = query.limit == 0 ? 5 : query.limit;
+        const std::size_t limit = (std::min<std::size_t>)(requestedLimit, 5);
+        std::vector<std::int64_t> candidateIds;
+        candidateIds.reserve(limit);
+        std::set<std::int64_t> seenIds;
+        const auto appendKeyMatches = [&](std::wstring_view kind, std::wstring_view value)
+        {
+            if (value.empty() || candidateIds.size() >= limit)
+            {
+                return;
+            }
+            Statement statement = database.prepare(
+                "SELECT k.mod_id FROM mod_identity_keys k "
+                "JOIN mods m ON m.id = k.mod_id "
+                "WHERE k.key_kind = ? AND k.key_value = ? "
+                "AND m.state IN ('installed', 'disabled') "
+                "ORDER BY k.mod_id LIMIT 5;");
+            statement.bindText(1, kind);
+            statement.bindText(2, value);
+            while (candidateIds.size() < limit && statement.stepRow())
+            {
+                const std::int64_t id = std::stoll(statement.columnText(0));
+                if (seenIds.insert(id).second)
+                {
+                    candidateIds.push_back(id);
+                }
+            }
+        };
+
+        appendKeyMatches(
+            L"source",
+            identitySourceKey(query.provider, query.gameDomain, query.remoteModId));
+        appendKeyMatches(L"alias", query.normalizedName);
+        appendKeyMatches(L"fomod", toLower(trim(query.fomodModuleId)));
+        appendKeyMatches(L"name", query.normalizedName);
+        appendKeyMatches(L"folder", query.normalizedName);
+
+        if (candidateIds.size() < limit && !query.tokens.empty())
+        {
+            std::string sql =
+                "SELECT t.mod_id, SUM(t.weight) AS score, COUNT(*) AS matches "
+                "FROM mod_identity_tokens t JOIN mods m ON m.id = t.mod_id "
+                "WHERE m.state IN ('installed', 'disabled') AND t.token IN (";
+            for (std::size_t index = 0; index < query.tokens.size(); ++index)
+            {
+                if (index != 0)
+                {
+                    sql += ',';
+                }
+                sql += '?';
+            }
+            sql += ") GROUP BY t.mod_id ORDER BY matches DESC, score DESC, t.mod_id LIMIT 5;";
+            Statement statement = database.prepare(sql.c_str());
+            for (std::size_t index = 0; index < query.tokens.size(); ++index)
+            {
+                statement.bindText(static_cast<int>(index + 1), query.tokens[index]);
+            }
+            while (candidateIds.size() < limit && statement.stepRow())
+            {
+                const std::int64_t id = std::stoll(statement.columnText(0));
+                if (seenIds.insert(id).second)
+                {
+                    candidateIds.push_back(id);
+                }
+            }
+        }
+
+        ModIdentityCatalogSnapshot snapshot;
+        try
+        {
+            const std::wstring revision = readMetadataValue(database, modInventoryRevisionKey);
+            snapshot.catalogRevision = revision.empty() ? 0 : std::stoull(revision);
+        }
+        catch (const std::exception&)
+        {
+            snapshot.catalogRevision = 0;
+        }
+
+        const std::wstring sourceKey = identitySourceKey(
+            query.provider,
+            query.gameDomain,
+            query.remoteModId);
+        for (const std::int64_t id : candidateIds)
+        {
+            Statement folder = database.prepare(
+                "SELECT folder_name FROM mods WHERE id = ? AND state IN ('installed', 'disabled') LIMIT 1;");
+            folder.bindInt64(1, id);
+            if (!folder.stepRow())
+            {
+                continue;
+            }
+
+            ModIdentityCatalogCandidate candidate;
+            candidate.mod = readRecordByFolder(
+                database,
+                projectDirectory,
+                folder.columnText(0));
+            candidate.aliases = identityAliases(database, id);
+            candidate.fomodModuleId = identityFomodModuleId(database, id);
+            candidate.mod.identityAliases = candidate.aliases;
+            candidate.mod.fomodModuleId = candidate.fomodModuleId;
+
+            Statement excluded = database.prepare(
+                "SELECT 1 FROM mod_identity_exclusions "
+                "WHERE rejected_mod_uuid = ? AND "
+                "((source_key <> '' AND source_key = ?) OR "
+                "(incoming_name_key <> '' AND incoming_name_key = ?)) LIMIT 1;");
+            excluded.bindText(1, candidate.mod.uuid);
+            excluded.bindText(2, sourceKey);
+            excluded.bindText(3, query.normalizedName);
+            candidate.excluded = excluded.stepRow();
+            snapshot.candidates.push_back(std::move(candidate));
+        }
+        return snapshot;
+    }
+
+    std::optional<ModIdentityContentCacheRecord> InstanceMetadataStore::modIdentityContentCache(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view archiveFingerprint)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        if (projectDirectory.empty() || trim(std::wstring(archiveFingerprint)).empty())
+        {
+            return std::nullopt;
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        Statement statement = database.prepare(
+            "SELECT content_json FROM mod_identity_cache "
+            "WHERE archive_fingerprint = ? AND content_json <> '{}' LIMIT 1;");
+        statement.bindText(1, archiveFingerprint);
+        if (!statement.stepRow())
+        {
+            return std::nullopt;
+        }
+
+        try
+        {
+            const JsonValue root = JsonReader::parse(statement.columnText(0));
+            if (!root.isObject())
+            {
+                return std::nullopt;
+            }
+            const auto readArray = [&](std::wstring_view key)
+            {
+                std::vector<std::wstring> values;
+                const JsonValue* array = root.find(key);
+                if (array == nullptr || !array->isArray())
+                {
+                    return values;
+                }
+                for (const JsonValue& value : array->asArray())
+                {
+                    if (value.isString())
+                    {
+                        values.push_back(value.asString());
+                    }
+                }
+                return values;
+            };
+            return ModIdentityContentCacheRecord{
+                readArray(L"pluginFiles"),
+                readArray(L"archiveFiles"),
+                readArray(L"scriptExtenderDlls")
+            };
+        }
+        catch (const std::exception&)
+        {
+            return std::nullopt;
+        }
+    }
+
+    void InstanceMetadataStore::recordModIdentityContentCache(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view archiveFingerprint,
+        const ModIdentityContentCacheRecord& content)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        if (projectDirectory.empty() || trim(std::wstring(archiveFingerprint)).empty())
+        {
+            throw std::invalid_argument("Project directory and archive fingerprint are required.");
+        }
+
+        JsonWriter writer;
+        writer.beginObject();
+        writer.stringArray(L"pluginFiles", content.pluginFiles);
+        writer.stringArray(L"archiveFiles", content.archiveFiles);
+        writer.stringArray(L"scriptExtenderDlls", content.scriptExtenderDlls);
+        writer.endObject();
+
+        Database database = openInstanceDatabase(projectDirectory);
+        Statement statement = database.prepare(
+            "INSERT INTO mod_identity_cache(archive_fingerprint, content_json, checked_at) "
+            "VALUES(?, ?, ?) ON CONFLICT(archive_fingerprint) DO UPDATE SET "
+            "content_json = excluded.content_json, checked_at = excluded.checked_at;");
+        statement.bindText(1, archiveFingerprint);
+        statement.bindText(2, writer.str());
+        statement.bindText(3, nowUtcText());
+        statement.stepDone();
+    }
+
+    std::optional<ModIdentityOnlineCacheRecord> InstanceMetadataStore::modIdentityOnlineCache(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view archiveFingerprint,
+        std::wstring_view provider,
+        std::wstring_view gameDomain,
+        std::wstring_view md5,
+        std::wstring_view sha256,
+        std::uintmax_t archiveSize)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        if (projectDirectory.empty() || trim(std::wstring(archiveFingerprint)).empty())
+        {
+            return std::nullopt;
+        }
+        if (archiveSize > static_cast<std::uintmax_t>((std::numeric_limits<std::int64_t>::max)()))
+        {
+            return std::nullopt;
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        Statement statement = database.prepare(
+            "SELECT remote_mod_id, online_json, checked_at FROM mod_identity_cache "
+            "WHERE archive_fingerprint = ? AND provider = ? AND game_domain = ? "
+            "AND md5 = ? AND sha256 = ? AND archive_size = ? AND online_json <> '{}' LIMIT 1;");
+        statement.bindText(1, archiveFingerprint);
+        statement.bindText(2, toLower(trim(std::wstring(provider))));
+        statement.bindText(3, toLower(trim(std::wstring(gameDomain))));
+        statement.bindText(4, toLower(trim(std::wstring(md5))));
+        statement.bindText(5, toLower(trim(std::wstring(sha256))));
+        statement.bindInt64(6, static_cast<std::int64_t>(archiveSize));
+        if (!statement.stepRow())
+        {
+            return std::nullopt;
+        }
+
+        try
+        {
+            const JsonValue root = JsonReader::parse(statement.columnText(1));
+            if (!root.isObject())
+            {
+                return std::nullopt;
+            }
+            ModIdentityOnlineCacheRecord cached;
+            cached.provider = toLower(trim(std::wstring(provider)));
+            cached.gameDomain = toLower(trim(std::wstring(gameDomain)));
+            cached.remoteModId = statement.columnText(0);
+            cached.remoteFileId = readStringOrDefault(root, L"remoteFileId");
+            cached.modName = readStringOrDefault(root, L"modName");
+            cached.md5 = toLower(trim(std::wstring(md5)));
+            cached.sha256 = toLower(trim(std::wstring(sha256)));
+            cached.archiveSize = archiveSize;
+            cached.checkedAt = statement.columnText(2);
+            if (cached.remoteModId.empty() || cached.remoteFileId.empty())
+            {
+                return std::nullopt;
+            }
+            return cached;
+        }
+        catch (const std::exception&)
+        {
+            return std::nullopt;
+        }
+    }
+
+    void InstanceMetadataStore::recordModIdentityOnlineCache(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view archiveFingerprint,
+        const ModIdentityOnlineCacheRecord& online)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        if (projectDirectory.empty() || trim(std::wstring(archiveFingerprint)).empty() ||
+            trim(online.provider).empty() || trim(online.gameDomain).empty() ||
+            trim(online.remoteModId).empty() || trim(online.remoteFileId).empty())
+        {
+            throw std::invalid_argument("Complete online identity cache metadata is required.");
+        }
+        if (online.archiveSize > static_cast<std::uintmax_t>((std::numeric_limits<std::int64_t>::max)()))
+        {
+            throw std::invalid_argument("Archive is too large for identity cache metadata.");
+        }
+
+        JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"remoteFileId", online.remoteFileId);
+        writer.field(L"modName", online.modName);
+        writer.endObject();
+
+        Database database = openInstanceDatabase(projectDirectory);
+        Statement statement = database.prepare(
+            "INSERT INTO mod_identity_cache("
+            "archive_fingerprint, provider, game_domain, remote_mod_id, md5, sha256, "
+            "archive_size, online_json, checked_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(archive_fingerprint) DO UPDATE SET "
+            "provider = excluded.provider, game_domain = excluded.game_domain, "
+            "remote_mod_id = excluded.remote_mod_id, md5 = excluded.md5, sha256 = excluded.sha256, "
+            "archive_size = excluded.archive_size, online_json = excluded.online_json, "
+            "checked_at = excluded.checked_at;");
+        statement.bindText(1, archiveFingerprint);
+        statement.bindText(2, toLower(trim(online.provider)));
+        statement.bindText(3, toLower(trim(online.gameDomain)));
+        statement.bindText(4, trim(online.remoteModId));
+        statement.bindText(5, toLower(trim(online.md5)));
+        statement.bindText(6, toLower(trim(online.sha256)));
+        statement.bindInt64(7, static_cast<std::int64_t>(online.archiveSize));
+        statement.bindText(8, writer.str());
+        statement.bindText(9, online.checkedAt.empty() ? nowUtcText() : online.checkedAt);
+        statement.stepDone();
+    }
+
+    void InstanceMetadataStore::recordModIdentity(
+        const std::filesystem::path& projectDirectory,
+        const ModIdentityPersistenceUpdate& update)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        if (projectDirectory.empty() || trim(update.modUuid).empty())
+        {
+            throw std::invalid_argument("Project directory and mod UUID are required.");
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        Statement folder = database.prepare(
+            "SELECT id, folder_name FROM mods WHERE uuid = ? AND state IN ('installed', 'disabled') LIMIT 1;");
+        folder.bindText(1, update.modUuid);
+        if (!folder.stepRow())
+        {
+            throw std::invalid_argument("Identity target mod was not found.");
+        }
+        const std::int64_t modId = std::stoll(folder.columnText(0));
+        const std::wstring folderName = folder.columnText(1);
+
+        Transaction transaction(database);
+        if (!trim(update.fomodModuleId).empty())
+        {
+            Statement metadata = database.prepare(
+                "INSERT INTO mod_identity_metadata(mod_id, fomod_module_id) VALUES(?, ?) "
+                "ON CONFLICT(mod_id) DO UPDATE SET fomod_module_id = excluded.fomod_module_id;");
+            metadata.bindInt64(1, modId);
+            metadata.bindText(2, trim(update.fomodModuleId));
+            metadata.stepDone();
+        }
+
+        if (!identitySourceKey(
+                update.sourceProvider,
+                update.sourceGameDomain,
+                update.sourceRemoteModId).empty())
+        {
+            const std::wstring normalizedProvider = toLower(trim(update.sourceProvider));
+            Statement source = database.prepare(
+                "INSERT INTO mod_sources("
+                "mod_id, provider, game_domain, remote_mod_id, remote_file_id, url, last_checked_at, latest_version"
+                ") VALUES(?, ?, ?, ?, ?, '', ?, '') "
+                "ON CONFLICT(mod_id) DO UPDATE SET "
+                "provider = excluded.provider, game_domain = excluded.game_domain, "
+                "remote_mod_id = excluded.remote_mod_id, remote_file_id = excluded.remote_file_id, "
+                "last_checked_at = excluded.last_checked_at;");
+            source.bindInt64(1, modId);
+            source.bindText(2, normalizedProvider);
+            source.bindText(3, toLower(trim(update.sourceGameDomain)));
+            source.bindText(4, trim(update.sourceRemoteModId));
+            source.bindText(5, trim(update.sourceRemoteFileId));
+            source.bindText(6, nowUtcText());
+            source.stepDone();
+
+            Statement flags = database.prepare(
+                "UPDATE mods SET source_is_nexus = ?, source_is_moddingflow = ?, "
+                "is_local = 0, updated_at = ? WHERE id = ?;");
+            flags.bindInt64(1, normalizedProvider == L"nexus" ? 1 : 0);
+            flags.bindInt64(2, normalizedProvider == L"moddingflow" ? 1 : 0);
+            flags.bindText(3, nowUtcText());
+            flags.bindInt64(4, modId);
+            flags.stepDone();
+        }
+
+        const std::wstring confirmedAt = nowUtcText();
+        for (const std::wstring& alias : update.confirmedAliases)
+        {
+            const std::wstring cleanAlias = trim(alias);
+            const std::wstring normalizedAlias = ModIdentityResolver::normalizedName(cleanAlias);
+            if (normalizedAlias.empty())
+            {
+                continue;
+            }
+            Statement insert = database.prepare(
+                "INSERT INTO mod_identity_aliases(mod_id, alias, normalized_alias, confirmed_at) "
+                "VALUES(?, ?, ?, ?) ON CONFLICT(mod_id, normalized_alias) DO UPDATE SET "
+                "alias = excluded.alias, confirmed_at = excluded.confirmed_at;");
+            insert.bindInt64(1, modId);
+            insert.bindText(2, cleanAlias);
+            insert.bindText(3, normalizedAlias);
+            insert.bindText(4, confirmedAt);
+            insert.stepDone();
+        }
+
+        const std::wstring sourceKey = identitySourceKey(
+            update.exclusionProvider,
+            update.exclusionGameDomain,
+            update.exclusionRemoteModId);
+        const std::wstring incomingNameKey =
+            ModIdentityResolver::normalizedName(update.exclusionIncomingName);
+        for (const std::wstring& rejectedUuid : update.rejectedModUuids)
+        {
+            if (trim(rejectedUuid).empty() || (sourceKey.empty() && incomingNameKey.empty()))
+            {
+                continue;
+            }
+            Statement insert = database.prepare(
+                "INSERT OR IGNORE INTO mod_identity_exclusions("
+                "owner_mod_id, source_key, incoming_name_key, rejected_mod_uuid, created_at"
+                ") VALUES(?, ?, ?, ?, ?);");
+            insert.bindInt64(1, modId);
+            insert.bindText(2, sourceKey);
+            insert.bindText(3, incomingNameKey);
+            insert.bindText(4, trim(rejectedUuid));
+            insert.bindText(5, confirmedAt);
+            insert.stepDone();
+        }
+
+        InstalledModRecord record = readRecordByFolder(database, projectDirectory, folderName);
+        record.fomodModuleId = identityFomodModuleId(database, modId);
+        record.identityAliases = identityAliases(database, modId);
+        syncIdentitySearchIndex(database, record);
+        bumpModInventoryRevision(database);
+        transaction.commit();
+
+        record = readRecordByFolder(database, projectDirectory, folderName);
+        record.fomodModuleId = identityFomodModuleId(database, modId);
+        record.identityAliases = identityAliases(database, modId);
+        Statement exclusions = database.prepare(
+            "SELECT DISTINCT rejected_mod_uuid FROM mod_identity_exclusions "
+            "WHERE owner_mod_id = ? ORDER BY rejected_mod_uuid;");
+        exclusions.bindInt64(1, modId);
+        while (exclusions.stepRow())
+        {
+            record.identityExcludedModUuids.push_back(exclusions.columnText(0));
+        }
+        record.portableManifestSchemaVersion = 2;
+        writePortableManifest(record);
+    }
+
+    std::uint64_t InstanceMetadataStore::modCatalogRevision(
+        const std::filesystem::path& projectDirectory)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        try
+        {
+            const std::wstring revision = readMetadataValue(database, modInventoryRevisionKey);
+            return revision.empty() ? 0 : std::stoull(revision);
+        }
+        catch (const std::exception&)
+        {
+            return 0;
+        }
+    }
+
+    std::optional<InstalledModRecord> InstanceMetadataStore::installedModByUuid(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view modUuid)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        if (projectDirectory.empty() || trim(std::wstring(modUuid)).empty())
+        {
+            return std::nullopt;
+        }
+        Database database = openInstanceDatabase(projectDirectory);
+        Statement folder = database.prepare(
+            "SELECT id, folder_name FROM mods WHERE uuid = ? AND state IN ('installed', 'disabled') LIMIT 1;");
+        folder.bindText(1, modUuid);
+        if (!folder.stepRow())
+        {
+            return std::nullopt;
+        }
+        const std::int64_t id = std::stoll(folder.columnText(0));
+        InstalledModRecord record = readRecordByFolder(
+            database,
+            projectDirectory,
+            folder.columnText(1));
+        record.fomodModuleId = identityFomodModuleId(database, id);
+        record.identityAliases = identityAliases(database, id);
+        Statement exclusions = database.prepare(
+            "SELECT DISTINCT rejected_mod_uuid FROM mod_identity_exclusions "
+            "WHERE owner_mod_id = ? ORDER BY rejected_mod_uuid;");
+        exclusions.bindInt64(1, id);
+        while (exclusions.stepRow())
+        {
+            record.identityExcludedModUuids.push_back(exclusions.columnText(0));
+        }
+        return record;
     }
 
     void InstanceMetadataStore::refreshInstalledModsFromDisk(

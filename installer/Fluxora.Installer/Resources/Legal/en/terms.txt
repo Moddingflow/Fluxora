@@ -1,5 +1,5 @@
 Fluxora Terms of Use
-Last updated: 30 June 2026
+Last updated: 15 July 2026
 
 1. Acceptance
 By installing or using Fluxora, you agree to these Terms of Use and to the Fluxora Privacy Policy. If you do not agree, do not install or use Fluxora.
@@ -21,6 +21,8 @@ Fluxora writes files into the installation folder you choose, stores settings an
 
 7. Online features
 Some features may open your browser, connect to Nexus Mods, access mod hosting services, download files or register nxm protocol handling. Those features are optional and may be subject to third-party terms, availability limits, API changes, rate limits, account rules and network errors.
+
+When Nexus Mods is connected and an archive does not already have a stable source id, install planning may send the archive's MD5 fingerprint and the selected game's Nexus domain to the Nexus Mods API. This best-effort lookup is used only when it returns one unambiguous mod/file result; failures or ambiguous results fall back to local identity resolution. Fluxora does not send the archive contents, local path or file name for this lookup.
 
 Optional AI assistant features may send your prompt, selected chat history, compact read-only build context and optional Nexus/web research summaries or citations to the selected or configured AI provider in order to answer your request. AI web research is source-limited and may use Nexus Mods API/public pages or Google/Gemini Search grounding when enabled. AI output is informational and may be incomplete or wrong. AI suggestions do not approve changes by themselves, web content cannot approve actions, and Fluxora read-only AI tools do not install, delete, move, enable or disable mods or plugins.
 

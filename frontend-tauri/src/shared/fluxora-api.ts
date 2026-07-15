@@ -55,6 +55,7 @@ export const FluxoraIpcChannels = {
   downloadsAnalyzeFomod: 'fluxora:downloads:analyze-fomod',
   downloadsAnalyzeFomodContentLayout: 'fluxora:downloads:analyze-fomod-content-layout',
   downloadsImportFile: 'fluxora:downloads:import-file',
+  downloadsPlanInstall: 'fluxora:downloads:plan-install',
   downloadsInstallFomod: 'fluxora:downloads:install-fomod',
   downloadsInstall: 'fluxora:downloads:install',
   downloadsList: 'fluxora:downloads:list',
@@ -127,6 +128,7 @@ export const FluxoraIpcChannels = {
   operationsProgress: 'fluxora:operations:progress',
   operationsRecentLogs: 'fluxora:operations:recent-logs',
   archivesInstallFomod: 'fluxora:archives:install-fomod',
+  archivesPlanInstall: 'fluxora:archives:plan-install',
   archivesInstall: 'fluxora:archives:install',
   buildSettingsNotifyPathsSaved: 'fluxora:build-settings:notify-paths-saved',
   buildSettingsPathsSaved: 'fluxora:build-settings:paths-saved',
@@ -1980,6 +1982,33 @@ export interface FluxoraFomodInstaller {
   conditionalFilePatterns: unknown[];
 }
 
+export type FluxoraModIdentityResolutionKind = 'none' | 'exact' | 'probable';
+export type FluxoraInstallIdentityDecision = 'use-match' | 'install-new';
+export type FluxoraNewNamePolicy = 'first-free-copy-suffix';
+
+export interface FluxoraInstallIdentityTarget {
+  modUuid: string;
+  displayName: string;
+  folderName: string;
+}
+
+export interface FluxoraInstallPlan {
+  suggestedModName: string;
+  resolutionKind: FluxoraModIdentityResolutionKind;
+  matchedTarget: FluxoraInstallIdentityTarget | null;
+  resolutionId: string;
+  fomodInstaller: FluxoraFomodInstaller;
+  evidenceCodes: string[];
+  score: number;
+}
+
+export interface FluxoraInstallIdentitySelection {
+  resolutionId?: string;
+  identityDecision?: FluxoraInstallIdentityDecision;
+  targetModUuid?: string;
+  newNamePolicy?: FluxoraNewNamePolicy;
+}
+
 export interface FluxoraAnalyzeContentLayoutRequest {
   projectDirectory: string;
   downloadPath: string;
@@ -1990,7 +2019,7 @@ export interface FluxoraAnalyzeFomodContentLayoutRequest extends FluxoraAnalyzeC
   selectedOptionIds: string[];
 }
 
-export interface FluxoraInstallArchiveRequest {
+export interface FluxoraInstallArchiveRequest extends FluxoraInstallIdentitySelection {
   projectDirectory: string;
   archivePath: string;
   modName: string;
@@ -2002,7 +2031,7 @@ export interface FluxoraInstallFomodArchiveRequest extends FluxoraInstallArchive
   selectedOptionIds: string[];
 }
 
-export interface FluxoraInstallDownloadRequest {
+export interface FluxoraInstallDownloadRequest extends FluxoraInstallIdentitySelection {
   projectDirectory: string;
   downloadPath: string;
   modName: string;
@@ -2019,6 +2048,17 @@ export interface FluxoraInstalledModSummary {
   name: string;
   version: string;
   isEnabled: boolean;
+  latestVersion: string;
+  sourceIsNexus: boolean;
+  sourceIsModdingFlow: boolean;
+  sourceProvider?: string;
+  sourceGameDomain?: string;
+  sourceModId?: string;
+  sourceFileId?: string;
+  sourceUrl?: string;
+  isLocal: boolean;
+  isTranslation: boolean;
+  isPatch: boolean;
   operationId: string;
 }
 
@@ -2736,6 +2776,11 @@ export interface FluxoraApi {
       downloadPath: string,
       operation?: OperationRequest
     ) => Promise<FluxoraFomodInstaller>;
+    planInstall: (
+      projectDirectory: string,
+      downloadPath: string,
+      operation?: OperationRequest
+    ) => Promise<FluxoraInstallPlan>;
     analyzeFomodContentLayout: (
       request: FluxoraAnalyzeFomodContentLayoutRequest,
       operation?: OperationRequest
@@ -2750,6 +2795,11 @@ export interface FluxoraApi {
     ) => Promise<FluxoraInstalledModSummary>;
   };
   archives: {
+    planInstall: (
+      projectDirectory: string,
+      archivePath: string,
+      operation?: OperationRequest
+    ) => Promise<FluxoraInstallPlan>;
     install: (
       request: FluxoraInstallArchiveRequest,
       operation?: OperationRequest

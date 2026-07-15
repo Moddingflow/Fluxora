@@ -52,6 +52,7 @@ import type {
   FluxoraInstallDownloadRequest,
   FluxoraInstallFomodArchiveRequest,
   FluxoraInstallFomodDownloadRequest,
+  FluxoraInstallPlan,
   FluxoraInstalledModSummary,
   FluxoraInstalledMod,
   FluxoraModOrganizerImportAnalysis,
@@ -1085,6 +1086,18 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         downloadPath,
         operation
       ),
+    planInstall: (
+      projectDirectory: string,
+      downloadPath: string,
+      operation?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraInstallPlan>(
+        ipc,
+        FluxoraIpcChannels.downloadsPlanInstall,
+        projectDirectory,
+        downloadPath,
+        operation
+      ),
     analyzeFomodContentLayout: (
       request: FluxoraAnalyzeFomodContentLayoutRequest,
       operation?: OperationRequest
@@ -1111,6 +1124,18 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
       )
   },
   archives: {
+    planInstall: (
+      projectDirectory: string,
+      archivePath: string,
+      operation?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraInstallPlan>(
+        ipc,
+        FluxoraIpcChannels.archivesPlanInstall,
+        projectDirectory,
+        archivePath,
+        operation
+      ),
     install: (request: FluxoraInstallArchiveRequest, operation?: OperationRequest) =>
       invokeTyped<FluxoraInstalledModSummary>(
         ipc,
@@ -3365,6 +3390,18 @@ const createTauriInvoker = (): IpcInvoker => ({
         );
       case FluxoraIpcChannels.downloadsResume:
         return bridgeRequest('downloads.resume', { projectDirectory: args[0], downloadPath: args[1] }, requestWithOperationId(args[2], 'downloads_resume'));
+      case FluxoraIpcChannels.downloadsPlanInstall:
+      case FluxoraIpcChannels.archivesPlanInstall: {
+        const isArchive = channel === FluxoraIpcChannels.archivesPlanInstall;
+        return bridgeRequest(
+          isArchive ? 'archives.planInstall' : 'downloads.planInstall',
+          isArchive
+            ? { projectDirectory: args[0], archivePath: args[1] }
+            : { projectDirectory: args[0], downloadPath: args[1] },
+          requestWithOperationId(args[2], isArchive ? 'archives_plan_install' : 'downloads_plan_install'),
+          fileMutationTimeoutMs
+        );
+      }
       case FluxoraIpcChannels.downloadsAnalyzeFomod:
         return bridgeRequest('downloads.analyzeFomod', { projectDirectory: args[0], downloadPath: args[1] }, requestWithOperationId(args[2], 'downloads_analyze_fomod'));
       case FluxoraIpcChannels.downloadsAnalyzeContentLayout:

@@ -73,6 +73,67 @@ namespace fluxora
             return toLower(std::wstring(left)) == toLower(std::wstring(right));
         }
 
+        bool isDottedNumericVersion(std::wstring_view value)
+        {
+            bool segmentHasDigit = false;
+            for (const wchar_t character : value)
+            {
+                if (character >= L'0' && character <= L'9')
+                {
+                    segmentHasDigit = true;
+                    continue;
+                }
+
+                if (character != L'.' || !segmentHasDigit)
+                {
+                    return false;
+                }
+                segmentHasDigit = false;
+            }
+
+            return segmentHasDigit;
+        }
+
+        std::wstring normalizeVersionForComparison(std::wstring value)
+        {
+            value = toLower(std::move(value));
+            std::wstring numericVersion = trim(value);
+            if (!isDottedNumericVersion(numericVersion))
+            {
+                return value;
+            }
+            value = std::move(numericVersion);
+
+            while (true)
+            {
+                const std::size_t separator = value.rfind(L'.');
+                if (separator == std::wstring::npos)
+                {
+                    break;
+                }
+
+                const std::wstring_view trailingSegment(value.data() + separator + 1, value.size() - separator - 1);
+                if (trailingSegment.empty() ||
+                    !std::all_of(trailingSegment.begin(), trailingSegment.end(), [](wchar_t character)
+                    {
+                        return character == L'0';
+                    }))
+                {
+                    break;
+                }
+
+                value.erase(separator);
+            }
+
+            return value;
+        }
+
+        bool versionsEquivalent(std::wstring_view left, std::wstring_view right)
+        {
+            return normalizeVersionForComparison(std::wstring(left)) ==
+                normalizeVersionForComparison(std::wstring(right));
+        }
+
         bool containsInvalidFileNameCharacter(std::wstring_view value)
         {
             for (wchar_t character : value)
@@ -1119,7 +1180,7 @@ namespace fluxora
         {
             return !isUnknownVersion(mod.version) &&
                 !isUnknownVersion(mod.source.latestVersion) &&
-                !equalsIgnoreCase(mod.version, mod.source.latestVersion);
+                !versionsEquivalent(mod.version, mod.source.latestVersion);
         }
 
         std::wstring updateStatusText(const InstalledModRecord& mod)

@@ -548,9 +548,19 @@ namespace
 
     BridgeError coreError(std::wstring code)
     {
+        const std::wstring message = getLastCoreError();
+        if (message == L"install.identityPlanStale")
+        {
+            return BridgeError{
+                L"install.identityPlanStale",
+                message,
+                ErrorCategory::Core,
+                true
+            };
+        }
         return BridgeError{
             std::move(code),
-            getLastCoreError(),
+            message,
             ErrorCategory::Core,
             false
         };
@@ -2492,6 +2502,92 @@ namespace
             });
     }
 
+    struct BridgeInstallIdentitySelection
+    {
+        bool present{false};
+        std::wstring resolutionId;
+        int decision{1};
+        std::wstring targetModUuid;
+        int newNamePolicy{0};
+    };
+
+    BridgeInstallIdentitySelection optionalInstallIdentitySelection(
+        const fluxora::JsonValue& params)
+    {
+        BridgeInstallIdentitySelection selection;
+        selection.resolutionId = optionalStringField(&params, L"resolutionId");
+        if (selection.resolutionId.empty())
+        {
+            return selection;
+        }
+        selection.present = true;
+        const std::wstring decision = requiredStringField(params, L"identityDecision");
+        if (decision == L"use-match")
+        {
+            selection.decision = 0;
+            selection.targetModUuid = requiredStringField(params, L"targetModUuid");
+        }
+        else if (decision == L"install-new")
+        {
+            selection.decision = 1;
+            selection.targetModUuid = optionalStringField(&params, L"targetModUuid");
+        }
+        else
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"identityDecision must be use-match or install-new.",
+                ErrorCategory::Validation,
+                false
+            };
+        }
+        const std::wstring policy = requiredStringField(params, L"newNamePolicy");
+        if (policy != L"first-free-copy-suffix")
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"newNamePolicy must be first-free-copy-suffix.",
+                ErrorCategory::Validation,
+                false
+            };
+        }
+        return selection;
+    }
+
+    std::wstring payloadPlanDownloadInstall(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring downloadPath = requiredStringField(params, L"downloadPath");
+        return payloadFromCoreJson(
+            L"core.downloadInstallPlanFailed",
+            [&projectDirectory, &downloadPath](wchar_t* buffer, int length)
+            {
+                return fluxora_plan_download_install(
+                    projectDirectory.c_str(),
+                    downloadPath.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadPlanArchiveInstall(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring archivePath = requiredStringField(params, L"archivePath");
+        return payloadFromCoreJson(
+            L"core.archiveInstallPlanFailed",
+            [&projectDirectory, &archivePath](wchar_t* buffer, int length)
+            {
+                return fluxora_plan_archive_install(
+                    projectDirectory.c_str(),
+                    archivePath.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadInstallDownload(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -2500,12 +2596,28 @@ namespace
         const std::wstring modName = requiredStringField(params, L"modName");
         const int existingModMode = optionalIntField(params, L"existingModMode", 0);
         const std::wstring placementOverridesJson = optionalStringField(&params, L"placementOverridesJson");
+        const BridgeInstallIdentitySelection identity = optionalInstallIdentitySelection(params);
         return payloadFromCoreJson(
             L"core.downloadInstallFailed",
-            [&projectDirectory, &downloadPath, &modName, existingModMode, &placementOverridesJson](
+            [&projectDirectory, &downloadPath, &modName, existingModMode, &placementOverridesJson, &identity](
                 wchar_t* buffer,
                 int length)
             {
+                if (identity.present)
+                {
+                    return fluxora_install_download_planned(
+                        projectDirectory.c_str(),
+                        downloadPath.c_str(),
+                        modName.c_str(),
+                        existingModMode,
+                        placementOverridesJson.empty() ? nullptr : placementOverridesJson.c_str(),
+                        identity.resolutionId.c_str(),
+                        identity.decision,
+                        identity.targetModUuid.empty() ? nullptr : identity.targetModUuid.c_str(),
+                        identity.newNamePolicy,
+                        buffer,
+                        length);
+                }
                 return fluxora_install_download_with_layout(
                     projectDirectory.c_str(),
                     downloadPath.c_str(),
@@ -2525,12 +2637,28 @@ namespace
         const std::wstring modName = requiredStringField(params, L"modName");
         const int existingModMode = optionalIntField(params, L"existingModMode", 0);
         const std::wstring placementOverridesJson = optionalStringField(&params, L"placementOverridesJson");
+        const BridgeInstallIdentitySelection identity = optionalInstallIdentitySelection(params);
         return payloadFromCoreJson(
             L"core.archiveInstallFailed",
-            [&projectDirectory, &archivePath, &modName, existingModMode, &placementOverridesJson](
+            [&projectDirectory, &archivePath, &modName, existingModMode, &placementOverridesJson, &identity](
                 wchar_t* buffer,
                 int length)
             {
+                if (identity.present)
+                {
+                    return fluxora_install_archive_planned(
+                        projectDirectory.c_str(),
+                        archivePath.c_str(),
+                        modName.c_str(),
+                        existingModMode,
+                        placementOverridesJson.empty() ? nullptr : placementOverridesJson.c_str(),
+                        identity.resolutionId.c_str(),
+                        identity.decision,
+                        identity.targetModUuid.empty() ? nullptr : identity.targetModUuid.c_str(),
+                        identity.newNamePolicy,
+                        buffer,
+                        length);
+                }
                 return fluxora_install_archive_with_layout(
                     projectDirectory.c_str(),
                     archivePath.c_str(),
@@ -2610,6 +2738,7 @@ namespace
         const int existingModMode = optionalIntField(params, L"existingModMode", 0);
         const std::wstring selectedOptionIdsJson = requiredStringField(params, L"selectedOptionIdsJson");
         const std::wstring placementOverridesJson = optionalStringField(&params, L"placementOverridesJson");
+        const BridgeInstallIdentitySelection identity = optionalInstallIdentitySelection(params);
         return payloadFromCoreJson(
             L"core.fomodDownloadInstallFailed",
             [&projectDirectory,
@@ -2617,8 +2746,25 @@ namespace
              &modName,
              existingModMode,
              &selectedOptionIdsJson,
-             &placementOverridesJson](wchar_t* buffer, int length)
+             &placementOverridesJson,
+             &identity](wchar_t* buffer, int length)
             {
+                if (identity.present)
+                {
+                    return fluxora_install_fomod_download_planned(
+                        projectDirectory.c_str(),
+                        downloadPath.c_str(),
+                        modName.c_str(),
+                        existingModMode,
+                        selectedOptionIdsJson.c_str(),
+                        placementOverridesJson.empty() ? nullptr : placementOverridesJson.c_str(),
+                        identity.resolutionId.c_str(),
+                        identity.decision,
+                        identity.targetModUuid.empty() ? nullptr : identity.targetModUuid.c_str(),
+                        identity.newNamePolicy,
+                        buffer,
+                        length);
+                }
                 return fluxora_install_fomod_download_with_layout(
                     projectDirectory.c_str(),
                     downloadPath.c_str(),
@@ -2640,6 +2786,7 @@ namespace
         const int existingModMode = optionalIntField(params, L"existingModMode", 0);
         const std::wstring selectedOptionIdsJson = requiredStringField(params, L"selectedOptionIdsJson");
         const std::wstring placementOverridesJson = optionalStringField(&params, L"placementOverridesJson");
+        const BridgeInstallIdentitySelection identity = optionalInstallIdentitySelection(params);
         return payloadFromCoreJson(
             L"core.fomodArchiveInstallFailed",
             [&projectDirectory,
@@ -2647,8 +2794,25 @@ namespace
              &modName,
              existingModMode,
              &selectedOptionIdsJson,
-             &placementOverridesJson](wchar_t* buffer, int length)
+             &placementOverridesJson,
+             &identity](wchar_t* buffer, int length)
             {
+                if (identity.present)
+                {
+                    return fluxora_install_fomod_archive_planned(
+                        projectDirectory.c_str(),
+                        archivePath.c_str(),
+                        modName.c_str(),
+                        existingModMode,
+                        selectedOptionIdsJson.c_str(),
+                        placementOverridesJson.empty() ? nullptr : placementOverridesJson.c_str(),
+                        identity.resolutionId.c_str(),
+                        identity.decision,
+                        identity.targetModUuid.empty() ? nullptr : identity.targetModUuid.c_str(),
+                        identity.newNamePolicy,
+                        buffer,
+                        length);
+                }
                 return fluxora_install_fomod_archive_with_layout(
                     projectDirectory.c_str(),
                     archivePath.c_str(),
@@ -3040,6 +3204,10 @@ namespace
         {
             return payloadAnalyzeDownloadContentLayout(request);
         }
+        if (request.method == L"downloads.planInstall")
+        {
+            return payloadPlanDownloadInstall(request);
+        }
         if (request.method == L"downloads.analyzeFomod")
         {
             return payloadAnalyzeFomodDownload(request);
@@ -3059,6 +3227,10 @@ namespace
         if (request.method == L"archives.install")
         {
             return payloadInstallArchive(request);
+        }
+        if (request.method == L"archives.planInstall")
+        {
+            return payloadPlanArchiveInstall(request);
         }
         if (request.method == L"archives.installFomod")
         {

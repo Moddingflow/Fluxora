@@ -86,8 +86,8 @@ Phase 7 extends `fluxora.bridge.v1` to the plugin/load-order workspace:
 
 Phase 8 extends `fluxora.bridge.v1` to downloads and simple archive install:
 
-- Native host routes `downloads.list`, `downloads.importFile`, `downloads.delete`, `downloads.cancel`, `downloads.resume`, `downloads.install`, `archives.install`, `nxm.registerProtocol`, `nxm.captureLinks` and `nxm.importInboundDownloads` to existing C++ C ABI functions backed by `DownloadService`.
-- Tauri Rust shell/facade expose typed `window.fluxora.downloads.*`, `window.fluxora.archives.install` and `window.fluxora.nxm.*` calls only; renderer still has no Node.js, filesystem, shell or raw command access.
+- Native host routes `downloads.list`, `downloads.importFile`, `downloads.delete`, `downloads.cancel`, `downloads.resume`, `downloads.planInstall`, `downloads.install`, `archives.planInstall`, `archives.install`, `nxm.registerProtocol`, `nxm.captureLinks` and `nxm.importInboundDownloads` to C++ C ABI functions backed by `DownloadService`.
+- Tauri Rust shell/facade expose typed `window.fluxora.downloads.*`, `window.fluxora.archives.*` and `window.fluxora.nxm.*` calls only; renderer still has no Node.js, filesystem, shell or raw command access.
 - Tauri Rust shell owns `nxm://` app activation handling through startup argv and Windows/Linux/macOS `second-instance`, forwards links to the bridge inbound queue, then emits `fluxora:nxm:inbound-links-captured` so the renderer can import the queued links into the active build.
 - Renderer auto-registers the Windows `nxm://` handler once per session when a Nexus account is linked, while the Downloads workspace still exposes the manual `Register NXM` fallback.
 - Renderer owns local download search, selection, row context menus, double-click install trigger, selected-download details and platform capability messaging only.
@@ -104,6 +104,11 @@ Phase 9 extends `fluxora.bridge.v1` from simple install to the full WPF parity i
 - C++ core remains the owner of archive extraction, FOMOD descriptor evaluation inputs, content-layout analysis, placement override validation, existing-mod replace/merge behavior and final filesystem mutation.
 - After a successful FOMOD install, C++ persists the applied option ids in `<project>/.flow/fomod-memory.json`; the next analysis returns those ids and the renderer restores them before applying required/default coercion. Preview files are copied by C++ only when the referenced package image exists, under the dedicated `.fomod-previews` cache. The typed facade converts those native paths to Tauri asset URLs, while `assetProtocol.scope` exposes only `**/.fomod-previews/**/*`; missing or failed images render no placeholder surface.
 - Placement details send only `{ sourcePath, target, targetRelativePath }` override records back to core. Renderer never moves archive files directly.
+- `downloads.planInstall` and `archives.planInstall` return a `FluxoraInstallPlan` with `suggestedModName`, `resolutionKind`, optional `matchedTarget { modUuid, displayName, folderName }`, opaque `resolutionId`, the FOMOD descriptor, bounded evidence codes and score. The C++ `ModIdentityResolver` owns all source/FOMOD/name/content scoring, stable-id conflict rejection, threshold/margin decisions and the indexed top-five candidate lookup.
+- The renderer tracks the mod-name source as `source | fomod | identity | user`. An asynchronous plan may replace the value only before the user edits it. FOMOD module names remain authoritative and skip the generic verification screen; a matched identity opens only the existing-mod choice with `Заменить`, `Объединить` and `Это другой мод`.
+- All four install mutations carry the opaque `resolutionId`, `identityDecision: use-match | install-new`, optional target mod UUID and `newNamePolicy: first-free-copy-suffix`. C++ validates archive fingerprint, catalog revision and target UUID immediately before mutation and again before commit. A stale plan maps to retryable `install.identityPlanStale`; the renderer replans without overwriting a user-edited name.
+- `use-match` preserves the matched mod UUID, display name and folder. `install-new` allocates the first free case-insensitive display/folder pair (`Name`, `Name (2)`, `Name (3)`, ...), including unmanaged disk-folder collisions, under a per-project Windows named mutex plus the process-local native install commit lock, so the main and interactive bridge hosts cannot allocate the same target concurrently. A rejected target is stored as an exclusion and is not copied into the new mod's confirmed aliases. If the same stable source id belongs to multiple separate mods, exclusions do not make that source unique again: automatic selection still requires an additional name or content signal.
+- If an archive has no stable source id, local indexed/name/content resolution runs first. Only when that result remains unmatched or ambiguous, a game domain is known and Nexus is connected may C++ perform a bounded best-effort Nexus MD5 lookup. SHA-256 and MD5 are calculated in one cached file pass; only MD5 plus game domain are sent. A response is accepted only when exactly one entry matches both the selected game domain and the locally checked archive size; network failure, quota failure, timeout, missing size or ambiguity keeps the local plan. Fingerprint-scoped incoming-content and successful online results are cached in SQLite and naturally miss after archive content changes. Legal resources disclose this optional transfer in English, German and Russian.
 
 ## Phase 10 Profiles And Executables MVP
 
@@ -246,8 +251,10 @@ Implemented MVP methods:
 - `downloads.analyzeContentLayout`
 - `downloads.analyzeFomod`
 - `downloads.analyzeFomodContentLayout`
+- `downloads.planInstall`
 - `downloads.install`
 - `downloads.installFomod`
+- `archives.planInstall`
 - `archives.install`
 - `archives.installFomod`
 - `nxm.registerProtocol`
@@ -834,6 +841,12 @@ but must not parse plugin files or invent master dependency data.
 - `downloads.installFomod`
 - `archives.installFomod`
 
+Successful `downloads.install*` and `archives.install*` responses include the
+persisted mod source identity (`latestVersion`, provider flags, remote ids and
+source URL) together with the installed summary. The renderer uses that
+authoritative result for its immediate optimistic row, so a Nexus install must
+not appear as `Local` while the background workspace reconciliation is pending.
+
 ### Operations
 
 - `operations.setContext`
@@ -958,7 +971,7 @@ Current WPF `CoreBridgeService` serializes native calls because the native core 
 
 - One mutating operation at a time per host.
 - Read operations can be serialized initially.
-- Allowlisted latency-sensitive reads and bounded user-interactive waits may use the separate interactive bridge-host lane when they are safe to run independently and have focused routing/isolation tests. Text editor file/tree reads and the `nexus.connect` loopback callback wait use this lane; editor save calls remain on the serialized main lane.
+- Allowlisted latency-sensitive reads and bounded user-interactive waits may use the separate interactive bridge-host lane when they are safe to run independently and have focused routing/isolation tests. Text editor file/tree reads, `downloads.planInstall`, `archives.planInstall`, all four related install mutations and the `nexus.connect` loopback callback wait use this lane. Keeping install planning and commit on the same process-affine host preserves the opaque in-memory resolution registry; cross-host filesystem collisions are still prevented by the native per-project named mutex. Editor save calls remain on the serialized main lane.
 - The NXM download lifecycle is process-affine: `nxm.captureLinks`, `nxm.importInboundDownloads`, `downloads.list`, `downloads.cancel`, `downloads.resume`, and `downloads.delete` use the same interactive bridge-host lane. The queued worker and active-download registry live in that host process, so splitting these calls across lanes can misclassify a live transfer as canceled and expose its open `.part` file to deletion.
 - Other parallel reads require explicit core approval and tests.
 - Renderer can remain responsive because requests are asynchronous and progress/event driven.

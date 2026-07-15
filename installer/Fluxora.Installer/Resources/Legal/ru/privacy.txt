@@ -1,5 +1,5 @@
 Политика конфиденциальности Fluxora
-Дата обновления: 30 июня 2026 г.
+Дата обновления: 15 июля 2026 г.
 
 1. Контролер данных
 Fluxora предоставляется как часть экосистемы ModdingFlow. Контролером обработки данных является ModdingFlow, Германия, если в официальной поставке не указан другой правовой документ. Для запросов по персональным данным используйте официальный контактный канал или юридическое уведомление ModdingFlow.
@@ -19,6 +19,7 @@ Fluxora может хранить или обрабатывать на ваше�
 - Данные AI-ассистента, если вы включаете или используете AI-функции: chat prompts, история чата, выбранные model/provider metadata, локальные оценки стоимости, run identifiers, компактный read-only контекст сборки, локальные metadata context graph, например source ids, source fingerprints, timestamps и stale markers, а также опциональные AI research metadata. Компактный контекст может включать summary проекта, summaries установленных модов, summaries plugin/load order, имена из file tree выбранного мода, ограниченные локальные файловые metadata из папок сборки Fluxora, например относительные пути, типы файлов, размеры, сигналы SKSE DLL/config и владельцев конфликтов, ограниченные file-owner samples для важных overwrite/conflict evidence, имена профилей, summaries загрузок, статус подключения Nexus, snapshots статуса операций и недавние строки operation logs. AI research metadata могут включать Nexus URLs или nxm-ссылки из вашего prompt, summaries официальных Nexus API metadata/files, summaries разрешенных публичных Nexus pages, Gemini/Google Search grounding citations, source ids, source snapshots, metadata rate-limit/backoff и причины блокировки источников. В Phase 7 AI context и research bundles Fluxora по умолчанию не включает provider keys, Nexus tokens, произвольные OS paths, произвольное содержимое файлов, shell output, полные log files, browser cookies или authenticated private pages.
 - Логи и crash diagnostics: логи установщика, Tauri UI logs, Tauri main/bridge logs, native core logs, operation logs и crash logs с временем операций, статусом операций, operation ids, сообщениями об ошибках, выбранными путями, именами файлов, идентификаторами процессов или потоков и диагностическими сведениями. Логи могут косвенно содержать имя пользователя операционной системы, если оно входит в путь к файлу.
 - Данные подключения Nexus Mods, если вы его подключаете: отображаемое имя аккаунта, user id, тип токена, срок действия, access или refresh tokens и персональные API keys, защищенные Windows data protection APIs, если они доступны.
+- Данные для определения мода, когда Nexus Mods подключен, а у архива нет стабильного source id: Fluxora может отправить MD5-отпечаток архива и Nexus domain выбранной игры в Nexus Mods API, чтобы найти однозначные mod/file identifiers. SHA-256 вычисляется локально за тот же проход по файлу, но для этого запроса не отправляется. Содержимое архива, локальный путь и имя файла не отправляются. Полученные идентификаторы и название мода могут сохраняться в локальных метаданных проекта.
 - Локальные protocol данные: nxm-ссылки, переданные в Fluxora, если вы выбрали Fluxora обработчиком таких ссылок.
 
 Fluxora намеренно не собирает специальные категории персональных данных, платежные данные, рекламные идентификаторы, адресные книги, историю браузера, данные микрофона, камеры или геолокации. Встроенный Tauri/Chromium runtime используется для отображения локального интерфейса приложения; Fluxora не использует его для отслеживания браузерной активности.
@@ -48,7 +49,7 @@ Fluxora хранит локальные данные до тех пор, пок�
 8. Получатели и передачи данных
 Fluxora не продает персональные данные и не отправляет логи или телеметрию в ModdingFlow автоматически. Данные могут передаваться третьим лицам только когда вы запускаете функцию, которой это необходимо, например:
 
-- Nexus Mods OAuth и API endpoints, когда вы подключаете Nexus Mods или используете функции Nexus Mods.
+- Nexus Mods OAuth и API endpoints, когда вы подключаете Nexus Mods или используете функции Nexus Mods, включая опциональный MD5/game-domain lookup при планировании установки.
 - Nexus Mods API endpoints и разрешенные публичные Nexus pages, когда вы запрашиваете AI Nexus/web research.
 - Управляемые Fluxora Supabase configuration endpoints, когда AI нужно определить доступность credentials провайдера; chat prompts и локальный build context не отправляются в Supabase для этой проверки.
 - AI model providers, выбранные вами или настроенные режимом Fluxora AI, когда вы отправляете AI chat message или запрашиваете AI-ответ. Обработка у provider регулируется его собственными условиями и политикой конфиденциальности и может включать передачу за пределы вашей страны или EU/EEA в зависимости от provider.

@@ -5,6 +5,7 @@
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/ContentLayoutService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
+#include "FluxoraCore/Services/ModIdentityResolver.hpp"
 #include "FluxoraCore/Services/NexusModsAuthService.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
@@ -12,10 +13,13 @@
 #include "FluxoraCore/Support/JsonReader.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
 
+#include <zlib.h>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <ctime>
 #include <cwctype>
@@ -172,6 +176,14 @@ namespace fluxora
             std::wstring fileName;
             std::wstring version;
             std::wstring payloadJson;
+        };
+
+        struct NexusMd5Identity
+        {
+            std::wstring gameDomain;
+            std::wstring modId;
+            std::wstring fileId;
+            std::wstring modName;
         };
 
         class DownloadCanceledException final : public std::runtime_error
@@ -698,19 +710,31 @@ namespace fluxora
             return stream.str();
         }
 
+        enum class ContentHashAlgorithm
+        {
+            Sha256,
+            Md5
+        };
+
         class StrongContentHasher final
         {
         public:
-            StrongContentHasher()
+            explicit StrongContentHasher(
+                ContentHashAlgorithm algorithm = ContentHashAlgorithm::Sha256)
+                : algorithmLabel_(algorithm == ContentHashAlgorithm::Sha256 ? "SHA-256" : "MD5")
             {
 #ifdef _WIN32
+                const wchar_t* algorithmIdentifier = algorithm == ContentHashAlgorithm::Sha256
+                    ? BCRYPT_SHA256_ALGORITHM
+                    : BCRYPT_MD5_ALGORITHM;
                 if (BCryptOpenAlgorithmProvider(
                         &algorithm_,
-                        BCRYPT_SHA256_ALGORITHM,
+                        algorithmIdentifier,
                         nullptr,
                         0) < 0)
                 {
-                    throw std::runtime_error("Failed to initialize SHA-256 hashing.");
+                    throw std::runtime_error(
+                        std::string("Failed to initialize ") + algorithmLabel_ + " hashing.");
                 }
 
                 DWORD bytesWritten = 0;
@@ -726,7 +750,8 @@ namespace fluxora
                 {
                     BCryptCloseAlgorithmProvider(algorithm_, 0);
                     algorithm_ = nullptr;
-                    throw std::runtime_error("Failed to configure SHA-256 hashing.");
+                    throw std::runtime_error(
+                        std::string("Failed to configure ") + algorithmLabel_ + " hashing.");
                 }
 
                 if (BCryptGetProperty(
@@ -740,7 +765,8 @@ namespace fluxora
                 {
                     BCryptCloseAlgorithmProvider(algorithm_, 0);
                     algorithm_ = nullptr;
-                    throw std::runtime_error("Failed to query SHA-256 hash length.");
+                    throw std::runtime_error(
+                        std::string("Failed to query ") + algorithmLabel_ + " hash length.");
                 }
 
                 hashObject_.resize(objectLength);
@@ -755,7 +781,8 @@ namespace fluxora
                 {
                     BCryptCloseAlgorithmProvider(algorithm_, 0);
                     algorithm_ = nullptr;
-                    throw std::runtime_error("Failed to create SHA-256 hash state.");
+                    throw std::runtime_error(
+                        std::string("Failed to create ") + algorithmLabel_ + " hash state.");
                 }
 #endif
             }
@@ -797,7 +824,8 @@ namespace fluxora
                             chunk,
                             0) < 0)
                     {
-                        throw std::runtime_error("Failed to update SHA-256 hash.");
+                        throw std::runtime_error(
+                            std::string("Failed to update ") + algorithmLabel_ + " hash.");
                     }
                     bytes += chunk;
                     size -= chunk;
@@ -837,7 +865,8 @@ namespace fluxora
                         static_cast<ULONG>(digest.size()),
                         0) < 0)
                 {
-                    throw std::runtime_error("Failed to finalize SHA-256 hash.");
+                    throw std::runtime_error(
+                        std::string("Failed to finalize ") + algorithmLabel_ + " hash.");
                 }
 #else
                 digest.resize(16);
@@ -859,6 +888,7 @@ namespace fluxora
 
         private:
             bool finished_{false};
+            const char* algorithmLabel_;
 #ifdef _WIN32
             BCRYPT_ALG_HANDLE algorithm_{nullptr};
             BCRYPT_HASH_HANDLE hash_{nullptr};
@@ -868,6 +898,12 @@ namespace fluxora
             std::uint64_t first_{14695981039346656037ull};
             std::uint64_t second_{1099511628211ull};
 #endif
+        };
+
+        struct FileContentDigests
+        {
+            std::string sha256;
+            std::string md5;
         };
 
         [[nodiscard]] std::string regularFileIdentityToken(const std::filesystem::path& path)
@@ -926,7 +962,8 @@ namespace fluxora
 
         void hashRegularFileContents(
             const std::filesystem::path& path,
-            StrongContentHasher& hasher)
+            StrongContentHasher& sha256Hasher,
+            StrongContentHasher* md5Hasher)
         {
             std::ifstream file(path, std::ios::in | std::ios::binary);
             if (!file)
@@ -941,7 +978,12 @@ namespace fluxora
                 const std::streamsize read = file.gcount();
                 if (read > 0)
                 {
-                    hasher.update(buffer.data(), static_cast<std::size_t>(read));
+                    const std::size_t byteCount = static_cast<std::size_t>(read);
+                    sha256Hasher.update(buffer.data(), byteCount);
+                    if (md5Hasher != nullptr)
+                    {
+                        md5Hasher->update(buffer.data(), byteCount);
+                    }
                 }
             }
             if (!file.eof())
@@ -950,19 +992,32 @@ namespace fluxora
             }
         }
 
-        [[nodiscard]] std::string regularFileContentHash(const std::filesystem::path& path)
+        [[nodiscard]] FileContentDigests regularFileContentDigests(
+            const std::filesystem::path& path)
         {
-            StrongContentHasher hasher;
-            hashRegularFileContents(path, hasher);
-            return hasher.finish();
+            StrongContentHasher sha256Hasher;
+            std::unique_ptr<StrongContentHasher> md5Hasher;
+            try
+            {
+                md5Hasher = std::make_unique<StrongContentHasher>(ContentHashAlgorithm::Md5);
+            }
+            catch (const std::exception&)
+            {
+            }
+            hashRegularFileContents(path, sha256Hasher, md5Hasher.get());
+            return FileContentDigests{
+                sha256Hasher.finish(),
+                md5Hasher == nullptr ? std::string{} : md5Hasher->finish()
+            };
         }
 
-        [[nodiscard]] std::string cachedRegularFileContentHash(const std::filesystem::path& path)
+        [[nodiscard]] FileContentDigests cachedRegularFileContentDigests(
+            const std::filesystem::path& path)
         {
             struct CachedHash
             {
                 std::string identity;
-                std::string digest;
+                FileContentDigests digests;
                 std::uint64_t lastUse{0};
             };
 
@@ -984,12 +1039,12 @@ namespace fluxora
                     if (found != cache.end() && found->second.identity == identityBefore)
                     {
                         found->second.lastUse = ++useCounter;
-                        return found->second.digest;
+                        return found->second.digests;
                     }
                 }
 #endif
 
-                const std::string digest = regularFileContentHash(path);
+                const FileContentDigests digests = regularFileContentDigests(path);
                 const std::string identityAfter = regularFileIdentityToken(path);
                 if (identityBefore != identityAfter)
                 {
@@ -999,7 +1054,7 @@ namespace fluxora
 #ifdef _WIN32
                 {
                     std::lock_guard lock(cacheMutex);
-                    cache[cacheKey] = CachedHash{identityAfter, digest, ++useCounter};
+                    cache[cacheKey] = CachedHash{identityAfter, digests, ++useCounter};
                     if (cache.size() > maxCachedHashes)
                     {
                         const auto oldest = std::min_element(
@@ -1016,10 +1071,16 @@ namespace fluxora
                     }
                 }
 #endif
-                return digest;
+                return digests;
             }
 
             throw std::runtime_error("File changed while its cache identity was being calculated.");
+        }
+
+        [[nodiscard]] std::string cachedRegularFileContentHash(
+            const std::filesystem::path& path)
+        {
+            return cachedRegularFileContentDigests(path).sha256;
         }
 
         [[nodiscard]] std::wstring fileCacheFingerprint(const std::filesystem::path& path)
@@ -1032,6 +1093,18 @@ namespace fluxora
             const std::string digest = cachedRegularFileContentHash(path);
             return L"v=2|path=" + hashText(toLower(path.lexically_normal().wstring())) +
                 L"|content=" + std::wstring(digest.begin(), digest.end());
+        }
+
+        [[nodiscard]] std::wstring fastFileCacheFingerprint(const std::filesystem::path& path)
+        {
+            if (path.empty())
+            {
+                return {};
+            }
+
+            const std::string identity = regularFileIdentityToken(path);
+            return L"v=1|path=" + hashText(toLower(path.lexically_normal().wstring())) +
+                L"|identity=" + std::wstring(identity.begin(), identity.end());
         }
 
         [[nodiscard]] std::wstring fomodOutputCacheFingerprint(
@@ -1053,7 +1126,7 @@ namespace fluxora
             const std::filesystem::path& downloadPath,
             std::wstring_view fallbackName)
         {
-            const std::wstring key = fileCacheFingerprint(downloadPath);
+            const std::wstring key = fastFileCacheFingerprint(downloadPath);
 
             std::wstring safeName = sanitizeFileName(fallbackName);
             if (safeName.size() > 80)
@@ -1114,6 +1187,43 @@ namespace fluxora
                 if (std::filesystem::is_regular_file(candidate, error))
                 {
                     return candidate;
+                }
+
+                std::filesystem::path current = candidate.root_path();
+                std::filesystem::path remaining = candidate.relative_path();
+                if (current.empty())
+                {
+                    current = packageRoot.root_path();
+                }
+                bool resolved = true;
+                for (const auto& component : remaining)
+                {
+                    if (component == L".")
+                    {
+                        continue;
+                    }
+
+                    std::error_code iteratorError;
+                    std::filesystem::path matched;
+                    for (const auto& entry : std::filesystem::directory_iterator(current, iteratorError))
+                    {
+                        if (toLower(entry.path().filename().wstring()) ==
+                            toLower(component.wstring()))
+                        {
+                            matched = entry.path();
+                            break;
+                        }
+                    }
+                    if (iteratorError || matched.empty())
+                    {
+                        resolved = false;
+                        break;
+                    }
+                    current = matched;
+                }
+                if (resolved && std::filesystem::is_regular_file(current, error))
+                {
+                    return current;
                 }
             }
 
@@ -1209,18 +1319,48 @@ namespace fluxora
         {
             std::size_t copied = 0;
             std::size_t index = 0;
+            std::map<std::wstring, std::wstring> materializedBySource;
+
+            const auto materialize = [&](std::wstring_view imagePath) -> std::wstring
+            {
+                const std::optional<std::filesystem::path> relativePath =
+                    trySafeFomodPreviewRelativePath(imagePath);
+                if (!relativePath.has_value())
+                {
+                    return {};
+                }
+
+                const std::filesystem::path source =
+                    resolveFomodPreviewSource(packageRoot, relativePath.value());
+                if (source.empty())
+                {
+                    return {};
+                }
+
+                const std::wstring sourceKey = toLower(
+                    std::filesystem::absolute(source).lexically_normal().wstring());
+                if (const auto found = materializedBySource.find(sourceKey);
+                    found != materializedBySource.end())
+                {
+                    return found->second;
+                }
+
+                const std::wstring materialized = materializeFomodPreviewImage(
+                    packageRoot,
+                    previewDirectory,
+                    imagePath,
+                    ++index);
+                if (!materialized.empty())
+                {
+                    materializedBySource.emplace(sourceKey, materialized);
+                    copied++;
+                }
+                return materialized;
+            };
 
             if (!descriptor.moduleImagePath.empty())
             {
-                descriptor.moduleImagePath = materializeFomodPreviewImage(
-                    packageRoot,
-                    previewDirectory,
-                    descriptor.moduleImagePath,
-                    ++index);
-                if (!descriptor.moduleImagePath.empty())
-                {
-                    copied++;
-                }
+                descriptor.moduleImagePath = materialize(descriptor.moduleImagePath);
             }
 
             for (FomodStep& step : descriptor.steps)
@@ -1234,15 +1374,7 @@ namespace fluxora
                             continue;
                         }
 
-                        option.imagePath = materializeFomodPreviewImage(
-                            packageRoot,
-                            previewDirectory,
-                            option.imagePath,
-                            ++index);
-                        if (!option.imagePath.empty())
-                        {
-                            copied++;
-                        }
+                        option.imagePath = materialize(option.imagePath);
                     }
                 }
             }
@@ -3460,7 +3592,10 @@ namespace fluxora
             return "Nexus request returned HTTP " + std::to_string(statusCode) + ".";
         }
 
-        std::string winHttpGet(const std::wstring& url, std::wstring_view extraHeaders = {})
+        std::string winHttpGet(
+            const std::wstring& url,
+            std::wstring_view extraHeaders = {},
+            DWORD timeoutMilliseconds = 30'000)
         {
             URL_COMPONENTS components{};
             components.dwStructSize = sizeof(components);
@@ -3487,6 +3622,16 @@ namespace fluxora
             if (session == nullptr)
             {
                 throw std::runtime_error("Failed to initialize Nexus HTTP session.");
+            }
+            if (!WinHttpSetTimeouts(
+                    session,
+                    timeoutMilliseconds,
+                    timeoutMilliseconds,
+                    timeoutMilliseconds,
+                    timeoutMilliseconds))
+            {
+                WinHttpCloseHandle(session);
+                throw std::runtime_error("Failed to configure Nexus HTTP timeouts.");
             }
 
             HINTERNET connection = WinHttpConnect(session, host.c_str(), components.nPort, 0);
@@ -4499,7 +4644,7 @@ namespace fluxora
             return !path.empty() && (path.back() == L'/' || path.back() == L'\\');
         }
 
-        void validateSafeArchiveEntryPath(
+        std::filesystem::path validateSafeArchiveEntryPath(
             std::wstring entryPath,
             bool isDirectory,
             std::set<std::wstring>& seenEntryKeys)
@@ -4527,6 +4672,8 @@ namespace fluxora
             {
                 throw std::runtime_error("Archive contains duplicate file paths that differ only by case.");
             }
+
+            return validation.normalizedRelativePath;
         }
 
         std::size_t findZipEndOfCentralDirectory(const std::vector<unsigned char>& bytes)
@@ -4612,7 +4759,89 @@ namespace fluxora
             return location;
         }
 
-        void validateZipArchiveEntryPaths(const std::filesystem::path& archivePath)
+        struct ZipArchiveEntry
+        {
+            std::wstring name;
+            std::filesystem::path relativePath;
+            std::wstring comparisonKey;
+            std::uint16_t flags{0};
+            std::uint16_t compressionMethod{0};
+            std::uint32_t crc{0};
+            std::uint64_t compressedSize{0};
+            std::uint64_t uncompressedSize{0};
+            std::uint64_t localHeaderOffset{0};
+            bool isDirectory{false};
+        };
+
+        void readZip64CentralDirectoryValues(
+            const std::vector<unsigned char>& centralDirectory,
+            std::size_t extraOffset,
+            std::uint16_t extraLength,
+            std::uint64_t& uncompressedSize,
+            std::uint64_t& compressedSize,
+            std::uint64_t& localHeaderOffset)
+        {
+            const std::size_t extraEnd = extraOffset + extraLength;
+            if (extraEnd > centralDirectory.size())
+            {
+                throw std::runtime_error("ZIP archive central directory is invalid.");
+            }
+
+            std::size_t cursor = extraOffset;
+            while (cursor + 4 <= extraEnd)
+            {
+                const std::uint16_t fieldId = readLittleEndian16(centralDirectory, cursor);
+                const std::uint16_t fieldSize = readLittleEndian16(centralDirectory, cursor + 2);
+                cursor += 4;
+                if (cursor + fieldSize > extraEnd)
+                {
+                    throw std::runtime_error("ZIP archive central directory is invalid.");
+                }
+
+                if (fieldId == 0x0001)
+                {
+                    std::size_t valueOffset = cursor;
+                    const std::size_t valueEnd = cursor + fieldSize;
+                    const auto readRequiredValue = [&]()
+                    {
+                        if (valueOffset + 8 > valueEnd)
+                        {
+                            throw std::runtime_error("ZIP64 archive entry metadata is invalid.");
+                        }
+                        const std::uint64_t value =
+                            readLittleEndian64(centralDirectory, valueOffset);
+                        valueOffset += 8;
+                        return value;
+                    };
+
+                    if (uncompressedSize == 0xFFFFFFFFULL)
+                    {
+                        uncompressedSize = readRequiredValue();
+                    }
+                    if (compressedSize == 0xFFFFFFFFULL)
+                    {
+                        compressedSize = readRequiredValue();
+                    }
+                    if (localHeaderOffset == 0xFFFFFFFFULL)
+                    {
+                        localHeaderOffset = readRequiredValue();
+                    }
+                    return;
+                }
+
+                cursor += fieldSize;
+            }
+
+            if (uncompressedSize == 0xFFFFFFFFULL ||
+                compressedSize == 0xFFFFFFFFULL ||
+                localHeaderOffset == 0xFFFFFFFFULL)
+            {
+                throw std::runtime_error("ZIP64 archive entry metadata was not found.");
+            }
+        }
+
+        std::vector<ZipArchiveEntry> indexZipArchive(
+            const std::filesystem::path& archivePath)
         {
             constexpr std::uint64_t maxEocdSearchBytes = 65557;
             const std::uint64_t archiveSize = binaryFileSize(archivePath);
@@ -4640,6 +4869,13 @@ namespace fluxora
             const std::size_t centralEnd = centralDirectory.size();
 
             std::set<std::wstring> seenEntryKeys;
+            const PathSafetyService safety;
+            std::vector<ZipArchiveEntry> entries;
+            if (location.entryCount <=
+                static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()))
+            {
+                entries.reserve(static_cast<std::size_t>(location.entryCount));
+            }
             std::size_t offset = 0;
             for (std::uint64_t index = 0; index < location.entryCount; ++index)
             {
@@ -4649,9 +4885,18 @@ namespace fluxora
                 }
 
                 const std::uint16_t flags = readLittleEndian16(centralDirectory, offset + 8);
+                const std::uint16_t compressionMethod =
+                    readLittleEndian16(centralDirectory, offset + 10);
+                const std::uint32_t crc = readLittleEndian32(centralDirectory, offset + 16);
+                std::uint64_t compressedSize =
+                    readLittleEndian32(centralDirectory, offset + 20);
+                std::uint64_t uncompressedSize =
+                    readLittleEndian32(centralDirectory, offset + 24);
                 const std::uint16_t nameLength = readLittleEndian16(centralDirectory, offset + 28);
                 const std::uint16_t extraLength = readLittleEndian16(centralDirectory, offset + 30);
                 const std::uint16_t commentLength = readLittleEndian16(centralDirectory, offset + 32);
+                std::uint64_t localHeaderOffset =
+                    readLittleEndian32(centralDirectory, offset + 42);
                 const std::size_t nameOffset = offset + 46;
                 const std::size_t nextOffset = nameOffset + nameLength + extraLength + commentLength;
                 if (nextOffset > centralEnd)
@@ -4664,10 +4909,45 @@ namespace fluxora
                     nameOffset,
                     nameLength,
                     (flags & 0x0800) != 0);
-                validateSafeArchiveEntryPath(entryName, isDirectoryArchiveEntry(entryName), seenEntryKeys);
+                const bool isDirectory = isDirectoryArchiveEntry(entryName);
+                const std::filesystem::path relativePath = validateSafeArchiveEntryPath(
+                    entryName,
+                    isDirectory,
+                    seenEntryKeys);
+                readZip64CentralDirectoryValues(
+                    centralDirectory,
+                    nameOffset + nameLength,
+                    extraLength,
+                    uncompressedSize,
+                    compressedSize,
+                    localHeaderOffset);
+                if (localHeaderOffset > archiveSize || compressedSize > archiveSize)
+                {
+                    throw std::runtime_error("ZIP archive entry metadata is invalid.");
+                }
+
+                entries.push_back(ZipArchiveEntry{
+                    entryName,
+                    relativePath,
+                    safety.archiveEntryComparisonKey(relativePath),
+                    flags,
+                    compressionMethod,
+                    crc,
+                    compressedSize,
+                    uncompressedSize,
+                    localHeaderOffset,
+                    isDirectory
+                });
 
                 offset = nextOffset;
             }
+
+            return entries;
+        }
+
+        void validateZipArchiveEntryPaths(const std::filesystem::path& archivePath)
+        {
+            (void)indexZipArchive(archivePath);
         }
 
         void validateArchiveEntryPaths(const std::filesystem::path& archivePath)
@@ -4676,6 +4956,371 @@ namespace fluxora
             {
                 validateZipArchiveEntryPaths(archivePath);
             }
+        }
+
+        [[nodiscard]] std::wstring normalizedZipPathText(
+            const std::filesystem::path& path)
+        {
+            std::wstring text = path.generic_wstring();
+            std::replace(text.begin(), text.end(), L'\\', L'/');
+            while (text.rfind(L"./", 0) == 0)
+            {
+                text.erase(0, 2);
+            }
+            return text;
+        }
+
+        [[nodiscard]] std::wstring zipPathKey(const std::filesystem::path& path)
+        {
+            return toLower(normalizedZipPathText(path));
+        }
+
+        struct IndexedFomodZip
+        {
+            std::size_t configIndex{0};
+            std::optional<std::size_t> infoIndex;
+            std::wstring wrapperPrefix;
+            std::wstring wrapperPrefixKey;
+            std::map<std::wstring, std::size_t> entryIndexByKey;
+        };
+
+        [[nodiscard]] std::optional<IndexedFomodZip> findIndexedFomodZip(
+            const std::vector<ZipArchiveEntry>& entries)
+        {
+            constexpr std::wstring_view configSuffix = L"fomod/moduleconfig.xml";
+            std::optional<std::size_t> configIndex;
+            std::wstring selectedPath;
+            std::map<std::wstring, std::size_t> entryIndexByKey;
+            for (std::size_t index = 0; index < entries.size(); ++index)
+            {
+                const ZipArchiveEntry& entry = entries[index];
+                if (entry.isDirectory)
+                {
+                    continue;
+                }
+
+                const std::wstring key = zipPathKey(entry.relativePath);
+                entryIndexByKey.emplace(key, index);
+                if (key.size() < configSuffix.size() ||
+                    key.compare(key.size() - configSuffix.size(), configSuffix.size(), configSuffix) != 0)
+                {
+                    continue;
+                }
+                if (key.size() > configSuffix.size() &&
+                    key[key.size() - configSuffix.size() - 1] != L'/')
+                {
+                    continue;
+                }
+
+                const std::wstring path = normalizedZipPathText(entry.relativePath);
+                if (!configIndex.has_value() || path.size() < selectedPath.size())
+                {
+                    configIndex = index;
+                    selectedPath = path;
+                }
+            }
+
+            if (!configIndex.has_value())
+            {
+                return std::nullopt;
+            }
+
+            const std::wstring selectedKey = zipPathKey(entries[configIndex.value()].relativePath);
+            const std::size_t suffixOffset = selectedKey.size() - configSuffix.size();
+            const std::wstring wrapperPrefix = selectedPath.substr(0, suffixOffset);
+            const std::wstring wrapperPrefixKey = selectedKey.substr(0, suffixOffset);
+            const std::wstring infoKey = wrapperPrefixKey + L"fomod/info.xml";
+            std::optional<std::size_t> infoIndex;
+            if (const auto found = entryIndexByKey.find(infoKey); found != entryIndexByKey.end())
+            {
+                infoIndex = found->second;
+            }
+
+            return IndexedFomodZip{
+                configIndex.value(),
+                infoIndex,
+                wrapperPrefix,
+                wrapperPrefixKey,
+                std::move(entryIndexByKey)
+            };
+        }
+
+        [[nodiscard]] bool zipEntrySupportsSelectiveExtraction(
+            const ZipArchiveEntry& entry,
+            std::uint64_t maximumUncompressedBytes)
+        {
+            return !entry.isDirectory &&
+                (entry.flags & 0x0001) == 0 &&
+                (entry.compressionMethod == 0 || entry.compressionMethod == 8) &&
+                entry.uncompressedSize <= maximumUncompressedBytes &&
+                entry.compressedSize <=
+                    static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()) &&
+                entry.uncompressedSize <=
+                    static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()) &&
+                entry.compressedSize <=
+                    static_cast<std::uint64_t>((std::numeric_limits<uInt>::max)()) &&
+                entry.uncompressedSize <=
+                    static_cast<std::uint64_t>((std::numeric_limits<uInt>::max)());
+        }
+
+        [[nodiscard]] std::uint32_t crc32Bytes(const std::vector<unsigned char>& bytes)
+        {
+            uLong checksum = ::crc32(0L, Z_NULL, 0);
+            std::size_t offset = 0;
+            while (offset < bytes.size())
+            {
+                const std::size_t remaining = bytes.size() - offset;
+                const uInt chunkSize = static_cast<uInt>((std::min)(
+                    remaining,
+                    static_cast<std::size_t>((std::numeric_limits<uInt>::max)())));
+                checksum = ::crc32(checksum, bytes.data() + offset, chunkSize);
+                offset += chunkSize;
+            }
+            return static_cast<std::uint32_t>(checksum);
+        }
+
+        void extractZipEntrySelectively(
+            const std::filesystem::path& archivePath,
+            const ZipArchiveEntry& entry,
+            const std::filesystem::path& destinationRoot,
+            const std::filesystem::path& destinationRelativePath)
+        {
+            const std::vector<unsigned char> localHeader =
+                readBinaryFileRange(archivePath, entry.localHeaderOffset, 30);
+            if (readLittleEndian32(localHeader, 0) != 0x04034B50)
+            {
+                throw std::runtime_error("ZIP archive local entry header is invalid.");
+            }
+
+            const std::uint16_t localFlags = readLittleEndian16(localHeader, 6);
+            const std::uint16_t localCompressionMethod = readLittleEndian16(localHeader, 8);
+            if ((localFlags & 0x0001) != 0 || localCompressionMethod != entry.compressionMethod)
+            {
+                throw std::runtime_error("ZIP archive local entry metadata is inconsistent.");
+            }
+
+            const std::uint16_t localNameLength = readLittleEndian16(localHeader, 26);
+            const std::uint16_t localExtraLength = readLittleEndian16(localHeader, 28);
+            const std::uint64_t dataOffset = entry.localHeaderOffset + 30ULL +
+                static_cast<std::uint64_t>(localNameLength) +
+                static_cast<std::uint64_t>(localExtraLength);
+            const std::uint64_t archiveSize = binaryFileSize(archivePath);
+            if (dataOffset > archiveSize || entry.compressedSize > archiveSize - dataOffset)
+            {
+                throw std::runtime_error("ZIP archive entry data is truncated.");
+            }
+
+            const std::vector<unsigned char> compressed =
+                readBinaryFileRange(archivePath, dataOffset, entry.compressedSize);
+            std::vector<unsigned char> uncompressed;
+            if (entry.compressionMethod == 0)
+            {
+                if (entry.compressedSize != entry.uncompressedSize)
+                {
+                    throw std::runtime_error("Stored ZIP archive entry has inconsistent sizes.");
+                }
+                uncompressed = compressed;
+            }
+            else
+            {
+                const std::size_t expectedSize =
+                    static_cast<std::size_t>(entry.uncompressedSize);
+                uncompressed.resize((std::max)(expectedSize, std::size_t{1}));
+                z_stream stream{};
+                stream.next_in = const_cast<Bytef*>(compressed.data());
+                stream.avail_in = static_cast<uInt>(compressed.size());
+                stream.next_out = uncompressed.data();
+                stream.avail_out = static_cast<uInt>(uncompressed.size());
+                if (inflateInit2(&stream, -MAX_WBITS) != Z_OK)
+                {
+                    throw std::runtime_error("Failed to initialize ZIP decompression.");
+                }
+                const int result = inflate(&stream, Z_FINISH);
+                const std::uint64_t produced = stream.total_out;
+                inflateEnd(&stream);
+                if (result != Z_STREAM_END || produced != entry.uncompressedSize)
+                {
+                    throw std::runtime_error("ZIP archive entry decompression failed.");
+                }
+                uncompressed.resize(expectedSize);
+            }
+
+            if (crc32Bytes(uncompressed) != entry.crc)
+            {
+                throw std::runtime_error("ZIP archive entry checksum is invalid.");
+            }
+
+            const PathSafetyService safety;
+            const PathSafetyResult relativeValidation =
+                safety.validateArchiveEntryPath(destinationRelativePath, false);
+            relativeValidation.throwIfUnsafe("FOMOD metadata path is unsafe");
+            const std::filesystem::path target =
+                destinationRoot / relativeValidation.normalizedRelativePath;
+            std::filesystem::create_directories(target.parent_path());
+            safety.validateWritePath(
+                destinationRoot,
+                target,
+                PathSafetyWriteOptions{entry.uncompressedSize, false})
+                .throwIfUnsafe("FOMOD metadata destination is unsafe");
+            std::ofstream file(target, std::ios::out | std::ios::binary | std::ios::trunc);
+            if (!file)
+            {
+                throw std::runtime_error("Failed to create extracted FOMOD metadata file.");
+            }
+            if (!uncompressed.empty())
+            {
+                file.write(
+                    reinterpret_cast<const char*>(uncompressed.data()),
+                    static_cast<std::streamsize>(uncompressed.size()));
+            }
+            if (!file)
+            {
+                throw std::runtime_error("Failed to write extracted FOMOD metadata file.");
+            }
+        }
+
+        [[nodiscard]] std::optional<std::size_t> indexedFomodImageEntry(
+            const IndexedFomodZip& fomod,
+            std::wstring_view imagePath)
+        {
+            const std::optional<std::filesystem::path> safePath =
+                trySafeFomodPreviewRelativePath(imagePath);
+            if (!safePath.has_value())
+            {
+                return std::nullopt;
+            }
+
+            const std::wstring referenceKey = zipPathKey(safePath.value());
+            const std::array candidates{
+                fomod.wrapperPrefixKey + referenceKey,
+                fomod.wrapperPrefixKey + L"fomod/" + referenceKey
+            };
+            for (const std::wstring& candidate : candidates)
+            {
+                if (const auto found = fomod.entryIndexByKey.find(candidate);
+                    found != fomod.entryIndexByKey.end())
+                {
+                    return found->second;
+                }
+            }
+            return std::nullopt;
+        }
+
+        void clearDirectoryContents(const std::filesystem::path& directory)
+        {
+            std::error_code iteratorError;
+            for (const auto& entry : std::filesystem::directory_iterator(directory, iteratorError))
+            {
+                std::error_code removeError;
+                std::filesystem::remove_all(entry.path(), removeError);
+                if (removeError)
+                {
+                    throw std::runtime_error("Failed to clear FOMOD metadata staging directory.");
+                }
+            }
+            if (iteratorError)
+            {
+                throw std::runtime_error("Failed to inspect FOMOD metadata staging directory.");
+            }
+        }
+
+        [[nodiscard]] bool materializeIndexedFomodMetadata(
+            const std::filesystem::path& archivePath,
+            const std::vector<ZipArchiveEntry>& entries,
+            const IndexedFomodZip& fomod,
+            const std::filesystem::path& destinationDirectory,
+            const std::function<FomodInstallerDescriptor(const std::filesystem::path&)>& analyzeDescriptor,
+            std::size_t& uniquePreviewCount,
+            std::optional<FomodInstallerDescriptor>& parsedDescriptor,
+            std::chrono::milliseconds& xmlDuration)
+        {
+            constexpr std::uint64_t maximumXmlBytes = 16ULL * 1024ULL * 1024ULL;
+            constexpr std::uint64_t maximumPreviewBytes = 128ULL * 1024ULL * 1024ULL;
+            constexpr std::uint64_t maximumTotalPreviewBytes = 512ULL * 1024ULL * 1024ULL;
+            const ZipArchiveEntry& config = entries[fomod.configIndex];
+            if (!zipEntrySupportsSelectiveExtraction(config, maximumXmlBytes) ||
+                (fomod.infoIndex.has_value() &&
+                 !zipEntrySupportsSelectiveExtraction(entries[fomod.infoIndex.value()], maximumXmlBytes)))
+            {
+                return false;
+            }
+
+            extractZipEntrySelectively(
+                archivePath,
+                config,
+                destinationDirectory,
+                std::filesystem::path(L"fomod") / L"ModuleConfig.xml");
+            if (fomod.infoIndex.has_value())
+            {
+                extractZipEntrySelectively(
+                    archivePath,
+                    entries[fomod.infoIndex.value()],
+                    destinationDirectory,
+                    std::filesystem::path(L"fomod") / L"info.xml");
+            }
+
+            const auto xmlStartedAt = std::chrono::steady_clock::now();
+            FomodInstallerDescriptor descriptor = analyzeDescriptor(destinationDirectory);
+            xmlDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - xmlStartedAt);
+            if (!descriptor.isFomod)
+            {
+                throw std::runtime_error("Indexed FOMOD metadata could not be parsed.");
+            }
+
+            std::set<std::size_t> previewEntryIndexes;
+            const auto rememberPreview = [&](std::wstring_view imagePath)
+            {
+                if (const std::optional<std::size_t> imageIndex =
+                        indexedFomodImageEntry(fomod, imagePath);
+                    imageIndex.has_value())
+                {
+                    previewEntryIndexes.insert(imageIndex.value());
+                }
+            };
+            rememberPreview(descriptor.moduleImagePath);
+            for (const FomodStep& step : descriptor.steps)
+            {
+                for (const FomodGroup& group : step.groups)
+                {
+                    for (const FomodOption& option : group.options)
+                    {
+                        rememberPreview(option.imagePath);
+                    }
+                }
+            }
+
+            std::uint64_t totalPreviewBytes = 0;
+            for (const std::size_t imageIndex : previewEntryIndexes)
+            {
+                const ZipArchiveEntry& image = entries[imageIndex];
+                if (!zipEntrySupportsSelectiveExtraction(image, maximumPreviewBytes) ||
+                    image.uncompressedSize > maximumTotalPreviewBytes - totalPreviewBytes)
+                {
+                    return false;
+                }
+                totalPreviewBytes += image.uncompressedSize;
+            }
+
+            for (const std::size_t imageIndex : previewEntryIndexes)
+            {
+                const ZipArchiveEntry& image = entries[imageIndex];
+                const std::wstring archivePathText = normalizedZipPathText(image.relativePath);
+                if (archivePathText.size() < fomod.wrapperPrefix.size())
+                {
+                    throw std::runtime_error("Indexed FOMOD wrapper metadata is invalid.");
+                }
+                const std::filesystem::path destinationRelative =
+                    std::filesystem::path(archivePathText.substr(fomod.wrapperPrefix.size()));
+                extractZipEntrySelectively(
+                    archivePath,
+                    image,
+                    destinationDirectory,
+                    destinationRelative);
+            }
+            uniquePreviewCount = previewEntryIndexes.size();
+            parsedDescriptor = std::move(descriptor);
+            return true;
         }
 
         void validateExtractedDirectoryTree(const std::filesystem::path& destinationDirectory)
@@ -5798,6 +6443,12 @@ namespace fluxora
             return L"v=1|kind=fomod-package|archive=" + fileCacheFingerprint(archivePath);
         }
 
+        [[nodiscard]] std::wstring fomodMetadataStagingCacheKey(
+            const std::filesystem::path& archivePath)
+        {
+            return L"v=1|kind=fomod-metadata|archive=" + fastFileCacheFingerprint(archivePath);
+        }
+
         [[nodiscard]] ContentLayoutInstallMode contentLayoutInstallMode(ExistingModInstallMode mode)
         {
             switch (mode)
@@ -5969,6 +6620,242 @@ namespace fluxora
             layout.applyPlanToDirectory(stagingDirectory, plan);
         }
 
+        InstalledMod installedModFromRecord(const InstalledModRecord& record)
+        {
+            return InstalledMod{
+                record.path,
+                record.displayName,
+                record.version.empty() ? L"Unknown" : record.version,
+                record.state == L"installed",
+                record.source.latestVersion,
+                record.sourceIsNexus,
+                record.sourceIsModdingFlow,
+                record.source.provider,
+                record.source.gameDomain,
+                record.source.remoteModId,
+                record.source.remoteFileId,
+                record.source.url,
+                record.isLocal,
+                record.isTranslation,
+                record.isPatch
+            };
+        }
+
+        std::mutex& installCommitMutex()
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        class InstallCommitGuard final
+        {
+        public:
+            explicit InstallCommitGuard(const std::filesystem::path& projectDirectory)
+                : localLock_(installCommitMutex())
+            {
+#ifdef _WIN32
+                const std::wstring projectKey = toLower(
+                    std::filesystem::absolute(projectDirectory).lexically_normal().wstring());
+                const std::wstring mutexName =
+                    L"Local\\Fluxora.ModInstall." + hashText(projectKey);
+                namedMutex_ = CreateMutexW(nullptr, FALSE, mutexName.c_str());
+                if (namedMutex_ == nullptr)
+                {
+                    throw std::runtime_error("Failed to create the cross-process install lock.");
+                }
+                const DWORD waitResult = WaitForSingleObject(namedMutex_, INFINITE);
+                if (waitResult != WAIT_OBJECT_0 && waitResult != WAIT_ABANDONED)
+                {
+                    CloseHandle(namedMutex_);
+                    namedMutex_ = nullptr;
+                    throw std::runtime_error("Failed to acquire the cross-process install lock.");
+                }
+#else
+                (void)projectDirectory;
+#endif
+            }
+
+            InstallCommitGuard(const InstallCommitGuard&) = delete;
+            InstallCommitGuard& operator=(const InstallCommitGuard&) = delete;
+
+            ~InstallCommitGuard()
+            {
+#ifdef _WIN32
+                if (namedMutex_ != nullptr)
+                {
+                    ReleaseMutex(namedMutex_);
+                    CloseHandle(namedMutex_);
+                }
+#endif
+            }
+
+        private:
+            std::unique_lock<std::mutex> localLock_;
+#ifdef _WIN32
+            HANDLE namedMutex_{nullptr};
+#endif
+        };
+
+        bool sameInstallName(std::wstring_view left, std::wstring_view right)
+        {
+            return toLower(trim(std::wstring(left))) == toLower(trim(std::wstring(right)));
+        }
+
+        bool copyFamilyMember(std::wstring_view candidate, std::wstring_view base)
+        {
+            if (sameInstallName(candidate, base))
+            {
+                return true;
+            }
+            const std::wstring value = trim(std::wstring(candidate));
+            const std::wstring prefix = trim(std::wstring(base)) + L" (";
+            if (value.size() <= prefix.size() + 1 ||
+                toLower(value.substr(0, prefix.size())) != toLower(prefix) ||
+                value.back() != L')')
+            {
+                return false;
+            }
+            return std::all_of(
+                value.begin() + static_cast<std::ptrdiff_t>(prefix.size()),
+                value.end() - 1,
+                [](wchar_t character)
+                {
+                    return std::iswdigit(character) != 0;
+                });
+        }
+
+        std::wstring copyFamilyBase(
+            std::wstring_view requestedName,
+            const std::vector<InstalledModRecord>& installed,
+            const std::vector<std::wstring>& diskFolderNames)
+        {
+            const std::wstring requested = trim(std::wstring(requestedName));
+            static const std::wregex suffix(LR"(^(.+) \((\d+)\)$)");
+            std::wsmatch match;
+            if (!std::regex_match(requested, match, suffix))
+            {
+                return requested;
+            }
+
+            const std::wstring possibleBase = trim(match[1].str());
+            const bool hasInstalledSibling = std::any_of(
+                installed.begin(),
+                installed.end(),
+                [&](const InstalledModRecord& record)
+                {
+                    return !sameInstallName(record.displayName, requested) &&
+                        (copyFamilyMember(record.displayName, possibleBase) ||
+                            copyFamilyMember(record.folderName, sanitizeFileName(possibleBase)));
+                });
+            const std::wstring requestedFolder = sanitizeFileName(requested);
+            const std::wstring possibleBaseFolder = sanitizeFileName(possibleBase);
+            const bool hasDiskSibling = std::any_of(
+                diskFolderNames.begin(),
+                diskFolderNames.end(),
+                [&](const std::wstring& folderName)
+                {
+                    return !sameInstallName(folderName, requestedFolder) &&
+                        copyFamilyMember(folderName, possibleBaseFolder);
+                });
+            return hasInstalledSibling || hasDiskSibling ? possibleBase : requested;
+        }
+
+        struct AllocatedInstallName
+        {
+            std::wstring displayName;
+            std::wstring folderName;
+        };
+
+        AllocatedInstallName allocateFirstFreeInstallName(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modsDirectory,
+            std::wstring_view requestedName)
+        {
+            const std::vector<InstalledModRecord> installed =
+                InstanceMetadataStore::listInstalledMods(projectDirectory, modsDirectory);
+            std::vector<std::wstring> diskFolderNames;
+            std::error_code iteratorError;
+            if (std::filesystem::is_directory(modsDirectory, iteratorError) && !iteratorError)
+            {
+                for (std::filesystem::directory_iterator iterator(modsDirectory, iteratorError), end;
+                     iterator != end;
+                     iterator.increment(iteratorError))
+                {
+                    if (iteratorError)
+                    {
+                        iteratorError.clear();
+                        continue;
+                    }
+                    diskFolderNames.push_back(iterator->path().filename().wstring());
+                }
+            }
+
+            const std::wstring base = copyFamilyBase(requestedName, installed, diskFolderNames);
+            if (base.empty())
+            {
+                throw std::invalid_argument("Mod name is required.");
+            }
+
+            std::set<std::wstring> occupiedDisplayNames;
+            std::set<std::wstring> occupiedFolderNames;
+            for (const InstalledModRecord& record : installed)
+            {
+                occupiedDisplayNames.insert(toLower(trim(record.displayName)));
+                occupiedFolderNames.insert(toLower(trim(record.folderName)));
+            }
+            for (const std::wstring& folderName : diskFolderNames)
+            {
+                occupiedFolderNames.insert(toLower(trim(folderName)));
+            }
+
+            for (int index = 1;; ++index)
+            {
+                const std::wstring displayName = index == 1
+                    ? base
+                    : base + L" (" + std::to_wstring(index) + L")";
+                const std::wstring folderName = sanitizeFileName(displayName);
+                if (folderName.empty())
+                {
+                    continue;
+                }
+                if (!occupiedDisplayNames.contains(toLower(displayName)) &&
+                    !occupiedFolderNames.contains(toLower(folderName)))
+                {
+                    return {displayName, folderName};
+                }
+            }
+        }
+
+        void persistInstallIdentity(
+            const std::filesystem::path& projectDirectory,
+            const InstalledModRecord& record,
+            const ValidatedModIdentityInstall& identity,
+            std::wstring_view displayName)
+        {
+            ModIdentityPersistenceUpdate update;
+            update.modUuid = record.uuid;
+            update.fomodModuleId = identity.fomodModuleId;
+            update.sourceProvider = identity.incomingSource.provider;
+            update.sourceGameDomain = identity.incomingSource.game;
+            update.sourceRemoteModId = identity.incomingSource.remoteModId;
+            update.sourceRemoteFileId = identity.incomingSource.remoteFileId;
+            if (identity.decision == InstallIdentityDecision::UseMatch &&
+                !trim(identity.incomingName).empty() &&
+                !sameInstallName(identity.incomingName, displayName))
+            {
+                update.confirmedAliases.push_back(identity.incomingName);
+            }
+            if (identity.rejectedTarget.has_value())
+            {
+                update.exclusionProvider = identity.incomingSource.provider;
+                update.exclusionGameDomain = identity.incomingSource.game;
+                update.exclusionRemoteModId = identity.incomingSource.remoteModId;
+                update.exclusionIncomingName = identity.incomingName;
+                update.rejectedModUuids.push_back(identity.rejectedTarget->modUuid);
+            }
+            InstanceMetadataStore::recordModIdentity(projectDirectory, update);
+        }
+
         InstalledMod installArchiveCore(
             Logger& logger,
             const BuildPathSettingsService& pathSettings,
@@ -5979,13 +6866,52 @@ namespace fluxora
             DownloadMetadata metadata,
             bool persistMetadata,
             const char* logKind,
-            const std::vector<PlacementOverride>& placementOverrides)
+            const std::vector<PlacementOverride>& placementOverrides,
+            const ModIdentityInstallSelection* identitySelection)
         {
+            InstallCommitGuard installCommitLock(projectDirectory);
+            const std::wstring archiveFingerprint = fileCacheFingerprint(archivePath);
+            std::optional<ValidatedModIdentityInstall> identity;
+            if (identitySelection != nullptr)
+            {
+                identity = ModIdentityResolver::validateInstallPlan(
+                    projectDirectory,
+                    archiveFingerprint,
+                    *identitySelection);
+            }
+
             const std::wstring requestedName = trim(std::wstring(modName));
-            const std::wstring installName = requestedName.empty()
+            std::wstring installName = requestedName.empty()
                 ? metadata.nexusModName
                 : requestedName;
-            std::wstring safeName = sanitizeFileName(installName);
+            const BuildPathSettings paths = pathSettings.loadForProjectDirectory(projectDirectory);
+            const std::filesystem::path modsDirectory = paths.modsDirectory;
+            ExistingModInstallMode effectiveInstallMode = existingModMode;
+            std::wstring safeName;
+            if (identity.has_value() && identity->decision == InstallIdentityDecision::UseMatch)
+            {
+                if (!identity->matchedTarget.has_value() ||
+                    effectiveInstallMode == ExistingModInstallMode::FailIfExists)
+                {
+                    throw std::invalid_argument("A matched mod requires replace or merge mode.");
+                }
+                installName = identity->matchedTarget->displayName;
+                safeName = identity->matchedTarget->folderName;
+            }
+            else if (identity.has_value())
+            {
+                effectiveInstallMode = ExistingModInstallMode::FailIfExists;
+                const AllocatedInstallName allocated = allocateFirstFreeInstallName(
+                    projectDirectory,
+                    modsDirectory,
+                    installName);
+                installName = allocated.displayName;
+                safeName = allocated.folderName;
+            }
+            else
+            {
+                safeName = sanitizeFileName(installName);
+            }
             if (safeName.empty())
             {
                 throw std::invalid_argument("Mod name is required.");
@@ -5997,10 +6923,17 @@ namespace fluxora
                 "ModInstall",
                 std::string("installMod requested kind=\"") + logKind +
                     "\", selectedGameId=\"" + toUtf8(selectedGameId) +
-                    "\", installMode=\"" + installModeName(existingModMode) +
+                    "\", installMode=\"" + installModeName(effectiveInstallMode) +
                     "\", archivePath=\"" + toUtf8(archivePath.wstring()) +
                     "\", requestedName=\"" + toUtf8(requestedName) +
+                    "\", allocatedDisplayName=\"" + toUtf8(installName) +
                     "\", safeName=\"" + toUtf8(safeName) +
+                    "\", identityDecision=\"" +
+                    (identity.has_value()
+                        ? (identity->decision == InstallIdentityDecision::UseMatch ? "use-match" : "install-new")
+                        : "legacy") +
+                    "\", identityTargetUuid=\"" +
+                    (identitySelection == nullptr ? std::string{} : toUtf8(identitySelection->targetModUuid)) +
                     "\", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
                     ", source=\"" + toUtf8(metadata.source) +
                     "\", gameDomain=\"" + toUtf8(metadata.gameDomain) +
@@ -6009,16 +6942,14 @@ namespace fluxora
                     "\", versionResult=\"" +
                     (metadata.version.empty() ? std::string("metadata-unavailable") : toUtf8(metadata.version)) + "\".");
 
-            const BuildPathSettings paths = pathSettings.loadForProjectDirectory(projectDirectory);
-            const std::filesystem::path modsDirectory = paths.modsDirectory;
             const std::filesystem::path targetDirectory = modsDirectory / std::filesystem::path(safeName);
             const bool targetExists = std::filesystem::exists(targetDirectory);
-            if (targetExists && existingModMode == ExistingModInstallMode::FailIfExists)
+            if (targetExists && effectiveInstallMode == ExistingModInstallMode::FailIfExists)
             {
                 throw std::invalid_argument("Mod is already installed.");
             }
             if (targetExists &&
-                existingModMode == ExistingModInstallMode::Merge &&
+                effectiveInstallMode == ExistingModInstallMode::Merge &&
                 !std::filesystem::is_directory(targetDirectory))
             {
                 throw std::invalid_argument("Existing mod path is not a directory.");
@@ -6044,7 +6975,7 @@ namespace fluxora
                         tryInstallStagingCachePayload(
                             paths.downloadsDirectory,
                             L"archive-staging",
-                            archiveInstallStagingCacheKey(archivePath, existingModMode, safeName),
+                            archiveInstallStagingCacheKey(archivePath, effectiveInstallMode, safeName),
                             logger);
                     if (cachedPayload.has_value())
                     {
@@ -6060,13 +6991,20 @@ namespace fluxora
                 applyContentLayoutToStaging(
                     projectDirectory,
                     stagingDirectory,
-                    existingModMode,
+                    effectiveInstallMode,
                     false,
-                    fileCacheFingerprint(archivePath),
+                    archiveFingerprint,
                     placementOverrides,
                     logger);
                 detectedVersion = detectInstalledModVersion(stagingDirectory, archivePath, metadata, safeName);
-                switch (existingModMode)
+                if (identitySelection != nullptr)
+                {
+                    identity = ModIdentityResolver::validateInstallPlan(
+                        projectDirectory,
+                        archiveFingerprint,
+                        *identitySelection);
+                }
+                switch (effectiveInstallMode)
                 {
                 case ExistingModInstallMode::Replace:
                     replaceDirectoryWithStaging(stagingDirectory, targetDirectory, modsDirectory, safeName);
@@ -6112,9 +7050,9 @@ namespace fluxora
             {
                 metadata.latestVersion = detectedVersion;
             }
-            metadata.installedModName = safeName;
+            metadata.installedModName = installName;
             metadata.installedAtUtc = nowUtcText();
-            metadata.status = L"Установлен: " + safeName;
+            metadata.status = L"Установлен: " + installName;
             if (persistMetadata)
             {
                 writeMetadata(archivePath, metadata);
@@ -6129,31 +7067,38 @@ namespace fluxora
                 {},
                 metadata.latestVersion
             };
-            const InstalledModRecord record = InstanceMetadataStore::registerInstalledMod(
+            InstalledModRecord record = InstanceMetadataStore::registerInstalledMod(
                 projectDirectory,
                 targetDirectory,
-                safeName,
+                installName,
                 detectedVersion,
                 source);
+            if (identity.has_value())
+            {
+                persistInstallIdentity(projectDirectory, record, *identity, installName);
+                if (const std::optional<InstalledModRecord> updated =
+                        InstanceMetadataStore::installedModByUuid(projectDirectory, record.uuid);
+                    updated.has_value())
+                {
+                    record = *updated;
+                }
+            }
 
             logger.writeOperation(
                 LogLevel::Info,
                 "ModInstall",
                 std::string("installMod completed kind=\"") + logKind +
                     "\", selectedGameId=\"" + toUtf8(selectedGameId) +
+                    "\", displayName=\"" + toUtf8(installName) +
                     "\", safeName=\"" + toUtf8(safeName) +
                     "\", targetDirectory=\"" + toUtf8(targetDirectory.wstring()) +
-                    "\", installMode=\"" + installModeName(existingModMode) +
+                    "\", modUuid=\"" + toUtf8(record.uuid) +
+                    "\", installMode=\"" + installModeName(effectiveInstallMode) +
                     "\", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
                     ", versionResult=\"" +
                     (detectedVersion.empty() ? std::string("unknown") : toUtf8(detectedVersion)) + "\".");
 
-            return InstalledMod{
-                record.path,
-                record.displayName,
-                record.version.empty() ? L"Unknown" : record.version,
-                record.state == L"installed"
-            };
+            return installedModFromRecord(record);
         }
 
         InstalledMod installFomodArchiveCore(
@@ -6167,13 +7112,52 @@ namespace fluxora
             DownloadMetadata metadata,
             bool persistMetadata,
             const char* logKind,
-            const std::vector<PlacementOverride>& placementOverrides)
+            const std::vector<PlacementOverride>& placementOverrides,
+            const ModIdentityInstallSelection* identitySelection)
         {
+            InstallCommitGuard installCommitLock(projectDirectory);
+            const std::wstring archiveFingerprint = fileCacheFingerprint(archivePath);
+            std::optional<ValidatedModIdentityInstall> identity;
+            if (identitySelection != nullptr)
+            {
+                identity = ModIdentityResolver::validateInstallPlan(
+                    projectDirectory,
+                    archiveFingerprint,
+                    *identitySelection);
+            }
+
             const std::wstring requestedName = trim(std::wstring(modName));
-            const std::wstring installName = requestedName.empty()
+            std::wstring installName = requestedName.empty()
                 ? metadata.nexusModName
                 : requestedName;
-            std::wstring safeName = sanitizeFileName(installName);
+            const BuildPathSettings paths = pathSettings.loadForProjectDirectory(projectDirectory);
+            const std::filesystem::path modsDirectory = paths.modsDirectory;
+            ExistingModInstallMode effectiveInstallMode = existingModMode;
+            std::wstring safeName;
+            if (identity.has_value() && identity->decision == InstallIdentityDecision::UseMatch)
+            {
+                if (!identity->matchedTarget.has_value() ||
+                    effectiveInstallMode == ExistingModInstallMode::FailIfExists)
+                {
+                    throw std::invalid_argument("A matched mod requires replace or merge mode.");
+                }
+                installName = identity->matchedTarget->displayName;
+                safeName = identity->matchedTarget->folderName;
+            }
+            else if (identity.has_value())
+            {
+                effectiveInstallMode = ExistingModInstallMode::FailIfExists;
+                const AllocatedInstallName allocated = allocateFirstFreeInstallName(
+                    projectDirectory,
+                    modsDirectory,
+                    installName);
+                installName = allocated.displayName;
+                safeName = allocated.folderName;
+            }
+            else
+            {
+                safeName = sanitizeFileName(installName);
+            }
             if (safeName.empty())
             {
                 throw std::invalid_argument("Mod name is required.");
@@ -6185,10 +7169,17 @@ namespace fluxora
                 "ModInstall",
                 std::string("installMod requested kind=\"") + logKind +
                     "\", selectedGameId=\"" + toUtf8(selectedGameId) +
-                    "\", installMode=\"" + installModeName(existingModMode) +
+                    "\", installMode=\"" + installModeName(effectiveInstallMode) +
                     "\", archivePath=\"" + toUtf8(archivePath.wstring()) +
                     "\", requestedName=\"" + toUtf8(requestedName) +
+                    "\", allocatedDisplayName=\"" + toUtf8(installName) +
                     "\", safeName=\"" + toUtf8(safeName) +
+                    "\", identityDecision=\"" +
+                    (identity.has_value()
+                        ? (identity->decision == InstallIdentityDecision::UseMatch ? "use-match" : "install-new")
+                        : "legacy") +
+                    "\", identityTargetUuid=\"" +
+                    (identitySelection == nullptr ? std::string{} : toUtf8(identitySelection->targetModUuid)) +
                     "\", source=\"" + toUtf8(metadata.source) +
                     "\", gameDomain=\"" + toUtf8(metadata.gameDomain) +
                     "\", modId=\"" + toUtf8(metadata.modId) +
@@ -6198,16 +7189,14 @@ namespace fluxora
                     ", versionResult=\"" +
                     (metadata.version.empty() ? std::string("metadata-unavailable") : toUtf8(metadata.version)) + "\".");
 
-            const BuildPathSettings paths = pathSettings.loadForProjectDirectory(projectDirectory);
-            const std::filesystem::path modsDirectory = paths.modsDirectory;
             const std::filesystem::path targetDirectory = modsDirectory / std::filesystem::path(safeName);
             const bool targetExists = std::filesystem::exists(targetDirectory);
-            if (targetExists && existingModMode == ExistingModInstallMode::FailIfExists)
+            if (targetExists && effectiveInstallMode == ExistingModInstallMode::FailIfExists)
             {
                 throw std::invalid_argument("Mod is already installed.");
             }
             if (targetExists &&
-                existingModMode == ExistingModInstallMode::Merge &&
+                effectiveInstallMode == ExistingModInstallMode::Merge &&
                 !std::filesystem::is_directory(targetDirectory))
             {
                 throw std::invalid_argument("Existing mod path is not a directory.");
@@ -6230,7 +7219,7 @@ namespace fluxora
             std::vector<std::wstring> appliedOptionIds;
             try
             {
-                const FomodPackageIdentity identity{
+                const FomodPackageIdentity packageIdentity{
                     !metadata.gameDomain.empty() ? L"nexus" : (metadata.source.empty() ? L"local" : L"manual"),
                     metadata.gameDomain,
                     metadata.modId,
@@ -6259,7 +7248,7 @@ namespace fluxora
                         paths.gameDirectory,
                         paths.modsDirectory,
                         packageDirectory,
-                        identity,
+                        packageIdentity,
                         fomodGameDataFoldersForProject(projectDirectory));
                     if (!descriptor.isFomod)
                     {
@@ -6273,7 +7262,7 @@ namespace fluxora
                         paths.modsDirectory,
                         packageDirectory,
                         stagingDirectory,
-                        identity,
+                        packageIdentity,
                         selectedOptionIds,
                         fomodGameDataFoldersForProject(projectDirectory)
                     });
@@ -6288,13 +7277,20 @@ namespace fluxora
                 applyContentLayoutToStaging(
                     projectDirectory,
                     stagingDirectory,
-                    existingModMode,
+                    effectiveInstallMode,
                     true,
                     fomodOutputCacheFingerprint(archivePath, selectedOptionIds),
                     placementOverrides,
                     logger);
 
-                switch (existingModMode)
+                if (identitySelection != nullptr)
+                {
+                    identity = ModIdentityResolver::validateInstallPlan(
+                        projectDirectory,
+                        archiveFingerprint,
+                        *identitySelection);
+                }
+                switch (effectiveInstallMode)
                 {
                 case ExistingModInstallMode::Replace:
                     replaceDirectoryWithStaging(stagingDirectory, targetDirectory, modsDirectory, safeName);
@@ -6344,9 +7340,9 @@ namespace fluxora
             {
                 metadata.latestVersion = detectedVersion;
             }
-            metadata.installedModName = safeName;
+            metadata.installedModName = installName;
             metadata.installedAtUtc = nowUtcText();
-            metadata.status = L"Установлен FOMOD: " + safeName;
+            metadata.status = L"Установлен FOMOD: " + installName;
             if (persistMetadata)
             {
                 writeMetadata(archivePath, metadata);
@@ -6361,31 +7357,338 @@ namespace fluxora
                 {},
                 metadata.latestVersion
             };
-            const InstalledModRecord record = InstanceMetadataStore::registerInstalledMod(
+            InstalledModRecord record = InstanceMetadataStore::registerInstalledMod(
                 projectDirectory,
                 targetDirectory,
-                safeName,
+                installName,
                 detectedVersion,
                 source);
+            if (identity.has_value())
+            {
+                persistInstallIdentity(projectDirectory, record, *identity, installName);
+                if (const std::optional<InstalledModRecord> updated =
+                        InstanceMetadataStore::installedModByUuid(projectDirectory, record.uuid);
+                    updated.has_value())
+                {
+                    record = *updated;
+                }
+            }
 
             logger.writeOperation(
                 LogLevel::Info,
                 "ModInstall",
                 std::string("installMod completed kind=\"") + logKind +
                     "\", selectedGameId=\"" + toUtf8(selectedGameId) +
+                    "\", displayName=\"" + toUtf8(installName) +
                     "\", safeName=\"" + toUtf8(safeName) +
                     "\", targetDirectory=\"" + toUtf8(targetDirectory.wstring()) +
-                    "\", installMode=\"" + installModeName(existingModMode) +
+                    "\", modUuid=\"" + toUtf8(record.uuid) +
+                    "\", installMode=\"" + installModeName(effectiveInstallMode) +
                     "\", appliedPluginRules=\"fomod options=" + std::to_string(appliedOptionIds.size()) +
                     "\", versionResult=\"" +
                     (detectedVersion.empty() ? std::string("unknown") : toUtf8(detectedVersion)) + "\".");
 
-            return InstalledMod{
-                record.path,
-                record.displayName,
-                record.version.empty() ? L"Unknown" : record.version,
-                record.state == L"installed"
-            };
+            return installedModFromRecord(record);
+        }
+
+        [[nodiscard]] std::wstring jsonIdentifier(const JsonValue* value)
+        {
+            if (value == nullptr)
+            {
+                return {};
+            }
+            if (value->isString())
+            {
+                return trim(value->asString());
+            }
+            if (value->isNumber())
+            {
+                return trim(value->asNumber());
+            }
+            return {};
+        }
+
+        [[nodiscard]] bool isPositiveDecimalIdentifier(std::wstring_view value)
+        {
+            bool hasNonZeroDigit = false;
+            if (value.empty())
+            {
+                return false;
+            }
+            for (const wchar_t character : value)
+            {
+                if (character < L'0' || character > L'9')
+                {
+                    return false;
+                }
+                hasNonZeroDigit = hasNonZeroDigit || character != L'0';
+            }
+            return hasNonZeroDigit;
+        }
+
+        [[nodiscard]] bool nexusFileSizeMatches(
+            const JsonValue& fileDetails,
+            std::uintmax_t expectedArchiveSizeBytes)
+        {
+            const JsonValue* sizeValue = fileDetails.find(L"size");
+            if (sizeValue == nullptr)
+            {
+                sizeValue = fileDetails.find(L"size_kb");
+            }
+
+            const std::wstring serializedSize = jsonIdentifier(sizeValue);
+            if (serializedSize.empty())
+            {
+                return false;
+            }
+
+            try
+            {
+                std::size_t parsedCharacters = 0;
+                const long double reportedKilobytes = std::stold(serializedSize, &parsedCharacters);
+                if (parsedCharacters != serializedSize.size() ||
+                    !std::isfinite(reportedKilobytes) || reportedKilobytes < 0.0L)
+                {
+                    return false;
+                }
+
+                const long double expectedKilobytes =
+                    static_cast<long double>(expectedArchiveSizeBytes) / 1024.0L;
+                // Nexus exposes this value in kilobytes and deployments have
+                // historically rounded it. Keep the comparison within one KB.
+                return std::fabs(reportedKilobytes - expectedKilobytes) <= 1.0L;
+            }
+            catch (const std::exception&)
+            {
+                return false;
+            }
+        }
+
+        [[nodiscard]] std::optional<NexusMd5Identity> parseUniqueNexusMd5Identity(
+            std::wstring_view payloadJson,
+            std::wstring_view expectedGameDomain,
+            std::uintmax_t expectedArchiveSizeBytes)
+        {
+            const std::wstring normalizedExpectedDomain =
+                toLower(trim(std::wstring(expectedGameDomain)));
+            if (normalizedExpectedDomain.empty())
+            {
+                return std::nullopt;
+            }
+
+            const JsonValue root = JsonReader::parse(payloadJson);
+            if (!root.isArray())
+            {
+                return std::nullopt;
+            }
+
+            std::optional<NexusMd5Identity> result;
+            for (const JsonValue& item : root.asArray())
+            {
+                if (!item.isObject())
+                {
+                    continue;
+                }
+                const JsonValue* mod = item.find(L"mod");
+                const JsonValue* fileDetails = item.find(L"file_details");
+                if (mod == nullptr || !mod->isObject() ||
+                    fileDetails == nullptr || !fileDetails->isObject())
+                {
+                    continue;
+                }
+
+                NexusMd5Identity candidate;
+                candidate.gameDomain = toLower(jsonIdentifier(mod->find(L"domain_name")));
+                candidate.modId = jsonIdentifier(mod->find(L"mod_id"));
+                candidate.fileId = jsonIdentifier(fileDetails->find(L"file_id"));
+                if (const JsonValue* name = mod->find(L"name");
+                    name != nullptr && name->isString())
+                {
+                    candidate.modName = trim(name->asString());
+                }
+
+                if (candidate.gameDomain != normalizedExpectedDomain ||
+                    !isPositiveDecimalIdentifier(candidate.modId) ||
+                    !isPositiveDecimalIdentifier(candidate.fileId) ||
+                    !nexusFileSizeMatches(*fileDetails, expectedArchiveSizeBytes))
+                {
+                    continue;
+                }
+                if (result.has_value())
+                {
+                    return std::nullopt;
+                }
+                result = std::move(candidate);
+            }
+            return result;
+        }
+
+        [[nodiscard]] std::wstring nexusGameDomainForProject(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view preferredDomain)
+        {
+            if (const std::wstring preferred = toLower(trim(std::wstring(preferredDomain)));
+                !preferred.empty())
+            {
+                return preferred;
+            }
+
+            try
+            {
+                const std::wstring gameId = InstanceMetadataStore::gameId(projectDirectory);
+                const GameSupportLookupResult lookup =
+                    GameSupportRegistry::embedded().lookupById(gameId);
+                if (lookup.supported && lookup.support != nullptr &&
+                    !lookup.support->identity().domains.empty())
+                {
+                    return toLower(trim(lookup.support->identity().domains.front()));
+                }
+            }
+            catch (const std::exception&)
+            {
+            }
+            return {};
+        }
+
+        [[nodiscard]] std::optional<NexusMd5Identity> tryResolveNexusMd5Identity(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& archivePath,
+            std::wstring_view preferredGameDomain,
+            NexusModsAuthService* nexusAuth,
+            Logger& logger)
+        {
+#ifndef _WIN32
+            (void)projectDirectory;
+            (void)archivePath;
+            (void)preferredGameDomain;
+            (void)nexusAuth;
+            (void)logger;
+            return std::nullopt;
+#else
+            if (nexusAuth == nullptr)
+            {
+                return std::nullopt;
+            }
+
+            const auto lookupStartedAt = std::chrono::steady_clock::now();
+
+            try
+            {
+                const std::wstring gameDomain =
+                    nexusGameDomainForProject(projectDirectory, preferredGameDomain);
+                const NexusModsApiAuthHeader auth = nexusAuth->apiAuthHeader();
+                if (gameDomain.empty() || !auth.isAvailable ||
+                    auth.headerName.empty() || auth.headerValue.empty())
+                {
+                    return std::nullopt;
+                }
+
+                const FileContentDigests digests =
+                    cachedRegularFileContentDigests(archivePath);
+                if (digests.md5.empty())
+                {
+                    return std::nullopt;
+                }
+                const std::wstring md5(digests.md5.begin(), digests.md5.end());
+                const std::wstring sha256(digests.sha256.begin(), digests.sha256.end());
+                const std::wstring endpoint =
+                    L"https://api.nexusmods.com/v1/games/" + percentEncode(gameDomain) +
+                    L"/mods/md5_search/" + percentEncode(md5);
+                const std::wstring authHeader =
+                    auth.headerName + L": " + auth.headerValue + L"\r\n";
+                std::error_code sizeError;
+                const std::uintmax_t archiveSize =
+                    std::filesystem::file_size(archivePath, sizeError);
+                if (sizeError)
+                {
+                    return std::nullopt;
+                }
+                const std::wstring archiveFingerprint = fileCacheFingerprint(archivePath);
+                try
+                {
+                    if (const std::optional<ModIdentityOnlineCacheRecord> cached =
+                            InstanceMetadataStore::modIdentityOnlineCache(
+                                projectDirectory,
+                                archiveFingerprint,
+                                L"nexus",
+                                gameDomain,
+                                md5,
+                                sha256,
+                                archiveSize);
+                        cached.has_value())
+                    {
+                        logger.write(
+                            LogLevel::Info,
+                            std::string("Mod identity Nexus MD5 lookup completed. game=\"") +
+                                toUtf8(gameDomain) + "\", result=\"cache-hit\", durationMs=" +
+                                std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - lookupStartedAt).count()) + ".");
+                        return NexusMd5Identity{
+                            cached->gameDomain,
+                            cached->remoteModId,
+                            cached->remoteFileId,
+                            cached->modName
+                        };
+                    }
+                }
+                catch (const std::exception&)
+                {
+                    logger.write(
+                        LogLevel::Info,
+                        "Mod identity online cache was unavailable; Nexus lookup continues.");
+                }
+                const std::optional<NexusMd5Identity> identity =
+                    parseUniqueNexusMd5Identity(
+                        fromUtf8(winHttpGet(endpoint, authHeader, 5'000)),
+                        gameDomain,
+                        archiveSize);
+                if (identity.has_value())
+                {
+                    try
+                    {
+                        InstanceMetadataStore::recordModIdentityOnlineCache(
+                            projectDirectory,
+                            archiveFingerprint,
+                            ModIdentityOnlineCacheRecord{
+                                L"nexus",
+                                identity->gameDomain,
+                                identity->modId,
+                                identity->fileId,
+                                identity->modName,
+                                md5,
+                                sha256,
+                                archiveSize,
+                                nowUtcText()
+                            });
+                    }
+                    catch (const std::exception&)
+                    {
+                        logger.write(
+                            LogLevel::Info,
+                            "Mod identity online cache write was unavailable; install planning continues.");
+                    }
+                }
+                logger.write(
+                    LogLevel::Info,
+                    std::string("Mod identity Nexus MD5 lookup completed. game=\"") +
+                        toUtf8(gameDomain) + "\", result=\"" +
+                        (identity.has_value() ? "unique" : "none-or-ambiguous") +
+                        "\", durationMs=" +
+                        std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - lookupStartedAt).count()) + ".");
+                return identity;
+            }
+            catch (const std::exception&)
+            {
+                logger.write(
+                    LogLevel::Info,
+                    "Mod identity Nexus MD5 lookup was unavailable; local identity resolution continues. "
+                    "durationMs=" +
+                        std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - lookupStartedAt).count()) + ".");
+                return std::nullopt;
+            }
+#endif
         }
 
         std::wstring fetchNexusModName(
@@ -6807,6 +8110,45 @@ namespace fluxora
 #ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
     namespace test_hooks
     {
+        std::pair<std::wstring, std::wstring> allocateFirstFreeInstallNameForTest(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modsDirectory,
+            std::wstring_view requestedName)
+        {
+            const AllocatedInstallName allocated = allocateFirstFreeInstallName(
+                projectDirectory,
+                modsDirectory,
+                requestedName);
+            return {allocated.displayName, allocated.folderName};
+        }
+
+        std::pair<std::wstring, std::wstring> reserveFirstFreeInstallNameForTest(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& modsDirectory,
+            std::wstring_view requestedName)
+        {
+            InstallCommitGuard guard(projectDirectory);
+            const AllocatedInstallName allocated = allocateFirstFreeInstallName(
+                projectDirectory,
+                modsDirectory,
+                requestedName);
+            std::filesystem::create_directories(modsDirectory / allocated.folderName);
+            return {allocated.displayName, allocated.folderName};
+        }
+
+        void replaceDirectoryWithStagingForTest(
+            const std::filesystem::path& stagingDirectory,
+            const std::filesystem::path& targetDirectory,
+            const std::filesystem::path& modsDirectory,
+            std::wstring_view safeName)
+        {
+            replaceDirectoryWithStaging(
+                stagingDirectory,
+                targetDirectory,
+                modsDirectory,
+                safeName);
+        }
+
         std::wstring nexusArchiveFileNameForTest(
             std::wstring_view suggestedName,
             std::wstring_view nexusModName)
@@ -6840,6 +8182,35 @@ namespace fluxora
                 info.displayName,
                 fallbackFileName);
             return displayFileName.empty() ? fallbackFileName : displayFileName;
+        }
+
+        std::pair<std::string, std::string> fileContentDigestsForTest(
+            const std::filesystem::path& path)
+        {
+            const FileContentDigests digests = cachedRegularFileContentDigests(path);
+            return {digests.sha256, digests.md5};
+        }
+
+        std::vector<std::wstring> uniqueNexusMd5IdentityFromPayloadForTest(
+            std::wstring_view payloadJson,
+            std::wstring_view expectedGameDomain,
+            std::uintmax_t expectedArchiveSizeBytes)
+        {
+            const std::optional<NexusMd5Identity> identity =
+                parseUniqueNexusMd5Identity(
+                    payloadJson,
+                    expectedGameDomain,
+                    expectedArchiveSizeBytes);
+            if (!identity.has_value())
+            {
+                return {};
+            }
+            return {
+                identity->gameDomain,
+                identity->modId,
+                identity->fileId,
+                identity->modName
+            };
         }
 
         void withExistingDownloadOutputPathReservationForTest(
@@ -8013,12 +9384,295 @@ namespace fluxora
         }
     }
 
+    FluxoraInstallPlan DownloadService::planDownloadInstall(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& downloadPath) const
+    {
+        if (downloadPath.empty() ||
+            !std::filesystem::exists(downloadPath) ||
+            !std::filesystem::is_regular_file(downloadPath))
+        {
+            throw std::invalid_argument("Download file does not exist.");
+        }
+        if (downloadPath.extension().wstring() == pendingNxmExtension)
+        {
+            throw std::invalid_argument("Download is not ready to install.");
+        }
+
+        const DownloadMetadata metadata = readMetadata(downloadPath);
+        if (metadata.isDownloading)
+        {
+            throw std::invalid_argument("Download is still in progress.");
+        }
+
+        FomodInstallerDescriptor fomodInstaller = analyzeFomodDownload(
+            projectDirectory,
+            downloadPath);
+        const BuildPathSettings paths = pathSettings_.loadForProjectDirectory(projectDirectory);
+        const auto buildPlan = [&](const NexusMd5Identity* onlineIdentity)
+        {
+            std::wstring suggestedName =
+                fomodInstaller.isFomod && !trim(fomodInstaller.moduleName).empty()
+                ? trim(fomodInstaller.moduleName)
+                : (onlineIdentity != nullptr && !onlineIdentity->modName.empty()
+                    ? onlineIdentity->modName
+                    : trim(metadata.nexusModName));
+            if (suggestedName.empty())
+            {
+                suggestedName = downloadPath.stem().wstring();
+            }
+
+            ModIdentityPlanRequest request;
+            request.projectDirectory = projectDirectory;
+            request.archivePath = downloadPath;
+            request.archiveFingerprint = fileCacheFingerprint(downloadPath);
+            request.input.displayName = ModIdentityResolver::canonicalSuggestedName(suggestedName);
+            request.input.folderName = sanitizeFileName(request.input.displayName);
+            request.input.fomodModuleId = fomodInstaller.moduleId;
+            request.input.source = onlineIdentity != nullptr
+                ? ModIdentitySource{
+                    L"nexus",
+                    onlineIdentity->gameDomain,
+                    onlineIdentity->modId,
+                    onlineIdentity->fileId}
+                : ModIdentitySource{
+                    !metadata.gameDomain.empty()
+                        ? L"nexus"
+                        : (metadata.source.empty() ? L"local" : L"manual"),
+                    metadata.gameDomain,
+                    metadata.modId,
+                    metadata.fileId};
+            request.fomodInstaller = fomodInstaller;
+            request.loadIncomingContent = [&, suggestedName, fomodInstaller]()
+            {
+                if (fomodInstaller.isFomod)
+                {
+                    const auto preparationStartedAt = std::chrono::steady_clock::now();
+                    const std::wstring cacheKey = fomodPackageStagingCacheKey(downloadPath);
+                    std::optional<InstallStagingCachePayloadLease> payload =
+                        tryInstallStagingCachePayload(
+                            paths.downloadsDirectory,
+                            L"fomod-package",
+                            cacheKey,
+                            logger_);
+                    const bool cacheHit = payload.has_value();
+                    if (!payload.has_value())
+                    {
+                        payload.emplace(ensureInstallStagingCachePayload(
+                            paths.downloadsDirectory,
+                            L"fomod-package",
+                            cacheKey,
+                            logger_,
+                            [&](const std::filesystem::path& payloadDirectory)
+                            {
+                                if (!extractArchiveToDirectory(downloadPath, payloadDirectory, logger_))
+                                {
+                                    throw std::invalid_argument("Download archive could not be inspected.");
+                                }
+                            }));
+                    }
+                    auto anchors =
+                        ModIdentityResolver::collectContentAnchors(payload->payloadDirectory());
+                    const auto preparationDuration =
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - preparationStartedAt);
+                    logger_.write(
+                        LogLevel::Info,
+                        "FomodPerformance",
+                        "FOMOD background full preparation completed. cacheHit=" +
+                            std::string(cacheHit ? "true" : "false") +
+                            ", durationMs=" + std::to_string(preparationDuration.count()) +
+                            ", archive=\"" + toUtf8(downloadPath.wstring()) + "\"");
+                    return anchors;
+                }
+
+                const std::wstring safeName = sanitizeFileName(suggestedName).empty()
+                    ? L"download"
+                    : sanitizeFileName(suggestedName);
+                InstallStagingCachePayloadLease payload = ensureInstallStagingCachePayload(
+                    paths.downloadsDirectory,
+                    L"archive-staging",
+                    archiveInstallStagingCacheKey(
+                        downloadPath,
+                        ExistingModInstallMode::FailIfExists,
+                        safeName),
+                    logger_,
+                    [&](const std::filesystem::path& payloadDirectory)
+                    {
+                        materializeArchiveInstallCachePayload(
+                            downloadPath,
+                            payloadDirectory,
+                            safeName,
+                            logger_);
+                    });
+                return ModIdentityResolver::collectContentAnchors(payload.payloadDirectory());
+            };
+            return ModIdentityResolver::createInstallPlan(std::move(request), &logger_);
+        };
+
+        FluxoraInstallPlan localPlan = buildPlan(nullptr);
+        if (localPlan.matchedTarget.has_value() || !trim(metadata.modId).empty())
+        {
+            return localPlan;
+        }
+
+        const std::optional<NexusMd5Identity> nexusMd5Identity =
+            tryResolveNexusMd5Identity(
+                projectDirectory,
+                downloadPath,
+                metadata.gameDomain,
+                nexusAuth_,
+                logger_);
+        if (!nexusMd5Identity.has_value())
+        {
+            return localPlan;
+        }
+
+        FluxoraInstallPlan onlinePlan = buildPlan(&*nexusMd5Identity);
+        onlinePlan.evidenceCodes.push_back(L"source.nexusMd5");
+        return onlinePlan;
+    }
+
+    FluxoraInstallPlan DownloadService::planArchiveInstall(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& archivePath) const
+    {
+        if (archivePath.empty() ||
+            !std::filesystem::exists(archivePath) ||
+            !std::filesystem::is_regular_file(archivePath))
+        {
+            throw std::invalid_argument("Archive file does not exist.");
+        }
+        if (!hasSupportedDownloadFileExtension(archivePath.filename().wstring()))
+        {
+            throw std::invalid_argument("Archive file type is not supported.");
+        }
+
+        FomodInstallerDescriptor fomodInstaller = analyzeFomodDownload(
+            projectDirectory,
+            archivePath);
+        const BuildPathSettings paths = pathSettings_.loadForProjectDirectory(projectDirectory);
+        const auto buildPlan = [&](const NexusMd5Identity* onlineIdentity)
+        {
+            const std::wstring suggestedName =
+                fomodInstaller.isFomod && !trim(fomodInstaller.moduleName).empty()
+                ? trim(fomodInstaller.moduleName)
+                : (onlineIdentity != nullptr && !onlineIdentity->modName.empty()
+                    ? onlineIdentity->modName
+                    : archivePath.stem().wstring());
+
+            ModIdentityPlanRequest request;
+            request.projectDirectory = projectDirectory;
+            request.archivePath = archivePath;
+            request.archiveFingerprint = fileCacheFingerprint(archivePath);
+            request.input.displayName = ModIdentityResolver::canonicalSuggestedName(suggestedName);
+            request.input.folderName = sanitizeFileName(request.input.displayName);
+            request.input.fomodModuleId = fomodInstaller.moduleId;
+            request.input.source = onlineIdentity != nullptr
+                ? ModIdentitySource{
+                    L"nexus",
+                    onlineIdentity->gameDomain,
+                    onlineIdentity->modId,
+                    onlineIdentity->fileId}
+                : ModIdentitySource{L"manual", {}, {}, {}};
+            request.fomodInstaller = fomodInstaller;
+            request.loadIncomingContent = [&, suggestedName, fomodInstaller]()
+            {
+                if (fomodInstaller.isFomod)
+                {
+                    const auto preparationStartedAt = std::chrono::steady_clock::now();
+                    const std::wstring cacheKey = fomodPackageStagingCacheKey(archivePath);
+                    std::optional<InstallStagingCachePayloadLease> payload =
+                        tryInstallStagingCachePayload(
+                            paths.downloadsDirectory,
+                            L"fomod-package",
+                            cacheKey,
+                            logger_);
+                    const bool cacheHit = payload.has_value();
+                    if (!payload.has_value())
+                    {
+                        payload.emplace(ensureInstallStagingCachePayload(
+                            paths.downloadsDirectory,
+                            L"fomod-package",
+                            cacheKey,
+                            logger_,
+                            [&](const std::filesystem::path& payloadDirectory)
+                            {
+                                if (!extractArchiveToDirectory(archivePath, payloadDirectory, logger_))
+                                {
+                                    throw std::invalid_argument("Archive could not be inspected.");
+                                }
+                            }));
+                    }
+                    auto anchors =
+                        ModIdentityResolver::collectContentAnchors(payload->payloadDirectory());
+                    const auto preparationDuration =
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - preparationStartedAt);
+                    logger_.write(
+                        LogLevel::Info,
+                        "FomodPerformance",
+                        "FOMOD background full preparation completed. cacheHit=" +
+                            std::string(cacheHit ? "true" : "false") +
+                            ", durationMs=" + std::to_string(preparationDuration.count()) +
+                            ", archive=\"" + toUtf8(archivePath.wstring()) + "\"");
+                    return anchors;
+                }
+
+                const std::wstring safeName = sanitizeFileName(suggestedName).empty()
+                    ? L"archive"
+                    : sanitizeFileName(suggestedName);
+                InstallStagingCachePayloadLease payload = ensureInstallStagingCachePayload(
+                    paths.downloadsDirectory,
+                    L"archive-staging",
+                    archiveInstallStagingCacheKey(
+                        archivePath,
+                        ExistingModInstallMode::FailIfExists,
+                        safeName),
+                    logger_,
+                    [&](const std::filesystem::path& payloadDirectory)
+                    {
+                        materializeArchiveInstallCachePayload(
+                            archivePath,
+                            payloadDirectory,
+                            safeName,
+                            logger_);
+                    });
+                return ModIdentityResolver::collectContentAnchors(payload.payloadDirectory());
+            };
+            return ModIdentityResolver::createInstallPlan(std::move(request), &logger_);
+        };
+
+        FluxoraInstallPlan localPlan = buildPlan(nullptr);
+        if (localPlan.matchedTarget.has_value())
+        {
+            return localPlan;
+        }
+
+        const std::optional<NexusMd5Identity> nexusMd5Identity =
+            tryResolveNexusMd5Identity(
+                projectDirectory,
+                archivePath,
+                {},
+                nexusAuth_,
+                logger_);
+        if (!nexusMd5Identity.has_value())
+        {
+            return localPlan;
+        }
+
+        FluxoraInstallPlan onlinePlan = buildPlan(&*nexusMd5Identity);
+        onlinePlan.evidenceCodes.push_back(L"source.nexusMd5");
+        return onlinePlan;
+    }
+
     InstalledMod DownloadService::installDownload(
         const std::filesystem::path& projectDirectory,
         const std::filesystem::path& downloadPath,
         std::wstring_view modName,
         ExistingModInstallMode existingModMode,
-        const std::vector<PlacementOverride>& placementOverrides) const
+        const std::vector<PlacementOverride>& placementOverrides,
+        const ModIdentityInstallSelection* identitySelection) const
     {
         if (downloadPath.empty() || !std::filesystem::exists(downloadPath) || !std::filesystem::is_regular_file(downloadPath))
         {
@@ -8046,7 +9700,8 @@ namespace fluxora
             std::move(metadata),
             true,
             "archive",
-            placementOverrides);
+            placementOverrides,
+            identitySelection);
     }
 
     InstalledMod DownloadService::installArchive(
@@ -8054,7 +9709,8 @@ namespace fluxora
         const std::filesystem::path& archivePath,
         std::wstring_view modName,
         ExistingModInstallMode existingModMode,
-        const std::vector<PlacementOverride>& placementOverrides) const
+        const std::vector<PlacementOverride>& placementOverrides,
+        const ModIdentityInstallSelection* identitySelection) const
     {
         if (archivePath.empty() || !std::filesystem::exists(archivePath) || !std::filesystem::is_regular_file(archivePath))
         {
@@ -8079,7 +9735,8 @@ namespace fluxora
             std::move(metadata),
             false,
             "manualArchive",
-            placementOverrides);
+            placementOverrides,
+            identitySelection);
     }
 
     PlacementPlan DownloadService::analyzeDownloadContentLayout(
@@ -8134,6 +9791,7 @@ namespace fluxora
         const std::filesystem::path& projectDirectory,
         const std::filesystem::path& downloadPath) const
     {
+        const auto analysisStartedAt = std::chrono::steady_clock::now();
         if (downloadPath.empty() || !std::filesystem::exists(downloadPath) || !std::filesystem::is_regular_file(downloadPath))
         {
             throw std::invalid_argument("Download file does not exist.");
@@ -8160,37 +9818,123 @@ namespace fluxora
             ? downloadPath.stem().wstring()
             : trim(metadata.nexusModName);
 
-        InstallStagingCachePayloadLease packagePayload = ensureInstallStagingCachePayload(
-            paths.downloadsDirectory,
-            L"fomod-package",
-            fomodPackageStagingCacheKey(downloadPath),
-            logger_,
-            [&](const std::filesystem::path& payloadDirectory)
-            {
-                if (!extractArchiveToDirectory(downloadPath, payloadDirectory, logger_))
-                {
-                    throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
-                }
-            });
-        const std::filesystem::path& packageDirectory = packagePayload.payloadDirectory();
+        const FomodPackageIdentity identity{
+            !metadata.gameDomain.empty() ? L"nexus" : (metadata.source.empty() ? L"local" : L"manual"),
+            metadata.gameDomain,
+            metadata.modId,
+            metadata.fileId,
+            metadata.source.empty() ? downloadPath.wstring() : metadata.source,
+            fallbackName
+        };
+        const std::vector<std::wstring> gameDataFolders =
+            fomodGameDataFoldersForProject(projectDirectory);
+        const auto analyzeDescriptor = [&](const std::filesystem::path& packageDirectory)
+        {
+            return FomodInstallerService::analyze(
+                projectDirectory,
+                paths.gameDirectory,
+                paths.modsDirectory,
+                packageDirectory,
+                identity,
+                gameDataFolders);
+        };
 
-        FomodInstallerDescriptor descriptor = FomodInstallerService::analyze(
-            projectDirectory,
-            paths.gameDirectory,
-            paths.modsDirectory,
-            packageDirectory,
-            FomodPackageIdentity{
-                !metadata.gameDomain.empty() ? L"nexus" : (metadata.source.empty() ? L"local" : L"manual"),
-                metadata.gameDomain,
-                metadata.modId,
-                metadata.fileId,
-                metadata.source.empty() ? downloadPath.wstring() : metadata.source,
-                fallbackName
-            },
-            fomodGameDataFoldersForProject(projectDirectory));
+        const std::wstring metadataCacheKey = fomodMetadataStagingCacheKey(downloadPath);
+        bool metadataCacheHit = false;
+        bool selectiveExtractionUsed = false;
+        std::size_t indexedEntryCount = 0;
+        std::size_t indexedPreviewCount = 0;
+        std::chrono::milliseconds indexDuration{0};
+        std::chrono::milliseconds xmlDuration{0};
+        std::optional<FomodInstallerDescriptor> selectivelyParsedDescriptor;
+        std::optional<InstallStagingCachePayloadLease> packagePayload;
+        if (std::optional<InstallStagingCachePayloadLease> cached =
+                tryInstallStagingCachePayload(
+                    paths.downloadsDirectory,
+                    L"fomod-metadata",
+                    metadataCacheKey,
+                    logger_);
+            cached.has_value())
+        {
+            metadataCacheHit = true;
+            packagePayload.emplace(std::move(cached.value()));
+        }
+        else
+        {
+            std::optional<std::vector<ZipArchiveEntry>> zipEntries;
+            std::optional<IndexedFomodZip> indexedFomod;
+            if (archiveExtension(downloadPath) == L".zip")
+            {
+                const auto indexStartedAt = std::chrono::steady_clock::now();
+                zipEntries = indexZipArchive(downloadPath);
+                indexDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - indexStartedAt);
+                indexedEntryCount = zipEntries->size();
+                indexedFomod = findIndexedFomodZip(zipEntries.value());
+                if (!indexedFomod.has_value())
+                {
+                    const auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - analysisStartedAt);
+                    logger_.write(
+                        LogLevel::Info,
+                        "FomodPerformance",
+                        "FOMOD archive index found no installer. cacheHit=false, entries=" +
+                            std::to_string(indexedEntryCount) +
+                            ", indexMs=" + std::to_string(indexDuration.count()) +
+                            ", totalMs=" + std::to_string(totalDuration.count()) +
+                            ", archive=\"" + toUtf8(downloadPath.wstring()) + "\"");
+                    return {};
+                }
+            }
+
+            packagePayload.emplace(ensureInstallStagingCachePayload(
+                paths.downloadsDirectory,
+                L"fomod-metadata",
+                metadataCacheKey,
+                logger_,
+                [&](const std::filesystem::path& payloadDirectory)
+                {
+                    if (zipEntries.has_value() && indexedFomod.has_value())
+                    {
+                        selectiveExtractionUsed = materializeIndexedFomodMetadata(
+                            downloadPath,
+                            zipEntries.value(),
+                            indexedFomod.value(),
+                            payloadDirectory,
+                            analyzeDescriptor,
+                            indexedPreviewCount,
+                            selectivelyParsedDescriptor,
+                            xmlDuration);
+                        if (selectiveExtractionUsed)
+                        {
+                            return;
+                        }
+                        clearDirectoryContents(payloadDirectory);
+                    }
+
+                    if (!extractArchiveToDirectory(downloadPath, payloadDirectory, logger_))
+                    {
+                        throw std::invalid_argument("Download does not contain an XML FOMOD installer.");
+                    }
+                }));
+        }
+        const std::filesystem::path& packageDirectory = packagePayload->payloadDirectory();
+
+        FomodInstallerDescriptor descriptor;
+        if (selectivelyParsedDescriptor.has_value())
+        {
+            descriptor = std::move(selectivelyParsedDescriptor.value());
+        }
+        else
+        {
+            const auto xmlStartedAt = std::chrono::steady_clock::now();
+            descriptor = analyzeDescriptor(packageDirectory);
+            xmlDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - xmlStartedAt);
+        }
         if (!descriptor.isFomod)
         {
-            discardInstallStagingCachePayload(packagePayload, logger_);
+            discardInstallStagingCachePayload(packagePayload.value(), logger_);
             return {};
         }
 
@@ -8198,12 +9942,13 @@ namespace fluxora
             paths.downloadsDirectory,
             downloadPath,
             fallbackName);
-        std::error_code previewCleanupError;
-        std::filesystem::remove_all(previewDirectory, previewCleanupError);
+        const auto previewStartedAt = std::chrono::steady_clock::now();
         const std::size_t previewCount = materializeFomodPreviewImages(
             descriptor,
             fomodPreviewPackageRoot(packageDirectory),
             previewDirectory);
+        const auto previewDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - previewStartedAt);
         if (previewCount > 0)
         {
             logger_.write(
@@ -8211,6 +9956,22 @@ namespace fluxora
                 "Cached FOMOD preview images. count=" + std::to_string(previewCount) +
                     ", path=\"" + toUtf8(previewDirectory.wstring()) + "\"");
         }
+        const auto totalDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - analysisStartedAt);
+        logger_.write(
+            LogLevel::Info,
+            "FomodPerformance",
+            "FOMOD fast analysis completed. cacheHit=" +
+                std::string(metadataCacheHit ? "true" : "false") +
+                ", selective=" + std::string(selectiveExtractionUsed ? "true" : "false") +
+                ", entries=" + std::to_string(indexedEntryCount) +
+                ", indexedPreviews=" + std::to_string(indexedPreviewCount) +
+                ", materializedPreviews=" + std::to_string(previewCount) +
+                ", indexMs=" + std::to_string(indexDuration.count()) +
+                ", xmlMs=" + std::to_string(xmlDuration.count()) +
+                ", previewMs=" + std::to_string(previewDuration.count()) +
+                ", totalMs=" + std::to_string(totalDuration.count()) +
+                ", archive=\"" + toUtf8(downloadPath.wstring()) + "\"");
         return descriptor;
     }
 
@@ -8327,7 +10088,8 @@ namespace fluxora
         std::wstring_view modName,
         ExistingModInstallMode existingModMode,
         const std::vector<std::wstring>& selectedOptionIds,
-        const std::vector<PlacementOverride>& placementOverrides) const
+        const std::vector<PlacementOverride>& placementOverrides,
+        const ModIdentityInstallSelection* identitySelection) const
     {
         if (downloadPath.empty() || !std::filesystem::exists(downloadPath) || !std::filesystem::is_regular_file(downloadPath))
         {
@@ -8356,7 +10118,8 @@ namespace fluxora
             std::move(metadata),
             true,
             "fomod",
-            placementOverrides);
+            placementOverrides,
+            identitySelection);
     }
 
     InstalledMod DownloadService::installFomodArchive(
@@ -8365,7 +10128,8 @@ namespace fluxora
         std::wstring_view modName,
         ExistingModInstallMode existingModMode,
         const std::vector<std::wstring>& selectedOptionIds,
-        const std::vector<PlacementOverride>& placementOverrides) const
+        const std::vector<PlacementOverride>& placementOverrides,
+        const ModIdentityInstallSelection* identitySelection) const
     {
         if (archivePath.empty() || !std::filesystem::exists(archivePath) || !std::filesystem::is_regular_file(archivePath))
         {
@@ -8391,7 +10155,8 @@ namespace fluxora
             std::move(metadata),
             false,
             "manualFomodArchive",
-            placementOverrides);
+            placementOverrides,
+            identitySelection);
     }
 
     bool DownloadService::isInitialized() const noexcept

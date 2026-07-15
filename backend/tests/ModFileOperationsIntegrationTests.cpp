@@ -662,6 +662,270 @@ namespace fluxora::tests
         EXPECT_EQ(summary.conflictingFileCount, 0);
     }
 
+    TEST_F(ModFileOperationsIntegrationTests, InstallDownloadReturnsPersistedNexusIdentity)
+    {
+        const DownloadEntry download = importArchive(
+            L"Cabbage CS Preset 1.4.0.zip",
+            {
+                {L"SKSE/Plugins/CabbagePreset.dll", "plugin"},
+                {L"fomod/info.xml", "<fomod><Name>Cabbage CS Preset</Name><Version>1.4.0</Version></fomod>"}
+            });
+        writeTextFile(
+            download.localPath.wstring() + L".fluxora.json",
+            R"json({
+                "source":"nxm://skyrimspecialedition/mods/182366/files/770345",
+                "gameDomain":"skyrimspecialedition",
+                "modId":"182366",
+                "fileId":"770345",
+                "nexusModName":"Cabbage CS Preset",
+                "version":"1.4.0",
+                "latestVersion":"1.4.0",
+                "isDownloading":false
+            })json");
+
+        InstalledMod installed;
+        try
+        {
+            installed = downloads_.installDownload(
+                project_,
+                download.localPath,
+                L"Cabbage CS Preset");
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+
+            throw;
+        }
+
+        EXPECT_EQ(installed.latestVersion, L"1.4.0");
+        EXPECT_TRUE(installed.sourceIsNexus);
+        EXPECT_FALSE(installed.isLocal);
+        EXPECT_EQ(installed.sourceProvider, L"nexus");
+        EXPECT_EQ(installed.sourceGameDomain, L"skyrimspecialedition");
+        EXPECT_EQ(installed.sourceModId, L"182366");
+        EXPECT_EQ(installed.sourceFileId, L"770345");
+        EXPECT_EQ(
+            installed.sourceUrl,
+            L"nxm://skyrimspecialedition/mods/182366/files/770345");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, PlannedInstallNewUsesFirstFreeCaseInsensitiveCopySuffix)
+    {
+        const std::filesystem::path existingPath = modsDirectory() / L"Example Mod";
+        writeTextFile(existingPath / L"Data" / L"Existing.esp", "existing");
+        const InstalledModRecord existing = InstanceMetadataStore::registerInstalledMod(
+            project_,
+            existingPath,
+            L"Example Mod",
+            L"1.0",
+            ModSourceRecord{L"manual"});
+        writeTextFile(modsDirectory() / L"eXaMpLe MoD (2)" / L"Data" / L"Collision.esp", "collision");
+
+        const DownloadEntry download = importArchive(
+            L"Example Mod 2.0.zip",
+            {{L"Data/Example.esp", "new"}});
+        FluxoraInstallPlan plan;
+        try
+        {
+            plan = downloads_.planDownloadInstall(project_, download.localPath);
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+            throw;
+        }
+
+        const ModIdentityInstallSelection selection{
+            plan.resolutionId,
+            InstallIdentityDecision::InstallNew,
+            {},
+            NewNamePolicy::FirstFreeCopySuffix
+        };
+        const InstalledMod installed = downloads_.installDownload(
+            project_,
+            download.localPath,
+            L"Example Mod",
+            ExistingModInstallMode::FailIfExists,
+            {},
+            &selection);
+
+        EXPECT_EQ(installed.name, L"Example Mod (3)");
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            modsDirectory() / L"Example Mod (3)" / L"Example.esp"));
+        const std::vector<InstalledModRecord> records =
+            InstanceMetadataStore::listInstalledMods(project_, modsDirectory());
+        const InstalledModRecord* separateCopy = findInstalledMod(records, L"Example Mod (3)");
+        ASSERT_NE(separateCopy, nullptr);
+        EXPECT_NE(separateCopy->uuid, existing.uuid);
+        const std::optional<InstalledModRecord> detailedCopy =
+            InstanceMetadataStore::installedModByUuid(project_, separateCopy->uuid);
+        ASSERT_TRUE(detailedCopy.has_value());
+        EXPECT_TRUE(detailedCopy->identityAliases.empty());
+        EXPECT_NE(
+            std::find(
+                detailedCopy->identityExcludedModUuids.begin(),
+                detailedCopy->identityExcludedModUuids.end(),
+                existing.uuid),
+            detailedCopy->identityExcludedModUuids.end());
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, PlannedReplaceKeepsMatchedUuidDisplayNameAndFolder)
+    {
+        const std::filesystem::path existingPath = modsDirectory() / L"SPID";
+        writeTextFile(existingPath / L"SKSE" / L"Plugins" / L"SPID.dll", "old");
+        const InstalledModRecord existing = InstanceMetadataStore::registerInstalledMod(
+            project_,
+            existingPath,
+            L"Spell Perks Item Distributor",
+            L"7.1",
+            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"36869", L"100"});
+
+        const DownloadEntry download = importArchive(
+            L"SPID 7.2.zip",
+            {{L"SKSE/Plugins/SPID.dll", "new"}});
+        writeTextFile(
+            download.localPath.wstring() + L".fluxora.json",
+            R"json({
+                "source":"nxm://skyrimspecialedition/mods/36869/files/200",
+                "gameDomain":"skyrimspecialedition",
+                "modId":"36869",
+                "fileId":"200",
+                "nexusModName":"SPID 7.2",
+                "isDownloading":false
+            })json");
+
+        FluxoraInstallPlan plan;
+        try
+        {
+            plan = downloads_.planDownloadInstall(project_, download.localPath);
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+            throw;
+        }
+        ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.matchedTarget->modUuid, existing.uuid);
+
+        const ModIdentityInstallSelection selection{
+            plan.resolutionId,
+            InstallIdentityDecision::UseMatch,
+            existing.uuid,
+            NewNamePolicy::FirstFreeCopySuffix
+        };
+        const InstalledMod installed = downloads_.installDownload(
+            project_,
+            download.localPath,
+            L"User typed a different name",
+            ExistingModInstallMode::Replace,
+            {},
+            &selection);
+
+        EXPECT_EQ(installed.name, L"Spell Perks Item Distributor");
+        EXPECT_EQ(installed.id.filename().wstring(), L"SPID");
+        const std::optional<InstalledModRecord> current =
+            InstanceMetadataStore::installedModByUuid(project_, existing.uuid);
+        ASSERT_TRUE(current.has_value());
+        EXPECT_EQ(current->displayName, L"Spell Perks Item Distributor");
+        EXPECT_EQ(current->folderName, L"SPID");
+        EXPECT_EQ(current->source.remoteModId, L"36869");
+        EXPECT_EQ(current->source.remoteFileId, L"200");
+        EXPECT_NE(
+            std::find(current->identityAliases.begin(), current->identityAliases.end(), L"SPID 7.2"),
+            current->identityAliases.end());
+        EXPECT_EQ(readTextFile(existingPath / L"SKSE" / L"Plugins" / L"SPID.dll"), "new");
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, PlannedMergeKeepsMatchedIdentityAndPreservesExistingFiles)
+    {
+        const std::filesystem::path existingPath = modsDirectory() / L"Merge Target";
+        writeTextFile(existingPath / L"textures" / L"shared.dds", "old-shared");
+        writeTextFile(existingPath / L"textures" / L"old-only.dds", "old-only");
+        const InstalledModRecord existing = InstanceMetadataStore::registerInstalledMod(
+            project_,
+            existingPath,
+            L"Merge Target",
+            L"1.0",
+            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"900", L"100"});
+
+        const DownloadEntry download = importArchive(
+            L"Incoming Merge 2.0.zip",
+            {
+                {L"textures/shared.dds", "new-shared"},
+                {L"textures/new-only.dds", "new-only"}
+            });
+        writeTextFile(
+            download.localPath.wstring() + L".fluxora.json",
+            R"json({
+                "source":"nxm://skyrimspecialedition/mods/900/files/200",
+                "gameDomain":"skyrimspecialedition",
+                "modId":"900",
+                "fileId":"200",
+                "nexusModName":"Incoming Merge 2.0",
+                "isDownloading":false
+            })json");
+
+        FluxoraInstallPlan plan;
+        try
+        {
+            plan = downloads_.planDownloadInstall(project_, download.localPath);
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+            throw;
+        }
+        ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.matchedTarget->modUuid, existing.uuid);
+
+        const ModIdentityInstallSelection selection{
+            plan.resolutionId,
+            InstallIdentityDecision::UseMatch,
+            existing.uuid,
+            NewNamePolicy::FirstFreeCopySuffix
+        };
+        const InstalledMod installed = downloads_.installDownload(
+            project_,
+            download.localPath,
+            L"Incoming Merge 2.0",
+            ExistingModInstallMode::Merge,
+            {},
+            &selection);
+
+        EXPECT_EQ(installed.name, L"Merge Target");
+        EXPECT_EQ(installed.id.filename().wstring(), L"Merge Target");
+        EXPECT_EQ(readTextFile(existingPath / L"textures" / L"shared.dds"), "new-shared");
+        EXPECT_EQ(readTextFile(existingPath / L"textures" / L"old-only.dds"), "old-only");
+        EXPECT_EQ(readTextFile(existingPath / L"textures" / L"new-only.dds"), "new-only");
+
+        const std::optional<InstalledModRecord> current =
+            InstanceMetadataStore::installedModByUuid(project_, existing.uuid);
+        ASSERT_TRUE(current.has_value());
+        EXPECT_EQ(current->displayName, L"Merge Target");
+        EXPECT_EQ(current->folderName, L"Merge Target");
+        EXPECT_EQ(current->source.remoteModId, L"900");
+        EXPECT_EQ(current->source.remoteFileId, L"200");
+        EXPECT_NE(
+            std::find(
+                current->identityAliases.begin(),
+                current->identityAliases.end(),
+                L"Incoming Merge 2.0"),
+            current->identityAliases.end());
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, InstallArchiveFromExternalFileDoesNotImportDownloadMetadata)
     {
         const std::filesystem::path archivePath =
@@ -735,6 +999,33 @@ namespace fluxora::tests
         ASSERT_EQ(installed.size(), 1U);
         EXPECT_EQ(installed.front().name, L"Inventory Probe");
         EXPECT_EQ(InstanceMetadataStore::inventorySyncCountForTesting(), 1U);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, InstalledModListTreatsTrailingZeroVersionSegmentsAsEquivalent)
+    {
+        const std::filesystem::path modPath = modsDirectory() / L"Animation Motion Revolution";
+        writeTextFile(modPath / L"SKSE" / L"Plugins" / L"AnimationMotionRevolution.dll", "plugin");
+        InstanceMetadataStore::registerInstalledMod(
+            project_,
+            modPath,
+            L"Animation Motion Revolution",
+            L"1.5.3.0",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"50258",
+                L"123456",
+                L"nxm://skyrimspecialedition/mods/50258/files/123456",
+                L"2026-07-15T10:00:00Z",
+                L"1.5.3"});
+
+        const std::vector<InstalledModEntry> installed = mods_.listInstalledMods(project_);
+
+        ASSERT_EQ(installed.size(), 1U);
+        EXPECT_EQ(installed.front().version, L"1.5.3.0");
+        EXPECT_EQ(installed.front().latestVersion, L"1.5.3");
+        EXPECT_FALSE(installed.front().hasUpdate);
+        EXPECT_EQ(installed.front().updateStatus, L"Актуально");
     }
 
     TEST_F(ModFileOperationsIntegrationTests, LiveProfileOrderPerformsOneLiveInventorySync)
@@ -2394,6 +2685,12 @@ namespace fluxora::tests
         }
 
         ASSERT_TRUE(descriptor.isFomod);
+        const PlacementPlan layoutPlan = downloads_.analyzeFomodDownloadContentLayout(
+            project_,
+            download.localPath,
+            ExistingModInstallMode::FailIfExists,
+            {});
+        ASSERT_TRUE(layoutPlan.canInstall());
         const std::vector<std::filesystem::path> payloads =
             installStagingCachePayloads(downloadsDirectory(), L"fomod-package-");
         ASSERT_EQ(payloads.size(), 1U);
@@ -2429,6 +2726,119 @@ namespace fluxora::tests
     }
 
 #ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+    TEST_F(ModFileOperationsIntegrationTests, AnalyzeFomodDownloadIndexesLargeZipWithoutBuildingFullPackage)
+    {
+        std::string moduleConfig = R"xml(<config>
+  <moduleName>Large Indexed FOMOD</moduleName>
+  <installSteps order="Explicit">
+    <installStep name="Variants">
+      <optionalFileGroups order="Explicit">
+        <group name="Choices" type="SelectAny">
+          <plugins order="Explicit">
+)xml";
+        for (int index = 0; index < 120; ++index)
+        {
+            moduleConfig +=
+                "<plugin name=\"Variant " + std::to_string(index) +
+                "\"><image path=\"fomod/images/shared.png\" /></plugin>";
+        }
+        moduleConfig += R"xml(
+          </plugins>
+        </group>
+      </optionalFileGroups>
+    </installStep>
+  </installSteps>
+</config>)xml";
+
+        std::vector<ZipEntry> entries{
+            {L"Wrapper/FoMoD/MODULECONFIG.XML", moduleConfig},
+            {L"Wrapper/FoMoD/INFO.XML", R"xml(<fomod><Name>Large Indexed FOMOD</Name><Version>1.0.0</Version></fomod>)xml"},
+            {L"Wrapper/FoMoD/images/shared.png", "shared-preview"}
+        };
+        for (int index = 0; index < 2048; ++index)
+        {
+            entries.push_back({
+                L"Wrapper/payload/textures/generated/texture-" + std::to_wstring(index) + L".dds",
+                "payload"
+            });
+        }
+        const DownloadEntry download = importArchive(L"Large Indexed FOMOD.zip", entries);
+
+        std::atomic_int metadataBuilds{0};
+        std::atomic_int fullPackageBuilds{0};
+        InstallStagingCacheProducerHookGuard hook{
+            [&](std::wstring_view kind, std::wstring_view, const std::filesystem::path&)
+            {
+                if (kind == L"fomod-metadata")
+                {
+                    metadataBuilds.fetch_add(1);
+                }
+                else if (kind == L"fomod-package")
+                {
+                    fullPackageBuilds.fetch_add(1);
+                }
+            }};
+
+        const FomodInstallerDescriptor descriptor =
+            downloads_.analyzeFomodDownload(project_, download.localPath);
+
+        ASSERT_TRUE(descriptor.isFomod);
+        ASSERT_EQ(descriptor.steps.size(), 1U);
+        ASSERT_EQ(descriptor.steps[0].groups.size(), 1U);
+        EXPECT_EQ(descriptor.steps[0].groups[0].options.size(), 120U);
+        EXPECT_EQ(metadataBuilds.load(), 1);
+        EXPECT_EQ(fullPackageBuilds.load(), 0);
+        EXPECT_TRUE(installStagingCachePayloads(downloadsDirectory(), L"fomod-package-").empty());
+
+        const FomodInstallerDescriptor cachedDescriptor =
+            downloads_.analyzeFomodDownload(project_, download.localPath);
+        ASSERT_TRUE(cachedDescriptor.isFomod);
+        EXPECT_EQ(cachedDescriptor.steps[0].groups[0].options.size(), 120U);
+        EXPECT_EQ(metadataBuilds.load(), 1);
+        EXPECT_EQ(fullPackageBuilds.load(), 0);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, AnalyzeOrdinaryZipDoesNotBuildInstallPayload)
+    {
+        std::vector<ZipEntry> entries;
+        for (int index = 0; index < 1024; ++index)
+        {
+            entries.push_back({
+                L"Data/textures/generated/plain-" + std::to_wstring(index) + L".dds",
+                "payload"
+            });
+        }
+        const DownloadEntry download = importArchive(L"Large Plain Archive.zip", entries);
+
+        std::atomic_int producerCalls{0};
+        InstallStagingCacheProducerHookGuard hook{
+            [&](std::wstring_view, std::wstring_view, const std::filesystem::path&)
+            {
+                producerCalls.fetch_add(1);
+            }};
+
+        const FomodInstallerDescriptor descriptor =
+            downloads_.analyzeFomodDownload(project_, download.localPath);
+
+        EXPECT_FALSE(descriptor.isFomod);
+        EXPECT_EQ(producerCalls.load(), 0);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, AnalyzeFomodZipRejectsTraversalBeforeMetadataExtraction)
+    {
+        const DownloadEntry download = importArchive(
+            L"Unsafe Indexed FOMOD.zip",
+            {
+                {L"fomod/ModuleConfig.xml", R"xml(<config><moduleName>Unsafe</moduleName></config>)xml"},
+                {L"../escaped-preview.png", "unsafe"}
+            });
+
+        EXPECT_THROW(
+            (void)downloads_.analyzeFomodDownload(project_, download.localPath),
+            std::runtime_error);
+        EXPECT_FALSE(std::filesystem::exists(downloadsDirectory().parent_path() / L"escaped-preview.png"));
+    }
+
     TEST_F(ModFileOperationsIntegrationTests, OrdinaryArchiveInstallCompletesWhileFomodPackageBuildIsPaused)
     {
         std::vector<ZipEntry> fomodEntries{
@@ -2439,7 +2849,9 @@ namespace fluxora::tests
   </requiredInstallFiles>
 </config>)xml"},
             {L"fomod/info.xml", R"xml(<fomod><Name>Slow FOMOD Package</Name><Version>1.0.0</Version></fomod>)xml"},
-            {L"payload/Data/SlowFomod.esp", "fomod-plugin"}
+            {L"payload/Data/SlowFomod.esp", "fomod-plugin"},
+            {L"payload/Data/SlowFomod.bsa", "fomod-archive"},
+            {L"payload/Data/SKSE/Plugins/SlowFomod.dll", "fomod-dll"}
         };
         for (int index = 0; index < 128; ++index)
         {
@@ -2450,6 +2862,17 @@ namespace fluxora::tests
         }
 
         const DownloadEntry fomod = importArchive(L"Slow FOMOD Package.fomod", fomodEntries);
+        const std::filesystem::path existingFomod =
+            modsDirectory() / L"Slow FOMOD Previous Package";
+        writeTextFile(existingFomod / L"SlowFomod.esp", "old-plugin");
+        writeTextFile(existingFomod / L"SlowFomod.bsa", "old-archive");
+        writeTextFile(existingFomod / L"SKSE" / L"Plugins" / L"SlowFomod.dll", "old-dll");
+        InstanceMetadataStore::registerInstalledMod(
+            project_,
+            existingFomod,
+            L"Slow FOMOD Previous Package",
+            L"0.9.0",
+            ModSourceRecord{L"manual"});
         const DownloadEntry archive = importArchive(
             L"Plain Archive.zip",
             {
@@ -2480,9 +2903,9 @@ namespace fluxora::tests
                 }
             }};
 
-        auto fomodAnalyze = std::async(std::launch::async, [&]()
+        auto fomodPlan = std::async(std::launch::async, [&]()
         {
-            return downloads_.analyzeFomodDownload(project_, fomod.localPath);
+            return downloads_.planDownloadInstall(project_, fomod.localPath);
         });
 
         ASSERT_EQ(fomodProducerStarted.wait_for(std::chrono::seconds(5)), std::future_status::ready);
@@ -2523,8 +2946,8 @@ namespace fluxora::tests
         releaseFomod();
         try
         {
-            const FomodInstallerDescriptor descriptor = fomodAnalyze.get();
-            EXPECT_TRUE(descriptor.isFomod);
+            const FluxoraInstallPlan plan = fomodPlan.get();
+            EXPECT_TRUE(plan.fomodInstaller.isFomod);
         }
         catch (const std::exception& exception)
         {
@@ -2649,6 +3072,9 @@ namespace fluxora::tests
             <plugin name="With image">
               <image path="fomod/images/option.png" />
             </plugin>
+            <plugin name="With the same image again">
+              <image path="FOMOD/IMAGES/OPTION.PNG" />
+            </plugin>
           </plugins>
         </group>
       </optionalFileGroups>
@@ -2678,11 +3104,15 @@ namespace fluxora::tests
         ASSERT_TRUE(descriptor.isFomod);
         ASSERT_EQ(1u, descriptor.steps.size());
         ASSERT_EQ(1u, descriptor.steps[0].groups.size());
-        ASSERT_EQ(1u, descriptor.steps[0].groups[0].options.size());
+        ASSERT_EQ(2u, descriptor.steps[0].groups[0].options.size());
         ASSERT_FALSE(descriptor.moduleImagePath.empty());
         ASSERT_FALSE(descriptor.steps[0].groups[0].options[0].imagePath.empty());
+        ASSERT_FALSE(descriptor.steps[0].groups[0].options[1].imagePath.empty());
         EXPECT_TRUE(std::filesystem::is_regular_file(std::filesystem::path(descriptor.moduleImagePath)));
         EXPECT_TRUE(std::filesystem::is_regular_file(std::filesystem::path(descriptor.steps[0].groups[0].options[0].imagePath)));
+        EXPECT_EQ(
+            descriptor.steps[0].groups[0].options[0].imagePath,
+            descriptor.steps[0].groups[0].options[1].imagePath);
         EXPECT_NE(descriptor.moduleImagePath.find(L".fomod-previews"), std::wstring::npos);
         EXPECT_NE(descriptor.steps[0].groups[0].options[0].imagePath.find(L".fomod-previews"), std::wstring::npos);
     }

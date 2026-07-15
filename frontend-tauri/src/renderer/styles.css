@@ -6954,7 +6954,7 @@ body.row-reorder-active * {
 
 .fomod-option {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   min-height: 42px;
@@ -7270,6 +7270,7 @@ body.row-reorder-active * {
 }
 
 .install-dialog[data-phase="options"],
+.install-dialog[data-phase="detecting"],
 .install-dialog[data-phase="conflict"] {
   min-height: auto;
 }
@@ -8024,11 +8025,40 @@ body.row-reorder-active * {
   overflow: auto;
 }
 
+.install-dialog[data-phase="fomod"] .install-dialog-body {
+  overflow: hidden;
+}
+
 .install-simple {
   display: grid;
   gap: 15px;
   min-width: 0;
   padding: 20px 22px 8px;
+}
+
+.install-detecting-skeleton {
+  min-width: 0;
+  padding: 24px 22px 26px;
+}
+
+.install-detecting-skeleton__content {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.install-detecting-skeleton__title {
+  width: min(44%, 188px);
+  height: 14px;
+}
+
+.install-detecting-skeleton__line {
+  width: 100%;
+  height: 36px;
+}
+
+.install-detecting-skeleton__line--short {
+  width: 72%;
 }
 
 .install-name-field {
@@ -8138,6 +8168,9 @@ body.row-reorder-active * {
 .install-fomod-options .fomod-group-list {
   flex: 1 1 auto;
   align-content: start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
 }
 
 .fomod-group {
@@ -8157,7 +8190,7 @@ body.row-reorder-active * {
 }
 
 .fomod-option {
-  grid-template-columns: 18px minmax(0, 1fr) 16px;
+  grid-template-columns: 18px minmax(0, 1fr);
   min-height: 66px;
   padding: 10px 13px;
   border: 1px solid var(--line);
@@ -8167,7 +8200,7 @@ body.row-reorder-active * {
 }
 
 .fomod-option:has(.fomod-option__thumb) {
-  grid-template-columns: 18px 42px minmax(0, 1fr) 16px;
+  grid-template-columns: 18px 42px minmax(0, 1fr);
 }
 
 .fomod-option:hover,
@@ -8185,7 +8218,16 @@ body.row-reorder-active * {
   color: var(--accent);
 }
 
-.fomod-option input {
+.fomod-option__control {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+}
+
+.fomod-option__control input {
   appearance: none;
   width: 16px;
   min-width: 16px;
@@ -8197,12 +8239,21 @@ body.row-reorder-active * {
   box-shadow: none;
 }
 
+.fomod-option__control > svg {
+  position: absolute;
+  inset: 2px;
+  color: var(--flx-ink-on-accent);
+  pointer-events: none;
+}
+
 .fomod-option input[type="radio"] {
   border-radius: 999px;
 }
 
 .fomod-option input[type="checkbox"] {
-  border-radius: 3px;
+  border-radius: 4px;
+  background: var(--flx-bg-0);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
 .fomod-option input[type="radio"]:checked {
@@ -8211,7 +8262,7 @@ body.row-reorder-active * {
 }
 
 .fomod-option input[type="checkbox"]:checked {
-  border-color: var(--accent);
+  border-color: rgba(var(--flx-accent-rgb), 0.8);
   background: var(--accent);
 }
 

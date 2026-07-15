@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -40,6 +41,10 @@ namespace fluxora
         bool isPatch{false};
         std::filesystem::path path;
         ModSourceRecord source;
+        std::wstring fomodModuleId;
+        std::vector<std::wstring> identityAliases;
+        std::vector<std::wstring> identityExcludedModUuids;
+        int portableManifestSchemaVersion{0};
     };
 
     struct InstalledModImportRecord
@@ -59,6 +64,67 @@ namespace fluxora
 
     using InstalledModImportProgress =
         std::function<void(std::size_t processed, std::size_t total, std::wstring_view folderName)>;
+
+    struct ModIdentityCatalogQuery
+    {
+        std::wstring provider;
+        std::wstring gameDomain;
+        std::wstring remoteModId;
+        std::wstring fomodModuleId;
+        std::wstring normalizedName;
+        std::vector<std::wstring> tokens;
+        std::size_t limit{5};
+    };
+
+    struct ModIdentityCatalogCandidate
+    {
+        InstalledModRecord mod;
+        std::wstring fomodModuleId;
+        std::vector<std::wstring> aliases;
+        bool excluded{false};
+    };
+
+    struct ModIdentityCatalogSnapshot
+    {
+        std::uint64_t catalogRevision{0};
+        std::vector<ModIdentityCatalogCandidate> candidates;
+    };
+
+    struct ModIdentityPersistenceUpdate
+    {
+        std::wstring modUuid;
+        std::wstring fomodModuleId;
+        std::vector<std::wstring> confirmedAliases;
+        std::wstring sourceProvider;
+        std::wstring sourceGameDomain;
+        std::wstring sourceRemoteModId;
+        std::wstring sourceRemoteFileId;
+        std::wstring exclusionProvider;
+        std::wstring exclusionGameDomain;
+        std::wstring exclusionRemoteModId;
+        std::wstring exclusionIncomingName;
+        std::vector<std::wstring> rejectedModUuids;
+    };
+
+    struct ModIdentityContentCacheRecord
+    {
+        std::vector<std::wstring> pluginFiles;
+        std::vector<std::wstring> archiveFiles;
+        std::vector<std::wstring> scriptExtenderDlls;
+    };
+
+    struct ModIdentityOnlineCacheRecord
+    {
+        std::wstring provider;
+        std::wstring gameDomain;
+        std::wstring remoteModId;
+        std::wstring remoteFileId;
+        std::wstring modName;
+        std::wstring md5;
+        std::wstring sha256;
+        std::uintmax_t archiveSize{0};
+        std::wstring checkedAt;
+    };
 
     struct RemoteCheckRecord
     {
@@ -205,6 +271,46 @@ namespace fluxora
         [[nodiscard]] static std::vector<InstalledModRecord> listInstalledMods(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modsDirectory = {});
+
+        [[nodiscard]] static ModIdentityCatalogSnapshot queryModIdentityCandidates(
+            const std::filesystem::path& projectDirectory,
+            const ModIdentityCatalogQuery& query);
+
+        [[nodiscard]] static std::uint64_t modCatalogRevision(
+            const std::filesystem::path& projectDirectory);
+
+        [[nodiscard]] static std::optional<InstalledModRecord> installedModByUuid(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view modUuid);
+
+        static void recordModIdentity(
+            const std::filesystem::path& projectDirectory,
+            const ModIdentityPersistenceUpdate& update);
+
+        [[nodiscard]] static std::optional<ModIdentityContentCacheRecord>
+            modIdentityContentCache(
+                const std::filesystem::path& projectDirectory,
+                std::wstring_view archiveFingerprint);
+
+        static void recordModIdentityContentCache(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view archiveFingerprint,
+            const ModIdentityContentCacheRecord& content);
+
+        [[nodiscard]] static std::optional<ModIdentityOnlineCacheRecord>
+            modIdentityOnlineCache(
+                const std::filesystem::path& projectDirectory,
+                std::wstring_view archiveFingerprint,
+                std::wstring_view provider,
+                std::wstring_view gameDomain,
+                std::wstring_view md5,
+                std::wstring_view sha256,
+                std::uintmax_t archiveSize);
+
+        static void recordModIdentityOnlineCache(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view archiveFingerprint,
+            const ModIdentityOnlineCacheRecord& online);
 
         static void refreshInstalledModsFromDisk(
             const std::filesystem::path& projectDirectory,

@@ -11,7 +11,7 @@ import {
   RefreshCw,
   X
 } from 'lucide-react';
-import { useState, type CSSProperties } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 
 import installModIcon from '../../../../../Icons/package-plus.svg';
 import {
@@ -26,13 +26,16 @@ import {
   type PlacementOverrideMap
 } from '../../install-workspace-state';
 import { createVirtualWindow } from '../../ui-performance';
+import type { InstallNameSource } from './install-name-state';
 import type {
   FluxoraContentLayoutPreview,
   FluxoraExistingModInstallMode,
-  FluxoraFomodInstaller
+  FluxoraFomodInstaller,
+  FluxoraInstallPlan
 } from '../../../shared/fluxora-api';
 
 export type InstallDialogPhase =
+  | 'detecting'
   | 'fomod'
   | 'options'
   | 'conflict'
@@ -51,13 +54,16 @@ export interface InstallDialogState {
   fomodStepIndex: number;
   activeFomodOptionId: string | null;
   layoutPreview: FluxoraContentLayoutPreview | null;
+  installPlan: FluxoraInstallPlan | null;
   modName: string;
+  modNameSource: InstallNameSource;
   modOrderPlacement: InstallModOrderPlacement | null;
   existingModMode: FluxoraExistingModInstallMode;
   placementOverrides: PlacementOverrideMap;
   draggedSourcePath: string | null;
   validationMessage: string | null;
   errorMessage: string | null;
+  isSubmitting: boolean;
 }
 
 interface InstallDialogProps {
@@ -71,7 +77,7 @@ interface InstallDialogProps {
   onMoveFomodStep: (direction: 1 | -1) => void;
   onOpenDetails: () => void;
   onPatch: (patch: Partial<InstallDialogState>) => void;
-  onResolveExistingMod: (mode: 1 | 2) => void;
+  onResolveExistingMod: (decision: 1 | 2 | 'installNew') => void;
   onSubmitInstallOptions: () => void;
 }
 
@@ -139,6 +145,34 @@ export function InstallDialog({
   onResolveExistingMod,
   onSubmitInstallOptions
 }: InstallDialogProps) {
+  const modNameInputRef = useRef<HTMLInputElement>(null);
+  const modNameSelectionRef = useRef<{
+    start: number;
+    end: number;
+    direction: 'forward' | 'backward' | 'none';
+  }>({ start: 0, end: 0, direction: 'none' });
+  const modNameInputFocusedRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const input = modNameInputRef.current;
+    if (!input || !installDialog) {
+      modNameInputFocusedRef.current = false;
+      return;
+    }
+    if (installDialog.modNameSource === 'user' || !modNameInputFocusedRef.current) {
+      return;
+    }
+
+    const selection = modNameSelectionRef.current;
+    const maxOffset = input.value.length;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(
+      Math.min(selection.start, maxOffset),
+      Math.min(selection.end, maxOffset),
+      selection.direction
+    );
+  }, [installDialog?.modName, installDialog?.modNameSource]);
+
   if (!installDialog) {
     return null;
   }
@@ -227,69 +261,79 @@ export function InstallDialog({
               </div>
             ) : null}
 
-            <div className="fomod-group-list">
-              {currentStep?.groups.map((group) => (
-                <section
-                  key={group.group.id || group.group.name}
-                  className="fomod-group"
-                  data-invalid={!group.isSelectionValid}
-                >
-                  <header>
-                    <strong>{group.group.name || 'Options'}</strong>
-                  </header>
-                  <div className="fomod-options">
-                    {group.options.map((option) => {
-                      const isRadio =
-                        group.group.type === 'SelectExactlyOne' ||
-                        group.group.type === 'SelectAtMostOne';
-                      return (
-                        <label
-                          key={option.option.id || option.option.name}
-                          className="fomod-option"
-                          data-selected={option.isSelected}
-                          data-disabled={!option.canToggle}
-                          data-highlighted={detailsOption?.option.id === option.option.id}
-                          data-previous={option.wasPreviouslySelected}
-                          onMouseEnter={() =>
-                            onPatch({ activeFomodOptionId: option.option.id })
-                          }
-                          onFocus={() =>
-                            onPatch({ activeFomodOptionId: option.option.id })
-                          }
-                        >
-                          <input
-                            type={isRadio ? 'radio' : 'checkbox'}
-                            name={group.group.id || group.group.name}
-                            checked={option.isSelected}
-                            disabled={!option.canToggle}
-                            onChange={(event) =>
-                              onPatch({
-                                selectedFomodOptionIds: toggleFomodOption(
-                                  installDialog.fomodInstaller!,
-                                  installDialog.selectedFomodOptionIds,
-                                  option.option.id,
-                                  event.target.checked
-                                ),
-                                activeFomodOptionId: option.option.id,
-                                validationMessage: null
-                              })
+            <div
+              key={`fomod-step-${currentStep?.stepIndex ?? 'empty'}`}
+              className="fomod-group-list"
+            >
+              {currentStep?.groups.map((group, groupIndex) => {
+                const groupIdentity = `fomod-step-${currentStep.stepIndex}-group-${groupIndex}`;
+                return (
+                  <section
+                    key={groupIdentity}
+                    className="fomod-group"
+                    data-invalid={!group.isSelectionValid}
+                  >
+                    <header>
+                      <strong>{group.group.name || 'Options'}</strong>
+                    </header>
+                    <div className="fomod-options">
+                      {group.options.map((option, optionIndex) => {
+                        const isRadio =
+                          group.group.type === 'SelectExactlyOne' ||
+                          group.group.type === 'SelectAtMostOne';
+                        return (
+                          <label
+                            key={`${groupIdentity}-option-${optionIndex}`}
+                            className="fomod-option"
+                            data-selected={option.isSelected}
+                            data-disabled={!option.canToggle}
+                            data-highlighted={detailsOption?.option.id === option.option.id}
+                            data-previous={option.wasPreviouslySelected}
+                            onMouseEnter={() =>
+                              onPatch({ activeFomodOptionId: option.option.id })
                             }
-                          />
-                          <FomodOptionImage imagePath={option.option.imagePath} />
-                          <span className="fomod-option__text">
-                            <strong>{option.option.name || 'Option'}</strong>
-                            <small>{option.effectiveType}</small>
-                            {option.wasPreviouslySelected ? (
-                              <small className="fomod-option__previous">Previously selected</small>
-                            ) : null}
-                          </span>
-                          {option.isSelected ? <CheckCircle2 size={15} aria-hidden="true" /> : null}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </section>
-              ))}
+                            onFocus={() =>
+                              onPatch({ activeFomodOptionId: option.option.id })
+                            }
+                          >
+                            <span className="fomod-option__control">
+                              <input
+                                type={isRadio ? 'radio' : 'checkbox'}
+                                name={groupIdentity}
+                                checked={option.isSelected}
+                                disabled={!option.canToggle}
+                                onChange={(event) =>
+                                  onPatch({
+                                    selectedFomodOptionIds: toggleFomodOption(
+                                      installDialog.fomodInstaller!,
+                                      installDialog.selectedFomodOptionIds,
+                                      option.option.id,
+                                      event.target.checked
+                                    ),
+                                    activeFomodOptionId: option.option.id,
+                                    validationMessage: null
+                                  })
+                                }
+                              />
+                              {!isRadio && option.isSelected ? (
+                                <Check size={12} strokeWidth={3} aria-hidden="true" />
+                              ) : null}
+                            </span>
+                            <FomodOptionImage imagePath={option.option.imagePath} />
+                            <span className="fomod-option__text">
+                              <strong>{option.option.name || 'Option'}</strong>
+                              <small>{option.effectiveType}</small>
+                              {option.wasPreviouslySelected ? (
+                                <small className="fomod-option__previous">Previously selected</small>
+                              ) : null}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           </section>
 
@@ -321,6 +365,7 @@ export function InstallDialog({
             <button
               className="primary-button"
               type="button"
+              disabled={installDialog.isSubmitting}
               onClick={() => (canMoveNext ? onMoveFomodStep(1) : onContinueFromFomod())}
             >
               {canMoveNext ? (
@@ -331,7 +376,7 @@ export function InstallDialog({
               ) : (
                 <>
                   <CheckCircle2 size={16} aria-hidden="true" />
-                  Установить
+                  {installDialog.isSubmitting ? 'Подготовка…' : 'Установить'}
                 </>
               )}
             </button>
@@ -353,11 +398,32 @@ export function InstallDialog({
         <label className="field install-name-field">
           <span>Mod name</span>
           <input
+            ref={modNameInputRef}
             aria-label={`Mod name for ${installTitle}`}
             value={installDialog.modName}
+            disabled={installDialog.isSubmitting}
+            onBlur={() => {
+              modNameInputFocusedRef.current = false;
+            }}
+            onFocus={(event) => {
+              modNameInputFocusedRef.current = true;
+              modNameSelectionRef.current = {
+                start: event.currentTarget.selectionStart ?? 0,
+                end: event.currentTarget.selectionEnd ?? 0,
+                direction: event.currentTarget.selectionDirection ?? 'none'
+              };
+            }}
+            onSelect={(event) => {
+              modNameSelectionRef.current = {
+                start: event.currentTarget.selectionStart ?? 0,
+                end: event.currentTarget.selectionEnd ?? 0,
+                direction: event.currentTarget.selectionDirection ?? 'none'
+              };
+            }}
             onChange={(event) =>
               onPatch({
                 modName: event.target.value,
+                modNameSource: 'user',
                 validationMessage: null
               })
             }
@@ -373,6 +439,17 @@ export function InstallDialog({
       </div>
     );
   };
+
+  const renderInstallDetecting = () => (
+    <div className="install-detecting-skeleton" role="status" aria-live="polite">
+      <span className="sr-only">Определяем тип установщика</span>
+      <div className="install-detecting-skeleton__content" aria-hidden="true">
+        <span className="workspace-skeleton install-detecting-skeleton__title" />
+        <span className="workspace-skeleton install-detecting-skeleton__line" />
+        <span className="workspace-skeleton install-detecting-skeleton__line install-detecting-skeleton__line--short" />
+      </div>
+    </div>
+  );
 
   const renderExistingModConflict = () => {
     const conflictName =
@@ -391,13 +468,29 @@ export function InstallDialog({
           </div>
         </section>
         <div className="install-existing-mod__choices" aria-label="Existing mod install mode">
-          <button type="button" onClick={() => onResolveExistingMod(1)}>
+          <button
+            type="button"
+            disabled={installDialog.isSubmitting}
+            onClick={() => onResolveExistingMod(1)}
+          >
             <strong>Заменить</strong>
             <span>Полностью заменяет мод.</span>
           </button>
-          <button type="button" onClick={() => onResolveExistingMod(2)}>
+          <button
+            type="button"
+            disabled={installDialog.isSubmitting}
+            onClick={() => onResolveExistingMod(2)}
+          >
             <strong>Объединить</strong>
             <span>Перезаписывает только файлы с одинаковыми названиями.</span>
+          </button>
+          <button
+            type="button"
+            disabled={installDialog.isSubmitting}
+            onClick={() => onResolveExistingMod('installNew')}
+          >
+            <strong>Это другой мод</strong>
+            <span>Устанавливает отдельную копию с уникальным именем.</span>
           </button>
         </div>
       </div>
@@ -582,6 +675,7 @@ export function InstallDialog({
         role="dialog"
         aria-modal="true"
         aria-label={dialogAriaLabel}
+        aria-busy={installDialog.phase === 'detecting'}
       >
         {installDialog.phase === 'fomod' ? renderInstallFomodSidebar() : null}
         <div className="install-dialog" data-phase={installDialog.phase}>
@@ -598,6 +692,7 @@ export function InstallDialog({
               className="icon-button"
               type="button"
               title="Закрыть окно установки"
+              disabled={installDialog.isSubmitting}
               onClick={onClose}
             >
               <X size={16} aria-hidden="true" />
@@ -605,6 +700,7 @@ export function InstallDialog({
           </header>
 
           <div className="install-dialog-body">
+            {installDialog.phase === 'detecting' ? renderInstallDetecting() : null}
             {installDialog.phase === 'fomod' ? renderInstallFomodStep() : null}
             {installDialog.phase === 'options' ? renderInstallOptions() : null}
             {installDialog.phase === 'conflict' ? renderExistingModConflict() : null}
@@ -649,11 +745,14 @@ export function InstallDialog({
                   <button
                     className="primary-button"
                     type="button"
-                    disabled={Boolean(validateInstallModName(installDialog.modName))}
+                    disabled={
+                      installDialog.isSubmitting ||
+                      Boolean(validateInstallModName(installDialog.modName))
+                    }
                     onClick={onSubmitInstallOptions}
                   >
                     <Play size={16} aria-hidden="true" />
-                    Установить
+                    {installDialog.isSubmitting ? 'Подготовка…' : 'Установить'}
                   </button>
                 ) : null}
               </div>

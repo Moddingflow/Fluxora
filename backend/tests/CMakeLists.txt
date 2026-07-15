@@ -36,6 +36,7 @@ add_executable(FluxoraCoreTests
     GrassCacheServiceTests.cpp
     LoggerTests.cpp
     ModFileOperationsIntegrationTests.cpp
+    ModIdentityResolverTests.cpp
     ModOrganizerTransferBuildTests.cpp
     ModOrganizerImportServiceTests.cpp
     ModOrganizerPluginGroupServiceTests.cpp
@@ -76,6 +77,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/ModOrganizerExecutableImportService.cpp
     ../src/Services/ModOrganizerImportService.cpp
     ../src/Services/ModService.cpp
+    ../src/Services/ModIdentityResolver.cpp
     ../src/Services/NifPreviewResolver.cpp
     ../src/Services/NexusModsAuthService.cpp
     ../src/Services/ModOrganizerPluginGroupService.cpp
@@ -146,7 +148,7 @@ target_link_libraries(
         ${FLUXORA_ZSTD_TARGET})
 
 if(WIN32)
-    target_link_libraries(FluxoraCoreTests PRIVATE advapi32 bcrypt crypt32 gdiplus rstrtmgr shell32 winhttp ws2_32)
+    target_link_libraries(FluxoraCoreTests PRIVATE advapi32 bcrypt crypt32 gdiplus normaliz rstrtmgr shell32 winhttp ws2_32)
 endif()
 
 include(GoogleTest)

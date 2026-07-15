@@ -3,6 +3,7 @@
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/NexusModsAuthService.hpp"
+#include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 #include "TestFilesystem.hpp"
 
 #include <gtest/gtest.h>
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <future>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -57,6 +59,30 @@ namespace fluxora::test_hooks
         std::wstring_view fallbackFileName);
 
     std::wstring nexusDownloadFileNameFromApiPayloadForTest(std::wstring_view payloadJson);
+
+    std::pair<std::string, std::string> fileContentDigestsForTest(
+        const std::filesystem::path& path);
+
+    std::vector<std::wstring> uniqueNexusMd5IdentityFromPayloadForTest(
+        std::wstring_view payloadJson,
+        std::wstring_view expectedGameDomain,
+        std::uintmax_t expectedArchiveSizeBytes);
+
+    std::pair<std::wstring, std::wstring> allocateFirstFreeInstallNameForTest(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modsDirectory,
+        std::wstring_view requestedName);
+
+    std::pair<std::wstring, std::wstring> reserveFirstFreeInstallNameForTest(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& modsDirectory,
+        std::wstring_view requestedName);
+
+    void replaceDirectoryWithStagingForTest(
+        const std::filesystem::path& stagingDirectory,
+        const std::filesystem::path& targetDirectory,
+        const std::filesystem::path& modsDirectory,
+        std::wstring_view safeName);
 
     void setActiveDownloadForTest(const std::filesystem::path& path, bool active);
 
@@ -237,6 +263,199 @@ namespace fluxora::tests
                     "version": "1.3.1"
                 })json"),
             L"Disabled Reference Integrity Fix AE (SKSE).7z");
+#endif
+    }
+
+    TEST(DownloadServiceTests, ArchiveFingerprintCalculatesSha256AndMd5InOneCachedPass)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path archive = temp.path() / L"identity.zip";
+        writeTextFile(archive, "abc");
+
+        const auto [sha256, md5] = test_hooks::fileContentDigestsForTest(archive);
+
+        EXPECT_EQ(
+            sha256,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        EXPECT_EQ(md5, "900150983cd24fb0d6963f7d28e17f72");
+
+        writeTextFile(archive, "abcd");
+        const auto [updatedSha256, updatedMd5] = test_hooks::fileContentDigestsForTest(archive);
+        EXPECT_EQ(
+            updatedSha256,
+            "88d4266fd4e6338d13b845fcf289579d209c897823b9217da3e161936f031589");
+        EXPECT_EQ(updatedMd5, "e2fc714c4727ee9395f324cd2e7f331f");
+#endif
+    }
+
+    TEST(DownloadServiceTests, NexusMd5LookupAcceptsOnlyOneValidGameScopedIdentity)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        const std::vector<std::wstring> identity =
+            test_hooks::uniqueNexusMd5IdentityFromPayloadForTest(
+                LR"json([
+                    {
+                        "mod": {
+                            "mod_id": 3863,
+                            "domain_name": "skyrimspecialedition",
+                            "name": "SkyUI"
+                        },
+                        "file_details": { "file_id": 123, "size": 1024 }
+                    }
+                ])json",
+                L"skyrimspecialedition",
+                1024U * 1024U);
+
+        ASSERT_EQ(identity.size(), 4U);
+        EXPECT_EQ(identity[0], L"skyrimspecialedition");
+        EXPECT_EQ(identity[1], L"3863");
+        EXPECT_EQ(identity[2], L"123");
+        EXPECT_EQ(identity[3], L"SkyUI");
+
+        EXPECT_TRUE(test_hooks::uniqueNexusMd5IdentityFromPayloadForTest(
+            LR"json([
+                {"mod":{"mod_id":3863,"domain_name":"skyrimspecialedition","name":"SkyUI"},"file_details":{"file_id":123,"size":1024}},
+                {"mod":{"mod_id":3863,"domain_name":"skyrimspecialedition","name":"SkyUI"},"file_details":{"file_id":124,"size":1024}}
+            ])json",
+            L"skyrimspecialedition",
+            1024U * 1024U).empty());
+        EXPECT_TRUE(test_hooks::uniqueNexusMd5IdentityFromPayloadForTest(
+            LR"json([
+                {"mod":{"mod_id":3863,"domain_name":"skyrim","name":"SkyUI"},"file_details":{"file_id":123,"size":1024}}
+            ])json",
+            L"skyrimspecialedition",
+            1024U * 1024U).empty());
+        EXPECT_TRUE(test_hooks::uniqueNexusMd5IdentityFromPayloadForTest(
+            LR"json([
+                {"mod":{"mod_id":3863,"domain_name":"skyrimspecialedition","name":"SkyUI"},"file_details":{"file_id":123,"size":2048}}
+            ])json",
+            L"skyrimspecialedition",
+            1024U * 1024U).empty());
+        EXPECT_TRUE(test_hooks::uniqueNexusMd5IdentityFromPayloadForTest(
+            LR"json([
+                {"mod":{"mod_id":3863,"domain_name":"skyrimspecialedition","name":"SkyUI"},"file_details":{"file_id":123}}
+            ])json",
+            L"skyrimspecialedition",
+            1024U * 1024U).empty());
+#endif
+    }
+
+    TEST(DownloadServiceTests, FirstFreeIdentityNameChecksGapsSafeFoldersAndSuffixFamilies)
+    {
+#if !defined(_WIN32) || !defined(FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS)
+        GTEST_SKIP() << "Install-name allocation hooks require the Windows metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const auto createProject = [&](std::wstring_view name)
+        {
+            const std::filesystem::path project = temp.path() / std::wstring(name);
+            InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+            return project;
+        };
+
+        const std::filesystem::path gapProject = createProject(L"Gap");
+        const std::filesystem::path gapMods = gapProject / L"mods";
+        writeTextFile(gapMods / L"Foo" / L"marker.txt", "base");
+        writeTextFile(gapMods / L"fOo (2)" / L"marker.txt", "two");
+        writeTextFile(gapMods / L"FOO (4)" / L"marker.txt", "four");
+        EXPECT_EQ(
+            test_hooks::allocateFirstFreeInstallNameForTest(gapProject, gapMods, L"Foo"),
+            (std::pair<std::wstring, std::wstring>{L"Foo (3)", L"Foo (3)"}));
+
+        const std::filesystem::path safeProject = createProject(L"Safe folder");
+        const std::filesystem::path safeMods = safeProject / L"mods";
+        writeTextFile(safeMods / L"bad_name" / L"marker.txt", "collision");
+        EXPECT_EQ(
+            test_hooks::allocateFirstFreeInstallNameForTest(safeProject, safeMods, L"Bad:Name"),
+            (std::pair<std::wstring, std::wstring>{L"Bad:Name (2)", L"Bad_Name (2)"}));
+
+        const std::filesystem::path meaningfulProject = createProject(L"Meaningful number");
+        const std::filesystem::path meaningfulMods = meaningfulProject / L"mods";
+        EXPECT_EQ(
+            test_hooks::allocateFirstFreeInstallNameForTest(
+                meaningfulProject,
+                meaningfulMods,
+                L"Chapter (2)"),
+            (std::pair<std::wstring, std::wstring>{L"Chapter (2)", L"Chapter (2)"}));
+
+        const std::filesystem::path familyProject = createProject(L"Suffix family");
+        const std::filesystem::path familyMods = familyProject / L"mods";
+        writeTextFile(familyMods / L"Chapter (4)" / L"marker.txt", "sibling");
+        EXPECT_EQ(
+            test_hooks::allocateFirstFreeInstallNameForTest(
+                familyProject,
+                familyMods,
+                L"Chapter (2)"),
+            (std::pair<std::wstring, std::wstring>{L"Chapter", L"Chapter"}));
+#endif
+    }
+
+    TEST(DownloadServiceTests, ParallelIdentityNameReservationsChooseDifferentNumbers)
+    {
+#if !defined(_WIN32) || !defined(FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS)
+        GTEST_SKIP() << "Install-name reservation hooks require Windows.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        const std::filesystem::path project = temp.path() / L"Parallel reservation";
+        const std::filesystem::path mods = project / L"mods";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        writeTextFile(mods / L"Concurrent Mod" / L"marker.txt", "base");
+
+        auto first = std::async(std::launch::async, [&]()
+        {
+            return test_hooks::reserveFirstFreeInstallNameForTest(
+                project,
+                mods,
+                L"Concurrent Mod");
+        });
+        auto second = std::async(std::launch::async, [&]()
+        {
+            return test_hooks::reserveFirstFreeInstallNameForTest(
+                project,
+                mods,
+                L"Concurrent Mod");
+        });
+
+        std::vector<std::wstring> names{first.get().first, second.get().first};
+        std::sort(names.begin(), names.end());
+        EXPECT_EQ(names, (std::vector<std::wstring>{L"Concurrent Mod (2)", L"Concurrent Mod (3)"}));
+#endif
+    }
+
+    TEST(DownloadServiceTests, FailedReplaceCommitRestoresTheOriginalDirectory)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path mods = temp.path() / L"mods";
+        const std::filesystem::path target = mods / L"Rollback Mod";
+        const std::filesystem::path missingStaging = temp.path() / L"missing-staging";
+        writeTextFile(target / L"Data" / L"Original.esp", "original");
+
+        EXPECT_THROW(
+            test_hooks::replaceDirectoryWithStagingForTest(
+                missingStaging,
+                target,
+                mods,
+                L"Rollback Mod"),
+            std::exception);
+
+        EXPECT_EQ(readTextFile(target / L"Data" / L"Original.esp"), "original");
+        EXPECT_FALSE(std::filesystem::exists(missingStaging));
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(mods))
+        {
+            EXPECT_FALSE(entry.path().filename().wstring().starts_with(L".Rollback Mod.replacing"));
+        }
 #endif
     }
 

@@ -3543,6 +3543,7 @@ fn bridge_lane_for_method(method: &str) -> BridgeLane {
         | "mods.listInstalled"
         | "mods.deleteInstalled"
         | "downloads.analyzeFomod"
+        | "downloads.planInstall"
         | "downloads.analyzeContentLayout"
         | "downloads.analyzeFomodContentLayout"
         | "downloads.cancel"
@@ -3554,6 +3555,7 @@ fn bridge_lane_for_method(method: &str) -> BridgeLane {
         | "nxm.captureLinks"
         | "nxm.importInboundDownloads"
         | "archives.install"
+        | "archives.planInstall"
         | "archives.installFomod"
         | "nexus.connect"
         | "textFiles.read" => BridgeLane::Interactive,
@@ -6780,11 +6782,13 @@ mod tests {
         for method in [
             "mods.listInstalled",
             "downloads.analyzeFomod",
+            "downloads.planInstall",
             "downloads.analyzeContentLayout",
             "downloads.analyzeFomodContentLayout",
             "downloads.install",
             "downloads.installFomod",
             "archives.install",
+            "archives.planInstall",
             "archives.installFomod",
         ] {
             assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);

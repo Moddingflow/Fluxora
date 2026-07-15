@@ -1,5 +1,5 @@
 Fluxora Privacy Policy
-Last updated: 30 June 2026
+Last updated: 15 July 2026
 
 1. Controller
 Fluxora is provided as part of the ModdingFlow ecosystem. The controller for data processing is ModdingFlow, Germany, unless another legal notice is supplied with the official distribution. Use the official ModdingFlow contact channel or legal notice for privacy requests.
@@ -19,6 +19,7 @@ Fluxora may store or process the following data on your device:
 - AI assistant data, if you enable or use AI features: chat prompts, chat history, selected model/provider metadata, local cost estimates, run identifiers, compact read-only build context, local context graph metadata such as source ids, source fingerprints, timestamps and stale markers, and optional AI research metadata. The compact context can include project summary, installed-mod summaries, plugin/load-order summaries, selected mod file-tree names, bounded local file metadata from Fluxora-owned build folders such as relative paths, file kinds, sizes, SKSE DLL/config signals and conflict owners, bounded file-owner samples for high-signal overwrite/conflict evidence, profile names, download summaries, Nexus linked/configured status, operation status snapshots and recent operation log lines. AI research metadata can include Nexus URLs or nxm links from your prompt, official Nexus API metadata/file summaries when available, allowlisted public Nexus page summaries, Gemini/Google Search grounding citations, source ids, source snapshots, rate-limit/backoff metadata and blocked-source reasons. Fluxora does not include provider keys, Nexus tokens, arbitrary OS paths, arbitrary file contents, shell output, full log files, browser cookies or authenticated private pages in the Phase 7 AI context and research bundles by default.
 - Logs and crash diagnostics: installer logs, Tauri UI logs, Tauri main/bridge logs, native core logs, operation logs and crash logs with timestamps, operation status, operation ids, error messages, selected paths, file names involved in an operation, process or thread identifiers and diagnostic details. Logs may indirectly contain your operating-system user name if it is part of a file path.
 - Nexus Mods connection data, if you connect it: account display name, user id, token type, expiry date, access or refresh tokens, and personal API keys protected with Windows data protection APIs where available.
+- Mod identity lookup data, when Nexus Mods is connected and an archive has no stable source id: Fluxora may send the archive's MD5 fingerprint and the selected game's Nexus domain to the Nexus Mods API to find an unambiguous mod and file identity. Fluxora calculates SHA-256 locally in the same file pass but does not send it for this lookup. The archive contents, local path and file name are not sent. Returned mod/file identifiers and names may be stored in the local project metadata.
 - Local protocol data: nxm links passed to Fluxora when you choose Fluxora as handler.
 
 Fluxora does not intentionally collect special categories of personal data, payment data, advertising identifiers, address books, browser history, microphone data, camera data or location data. The bundled Tauri/Chromium runtime is used to render the local application UI; Fluxora does not use it to track browsing activity.
@@ -48,7 +49,7 @@ Fluxora keeps local data until you delete it, uninstall Fluxora, reset the app, 
 8. Recipients and transfers
 Fluxora does not sell personal data and does not send logs or telemetry to ModdingFlow automatically. Data may be sent to third parties only when you initiate a feature that requires it, for example:
 
-- Nexus Mods OAuth and API endpoints when you connect or use Nexus Mods features.
+- Nexus Mods OAuth and API endpoints when you connect or use Nexus Mods features, including the optional MD5/game-domain identity lookup during install planning.
 - Nexus Mods API endpoints and allowlisted public Nexus pages when you request AI Nexus/web research.
 - Fluxora-managed Supabase configuration endpoints when AI needs to resolve provider credential availability; chat prompts and local build context are not sent to Supabase for this lookup.
 - AI model providers selected by you, or configured by a Fluxora AI mode, when you send an AI chat message or request an AI response. Provider processing is subject to the provider's own terms and privacy policy, and may involve transfer outside your country or the EU/EEA depending on the provider.

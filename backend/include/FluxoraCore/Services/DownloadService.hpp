@@ -4,6 +4,7 @@
 #include "FluxoraCore/Services/DownloadTransferLimiter.hpp"
 #include "FluxoraCore/Services/FomodInstallerService.hpp"
 #include "FluxoraCore/Services/IService.hpp"
+#include "FluxoraCore/Services/ModIdentityResolver.hpp"
 
 #include <condition_variable>
 #include <deque>
@@ -49,6 +50,17 @@ namespace fluxora
         std::wstring name;
         std::wstring version;
         bool isEnabled{true};
+        std::wstring latestVersion;
+        bool sourceIsNexus{false};
+        bool sourceIsModdingFlow{false};
+        std::wstring sourceProvider;
+        std::wstring sourceGameDomain;
+        std::wstring sourceModId;
+        std::wstring sourceFileId;
+        std::wstring sourceUrl;
+        bool isLocal{true};
+        bool isTranslation{false};
+        bool isPatch{false};
     };
 
     enum class ExistingModInstallMode
@@ -114,19 +126,29 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& downloadPath) const;
 
+        [[nodiscard]] FluxoraInstallPlan planDownloadInstall(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& downloadPath) const;
+
+        [[nodiscard]] FluxoraInstallPlan planArchiveInstall(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& archivePath) const;
+
         InstalledMod installDownload(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& downloadPath,
             std::wstring_view modName,
             ExistingModInstallMode existingModMode = ExistingModInstallMode::FailIfExists,
-            const std::vector<PlacementOverride>& placementOverrides = {}) const;
+            const std::vector<PlacementOverride>& placementOverrides = {},
+            const ModIdentityInstallSelection* identitySelection = nullptr) const;
 
         InstalledMod installArchive(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& archivePath,
             std::wstring_view modName,
             ExistingModInstallMode existingModMode = ExistingModInstallMode::FailIfExists,
-            const std::vector<PlacementOverride>& placementOverrides = {}) const;
+            const std::vector<PlacementOverride>& placementOverrides = {},
+            const ModIdentityInstallSelection* identitySelection = nullptr) const;
 
         [[nodiscard]] PlacementPlan analyzeDownloadContentLayout(
             const std::filesystem::path& projectDirectory,
@@ -149,7 +171,8 @@ namespace fluxora
             std::wstring_view modName,
             ExistingModInstallMode existingModMode,
             const std::vector<std::wstring>& selectedOptionIds,
-            const std::vector<PlacementOverride>& placementOverrides = {}) const;
+            const std::vector<PlacementOverride>& placementOverrides = {},
+            const ModIdentityInstallSelection* identitySelection = nullptr) const;
 
         InstalledMod installFomodArchive(
             const std::filesystem::path& projectDirectory,
@@ -157,7 +180,8 @@ namespace fluxora
             std::wstring_view modName,
             ExistingModInstallMode existingModMode,
             const std::vector<std::wstring>& selectedOptionIds,
-            const std::vector<PlacementOverride>& placementOverrides = {}) const;
+            const std::vector<PlacementOverride>& placementOverrides = {},
+            const ModIdentityInstallSelection* identitySelection = nullptr) const;
 
         [[nodiscard]] bool isInitialized() const noexcept;
 

@@ -1,4 +1,5 @@
 #include "FluxoraCore/FluxoraCoreApi.hpp"
+#include "FluxoraCore/Support/JsonReader.hpp"
 
 #include "TestFilesystem.hpp"
 
@@ -374,6 +375,214 @@ namespace fluxora::tests
             FluxoraCoreResultOk);
         EXPECT_EQ(readTextFile(profilePlugins).find("SkyUI_SE.esp"), std::string::npos);
         EXPECT_NE(readTextFile(profilePlugins).find("*Skyrim.esm\n"), std::string::npos);
+
+        fluxora_core_shutdown();
+#endif
+    }
+
+    TEST(FluxoraCoreApiTests, NexusDownloadInstallResponseIncludesPersistedIdentity)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Core API Nexus install response test uses the Windows instance metadata store.";
+#else
+        fluxora_core_shutdown();
+
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path project = installRoot / L"Nexus Install Response Build";
+        const std::filesystem::path downloadPath =
+            project / L"downloads" / L"Cabbage CS Preset 1.4.0.zip";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+
+        std::array<wchar_t, 4> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_create_project(
+                L"Nexus Install Response Build",
+                L"skyrimse",
+                game.c_str(),
+                installRoot.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        (void)copyBufferedApiOutput();
+
+        writeZipArchive(
+            downloadPath,
+            {
+                ZipEntry{L"SKSE/Plugins/CabbagePreset.dll", "plugin"},
+                ZipEntry{
+                    L"fomod/info.xml",
+                    "<fomod><Name>Cabbage CS Preset</Name><Version>1.4.0</Version></fomod>"}
+            });
+        writeTextFile(
+            downloadPath.wstring() + L".fluxora.json",
+            R"json({
+                "source":"nxm://skyrimspecialedition/mods/182366/files/770345",
+                "gameDomain":"skyrimspecialedition",
+                "modId":"182366",
+                "fileId":"770345",
+                "nexusModName":"Cabbage CS Preset",
+                "version":"1.4.0",
+                "latestVersion":"1.4.0",
+                "isDownloading":false
+            })json");
+
+        const int installResult = fluxora_install_download_with_layout(
+            project.c_str(),
+            downloadPath.c_str(),
+            L"Cabbage CS Preset",
+            0,
+            nullptr,
+            smallBuffer.data(),
+            static_cast<int>(smallBuffer.size()));
+        if (installResult == FluxoraCoreResultCoreError && isMissingExtractorError(lastCoreError()))
+        {
+            GTEST_SKIP() << "No supported archive extractor was available.";
+        }
+        ASSERT_EQ(installResult, FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+
+        const std::wstring json = copyBufferedApiOutput();
+        EXPECT_NE(json.find(L"\"latestVersion\":\"1.4.0\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"sourceIsNexus\":true"), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"sourceProvider\":\"nexus\""), std::wstring::npos);
+        EXPECT_NE(
+            json.find(L"\"sourceGameDomain\":\"skyrimspecialedition\""),
+            std::wstring::npos);
+        EXPECT_NE(json.find(L"\"sourceModId\":\"182366\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"sourceFileId\":\"770345\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"isLocal\":false"), std::wstring::npos);
+
+        fluxora_core_shutdown();
+#endif
+    }
+
+    TEST(FluxoraCoreApiTests, PlannedInstallExportsReturnPlanRejectStaleArchiveAndInstallBothSources)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Planned install C ABI test uses the Windows instance metadata store.";
+#else
+        fluxora_core_shutdown();
+
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path project = installRoot / L"Planned C ABI Build";
+        const std::filesystem::path archive = project / L"downloads" / L"C ABI Identity 1.0.zip";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ executable stub");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+
+        std::array<wchar_t, 4> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_create_project(
+                L"Planned C ABI Build",
+                L"skyrimse",
+                game.c_str(),
+                installRoot.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        (void)copyBufferedApiOutput();
+
+        writeZipArchive(archive, {{L"Data/CAbiIdentity.esp", "first"}});
+        int planResult = fluxora_plan_download_install(
+            project.c_str(),
+            archive.c_str(),
+            smallBuffer.data(),
+            static_cast<int>(smallBuffer.size()));
+        if (planResult == FluxoraCoreResultCoreError && isMissingExtractorError(lastCoreError()))
+        {
+            GTEST_SKIP() << "No supported archive extractor was available.";
+        }
+        ASSERT_EQ(planResult, FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const std::wstring stalePlanJson = copyBufferedApiOutput();
+        const JsonValue stalePlan = JsonReader::parse(stalePlanJson);
+        const JsonValue* staleResolution = stalePlan.find(L"resolutionId");
+        ASSERT_NE(staleResolution, nullptr);
+        ASSERT_TRUE(staleResolution->isString());
+        EXPECT_NE(stalePlanJson.find(L"\"resolutionKind\""), std::wstring::npos);
+        EXPECT_NE(stalePlanJson.find(L"\"fomodInstaller\""), std::wstring::npos);
+        EXPECT_NE(stalePlanJson.find(L"\"evidenceCodes\""), std::wstring::npos);
+
+        writeZipArchive(archive, {{L"Data/CAbiIdentity.esp", "changed"}});
+        EXPECT_EQ(
+            fluxora_install_download_planned(
+                project.c_str(),
+                archive.c_str(),
+                L"C ABI Identity",
+                0,
+                nullptr,
+                staleResolution->asString().c_str(),
+                1,
+                nullptr,
+                0,
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultCoreError);
+        EXPECT_EQ(lastCoreError(), L"install.identityPlanStale");
+        EXPECT_FALSE(std::filesystem::exists(project / L"mods" / L"C ABI Identity"));
+
+        ASSERT_EQ(
+            fluxora_plan_download_install(
+                project.c_str(),
+                archive.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        const JsonValue downloadPlan = JsonReader::parse(copyBufferedApiOutput());
+        const JsonValue* downloadResolution = downloadPlan.find(L"resolutionId");
+        ASSERT_NE(downloadResolution, nullptr);
+        ASSERT_TRUE(downloadResolution->isString());
+        const int downloadInstallResult = fluxora_install_download_planned(
+            project.c_str(),
+            archive.c_str(),
+            L"C ABI Identity",
+            0,
+            nullptr,
+            downloadResolution->asString().c_str(),
+            1,
+            nullptr,
+            0,
+            smallBuffer.data(),
+            static_cast<int>(smallBuffer.size()));
+        if (downloadInstallResult == FluxoraCoreResultCoreError && isMissingExtractorError(lastCoreError()))
+        {
+            GTEST_SKIP() << "No supported archive extractor was available.";
+        }
+        ASSERT_EQ(downloadInstallResult, FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        EXPECT_NE(copyBufferedApiOutput().find(L"\"name\":\"C ABI Identity\""), std::wstring::npos);
+
+        ASSERT_EQ(
+            fluxora_plan_archive_install(
+                project.c_str(),
+                archive.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        const JsonValue archivePlan = JsonReader::parse(copyBufferedApiOutput());
+        const JsonValue* archiveResolution = archivePlan.find(L"resolutionId");
+        ASSERT_NE(archiveResolution, nullptr);
+        ASSERT_TRUE(archiveResolution->isString());
+        ASSERT_EQ(
+            fluxora_install_archive_planned(
+                project.c_str(),
+                archive.c_str(),
+                L"C ABI Identity",
+                0,
+                nullptr,
+                archiveResolution->asString().c_str(),
+                1,
+                nullptr,
+                0,
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall)
+            << toUtf8(lastCoreError());
+        EXPECT_NE(copyBufferedApiOutput().find(L"C ABI Identity (2)"), std::wstring::npos);
 
         fluxora_core_shutdown();
 #endif

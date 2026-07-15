@@ -158,6 +158,7 @@ add_library(FluxoraCore SHARED
     src/Services/GrassCacheService.cpp
     src/Services/Logger.cpp
     src/Services/ModService.cpp
+    src/Services/ModIdentityResolver.cpp
     src/Services/NifPreviewResolver.cpp
     src/Services/ModOrganizerExecutableImportService.cpp
     src/Services/ModOrganizerImportService.cpp
@@ -209,7 +210,7 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(FluxoraCore PRIVATE advapi32 bcrypt crypt32 gdiplus rstrtmgr shell32 winhttp ws2_32)
+    target_link_libraries(FluxoraCore PRIVATE advapi32 bcrypt crypt32 gdiplus normaliz rstrtmgr shell32 winhttp ws2_32)
 endif()
 
 # --------------------------------------------------------------------------

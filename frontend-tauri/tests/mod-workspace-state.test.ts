@@ -376,6 +376,17 @@ describe('mod workspace state', () => {
       name: 'Cabbage CS Preset',
       version: '1.4.0',
       isEnabled: true,
+      latestVersion: '1.4.0',
+      sourceIsNexus: true,
+      sourceIsModdingFlow: false,
+      sourceProvider: 'nexus',
+      sourceGameDomain: 'skyrimspecialedition',
+      sourceModId: '182366',
+      sourceFileId: '770345',
+      sourceUrl: 'nxm://skyrimspecialedition/mods/182366/files/770345',
+      isLocal: false,
+      isTranslation: false,
+      isPatch: false,
       operationId: 'op_install_cabbage'
     };
 
@@ -399,7 +410,22 @@ describe('mod workspace state', () => {
       id: installed.id,
       name: installed.name,
       version: installed.version,
-      isEnabled: true
+      latestVersion: '1.4.0',
+      isEnabled: true,
+      canCheckUpdates: true,
+      sourceIsNexus: true,
+      sourceProvider: 'nexus',
+      sourceGameDomain: 'skyrimspecialedition',
+      sourceModId: '182366',
+      sourceFileId: '770345',
+      sourceUrl: 'nxm://skyrimspecialedition/mods/182366/files/770345',
+      isLocal: false
+    });
+    expect(optimistic.items.at(-2)).toMatchObject({
+      latestVersion: '1.4.0',
+      canCheckUpdates: true,
+      sourceIsNexus: true,
+      isLocal: false
     });
     expect(optimistic.installedOrderId).toBe('pending-install:op_install_cabbage');
   });

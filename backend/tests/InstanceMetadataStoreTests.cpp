@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <stdexcept>
@@ -229,6 +230,221 @@ namespace fluxora::tests
         EXPECT_EQ(order[0].position, 0);
     }
 
+    TEST(InstanceMetadataStoreTests, IdentityCandidateQueryUsesDatabaseIndexAndLimitsFuzzyResults)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+
+        std::vector<InstalledModImportRecord> imports;
+        for (int index = 1; index <= 7; ++index)
+        {
+            const std::wstring name = L"Amazing Weather Variant " + std::to_wstring(index);
+            const std::filesystem::path modPath = mods / name;
+            writeTextFile(modPath / L"Data" / (L"Weather" + std::to_wstring(index) + L".esp"), "plugin");
+            imports.push_back(InstalledModImportRecord{modPath, name, L"1.0", true, {}});
+        }
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(project, imports);
+        InstanceMetadataStore::resetInventorySyncCountForTesting();
+
+        ModIdentityCatalogQuery query;
+        query.normalizedName = L"amazing weather overhaul";
+        query.tokens = {L"amazing", L"weather", L"overhaul"};
+        const ModIdentityCatalogSnapshot snapshot =
+            InstanceMetadataStore::queryModIdentityCandidates(project, query);
+
+        EXPECT_EQ(snapshot.candidates.size(), 5U);
+        EXPECT_GT(snapshot.catalogRevision, 0U);
+        EXPECT_EQ(InstanceMetadataStore::inventorySyncCountForTesting(), 0U);
+
+        const std::filesystem::path database = project / L"instance.db";
+        EXPECT_TRUE(sqliteTableExists(database, "mod_identity_keys"));
+        EXPECT_TRUE(sqliteTableExists(database, "mod_identity_tokens"));
+        EXPECT_TRUE(sqliteTableExists(database, "mod_identity_aliases"));
+        EXPECT_TRUE(sqliteTableExists(database, "mod_identity_exclusions"));
+        EXPECT_TRUE(sqliteTableExists(database, "mod_identity_cache"));
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 7);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, IdentityCandidateIndexStaysUnderFiftyMillisecondsForFiveThousandMods)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+
+        std::string seed = "BEGIN;";
+        seed.reserve(2'500'000);
+        for (int index = 1; index <= 5'000; ++index)
+        {
+            const std::string number = std::to_string(index);
+            seed += "INSERT INTO mods(id,uuid,game_id,folder_name,display_name,installed_at,updated_at) VALUES(";
+            seed += number + ",'uuid-" + number + "','skyrimse','Weather " + number +
+                "','Amazing Weather Variant " + number + "','2026-07-15T00:00:00Z','2026-07-15T00:00:00Z');";
+            seed += "INSERT INTO mod_identity_keys(mod_id,key_kind,key_value,created_at) VALUES(" +
+                number + ",'name','amazing weather variant " + number + "','');";
+            seed += "INSERT INTO mod_identity_tokens(mod_id,token,weight) VALUES(" +
+                number + ",'amazing',3);";
+            seed += "INSERT INTO mod_identity_tokens(mod_id,token,weight) VALUES(" +
+                number + ",'weather',3);";
+        }
+        seed += "COMMIT;";
+        sqliteExec(project / L"instance.db", seed.c_str());
+
+        ModIdentityCatalogQuery query;
+        query.normalizedName = L"amazing weather overhaul";
+        query.tokens = {L"amazing", L"weather", L"overhaul"};
+        query.limit = 5;
+        ASSERT_EQ(
+            InstanceMetadataStore::queryModIdentityCandidates(project, query).candidates.size(),
+            5U);
+
+        std::chrono::milliseconds best{10'000};
+        for (int iteration = 0; iteration < 5; ++iteration)
+        {
+            const auto startedAt = std::chrono::steady_clock::now();
+            const ModIdentityCatalogSnapshot snapshot =
+                InstanceMetadataStore::queryModIdentityCandidates(project, query);
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - startedAt);
+            best = (std::min)(best, elapsed);
+            ASSERT_EQ(snapshot.candidates.size(), 5U);
+        }
+        EXPECT_LT(best.count(), 50);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, IdentityMetadataPersistsAliasesAndFomodIdInPortableManifestV2)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path modPath = project / L"mods" / L"Spell Perks Item Distributor";
+        writeTextFile(modPath / L"Data" / L"SPID.esp", "plugin");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+            project,
+            modPath,
+            L"Spell Perks Item Distributor",
+            L"7.2.0",
+            ModSourceRecord{L"manual", {}, {}, {}});
+
+        ModIdentityPersistenceUpdate update;
+        update.modUuid = installed.uuid;
+        update.fomodModuleId = L"spid-module";
+        update.confirmedAliases = {L"SPID", L"Renamed Incoming Archive"};
+        update.sourceProvider = L"nexus";
+        update.sourceGameDomain = L"skyrimspecialedition";
+        update.sourceRemoteModId = L"36869";
+        update.sourceRemoteFileId = L"100";
+        InstanceMetadataStore::recordModIdentity(project, update);
+
+        ModIdentityCatalogQuery query;
+        query.normalizedName = L"renamed incoming archive";
+        query.tokens = {L"renamed", L"incoming", L"archive"};
+        const ModIdentityCatalogSnapshot snapshot =
+            InstanceMetadataStore::queryModIdentityCandidates(project, query);
+
+        ASSERT_EQ(snapshot.candidates.size(), 1U);
+        EXPECT_EQ(snapshot.candidates[0].mod.uuid, installed.uuid);
+        EXPECT_EQ(snapshot.candidates[0].fomodModuleId, L"spid-module");
+        EXPECT_EQ(snapshot.candidates[0].aliases.size(), 2U);
+
+        ModIdentityCatalogQuery sourceQuery;
+        sourceQuery.provider = L"nexus";
+        sourceQuery.gameDomain = L"skyrimspecialedition";
+        sourceQuery.remoteModId = L"36869";
+        const ModIdentityCatalogSnapshot sourceSnapshot =
+            InstanceMetadataStore::queryModIdentityCandidates(project, sourceQuery);
+        ASSERT_EQ(sourceSnapshot.candidates.size(), 1U);
+        EXPECT_EQ(sourceSnapshot.candidates[0].mod.uuid, installed.uuid);
+        EXPECT_EQ(sourceSnapshot.candidates[0].mod.source.remoteFileId, L"100");
+        EXPECT_TRUE(sourceSnapshot.candidates[0].mod.sourceIsNexus);
+        EXPECT_FALSE(sourceSnapshot.candidates[0].mod.isLocal);
+
+        const std::string manifest = readTextFile(portableManifestPath(modPath));
+        EXPECT_NE(manifest.find(R"("schemaVersion":2)"), std::string::npos);
+        EXPECT_NE(manifest.find(R"("fomodModuleId":"spid-module")"), std::string::npos);
+        EXPECT_NE(manifest.find(R"("Renamed Incoming Archive")"), std::string::npos);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, IdentityContentAndOnlineCachesInvalidateByArchiveFingerprint)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+
+        const std::wstring fingerprint = L"v=2|path=one|content=abc";
+        InstanceMetadataStore::recordModIdentityContentCache(
+            project,
+            fingerprint,
+            ModIdentityContentCacheRecord{
+                {L"weather.esp"},
+                {L"weather.bsa"},
+                {L"weather.dll"}
+            });
+        const std::optional<ModIdentityContentCacheRecord> content =
+            InstanceMetadataStore::modIdentityContentCache(project, fingerprint);
+        ASSERT_TRUE(content.has_value());
+        EXPECT_EQ(content->pluginFiles, (std::vector<std::wstring>{L"weather.esp"}));
+        EXPECT_FALSE(InstanceMetadataStore::modIdentityContentCache(
+            project,
+            L"v=2|path=one|content=changed").has_value());
+
+        InstanceMetadataStore::recordModIdentityOnlineCache(
+            project,
+            fingerprint,
+            ModIdentityOnlineCacheRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"3863",
+                L"123",
+                L"SkyUI",
+                L"md5",
+                L"sha256",
+                1'048'576,
+                L"2026-07-15T00:00:00Z"
+            });
+        const std::optional<ModIdentityOnlineCacheRecord> online =
+            InstanceMetadataStore::modIdentityOnlineCache(
+                project,
+                fingerprint,
+                L"NEXUS",
+                L"SkyrimSpecialEdition",
+                L"MD5",
+                L"SHA256",
+                1'048'576);
+        ASSERT_TRUE(online.has_value());
+        EXPECT_EQ(online->remoteModId, L"3863");
+        EXPECT_EQ(online->remoteFileId, L"123");
+        EXPECT_EQ(online->modName, L"SkyUI");
+        EXPECT_FALSE(InstanceMetadataStore::modIdentityOnlineCache(
+            project,
+            fingerprint,
+            L"nexus",
+            L"skyrimspecialedition",
+            L"md5",
+            L"sha256",
+            1'048'577).has_value());
+        EXPECT_TRUE(InstanceMetadataStore::modIdentityContentCache(project, fingerprint).has_value());
+#endif
+    }
+
     TEST(InstanceMetadataStoreTests, CloneRenameAndDeleteProfileStatePreservesScopedOrder)
     {
 #ifndef _WIN32
@@ -415,7 +631,7 @@ namespace fluxora::tests
         {
             EXPECT_TRUE(sqliteTableExists(database, table)) << table;
         }
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 6);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 7);
 
         const std::vector<InstalledModRecord> records =
             InstanceMetadataStore::listInstalledMods(project, mods);
@@ -1294,7 +1510,7 @@ namespace fluxora::tests
         const std::filesystem::path project = temp.path() / L"project";
         const std::filesystem::path database = project / L"instance.db";
         std::filesystem::create_directories(project);
-        sqliteExec(database, "PRAGMA user_version = 7;");
+        sqliteExec(database, "PRAGMA user_version = 8;");
         ASSERT_FALSE(sqliteTableExists(database, "instance_metadata"));
         InstanceMetadataStore::resetSqlPrepareCountForTesting();
         InstanceMetadataStore::resetSqlExecCountForTesting();
@@ -1304,7 +1520,7 @@ namespace fluxora::tests
             std::runtime_error);
         EXPECT_EQ(InstanceMetadataStore::sqlPrepareCountForTesting(), 1U);
         EXPECT_EQ(InstanceMetadataStore::sqlExecCountForTesting(), 0U);
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 7);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 8);
         EXPECT_FALSE(sqliteTableExists(database, "instance_metadata"));
 #endif
     }
@@ -1342,7 +1558,7 @@ namespace fluxora::tests
 
         EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
 
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 6);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 7);
         EXPECT_TRUE(sqliteTableExists(database, "mod_file_cache_state"));
         EXPECT_GT(InstanceMetadataStore::sqlPrepareCountForTesting(), 2U);
         EXPECT_GT(InstanceMetadataStore::sqlExecCountForTesting(), 3U);

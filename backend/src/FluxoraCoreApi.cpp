@@ -1089,6 +1089,17 @@ namespace
         writer.field(L"name", mod.name);
         writer.field(L"version", mod.version);
         writer.field(L"isEnabled", mod.isEnabled);
+        writer.field(L"latestVersion", mod.latestVersion);
+        writer.field(L"sourceIsNexus", mod.sourceIsNexus);
+        writer.field(L"sourceIsModdingFlow", mod.sourceIsModdingFlow);
+        writer.field(L"sourceProvider", mod.sourceProvider);
+        writer.field(L"sourceGameDomain", mod.sourceGameDomain);
+        writer.field(L"sourceModId", mod.sourceModId);
+        writer.field(L"sourceFileId", mod.sourceFileId);
+        writer.field(L"sourceUrl", mod.sourceUrl);
+        writer.field(L"isLocal", mod.isLocal);
+        writer.field(L"isTranslation", mod.isTranslation);
+        writer.field(L"isPatch", mod.isPatch);
         writer.endObject();
         return writer.str();
     }
@@ -1364,9 +1375,10 @@ namespace
         writer.endObject();
     }
 
-    std::wstring serializeFomodInstaller(const fluxora::FomodInstallerDescriptor& descriptor)
+    void writeFomodInstaller(
+        fluxora::JsonWriter& writer,
+        const fluxora::FomodInstallerDescriptor& descriptor)
     {
-        fluxora::JsonWriter writer;
         writer.beginObject();
         writer.field(L"isFomod", descriptor.isFomod);
         writer.field(L"moduleName", descriptor.moduleName);
@@ -1410,7 +1422,6 @@ namespace
         }
         writer.endArray();
         writer.endObject();
-        return writer.str();
     }
 
     void writeInstalledModEntry(fluxora::JsonWriter& writer, const fluxora::InstalledModEntry& mod)
@@ -1560,6 +1571,55 @@ namespace
             writeProfileModOrderItem(writer, item);
         }
         writer.endArray();
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeFomodInstaller(const fluxora::FomodInstallerDescriptor& descriptor)
+    {
+        fluxora::JsonWriter writer;
+        writeFomodInstaller(writer, descriptor);
+        return writer.str();
+    }
+
+    std::wstring identityResolutionKindName(fluxora::ModIdentityResolutionKind kind)
+    {
+        switch (kind)
+        {
+        case fluxora::ModIdentityResolutionKind::Exact:
+            return L"exact";
+        case fluxora::ModIdentityResolutionKind::Probable:
+            return L"probable";
+        case fluxora::ModIdentityResolutionKind::None:
+        default:
+            return L"none";
+        }
+    }
+
+    std::wstring serializeInstallPlan(const fluxora::FluxoraInstallPlan& plan)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"suggestedModName", plan.suggestedModName);
+        writer.field(L"resolutionKind", identityResolutionKindName(plan.resolutionKind));
+        writer.key(L"matchedTarget");
+        if (plan.matchedTarget.has_value())
+        {
+            writer.beginObject();
+            writer.field(L"modUuid", plan.matchedTarget->modUuid);
+            writer.field(L"displayName", plan.matchedTarget->displayName);
+            writer.field(L"folderName", plan.matchedTarget->folderName);
+            writer.endObject();
+        }
+        else
+        {
+            writer.nullValue();
+        }
+        writer.field(L"resolutionId", plan.resolutionId);
+        writer.key(L"fomodInstaller");
+        writeFomodInstaller(writer, plan.fomodInstaller);
+        writer.stringArray(L"evidenceCodes", plan.evidenceCodes);
+        writer.field(L"score", plan.score);
         writer.endObject();
         return writer.str();
     }
@@ -2449,6 +2509,39 @@ namespace
         }
     }
 
+    bool tryParseIdentityInstallSelection(
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        fluxora::ModIdentityInstallSelection& selection)
+    {
+        if (isBlank(resolutionId) || newNamePolicy != 0)
+        {
+            return false;
+        }
+        if (identityDecision == 0)
+        {
+            if (isBlank(targetModUuid))
+            {
+                return false;
+            }
+            selection.decision = fluxora::InstallIdentityDecision::UseMatch;
+        }
+        else if (identityDecision == 1)
+        {
+            selection.decision = fluxora::InstallIdentityDecision::InstallNew;
+        }
+        else
+        {
+            return false;
+        }
+        selection.resolutionId = resolutionId;
+        selection.targetModUuid = isBlank(targetModUuid) ? std::wstring{} : std::wstring(targetModUuid);
+        selection.newNamePolicy = fluxora::NewNamePolicy::FirstFreeCopySuffix;
+        return true;
+    }
+
     void writeTextFileDocumentJson(
         fluxora::JsonWriter& writer,
         const std::filesystem::path& path,
@@ -2695,6 +2788,7 @@ namespace
         const wchar_t* modName,
         int existingModMode,
         const wchar_t* placementOverridesJson,
+        const fluxora::ModIdentityInstallSelection* identitySelection,
         wchar_t* jsonBuffer,
         int jsonBufferLength)
     {
@@ -2731,7 +2825,8 @@ namespace
                     std::filesystem::path(downloadPath),
                     modName,
                     mode,
-                    placementOverrides));
+                    placementOverrides,
+                    identitySelection));
             syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Install download", true);
             logOperation(fluxora::LogLevel::Info, "Downloads", "Install download completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
@@ -2748,6 +2843,7 @@ namespace
         const wchar_t* modName,
         int existingModMode,
         const wchar_t* placementOverridesJson,
+        const fluxora::ModIdentityInstallSelection* identitySelection,
         wchar_t* jsonBuffer,
         int jsonBufferLength)
     {
@@ -2784,7 +2880,8 @@ namespace
                     std::filesystem::path(archivePath),
                     modName,
                     mode,
-                    placementOverrides));
+                    placementOverrides,
+                    identitySelection));
             syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Install archive", true);
             logOperation(fluxora::LogLevel::Info, "Mods", "Install archive completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
@@ -5459,6 +5556,58 @@ extern "C"
         }
     }
 
+    int fluxora_plan_download_install(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(downloadPath))
+            {
+                lastError = L"Project directory and download path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            return writeToBuffer(
+                serializeInstallPlan(core().downloads().planDownloadInstall(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(downloadPath))),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_plan_archive_install(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(archivePath))
+            {
+                lastError = L"Project directory and archive path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            return writeToBuffer(
+                serializeInstallPlan(core().downloads().planArchiveInstall(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(archivePath))),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
     int fluxora_install_download(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
@@ -5471,6 +5620,7 @@ extern "C"
             downloadPath,
             modName,
             0,
+            nullptr,
             nullptr,
             jsonBuffer,
             jsonBufferLength);
@@ -5489,6 +5639,7 @@ extern "C"
             downloadPath,
             modName,
             existingModMode,
+            nullptr,
             nullptr,
             jsonBuffer,
             jsonBufferLength);
@@ -5509,6 +5660,42 @@ extern "C"
             modName,
             existingModMode,
             placementOverridesJson,
+            nullptr,
+            jsonBuffer,
+            jsonBufferLength);
+    }
+
+    int fluxora_install_download_planned(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        fluxora::ModIdentityInstallSelection selection;
+        if (!tryParseIdentityInstallSelection(
+                resolutionId,
+                identityDecision,
+                targetModUuid,
+                newNamePolicy,
+                selection))
+        {
+            lastError = L"Install identity selection is invalid.";
+            return FluxoraCoreResultInvalidArgument;
+        }
+        return installDownloadWithMode(
+            projectDirectory,
+            downloadPath,
+            modName,
+            existingModMode,
+            placementOverridesJson,
+            &selection,
             jsonBuffer,
             jsonBufferLength);
     }
@@ -5526,6 +5713,7 @@ extern "C"
             archivePath,
             modName,
             existingModMode,
+            nullptr,
             nullptr,
             jsonBuffer,
             jsonBufferLength);
@@ -5546,6 +5734,42 @@ extern "C"
             modName,
             existingModMode,
             placementOverridesJson,
+            nullptr,
+            jsonBuffer,
+            jsonBufferLength);
+    }
+
+    int fluxora_install_archive_planned(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        fluxora::ModIdentityInstallSelection selection;
+        if (!tryParseIdentityInstallSelection(
+                resolutionId,
+                identityDecision,
+                targetModUuid,
+                newNamePolicy,
+                selection))
+        {
+            lastError = L"Install identity selection is invalid.";
+            return FluxoraCoreResultInvalidArgument;
+        }
+        return installArchiveWithMode(
+            projectDirectory,
+            archivePath,
+            modName,
+            existingModMode,
+            placementOverridesJson,
+            &selection,
             jsonBuffer,
             jsonBufferLength);
     }
@@ -5886,6 +6110,124 @@ extern "C"
                     placementOverrides));
             syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Install FOMOD archive", true);
             logOperation(fluxora::LogLevel::Info, "Mods", "Install FOMOD archive completed.");
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_install_fomod_download_planned(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(downloadPath) || isBlank(modName))
+            {
+                lastError = L"Project directory, download path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            fluxora::ModIdentityInstallSelection selection;
+            if (!tryParseExistingModInstallMode(existingModMode, mode) ||
+                !tryParseIdentityInstallSelection(
+                    resolutionId,
+                    identityDecision,
+                    targetModUuid,
+                    newNamePolicy,
+                    selection))
+            {
+                lastError = L"Install mode or identity selection is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const std::vector<std::wstring> selectedOptionIds =
+                parseStringArrayJson(selectedOptionIdsJson);
+            const std::vector<fluxora::PlacementOverride> placementOverrides =
+                parsePlacementOverridesJson(placementOverridesJson);
+            const std::wstring json = serializeInstalledMod(
+                core().downloads().installFomodDownload(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(downloadPath),
+                    modName,
+                    mode,
+                    selectedOptionIds,
+                    placementOverrides,
+                    &selection));
+            syncSkyrimPluginsForInstalledMods(
+                std::filesystem::path(projectDirectory),
+                "Install planned FOMOD download",
+                true);
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_install_fomod_archive_planned(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(archivePath) || isBlank(modName))
+            {
+                lastError = L"Project directory, archive path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            fluxora::ModIdentityInstallSelection selection;
+            if (!tryParseExistingModInstallMode(existingModMode, mode) ||
+                !tryParseIdentityInstallSelection(
+                    resolutionId,
+                    identityDecision,
+                    targetModUuid,
+                    newNamePolicy,
+                    selection))
+            {
+                lastError = L"Install mode or identity selection is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const std::vector<std::wstring> selectedOptionIds =
+                parseStringArrayJson(selectedOptionIdsJson);
+            const std::vector<fluxora::PlacementOverride> placementOverrides =
+                parsePlacementOverridesJson(placementOverridesJson);
+            const std::wstring json = serializeInstalledMod(
+                core().downloads().installFomodArchive(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(archivePath),
+                    modName,
+                    mode,
+                    selectedOptionIds,
+                    placementOverrides,
+                    &selection));
+            syncSkyrimPluginsForInstalledMods(
+                std::filesystem::path(projectDirectory),
+                "Install planned FOMOD archive",
+                true);
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)

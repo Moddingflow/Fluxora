@@ -1,0 +1,367 @@
+#include "FluxoraCore/Services/ModIdentityResolver.hpp"
+#include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
+#include "TestFilesystem.hpp"
+
+#include <gtest/gtest.h>
+
+namespace fluxora
+{
+    TEST(ModIdentityResolverTests, ExpandsConfirmedSpidAbbreviation)
+    {
+        EXPECT_EQ(
+            ModIdentityResolver::canonicalSuggestedName(
+                L"Spell Perks Item Distributor (SPID)"),
+            L"Spell Perks Item Distributor");
+    }
+
+    TEST(ModIdentityResolverTests, StableProviderGameAndModIdIgnoreChangingFileId)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"SPID 7.2.0";
+        incoming.source = {L"nexus", L"skyrimspecialedition", L"36869", L"200"};
+
+        ModIdentityCandidate installed;
+        installed.target = {L"mod-spid", L"Spell Perks Item Distributor", L"SPID"};
+        installed.source = {L"nexus", L"skyrimspecialedition", L"36869", L"100"};
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {installed});
+
+        ASSERT_TRUE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Exact);
+        EXPECT_EQ(resolution.matchedTarget->modUuid, L"mod-spid");
+        EXPECT_EQ(resolution.suggestedModName, L"Spell Perks Item Distributor");
+        EXPECT_EQ(resolution.score, 100);
+    }
+
+    TEST(ModIdentityResolverTests, ConfirmedAliasIsAnExactMatch)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"SPID";
+
+        ModIdentityCandidate installed;
+        installed.target = {L"mod-spid", L"Spell Perks Item Distributor", L"SPID"};
+        installed.aliases = {L"spid"};
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {installed});
+
+        ASSERT_TRUE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Exact);
+        EXPECT_EQ(resolution.score, 98);
+    }
+
+    TEST(ModIdentityResolverTests, UniqueFomodModuleIdIsAnExactMatch)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"A renamed archive";
+        incoming.fomodModuleId = L"spid-module";
+
+        ModIdentityCandidate installed;
+        installed.target = {L"mod-spid", L"Spell Perks Item Distributor", L"SPID"};
+        installed.fomodModuleId = L"SPID-MODULE";
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {installed});
+
+        ASSERT_TRUE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Exact);
+        EXPECT_EQ(resolution.score, 96);
+    }
+
+    TEST(ModIdentityResolverTests, SafeNormalizedNameHandlesNfkcSeparatorsAndVersion)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"ＳｋｙＵＩ＿ＳＥ 5.2.0";
+
+        ModIdentityCandidate installed;
+        installed.target = {L"mod-skyui", L"SkyUI-SE", L"SkyUI"};
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {installed});
+
+        ASSERT_TRUE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(resolution.score, 90);
+    }
+
+    TEST(ModIdentityResolverTests, SignificantParentheticalTextRemainsPartOfIdentity)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"Some Mod (Patch) 1.0";
+
+        ModIdentityCandidate base;
+        base.target = {L"base", L"Some Mod", L"Some Mod"};
+        ModIdentityCandidate patch;
+        patch.target = {L"patch", L"Some Mod (Patch)", L"Some Mod (Patch)"};
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {base, patch});
+
+        ASSERT_TRUE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.matchedTarget->modUuid, L"patch");
+    }
+
+    TEST(ModIdentityResolverTests, ContentAnchorsCreateProbableMatchWithRequiredMargin)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"Amazing Weather Overhaul";
+        incoming.content.pluginFiles = {L"AmazingWeather.esp"};
+        incoming.content.archiveFiles = {L"AmazingWeather.bsa"};
+
+        ModIdentityCandidate match;
+        match.target = {L"weather", L"Amazing Weather", L"Amazing Weather"};
+        match.content.pluginFiles = {L"amazingweather.esp"};
+        match.content.archiveFiles = {L"amazingweather.bsa"};
+
+        ModIdentityCandidate runnerUp;
+        runnerUp.target = {L"weather-patch", L"Amazing Weather Patch", L"Amazing Weather Patch"};
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {match, runnerUp});
+
+        ASSERT_TRUE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(resolution.matchedTarget->modUuid, L"weather");
+        EXPECT_GE(resolution.score, 86);
+    }
+
+    TEST(ModIdentityResolverTests, ConflictingStableSourceBlocksEvenAnIdenticalName)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"Identical Mod";
+        incoming.source = {L"nexus", L"skyrimspecialedition", L"100", L"2"};
+
+        ModIdentityCandidate installed;
+        installed.target = {L"different-mod", L"Identical Mod", L"Identical Mod"};
+        installed.source = {L"nexus", L"skyrimspecialedition", L"200", L"1"};
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {installed});
+
+        EXPECT_FALSE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::None);
+    }
+
+    TEST(ModIdentityResolverTests, TieWeakAndExcludedCandidatesKeepTheIncomingName)
+    {
+        ModIdentityInput tiedInput;
+        tiedInput.displayName = L"Same Name 2.0";
+        ModIdentityCandidate first;
+        first.target = {L"first", L"Same Name", L"Same Name"};
+        ModIdentityCandidate second;
+        second.target = {L"second", L"Same Name", L"Same Name"};
+
+        const ModIdentityResolution tied = ModIdentityResolver::resolve(
+            tiedInput,
+            {first, second});
+        EXPECT_FALSE(tied.matchedTarget.has_value());
+        EXPECT_EQ(tied.suggestedModName, L"Same Name 2.0");
+
+        ModIdentityInput weakInput;
+        weakInput.displayName = L"Unrelated Incoming Archive";
+        const ModIdentityResolution weak = ModIdentityResolver::resolve(weakInput, {first});
+        EXPECT_FALSE(weak.matchedTarget.has_value());
+
+        ModIdentityInput excludedInput;
+        excludedInput.displayName = L"Same Name";
+        excludedInput.source = {L"nexus", L"skyrimspecialedition", L"500", L"2"};
+        first.source = {L"nexus", L"skyrimspecialedition", L"500", L"1"};
+        first.excluded = true;
+        const ModIdentityResolution excluded = ModIdentityResolver::resolve(excludedInput, {first});
+        EXPECT_FALSE(excluded.matchedTarget.has_value());
+    }
+
+    TEST(ModIdentityResolverTests, DuplicateStableSourceNeedsAnAdditionalUniqueSignal)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"Downloaded Archive";
+        incoming.source = {L"nexus", L"skyrimspecialedition", L"36869", L"300"};
+
+        ModIdentityCandidate first;
+        first.target = {L"first", L"Spell Perks Item Distributor", L"SPID"};
+        first.source = {L"nexus", L"skyrimspecialedition", L"36869", L"100"};
+        ModIdentityCandidate second;
+        second.target = {L"second", L"SPID Separate Configuration", L"SPID Separate Configuration"};
+        second.source = {L"nexus", L"skyrimspecialedition", L"36869", L"200"};
+
+        EXPECT_FALSE(ModIdentityResolver::resolve(incoming, {first, second}).matchedTarget.has_value());
+
+        incoming.displayName = L"Spell Perks Item Distributor";
+        const ModIdentityResolution named = ModIdentityResolver::resolve(incoming, {first, second});
+        ASSERT_TRUE(named.matchedTarget.has_value());
+        EXPECT_EQ(named.matchedTarget->modUuid, L"first");
+    }
+
+    TEST(ModIdentityResolverTests, ExclusionDoesNotMakeDuplicateStableSourceUniqueAgain)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"Downloaded Archive";
+        incoming.source = {L"nexus", L"skyrimspecialedition", L"36869", L"300"};
+
+        ModIdentityCandidate rejected;
+        rejected.target = {L"rejected", L"Spell Perks Item Distributor", L"SPID"};
+        rejected.source = {L"nexus", L"skyrimspecialedition", L"36869", L"100"};
+        rejected.excluded = true;
+
+        ModIdentityCandidate separateCopy;
+        separateCopy.target = {
+            L"separate",
+            L"SPID Separate Configuration",
+            L"SPID Separate Configuration"
+        };
+        separateCopy.source = {L"nexus", L"skyrimspecialedition", L"36869", L"200"};
+
+        const ModIdentityResolution sourceOnly = ModIdentityResolver::resolve(
+            incoming,
+            {rejected, separateCopy});
+        EXPECT_FALSE(sourceOnly.matchedTarget.has_value());
+
+        incoming.displayName = L"SPID Separate Configuration";
+        const ModIdentityResolution named = ModIdentityResolver::resolve(
+            incoming,
+            {rejected, separateCopy});
+        ASSERT_TRUE(named.matchedTarget.has_value());
+        EXPECT_EQ(named.matchedTarget->modUuid, L"separate");
+    }
+
+    TEST(ModIdentityResolverTests, InstallPlanResolvesAndValidatesStableSourceMatch)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        tests::TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path modPath = project / L"mods" / L"SPID";
+        tests::writeTextFile(modPath / L"SKSE" / L"Plugins" / L"SPID.dll", "plugin");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+            project,
+            modPath,
+            L"Spell Perks Item Distributor",
+            L"7.1",
+            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"36869", L"100"});
+
+        ModIdentityPlanRequest request;
+        request.projectDirectory = project;
+        request.archiveFingerprint = L"archive-fingerprint";
+        request.input.displayName = L"SPID 7.2";
+        request.input.source = {L"nexus", L"skyrimspecialedition", L"36869", L"200"};
+        const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(std::move(request));
+
+        ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Exact);
+        EXPECT_EQ(plan.matchedTarget->modUuid, installed.uuid);
+        EXPECT_THROW(
+            (void)ModIdentityResolver::validateInstallPlan(
+                project,
+                L"archive-fingerprint",
+                ModIdentityInstallSelection{
+                    plan.resolutionId,
+                    InstallIdentityDecision::UseMatch,
+                    {},
+                    NewNamePolicy::FirstFreeCopySuffix
+                }),
+            InstallIdentityPlanStaleError);
+        const ValidatedModIdentityInstall validated = ModIdentityResolver::validateInstallPlan(
+            project,
+            L"archive-fingerprint",
+            ModIdentityInstallSelection{
+                plan.resolutionId,
+                InstallIdentityDecision::UseMatch,
+                installed.uuid,
+                NewNamePolicy::FirstFreeCopySuffix
+            });
+        ASSERT_TRUE(validated.matchedTarget.has_value());
+        EXPECT_EQ(validated.matchedTarget->displayName, L"Spell Perks Item Distributor");
+#endif
+    }
+
+    TEST(ModIdentityResolverTests, InstallPlanBecomesStaleAfterCatalogMutation)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        tests::TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+
+        ModIdentityPlanRequest request;
+        request.projectDirectory = project;
+        request.archiveFingerprint = L"archive-fingerprint";
+        request.input.displayName = L"New Mod";
+        const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(std::move(request));
+
+        const std::filesystem::path otherPath = project / L"mods" / L"Other";
+        tests::writeTextFile(otherPath / L"Data" / L"Other.esp", "plugin");
+        (void)InstanceMetadataStore::registerInstalledMod(
+            project,
+            otherPath,
+            L"Other",
+            L"1.0",
+            ModSourceRecord{L"manual"});
+
+        EXPECT_THROW(
+            (void)ModIdentityResolver::validateInstallPlan(
+                project,
+                L"archive-fingerprint",
+                ModIdentityInstallSelection{
+                    plan.resolutionId,
+                    InstallIdentityDecision::InstallNew,
+                    {},
+                    NewNamePolicy::FirstFreeCopySuffix
+                }),
+            InstallIdentityPlanStaleError);
+#endif
+    }
+
+    TEST(ModIdentityResolverTests, InstallPlanReusesFingerprintScopedIncomingContentCache)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        tests::TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path modPath = project / L"mods" / L"Amazing Weather Classic";
+        tests::writeTextFile(modPath / L"Data" / L"Weather.esp", "plugin");
+        tests::writeTextFile(modPath / L"Data" / L"Weather.bsa", "archive");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        (void)InstanceMetadataStore::registerInstalledMod(
+            project,
+            modPath,
+            L"Amazing Weather Classic",
+            L"1.0",
+            ModSourceRecord{L"manual"});
+
+        int loadCount = 0;
+        const auto createPlan = [&]()
+        {
+            ModIdentityPlanRequest request;
+            request.projectDirectory = project;
+            request.archiveFingerprint = L"archive-fingerprint";
+            request.input.displayName = L"Amazing Weather Overhaul";
+            request.loadIncomingContent = [&]()
+            {
+                ++loadCount;
+                return ModIdentityContentAnchors{
+                    {L"Weather.esp"},
+                    {L"Weather.bsa"},
+                    {}
+                };
+            };
+            return ModIdentityResolver::createInstallPlan(std::move(request));
+        };
+
+        ASSERT_TRUE(createPlan().matchedTarget.has_value());
+        ASSERT_TRUE(createPlan().matchedTarget.has_value());
+        EXPECT_EQ(loadCount, 1);
+#endif
+    }
+}
