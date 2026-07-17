@@ -19,7 +19,7 @@ namespace fluxora::tests
               project_(temp_.path() / L"Vfs Mount Plan Build"),
               settings_(logger_),
               pathSettings_(logger_),
-              mods_(logger_, settings_, pathSettings_),
+              mods_(logger_, pathSettings_),
               profileOrder_(logger_, mods_, pathSettings_)
         {
         }

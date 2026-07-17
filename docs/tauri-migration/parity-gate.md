@@ -1,6 +1,6 @@
 # Fluxora Tauri parity gate
 
-Дата обновления: 2026-07-14
+Дата обновления: 2026-07-16
 
 Статус: Phase 17 deprecation and removal is in place. The automated Windows-local gate was green on 2026-06-24, and the old C# WPF product frontend has now been removed from the active repository/build/release path.
 
@@ -60,7 +60,7 @@ Required unit anchors:
 - `mod-workspace-state.test.ts` covers mod list state, row/windowing helpers and mod UI formatting.
 - `plugin-workspace-state.test.ts` covers plugin/load-order UI state.
 - `download-workspace-state.test.ts` covers download filtering, state labels and row actions.
-- `install-workspace-state.test.ts` covers mod-name validation, archive placement overrides, FOMOD wizard state and automatic restoration of remembered choices. `fomod-preview-url.test.ts` covers typed conversion of native preview-cache paths, while `ai-security-hardening.test.ts` keeps the Tauri asset scope restricted to `.fomod-previews`.
+- `install-workspace-state.test.ts` covers mod-name validation, archive placement overrides, FOMOD wizard state, core-provided Smart Select plans, manual pins and remembered choices. `install-plan-state.test.ts`, install flow coverage and the typed bridge tests verify that a user-edited final name is replanned natively before replace/merge conflict selection. Component/flow tests cover structured reasons, accessible statuses, reset/recalculation and stale-context recovery. `fomod-preview-url.test.ts` covers typed conversion of native preview-cache paths, while `ai-security-hardening.test.ts` keeps the Tauri asset scope restricted to `.fomod-previews`.
 - `profiles-executables-workspace-state.test.ts`, `launch-process-session.test.ts` and `launch-process-watch.test.ts` cover profile/executable UI state, readable process labels, VFS-holder handoff, native exit-signal wiring and fallback polling.
 - `settings-workspace-state.test.ts` and `nexus-auth-workflow.test.ts` cover settings sections, single-theme normalization, language/MO2 transfer state, retryable Nexus status failures and independent auth/API-limit settlement.
 - `build-workspace-state.test.ts`, `fluxpack-export-dialog.test.ts`, `fluxpack-install-target.test.ts`, `fluxpack-install-dialogs.test.ts` and `operation-overlays.test.ts` cover build paths, full-vs-recipe export selection, same-name targeting, manual Nexus archive collection and provider-segmented FluxPack progress. Backend tests prove that full export produces no acquisition plan and restores remote-origin plus generated mods from the package payload.
@@ -77,7 +77,7 @@ Required unit anchors:
 | Mod list operations | Automated | Playwright creates a mod/separator, searches, toggles enablement and expands file tree |
 | Plugin operations | Automated | Playwright creates a plugin separator, searches and toggles plugin enablement |
 | Downloads/install | Partial automated | Playwright imports a local archive and checks download row install affordance; full archive install is covered by API/backend tests and still needs a real archive e2e fixture |
-| FOMOD | Partial automated | Vitest covers remembered wizard state and preview URL conversion; Playwright covers the separate scrollable step panel, step switching without selection loss, real-image/absent-image rendering and round radio focus state; backend integration proves successful installs persist the applied choice for the next analysis. A real FOMOD archive e2e fixture remains a fixture-hardening item |
+| FOMOD | Automated | CTest covers profile states, dependency/version semantics, fixed-point/cycles, memory migration, stale guards and bounded TES4 parsing. Playwright creates a real ZIP FOMOD with binary TES4 master headers, analyzes it through `FluxoraBridgeHost`, then verifies the core DTO in the Smart Select UI; a second scenario covers active/inactive/missing evidence, manual pins, profile change, zero writes on stale context and the direct final install path. |
 | Profiles | Automated | Playwright create/clone/rename/delete profile flow |
 | Executables | Automated | Playwright save/rename/delete executable flow, launch capability state, readable running-process label, removal of the screen-lock badge and dynamic VFS-holder handoff |
 | Settings | Automated | Playwright settings sections, language/Nexus/MO2 transfer surfaces and recovery from a transient Nexus status failure without accidentally starting connect/disconnect; theme customization is absent while the single dark theme is supported |
@@ -174,7 +174,6 @@ The final migration DoD is considered closed when these remain true:
 These items remain release-hardening gates after Phase 17:
 
 - Real archive install e2e fixture.
-- Real FOMOD archive e2e fixture.
 - Real MO2 import fixture or documented owner acceptance.
 - Linux `.deb`/`.rpm` install smoke.
 - macOS bundle/signing/notarization smoke.

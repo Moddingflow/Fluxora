@@ -1658,6 +1658,15 @@ namespace
 #endif
     }
 
+    bool isProtectedDownloadsOutputPath(const std::wstring& normalizedOutputPath)
+    {
+        constexpr std::wstring_view protectedDirectory = L"downloads";
+        return normalizedOutputPath == protectedDirectory ||
+            (normalizedOutputPath.size() > protectedDirectory.size() &&
+             normalizedOutputPath.compare(0, protectedDirectory.size(), protectedDirectory) == 0 &&
+             normalizedOutputPath[protectedDirectory.size()] == L'/');
+    }
+
     std::filesystem::path resolvePackageEntryPath(
         const std::filesystem::path& installRoot,
         const std::wstring& relativePathText)
@@ -1698,6 +1707,213 @@ namespace
         }
 
         return destination;
+    }
+
+    enum class ProtectedDownloadsPathKind
+    {
+        Missing,
+        Directory,
+        RegularFile,
+        Other
+    };
+
+    struct ProtectedDownloadsCopyStats
+    {
+        std::uint64_t fileCount{0};
+        std::uint64_t byteCount{0};
+    };
+
+    ProtectedDownloadsPathKind inspectProtectedDownloadsPath(
+        const std::filesystem::path& path)
+    {
+#ifdef _WIN32
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES)
+        {
+            const DWORD error = GetLastError();
+            if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+            {
+                return ProtectedDownloadsPathKind::Missing;
+            }
+
+            throw std::runtime_error(
+                "Failed to inspect the protected Downloads path: " +
+                toUtf8(path.wstring()) + ". Windows error " + std::to_string(error) + ".");
+        }
+
+        if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        {
+            throw std::runtime_error(
+                "The protected Downloads directory cannot contain a symbolic link, junction or reparse point: " +
+                toUtf8(path.wstring()));
+        }
+        if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        {
+            return ProtectedDownloadsPathKind::Directory;
+        }
+        if ((attributes & FILE_ATTRIBUTE_DEVICE) == 0)
+        {
+            return ProtectedDownloadsPathKind::RegularFile;
+        }
+        return ProtectedDownloadsPathKind::Other;
+#else
+        std::error_code error;
+        const std::filesystem::file_status status = std::filesystem::symlink_status(path, error);
+        if (error == std::errc::no_such_file_or_directory ||
+            status.type() == std::filesystem::file_type::not_found)
+        {
+            return ProtectedDownloadsPathKind::Missing;
+        }
+        if (error)
+        {
+            throw std::runtime_error(
+                "Failed to inspect the protected Downloads path: " +
+                toUtf8(path.wstring()) + ". " + error.message());
+        }
+        if (std::filesystem::is_symlink(status))
+        {
+            throw std::runtime_error(
+                "The protected Downloads directory cannot contain a symbolic link, junction or reparse point: " +
+                toUtf8(path.wstring()));
+        }
+        if (std::filesystem::is_directory(status))
+        {
+            return ProtectedDownloadsPathKind::Directory;
+        }
+        if (std::filesystem::is_regular_file(status))
+        {
+            return ProtectedDownloadsPathKind::RegularFile;
+        }
+        return ProtectedDownloadsPathKind::Other;
+#endif
+    }
+
+    void createProtectedDownloadsDirectory(const std::filesystem::path& path)
+    {
+        std::error_code error;
+        if (!std::filesystem::create_directory(path, error) || error)
+        {
+            throw std::runtime_error(
+                "Failed to create the staged Downloads directory: " +
+                toUtf8(path.wstring()) + ". " + error.message());
+        }
+    }
+
+    void copyProtectedDownloadsDirectory(
+        const std::filesystem::path& source,
+        const std::filesystem::path& destination,
+        ProtectedDownloadsCopyStats& stats)
+    {
+        if (inspectProtectedDownloadsPath(source) != ProtectedDownloadsPathKind::Directory)
+        {
+            throw std::runtime_error(
+                "The protected Downloads path changed or is not a directory: " +
+                toUtf8(source.wstring()));
+        }
+
+        createProtectedDownloadsDirectory(destination);
+
+        std::error_code iteratorError;
+        std::filesystem::directory_iterator iterator(
+            source,
+            std::filesystem::directory_options::none,
+            iteratorError);
+        if (iteratorError)
+        {
+            throw std::runtime_error(
+                "Failed to enumerate the protected Downloads directory: " +
+                toUtf8(source.wstring()) + ". " + iteratorError.message());
+        }
+
+        const std::filesystem::directory_iterator end;
+        while (iterator != end)
+        {
+            const std::filesystem::path sourceEntry = iterator->path();
+            const std::filesystem::path destinationEntry = destination / sourceEntry.filename();
+            const ProtectedDownloadsPathKind kind = inspectProtectedDownloadsPath(sourceEntry);
+            if (kind == ProtectedDownloadsPathKind::Directory)
+            {
+                copyProtectedDownloadsDirectory(sourceEntry, destinationEntry, stats);
+            }
+            else if (kind == ProtectedDownloadsPathKind::RegularFile)
+            {
+                std::error_code copyError;
+                std::filesystem::copy_file(
+                    sourceEntry,
+                    destinationEntry,
+                    std::filesystem::copy_options::none,
+                    copyError);
+                if (copyError)
+                {
+                    throw std::runtime_error(
+                        "Failed to stage a protected Downloads file: " +
+                        toUtf8(sourceEntry.wstring()) + ". " + copyError.message());
+                }
+
+                std::error_code sizeError;
+                const std::uintmax_t fileBytes = std::filesystem::file_size(sourceEntry, sizeError);
+                if (sizeError || fileBytes > std::numeric_limits<std::uint64_t>::max() - stats.byteCount)
+                {
+                    throw std::runtime_error(
+                        "Failed to measure a staged Downloads file: " +
+                        toUtf8(sourceEntry.wstring()));
+                }
+                ++stats.fileCount;
+                stats.byteCount += static_cast<std::uint64_t>(fileBytes);
+            }
+            else
+            {
+                throw std::runtime_error(
+                    "The protected Downloads directory contains an unsupported filesystem entry: " +
+                    toUtf8(sourceEntry.wstring()));
+            }
+
+            iterator.increment(iteratorError);
+            if (iteratorError)
+            {
+                throw std::runtime_error(
+                    "Failed while enumerating the protected Downloads directory: " +
+                    toUtf8(source.wstring()) + ". " + iteratorError.message());
+            }
+        }
+    }
+
+    void stageProtectedDownloadsDirectory(
+        const std::filesystem::path& liveInstallDirectory,
+        const std::filesystem::path& stagingDirectory,
+        bool replacingExisting)
+    {
+        const std::filesystem::path stagedDownloads = stagingDirectory / L"Downloads";
+        if (!replacingExisting)
+        {
+            createProtectedDownloadsDirectory(stagedDownloads);
+            writeLog("INFO", "Created an empty protected Downloads directory for the first installation.");
+            return;
+        }
+
+        const std::filesystem::path liveDownloads = liveInstallDirectory / L"Downloads";
+        const ProtectedDownloadsPathKind liveKind = inspectProtectedDownloadsPath(liveDownloads);
+        if (liveKind == ProtectedDownloadsPathKind::Missing)
+        {
+            createProtectedDownloadsDirectory(stagedDownloads);
+            writeLog("INFO", "The existing installation has no Downloads directory; staged an empty one.");
+            return;
+        }
+        if (liveKind != ProtectedDownloadsPathKind::Directory)
+        {
+            throw std::runtime_error(
+                "The protected Downloads path in the existing installation is not a directory: " +
+                toUtf8(liveDownloads.wstring()));
+        }
+
+        ProtectedDownloadsCopyStats stats;
+        copyProtectedDownloadsDirectory(liveDownloads, stagedDownloads, stats);
+        std::ostringstream stream;
+        stream << "Protected Downloads directory staged for the atomic update. source=\""
+               << toUtf8(liveDownloads.wstring())
+               << "\", files=" << stats.fileCount
+               << ", bytes=" << stats.byteCount;
+        writeLog("INFO", stream.str());
     }
 
     void emitProgress(
@@ -2138,7 +2354,13 @@ namespace
             const std::filesystem::path destination = resolvePackageEntryPath(
                 stagingDirectory,
                 relativePath);
-            if (!outputTargets.insert(windowsNormalizedOutputPathKey(relativePath)).second)
+            const std::wstring normalizedOutputPath = windowsNormalizedOutputPathKey(relativePath);
+            if (isProtectedDownloadsOutputPath(normalizedOutputPath))
+            {
+                throw std::runtime_error(
+                    "Installer payload cannot contain the protected Downloads directory.");
+            }
+            if (!outputTargets.insert(normalizedOutputPath).second)
             {
                 throw std::runtime_error(
                     "Package contains a duplicate output path after Windows normalization.");
@@ -2202,6 +2424,11 @@ namespace
             throw std::runtime_error(
                 "Failed to inspect existing installation: " + existsError.message());
         }
+
+        stageProtectedDownloadsDirectory(
+            validatedInstallDirectory,
+            stagingDirectory,
+            replacingExisting);
 
         persistTransactionSentinel(transaction);
         persistTransactionMarker(transaction, replacingExisting);

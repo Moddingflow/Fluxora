@@ -58,6 +58,101 @@ namespace fluxora
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
 
+    ArchiveBuildStatus InstanceMetadataStore::archiveBuildStatus(
+        const std::filesystem::path&,
+        std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::beginArchiveInstallAttempt(
+        const std::filesystem::path&,
+        std::wstring_view,
+        std::wstring_view,
+        std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::completeArchiveInstallAttempt(
+        const std::filesystem::path&,
+        std::wstring_view,
+        std::wstring_view,
+        std::wstring_view,
+        ArchiveModLinkMode)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::failArchiveInstallAttempt(
+        const std::filesystem::path&,
+        std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::beginPendingInstallSession(
+        const std::filesystem::path&,
+        std::wstring_view,
+        std::wstring_view,
+        InstallConflictPreviewMode,
+        std::wstring_view,
+        std::wstring_view,
+        int)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    PendingInstallSessionRecord InstanceMetadataStore::preparePendingInstallSession(
+        const std::filesystem::path&,
+        std::wstring_view,
+        const std::vector<InstallConflictFile>&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    PendingInstallSessionRecord InstanceMetadataStore::rebasePendingInstallSession(
+        const std::filesystem::path&,
+        std::wstring_view,
+        int)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    PendingInstallSessionRecord InstanceMetadataStore::completePendingInstallSession(
+        const std::filesystem::path&,
+        std::wstring_view,
+        std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    PendingInstallSessionRecord InstanceMetadataStore::failPendingInstallSession(
+        const std::filesystem::path&,
+        std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    PendingInstallSessionRecord InstanceMetadataStore::pendingInstallSession(
+        const std::filesystem::path&,
+        std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    FinalizedPendingInstallRecord InstanceMetadataStore::finalizePendingInstalledMod(
+        const std::filesystem::path&,
+        std::wstring_view,
+        const std::filesystem::path&,
+        std::wstring_view,
+        std::wstring_view,
+        const ModSourceRecord&,
+        const PendingInstallFinalizationMetadata&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
 #ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
     void InstanceMetadataStore::resetSqlPrepareCountForTesting()
     {
@@ -87,6 +182,10 @@ namespace fluxora
     }
 
     void InstanceMetadataStore::setFileCacheScanFailureAfterEntriesForTesting(int)
+    {
+    }
+
+    void InstanceMetadataStore::setPendingInstallFinalizeFailureForTesting(bool)
     {
     }
 
@@ -336,6 +435,20 @@ namespace fluxora
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
 
+    std::optional<ModUpdateSweepRecord> InstanceMetadataStore::modUpdateSweep(
+        const std::filesystem::path&,
+        std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    void InstanceMetadataStore::recordModUpdateSweep(
+        const std::filesystem::path&,
+        const ModUpdateSweepRecord&)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
     ModFileSummary InstanceMetadataStore::summarizeModFiles(
         const std::filesystem::path&,
         const std::filesystem::path&,
@@ -431,7 +544,7 @@ namespace fluxora
         constexpr std::wstring_view profilePluginOrderSeparatorKind = L"separator";
         constexpr std::wstring_view modInventoryRevisionKey = L"mod_inventory_revision";
         constexpr std::wstring_view generatedPgPatcherProvider = L"generated-pgpatcher";
-        constexpr int instanceDatabaseSchemaVersion = 7;
+        constexpr int instanceDatabaseSchemaVersion = 11;
         constexpr int fileCacheSchemaVersion = 2;
 
         using SqliteDestructor = void (*)(void*);
@@ -441,6 +554,7 @@ namespace fluxora
         std::atomic<std::uint64_t> sqliteExecCountForTesting{0};
         std::atomic<std::uint64_t> inventorySyncInvocationCount{0};
         std::atomic<int> fileCacheScanFailureAfterEntriesForTesting{-1};
+        std::atomic<bool> pendingInstallFinalizeFailureForTesting{false};
         std::atomic<std::uint64_t> stableMetadataHandleOpenCounterForTesting{0};
 #endif
 
@@ -802,7 +916,10 @@ namespace fluxora
                 readStringOrDefault(*source, L"remoteFileId"),
                 readStringOrDefault(*source, L"url"),
                 readStringOrDefault(*source, L"lastCheckedAt"),
-                readStringOrDefault(*source, L"latestVersion")
+                readStringOrDefault(*source, L"latestVersion"),
+                readStringOrDefault(*source, L"latestFileId"),
+                readStringOrDefault(*source, L"updateCheckState"),
+                readStringOrDefault(*source, L"lastAttemptedAt")
             };
         }
 
@@ -1529,8 +1646,14 @@ namespace fluxora
                 "remote_file_id TEXT NOT NULL DEFAULT '',"
                 "url TEXT NOT NULL DEFAULT '',"
                 "last_checked_at TEXT NOT NULL DEFAULT '',"
-                "latest_version TEXT NOT NULL DEFAULT ''"
+                "latest_version TEXT NOT NULL DEFAULT '',"
+                "latest_file_id TEXT NOT NULL DEFAULT '',"
+                "last_check_state TEXT NOT NULL DEFAULT '',"
+                "last_attempted_at TEXT NOT NULL DEFAULT ''"
                 ");");
+            ensureColumn(database, "mod_sources", L"latest_file_id", "latest_file_id TEXT NOT NULL DEFAULT ''");
+            ensureColumn(database, "mod_sources", L"last_check_state", "last_check_state TEXT NOT NULL DEFAULT ''");
+            ensureColumn(database, "mod_sources", L"last_attempted_at", "last_attempted_at TEXT NOT NULL DEFAULT ''");
             database.exec(
                 "CREATE TABLE IF NOT EXISTS mod_identity_metadata ("
                 "mod_id INTEGER PRIMARY KEY NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
@@ -1647,6 +1770,51 @@ namespace fluxora
                 "details_json TEXT NOT NULL DEFAULT '{}'"
                 ");");
             database.exec(
+                "CREATE TABLE IF NOT EXISTS archive_mod_links ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "archive_sha256 TEXT NOT NULL,"
+                "mod_id INTEGER REFERENCES mods(id) ON DELETE SET NULL,"
+                "mod_uuid TEXT NOT NULL,"
+                "is_current INTEGER NOT NULL DEFAULT 1 CHECK(is_current IN (0, 1)),"
+                "linked_at TEXT NOT NULL,"
+                "unlinked_at TEXT NOT NULL DEFAULT '',"
+                "operation_id TEXT NOT NULL DEFAULT ''"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS archive_install_attempts ("
+                "operation_id TEXT PRIMARY KEY NOT NULL,"
+                "archive_sha256 TEXT NOT NULL,"
+                "target_folder_name TEXT NOT NULL DEFAULT '',"
+                "started_at TEXT NOT NULL"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS pending_install_sessions ("
+                "operation_id TEXT PRIMARY KEY NOT NULL,"
+                "profile_name TEXT NOT NULL DEFAULT 'Default',"
+                "mode INTEGER NOT NULL CHECK(mode IN (0, 1, 2)),"
+                "target_mod_uuid TEXT NOT NULL DEFAULT '',"
+                "target_position INTEGER NOT NULL DEFAULT -1,"
+                "revision INTEGER NOT NULL DEFAULT 0,"
+                "state TEXT NOT NULL CHECK(state IN ('preparing', 'ready', 'committing', 'completed', 'failed')),"
+                "final_order_id TEXT NOT NULL DEFAULT '',"
+                "pending_order_id TEXT NOT NULL,"
+                "created_at TEXT NOT NULL,"
+                "updated_at TEXT NOT NULL"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS pending_install_files ("
+                "operation_id TEXT NOT NULL REFERENCES pending_install_sessions(operation_id) ON DELETE CASCADE,"
+                "relative_path TEXT NOT NULL,"
+                "parent_path TEXT NOT NULL DEFAULT '',"
+                "path_key TEXT NOT NULL,"
+                "parent_key TEXT NOT NULL DEFAULT '',"
+                "name TEXT NOT NULL,"
+                "kind TEXT NOT NULL DEFAULT 'file',"
+                "size INTEGER NOT NULL DEFAULT 0,"
+                "modified_at TEXT NOT NULL DEFAULT '',"
+                "PRIMARY KEY(operation_id, path_key)"
+                ");");
+            database.exec(
                 "CREATE TABLE IF NOT EXISTS mod_notes ("
                 "id INTEGER PRIMARY KEY AUTOINCREMENT,"
                 "mod_id INTEGER NOT NULL REFERENCES mods(id) ON DELETE CASCADE,"
@@ -1665,6 +1833,18 @@ namespace fluxora
                 "payload_json TEXT NOT NULL DEFAULT '',"
                 "checked_at TEXT NOT NULL,"
                 "PRIMARY KEY(provider, game_domain, remote_mod_id, remote_file_id)"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS mod_update_sweeps ("
+                "game_domain TEXT PRIMARY KEY NOT NULL,"
+                "state TEXT NOT NULL DEFAULT '',"
+                "last_attempted_at TEXT NOT NULL DEFAULT '',"
+                "last_completed_at TEXT NOT NULL DEFAULT '',"
+                "baseline_completed_at TEXT NOT NULL DEFAULT '',"
+                "next_eligible_at TEXT NOT NULL DEFAULT '',"
+                "last_period TEXT NOT NULL DEFAULT '',"
+                "backoff_step INTEGER NOT NULL DEFAULT 0,"
+                "stop_reason TEXT NOT NULL DEFAULT ''"
                 ");");
             database.exec(
                 "CREATE TABLE IF NOT EXISTS mod_file_cache ("
@@ -1726,14 +1906,38 @@ namespace fluxora
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_dependencies_target ON mod_dependencies(target_provider, target_mod_id, target_file_id);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_conflicts_path ON mod_conflicts(relative_path COLLATE NOCASE);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_install_history_mod ON mod_install_history(mod_id, created_at);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_archive_mod_links_sha ON archive_mod_links(archive_sha256, is_current);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_archive_mod_links_mod ON archive_mod_links(mod_id, is_current);");
+            database.exec("DROP INDEX IF EXISTS idx_archive_mod_links_current_mod;");
+            database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_archive_mod_links_current_archive_mod ON archive_mod_links(archive_sha256, mod_id) WHERE is_current = 1 AND mod_id IS NOT NULL;");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_archive_install_attempts_sha ON archive_install_attempts(archive_sha256);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_pending_install_sessions_operation ON pending_install_sessions(operation_id);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_pending_install_sessions_state_updated ON pending_install_sessions(state, updated_at);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_pending_install_files_operation ON pending_install_files(operation_id);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_pending_install_files_path ON pending_install_files(path_key);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_notes_mod ON mod_notes(mod_id, updated_at);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_remote_cache_checked ON remote_cache(checked_at);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_mod_update_sweeps_next ON mod_update_sweeps(next_eligible_at);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_file_cache_path ON mod_file_cache(path_key);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_file_cache_parent ON mod_file_cache(mod_id, parent_key, kind, name COLLATE NOCASE);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_profile_order_profile_position ON profile_order_items(profile_name, position);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_profile_plugin_order_profile_position ON profile_plugin_order_items(profile_name, position);");
             database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_profile_plugin_order_unique_plugin ON profile_plugin_order_items(profile_name, plugin_name) WHERE kind = 'plugin';");
-            database.exec("PRAGMA user_version = 7;");
+            if (persistedVersion < 9)
+            {
+                database.exec(
+                    "UPDATE mod_sources SET "
+                    "latest_version = CASE WHEN last_checked_at = '' THEN "
+                    "COALESCE((SELECT version FROM mods WHERE mods.id = mod_sources.mod_id), latest_version) "
+                    "ELSE latest_version END, "
+                    "latest_file_id = CASE WHEN last_checked_at = '' THEN remote_file_id ELSE latest_file_id END, "
+                    "last_check_state = CASE "
+                    "WHEN lower(provider) = 'nexus' AND game_domain <> '' AND remote_mod_id <> '' AND remote_file_id <> '' "
+                    "THEN CASE WHEN last_checked_at = '' THEN 'baseline_pending' ELSE 'recheck_required' END "
+                    "ELSE last_check_state END, "
+                    "last_attempted_at = CASE WHEN last_attempted_at = '' THEN last_checked_at ELSE last_attempted_at END;");
+            }
+            database.exec("PRAGMA user_version = 11;");
         }
 
         Database openInstanceDatabase(const std::filesystem::path& projectDirectory)
@@ -2010,6 +2214,9 @@ namespace fluxora
             writer.field(L"url", record.source.url);
             writer.field(L"lastCheckedAt", record.source.lastCheckedAt);
             writer.field(L"latestVersion", record.source.latestVersion);
+            writer.field(L"latestFileId", record.source.latestFileId);
+            writer.field(L"updateCheckState", record.source.updateCheckState);
+            writer.field(L"lastAttemptedAt", record.source.lastAttemptedAt);
             writer.endObject();
             writer.key(L"identity").beginObject();
             writer.field(L"fomodModuleId", record.fomodModuleId);
@@ -2091,9 +2298,30 @@ namespace fluxora
             insert.stepDone();
         }
 
+        void normalizeNexusUpdateState(InstalledModRecord& record)
+        {
+            if (toLower(record.source.provider) == L"nexus" &&
+                !record.source.gameDomain.empty() &&
+                !record.source.remoteModId.empty() &&
+                !record.source.remoteFileId.empty())
+            {
+                if (record.source.lastCheckedAt.empty())
+                {
+                    record.source.latestVersion = record.version;
+                    record.source.latestFileId = record.source.remoteFileId;
+                    record.source.updateCheckState = L"baseline_pending";
+                }
+                else if (record.source.updateCheckState.empty())
+                {
+                    record.source.updateCheckState = L"recheck_required";
+                }
+            }
+        }
+
         void updateModFlags(Database& database, InstalledModRecord& record)
         {
             deriveModFlags(record);
+            normalizeNexusUpdateState(record);
 
             Statement update = database.prepare(
                 "UPDATE mods SET "
@@ -2151,6 +2379,7 @@ namespace fluxora
                 record.gameId = readMetadataValue(database, L"game_id");
             }
 
+            normalizeNexusUpdateState(record);
             deriveModFlags(record);
 
             Statement mod = database.prepare(
@@ -2207,8 +2436,9 @@ namespace fluxora
 
             Statement source = database.prepare(
                 "INSERT INTO mod_sources("
-                "mod_id, provider, game_domain, remote_mod_id, remote_file_id, url, last_checked_at, latest_version"
-                ") VALUES(?, ?, ?, ?, ?, ?, ?, ?) "
+                "mod_id, provider, game_domain, remote_mod_id, remote_file_id, url, last_checked_at, latest_version, "
+                "latest_file_id, last_check_state, last_attempted_at"
+                ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(mod_id) DO UPDATE SET "
                 "provider = excluded.provider,"
                 "game_domain = excluded.game_domain,"
@@ -2216,7 +2446,10 @@ namespace fluxora
                 "remote_file_id = excluded.remote_file_id,"
                 "url = excluded.url,"
                 "last_checked_at = excluded.last_checked_at,"
-                "latest_version = excluded.latest_version;");
+                "latest_version = excluded.latest_version,"
+                "latest_file_id = excluded.latest_file_id,"
+                "last_check_state = excluded.last_check_state,"
+                "last_attempted_at = excluded.last_attempted_at;");
             source.bindInt64(1, record.id);
             source.bindText(2, record.source.provider);
             source.bindText(3, record.source.gameDomain);
@@ -2225,6 +2458,9 @@ namespace fluxora
             source.bindText(6, record.source.url);
             source.bindText(7, record.source.lastCheckedAt);
             source.bindText(8, record.source.latestVersion);
+            source.bindText(9, record.source.latestFileId);
+            source.bindText(10, record.source.updateCheckState);
+            source.bindText(11, record.source.lastAttemptedAt);
             source.stepDone();
 
             syncIdentitySearchIndex(database, record);
@@ -2246,7 +2482,8 @@ namespace fluxora
                 "m.source_is_nexus, m.source_is_moddingflow, m.is_local, m.is_translation, m.is_patch, "
                 "COALESCE(s.provider, ''), COALESCE(s.game_domain, ''), "
                 "COALESCE(s.remote_mod_id, ''), COALESCE(s.remote_file_id, ''), "
-                "COALESCE(s.url, ''), COALESCE(s.last_checked_at, ''), COALESCE(s.latest_version, '') "
+                "COALESCE(s.url, ''), COALESCE(s.last_checked_at, ''), COALESCE(s.latest_version, ''), "
+                "COALESCE(s.latest_file_id, ''), COALESCE(s.last_check_state, ''), COALESCE(s.last_attempted_at, '') "
                 "FROM mods m "
                 "LEFT JOIN mod_sources s ON s.mod_id = m.id "
                 "WHERE m.folder_name = ? "
@@ -2281,7 +2518,10 @@ namespace fluxora
                 statement.columnText(18),
                 statement.columnText(19),
                 statement.columnText(20),
-                statement.columnText(21)
+                statement.columnText(21),
+                statement.columnText(22),
+                statement.columnText(23),
+                statement.columnText(24)
             };
             return record;
         }
@@ -2298,7 +2538,8 @@ namespace fluxora
                 "m.source_is_nexus, m.source_is_moddingflow, m.is_local, m.is_translation, m.is_patch, "
                 "COALESCE(s.provider, ''), COALESCE(s.game_domain, ''), "
                 "COALESCE(s.remote_mod_id, ''), COALESCE(s.remote_file_id, ''), "
-                "COALESCE(s.url, ''), COALESCE(s.last_checked_at, ''), COALESCE(s.latest_version, '') "
+                "COALESCE(s.url, ''), COALESCE(s.last_checked_at, ''), COALESCE(s.latest_version, ''), "
+                "COALESCE(s.latest_file_id, ''), COALESCE(s.last_check_state, ''), COALESCE(s.last_attempted_at, '') "
                 "FROM mods m "
                 "LEFT JOIN mod_sources s ON s.mod_id = m.id "
                 "WHERE m.state IN ('installed', 'disabled') "
@@ -2331,7 +2572,10 @@ namespace fluxora
                     statement.columnText(18),
                     statement.columnText(19),
                     statement.columnText(20),
-                    statement.columnText(21)
+                    statement.columnText(21),
+                    statement.columnText(22),
+                    statement.columnText(23),
+                    statement.columnText(24)
                 };
                 records.push_back(std::move(record));
             }
@@ -4306,6 +4550,132 @@ namespace fluxora
             markLaunchInventoryReconciledLocked(projectDirectory);
         }
 
+        PendingInstallSessionRecord readPendingInstallSession(
+            Database& database,
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view operationId,
+            bool includeProfileRows)
+        {
+            Statement session = database.prepare(
+                "SELECT operation_id, profile_name, mode, target_mod_uuid, target_position, "
+                "revision, state, final_order_id, pending_order_id "
+                "FROM pending_install_sessions WHERE operation_id = ? LIMIT 1;");
+            session.bindText(1, operationId);
+            if (!session.stepRow())
+            {
+                throw std::runtime_error("The pending install session was not found.");
+            }
+
+            PendingInstallSessionRecord record;
+            record.operationId = session.columnText(0);
+            record.profileName = session.columnText(1);
+            record.mode = static_cast<InstallConflictPreviewMode>(session.columnInt(2));
+            record.targetModUuid = session.columnText(3);
+            record.targetPosition = session.columnInt(4);
+            try
+            {
+                record.revision = static_cast<std::uint64_t>(
+                    std::stoull(session.columnText(5)));
+            }
+            catch (const std::exception&)
+            {
+                record.revision = 0;
+            }
+            record.state = session.columnText(6);
+            record.finalOrderId = session.columnText(7);
+            record.pendingOrderId = session.columnText(8);
+
+            Statement files = database.prepare(
+                "SELECT relative_path, size, modified_at "
+                "FROM pending_install_files WHERE operation_id = ? ORDER BY path_key;");
+            files.bindText(1, operationId);
+            while (files.stepRow())
+            {
+                InstallConflictFile file;
+                file.relativePath = files.columnText(0);
+                const std::int64_t size = files.columnInt64(1);
+                file.size = size < 0 ? 0 : static_cast<std::uintmax_t>(size);
+                file.modifiedAt = files.columnText(2);
+                record.files.push_back(std::move(file));
+            }
+
+            if (!includeProfileRows)
+            {
+                return record;
+            }
+
+            const std::vector<ProfileOrderItemRecord> profileRows = readProfileOrderItems(
+                database,
+                projectDirectory,
+                record.profileName);
+            record.profileRows.reserve(profileRows.size());
+            std::map<std::int64_t, std::vector<InstallConflictFile>> cachedFiles;
+            Statement modFiles = database.prepare(
+                "SELECT f.mod_id, f.relative_path, f.size, f.modified_at "
+                "FROM mod_files f JOIN profile_order_items oi ON oi.mod_id = f.mod_id "
+                "WHERE oi.profile_name = ? AND oi.kind = 'mod' AND f.kind = 'file' "
+                "ORDER BY oi.position, f.path_key;");
+            modFiles.bindText(1, record.profileName);
+            while (modFiles.stepRow())
+            {
+                InstallConflictFile file;
+                file.relativePath = modFiles.columnText(1);
+                const std::int64_t size = modFiles.columnInt64(2);
+                file.size = size < 0 ? 0 : static_cast<std::uintmax_t>(size);
+                file.modifiedAt = modFiles.columnText(3);
+                cachedFiles[modFiles.columnInt64(0)].push_back(std::move(file));
+            }
+            for (const ProfileOrderItemRecord& profileRow : profileRows)
+            {
+                InstallConflictProfileMod row;
+                row.orderId = profileRow.id;
+                row.separator = profileRow.kind == profileOrderSeparatorKind;
+                if (!row.separator && profileRow.hasMod)
+                {
+                    row.modUuid = profileRow.mod.uuid;
+                    row.relationId = profileRow.mod.uuid;
+                    row.enabled = profileRow.mod.state == L"installed";
+                    const auto selectedFiles = cachedFiles.find(profileRow.mod.id);
+                    if (selectedFiles != cachedFiles.end())
+                    {
+                        row.files = selectedFiles->second;
+                    }
+                }
+                record.profileRows.push_back(std::move(row));
+            }
+            return record;
+        }
+
+        void cleanupPendingInstallSessions(Database& database)
+        {
+            database.exec(
+                "DELETE FROM pending_install_sessions "
+                "WHERE (state IN ('completed', 'failed') AND datetime(updated_at) < datetime('now', '-1 day')) "
+                "OR (state IN ('preparing', 'ready', 'committing') "
+                "AND datetime(updated_at) < datetime('now', '-7 days'));"
+            );
+        }
+
+        void moveCompletedPendingInstall(
+            Database& database,
+            const PendingInstallSessionRecord& session,
+            int targetPosition)
+        {
+            if (session.finalOrderId.empty() || targetPosition < 0)
+            {
+                return;
+            }
+            syncProfileOrderItems(database, session.profileName);
+            moveProfileOrderStorageItems(
+                database,
+                session.profileName,
+                "profile_order_items",
+                session.finalOrderId,
+                targetPosition,
+                profileOrderSeparatorKind,
+                ProfileOrderSeparatorMoveMode::Single);
+        }
+
         struct ProfileFileOwner
         {
             std::int64_t modId{0};
@@ -4520,9 +4890,10 @@ namespace fluxora
                 return true;
             }
 
-            constexpr std::array<std::wstring_view, 3> suffixes{
+            constexpr std::array<std::wstring_view, 4> suffixes{
                 L".fomod-package",
                 L".installing",
+                L".merging",
                 L".replacing"
             };
             for (std::wstring_view suffix : suffixes)
@@ -4677,10 +5048,757 @@ namespace fluxora
             throw std::invalid_argument("Project directory is required.");
         }
         const std::lock_guard metadataLock(metadataStoreMutex());
+        const std::filesystem::path databasePath = instanceDatabasePath(projectDirectory);
+        if (std::filesystem::is_regular_file(databasePath))
+        {
+            Database database = openInstanceDatabase(projectDirectory);
+            database.exec("DELETE FROM archive_install_attempts;");
+        }
         // Reopening the same continuously watched project is not an uncovered
         // interval. A project switch (or a new process) advances the generation;
         // live watcher events invalidate affected durable rows directly.
         beginFileCacheActivationLocked(projectDirectory);
+    }
+
+    ArchiveBuildStatus InstanceMetadataStore::archiveBuildStatus(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view archiveSha256)
+    {
+        const std::wstring sha256 = trim(std::wstring(archiveSha256));
+        if (projectDirectory.empty() || sha256.empty())
+        {
+            throw std::invalid_argument("Project directory and archive SHA-256 are required.");
+        }
+
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+
+        Statement attempt = database.prepare(
+            "SELECT 1 FROM archive_install_attempts WHERE archive_sha256 = ? LIMIT 1;");
+        attempt.bindText(1, sha256);
+        if (attempt.stepRow())
+        {
+            return ArchiveBuildStatus::Installing;
+        }
+
+        Statement current = database.prepare(
+            "SELECT 1 FROM archive_mod_links AS links "
+            "JOIN mods ON mods.id = links.mod_id "
+            "WHERE links.archive_sha256 = ? AND links.is_current = 1 "
+            "AND mods.state IN ('installed', 'disabled') LIMIT 1;");
+        current.bindText(1, sha256);
+        if (current.stepRow())
+        {
+            return ArchiveBuildStatus::Installed;
+        }
+
+        Statement history = database.prepare(
+            "SELECT 1 FROM archive_mod_links WHERE archive_sha256 = ? LIMIT 1;");
+        history.bindText(1, sha256);
+        return history.stepRow() ? ArchiveBuildStatus::Deleted : ArchiveBuildStatus::Ready;
+    }
+
+    void InstanceMetadataStore::beginArchiveInstallAttempt(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view archiveSha256,
+        std::wstring_view operationId,
+        std::wstring_view targetFolderName)
+    {
+        const std::wstring sha256 = trim(std::wstring(archiveSha256));
+        const std::wstring operation = trim(std::wstring(operationId));
+        const std::wstring targetFolder = trim(std::wstring(targetFolderName));
+        if (projectDirectory.empty() || sha256.empty() || operation.empty() || targetFolder.empty())
+        {
+            throw std::invalid_argument(
+                "Project directory, archive SHA-256, operation id, and target folder are required.");
+        }
+
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        Statement insert = database.prepare(
+            "INSERT INTO archive_install_attempts("
+            "operation_id, archive_sha256, target_folder_name, started_at"
+            ") VALUES(?, ?, ?, ?) "
+            "ON CONFLICT(operation_id) DO UPDATE SET "
+            "archive_sha256 = excluded.archive_sha256, "
+            "target_folder_name = excluded.target_folder_name, "
+            "started_at = excluded.started_at;");
+        insert.bindText(1, operation);
+        insert.bindText(2, sha256);
+        insert.bindText(3, targetFolder);
+        insert.bindText(4, nowUtcText());
+        insert.stepDone();
+    }
+
+    namespace
+    {
+        void completeArchiveInstallAttemptRows(
+            Database& database,
+            std::wstring_view archiveSha256,
+            std::int64_t modId,
+            std::wstring_view modUuid,
+            std::wstring_view operationId,
+            bool mergeLink)
+        {
+            Statement attempt = database.prepare(
+                "SELECT archive_sha256 FROM archive_install_attempts WHERE operation_id = ? LIMIT 1;");
+            attempt.bindText(1, operationId);
+            if (!attempt.stepRow() || attempt.columnText(0) != archiveSha256)
+            {
+                throw std::runtime_error("The archive install attempt is no longer active.");
+            }
+
+            const std::wstring now = nowUtcText();
+            Statement deactivate = database.prepare(
+                mergeLink
+                    ? "UPDATE archive_mod_links SET is_current = 0, unlinked_at = ? "
+                      "WHERE mod_id = ? AND archive_sha256 = ? AND is_current = 1;"
+                    : "UPDATE archive_mod_links SET is_current = 0, unlinked_at = ? "
+                      "WHERE mod_id = ? AND is_current = 1;");
+            deactivate.bindText(1, now);
+            deactivate.bindInt64(2, modId);
+            if (mergeLink)
+            {
+                deactivate.bindText(3, archiveSha256);
+            }
+            deactivate.stepDone();
+
+            Statement link = database.prepare(
+                "INSERT INTO archive_mod_links("
+                "archive_sha256, mod_id, mod_uuid, is_current, linked_at, operation_id"
+                ") VALUES(?, ?, ?, 1, ?, ?);");
+            link.bindText(1, archiveSha256);
+            link.bindInt64(2, modId);
+            link.bindText(3, modUuid);
+            link.bindText(4, now);
+            link.bindText(5, operationId);
+            link.stepDone();
+
+            Statement clear = database.prepare(
+                "DELETE FROM archive_install_attempts WHERE operation_id = ?;");
+            clear.bindText(1, operationId);
+            clear.stepDone();
+        }
+
+        void applyModIdentityPersistenceRows(
+            Database& database,
+            const std::filesystem::path& projectDirectory,
+            InstalledModRecord& record,
+            const ModIdentityPersistenceUpdate& update)
+        {
+            const std::int64_t modId = record.id;
+            if (!trim(update.fomodModuleId).empty())
+            {
+                Statement metadata = database.prepare(
+                    "INSERT INTO mod_identity_metadata(mod_id, fomod_module_id) VALUES(?, ?) "
+                    "ON CONFLICT(mod_id) DO UPDATE SET fomod_module_id = excluded.fomod_module_id;");
+                metadata.bindInt64(1, modId);
+                metadata.bindText(2, trim(update.fomodModuleId));
+                metadata.stepDone();
+            }
+
+            if (!identitySourceKey(
+                    update.sourceProvider,
+                    update.sourceGameDomain,
+                    update.sourceRemoteModId).empty())
+            {
+                const std::wstring normalizedProvider = toLower(trim(update.sourceProvider));
+                Statement source = database.prepare(
+                    "INSERT INTO mod_sources("
+                    "mod_id, provider, game_domain, remote_mod_id, remote_file_id, url, last_checked_at, latest_version"
+                    ") VALUES(?, ?, ?, ?, ?, '', ?, '') "
+                    "ON CONFLICT(mod_id) DO UPDATE SET "
+                    "provider = excluded.provider, game_domain = excluded.game_domain, "
+                    "remote_mod_id = excluded.remote_mod_id, remote_file_id = excluded.remote_file_id, "
+                    "last_checked_at = excluded.last_checked_at;");
+                source.bindInt64(1, modId);
+                source.bindText(2, normalizedProvider);
+                source.bindText(3, toLower(trim(update.sourceGameDomain)));
+                source.bindText(4, trim(update.sourceRemoteModId));
+                source.bindText(5, trim(update.sourceRemoteFileId));
+                source.bindText(6, nowUtcText());
+                source.stepDone();
+
+                Statement flags = database.prepare(
+                    "UPDATE mods SET source_is_nexus = ?, source_is_moddingflow = ?, "
+                    "is_local = 0, updated_at = ? WHERE id = ?;");
+                flags.bindInt64(1, normalizedProvider == L"nexus" ? 1 : 0);
+                flags.bindInt64(2, normalizedProvider == L"moddingflow" ? 1 : 0);
+                flags.bindText(3, nowUtcText());
+                flags.bindInt64(4, modId);
+                flags.stepDone();
+            }
+
+            const std::wstring confirmedAt = nowUtcText();
+            for (const std::wstring& alias : update.confirmedAliases)
+            {
+                const std::wstring cleanAlias = trim(alias);
+                const std::wstring normalizedAlias = ModIdentityResolver::normalizedName(cleanAlias);
+                if (normalizedAlias.empty())
+                {
+                    continue;
+                }
+                Statement insert = database.prepare(
+                    "INSERT INTO mod_identity_aliases(mod_id, alias, normalized_alias, confirmed_at) "
+                    "VALUES(?, ?, ?, ?) ON CONFLICT(mod_id, normalized_alias) DO UPDATE SET "
+                    "alias = excluded.alias, confirmed_at = excluded.confirmed_at;");
+                insert.bindInt64(1, modId);
+                insert.bindText(2, cleanAlias);
+                insert.bindText(3, normalizedAlias);
+                insert.bindText(4, confirmedAt);
+                insert.stepDone();
+            }
+
+            const std::wstring sourceKey = identitySourceKey(
+                update.exclusionProvider,
+                update.exclusionGameDomain,
+                update.exclusionRemoteModId);
+            const std::wstring incomingNameKey =
+                ModIdentityResolver::normalizedName(update.exclusionIncomingName);
+            for (const std::wstring& rejectedUuid : update.rejectedModUuids)
+            {
+                if (trim(rejectedUuid).empty() || (sourceKey.empty() && incomingNameKey.empty()))
+                {
+                    continue;
+                }
+                Statement insert = database.prepare(
+                    "INSERT OR IGNORE INTO mod_identity_exclusions("
+                    "owner_mod_id, source_key, incoming_name_key, rejected_mod_uuid, created_at"
+                    ") VALUES(?, ?, ?, ?, ?);");
+                insert.bindInt64(1, modId);
+                insert.bindText(2, sourceKey);
+                insert.bindText(3, incomingNameKey);
+                insert.bindText(4, trim(rejectedUuid));
+                insert.bindText(5, confirmedAt);
+                insert.stepDone();
+            }
+
+            record = readRecordByFolder(
+                database,
+                projectDirectory,
+                record.folderName,
+                record.path.parent_path());
+            record.fomodModuleId = identityFomodModuleId(database, modId);
+            record.identityAliases = identityAliases(database, modId);
+            record.identityExcludedModUuids.clear();
+            Statement exclusions = database.prepare(
+                "SELECT DISTINCT rejected_mod_uuid FROM mod_identity_exclusions "
+                "WHERE owner_mod_id = ? ORDER BY rejected_mod_uuid;");
+            exclusions.bindInt64(1, modId);
+            while (exclusions.stepRow())
+            {
+                record.identityExcludedModUuids.push_back(exclusions.columnText(0));
+            }
+            record.portableManifestSchemaVersion = 2;
+            syncIdentitySearchIndex(database, record);
+            bumpModInventoryRevision(database);
+        }
+    }
+
+    void InstanceMetadataStore::completeArchiveInstallAttempt(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view archiveSha256,
+        std::wstring_view modUuid,
+        std::wstring_view operationId,
+        ArchiveModLinkMode linkMode)
+    {
+        const std::wstring sha256 = trim(std::wstring(archiveSha256));
+        const std::wstring uuid = trim(std::wstring(modUuid));
+        const std::wstring operation = trim(std::wstring(operationId));
+        if (projectDirectory.empty() || sha256.empty() || uuid.empty() || operation.empty())
+        {
+            throw std::invalid_argument(
+                "Project directory, archive SHA-256, mod UUID, and operation id are required.");
+        }
+
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        Transaction transaction(database);
+
+        Statement mod = database.prepare("SELECT id FROM mods WHERE uuid = ? LIMIT 1;");
+        mod.bindText(1, uuid);
+        if (!mod.stepRow())
+        {
+            throw std::runtime_error("The installed mod record was not found.");
+        }
+        const std::int64_t modId = mod.columnInt64(0);
+        completeArchiveInstallAttemptRows(
+            database,
+            sha256,
+            modId,
+            uuid,
+            operation,
+            linkMode == ArchiveModLinkMode::Merge);
+        transaction.commit();
+    }
+
+    void InstanceMetadataStore::failArchiveInstallAttempt(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view operationId)
+    {
+        const std::wstring operation = trim(std::wstring(operationId));
+        if (projectDirectory.empty() || operation.empty())
+        {
+            throw std::invalid_argument("Project directory and operation id are required.");
+        }
+
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        Statement clear = database.prepare(
+            "DELETE FROM archive_install_attempts WHERE operation_id = ?;");
+        clear.bindText(1, operation);
+        clear.stepDone();
+    }
+
+    void InstanceMetadataStore::beginPendingInstallSession(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view operationId,
+        std::wstring_view profileName,
+        InstallConflictPreviewMode mode,
+        std::wstring_view pendingOrderId,
+        std::wstring_view targetModUuid,
+        int targetPosition)
+    {
+        const std::wstring operation = trim(std::wstring(operationId));
+        const std::wstring pendingId = trim(std::wstring(pendingOrderId));
+        const std::wstring targetUuid = trim(std::wstring(targetModUuid));
+        if (projectDirectory.empty() || operation.empty() || pendingId.empty())
+        {
+            throw std::invalid_argument(
+                "Project directory, operation id, and pending order id are required.");
+        }
+        if (mode != InstallConflictPreviewMode::Install && targetUuid.empty())
+        {
+            throw std::invalid_argument("Replace and merge sessions require a target mod UUID.");
+        }
+
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        Transaction transaction(database);
+        cleanupPendingInstallSessions(database);
+
+        Statement active = database.prepare(
+            "SELECT operation_id FROM pending_install_sessions "
+            "WHERE state IN ('preparing', 'ready', 'committing') "
+            "AND operation_id <> ? LIMIT 1;");
+        active.bindText(1, operation);
+        if (active.stepRow())
+        {
+            throw std::runtime_error("Another install session is already active.");
+        }
+
+        Statement removeTerminal = database.prepare(
+            "DELETE FROM pending_install_sessions "
+            "WHERE operation_id = ? AND state IN ('completed', 'failed');");
+        removeTerminal.bindText(1, operation);
+        removeTerminal.stepDone();
+
+        const std::wstring now = nowUtcText();
+        Statement insert = database.prepare(
+            "INSERT OR IGNORE INTO pending_install_sessions("
+            "operation_id, profile_name, mode, target_mod_uuid, target_position, revision, "
+            "state, final_order_id, pending_order_id, created_at, updated_at"
+            ") VALUES(?, ?, ?, ?, ?, 0, 'preparing', '', ?, ?, ?);");
+        insert.bindText(1, operation);
+        insert.bindText(2, profileNameOrDefault(profileName));
+        insert.bindInt(3, static_cast<int>(mode));
+        insert.bindText(4, targetUuid);
+        insert.bindInt(5, targetPosition);
+        insert.bindText(6, pendingId);
+        insert.bindText(7, now);
+        insert.bindText(8, now);
+        insert.stepDone();
+        transaction.commit();
+    }
+
+    PendingInstallSessionRecord InstanceMetadataStore::preparePendingInstallSession(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view operationId,
+        const std::vector<InstallConflictFile>& files)
+    {
+        const std::wstring operation = trim(std::wstring(operationId));
+        if (projectDirectory.empty() || operation.empty())
+        {
+            throw std::invalid_argument("Project directory and operation id are required.");
+        }
+
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        ensureAllFileCachesPrepared(database, projectDirectory);
+
+        Transaction transaction(database);
+        PendingInstallSessionRecord current = readPendingInstallSession(
+            database,
+            projectDirectory,
+            operation,
+            false);
+        if (current.state != L"preparing" && current.state != L"ready")
+        {
+            throw std::runtime_error("The pending install session cannot accept an inventory.");
+        }
+
+        Statement clear = database.prepare(
+            "DELETE FROM pending_install_files WHERE operation_id = ?;");
+        clear.bindText(1, operation);
+        clear.stepDone();
+
+        Statement insert = database.prepare(
+            "INSERT OR REPLACE INTO pending_install_files("
+            "operation_id, relative_path, parent_path, path_key, parent_key, name, kind, size, modified_at"
+            ") VALUES(?, ?, ?, ?, ?, ?, 'file', ?, ?);");
+        for (const InstallConflictFile& file : files)
+        {
+            std::filesystem::path relative(file.relativePath);
+            relative = relative.lexically_normal();
+            if (relative.empty() || relative == L"." || relative.is_absolute())
+            {
+                continue;
+            }
+            bool escapesRoot = false;
+            for (const std::filesystem::path& component : relative)
+            {
+                if (component == L"..")
+                {
+                    escapesRoot = true;
+                    break;
+                }
+            }
+            if (escapesRoot)
+            {
+                throw std::invalid_argument("A pending install file escapes the staging root.");
+            }
+
+            const std::wstring relativeText = normalizeRelativePath(relative);
+            const std::wstring parentText = normalizeRelativePath(relative.parent_path());
+            insert.bindText(1, operation);
+            insert.bindText(2, relativeText);
+            insert.bindText(3, parentText);
+            insert.bindText(4, pathKey(relativeText));
+            insert.bindText(5, pathKey(parentText));
+            insert.bindText(6, relative.filename().wstring());
+            insert.bindInt64(7, static_cast<std::int64_t>(
+                (std::min<std::uintmax_t>)(
+                    file.size,
+                    static_cast<std::uintmax_t>((std::numeric_limits<std::int64_t>::max)()))));
+            insert.bindText(8, file.modifiedAt);
+            insert.stepDoneAndReset();
+        }
+
+        Statement update = database.prepare(
+            "UPDATE pending_install_sessions SET state = 'ready', "
+            "revision = revision + 1, updated_at = ? WHERE operation_id = ?;");
+        update.bindText(1, nowUtcText());
+        update.bindText(2, operation);
+        update.stepDone();
+        syncProfileOrderItems(database, current.profileName);
+        transaction.commit();
+        return readPendingInstallSession(database, projectDirectory, operation, true);
+    }
+
+    PendingInstallSessionRecord InstanceMetadataStore::rebasePendingInstallSession(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view operationId,
+        int targetPosition)
+    {
+        const std::wstring operation = trim(std::wstring(operationId));
+        if (projectDirectory.empty() || operation.empty())
+        {
+            throw std::invalid_argument("Project directory and operation id are required.");
+        }
+
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        Transaction transaction(database);
+        PendingInstallSessionRecord current = readPendingInstallSession(
+            database,
+            projectDirectory,
+            operation,
+            false);
+        if (current.state == L"failed")
+        {
+            throw std::runtime_error("The pending install session has failed.");
+        }
+        if (current.state == L"completed")
+        {
+            moveCompletedPendingInstall(database, current, targetPosition);
+        }
+
+        Statement update = database.prepare(
+            "UPDATE pending_install_sessions SET target_position = ?, "
+            "revision = revision + 1, updated_at = ? WHERE operation_id = ?;");
+        update.bindInt(1, targetPosition);
+        update.bindText(2, nowUtcText());
+        update.bindText(3, operation);
+        update.stepDone();
+        syncProfileOrderItems(database, current.profileName);
+        transaction.commit();
+        return readPendingInstallSession(database, projectDirectory, operation, true);
+    }
+
+    PendingInstallSessionRecord InstanceMetadataStore::completePendingInstallSession(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view operationId,
+        std::wstring_view finalOrderId)
+    {
+        const std::wstring operation = trim(std::wstring(operationId));
+        const std::wstring orderId = trim(std::wstring(finalOrderId));
+        if (projectDirectory.empty() || operation.empty() || orderId.empty())
+        {
+            throw std::invalid_argument(
+                "Project directory, operation id, and final order id are required.");
+        }
+
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        Transaction transaction(database);
+        PendingInstallSessionRecord current = readPendingInstallSession(
+            database,
+            projectDirectory,
+            operation,
+            false);
+        if (current.state == L"failed")
+        {
+            throw std::runtime_error("A failed pending install session cannot complete.");
+        }
+
+        Statement update = database.prepare(
+            "UPDATE pending_install_sessions SET state = 'completed', final_order_id = ?, "
+            "revision = revision + 1, updated_at = ? WHERE operation_id = ?;");
+        update.bindText(1, orderId);
+        update.bindText(2, nowUtcText());
+        update.bindText(3, operation);
+        update.stepDone();
+        current.finalOrderId = orderId;
+        moveCompletedPendingInstall(database, current, current.targetPosition);
+        transaction.commit();
+        return readPendingInstallSession(database, projectDirectory, operation, true);
+    }
+
+    PendingInstallSessionRecord InstanceMetadataStore::failPendingInstallSession(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view operationId)
+    {
+        const std::wstring operation = trim(std::wstring(operationId));
+        if (projectDirectory.empty() || operation.empty())
+        {
+            throw std::invalid_argument("Project directory and operation id are required.");
+        }
+
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        Transaction transaction(database);
+        static_cast<void>(readPendingInstallSession(database, projectDirectory, operation, false));
+        Statement update = database.prepare(
+            "UPDATE pending_install_sessions SET state = 'failed', "
+            "revision = revision + 1, updated_at = ? WHERE operation_id = ?;");
+        update.bindText(1, nowUtcText());
+        update.bindText(2, operation);
+        update.stepDone();
+        Statement clear = database.prepare(
+            "DELETE FROM pending_install_files WHERE operation_id = ?;");
+        clear.bindText(1, operation);
+        clear.stepDone();
+        transaction.commit();
+        return readPendingInstallSession(database, projectDirectory, operation, true);
+    }
+
+    PendingInstallSessionRecord InstanceMetadataStore::pendingInstallSession(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view operationId)
+    {
+        const std::wstring operation = trim(std::wstring(operationId));
+        if (projectDirectory.empty() || operation.empty())
+        {
+            throw std::invalid_argument("Project directory and operation id are required.");
+        }
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        return readPendingInstallSession(database, projectDirectory, operation, true);
+    }
+
+    FinalizedPendingInstallRecord InstanceMetadataStore::finalizePendingInstalledMod(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view operationId,
+        const std::filesystem::path& modDirectory,
+        std::wstring_view displayName,
+        std::wstring_view version,
+        const ModSourceRecord& source,
+        const PendingInstallFinalizationMetadata& metadata)
+    {
+        const std::wstring operation = trim(std::wstring(operationId));
+        if (projectDirectory.empty() || operation.empty() || modDirectory.empty() ||
+            !std::filesystem::is_directory(modDirectory))
+        {
+            throw std::invalid_argument(
+                "Project directory, operation id, and installed mod directory are required.");
+        }
+
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        PendingInstallSessionRecord session = readPendingInstallSession(
+            database,
+            projectDirectory,
+            operation,
+            false);
+        if (session.state != L"ready" && session.state != L"committing")
+        {
+            throw std::runtime_error("The pending install session is not ready to finalize.");
+        }
+
+        InstalledModRecord record;
+        record.gameId = readMetadataValue(database, L"game_id");
+        record.folderName = modDirectory.filename().wstring();
+        record.displayName = displayName.empty() ? record.folderName : std::wstring(displayName);
+        record.version = std::wstring(version);
+        record.installedAt = nowUtcText();
+        record.updatedAt = record.installedAt;
+        record.state = L"installed";
+        record.path = modDirectory;
+        record.source = source;
+
+        Statement existing = database.prepare(
+            "SELECT uuid, installed_at, state FROM mods "
+            "WHERE folder_name = ? COLLATE NOCASE LIMIT 1;");
+        existing.bindText(1, record.folderName);
+        if (existing.stepRow())
+        {
+            record.uuid = existing.columnText(0);
+            record.installedAt = existing.columnText(1);
+            if (existing.columnText(2) == L"disabled")
+            {
+                record.state = L"disabled";
+            }
+        }
+
+        const FileCacheSnapshot preparedCache = collectFileCacheSnapshot(record);
+        record.contentFingerprint = preparedCache.cacheKey;
+
+        Transaction transaction(database);
+        upsertModRecord(database, record);
+        replaceFileCache(database, record.id, preparedCache.entries);
+        upsertFileCacheState(
+            database,
+            record.id,
+            preparedCache.cacheKey,
+            static_cast<int>(preparedCache.entries.size()));
+
+        syncProfileOrderItems(database, session.profileName);
+        Statement order = database.prepare(
+            "SELECT id FROM profile_order_items "
+            "WHERE profile_name = ? AND kind = 'mod' AND mod_id = ? LIMIT 1;");
+        order.bindText(1, session.profileName);
+        order.bindInt64(2, record.id);
+        if (!order.stepRow())
+        {
+            throw std::runtime_error("The finalized mod order row was not created.");
+        }
+        const std::wstring orderId = order.columnText(0);
+        if (session.targetPosition >= 0)
+        {
+            moveProfileOrderStorageItems(
+                database,
+                session.profileName,
+                "profile_order_items",
+                orderId,
+                session.targetPosition,
+                profileOrderSeparatorKind,
+                ProfileOrderSeparatorMoveMode::Single);
+        }
+
+        refreshDetectedConflicts(database);
+        const std::vector<InstalledModRecord> records = readInstalledRecords(
+            database,
+            projectDirectory,
+            modDirectory.parent_path());
+        setMetadataValue(database, L"mod_conflict_inputs_key", conflictInputsKey(records));
+
+        if (metadata.identity.has_value())
+        {
+            ModIdentityPersistenceUpdate identity = *metadata.identity;
+            identity.modUuid = record.uuid;
+            applyModIdentityPersistenceRows(
+                database,
+                projectDirectory,
+                record,
+                identity);
+        }
+        else
+        {
+            record = readRecordByFolder(
+                database,
+                projectDirectory,
+                record.folderName,
+                modDirectory.parent_path());
+        }
+        if (!trim(metadata.archiveSha256).empty())
+        {
+            completeArchiveInstallAttemptRows(
+                database,
+                trim(metadata.archiveSha256),
+                record.id,
+                record.uuid,
+                operation,
+                metadata.mergeArchiveLink);
+        }
+#ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
+        if (pendingInstallFinalizeFailureForTesting.exchange(false, std::memory_order_relaxed))
+        {
+            throw std::runtime_error("Injected pending install finalization failure.");
+        }
+#endif
+        writePortableManifest(record);
+
+        Statement complete = database.prepare(
+            "UPDATE pending_install_sessions SET state = 'completed', final_order_id = ?, "
+            "revision = revision + 1, updated_at = ? WHERE operation_id = ?;");
+        complete.bindText(1, orderId);
+        complete.bindText(2, nowUtcText());
+        complete.bindText(3, operation);
+        complete.stepDone();
+        transaction.commit();
+
+        record = readRecordByFolder(
+            database,
+            projectDirectory,
+            record.folderName,
+            modDirectory.parent_path());
+        if (metadata.identity.has_value())
+        {
+            record.fomodModuleId = identityFomodModuleId(database, record.id);
+            record.identityAliases = identityAliases(database, record.id);
+            Statement exclusions = database.prepare(
+                "SELECT DISTINCT rejected_mod_uuid FROM mod_identity_exclusions "
+                "WHERE owner_mod_id = ? ORDER BY rejected_mod_uuid;");
+            exclusions.bindInt64(1, record.id);
+            while (exclusions.stepRow())
+            {
+                record.identityExcludedModUuids.push_back(exclusions.columnText(0));
+            }
+            record.portableManifestSchemaVersion = 2;
+        }
+        markFileCacheValidatedLocked(projectDirectory);
+        markLaunchInventoryReconciledLocked(projectDirectory);
+
+        FinalizedPendingInstallRecord result;
+        result.mod = record;
+        result.orderId = orderId;
+        const std::vector<ModFileSummaryRecord> summaries = summarizeCachedProfileModFiles(
+            database,
+            projectDirectory,
+            session.profileName,
+            modDirectory.parent_path());
+        const auto selected = std::find_if(
+            summaries.begin(),
+            summaries.end(),
+            [&record](const ModFileSummaryRecord& summary)
+            {
+                return pathKey(summary.modPath.wstring()) == pathKey(record.path.wstring());
+            });
+        if (selected != summaries.end())
+        {
+            result.summary = selected->summary;
+        }
+        return result;
     }
 
 #ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
@@ -4717,6 +5835,11 @@ namespace fluxora
     void InstanceMetadataStore::setFileCacheScanFailureAfterEntriesForTesting(int entryCount)
     {
         fileCacheScanFailureAfterEntriesForTesting.store(entryCount, std::memory_order_relaxed);
+    }
+
+    void InstanceMetadataStore::setPendingInstallFinalizeFailureForTesting(bool shouldFail)
+    {
+        pendingInstallFinalizeFailureForTesting.store(shouldFail, std::memory_order_relaxed);
     }
 
     void InstanceMetadataStore::resetStableMetadataHandleOpenCountForTesting()
@@ -6407,6 +7530,9 @@ namespace fluxora
         source.provider = normalizeProvider(source);
         source.lastCheckedAt = checkedAt;
         source.latestVersion = check.latestVersion;
+        source.latestFileId = check.latestFileId;
+        source.updateCheckState = check.lastCheckState;
+        source.lastAttemptedAt = check.lastAttemptedAt.empty() ? checkedAt : check.lastAttemptedAt;
 
         std::optional<InstalledModRecord> manifestToWrite;
         Transaction transaction(database);
@@ -6438,7 +7564,10 @@ namespace fluxora
                 "remote_file_id = ?,"
                 "url = CASE WHEN ? = '' THEN url ELSE ? END,"
                 "last_checked_at = ?,"
-                "latest_version = ? "
+                "latest_version = ?,"
+                "latest_file_id = ?,"
+                "last_check_state = ?,"
+                "last_attempted_at = ? "
                 "WHERE mod_id = (SELECT id FROM mods WHERE folder_name = ? LIMIT 1);");
             updateSource.bindText(1, source.provider);
             updateSource.bindText(2, source.gameDomain);
@@ -6448,7 +7577,10 @@ namespace fluxora
             updateSource.bindText(6, source.url);
             updateSource.bindText(7, checkedAt);
             updateSource.bindText(8, source.latestVersion);
-            updateSource.bindText(9, check.folderName);
+            updateSource.bindText(9, source.latestFileId);
+            updateSource.bindText(10, source.updateCheckState);
+            updateSource.bindText(11, source.lastAttemptedAt);
+            updateSource.bindText(12, check.folderName);
             updateSource.stepDone();
 
             try
@@ -6476,6 +7608,78 @@ namespace fluxora
             {
             }
         }
+    }
+
+    std::optional<ModUpdateSweepRecord> InstanceMetadataStore::modUpdateSweep(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view gameDomain)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        if (projectDirectory.empty() || trim(std::wstring(gameDomain)).empty())
+        {
+            throw std::invalid_argument("Project directory and game domain are required.");
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        Statement statement = database.prepare(
+            "SELECT game_domain, state, last_attempted_at, last_completed_at, baseline_completed_at, "
+            "next_eligible_at, last_period, backoff_step, stop_reason "
+            "FROM mod_update_sweeps WHERE game_domain = ? LIMIT 1;");
+        statement.bindText(1, toLower(trim(std::wstring(gameDomain))));
+        if (!statement.stepRow())
+        {
+            return std::nullopt;
+        }
+
+        return ModUpdateSweepRecord{
+            statement.columnText(0),
+            statement.columnText(1),
+            statement.columnText(2),
+            statement.columnText(3),
+            statement.columnText(4),
+            statement.columnText(5),
+            statement.columnText(6),
+            statement.columnInt(7),
+            statement.columnText(8)
+        };
+    }
+
+    void InstanceMetadataStore::recordModUpdateSweep(
+        const std::filesystem::path& projectDirectory,
+        const ModUpdateSweepRecord& sweep)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        const std::wstring gameDomain = toLower(trim(sweep.gameDomain));
+        if (projectDirectory.empty() || gameDomain.empty())
+        {
+            throw std::invalid_argument("Project directory and game domain are required.");
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        Statement statement = database.prepare(
+            "INSERT INTO mod_update_sweeps("
+            "game_domain, state, last_attempted_at, last_completed_at, baseline_completed_at, "
+            "next_eligible_at, last_period, backoff_step, stop_reason"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(game_domain) DO UPDATE SET "
+            "state = excluded.state, "
+            "last_attempted_at = excluded.last_attempted_at, "
+            "last_completed_at = excluded.last_completed_at, "
+            "baseline_completed_at = excluded.baseline_completed_at, "
+            "next_eligible_at = excluded.next_eligible_at, "
+            "last_period = excluded.last_period, "
+            "backoff_step = excluded.backoff_step, "
+            "stop_reason = excluded.stop_reason;");
+        statement.bindText(1, gameDomain);
+        statement.bindText(2, sweep.state);
+        statement.bindText(3, sweep.lastAttemptedAt);
+        statement.bindText(4, sweep.lastCompletedAt);
+        statement.bindText(5, sweep.baselineCompletedAt);
+        statement.bindText(6, sweep.nextEligibleAt);
+        statement.bindText(7, sweep.lastPeriod);
+        statement.bindInt(8, sweep.backoffStep);
+        statement.bindText(9, sweep.stopReason);
+        statement.stepDone();
     }
 
     ModFileSummary InstanceMetadataStore::summarizeModFiles(

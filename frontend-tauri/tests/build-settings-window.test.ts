@@ -40,6 +40,7 @@ describe('build settings window', () => {
         projectName: 'Foundation Edition',
         onBrowseDirectory: noop,
         onBrowseGameExecutable: noop,
+        onOpenDownloadsDirectory: noop,
         onChange: noop,
         onClose: noop,
         onSave: noop
@@ -53,6 +54,9 @@ describe('build settings window', () => {
     expect(markup).toContain('Project directory');
     expect(markup).toContain('Game executable');
     expect(markup).toContain('Mods directory');
+    expect(markup).toContain('Global downloads directory');
+    expect(markup).toContain('Open downloads directory');
+    expect(markup).not.toContain('Select downloads directory');
     expect(markup).not.toContain('Build not found');
     expect(markup).not.toContain('Loading build settings');
     expect(markup).not.toContain('Loading build paths');

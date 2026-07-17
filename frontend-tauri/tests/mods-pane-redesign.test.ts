@@ -20,9 +20,11 @@ describe('mods pane redesign', () => {
     expect(app).toContain('<StatusDot');
     expect(app).toContain('modTableStatusView(item)');
     expect(app).toContain("const visibleConflictHighlight =");
-    expect(app).toContain("item.isSeparator ? (isCollapsed ? conflictHighlight : 'none') : conflictHighlight");
+    expect(app).toContain("isCollapsed ? conflictHighlight : 'none'");
+    expect(app).toContain('const visibleConflictHighlight = conflictSnapshotReady');
     expect(app).toContain('data-conflict-highlight={visibleConflictHighlight}');
-    expect(app).toContain("item.isSeparator ? (isCollapsed ? conflictMarkerStates : []) : conflictMarkerStates");
+    expect(app).toContain('isCollapsed ? conflictMarkerStates : []');
+    expect(app).toContain('const visibleConflictMarkerStates = conflictSnapshotReady');
     expect(app).toContain('data-conflict-status={visibleConflictMarkerStates.join');
     expect(app).toContain('modConflictScrollbarMarkers.map');
     expect(app).toContain('modConflictMarkerStatesForHighlight(highlight)');

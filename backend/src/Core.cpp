@@ -12,6 +12,7 @@
 #include "FluxoraCore/Services/HookService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/ModService.hpp"
+#include "FluxoraCore/Services/ModUpdateService.hpp"
 #include "FluxoraCore/Services/ModOrganizerImportService.hpp"
 #include "FluxoraCore/Services/NexusModsAuthService.hpp"
 #include "FluxoraCore/Services/PluginService.hpp"
@@ -28,11 +29,12 @@ namespace fluxora
           settings_(std::make_unique<AppSettingsService>(*logger_)),
           buildPathSettings_(std::make_unique<BuildPathSettingsService>(*logger_)),
           hooks_(std::make_unique<HookService>(*logger_)),
-          mods_(std::make_unique<ModService>(*logger_, *settings_, *buildPathSettings_)),
+          mods_(std::make_unique<ModService>(*logger_, *buildPathSettings_)),
           plugins_(std::make_unique<PluginService>(*logger_, *buildPathSettings_)),
           profileOrder_(std::make_unique<ProfileOrderService>(*logger_, *mods_, *buildPathSettings_)),
           profiles_(std::make_unique<ProfileService>(*logger_, *buildPathSettings_)),
           nexusModsAuth_(std::make_unique<NexusModsAuthService>(*logger_, *settings_)),
+          nexusUpdateApi_(createNexusUpdateApi(*logger_, *nexusModsAuth_)),
           downloadTransferLimiter_(std::make_unique<DownloadTransferLimiter>()),
           downloads_(std::make_unique<DownloadService>(
               *logger_,
@@ -204,6 +206,11 @@ namespace fluxora
     NexusModsAuthService& Core::nexusModsAuth() noexcept
     {
         return *nexusModsAuth_;
+    }
+
+    NexusUpdateApi& Core::nexusUpdateApi() noexcept
+    {
+        return *nexusUpdateApi_;
     }
 
     ProjectService& Core::projects() noexcept

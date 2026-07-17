@@ -38,6 +38,7 @@ import type {
   FluxoraBuildContentWatchResult,
   FluxoraContentLayoutPreview,
   FluxoraFomodInstaller,
+  FluxoraFomodManualDecision,
   FluxoraDownloadsFolderChangedEvent,
   FluxoraDownloadsFolderWatchResult,
   FluxoraFluxPackExportRequest,
@@ -53,6 +54,7 @@ import type {
   FluxoraInstallFomodArchiveRequest,
   FluxoraInstallFomodDownloadRequest,
   FluxoraInstallPlan,
+  FluxoraInstallConflictSnapshot,
   FluxoraInstalledModSummary,
   FluxoraInstalledMod,
   FluxoraModOrganizerImportAnalysis,
@@ -67,6 +69,8 @@ import type {
   FluxoraModFileTreeEntry,
   FluxoraModFileCacheInvalidationResult,
   FluxoraModMutationResult,
+  FluxoraModUpdateCheckRequest,
+  FluxoraModUpdateCheckResult,
   FluxoraModOrderItem,
   FluxoraModWorkspaceSnapshot,
   FluxoraNifPreviewAssetHandle,
@@ -486,6 +490,20 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         targetIndex,
         request
       ),
+    rebasePendingInstall: (
+      projectDirectory: string,
+      operationId: string,
+      targetIndex: number,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraInstallConflictSnapshot>(
+        ipc,
+        FluxoraIpcChannels.modsRebasePendingInstall,
+        projectDirectory,
+        operationId,
+        targetIndex,
+        request
+      ),
     deleteInstalled: (projectDirectory: string, modPath: string, request?: OperationRequest) =>
       invokeTyped<FluxoraModMutationResult>(
         ipc,
@@ -528,11 +546,11 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         isEnabled,
         request
       ),
-    checkUpdates: (projectDirectory: string, request?: OperationRequest) =>
-      invokeTyped<FluxoraInstalledMod[]>(
+    checkUpdates: (updateRequest: FluxoraModUpdateCheckRequest, request?: OperationRequest) =>
+      invokeTyped<FluxoraModUpdateCheckResult>(
         ipc,
         FluxoraIpcChannels.modsCheckUpdates,
-        projectDirectory,
+        updateRequest,
         request
       ),
     clearOverwrite: (projectDirectory: string, request?: OperationRequest) =>
@@ -1077,6 +1095,8 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
     analyzeFomod: (
       projectDirectory: string,
       downloadPath: string,
+      profileNameOrOperation?: string | OperationRequest,
+      manualDecisions: FluxoraFomodManualDecision[] = [],
       operation?: OperationRequest
     ) =>
       invokeTyped<FluxoraFomodInstaller>(
@@ -1084,11 +1104,15 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         FluxoraIpcChannels.downloadsAnalyzeFomod,
         projectDirectory,
         downloadPath,
+        profileNameOrOperation,
+        manualDecisions,
         operation
       ),
     planInstall: (
       projectDirectory: string,
       downloadPath: string,
+      profileNameOrOperation?: string | OperationRequest,
+      modNameOrOperation?: string | OperationRequest,
       operation?: OperationRequest
     ) =>
       invokeTyped<FluxoraInstallPlan>(
@@ -1096,6 +1120,8 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         FluxoraIpcChannels.downloadsPlanInstall,
         projectDirectory,
         downloadPath,
+        profileNameOrOperation,
+        modNameOrOperation,
         operation
       ),
     analyzeFomodContentLayout: (
@@ -1127,6 +1153,8 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
     planInstall: (
       projectDirectory: string,
       archivePath: string,
+      profileNameOrOperation?: string | OperationRequest,
+      modNameOrOperation?: string | OperationRequest,
       operation?: OperationRequest
     ) =>
       invokeTyped<FluxoraInstallPlan>(
@@ -1134,6 +1162,8 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         FluxoraIpcChannels.archivesPlanInstall,
         projectDirectory,
         archivePath,
+        profileNameOrOperation,
+        modNameOrOperation,
         operation
       ),
     install: (request: FluxoraInstallArchiveRequest, operation?: OperationRequest) =>
@@ -3039,10 +3069,16 @@ const createTauriInvoker = (): IpcInvoker => ({
         return bridgeRequest('mods.deleteSeparator', { projectDirectory: args[0], profileName: optionalString(args[1]), separatorId: args[2] }, requestWithOperationId(args[3], 'mods_delete_separator'));
       case FluxoraIpcChannels.modsMoveOrderItem:
         return bridgeRequest('mods.moveOrderItem', { projectDirectory: args[0], profileName: optionalString(args[1]), orderItemId: args[2], targetIndex: args[3] }, requestWithOperationId(args[4], 'mods_move_order_item'));
+      case FluxoraIpcChannels.modsRebasePendingInstall:
+        return bridgeRequest(
+          'mods.rebasePendingInstall',
+          { projectDirectory: args[0], operationId: args[1], targetIndex: args[2] },
+          requestWithOperationId(args[3], 'mods_rebase_pending_install')
+        );
       case FluxoraIpcChannels.modsCreateEmpty:
         return bridgeRequest('mods.createEmpty', { projectDirectory: args[0], modName: args[1] }, requestWithOperationId(args[2], 'mods_create_empty'));
       case FluxoraIpcChannels.modsCheckUpdates:
-        return bridgeRequest('mods.checkUpdates', { projectDirectory: args[0] }, requestWithOperationId(args[1], 'mods_check_updates'));
+        return bridgeRequest('mods.checkUpdates', args[0] as Record<string, unknown>, requestWithOperationId(args[1], 'mods_check_updates'));
       case FluxoraIpcChannels.modsClearOverwrite: {
         const request = requestWithOperationId(args[1], 'mods_clear_overwrite');
         const data = await bridgeRequest<Record<string, unknown>>(
@@ -3393,17 +3429,43 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.downloadsPlanInstall:
       case FluxoraIpcChannels.archivesPlanInstall: {
         const isArchive = channel === FluxoraIpcChannels.archivesPlanInstall;
+        const profileAware = typeof args[2] === 'string';
+        const nameAware = profileAware && typeof args[3] === 'string';
+        const profileName = profileAware ? args[2] : undefined;
+        const modName = nameAware ? args[3] : undefined;
+        const request = profileAware ? (nameAware ? args[4] : args[3]) : args[2];
+        const params: Record<string, unknown> = isArchive
+          ? { projectDirectory: args[0], archivePath: args[1] }
+          : { projectDirectory: args[0], downloadPath: args[1] };
+        if (profileAware) {
+          params.profileName = profileName;
+        }
+        if (nameAware) {
+          params.modName = modName;
+        }
         return bridgeRequest(
           isArchive ? 'archives.planInstall' : 'downloads.planInstall',
-          isArchive
-            ? { projectDirectory: args[0], archivePath: args[1] }
-            : { projectDirectory: args[0], downloadPath: args[1] },
-          requestWithOperationId(args[2], isArchive ? 'archives_plan_install' : 'downloads_plan_install'),
+          params,
+          requestWithOperationId(request, isArchive ? 'archives_plan_install' : 'downloads_plan_install'),
           fileMutationTimeoutMs
         );
       }
-      case FluxoraIpcChannels.downloadsAnalyzeFomod:
-        return bridgeRequest('downloads.analyzeFomod', { projectDirectory: args[0], downloadPath: args[1] }, requestWithOperationId(args[2], 'downloads_analyze_fomod'));
+      case FluxoraIpcChannels.downloadsAnalyzeFomod: {
+        const profileAware = typeof args[2] === 'string';
+        const params: Record<string, unknown> = {
+          projectDirectory: args[0],
+          downloadPath: args[1]
+        };
+        if (profileAware) {
+          params.profileName = args[2];
+          params.manualDecisionsJson = JSON.stringify(Array.isArray(args[3]) ? args[3] : []);
+        }
+        return bridgeRequest(
+          'downloads.analyzeFomod',
+          params,
+          requestWithOperationId(profileAware ? args[4] : args[2], 'downloads_analyze_fomod')
+        );
+      }
       case FluxoraIpcChannels.downloadsAnalyzeContentLayout:
       case FluxoraIpcChannels.downloadsAnalyzeFomodContentLayout: {
         const analyze = (args[0] ?? {}) as Record<string, unknown>;
@@ -3415,6 +3477,15 @@ const createTauriInvoker = (): IpcInvoker => ({
         };
         if (channel === FluxoraIpcChannels.downloadsAnalyzeFomodContentLayout) {
           params.selectedOptionIdsJson = JSON.stringify(analyze.selectedOptionIds ?? []);
+          if (typeof analyze.profileName === 'string') {
+            params.profileName = analyze.profileName;
+          }
+          if (typeof analyze.fomodContextId === 'string') {
+            params.fomodContextId = analyze.fomodContextId;
+          }
+          if (Array.isArray(analyze.manualDecisions)) {
+            params.manualDecisionsJson = JSON.stringify(analyze.manualDecisions);
+          }
         }
         return bridgeRequest(
           channel === FluxoraIpcChannels.downloadsAnalyzeContentLayout ? 'downloads.analyzeContentLayout' : 'downloads.analyzeFomodContentLayout',
@@ -3451,7 +3522,11 @@ const createTauriInvoker = (): IpcInvoker => ({
         };
         if (isFomod) {
           params.selectedOptionIdsJson = JSON.stringify(install.selectedOptionIds ?? []);
+          if (Array.isArray(install.manualDecisions)) {
+            params.manualDecisionsJson = JSON.stringify(install.manualDecisions);
+          }
           delete params.selectedOptionIds;
+          delete params.manualDecisions;
         }
         const method = isArchive
           ? isFomod ? 'archives.installFomod' : 'archives.install'

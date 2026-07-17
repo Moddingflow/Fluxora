@@ -213,6 +213,7 @@ async fn record_operation_progress(app: &AppHandle, payload: &Value) {
 struct BridgeState {
     process: Mutex<BridgeProcess>,
     interactive_process: Mutex<BridgeProcess>,
+    background_process: Mutex<BridgeProcess>,
 }
 
 #[derive(Clone)]
@@ -1987,6 +1988,15 @@ async fn resolve_ai_host_path(app: &AppHandle) -> Result<PathBuf, String> {
     )
 }
 
+fn fluxora_app_root() -> Result<PathBuf, String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("Fluxora executable path is unavailable: {error}"))?;
+    executable
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "Fluxora executable directory is unavailable.".to_string())
+}
+
 impl BridgeProcess {
     async fn reset(&mut self) {
         if let Some(mut child) = self.child.take() {
@@ -2003,6 +2013,7 @@ impl BridgeProcess {
         }
 
         let host_path = resolve_host_path(app).await?;
+        let app_root = fluxora_app_root()?;
         let native_log_dir = logs_dir(app);
         let cancel_dir = operation_cancel_dir(app);
         tokio::fs::create_dir_all(&cancel_dir)
@@ -2015,6 +2026,7 @@ impl BridgeProcess {
             .stderr(Stdio::piped())
             .env("FLUXORA_LOG_DIR", &native_log_dir)
             .env("FLUXORA_OPERATION_CANCEL_DIR", &cancel_dir)
+            .env("FLUXORA_APP_ROOT", &app_root)
             .env("FLUXORA_TAURI_PROCESS_ID", std::process::id().to_string());
 
         #[cfg(windows)]
@@ -2052,9 +2064,10 @@ impl BridgeProcess {
             "info",
             "BridgeHost",
             &format!(
-                "Started FluxoraBridgeHost with hostPath={} FLUXORA_LOG_DIR={}",
+                "Started FluxoraBridgeHost with hostPath={} FLUXORA_LOG_DIR={} FLUXORA_APP_ROOT={}",
                 host_path_for_log,
-                native_log_dir.to_string_lossy()
+                native_log_dir.to_string_lossy(),
+                app_root.to_string_lossy()
             ),
             None,
         )
@@ -3521,6 +3534,7 @@ async fn fluxora_ai_chat_respond(app: AppHandle, request: Value) -> Result<Value
 enum BridgeLane {
     Main,
     Interactive,
+    Background,
 }
 
 impl BridgeLane {
@@ -3528,12 +3542,14 @@ impl BridgeLane {
         match self {
             Self::Main => "main",
             Self::Interactive => "interactive",
+            Self::Background => "background",
         }
     }
 }
 
 fn bridge_lane_for_method(method: &str) -> BridgeLane {
     match method {
+        "mods.checkUpdates" => BridgeLane::Background,
         "mods.getFileTree"
         | "mods.getModDetailsContent"
         | "mods.readTextFile"
@@ -3780,6 +3796,14 @@ async fn fluxora_bridge_request(
         }
         BridgeLane::Interactive => {
             let mut bridge = state.interactive_process.lock().await;
+            let queue_wait_us = queue_started_at.elapsed().as_micros();
+            let result = bridge
+                .request(&app, &method, params, request, timeout_ms)
+                .await;
+            (result, queue_wait_us)
+        }
+        BridgeLane::Background => {
+            let mut bridge = state.background_process.lock().await;
             let queue_wait_us = queue_started_at.elapsed().as_micros();
             let result = bridge
                 .request(&app, &method, params, request, timeout_ms)
@@ -4563,9 +4587,13 @@ async fn fluxora_shutdown_bridge(
     };
     let interactive_result = {
         let mut bridge = state.interactive_process.lock().await;
+        bridge.shutdown(&app, request.clone()).await
+    };
+    let background_result = {
+        let mut bridge = state.background_process.lock().await;
         bridge.shutdown(&app, request).await
     };
-    main_result.and(interactive_result)
+    main_result.and(interactive_result).and(background_result)
 }
 
 fn process_watch_request(
@@ -6659,6 +6687,47 @@ mod tests {
     }
 
     #[test]
+    fn operation_progress_payload_preserves_nested_install_conflict_snapshot() {
+        let envelope = json!({
+            "jsonrpc": "2.0",
+            "method": "operations.progress",
+            "params": {
+                "stage": "install-conflicts",
+                "installConflictSnapshot": {
+                    "operationId": "op_install",
+                    "revision": 3,
+                    "state": "ready",
+                    "pendingOrderId": "pending-install:op_install",
+                    "orderId": "",
+                    "targetIndex": 2,
+                    "rows": [{
+                        "orderId": "pending-install:op_install",
+                        "modUuid": "",
+                        "fileCount": 4,
+                        "conflictingFileCount": 1,
+                        "overwrittenFileCount": 0,
+                        "overwritingFileCount": 1,
+                        "overwritesModIds": ["uuid-alpha"],
+                        "overwrittenByModIds": []
+                    }]
+                }
+            },
+            "meta": {
+                "operationId": "op_install"
+            }
+        });
+
+        let payload = operation_progress_payload(&envelope);
+
+        assert_eq!(payload["operationId"], "op_install");
+        assert_eq!(payload["installConflictSnapshot"]["revision"], 3);
+        assert_eq!(
+            payload["installConflictSnapshot"]["rows"][0]["overwritesModIds"][0],
+            "uuid-alpha"
+        );
+    }
+
+    #[test]
     fn nexus_api_auth_header_payload_is_filtered_for_ai_host() {
         let credential = nexus_api_auth_header_from_bridge_payload(&json!({
             "isAvailable": true,
@@ -6747,6 +6816,10 @@ mod tests {
         assert_eq!(
             bridge_lane_for_method("mods.getWorkspace"),
             BridgeLane::Main
+        );
+        assert_eq!(
+            bridge_lane_for_method("mods.checkUpdates"),
+            BridgeLane::Background
         );
         assert_eq!(
             bridge_queue_performance_message(
@@ -6948,6 +7021,19 @@ mod tests {
                 timeout(Duration::from_millis(50), state.interactive_process.lock()).await;
 
             assert!(interactive_lane.is_ok());
+        });
+    }
+
+    #[test]
+    fn background_bridge_lane_does_not_wait_for_the_main_or_interactive_lane_locks() {
+        tauri::async_runtime::block_on(async {
+            let state = BridgeState::default();
+            let _main_lane = state.process.lock().await;
+            let _interactive_lane = state.interactive_process.lock().await;
+            let background_lane =
+                timeout(Duration::from_millis(50), state.background_process.lock()).await;
+
+            assert!(background_lane.is_ok());
         });
     }
 

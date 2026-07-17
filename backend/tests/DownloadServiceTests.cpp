@@ -84,7 +84,18 @@ namespace fluxora::test_hooks
         const std::filesystem::path& modsDirectory,
         std::wstring_view safeName);
 
+    void withInstalledDirectoryCommitForTest(
+        const std::filesystem::path& stagingDirectory,
+        const std::filesystem::path& targetDirectory,
+        const std::filesystem::path& modsDirectory,
+        std::wstring_view safeName,
+        const std::function<void()>& beforeCommit);
+
     void setActiveDownloadForTest(const std::filesystem::path& path, bool active);
+
+    void withArchiveUseLockForTest(
+        std::wstring_view archiveSha256,
+        const std::function<void()>& action);
 
     std::filesystem::path downloadProgressSidecarPathForTest(const std::filesystem::path& path);
 
@@ -124,6 +135,30 @@ namespace fluxora::test_hooks
 
 namespace fluxora::tests
 {
+    namespace
+    {
+        class ScopedDownloadProject final
+        {
+        public:
+            ScopedDownloadProject(
+                const TempDirectory& temp,
+                const std::filesystem::path& projectDirectory)
+                : appRootEnvironment_(
+                    L"FLUXORA_APP_ROOT",
+                    (temp.path() / L"Fluxora App").wstring())
+            {
+                std::filesystem::create_directories(temp.path() / L"Fluxora App");
+                InstanceMetadataStore::ensureInstance(projectDirectory, L"skyrimse");
+            }
+
+            ScopedDownloadProject(const ScopedDownloadProject&) = delete;
+            ScopedDownloadProject& operator=(const ScopedDownloadProject&) = delete;
+
+        private:
+            ScopedEnvironmentVariable appRootEnvironment_;
+        };
+    }
+
 #ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
     namespace
     {
@@ -430,6 +465,64 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(DownloadServiceTests, GlobalArchiveCannotBeDeletedWhileAnotherBuildIsInstallingIt)
+    {
+#if !defined(_WIN32) || !defined(FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS)
+        GTEST_SKIP() << "Global archive use locks require Windows test hooks.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedEnvironmentVariable appRoot(L"FLUXORA_APP_ROOT", (temp.path() / L"AppRoot").wstring());
+        std::filesystem::create_directories(temp.path() / L"AppRoot");
+
+        const std::filesystem::path project = temp.path() / L"Build A";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+
+        const std::filesystem::path source = temp.path() / L"Shared Archive.7z";
+        writeTextFile(source, "shared archive payload");
+        const DownloadEntry imported = downloads.importLocalFile(project, source);
+        ASSERT_TRUE(imported.archiveId.starts_with(L"sha256:"));
+
+        std::promise<void> lockAcquired;
+        std::promise<void> releaseLock;
+        const std::shared_future<void> releaseFuture = releaseLock.get_future().share();
+        auto installer = std::async(std::launch::async, [&]()
+        {
+            test_hooks::withArchiveUseLockForTest(
+                imported.archiveId.substr(7),
+                [&]()
+                {
+                    lockAcquired.set_value();
+                    releaseFuture.wait();
+                });
+        });
+
+        ASSERT_EQ(lockAcquired.get_future().wait_for(std::chrono::seconds(2)), std::future_status::ready);
+        EXPECT_THROW(downloads.deleteDownload(project, imported.localPath), std::invalid_argument);
+        EXPECT_TRUE(std::filesystem::exists(imported.localPath));
+
+        releaseLock.set_value();
+        installer.get();
+        EXPECT_NO_THROW(downloads.deleteDownload(project, imported.localPath));
+        EXPECT_FALSE(std::filesystem::exists(imported.localPath));
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+#endif
+    }
+
     TEST(DownloadServiceTests, FailedReplaceCommitRestoresTheOriginalDirectory)
     {
 #ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
@@ -459,6 +552,41 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(DownloadServiceTests, MetadataFailureAfterPromotionRestoresTheOriginalDirectory)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path mods = temp.path() / L"mods";
+        const std::filesystem::path target = mods / L"Atomic Mod";
+        const std::filesystem::path staging = mods / L".Atomic Mod.installing";
+        writeTextFile(target / L"Data" / L"Original.esp", "original");
+        writeTextFile(staging / L"Data" / L"Replacement.esp", "replacement");
+
+        EXPECT_THROW(
+            test_hooks::withInstalledDirectoryCommitForTest(
+                staging,
+                target,
+                mods,
+                L"Atomic Mod",
+                []()
+                {
+                    throw std::runtime_error("Injected metadata failure.");
+                }),
+            std::runtime_error);
+
+        EXPECT_EQ(readTextFile(target / L"Data" / L"Original.esp"), "original");
+        EXPECT_FALSE(std::filesystem::exists(target / L"Data" / L"Replacement.esp"));
+        EXPECT_FALSE(std::filesystem::exists(staging));
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(mods))
+        {
+            EXPECT_FALSE(entry.path().filename().wstring().starts_with(L".Atomic Mod.replacing"));
+        }
+#endif
+    }
+
     TEST(DownloadServiceTests, CaptureNxmLinkWithoutDownloadKeyQueuesAuthenticatedDownload)
     {
 #ifndef _WIN32
@@ -478,6 +606,7 @@ namespace fluxora::tests
         downloads.initialize();
 
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
         const std::vector<DownloadEntry> entries = downloads.captureNxmLinks(
             projectDirectory,
             {L"nxm://skyrimspecialedition/mods/3863/files/123"});
@@ -525,6 +654,7 @@ namespace fluxora::tests
         DownloadService downloads(logger, settings, pathSettings, transferLimiter);
         downloads.initialize();
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
         const std::vector<DownloadEntry> accepted = downloads.captureNxmLinks(
             projectDirectory,
             {L"nxm://skyrimspecialedition/mods/182366/files/770345"});
@@ -593,6 +723,7 @@ namespace fluxora::tests
         downloads.initialize();
 
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
         const std::vector<DownloadEntry> entries = downloads.captureNxmLinks(
             projectDirectory,
             {L"nxm://skyrimspecialedition/mods/3863/files/123"});
@@ -651,6 +782,7 @@ namespace fluxora::tests
         downloads.initialize();
 
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
         downloads.captureNxmLinks(
             projectDirectory,
             {L"nxm://skyrimspecialedition/mods/3863/files/123"});
@@ -695,7 +827,8 @@ namespace fluxora::tests
         downloads.initialize();
 
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
-        const std::filesystem::path downloadsDirectory = projectDirectory / L"downloads";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
+        const std::filesystem::path downloadsDirectory = pathSettings.downloadsDirectory(projectDirectory);
         writeTextFile(downloadsDirectory / L"Ready.zip", "archive");
         writeTextFile(downloadsDirectory / L".fb1234abcd", "nxm://skyrimspecialedition/mods/3863/files/123");
 
@@ -727,7 +860,8 @@ namespace fluxora::tests
         downloads.initialize();
 
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
-        const std::filesystem::path downloadsDirectory = projectDirectory / L"downloads";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
+        const std::filesystem::path downloadsDirectory = pathSettings.downloadsDirectory(projectDirectory);
         const std::filesystem::path olderPath = downloadsDirectory / L"Older.zip";
         const std::filesystem::path newerPath = downloadsDirectory / L"Newer.zip";
         writeTextFile(olderPath, "old archive");
@@ -765,7 +899,8 @@ namespace fluxora::tests
         downloads.initialize();
 
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
-        const std::filesystem::path downloadsDirectory = projectDirectory / L"downloads";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
+        const std::filesystem::path downloadsDirectory = pathSettings.downloadsDirectory(projectDirectory);
         const std::filesystem::path archivePath = downloadsDirectory / L"Ready.zip";
         writeTextFile(archivePath, "archive");
         writeTextFile(downloadsDirectory / L"notes.txt", "not a supported download");
@@ -773,10 +908,22 @@ namespace fluxora::tests
             archivePath.wstring() + L".fluxora.json",
             R"({"installedModName":"Sky Mod","bytesReceived":100,"totalBytes":100,"isDownloading":false})");
 
-        const std::vector<DownloadEntry> entries = downloads.listDownloads(projectDirectory);
+        std::vector<DownloadEntry> entries;
+        for (int attempt = 0; attempt < 200; ++attempt)
+        {
+            entries = downloads.listDownloads(projectDirectory);
+            if (entries.size() == 1U && entries.front().transferState == L"idle")
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
 
         ASSERT_EQ(entries.size(), 1U);
         EXPECT_EQ(entries.front().fileName, L"Ready.zip");
+        EXPECT_EQ(entries.front().buildStatus, L"Ready");
+        EXPECT_EQ(entries.front().transferState, L"idle");
+        EXPECT_TRUE(entries.front().canInstall);
         EXPECT_FALSE(entries.front().hasKnownProgress);
         EXPECT_EQ(entries.front().progressPercent, 0);
         EXPECT_TRUE(entries.front().progressText.empty());
@@ -785,6 +932,85 @@ namespace fluxora::tests
         pathSettings.shutdown();
         settings.shutdown();
         logger.shutdown();
+    }
+
+    TEST(DownloadServiceTests, GlobalArchiveIdentityUsesIndependentPerBuildStatusesAndIgnoresLegacyInstallSidecar)
+    {
+        TempDirectory temp;
+        const std::filesystem::path appRoot = temp.path() / L"Fluxora App";
+        const std::filesystem::path firstProject = temp.path() / L"First Build";
+        const std::filesystem::path secondProject = temp.path() / L"Second Build";
+        const std::filesystem::path source = temp.path() / L"Incoming" / L"Shared.zip";
+        std::filesystem::create_directories(appRoot);
+        writeTextFile(source, "shared archive content");
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedEnvironmentVariable appRootEnvironment(L"FLUXORA_APP_ROOT", appRoot.wstring());
+        InstanceMetadataStore::ensureInstance(firstProject, L"skyrimse");
+        InstanceMetadataStore::ensureInstance(secondProject, L"skyrimse");
+
+        Logger logger;
+        AppSettingsService settings(logger);
+        BuildPathSettingsService pathSettings(logger);
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+
+        const DownloadEntry imported = downloads.importLocalFile(firstProject, source);
+        writeTextFile(
+            imported.localPath.wstring() + L".fluxora.json",
+            R"({"installedModName":"Legacy Sidecar Mod","installedAtUtc":"2025-01-01T00:00:00Z"})");
+        const std::filesystem::path duplicatePhysicalPath =
+            imported.localPath.parent_path() / L"Explorer Duplicate.zip";
+        std::filesystem::copy_file(imported.localPath, duplicatePhysicalPath);
+
+        std::vector<DownloadEntry> firstReady;
+        for (int attempt = 0; attempt < 200; ++attempt)
+        {
+            firstReady = downloads.listDownloads(firstProject);
+            if (firstReady.size() == 2U &&
+                std::all_of(firstReady.begin(), firstReady.end(), [](const DownloadEntry& entry)
+                {
+                    return entry.transferState == L"idle";
+                }))
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        const std::vector<DownloadEntry> secondReady = downloads.listDownloads(secondProject);
+        ASSERT_EQ(firstReady.size(), 2U);
+        ASSERT_EQ(secondReady.size(), 2U);
+        EXPECT_EQ(firstReady[0].archiveId, firstReady[1].archiveId);
+        EXPECT_EQ(firstReady[0].buildStatus, L"Ready");
+        EXPECT_EQ(firstReady[1].buildStatus, L"Ready");
+        EXPECT_EQ(secondReady[0].buildStatus, L"Ready");
+
+        const std::filesystem::path modPath = firstProject / L"mods" / L"Shared Mod";
+        writeTextFile(modPath / L"Shared.esp", "plugin");
+        const InstalledModRecord mod = InstanceMetadataStore::registerInstalledMod(
+            firstProject,
+            modPath,
+            L"Shared Mod",
+            L"1.0",
+            {});
+        const std::wstring sha256 = imported.archiveId.substr(std::wstring(L"sha256:").size());
+        InstanceMetadataStore::beginArchiveInstallAttempt(
+            firstProject,
+            sha256,
+            L"status-test",
+            L"Shared Mod");
+        InstanceMetadataStore::completeArchiveInstallAttempt(
+            firstProject,
+            sha256,
+            mod.uuid,
+            L"status-test",
+            ArchiveModLinkMode::Replace);
+
+        EXPECT_EQ(downloads.listDownloads(firstProject).front().buildStatus, L"Installed");
+        EXPECT_EQ(downloads.listDownloads(secondProject).front().buildStatus, L"Ready");
+
+        InstanceMetadataStore::deleteInstalledMod(firstProject, modPath);
+        EXPECT_EQ(downloads.listDownloads(firstProject).front().buildStatus, L"Deleted");
+        EXPECT_EQ(downloads.listDownloads(secondProject).front().buildStatus, L"Ready");
     }
 
     TEST(DownloadServiceTests, ListDownloadsUsesDownloadedFileNameInsteadOfNexusModTitle)
@@ -803,7 +1029,8 @@ namespace fluxora::tests
         downloads.initialize();
 
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
-        const std::filesystem::path archivePath = projectDirectory / L"downloads" /
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
+        const std::filesystem::path archivePath = pathSettings.downloadsDirectory(projectDirectory) /
             L"Cabbage CS Preset 182366 5 2026-07-01T12-33Z Ks18n0uG9.7z";
         writeTextFile(archivePath, "archive");
         writeTextFile(
@@ -814,6 +1041,94 @@ namespace fluxora::tests
 
         ASSERT_EQ(entries.size(), 1U);
         EXPECT_EQ(entries.front().name, L"Cabbage CS Preset 182366 5 2026-07-01T12-33Z Ks18n0uG9");
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+    }
+
+    TEST(DownloadServiceTests, PlanDownloadInstallUsesSpecificFileNameInsteadOfNexusModTitle)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
+        const std::filesystem::path archivePath = pathSettings.downloadsDirectory(projectDirectory) /
+            L"Imperial Forts Remake PBR Lod Helper.bsa";
+        writeTextFile(archivePath, "archive");
+        writeTextFile(
+            archivePath.wstring() + L".fluxora.json",
+            R"({"gameDomain":"skyrimspecialedition","modId":"12345","fileId":"200","nexusModName":"Imperial Forts Remake PBR","isDownloading":false})");
+        InstanceMetadataStore::ensureInstance(projectDirectory, L"skyrimse");
+
+        const FluxoraInstallPlan plan = downloads.planDownloadInstall(projectDirectory, archivePath);
+
+        EXPECT_EQ(plan.suggestedModName, L"Imperial Forts Remake PBR Lod Helper");
+        EXPECT_FALSE(plan.matchedTarget.has_value());
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+    }
+
+    TEST(DownloadServiceTests, PlanDownloadInstallUsesFinalUserNameForExistingModConflict)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
+        const std::wstring finalName = L"Unofficial Skyrim Modders Patch";
+        const std::filesystem::path installedPath =
+            pathSettings.loadForProjectDirectory(projectDirectory).modsDirectory / finalName;
+        writeTextFile(installedPath / L"Unofficial Skyrim Modders Patch.esp", "original");
+        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+            projectDirectory,
+            installedPath,
+            finalName,
+            L"2.6.8",
+            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"154565", L"691455"});
+
+        const std::filesystem::path archivePath =
+            pathSettings.downloadsDirectory(projectDirectory) / L"USMP RU.bsa";
+        writeTextFile(archivePath, "translation");
+        writeTextFile(
+            archivePath.wstring() + L".fluxora.json",
+            R"({"gameDomain":"skyrimspecialedition","modId":"49616","fileId":"773384","nexusModName":"USMP RU","isDownloading":false})");
+
+        const FluxoraInstallPlan plan = downloads.planDownloadInstall(
+            projectDirectory,
+            archivePath,
+            L"Default",
+            finalName);
+
+        ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.matchedTarget->modUuid, installed.uuid);
+        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(plan.suggestedModName, finalName);
 
         downloads.shutdown();
         pathSettings.shutdown();
@@ -840,7 +1155,8 @@ namespace fluxora::tests
         downloads.initialize();
 
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
-        const std::filesystem::path downloadsDirectory = projectDirectory / L"downloads";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
+        const std::filesystem::path downloadsDirectory = pathSettings.downloadsDirectory(projectDirectory);
         const std::filesystem::path pendingPath = downloadsDirectory / L"skyrimspecialedition-3863-123.nxm";
         writeTextFile(pendingPath, "nxm://skyrimspecialedition/mods/3863/files/123");
 
@@ -889,8 +1205,9 @@ namespace fluxora::tests
         downloads.initialize();
 
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
         const std::filesystem::path pendingPath =
-            projectDirectory / L"downloads" / L"skyrimspecialedition-3863-123.nxm";
+            pathSettings.downloadsDirectory(projectDirectory) / L"skyrimspecialedition-3863-123.nxm";
         writeTextFile(pendingPath, "nxm://skyrimspecialedition/mods/3863/files/123");
         writeTextFile(
             pendingPath.wstring() + L".fluxora.json",
@@ -1317,6 +1634,7 @@ namespace fluxora::tests
             });
 
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
         const std::vector<DownloadEntry> queuedEntries = downloads.captureNxmLinks(
             projectDirectory,
             {
@@ -1520,6 +1838,7 @@ namespace fluxora::tests
             });
 
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
         std::array<std::exception_ptr, 5> synchronousFailures;
         std::vector<std::thread> synchronousDownloads;
         synchronousDownloads.reserve(synchronousFailures.size());
@@ -1631,7 +1950,22 @@ namespace fluxora::tests
         EXPECT_EQ(canceledEntry->status, L"Отменено");
         for (const std::exception_ptr& failure : synchronousFailures)
         {
-            EXPECT_EQ(failure, nullptr);
+            if (failure == nullptr)
+            {
+                continue;
+            }
+            try
+            {
+                std::rethrow_exception(failure);
+            }
+            catch (const std::exception& exception)
+            {
+                ADD_FAILURE() << "Synchronous transfer failed: " << exception.what();
+            }
+            catch (...)
+            {
+                ADD_FAILURE() << "Synchronous transfer failed with an unknown error.";
+            }
         }
 #endif
     }
@@ -1652,6 +1986,7 @@ namespace fluxora::tests
         pathSettings.initialize();
         DownloadTransferLimiter transferLimiter;
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
         const std::wstring link = L"nxm://skyrimspecialedition/mods/3863/files/778";
 
         std::filesystem::path orphanedPendingPath;
@@ -1919,6 +2254,7 @@ namespace fluxora::tests
         DownloadService downloads(logger, settings, pathSettings, transferLimiter);
 
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
         const std::filesystem::path directory = pathSettings.downloadsDirectory(projectDirectory);
         std::filesystem::create_directories(directory);
         writeTextFile(directory / L"shared-name.zip", "existing fixture");
@@ -2017,6 +2353,7 @@ namespace fluxora::tests
         pathSettings.initialize();
         DownloadTransferLimiter transferLimiter;
         const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
         const std::wstring link = L"nxm://skyrimspecialedition/mods/3863/files/779";
 
         std::filesystem::path pendingPath;

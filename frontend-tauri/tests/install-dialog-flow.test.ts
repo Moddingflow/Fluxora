@@ -104,6 +104,22 @@ describe('install dialog flow', () => {
     expect(startInstallFlow).not.toContain('analyzeInstallLayout(');
   });
 
+  it('reapplies an already resolved install plan after late FOMOD detection', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const detectionTransition = sliceBetween(
+      app,
+      'const installDialogWithDetection =',
+      '  const watchInstallDetection ='
+    );
+    const fomodStart = detectionTransition.indexOf('if (fomodInstaller.isFomod)');
+    const standardStart = detectionTransition.lastIndexOf(
+      'const detectedDialog: InstallDialogState'
+    );
+    const fomodBranch = detectionTransition.slice(fomodStart, standardStart);
+
+    expect(fomodBranch).toContain('attachBackgroundInstallPlan');
+  });
+
   it('keeps an active installation non-visual while blocking another install action', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const submitInstallDialog = sliceBetween(
@@ -135,7 +151,7 @@ describe('install dialog flow', () => {
     const continueFromFomod = sliceBetween(
       app,
       'const continueFromFomod = async',
-      '  const applyOptimisticInstalledMod = ('
+      '  async function submitInstallDialog('
     );
     const fomodStep = sliceBetween(
       dialog,
@@ -150,6 +166,34 @@ describe('install dialog flow', () => {
     expect(continueFromFomod).not.toContain("phase: 'options'");
     expect(fomodStep).toContain('Установить');
     expect(fomodStep).not.toContain('Review install');
+  });
+
+  it('keeps Smart Select in the current FOMOD step and refreshes stale context before any retry', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const dialog = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'install',
+      'InstallDialog.tsx'
+    );
+    const submitInstallDialog = sliceBetween(
+      app,
+      'async function submitInstallDialog',
+      '  const submitInstallOptions = async'
+    );
+
+    expect(dialog).toContain('Автовыбор · ${evaluation.selectedOptionIds.length} выбрано');
+    expect(dialog).toContain('Пересчитать');
+    expect(dialog).toContain('Вернуть автоподбор');
+    expect(dialog).toContain('Почему выбрано');
+    expect(submitInstallDialog).toContain("errorCode === 'install.fomodContextChanged'");
+    expect(submitInstallDialog).toContain('retainedManualDecisions');
+    expect(submitInstallDialog).toContain('selectedProjectProfileName');
+    expect(submitInstallDialog).toContain('fomodContextId');
+    expect(submitInstallDialog).toContain("phase: 'fomod'");
+    expect(submitInstallDialog).toContain('нажмите «Установить» ещё раз');
   });
 
   it('keeps Details usable before the background placement preview resolves', () => {
@@ -215,9 +259,12 @@ describe('install dialog flow', () => {
     expect(app).toContain('const resolveInstallDialogPlan = async');
     expect(app).toContain('existingModMode: 0,');
     expect(app).toContain('onResolveExistingMod={(mode) => void submitInstallOptions(mode)}');
-    expect(submitInstallDialog).toContain('const resolvedDialog = await resolveInstallDialogPlan');
+    expect(submitInstallDialog).toContain('let resolvedDialog = await resolveInstallDialogPlan');
     expect(submitInstallDialog).toContain(
-      'const existingModNameForPrompt = installPlan.matchedTarget?.displayName ?? null;'
+      'const matchedTarget = matchedInstallTargetForCurrentName(submissionDialog);'
+    );
+    expect(submitInstallDialog).toContain(
+      'const existingModNameForPrompt = matchedTarget?.displayName ?? null;'
     );
     expect(submitInstallDialog).toContain("phase: 'conflict'");
     expect(submitInstallDialog).toContain(
@@ -228,12 +275,35 @@ describe('install dialog flow', () => {
       "identityDecision: useMatchedTarget ? 'use-match' as const : 'install-new' as const"
     );
     expect(submitInstallDialog).toContain(
-      'targetModUuid: useMatchedTarget ? installPlan.matchedTarget!.modUuid : undefined'
+      'targetModUuid: useMatchedTarget ? matchedTarget!.modUuid : undefined'
     );
     expect(submitInstallDialog).toContain("newNamePolicy: 'first-free-copy-suffix' as const");
     expect(submitInstallDialog.match(/\.\.\.identitySelection/g)).toHaveLength(4);
     expect(submitInstallDialog).not.toContain("phase: 'installing'");
     expect(submitInstallDialog).not.toContain('mods.listInstalled');
+  });
+
+  it('replans a user-edited final name before deciding whether to show the conflict dialog', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const planInstallSource = sliceBetween(
+      app,
+      'const planInstallSource =',
+      '  const startInstallFlow = async'
+    );
+    const submitInstallDialog = sliceBetween(
+      app,
+      'async function submitInstallDialog',
+      '  const submitInstallOptions = async'
+    );
+
+    expect(planInstallSource).toContain('requestedModName?: string');
+    expect(planInstallSource.match(/requestedModName,\s*\{ operationId \}/g)).toHaveLength(2);
+    expect(submitInstallDialog).toContain('if (installPlanNeedsUserNameReplan(resolvedDialog))');
+    expect(submitInstallDialog).toContain('const userNamePlan = await planInstallSource(');
+    expect(submitInstallDialog).toContain('initialModName');
+    expect(submitInstallDialog).toContain(
+      'attachBackgroundInstallPlan(resolvedDialog, userNamePlan)'
+    );
   });
 
   it('replans a stale identity decision without overwriting a user-edited name', () => {
@@ -248,10 +318,13 @@ describe('install dialog flow', () => {
     expect(submitInstallDialog).toContain('await planInstallSource(');
     expect(submitInstallDialog).toContain('applyInstallNameSuggestion(');
     expect(submitInstallDialog).toContain('submissionDialog,');
+    expect(submitInstallDialog).toContain('const replannedDialog: InstallDialogState =');
+    expect(submitInstallDialog).toContain('matchedInstallTargetForCurrentName(replannedDialog)');
+    expect(submitInstallDialog).not.toContain('phase: plan.matchedTarget');
     expect(submitInstallDialog).toContain("submissionDialog.installerKind === 'fomod'");
   });
 
-  it('commits the installed row immediately and reconciles native state in the background', () => {
+  it('creates the pending row before mutation and completes it from the authoritative result', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const submitInstallDialog = sliceBetween(
       app,
@@ -261,10 +334,38 @@ describe('install dialog flow', () => {
 
     expect(submitInstallDialog).toContain('installSubmitInFlightRef.current');
     expect(submitInstallDialog).toContain('setInstallDialog((current) =>');
-    expect(submitInstallDialog).toContain('applyOptimisticInstalledMod(');
-    expect(submitInstallDialog).toContain('void reconcileInstalledModAfterInstall(');
+    expect(submitInstallDialog).toContain('pendingInstallOrchestrator.begin({');
+    expect(submitInstallDialog).toContain('pendingInstallOrchestrator.complete(installed)');
+    expect(submitInstallDialog).toContain('mergeOptimisticInstalledMod(current, installed)');
+    expect(submitInstallDialog).toContain('pendingInstallOrchestrator.rollback(');
     expect(submitInstallDialog).not.toContain("phase: 'installing'");
     expect(submitInstallDialog).not.toContain('await loadModsWorkspace(selectedProject)');
     expect(submitInstallDialog).not.toContain('await loadPluginsWorkspace(selectedProject)');
+  });
+
+  it('reveals the pending row before mutation and the permanent row from the common success tail', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const submitInstallDialog = sliceBetween(
+      app,
+      'async function submitInstallDialog',
+      '  const submitInstallOptions = async'
+    );
+    const lastInstallBranchIndex = submitInstallDialog.lastIndexOf(
+      'window.fluxora.archives.install('
+    );
+    const pendingRevealIndex = submitInstallDialog.indexOf('requestPostInstallModReveal({');
+    const completedRevealIndex = submitInstallDialog.lastIndexOf('requestPostInstallModReveal({');
+    const catchIndex = submitInstallDialog.indexOf('} catch (error)');
+
+    expect(submitInstallDialog.match(/requestPostInstallModReveal\(\{/g)).toHaveLength(2);
+    expect(lastInstallBranchIndex).toBeGreaterThan(-1);
+    expect(pendingRevealIndex).toBeLessThan(lastInstallBranchIndex);
+    expect(completedRevealIndex).toBeGreaterThan(lastInstallBranchIndex);
+    expect(completedRevealIndex).toBeLessThan(catchIndex);
+    expect(submitInstallDialog).toContain('installedId: pendingSession.pendingOrderId');
+    expect(submitInstallDialog).toContain('installedId: installed.id');
+    expect(submitInstallDialog).toContain('animate: false');
+    expect(submitInstallDialog).toContain('animate: true');
+    expect(submitInstallDialog.match(/\.\.\.identitySelection/g)).toHaveLength(4);
   });
 });

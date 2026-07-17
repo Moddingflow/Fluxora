@@ -6,6 +6,7 @@ import trashIcon from '../../../../../Icons/trash.svg';
 export type DeletionConfirmationKind = 'mod' | 'build' | 'download';
 
 export interface DeletionConfirmationDialogProps {
+  description?: string;
   kind: DeletionConfirmationKind;
   itemName: string;
   itemCount?: number;
@@ -65,6 +66,7 @@ export const deletionSubjectLabel = (
 };
 
 export function DeletionConfirmationDialog({
+  description,
   itemCount,
   kind,
   itemName,
@@ -102,7 +104,11 @@ export function DeletionConfirmationDialog({
   return (
     <div className="delete-confirmation-backdrop" role="presentation">
       <section
-        aria-describedby="delete-confirmation-name"
+        aria-describedby={
+          description
+            ? 'delete-confirmation-name delete-confirmation-description'
+            : 'delete-confirmation-name'
+        }
         aria-labelledby="delete-confirmation-title"
         aria-modal="true"
         className="delete-confirmation-dialog"
@@ -132,6 +138,7 @@ export function DeletionConfirmationDialog({
 
         <div className="delete-confirmation-dialog__body">
           <strong id="delete-confirmation-name">{subject}</strong>
+          {description ? <p id="delete-confirmation-description">{description}</p> : null}
         </div>
 
         <footer className="delete-confirmation-dialog__actions">

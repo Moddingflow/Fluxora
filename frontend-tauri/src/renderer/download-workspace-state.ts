@@ -51,7 +51,7 @@ export interface DownloadCapabilityView {
 
 export interface DownloadStatusView {
   text: string;
-  tone: 'downloading' | 'ready' | 'paused' | 'error' | 'waiting';
+  tone: 'downloading' | 'installed' | 'ready' | 'paused' | 'error' | 'waiting' | 'deleted';
   progressValue: number;
   showProgress: boolean;
 }
@@ -157,7 +157,9 @@ export const selectedDownloadEntry = (
   null;
 
 export const hasActiveDownload = (items: FluxoraDownloadEntry[]): boolean =>
-  items.some((entry) => entry.isDownloading);
+  items.some(
+    (entry) => entry.transferState === 'downloading' || entry.transferState === 'indexing'
+  );
 
 export const filterDownloadEntries = (
   items: FluxoraDownloadEntry[],
@@ -180,7 +182,10 @@ export const filterDownloadEntries = (
       entry.fileName,
       entry.localPath,
       entry.source,
-      entry.status,
+      entry.archiveId ?? '',
+      entry.buildStatus ?? '',
+      entry.transferState,
+      entry.transferMessage,
       entry.sizeText,
       entry.progressText,
       entry.downloadSpeedText
@@ -197,21 +202,24 @@ export const downloadStatusText = (entry: FluxoraDownloadEntry | null): string =
     return 'No download selected';
   }
 
-  if (entry.isDownloading) {
-    return entry.downloadSpeedText || entry.progressText || 'Downloading';
+  switch (entry.transferState) {
+    case 'downloading':
+      return entry.downloadSpeedText || entry.progressText || entry.transferMessage || 'Downloading';
+    case 'queued':
+      return entry.transferMessage || 'Queued';
+    case 'paused':
+      return entry.transferMessage || 'Paused';
+    case 'canceled':
+      return entry.transferMessage || 'Canceled';
+    case 'indexing':
+      return 'Indexing';
+    case 'failed':
+      return entry.transferMessage || 'Failed';
+    case 'idle':
+    default:
+      break;
   }
-
-  if (entry.canInstall) {
-    return 'Ready to install';
-  }
-
-  if (entry.canResume) {
-    return entry.status && entry.status !== 'Ожидает загрузки'
-      ? entry.status
-      : 'Ready to download';
-  }
-
-  return entry.status || 'Waiting';
+  return entry.buildStatus ?? 'Waiting';
 };
 
 export const downloadProgressValue = (entry: FluxoraDownloadEntry): number => {
@@ -224,7 +232,7 @@ export const downloadProgressValue = (entry: FluxoraDownloadEntry): number => {
 
 export const downloadStatusView = (entry: FluxoraDownloadEntry): DownloadStatusView => {
   const progressValue = downloadProgressValue(entry);
-  if (entry.isDownloading) {
+  if (entry.transferState === 'downloading') {
     const progressText = entry.progressText || (entry.hasKnownProgress ? `${progressValue}%` : 'Downloading');
     const text = entry.downloadSpeedText ? `${progressText} · ${entry.downloadSpeedText}` : progressText;
     return {
@@ -236,15 +244,18 @@ export const downloadStatusView = (entry: FluxoraDownloadEntry): DownloadStatusV
   }
 
   const text = downloadStatusText(entry);
-  const lowerStatus = `${entry.status ?? ''} ${text}`.toLocaleLowerCase();
   const tone: DownloadStatusView['tone'] =
-    entry.canInstall
-      ? 'ready'
-      : entry.canResume
-        ? 'paused'
-        : /error|failed|ошиб|не удалось|недоступ/.test(lowerStatus)
-          ? 'error'
-          : 'waiting';
+    entry.buildStatus === 'Installed'
+      ? 'installed'
+      : entry.buildStatus === 'Ready'
+        ? 'ready'
+        : entry.buildStatus === 'Deleted'
+          ? 'deleted'
+          : entry.transferState === 'paused' || entry.transferState === 'canceled'
+            ? 'paused'
+            : entry.transferState === 'failed'
+              ? 'error'
+              : 'waiting';
 
   return {
     text,

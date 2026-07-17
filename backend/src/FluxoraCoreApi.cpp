@@ -14,6 +14,7 @@
 #include "FluxoraCore/Services/FluxPackService.hpp"
 #include "FluxoraCore/Services/GrassCacheService.hpp"
 #include "FluxoraCore/Services/ModService.hpp"
+#include "FluxoraCore/Services/ModUpdateService.hpp"
 #include "FluxoraCore/Services/ModOrganizerImportService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/NexusModsAuthService.hpp"
@@ -1047,7 +1048,26 @@ namespace
         writer.field(L"fileName", download.fileName);
         writer.field(L"localPath", download.localPath.wstring());
         writer.field(L"source", download.source);
-        writer.field(L"status", download.status);
+        writer.key(L"archiveId");
+        if (download.archiveId.empty())
+        {
+            writer.nullValue();
+        }
+        else
+        {
+            writer.value(download.archiveId);
+        }
+        writer.key(L"buildStatus");
+        if (download.buildStatus.empty())
+        {
+            writer.nullValue();
+        }
+        else
+        {
+            writer.value(download.buildStatus);
+        }
+        writer.field(L"transferState", download.transferState);
+        writer.field(L"transferMessage", download.transferMessage);
         writer.field(L"sizeText", download.sizeText);
         writer.field(L"createdAtText", download.createdAtText);
         writer.field(L"progressPercent", download.progressPercent);
@@ -1090,6 +1110,10 @@ namespace
         writer.field(L"version", mod.version);
         writer.field(L"isEnabled", mod.isEnabled);
         writer.field(L"latestVersion", mod.latestVersion);
+        writer.field(L"latestFileId", mod.latestFileId);
+        writer.field(L"updateCheckState", mod.updateCheckState);
+        writer.field(L"latestFileId", mod.latestFileId);
+        writer.field(L"updateCheckState", mod.updateCheckState);
         writer.field(L"sourceIsNexus", mod.sourceIsNexus);
         writer.field(L"sourceIsModdingFlow", mod.sourceIsModdingFlow);
         writer.field(L"sourceProvider", mod.sourceProvider);
@@ -1100,8 +1124,100 @@ namespace
         writer.field(L"isLocal", mod.isLocal);
         writer.field(L"isTranslation", mod.isTranslation);
         writer.field(L"isPatch", mod.isPatch);
+        writer.field(L"modUuid", mod.modUuid);
+        writer.field(L"orderId", mod.orderId);
+        writer.field(L"fileCount", mod.fileCount);
+        writer.field(L"conflictingFileCount", mod.conflictingFileCount);
+        writer.field(L"overwrittenFileCount", mod.overwrittenFileCount);
+        writer.field(L"overwritingFileCount", mod.overwritingFileCount);
+        writer.stringArray(L"overwritesModIds", mod.overwritesModIds);
+        writer.stringArray(L"overwrittenByModIds", mod.overwrittenByModIds);
         writer.endObject();
         return writer.str();
+    }
+
+    std::wstring installConflictSnapshotStateName(
+        fluxora::InstallConflictSnapshotState state)
+    {
+        switch (state)
+        {
+        case fluxora::InstallConflictSnapshotState::Ready:
+            return L"ready";
+        case fluxora::InstallConflictSnapshotState::Committing:
+            return L"committing";
+        case fluxora::InstallConflictSnapshotState::Completed:
+            return L"completed";
+        case fluxora::InstallConflictSnapshotState::Failed:
+            return L"failed";
+        case fluxora::InstallConflictSnapshotState::Preparing:
+        default:
+            return L"preparing";
+        }
+    }
+
+    void writeInstallConflictSnapshot(
+        fluxora::JsonWriter& writer,
+        const fluxora::FluxoraInstallConflictSnapshot& snapshot)
+    {
+        writer.beginObject();
+        writer.field(L"operationId", snapshot.operationId);
+        writer.field(L"revision", static_cast<std::uint64_t>(snapshot.revision));
+        writer.field(L"state", installConflictSnapshotStateName(snapshot.state));
+        writer.field(L"pendingOrderId", snapshot.pendingOrderId);
+        writer.field(L"orderId", snapshot.orderId);
+        writer.field(L"targetIndex", snapshot.targetIndex);
+        writer.key(L"rows").beginArray();
+        for (const fluxora::InstallConflictRowPatch& row : snapshot.rows)
+        {
+            writer.beginObject();
+            writer.field(L"orderId", row.orderId);
+            writer.field(L"modUuid", row.modUuid);
+            writer.field(L"fileCount", row.fileCount);
+            writer.field(L"conflictingFileCount", row.conflictingFileCount);
+            writer.field(L"overwrittenFileCount", row.overwrittenFileCount);
+            writer.field(L"overwritingFileCount", row.overwritingFileCount);
+            writer.stringArray(L"overwritesModIds", row.overwritesModIds);
+            writer.stringArray(L"overwrittenByModIds", row.overwrittenByModIds);
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.endObject();
+    }
+
+    std::wstring serializeInstallConflictProgress(
+        const fluxora::FluxoraInstallConflictSnapshot& snapshot)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"stage", L"install-conflicts");
+        writer.field(L"message", L"Install conflict snapshot updated.");
+        writer.key(L"installConflictSnapshot");
+        writeInstallConflictSnapshot(writer, snapshot);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeInstallConflictSnapshot(
+        const fluxora::FluxoraInstallConflictSnapshot& snapshot)
+    {
+        fluxora::JsonWriter writer;
+        writeInstallConflictSnapshot(writer, snapshot);
+        return writer.str();
+    }
+
+    fluxora::InstallConflictSnapshotCallback installConflictProgressCallback(
+        FluxoraCoreProgressCallback callback,
+        void* userData)
+    {
+        if (callback == nullptr)
+        {
+            return {};
+        }
+        return [callback, userData](const fluxora::FluxoraInstallConflictSnapshot& snapshot)
+        {
+            const std::wstring json = serializeInstallConflictProgress(snapshot);
+            callback(json.c_str(), userData);
+        };
     }
 
     std::wstring placementTargetName(fluxora::PlacementTarget target)
@@ -1283,8 +1399,29 @@ namespace
     {
         writer.beginObject();
         writer.field(L"file", dependency.file);
+        writer.field(L"state", dependency.state);
+        writer.field(L"sourceKind", dependency.sourceKind);
+        writer.field(L"sourceName", dependency.sourceName);
         writer.field(L"exists", dependency.exists);
         writer.endObject();
+    }
+
+    std::wstring fomodPluginHeaderStatusName(fluxora::FomodPluginHeaderStatus status)
+    {
+        switch (status)
+        {
+        case fluxora::FomodPluginHeaderStatus::Parsed:
+            return L"parsed";
+        case fluxora::FomodPluginHeaderStatus::Oversize:
+            return L"oversize";
+        case fluxora::FomodPluginHeaderStatus::CandidateLimit:
+            return L"candidateLimit";
+        case fluxora::FomodPluginHeaderStatus::ReadBudgetExceeded:
+            return L"readBudgetExceeded";
+        case fluxora::FomodPluginHeaderStatus::Corrupt:
+        default:
+            return L"corrupt";
+        }
     }
 
     void writeFomodDependency(fluxora::JsonWriter& writer, const fluxora::FomodDependencyNode& dependency)
@@ -1334,6 +1471,17 @@ namespace
             writer.endObject();
         }
         writer.endArray();
+        writer.key(L"pluginHeaders").beginArray();
+        for (const fluxora::FomodPluginHeader& header : option.pluginHeaders)
+        {
+            writer.beginObject();
+            writer.field(L"outputFile", header.outputFile);
+            writer.stringArray(L"masters", header.masters);
+            writer.field(L"status", fomodPluginHeaderStatusName(header.status));
+            writer.field(L"issueCode", header.issueCode);
+            writer.endObject();
+        }
+        writer.endArray();
         writer.endObject();
     }
 
@@ -1375,6 +1523,115 @@ namespace
         writer.endObject();
     }
 
+    void writeFomodDetectedVersion(
+        fluxora::JsonWriter& writer,
+        const fluxora::FomodDetectedVersion& version)
+    {
+        writer.beginObject();
+        writer.field(L"kind", version.kind);
+        writer.field(L"displayName", version.displayName);
+        writer.field(L"version", version.version);
+        writer.field(L"known", version.known);
+        writer.endObject();
+    }
+
+    void writeFomodProfileContext(
+        fluxora::JsonWriter& writer,
+        const fluxora::FomodProfileContext& context)
+    {
+        writer.beginObject();
+        writer.field(L"contextId", context.contextId);
+        writer.field(L"profileName", context.profileName);
+        writer.field(L"fingerprint", context.fingerprint);
+        writer.field(L"modCatalogRevision", static_cast<std::uintmax_t>(context.modCatalogRevision));
+        writer.field(L"modRevision", context.modRevision);
+        writer.field(L"pluginRevision", context.pluginRevision);
+        writer.field(L"autoSelectionAvailable", context.autoSelectionAvailable);
+        writer.field(L"unavailableReason", context.unavailableReason);
+        writer.key(L"gameVersion");
+        writeFomodDetectedVersion(writer, context.gameVersion);
+        writer.key(L"extenderVersions").beginArray();
+        for (const fluxora::FomodDetectedVersion& version : context.extenderVersions)
+        {
+            writeFomodDetectedVersion(writer, version);
+        }
+        writer.endArray();
+        writer.stringArray(L"basePluginNames", context.basePluginNames);
+        writer.key(L"fileStates").beginArray();
+        for (const fluxora::FomodProfileFileState& state : context.fileStates)
+        {
+            writer.beginObject();
+            writer.field(L"file", state.file);
+            writer.field(L"state", fluxora::FomodProfileContextService::stateName(state.state));
+            writer.field(L"sourceKind", state.sourceKind);
+            writer.field(L"sourceName", state.sourceName);
+            writer.field(L"exists", state.exists);
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.endObject();
+    }
+
+    void writeFomodDecisionEvidence(
+        fluxora::JsonWriter& writer,
+        const fluxora::FomodDecisionEvidence& evidence)
+    {
+        writer.beginObject();
+        writer.field(L"code", evidence.code);
+        writer.field(L"subject", evidence.subject);
+        writer.field(L"expected", evidence.expected);
+        writer.field(L"actual", evidence.actual);
+        writer.field(L"sourceKind", evidence.sourceKind);
+        writer.field(L"sourceName", evidence.sourceName);
+        writer.endObject();
+    }
+
+    void writeFomodAutoSelection(
+        fluxora::JsonWriter& writer,
+        const fluxora::FomodAutoSelection& selection)
+    {
+        writer.beginObject();
+        writer.field(L"contextId", selection.contextId);
+        writer.stringArray(L"initialSelectedOptionIds", selection.initialSelectedOptionIds);
+        writer.key(L"unresolvedGroups").beginArray();
+        for (const fluxora::FomodUnresolvedGroup& group : selection.unresolvedGroups)
+        {
+            writer.beginObject();
+            writer.field(L"stepId", group.stepId);
+            writer.field(L"groupId", group.groupId);
+            writer.field(L"groupName", group.groupName);
+            writer.field(L"reasonCode", group.reasonCode);
+            writer.stringArray(L"optionIds", group.optionIds);
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.key(L"decisions").beginArray();
+        for (const fluxora::FomodOptionDecision& decision : selection.decisions)
+        {
+            writer.beginObject();
+            writer.field(L"optionId", decision.optionId);
+            writer.field(L"action", fluxora::FomodAutoSelectionService::actionName(decision.action));
+            writer.field(L"confidence", fluxora::FomodAutoSelectionService::confidenceName(decision.confidence));
+            writer.field(L"effectiveType", decision.effectiveType);
+            writer.stringArray(L"reasonCodes", decision.reasonCodes);
+            writer.key(L"evidence").beginArray();
+            for (const fluxora::FomodDecisionEvidence& evidence : decision.evidence)
+            {
+                writeFomodDecisionEvidence(writer, evidence);
+            }
+            writer.endArray();
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.field(
+            L"moduleDependencyResult",
+            fluxora::FomodAutoSelectionService::dependencyResultName(selection.moduleDependencyResult));
+        writer.field(L"installBlocked", selection.installBlocked);
+        writer.field(L"cycleDetected", selection.cycleDetected);
+        writer.stringArray(L"warnings", selection.warnings);
+        writer.endObject();
+    }
+
     void writeFomodInstaller(
         fluxora::JsonWriter& writer,
         const fluxora::FomodInstallerDescriptor& descriptor)
@@ -1387,7 +1644,19 @@ namespace
         writer.field(L"moduleImagePath", descriptor.moduleImagePath);
         writer.field(L"memoryKey", descriptor.memoryKey);
         writer.field(L"hasPreviousSelection", descriptor.hasPreviousSelection);
+        writer.field(L"previousSelectionContextual", descriptor.previousSelectionContextual);
+        writer.field(L"previousSelectionWeak", descriptor.previousSelectionWeak);
         writer.stringArray(L"previousSelectedOptionIds", descriptor.previousSelectedOptionIds);
+        writer.stringArray(L"previousDeselectedOptionIds", descriptor.previousDeselectedOptionIds);
+        writer.key(L"moduleDependencies");
+        if (descriptor.moduleDependencies.has_value())
+        {
+            writeFomodDependency(writer, descriptor.moduleDependencies.value());
+        }
+        else
+        {
+            writer.nullValue();
+        }
         writer.key(L"fileDependencies").beginArray();
         for (const fluxora::FomodFileDependencyState& dependency : descriptor.fileDependencyStates)
         {
@@ -1421,6 +1690,24 @@ namespace
             writer.endObject();
         }
         writer.endArray();
+        writer.key(L"profileContext");
+        if (descriptor.profileContext != nullptr)
+        {
+            writeFomodProfileContext(writer, *descriptor.profileContext);
+        }
+        else
+        {
+            writer.nullValue();
+        }
+        writer.key(L"autoSelection");
+        if (descriptor.autoSelection != nullptr)
+        {
+            writeFomodAutoSelection(writer, *descriptor.autoSelection);
+        }
+        else
+        {
+            writer.nullValue();
+        }
         writer.endObject();
     }
 
@@ -1477,6 +1764,97 @@ namespace
         return writer.str();
     }
 
+    std::wstring modUpdateStateText(fluxora::ModUpdateCheckState state)
+    {
+        switch (state)
+        {
+        case fluxora::ModUpdateCheckState::Completed:
+            return L"completed";
+        case fluxora::ModUpdateCheckState::Skipped:
+            return L"skipped";
+        case fluxora::ModUpdateCheckState::Partial:
+            return L"partial";
+        case fluxora::ModUpdateCheckState::Cancelled:
+            return L"cancelled";
+        }
+        return L"partial";
+    }
+
+    std::wstring modUpdateReasonText(fluxora::ModUpdateCheckReason reason)
+    {
+        switch (reason)
+        {
+        case fluxora::ModUpdateCheckReason::None:
+            return L"none";
+        case fluxora::ModUpdateCheckReason::NoEligibleMods:
+            return L"noEligibleMods";
+        case fluxora::ModUpdateCheckReason::DailyTtl:
+            return L"dailyTtl";
+        case fluxora::ModUpdateCheckReason::AuthenticationUnavailable:
+            return L"authenticationUnavailable";
+        case fluxora::ModUpdateCheckReason::QuotaReserve:
+            return L"quotaReserve";
+        case fluxora::ModUpdateCheckReason::RateLimited:
+            return L"rateLimited";
+        case fluxora::ModUpdateCheckReason::OfflineBackoff:
+            return L"offlineBackoff";
+        case fluxora::ModUpdateCheckReason::NetworkError:
+            return L"networkError";
+        case fluxora::ModUpdateCheckReason::Cancelled:
+            return L"cancelled";
+        case fluxora::ModUpdateCheckReason::AmbiguousMetadata:
+            return L"ambiguousMetadata";
+        case fluxora::ModUpdateCheckReason::MetadataUnavailable:
+            return L"metadataUnavailable";
+        }
+        return L"metadataUnavailable";
+    }
+
+    void writeSignedField(fluxora::JsonWriter& writer, std::wstring_view name, long long value)
+    {
+        writer.key(name).numberValue(std::to_wstring(value));
+    }
+
+    std::wstring serializeModUpdateCheckResult(const fluxora::ModUpdateCheckResult& result)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"state", modUpdateStateText(result.state));
+        writer.field(L"reason", modUpdateReasonText(result.reason));
+        writer.field(L"nextEligibleAt", result.nextEligibleAt);
+        writer.key(L"quota").beginObject();
+        writeSignedField(writer, L"hourlyLimit", result.quota.hourlyLimit);
+        writeSignedField(writer, L"hourlyRemaining", result.quota.hourlyRemaining);
+        writer.field(L"hourlyResetAt", result.quota.hourlyResetAt);
+        writeSignedField(writer, L"dailyLimit", result.quota.dailyLimit);
+        writeSignedField(writer, L"dailyRemaining", result.quota.dailyRemaining);
+        writer.field(L"dailyResetAt", result.quota.dailyResetAt);
+        writer.field(L"capturedAt", result.quota.capturedAt);
+        writer.endObject();
+        writer.key(L"counters").beginObject();
+        writer.field(L"apiRequests", static_cast<std::uintmax_t>(result.counters.apiRequests));
+        writer.field(L"cacheHits", static_cast<std::uintmax_t>(result.counters.cacheHits));
+        writer.field(L"checked", static_cast<std::uintmax_t>(result.counters.checked));
+        writer.field(L"updates", static_cast<std::uintmax_t>(result.counters.updates));
+        writer.field(L"ambiguous", static_cast<std::uintmax_t>(result.counters.ambiguous));
+        writer.field(L"failed", static_cast<std::uintmax_t>(result.counters.failed));
+        writer.endObject();
+        writer.key(L"mods").beginArray();
+        for (const fluxora::ModUpdateInstalledMod& mod : result.mods)
+        {
+            writer.beginObject();
+            writer.field(L"folderName", mod.folderName);
+            writer.field(L"latestVersion", mod.latestVersion);
+            writer.field(L"latestFileId", mod.latestFileId);
+            writer.field(L"updateCheckState", mod.updateCheckState);
+            writer.field(L"hasUpdate", mod.hasUpdate);
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.endObject();
+        return writer.str();
+    }
+
     void writeProfileModOrderItem(fluxora::JsonWriter& writer, const fluxora::ProfileModOrderItem& item)
     {
         const bool isSeparator = item.kind == L"separator";
@@ -1493,6 +1871,8 @@ namespace
         writer.field(L"name", item.name);
         writer.field(L"version", item.version);
         writer.field(L"latestVersion", item.latestVersion);
+        writer.field(L"latestFileId", item.latestFileId);
+        writer.field(L"updateCheckState", item.updateCheckState);
         writer.field(L"lastCheckedAt", item.lastCheckedAt);
         writer.field(L"updateStatus", item.updateStatus);
         writer.field(L"conflictStatus", item.conflictStatus);
@@ -2011,6 +2391,42 @@ namespace
         }
 
         return values;
+    }
+
+    std::vector<fluxora::FomodManualDecision> parseFomodManualDecisionsJson(const wchar_t* json)
+    {
+        if (isBlank(json))
+        {
+            return {};
+        }
+        const fluxora::JsonValue root = fluxora::JsonReader::parse(json);
+        if (!root.isArray())
+        {
+            throw std::invalid_argument("Expected a JSON FOMOD manual decision array.");
+        }
+        std::vector<fluxora::FomodManualDecision> decisions;
+        for (const fluxora::JsonValue& item : root.asArray())
+        {
+            if (!item.isObject())
+            {
+                throw std::invalid_argument("FOMOD manual decision must be an object.");
+            }
+            const fluxora::JsonValue* optionId = item.find(L"optionId");
+            const fluxora::JsonValue* selected = item.find(L"selected");
+            if (optionId == nullptr || !optionId->isString() || selected == nullptr ||
+                selected->type() != fluxora::JsonValue::Type::Boolean)
+            {
+                throw std::invalid_argument("FOMOD manual decision has invalid fields.");
+            }
+            if (!optionId->asString().empty())
+            {
+                decisions.push_back(fluxora::FomodManualDecision{
+                    optionId->asString(),
+                    selected->asBoolean()
+                });
+            }
+        }
+        return decisions;
     }
 
     std::wstring serializeStringArray(const std::vector<std::wstring>& values)
@@ -2790,7 +3206,11 @@ namespace
         const wchar_t* placementOverridesJson,
         const fluxora::ModIdentityInstallSelection* identitySelection,
         wchar_t* jsonBuffer,
-        int jsonBufferLength)
+        int jsonBufferLength,
+        const wchar_t* profileName = nullptr,
+        int modOrderTargetIndex = -1,
+        FluxoraCoreProgressCallback progressCallback = nullptr,
+        void* progressUserData = nullptr)
     {
         try
         {
@@ -2826,7 +3246,10 @@ namespace
                     modName,
                     mode,
                     placementOverrides,
-                    identitySelection));
+                    identitySelection,
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
+                    modOrderTargetIndex,
+                    installConflictProgressCallback(progressCallback, progressUserData)));
             syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Install download", true);
             logOperation(fluxora::LogLevel::Info, "Downloads", "Install download completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
@@ -2845,7 +3268,11 @@ namespace
         const wchar_t* placementOverridesJson,
         const fluxora::ModIdentityInstallSelection* identitySelection,
         wchar_t* jsonBuffer,
-        int jsonBufferLength)
+        int jsonBufferLength,
+        const wchar_t* profileName = nullptr,
+        int modOrderTargetIndex = -1,
+        FluxoraCoreProgressCallback progressCallback = nullptr,
+        void* progressUserData = nullptr)
     {
         try
         {
@@ -2881,7 +3308,10 @@ namespace
                     modName,
                     mode,
                     placementOverrides,
-                    identitySelection));
+                    identitySelection,
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
+                    modOrderTargetIndex,
+                    installConflictProgressCallback(progressCallback, progressUserData)));
             syncSkyrimPluginsForInstalledMods(std::filesystem::path(projectDirectory), "Install archive", true);
             logOperation(fluxora::LogLevel::Info, "Mods", "Install archive completed.");
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
@@ -4614,9 +5044,104 @@ extern "C"
                 return FluxoraCoreResultInvalidArgument;
             }
 
+            fluxora::ModUpdateService service(
+                core().logger(),
+                core().buildPathSettings(),
+                core().nexusUpdateApi());
+            (void)service.check(fluxora::ModUpdateCheckRequest{
+                std::filesystem::path(projectDirectory),
+                fluxora::ModUpdateCheckMode::Manual});
             const std::wstring json = serializeInstalledModList(
-                core().mods().checkInstalledModUpdates(std::filesystem::path(projectDirectory)));
+                core().mods().listInstalledMods(std::filesystem::path(projectDirectory)));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_check_mod_updates_v2(
+        const wchar_t* requestJson,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(requestJson))
+            {
+                lastError = L"Mod update request JSON is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const fluxora::JsonValue root = fluxora::JsonReader::parse(requestJson);
+            if (!root.isObject())
+            {
+                lastError = L"Expected a JSON mod update request object.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const fluxora::JsonValue* projectValue = root.find(L"projectDirectory");
+            const fluxora::JsonValue* modeValue = root.find(L"mode");
+            if (projectValue == nullptr || !projectValue->isString() ||
+                isBlank(projectValue->asString().c_str()))
+            {
+                lastError = L"Project directory is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            if (modeValue == nullptr || !modeValue->isString())
+            {
+                lastError = L"Mod update check mode is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            fluxora::ModUpdateCheckMode mode;
+            if (modeValue->asString() == L"automatic")
+            {
+                mode = fluxora::ModUpdateCheckMode::Automatic;
+            }
+            else if (modeValue->asString() == L"manual")
+            {
+                mode = fluxora::ModUpdateCheckMode::Manual;
+            }
+            else
+            {
+                lastError = L"Mod update check mode must be automatic or manual.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            fluxora::ModUpdateServiceOptions options;
+            if (progressCallback != nullptr)
+            {
+                options.progress = [progressCallback, progressUserData](
+                    std::size_t completed,
+                    std::size_t total,
+                    std::wstring_view modId)
+                {
+                    fluxora::JsonWriter writer;
+                    writer.beginObject();
+                    writer.field(L"phase", L"metadata");
+                    writer.field(L"completed", static_cast<std::uintmax_t>(completed));
+                    writer.field(L"total", static_cast<std::uintmax_t>(total));
+                    writer.field(L"modId", modId);
+                    writer.endObject();
+                    progressCallback(writer.str().c_str(), progressUserData);
+                };
+            }
+
+            fluxora::ModUpdateService service(
+                core().logger(),
+                core().buildPathSettings(),
+                core().nexusUpdateApi(),
+                std::move(options));
+            const fluxora::ModUpdateCheckResult result = service.check(fluxora::ModUpdateCheckRequest{
+                std::filesystem::path(projectValue->asString()),
+                mode});
+            return writeToBuffer(
+                serializeModUpdateCheckResult(result),
+                jsonBuffer,
+                jsonBufferLength);
         }
         catch (const std::exception& exception)
         {
@@ -5608,6 +6133,122 @@ extern "C"
         }
     }
 
+    int fluxora_plan_download_install_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(downloadPath))
+            {
+                lastError = L"Project directory and download path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            return writeToBuffer(
+                serializeInstallPlan(core().downloads().planDownloadInstall(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(downloadPath),
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName))),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_plan_download_install_for_profile_with_name(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* profileName,
+        const wchar_t* modName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(downloadPath) || isBlank(modName))
+            {
+                lastError = L"Project directory, download path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            return writeToBuffer(
+                serializeInstallPlan(core().downloads().planDownloadInstall(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(downloadPath),
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
+                    std::wstring_view(modName))),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_plan_archive_install_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(archivePath))
+            {
+                lastError = L"Project directory and archive path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            return writeToBuffer(
+                serializeInstallPlan(core().downloads().planArchiveInstall(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(archivePath),
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName))),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_plan_archive_install_for_profile_with_name(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* profileName,
+        const wchar_t* modName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(archivePath) || isBlank(modName))
+            {
+                lastError = L"Project directory, archive path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            return writeToBuffer(
+                serializeInstallPlan(core().downloads().planArchiveInstall(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(archivePath),
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
+                    std::wstring_view(modName))),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
     int fluxora_install_download(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
@@ -5700,6 +6341,49 @@ extern "C"
             jsonBufferLength);
     }
 
+    int fluxora_install_download_planned_with_progress(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        int modOrderTargetIndex,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        fluxora::ModIdentityInstallSelection selection;
+        if (!tryParseIdentityInstallSelection(
+                resolutionId,
+                identityDecision,
+                targetModUuid,
+                newNamePolicy,
+                selection))
+        {
+            lastError = L"Install identity selection is invalid.";
+            return FluxoraCoreResultInvalidArgument;
+        }
+        return installDownloadWithMode(
+            projectDirectory,
+            downloadPath,
+            modName,
+            existingModMode,
+            placementOverridesJson,
+            &selection,
+            jsonBuffer,
+            jsonBufferLength,
+            profileName,
+            modOrderTargetIndex,
+            progressCallback,
+            progressUserData);
+    }
+
     int fluxora_install_archive_with_mode(
         const wchar_t* projectDirectory,
         const wchar_t* archivePath,
@@ -5772,6 +6456,49 @@ extern "C"
             &selection,
             jsonBuffer,
             jsonBufferLength);
+    }
+
+    int fluxora_install_archive_planned_with_progress(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        int modOrderTargetIndex,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        fluxora::ModIdentityInstallSelection selection;
+        if (!tryParseIdentityInstallSelection(
+                resolutionId,
+                identityDecision,
+                targetModUuid,
+                newNamePolicy,
+                selection))
+        {
+            lastError = L"Install identity selection is invalid.";
+            return FluxoraCoreResultInvalidArgument;
+        }
+        return installArchiveWithMode(
+            projectDirectory,
+            archivePath,
+            modName,
+            existingModMode,
+            placementOverridesJson,
+            &selection,
+            jsonBuffer,
+            jsonBufferLength,
+            profileName,
+            modOrderTargetIndex,
+            progressCallback,
+            progressUserData);
     }
 
     int fluxora_analyze_download_content_layout(
@@ -5852,6 +6579,37 @@ extern "C"
         }
     }
 
+    int fluxora_analyze_fomod_download_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* profileName,
+        const wchar_t* manualDecisionsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(downloadPath))
+            {
+                lastError = L"Project directory and download path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const std::vector<fluxora::FomodManualDecision> manualDecisions =
+                parseFomodManualDecisionsJson(manualDecisionsJson);
+            const std::wstring json = serializeFomodInstaller(
+                core().downloads().analyzeFomodDownload(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(downloadPath),
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
+                    manualDecisions));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
     int fluxora_analyze_fomod_download_content_layout(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
@@ -5892,6 +6650,47 @@ extern "C"
                     mode,
                     selectedOptionIds));
             logOperation(fluxora::LogLevel::Info, "Downloads", "Analyze FOMOD content layout completed.");
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_analyze_fomod_download_content_layout_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(downloadPath))
+            {
+                lastError = L"Project directory and download path are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            if (!tryParseExistingModInstallMode(existingModMode, mode))
+            {
+                lastError = L"Existing mod install mode is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const std::wstring json = serializePlacementPlan(
+                core().downloads().analyzeFomodDownloadContentLayout(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(downloadPath),
+                    mode,
+                    parseStringArrayJson(selectedOptionIdsJson),
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
+                    isBlank(fomodContextId) ? std::wstring_view{} : std::wstring_view(fomodContextId),
+                    parseFomodManualDecisionsJson(manualDecisionsJson)));
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)
@@ -6229,6 +7028,389 @@ extern "C"
                 "Install planned FOMOD archive",
                 true);
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_install_fomod_download_with_layout_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(downloadPath) || isBlank(modName))
+            {
+                lastError = L"Project directory, download path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            if (!tryParseExistingModInstallMode(existingModMode, mode))
+            {
+                lastError = L"Existing mod install mode is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const std::wstring json = serializeInstalledMod(
+                core().downloads().installFomodDownload(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(downloadPath),
+                    modName,
+                    mode,
+                    parseStringArrayJson(selectedOptionIdsJson),
+                    parsePlacementOverridesJson(placementOverridesJson),
+                    nullptr,
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
+                    isBlank(fomodContextId) ? std::wstring_view{} : std::wstring_view(fomodContextId),
+                    parseFomodManualDecisionsJson(manualDecisionsJson)));
+            syncSkyrimPluginsForInstalledMods(
+                std::filesystem::path(projectDirectory),
+                "Install profile-aware FOMOD download",
+                true);
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_install_fomod_archive_with_layout_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(archivePath) || isBlank(modName))
+            {
+                lastError = L"Project directory, archive path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            if (!tryParseExistingModInstallMode(existingModMode, mode))
+            {
+                lastError = L"Existing mod install mode is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const std::wstring json = serializeInstalledMod(
+                core().downloads().installFomodArchive(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(archivePath),
+                    modName,
+                    mode,
+                    parseStringArrayJson(selectedOptionIdsJson),
+                    parsePlacementOverridesJson(placementOverridesJson),
+                    nullptr,
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
+                    isBlank(fomodContextId) ? std::wstring_view{} : std::wstring_view(fomodContextId),
+                    parseFomodManualDecisionsJson(manualDecisionsJson)));
+            syncSkyrimPluginsForInstalledMods(
+                std::filesystem::path(projectDirectory),
+                "Install profile-aware FOMOD archive",
+                true);
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_install_fomod_download_planned_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(downloadPath) || isBlank(modName))
+            {
+                lastError = L"Project directory, download path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            fluxora::ModIdentityInstallSelection selection;
+            if (!tryParseExistingModInstallMode(existingModMode, mode) ||
+                !tryParseIdentityInstallSelection(
+                    resolutionId,
+                    identityDecision,
+                    targetModUuid,
+                    newNamePolicy,
+                    selection))
+            {
+                lastError = L"Install mode or identity selection is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const std::wstring json = serializeInstalledMod(
+                core().downloads().installFomodDownload(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(downloadPath),
+                    modName,
+                    mode,
+                    parseStringArrayJson(selectedOptionIdsJson),
+                    parsePlacementOverridesJson(placementOverridesJson),
+                    &selection,
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
+                    isBlank(fomodContextId) ? std::wstring_view{} : std::wstring_view(fomodContextId),
+                    parseFomodManualDecisionsJson(manualDecisionsJson)));
+            syncSkyrimPluginsForInstalledMods(
+                std::filesystem::path(projectDirectory),
+                "Install planned profile-aware FOMOD download",
+                true);
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_install_fomod_archive_planned_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(archivePath) || isBlank(modName))
+            {
+                lastError = L"Project directory, archive path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            fluxora::ModIdentityInstallSelection selection;
+            if (!tryParseExistingModInstallMode(existingModMode, mode) ||
+                !tryParseIdentityInstallSelection(
+                    resolutionId,
+                    identityDecision,
+                    targetModUuid,
+                    newNamePolicy,
+                    selection))
+            {
+                lastError = L"Install mode or identity selection is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const std::wstring json = serializeInstalledMod(
+                core().downloads().installFomodArchive(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(archivePath),
+                    modName,
+                    mode,
+                    parseStringArrayJson(selectedOptionIdsJson),
+                    parsePlacementOverridesJson(placementOverridesJson),
+                    &selection,
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
+                    isBlank(fomodContextId) ? std::wstring_view{} : std::wstring_view(fomodContextId),
+                    parseFomodManualDecisionsJson(manualDecisionsJson)));
+            syncSkyrimPluginsForInstalledMods(
+                std::filesystem::path(projectDirectory),
+                "Install planned profile-aware FOMOD archive",
+                true);
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_install_fomod_download_planned_for_profile_with_progress(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        int modOrderTargetIndex,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(downloadPath) || isBlank(modName))
+            {
+                lastError = L"Project directory, download path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            fluxora::ModIdentityInstallSelection selection;
+            if (!tryParseExistingModInstallMode(existingModMode, mode) ||
+                !tryParseIdentityInstallSelection(
+                    resolutionId,
+                    identityDecision,
+                    targetModUuid,
+                    newNamePolicy,
+                    selection))
+            {
+                lastError = L"Install mode or identity selection is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const std::wstring json = serializeInstalledMod(
+                core().downloads().installFomodDownload(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(downloadPath),
+                    modName,
+                    mode,
+                    parseStringArrayJson(selectedOptionIdsJson),
+                    parsePlacementOverridesJson(placementOverridesJson),
+                    &selection,
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
+                    isBlank(fomodContextId) ? std::wstring_view{} : std::wstring_view(fomodContextId),
+                    parseFomodManualDecisionsJson(manualDecisionsJson),
+                    modOrderTargetIndex,
+                    installConflictProgressCallback(progressCallback, progressUserData)));
+            syncSkyrimPluginsForInstalledMods(
+                std::filesystem::path(projectDirectory),
+                "Install planned profile-aware FOMOD download",
+                true);
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_install_fomod_archive_planned_for_profile_with_progress(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        int modOrderTargetIndex,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(archivePath) || isBlank(modName))
+            {
+                lastError = L"Project directory, archive path, and mod name are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            fluxora::ExistingModInstallMode mode = fluxora::ExistingModInstallMode::FailIfExists;
+            fluxora::ModIdentityInstallSelection selection;
+            if (!tryParseExistingModInstallMode(existingModMode, mode) ||
+                !tryParseIdentityInstallSelection(
+                    resolutionId,
+                    identityDecision,
+                    targetModUuid,
+                    newNamePolicy,
+                    selection))
+            {
+                lastError = L"Install mode or identity selection is invalid.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const std::wstring json = serializeInstalledMod(
+                core().downloads().installFomodArchive(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(archivePath),
+                    modName,
+                    mode,
+                    parseStringArrayJson(selectedOptionIdsJson),
+                    parsePlacementOverridesJson(placementOverridesJson),
+                    &selection,
+                    isBlank(profileName) ? std::wstring_view{} : std::wstring_view(profileName),
+                    isBlank(fomodContextId) ? std::wstring_view{} : std::wstring_view(fomodContextId),
+                    parseFomodManualDecisionsJson(manualDecisionsJson),
+                    modOrderTargetIndex,
+                    installConflictProgressCallback(progressCallback, progressUserData)));
+            syncSkyrimPluginsForInstalledMods(
+                std::filesystem::path(projectDirectory),
+                "Install planned profile-aware FOMOD archive",
+                true);
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_rebase_pending_install(
+        const wchar_t* projectDirectory,
+        const wchar_t* operationId,
+        int targetIndex,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(operationId))
+            {
+                lastError = L"Project directory and operation id are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            return writeToBuffer(
+                serializeInstallConflictSnapshot(
+                    fluxora::InstallConflictPreviewService::rebase(
+                        std::filesystem::path(projectDirectory),
+                        operationId,
+                        targetIndex)),
+                jsonBuffer,
+                jsonBufferLength);
         }
         catch (const std::exception& exception)
         {

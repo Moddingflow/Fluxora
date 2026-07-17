@@ -6,13 +6,17 @@
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
+#include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 #include "FluxoraCore/Storage/ProjectStateTransaction.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <cstring>
 #include <cwctype>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <optional>
@@ -33,6 +37,112 @@ namespace fluxora
         constexpr std::wstring_view pathsField = L"paths";
         constexpr std::wstring_view localSettingsDirectoryName = L".fluxora";
         constexpr std::wstring_view localSettingsFileName = L"paths.json";
+
+        std::wstring environmentVariable(std::wstring_view name)
+        {
+#ifdef _WIN32
+            const std::wstring ownedName(name);
+            const DWORD requiredLength = GetEnvironmentVariableW(ownedName.c_str(), nullptr, 0);
+            if (requiredLength == 0)
+            {
+                return {};
+            }
+
+            std::wstring value(requiredLength, L'\0');
+            const DWORD actualLength = GetEnvironmentVariableW(
+                ownedName.c_str(),
+                value.data(),
+                requiredLength);
+            if (actualLength == 0 || actualLength >= requiredLength)
+            {
+                return {};
+            }
+            value.resize(actualLength);
+            return value;
+#else
+            const std::string narrowName(name.begin(), name.end());
+            const char* value = std::getenv(narrowName.c_str());
+            return value == nullptr ? std::wstring{} : std::wstring(value, value + std::strlen(value));
+#endif
+        }
+
+        bool isCanonicalGameId(std::wstring_view gameId)
+        {
+            if (gameId.empty() || gameId.size() > 64)
+            {
+                return false;
+            }
+
+            return std::all_of(gameId.begin(), gameId.end(), [](wchar_t character)
+            {
+                return (character >= L'a' && character <= L'z') ||
+                    (character >= L'0' && character <= L'9') ||
+                    character == L'-' ||
+                    character == L'_';
+            });
+        }
+
+        std::filesystem::path globalDownloadsDirectory(std::wstring_view gameId)
+        {
+            if (!isCanonicalGameId(gameId))
+            {
+                throw std::invalid_argument(
+                    "Build game id is missing or unsafe; the shared Downloads directory cannot be resolved.");
+            }
+
+            const std::wstring appRootText = environmentVariable(L"FLUXORA_APP_ROOT");
+            if (appRootText.empty())
+            {
+                throw std::invalid_argument(
+                    "Fluxora application directory is unavailable; FLUXORA_APP_ROOT was not provided.");
+            }
+
+            std::error_code error;
+            const std::filesystem::path appRoot =
+                std::filesystem::absolute(std::filesystem::path(appRootText), error).lexically_normal();
+            if (error || appRoot.empty() ||
+                !std::filesystem::exists(appRoot, error) || error ||
+                !std::filesystem::is_directory(appRoot, error) || error)
+            {
+                throw std::invalid_argument(
+                    "Fluxora application directory is unavailable; shared Downloads cannot be used.");
+            }
+
+            const std::filesystem::path downloads =
+                appRoot / L"Downloads" / std::filesystem::path(std::wstring(gameId));
+            PathSafetyService().validateDirectoryWriteRoot(downloads)
+                .throwIfUnsafe("Shared Downloads directory is unsafe");
+
+            std::filesystem::create_directories(downloads, error);
+            if (error || !std::filesystem::is_directory(downloads, error) || error)
+            {
+                throw std::runtime_error(
+                    "Shared Downloads directory could not be created or opened for writing.");
+            }
+
+            const std::filesystem::path probe = downloads /
+                (L".fluxora-write-probe-" + std::to_wstring(
+                    std::chrono::steady_clock::now().time_since_epoch().count()) + L".tmp");
+            {
+                std::ofstream output(probe, std::ios::out | std::ios::binary | std::ios::trunc);
+                if (!output)
+                {
+                    throw std::runtime_error("Shared Downloads directory is not writable.");
+                }
+                output << "fluxora";
+                output.flush();
+                if (!output)
+                {
+                    throw std::runtime_error("Shared Downloads directory is not writable.");
+                }
+            }
+            std::filesystem::remove(probe, error);
+            if (error)
+            {
+                throw std::runtime_error("Shared Downloads directory write probe could not be removed.");
+            }
+            return downloads;
+        }
 
         std::string toUtf8(const std::wstring& value)
         {
@@ -438,7 +548,7 @@ namespace fluxora
                 {},
                 root / L"mods",
                 root / L"profiles",
-                root / L"downloads",
+                {},
                 root / L"overwrite"
             };
         }
@@ -464,6 +574,12 @@ namespace fluxora
 
             BuildPathSettings settings = defaultSettingsForProjectDirectory(projectDirectory);
             settings.gameDirectory = resolvePath(readStringOrDefault(manifest, L"gamePath"), projectDirectory);
+            std::wstring gameId = readStringOrDefault(manifest, L"gameId");
+            if (gameId.empty())
+            {
+                gameId = readStringOrDefault(manifest, L"templateId");
+            }
+            settings.downloadsDirectory = globalDownloadsDirectory(gameId);
             return settings;
         }
 
@@ -492,8 +608,8 @@ namespace fluxora
             apply(L"modsPath", settings.modsDirectory);
             apply(L"profilesDirectory", settings.profilesDirectory);
             apply(L"profilesPath", settings.profilesDirectory);
-            apply(L"downloadsDirectory", settings.downloadsDirectory);
-            apply(L"downloadsPath", settings.downloadsDirectory);
+            // Legacy downloadsDirectory/downloadsPath values are intentionally accepted but ignored.
+            // Downloads are derived from FLUXORA_APP_ROOT and the canonical game id.
             apply(L"overwriteDirectory", settings.overwriteDirectory);
             apply(L"overwritePath", settings.overwriteDirectory);
         }
@@ -515,10 +631,7 @@ namespace fluxora
             {
                 settings.profilesDirectory = defaults.profilesDirectory;
             }
-            if (settings.downloadsDirectory.empty())
-            {
-                settings.downloadsDirectory = defaults.downloadsDirectory;
-            }
+            settings.downloadsDirectory = defaults.downloadsDirectory;
             if (settings.overwriteDirectory.empty())
             {
                 settings.overwriteDirectory = defaults.overwriteDirectory;
@@ -530,7 +643,11 @@ namespace fluxora
             }
             settings.modsDirectory = std::filesystem::absolute(settings.modsDirectory).lexically_normal();
             settings.profilesDirectory = std::filesystem::absolute(settings.profilesDirectory).lexically_normal();
-            settings.downloadsDirectory = std::filesystem::absolute(settings.downloadsDirectory).lexically_normal();
+            if (!settings.downloadsDirectory.empty())
+            {
+                settings.downloadsDirectory =
+                    std::filesystem::absolute(settings.downloadsDirectory).lexically_normal();
+            }
             settings.overwriteDirectory = std::filesystem::absolute(settings.overwriteDirectory).lexically_normal();
             return settings;
         }
@@ -574,9 +691,6 @@ namespace fluxora
             object.emplace(
                 L"profilesDirectory",
                 JsonValue::string(pathTextForStorage(settings.profilesDirectory, projectDirectory)));
-            object.emplace(
-                L"downloadsDirectory",
-                JsonValue::string(pathTextForStorage(settings.downloadsDirectory, projectDirectory)));
             object.emplace(
                 L"overwriteDirectory",
                 JsonValue::string(pathTextForStorage(settings.overwriteDirectory, projectDirectory)));
@@ -664,6 +778,27 @@ namespace fluxora
             const JsonValue root = parseJsonConfig(content);
             applyPathObject(root, projectDirectory, settings);
             return settings;
+        }
+
+        BuildPathSettings loadNonDownloadSettingsForProjectDirectory(
+            const std::filesystem::path& projectDirectory,
+            Logger& logger)
+        {
+            if (projectDirectory.empty())
+            {
+                throw std::invalid_argument("Project directory is required.");
+            }
+
+            const std::filesystem::path absoluteProjectDirectory =
+                std::filesystem::absolute(projectDirectory).lexically_normal();
+            const BuildPathSettings defaults =
+                defaultSettingsForProjectDirectory(absoluteProjectDirectory);
+            BuildPathSettings settings = loadLocalSettings(
+                absoluteProjectDirectory,
+                defaults,
+                &logger);
+            settings = normalizeSettings(settings, defaults);
+            return repairTransferredGameDirectory(settings, absoluteProjectDirectory);
         }
     }
 
@@ -799,6 +934,8 @@ namespace fluxora
         }
 
         BuildPathSettings defaults = defaultSettingsForProjectDirectory(projectDirectory);
+        defaults.downloadsDirectory = globalDownloadsDirectory(
+            InstanceMetadataStore::gameId(projectDirectory));
         BuildPathSettings settings = loadLocalSettings(
             std::filesystem::absolute(projectDirectory).lexically_normal(),
             defaults,
@@ -812,13 +949,13 @@ namespace fluxora
     std::filesystem::path BuildPathSettingsService::modsDirectory(
         const std::filesystem::path& projectDirectory) const
     {
-        return loadForProjectDirectory(projectDirectory).modsDirectory;
+        return loadNonDownloadSettingsForProjectDirectory(projectDirectory, logger_).modsDirectory;
     }
 
     std::filesystem::path BuildPathSettingsService::profilesDirectory(
         const std::filesystem::path& projectDirectory) const
     {
-        return loadForProjectDirectory(projectDirectory).profilesDirectory;
+        return loadNonDownloadSettingsForProjectDirectory(projectDirectory, logger_).profilesDirectory;
     }
 
     std::filesystem::path BuildPathSettingsService::downloadsDirectory(
@@ -827,10 +964,16 @@ namespace fluxora
         return loadForProjectDirectory(projectDirectory).downloadsDirectory;
     }
 
+    std::filesystem::path BuildPathSettingsService::downloadsDirectoryForGameId(
+        std::wstring_view gameId) const
+    {
+        return globalDownloadsDirectory(gameId);
+    }
+
     std::filesystem::path BuildPathSettingsService::overwriteDirectory(
         const std::filesystem::path& projectDirectory) const
     {
-        return loadForProjectDirectory(projectDirectory).overwriteDirectory;
+        return loadNonDownloadSettingsForProjectDirectory(projectDirectory, logger_).overwriteDirectory;
     }
 
     bool BuildPathSettingsService::isInitialized() const noexcept

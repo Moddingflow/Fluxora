@@ -275,6 +275,8 @@ interface CompactPluginCheckResult {
 }
 
 interface CompactDownload {
+  archiveId: string | null;
+  buildStatus: FluxoraDownloadEntry['buildStatus'];
   canInstall: boolean;
   fileName: string;
   id: string;
@@ -283,7 +285,8 @@ interface CompactDownload {
   progressPercent: number;
   sizeText: string;
   source: string;
-  status: string;
+  transferMessage: string;
+  transferState: FluxoraDownloadEntry['transferState'];
 }
 
 interface CompactFileTreeEntry {
@@ -1103,6 +1106,8 @@ const localPluginCheckSummary = (
 };
 
 const compactDownload = (download: FluxoraDownloadEntry): CompactDownload => ({
+  archiveId: download.archiveId,
+  buildStatus: download.buildStatus,
   canInstall: download.canInstall,
   fileName: download.fileName,
   id: download.id,
@@ -1111,7 +1116,8 @@ const compactDownload = (download: FluxoraDownloadEntry): CompactDownload => ({
   progressPercent: download.progressPercent,
   sizeText: download.sizeText,
   source: download.source,
-  status: download.status
+  transferMessage: download.transferMessage,
+  transferState: download.transferState
 });
 
 const fileKindForPath = (entry: FluxoraModFileTreeEntry): string => {
@@ -2501,11 +2507,6 @@ const collectLocalReadTextFileTool = async (
   );
 };
 
-const downloadLooksFailed = (status: string): boolean => {
-  const normalized = status.trim().toLowerCase();
-  return normalized.includes('fail') || normalized.includes('error') || normalized.includes('blocked');
-};
-
 const issuesFromMods = (mods: FluxoraInstalledMod[]): AiBuildToolIssue[] =>
   mods
     .filter((mod) => {
@@ -2544,14 +2545,14 @@ const issuesFromPlugins = (
 
 const issuesFromDownloads = (downloads: FluxoraDownloadEntry[]): AiBuildToolIssue[] =>
   downloads
-    .filter((download) => downloadLooksFailed(download.status))
+    .filter((download) => download.transferState === 'failed')
     .slice(0, 12)
     .map((download) =>
       issue(
         'downloads.list',
         'warning',
         'downloads.failed',
-        `${download.name}: ${download.status}`,
+        `${download.name}: ${download.transferMessage || 'Transfer failed'}`,
         download.id
       )
     );
@@ -2643,7 +2644,7 @@ const runBuildSummaryTool = async (
       bridgeReady: Boolean(context.bridgeStatus?.ready),
       downloads: {
         archiveQueueOnly: true,
-        failed: downloadEntries.filter((download) => downloadLooksFailed(download.status)).length,
+        failed: downloadEntries.filter((download) => download.transferState === 'failed').length,
         interpretation: 'Download records are archive files in the download queue, not the installed mod list.',
         total: downloadEntries.length
       },

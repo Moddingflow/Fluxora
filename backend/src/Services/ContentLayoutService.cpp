@@ -2,6 +2,7 @@
 
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
+#include "FluxoraCore/Support/FilesystemPath.hpp"
 
 #include <algorithm>
 #include <cwctype>
@@ -855,7 +856,7 @@ namespace fluxora
             const std::filesystem::path parent = directory.parent_path();
             const std::wstring stem = directory.filename().wstring();
             std::filesystem::path candidate = parent / std::filesystem::path(stem + std::wstring(suffix));
-            for (int index = 2; std::filesystem::exists(candidate); ++index)
+            for (int index = 2; std::filesystem::exists(pathForFilesystemIo(candidate)); ++index)
             {
                 candidate = parent / std::filesystem::path(
                     stem + std::wstring(suffix) + L"-" + std::to_wstring(index));
@@ -867,7 +868,9 @@ namespace fluxora
         [[nodiscard]] bool isRegularFile(const std::filesystem::path& path)
         {
             std::error_code error;
-            return std::filesystem::exists(path, error) && std::filesystem::is_regular_file(path, error);
+            const std::filesystem::path ioPath = pathForFilesystemIo(path);
+            return std::filesystem::exists(ioPath, error) &&
+                std::filesystem::is_regular_file(ioPath, error);
         }
 
         struct PlannedFileTransfer
@@ -880,7 +883,7 @@ namespace fluxora
         [[nodiscard]] bool isPlainRegularFile(const std::filesystem::path& path)
         {
             std::error_code statusError;
-            return std::filesystem::symlink_status(path, statusError).type() ==
+            return std::filesystem::symlink_status(pathForFilesystemIo(path), statusError).type() ==
                 std::filesystem::file_type::regular;
         }
 
@@ -909,7 +912,8 @@ namespace fluxora
 
                 const std::filesystem::path destination = destinationRoot / placementPath(entry, plan);
                 std::error_code sizeError;
-                const std::uintmax_t bytes = std::filesystem::file_size(source, sizeError);
+                const std::uintmax_t bytes =
+                    std::filesystem::file_size(pathForFilesystemIo(source), sizeError);
                 safety.validateWritePath(
                     destinationRoot,
                     destination,
@@ -931,10 +935,10 @@ namespace fluxora
             const std::filesystem::path& destination)
         {
             std::filesystem::copy_file(
-                source,
-                destination,
+                pathForFilesystemIo(source),
+                pathForFilesystemIo(destination),
                 std::filesystem::copy_options::overwrite_existing);
-            std::filesystem::remove(source);
+            std::filesystem::remove(pathForFilesystemIo(source));
         }
 
         void transferFile(
@@ -943,7 +947,10 @@ namespace fluxora
             if (transfer.canRename)
             {
                 std::error_code renameError;
-                std::filesystem::rename(transfer.source, transfer.destination, renameError);
+                std::filesystem::rename(
+                    pathForFilesystemIo(transfer.source),
+                    pathForFilesystemIo(transfer.destination),
+                    renameError);
                 if (!renameError)
                 {
                     return;
@@ -959,21 +966,26 @@ namespace fluxora
             for (auto it = completedTransfers.rbegin(); it != completedTransfers.rend(); ++it)
             {
                 std::error_code existsError;
-                if (!std::filesystem::exists(it->destination, existsError) ||
-                    std::filesystem::exists(it->source, existsError))
+                if (!std::filesystem::exists(pathForFilesystemIo(it->destination), existsError) ||
+                    std::filesystem::exists(pathForFilesystemIo(it->source), existsError))
                 {
                     continue;
                 }
 
                 std::error_code createError;
-                std::filesystem::create_directories(it->source.parent_path(), createError);
+                std::filesystem::create_directories(
+                    pathForFilesystemIo(it->source.parent_path()),
+                    createError);
                 if (createError)
                 {
                     continue;
                 }
 
                 std::error_code restoreError;
-                std::filesystem::rename(it->destination, it->source, restoreError);
+                std::filesystem::rename(
+                    pathForFilesystemIo(it->destination),
+                    pathForFilesystemIo(it->source),
+                    restoreError);
                 if (!restoreError)
                 {
                     continue;
@@ -981,13 +993,15 @@ namespace fluxora
 
                 restoreError.clear();
                 std::filesystem::copy_file(
-                    it->destination,
-                    it->source,
+                    pathForFilesystemIo(it->destination),
+                    pathForFilesystemIo(it->source),
                     std::filesystem::copy_options::overwrite_existing,
                     restoreError);
                 if (!restoreError)
                 {
-                    std::filesystem::remove(it->destination, restoreError);
+                    std::filesystem::remove(
+                        pathForFilesystemIo(it->destination),
+                        restoreError);
                 }
             }
         }
@@ -1002,7 +1016,8 @@ namespace fluxora
 
             for (const PlannedFileTransfer& transfer : transfers)
             {
-                std::filesystem::create_directories(transfer.destination.parent_path());
+                std::filesystem::create_directories(
+                    pathForFilesystemIo(transfer.destination.parent_path()));
             }
 
             std::vector<PlannedFileTransfer> completedTransfers;
@@ -1476,7 +1491,9 @@ namespace fluxora
         const ContentLayoutAnalysisRequest& request) const
     {
         throwIfCancelled(request);
-        if (directory.empty() || !std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
+        const std::filesystem::path ioDirectory = pathForFilesystemIo(directory);
+        if (directory.empty() || !std::filesystem::exists(ioDirectory) ||
+            !std::filesystem::is_directory(ioDirectory))
         {
             throw std::invalid_argument("Content layout directory is required.");
         }
@@ -1486,11 +1503,12 @@ namespace fluxora
 
         const PathSafetyService safety;
         std::error_code error;
-        for (const std::filesystem::directory_entry& entry :
-             std::filesystem::recursive_directory_iterator(
-                 directory,
-                 std::filesystem::directory_options::skip_permission_denied,
-                 error))
+        std::filesystem::recursive_directory_iterator iterator(
+            ioDirectory,
+            std::filesystem::directory_options::skip_permission_denied,
+            error);
+        const std::filesystem::recursive_directory_iterator end;
+        for (; iterator != end; iterator.increment(error))
         {
             throwIfCancelled(directoryRequest);
             if (error)
@@ -1498,18 +1516,31 @@ namespace fluxora
                 break;
             }
 
-            if (!entry.is_regular_file(error) && !entry.is_directory(error))
+            const std::filesystem::directory_entry& entry = *iterator;
+            const std::filesystem::file_status status = entry.symlink_status(error);
+            if (error)
+            {
+                break;
+            }
+            const bool isDirectory = std::filesystem::is_directory(status);
+            if (!std::filesystem::is_regular_file(status) && !isDirectory)
             {
                 continue;
             }
 
-            safety.validateContainedPath(directory, entry.path())
+            const std::filesystem::path relative = entry.path().lexically_relative(ioDirectory);
+            safety.validateContainedPath(directory, directory / relative)
                 .throwIfUnsafe("Extracted content path is unsafe");
 
             directoryRequest.archiveFileTree.push_back(ContentLayoutArchiveEntry{
-                std::filesystem::relative(entry.path(), directory),
-                entry.is_directory(error)
+                relative,
+                isDirectory
             });
+        }
+        if (error)
+        {
+            throw std::runtime_error(
+                "Failed to enumerate content layout directory: " + error.message());
         }
 
         std::sort(
@@ -1528,7 +1559,9 @@ namespace fluxora
         const std::filesystem::path& directory,
         const PlacementPlan& plan) const
     {
-        if (directory.empty() || !std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
+        const std::filesystem::path ioDirectory = pathForFilesystemIo(directory);
+        if (directory.empty() || !std::filesystem::exists(ioDirectory) ||
+            !std::filesystem::is_directory(ioDirectory))
         {
             throw std::invalid_argument("Content layout directory is required.");
         }
@@ -1543,18 +1576,20 @@ namespace fluxora
             .throwIfUnsafe("Content layout directory is unsafe");
         const std::filesystem::path temporaryDirectory =
             uniqueSiblingPath(normalizedDirectory, L".layout");
-        std::filesystem::create_directories(temporaryDirectory);
+        std::filesystem::create_directories(pathForFilesystemIo(temporaryDirectory));
 
         try
         {
             transferPlannedFiles(normalizedDirectory, temporaryDirectory, plan);
-            std::filesystem::remove_all(normalizedDirectory);
-            std::filesystem::rename(temporaryDirectory, normalizedDirectory);
+            std::filesystem::remove_all(pathForFilesystemIo(normalizedDirectory));
+            std::filesystem::rename(
+                pathForFilesystemIo(temporaryDirectory),
+                pathForFilesystemIo(normalizedDirectory));
         }
         catch (const std::exception&)
         {
             std::error_code cleanupError;
-            std::filesystem::remove_all(temporaryDirectory, cleanupError);
+            std::filesystem::remove_all(pathForFilesystemIo(temporaryDirectory), cleanupError);
             throw;
         }
     }

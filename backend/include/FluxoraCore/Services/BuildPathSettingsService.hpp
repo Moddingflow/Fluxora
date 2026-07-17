@@ -3,6 +3,7 @@
 #include "FluxoraCore/Services/IService.hpp"
 
 #include <filesystem>
+#include <string_view>
 
 namespace fluxora
 {
@@ -43,6 +44,9 @@ namespace fluxora
 
         [[nodiscard]] std::filesystem::path downloadsDirectory(
             const std::filesystem::path& projectDirectory) const;
+
+        [[nodiscard]] std::filesystem::path downloadsDirectoryForGameId(
+            std::wstring_view gameId) const;
 
         [[nodiscard]] std::filesystem::path overwriteDirectory(
             const std::filesystem::path& projectDirectory) const;

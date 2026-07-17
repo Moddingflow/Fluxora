@@ -97,6 +97,7 @@ export const FluxoraIpcChannels = {
   modsEndNifPreview: 'fluxora:mods:end-nif-preview',
   modsListInstalled: 'fluxora:mods:list-installed',
   modsMoveOrderItem: 'fluxora:mods:move-order-item',
+  modsRebasePendingInstall: 'fluxora:mods:rebase-pending-install',
   modsPreviewTextFile: 'fluxora:mods:preview-text-file',
   modsReadTextFile: 'fluxora:mods:read-text-file',
   modsSaveTextFile: 'fluxora:mods:save-text-file',
@@ -1430,7 +1431,6 @@ export interface FluxoraBuildPathSettingsSaveRequest {
   gameDirectory: string;
   modsDirectory: string;
   profilesDirectory: string;
-  downloadsDirectory: string;
   overwriteDirectory: string;
 }
 
@@ -1571,6 +1571,8 @@ export interface FluxoraInstalledMod {
   installedAt?: string;
   updatedAt?: string;
   latestVersion: string;
+  latestFileId: string;
+  updateCheckState: string;
   lastCheckedAt: string;
   updateStatus: string;
   conflictStatus: string;
@@ -1797,7 +1799,17 @@ export interface FluxoraDownloadEntry {
   fileName: string;
   localPath: string;
   source: string;
-  status: string;
+  archiveId: string | null;
+  buildStatus: 'Ready' | 'Installing' | 'Installed' | 'Deleted' | null;
+  transferState:
+    | 'idle'
+    | 'queued'
+    | 'downloading'
+    | 'paused'
+    | 'canceled'
+    | 'indexing'
+    | 'failed';
+  transferMessage: string;
   sizeText: string;
   createdAtText: string;
   progressPercent: number;
@@ -1918,7 +1930,121 @@ export interface FluxoraPlacementOverride {
 
 export interface FluxoraFomodFileDependencyState {
   file: string;
+  state?: 'Active' | 'Inactive' | 'Missing' | string;
+  sourceKind?: string;
+  sourceName?: string;
   exists: boolean;
+}
+
+export interface FluxoraFomodDetectedVersion {
+  kind: string;
+  displayName: string;
+  version: string;
+  known: boolean;
+}
+
+export interface FluxoraFomodProfileContext {
+  contextId: string;
+  profileName: string;
+  fingerprint: string;
+  modCatalogRevision: number;
+  modRevision: string;
+  pluginRevision: string;
+  autoSelectionAvailable: boolean;
+  unavailableReason: string;
+  gameVersion: FluxoraFomodDetectedVersion;
+  extenderVersions: FluxoraFomodDetectedVersion[];
+  basePluginNames: string[];
+  fileStates: FluxoraFomodFileDependencyState[];
+}
+
+export interface FluxoraFomodPluginHeader {
+  outputFile: string;
+  masters: string[];
+  status: 'parsed' | 'corrupt' | 'oversize' | 'candidateLimit' | 'readBudgetExceeded';
+  issueCode: string;
+}
+
+export type FluxoraFomodDecisionAction = 'select' | 'deselect' | 'manual' | 'locked';
+export type FluxoraFomodDecisionConfidence = 'none' | 'weak' | 'strong' | 'exact';
+export type FluxoraFomodDependencyResult = 'satisfied' | 'unsatisfied' | 'unknown';
+
+export interface FluxoraFomodDecisionEvidence {
+  code: string;
+  subject: string;
+  expected: string;
+  actual: string;
+  sourceKind: string;
+  sourceName: string;
+}
+
+export interface FluxoraFomodOptionDecision {
+  optionId: string;
+  action: FluxoraFomodDecisionAction;
+  confidence: FluxoraFomodDecisionConfidence;
+  effectiveType: string;
+  reasonCodes: string[];
+  evidence: FluxoraFomodDecisionEvidence[];
+}
+
+export interface FluxoraFomodUnresolvedGroup {
+  stepId: string;
+  groupId: string;
+  groupName: string;
+  reasonCode: string;
+  optionIds: string[];
+}
+
+export interface FluxoraFomodAutoSelection {
+  contextId: string;
+  initialSelectedOptionIds: string[];
+  unresolvedGroups: FluxoraFomodUnresolvedGroup[];
+  decisions: FluxoraFomodOptionDecision[];
+  moduleDependencyResult: FluxoraFomodDependencyResult;
+  installBlocked: boolean;
+  cycleDetected: boolean;
+  warnings: string[];
+}
+
+export interface FluxoraFomodManualDecision {
+  optionId: string;
+  selected: boolean;
+}
+
+export interface FluxoraAnalyzeFomodMethod {
+  (
+    projectDirectory: string,
+    downloadPath: string,
+    operation?: OperationRequest
+  ): Promise<FluxoraFomodInstaller>;
+  (
+    projectDirectory: string,
+    downloadPath: string,
+    profileName: string,
+    manualDecisions?: FluxoraFomodManualDecision[],
+    operation?: OperationRequest
+  ): Promise<FluxoraFomodInstaller>;
+}
+
+export interface FluxoraPlanInstallMethod {
+  (
+    projectDirectory: string,
+    sourcePath: string,
+    operation?: OperationRequest
+  ): Promise<FluxoraInstallPlan>;
+  (
+    projectDirectory: string,
+    sourcePath: string,
+    profileName: string,
+    operation?: OperationRequest
+  ): Promise<FluxoraInstallPlan>;
+  (
+    projectDirectory: string,
+    sourcePath: string,
+    profileName: string,
+    modName: string,
+    operation?: OperationRequest
+  ): Promise<FluxoraInstallPlan>;
 }
 
 export interface FluxoraFomodConditionFlag {
@@ -1951,6 +2077,7 @@ export interface FluxoraFomodOption {
   defaultType: string;
   flags: FluxoraFomodConditionFlag[];
   typePatterns: FluxoraFomodTypePattern[];
+  pluginHeaders?: FluxoraFomodPluginHeader[];
 }
 
 export interface FluxoraFomodGroup {
@@ -1975,11 +2102,17 @@ export interface FluxoraFomodInstaller {
   moduleImagePath: string;
   memoryKey: string;
   hasPreviousSelection: boolean;
+  previousSelectionContextual?: boolean;
+  previousSelectionWeak?: boolean;
   previousSelectedOptionIds: string[];
+  previousDeselectedOptionIds?: string[];
+  moduleDependencies?: FluxoraFomodDependency | null;
   fileDependencies: FluxoraFomodFileDependencyState[];
   requiredFiles: unknown[];
   steps: FluxoraFomodStep[];
   conditionalFilePatterns: unknown[];
+  profileContext?: FluxoraFomodProfileContext | null;
+  autoSelection?: FluxoraFomodAutoSelection | null;
 }
 
 export type FluxoraModIdentityResolutionKind = 'none' | 'exact' | 'probable';
@@ -2017,30 +2150,41 @@ export interface FluxoraAnalyzeContentLayoutRequest {
 
 export interface FluxoraAnalyzeFomodContentLayoutRequest extends FluxoraAnalyzeContentLayoutRequest {
   selectedOptionIds: string[];
+  profileName?: string;
+  fomodContextId?: string;
+  manualDecisions?: FluxoraFomodManualDecision[];
 }
 
 export interface FluxoraInstallArchiveRequest extends FluxoraInstallIdentitySelection {
   projectDirectory: string;
   archivePath: string;
   modName: string;
+  profileName: string;
+  modOrderTargetIndex?: number;
   existingModMode?: FluxoraExistingModInstallMode;
   placementOverridesJson?: string;
 }
 
 export interface FluxoraInstallFomodArchiveRequest extends FluxoraInstallArchiveRequest {
   selectedOptionIds: string[];
+  fomodContextId?: string;
+  manualDecisions?: FluxoraFomodManualDecision[];
 }
 
 export interface FluxoraInstallDownloadRequest extends FluxoraInstallIdentitySelection {
   projectDirectory: string;
   downloadPath: string;
   modName: string;
+  profileName: string;
+  modOrderTargetIndex?: number;
   existingModMode?: FluxoraExistingModInstallMode;
   placementOverridesJson?: string;
 }
 
 export interface FluxoraInstallFomodDownloadRequest extends FluxoraInstallDownloadRequest {
   selectedOptionIds: string[];
+  fomodContextId?: string;
+  manualDecisions?: FluxoraFomodManualDecision[];
 }
 
 export interface FluxoraInstalledModSummary {
@@ -2049,6 +2193,8 @@ export interface FluxoraInstalledModSummary {
   version: string;
   isEnabled: boolean;
   latestVersion: string;
+  latestFileId: string;
+  updateCheckState: string;
   sourceIsNexus: boolean;
   sourceIsModdingFlow: boolean;
   sourceProvider?: string;
@@ -2059,7 +2205,99 @@ export interface FluxoraInstalledModSummary {
   isLocal: boolean;
   isTranslation: boolean;
   isPatch: boolean;
+  modUuid: string;
+  orderId: string;
+  fileCount: number;
+  conflictingFileCount: number;
+  overwrittenFileCount: number;
+  overwritingFileCount: number;
+  overwritesModIds: string[];
+  overwrittenByModIds: string[];
   operationId: string;
+}
+
+export type FluxoraInstallConflictSnapshotState =
+  | 'preparing'
+  | 'ready'
+  | 'committing'
+  | 'completed'
+  | 'failed';
+
+export interface FluxoraInstallConflictRowPatch {
+  orderId: string;
+  modUuid: string;
+  fileCount: number;
+  conflictingFileCount: number;
+  overwrittenFileCount: number;
+  overwritingFileCount: number;
+  overwritesModIds: string[];
+  overwrittenByModIds: string[];
+}
+
+export interface FluxoraInstallConflictSnapshot {
+  operationId: string;
+  revision: number;
+  state: FluxoraInstallConflictSnapshotState;
+  pendingOrderId: string;
+  orderId: string;
+  targetIndex: number;
+  rows: FluxoraInstallConflictRowPatch[];
+}
+
+export type FluxoraModUpdateCheckMode = 'automatic' | 'manual';
+export type FluxoraModUpdateCheckState = 'completed' | 'skipped' | 'partial' | 'cancelled';
+export type FluxoraModUpdateCheckReason =
+  | 'none'
+  | 'noEligibleMods'
+  | 'dailyTtl'
+  | 'authenticationUnavailable'
+  | 'quotaReserve'
+  | 'rateLimited'
+  | 'offlineBackoff'
+  | 'networkError'
+  | 'cancelled'
+  | 'ambiguousMetadata'
+  | 'metadataUnavailable';
+
+export interface FluxoraModUpdateCheckRequest {
+  projectDirectory: string;
+  mode: FluxoraModUpdateCheckMode;
+}
+
+export interface FluxoraModUpdateQuota {
+  hourlyLimit: number;
+  hourlyRemaining: number;
+  hourlyResetAt: string;
+  dailyLimit: number;
+  dailyRemaining: number;
+  dailyResetAt: string;
+  capturedAt: string;
+}
+
+export interface FluxoraModUpdateCounters {
+  apiRequests: number;
+  cacheHits: number;
+  checked: number;
+  updates: number;
+  ambiguous: number;
+  failed: number;
+}
+
+export interface FluxoraModUpdateResultMod {
+  folderName: string;
+  latestVersion: string;
+  latestFileId: string;
+  updateCheckState: string;
+  hasUpdate: boolean;
+}
+
+export interface FluxoraModUpdateCheckResult {
+  state: FluxoraModUpdateCheckState;
+  reason: FluxoraModUpdateCheckReason;
+  nextEligibleAt: string;
+  quota: FluxoraModUpdateQuota;
+  counters: FluxoraModUpdateCounters;
+  mods: FluxoraModUpdateResultMod[];
 }
 
 export interface FluxoraDownloadMutationResult {
@@ -2172,6 +2410,7 @@ export interface FluxoraOperationProgress extends FluxoraModOrganizerImportProgr
   deletedEntries?: number;
   totalEntries?: number;
   providers?: FluxoraFluxPackProviderProgress[];
+  installConflictSnapshot?: FluxoraInstallConflictSnapshot;
 }
 
 export type FluxoraOperationSnapshotState = 'running' | 'completed' | 'unknown';
@@ -2492,6 +2731,12 @@ export interface FluxoraApi {
       targetIndex: number,
       request?: OperationRequest
     ) => Promise<FluxoraModOrderItem[]>;
+    rebasePendingInstall: (
+      projectDirectory: string,
+      operationId: string,
+      targetIndex: number,
+      request?: OperationRequest
+    ) => Promise<FluxoraInstallConflictSnapshot>;
     deleteInstalled: (
       projectDirectory: string,
       modPath: string,
@@ -2514,9 +2759,9 @@ export interface FluxoraApi {
       request?: OperationRequest
     ) => Promise<FluxoraModMutationResult>;
     checkUpdates: (
-      projectDirectory: string,
+      updateRequest: FluxoraModUpdateCheckRequest,
       request?: OperationRequest
-    ) => Promise<FluxoraInstalledMod[]>;
+    ) => Promise<FluxoraModUpdateCheckResult>;
     clearOverwrite: (
       projectDirectory: string,
       request?: OperationRequest
@@ -2771,16 +3016,8 @@ export interface FluxoraApi {
       request: FluxoraAnalyzeContentLayoutRequest,
       operation?: OperationRequest
     ) => Promise<FluxoraContentLayoutPreview>;
-    analyzeFomod: (
-      projectDirectory: string,
-      downloadPath: string,
-      operation?: OperationRequest
-    ) => Promise<FluxoraFomodInstaller>;
-    planInstall: (
-      projectDirectory: string,
-      downloadPath: string,
-      operation?: OperationRequest
-    ) => Promise<FluxoraInstallPlan>;
+    analyzeFomod: FluxoraAnalyzeFomodMethod;
+    planInstall: FluxoraPlanInstallMethod;
     analyzeFomodContentLayout: (
       request: FluxoraAnalyzeFomodContentLayoutRequest,
       operation?: OperationRequest
@@ -2795,11 +3032,7 @@ export interface FluxoraApi {
     ) => Promise<FluxoraInstalledModSummary>;
   };
   archives: {
-    planInstall: (
-      projectDirectory: string,
-      archivePath: string,
-      operation?: OperationRequest
-    ) => Promise<FluxoraInstallPlan>;
+    planInstall: FluxoraPlanInstallMethod;
     install: (
       request: FluxoraInstallArchiveRequest,
       operation?: OperationRequest

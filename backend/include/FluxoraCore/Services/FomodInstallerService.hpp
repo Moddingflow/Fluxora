@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -8,6 +9,9 @@
 
 namespace fluxora
 {
+    struct FomodProfileContext;
+    struct FomodAutoSelection;
+
     struct FomodFileEntry
     {
         std::wstring source;
@@ -51,7 +55,27 @@ namespace fluxora
     struct FomodFileDependencyState
     {
         std::wstring file;
+        std::wstring state;
+        std::wstring sourceKind;
+        std::wstring sourceName;
         bool exists{false};
+    };
+
+    enum class FomodPluginHeaderStatus
+    {
+        Parsed,
+        Corrupt,
+        Oversize,
+        CandidateLimit,
+        ReadBudgetExceeded
+    };
+
+    struct FomodPluginHeader
+    {
+        std::wstring outputFile;
+        std::vector<std::wstring> masters;
+        FomodPluginHeaderStatus status{FomodPluginHeaderStatus::Parsed};
+        std::wstring issueCode;
     };
 
     struct FomodOption
@@ -65,6 +89,7 @@ namespace fluxora
         std::vector<FomodFileEntry> files;
         std::vector<FomodConditionFlag> flags;
         std::vector<FomodTypePattern> typePatterns;
+        std::vector<FomodPluginHeader> pluginHeaders;
     };
 
     struct FomodGroup
@@ -92,11 +117,17 @@ namespace fluxora
         std::wstring moduleImagePath;
         std::wstring memoryKey;
         bool hasPreviousSelection{false};
+        bool previousSelectionContextual{false};
+        bool previousSelectionWeak{false};
         std::vector<std::wstring> previousSelectedOptionIds;
+        std::vector<std::wstring> previousDeselectedOptionIds;
         std::vector<FomodFileDependencyState> fileDependencyStates;
+        std::optional<FomodDependencyNode> moduleDependencies;
         std::vector<FomodFileEntry> requiredFiles;
         std::vector<FomodStep> steps;
         std::vector<FomodConditionalFilePattern> conditionalFilePatterns;
+        std::shared_ptr<FomodProfileContext> profileContext;
+        std::shared_ptr<FomodAutoSelection> autoSelection;
     };
 
     struct FomodPackageIdentity
@@ -119,6 +150,13 @@ namespace fluxora
         FomodPackageIdentity identity;
         std::vector<std::wstring> selectedOptionIds;
         std::vector<std::wstring> gameDataFolders;
+        const FomodProfileContext* profileContext{nullptr};
+    };
+
+    struct FomodRememberedManualDecision
+    {
+        std::wstring optionId;
+        bool selected{false};
     };
 
     class FomodInstallerService final
@@ -134,13 +172,26 @@ namespace fluxora
             const std::filesystem::path& modsDirectory,
             const std::filesystem::path& packageDirectory,
             const FomodPackageIdentity& identity,
-            const std::vector<std::wstring>& gameDataFolders = {});
+            const std::vector<std::wstring>& gameDataFolders = {},
+            std::wstring_view profileName = {},
+            std::wstring_view profileFingerprint = {});
 
         [[nodiscard]] static std::vector<std::wstring> install(const FomodInstallContext& context);
+
+        [[nodiscard]] static std::vector<std::wstring> referencedProfileFiles(
+            const FomodInstallerDescriptor& descriptor);
 
         static void rememberSelection(
             const std::filesystem::path& projectDirectory,
             const FomodInstallerDescriptor& descriptor,
             const std::vector<std::wstring>& selectedOptionIds);
+
+        static void rememberSelection(
+            const std::filesystem::path& projectDirectory,
+            const FomodInstallerDescriptor& descriptor,
+            const std::vector<std::wstring>& selectedOptionIds,
+            std::wstring_view profileName,
+            std::wstring_view profileFingerprint,
+            const std::vector<FomodRememberedManualDecision>& manualDecisions);
     };
 }

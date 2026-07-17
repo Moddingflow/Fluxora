@@ -1185,13 +1185,14 @@ const collectFailedOperations = (
 ): Array<{ claim: string; relevantMods: string[]; toolName: string }> => {
   const failures: Array<{ claim: string; relevantMods: string[]; toolName: string }> = [];
   for (const item of allToolItems(buildTools(buildSnapshot, 'downloads.list'))) {
-    const status = fieldString(item, 'status');
-    if (!failedStatus(status)) {
+    const transferState = fieldString(item, 'transferState');
+    if (transferState !== 'failed') {
       continue;
     }
     const label = fieldString(item, 'name') || fieldString(item, 'fileName') || fieldString(item, 'id');
+    const message = fieldString(item, 'transferMessage') || 'Transfer failed';
     failures.push({
-      claim: `Download/install queue item ${label} failed locally with status: ${status}.`,
+      claim: `Download/install queue item ${label} failed locally: ${message}.`,
       relevantMods: [label].filter(Boolean),
       toolName: 'downloads.list'
     });

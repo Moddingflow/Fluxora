@@ -1,5 +1,5 @@
 Fluxora Privacy Policy
-Last updated: 15 July 2026
+Last updated: 16 July 2026
 
 1. Controller
 Fluxora is provided as part of the ModdingFlow ecosystem. The controller for data processing is ModdingFlow, Germany, unless another legal notice is supplied with the official distribution. Use the official ModdingFlow contact channel or legal notice for privacy requests.
@@ -16,10 +16,12 @@ Fluxora may store or process the following data on your device:
 - Installation data: selected installation folder, installed files and optional desktop shortcut path.
 - Settings: language, app configuration, build configuration folder and other preferences.
 - Project data: project names, game paths, mod folders, profile files, plugin order, download records, imported Mod Organizer data, executable paths and related metadata.
+- Local archive-library data: archives shared by builds of the same game, locally calculated SHA-256 identifiers and sidecar metadata, plus per-build archive/install history and operation identifiers. Indexing or sharing an archive between local builds does not by itself upload the archive or its SHA-256 value.
 - AI assistant data, if you enable or use AI features: chat prompts, chat history, selected model/provider metadata, local cost estimates, run identifiers, compact read-only build context, local context graph metadata such as source ids, source fingerprints, timestamps and stale markers, and optional AI research metadata. The compact context can include project summary, installed-mod summaries, plugin/load-order summaries, selected mod file-tree names, bounded local file metadata from Fluxora-owned build folders such as relative paths, file kinds, sizes, SKSE DLL/config signals and conflict owners, bounded file-owner samples for high-signal overwrite/conflict evidence, profile names, download summaries, Nexus linked/configured status, operation status snapshots and recent operation log lines. AI research metadata can include Nexus URLs or nxm links from your prompt, official Nexus API metadata/file summaries when available, allowlisted public Nexus page summaries, Gemini/Google Search grounding citations, source ids, source snapshots, rate-limit/backoff metadata and blocked-source reasons. Fluxora does not include provider keys, Nexus tokens, arbitrary OS paths, arbitrary file contents, shell output, full log files, browser cookies or authenticated private pages in the Phase 7 AI context and research bundles by default.
 - Logs and crash diagnostics: installer logs, Tauri UI logs, Tauri main/bridge logs, native core logs, operation logs and crash logs with timestamps, operation status, operation ids, error messages, selected paths, file names involved in an operation, process or thread identifiers and diagnostic details. Logs may indirectly contain your operating-system user name if it is part of a file path.
 - Nexus Mods connection data, if you connect it: account display name, user id, token type, expiry date, access or refresh tokens, and personal API keys protected with Windows data protection APIs where available.
 - Mod identity lookup data, when Nexus Mods is connected and an archive has no stable source id: Fluxora may send the archive's MD5 fingerprint and the selected game's Nexus domain to the Nexus Mods API to find an unambiguous mod and file identity. Fluxora calculates SHA-256 locally in the same file pass but does not send it for this lookup. The archive contents, local path and file name are not sent. Returned mod/file identifiers and names may be stored in the local project metadata.
+- Nexus file-update check data, when Nexus Mods is connected: Fluxora may automatically check at most once every 24 hours and may also check when you request it manually. The selected game's Nexus domain and installed Nexus mod/file identifiers are sent to the Nexus Mods API. Returned file identifiers, file-version labels, categories, primary-file flags, update links, availability, timestamps, quota and retry metadata may be stored locally. Fluxora does not request or retain mod descriptions, file descriptions or changelogs for this feature, and it does not place Nexus access or refresh tokens in the update cache or update logs.
 - Local protocol data: nxm links passed to Fluxora when you choose Fluxora as handler.
 
 Fluxora does not intentionally collect special categories of personal data, payment data, advertising identifiers, address books, browser history, microphone data, camera data or location data. The bundled Tauri/Chromium runtime is used to render the local application UI; Fluxora does not use it to track browsing activity.
@@ -38,18 +40,20 @@ The legal bases follow Article 6 GDPR:
 Fluxora stores data locally, typically in these locations:
 
 - Installed application: the folder selected during installation.
+- Shared archive library: the Downloads\<gameId> folder inside the selected installation folder. Builds of one game share that folder; different games use separate folders. Installer updates preserve it as user data and do not include it in the application payload.
 - Logs: a logs folder next to the executable where writable, and/or %APPDATA%\Fluxora\logs. Tauri logs are separated from native core, operation, installer and crash logs.
 - Settings: %APPDATA%\Fluxora\settings.ini and %APPDATA%\Fluxora\settings.json.
 - Runtime launch state: %APPDATA%\Fluxora\launch-session.json while an external executable is being tracked.
 - Project files: folders selected by you when creating or importing projects.
+- Nexus update cache: %APPDATA%\Fluxora\nexus-update-cache.sqlite3, shared by local builds.
 
 7. Retention
-Fluxora keeps local data until you delete it, uninstall Fluxora, reset the app, disconnect an account, or delete the relevant project. Local AI chat history, context graph metadata and research summaries follow the same local-retention approach unless a later settings screen offers more specific deletion controls. Logs are written as dated local files and are not automatically uploaded. Current builds do not enforce automatic log deletion, so logs remain until deleted by you or by your system cleanup tools.
+Fluxora keeps local data until you delete it, uninstall Fluxora, reset the app, disconnect an account, or delete the relevant project. Nexus update-cache entries that have not been used for 90 days are pruned automatically; the cache file itself remains until you or the application removes it. Local AI chat history, context graph metadata and research summaries follow the same local-retention approach unless a later settings screen offers more specific deletion controls. Logs are written as dated local files and are not automatically uploaded. Current builds do not enforce automatic log deletion, so logs remain until deleted by you or by your system cleanup tools.
 
 8. Recipients and transfers
 Fluxora does not sell personal data and does not send logs or telemetry to ModdingFlow automatically. Data may be sent to third parties only when you initiate a feature that requires it, for example:
 
-- Nexus Mods OAuth and API endpoints when you connect or use Nexus Mods features, including the optional MD5/game-domain identity lookup during install planning.
+- Nexus Mods OAuth and API endpoints when you connect or use Nexus Mods features, including the optional MD5/game-domain identity lookup during install planning and automatic or manual file-level update checks.
 - Nexus Mods API endpoints and allowlisted public Nexus pages when you request AI Nexus/web research.
 - Fluxora-managed Supabase configuration endpoints when AI needs to resolve provider credential availability; chat prompts and local build context are not sent to Supabase for this lookup.
 - AI model providers selected by you, or configured by a Fluxora AI mode, when you send an AI chat message or request an AI response. Provider processing is subject to the provider's own terms and privacy policy, and may involve transfer outside your country or the EU/EEA depending on the provider.

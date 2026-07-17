@@ -181,6 +181,8 @@ describe('Tauri parity gate', () => {
     expect(rustShell).toContain('FLUXORA_LOG_DIR');
     expect(rustShell).toContain('FLUXORA_OPERATION_CANCEL_DIR');
     expect(rustShell).toContain('FLUXORA_TAURI_PROCESS_ID');
+    expect(rustShell).toContain('FLUXORA_APP_ROOT');
+    expect(rustShell).toContain('fluxora_app_root');
     expect(rustShell).toContain('operation_cancel_marker_path');
     expect(rustShell).toContain('nativeLogDirectory');
     expect(sharedApi).toContain('nativeLogDirectory');
@@ -215,6 +217,17 @@ describe('Tauri parity gate', () => {
     expect(launchApi).toContain('missing VFS support is a build error');
     expect(vfsService).toContain('virtual file system support is not compiled into this Fluxora build');
     expect(vfsService).not.toContain('Fluxora was built without VFS support for this platform');
+  });
+
+  it('preserves the global Downloads catalog across clean builds and excludes it from payloads', () => {
+    const buildScript = readText('Build.ps1');
+
+    expect(buildScript).toContain("$OutputDownloadsDir = Join-Path $OutputDir 'Downloads'");
+    expect(buildScript).toContain('Move-Item -LiteralPath $OutputDownloadsDir -Destination $PreservedDownloadsStagingDir');
+    expect(buildScript).toContain('Move-Item -LiteralPath $PreservedDownloadsStagingDir -Destination $OutputDownloadsDir');
+    expect(buildScript).toContain('Test-IsPayloadPathExcluded');
+    expect(buildScript).toContain("$normalized.StartsWith('Downloads/'");
+    expect(buildScript).toContain('Refusing to preserve output Downloads because it is a reparse point');
   });
 
   it('keeps MO2 transfer handoff in the Rust shell and closes Settings on launch', () => {

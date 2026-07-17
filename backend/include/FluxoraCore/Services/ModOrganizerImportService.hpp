@@ -1,5 +1,6 @@
 #pragma once
 
+#include "FluxoraCore/Services/ArchiveCatalogService.hpp"
 #include "FluxoraCore/Services/IService.hpp"
 #include "FluxoraCore/Services/ProjectService.hpp"
 #include "FluxoraCore/Services/TemplateService.hpp"
@@ -98,6 +99,7 @@ namespace fluxora
         const TemplateService& templates_;
         ProjectService& projects_;
         BuildPathSettingsService& pathSettings_;
+        ArchiveCatalogService archiveCatalog_;
         bool initialized_{false};
     };
 }

@@ -29,7 +29,10 @@ const downloadEntry = (
   fileName,
   localPath: `C:\\Builds\\Skyrim\\downloads\\${fileName}`,
   source: 'local',
-  status: 'Ready',
+  archiveId: `sha256:${id.padEnd(64, '0').slice(0, 64)}`,
+  buildStatus: 'Ready',
+  transferState: 'idle',
+  transferMessage: '',
   sizeText: '12 MB',
   createdAtText: 'today',
   progressPercent: 100,
@@ -47,14 +50,19 @@ const downloadEntry = (
 const items: FluxoraDownloadEntry[] = [
   downloadEntry('skyui', 'SkyUI.7z'),
   downloadEntry('paused', 'SmoothCam.zip', {
-    status: 'Paused',
+    buildStatus: null,
+    transferState: 'paused',
+    transferMessage: 'Paused',
     progressPercent: 44,
     progressText: '44%',
     canInstall: false,
     canResume: true
   }),
   downloadEntry('active', 'RaceMenu.7z', {
-    status: 'Downloading',
+    archiveId: null,
+    buildStatus: null,
+    transferState: 'downloading',
+    transferMessage: 'Downloading',
     progressPercent: 12.4,
     progressText: '12%',
     downloadSpeedText: '1.2 MB/s',
@@ -131,7 +139,10 @@ describe('download workspace state', () => {
       items: [items[0]]
     });
     const inbound = downloadEntry('nxm-inbound', 'Cabbage CS Preset.7z', {
-      status: 'Скачивается',
+      archiveId: null,
+      buildStatus: null,
+      transferState: 'downloading',
+      transferMessage: 'Скачивается',
       progressPercent: 0,
       progressText: 'Подготовка загрузки',
       isDownloading: true,
@@ -180,6 +191,15 @@ describe('download workspace state', () => {
   it('detects active download rows for live progress refreshes', () => {
     expect(hasActiveDownload(items)).toBe(true);
     expect(hasActiveDownload(items.filter((entry) => !entry.isDownloading))).toBe(false);
+    expect(
+      hasActiveDownload([
+        downloadEntry('indexing', 'Explorer Archive.7z', {
+          archiveId: null,
+          buildStatus: null,
+          transferState: 'indexing'
+        })
+      ])
+    ).toBe(true);
   });
 
   it('keeps rows visible during silent refreshes', () => {
@@ -210,14 +230,24 @@ describe('download workspace state', () => {
   });
 
   it('formats dense-row status and progress', () => {
+    const installed = downloadEntry('installed', 'Installed Mod.zip', {
+      buildStatus: 'Installed'
+    });
+
     expect(downloadTitle(items[0])).toBe('SkyUI');
-    expect(downloadStatusText(items[0])).toBe('Ready to install');
+    expect(downloadStatusText(items[0])).toBe('Ready');
+    expect(downloadStatusText(installed)).toBe('Installed');
     expect(downloadStatusText(items[1])).toBe('Paused');
     expect(downloadStatusText(items[2])).toBe('1.2 MB/s');
     expect(downloadProgressValue(items[2])).toBe(12);
     expect(downloadStatusView(items[0])).toMatchObject({
-      text: 'Ready to install',
+      text: 'Ready',
       tone: 'ready',
+      showProgress: false
+    });
+    expect(downloadStatusView(installed)).toMatchObject({
+      text: 'Installed',
+      tone: 'installed',
       showProgress: false
     });
     expect(downloadStatusView(items[2])).toMatchObject({
@@ -230,7 +260,10 @@ describe('download workspace state', () => {
 
   it('keeps pending Nexus retries actionable without calling them paused', () => {
     const pending = downloadEntry('nxm', 'skyrimspecialedition-3863-123.nxm', {
-      status: 'Ожидает загрузки',
+      archiveId: null,
+      buildStatus: null,
+      transferState: 'paused',
+      transferMessage: '',
       progressPercent: 0,
       progressText: '',
       hasKnownProgress: false,
@@ -239,10 +272,11 @@ describe('download workspace state', () => {
     });
     const failed = {
       ...pending,
-      status: 'Ожидает загрузки: NexusMods authentication token is not available. Reconnect NexusMods in settings.'
+      transferState: 'failed' as const,
+      transferMessage: 'NexusMods authentication token is not available. Reconnect NexusMods in settings.'
     };
 
-    expect(downloadStatusText(pending)).toBe('Ready to download');
+    expect(downloadStatusText(pending)).toBe('Paused');
     expect(downloadStatusText(failed)).toContain('Reconnect NexusMods');
   });
 

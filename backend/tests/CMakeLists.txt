@@ -15,6 +15,7 @@ endif()
 
 add_executable(FluxoraCoreTests
     AppSettingsServiceTests.cpp
+    ArchiveCatalogServiceTests.cpp
     AtomicFileStoreTests.cpp
     BuildPathSettingsServiceTests.cpp
     ContentLayoutServiceTests.cpp
@@ -28,15 +29,19 @@ add_executable(FluxoraCoreTests
     GameSupportRegistryTests.cpp
     GameTypesTests.cpp
     HookServiceTests.cpp
+    InstallConflictPreviewServiceTests.cpp
     InstanceMetadataStoreTests.cpp
     JsonSupportTests.cpp
     LaunchDescriptorStoreTests.cpp
     FomodInstallerServiceTests.cpp
+    FomodProfileContextServiceTests.cpp
+    FomodAutoSelectionServiceTests.cpp
     FluxPackServiceTests.cpp
     GrassCacheServiceTests.cpp
     LoggerTests.cpp
     ModFileOperationsIntegrationTests.cpp
     ModIdentityResolverTests.cpp
+    ModUpdateServiceTests.cpp
     ModOrganizerTransferBuildTests.cpp
     ModOrganizerImportServiceTests.cpp
     ModOrganizerPluginGroupServiceTests.cpp
@@ -53,6 +58,7 @@ add_executable(FluxoraCoreTests
     VfsMountPlanTests.cpp
     TestFilesystem.hpp
     ../src/Services/AppSettingsService.cpp
+    ../src/Services/ArchiveCatalogService.cpp
     ../src/Services/BulkFileCopyService.cpp
     ../src/Services/BuildPathSettingsService.cpp
     ../src/Services/ContentLayoutService.cpp
@@ -69,14 +75,20 @@ add_executable(FluxoraCoreTests
     ../src/Services/ExecutableIconService.cpp
     ../src/Services/ExecutableService.cpp
     ../src/Services/FomodInstallerService.cpp
+    ../src/Services/FomodProfileContextService.cpp
+    ../src/Services/FomodAutoSelectionService.cpp
     ../src/Services/FluxPackPackage.cpp
     ../src/Services/FluxPackService.cpp
     ../src/Services/GrassCacheService.cpp
     ../src/Services/HookService.cpp
+    ../src/Services/InstallConflictPreviewService.cpp
     ../src/Services/Logger.cpp
     ../src/Services/ModOrganizerExecutableImportService.cpp
     ../src/Services/ModOrganizerImportService.cpp
     ../src/Services/ModService.cpp
+    ../src/Services/ModUpdateService.cpp
+    ../src/Services/NexusUpdateCache.cpp
+    ../src/Services/NexusUpdateHttpApi.cpp
     ../src/Services/ModIdentityResolver.cpp
     ../src/Services/NifPreviewResolver.cpp
     ../src/Services/NexusModsAuthService.cpp
@@ -148,7 +160,7 @@ target_link_libraries(
         ${FLUXORA_ZSTD_TARGET})
 
 if(WIN32)
-    target_link_libraries(FluxoraCoreTests PRIVATE advapi32 bcrypt crypt32 gdiplus normaliz rstrtmgr shell32 winhttp ws2_32)
+    target_link_libraries(FluxoraCoreTests PRIVATE advapi32 bcrypt crypt32 gdiplus normaliz rstrtmgr shell32 version winhttp ws2_32)
 endif()
 
 include(GoogleTest)

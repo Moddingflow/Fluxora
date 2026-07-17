@@ -9,6 +9,33 @@ interface InstallPlanState extends InstallNameState {
   installPlan: FluxoraInstallPlan | null;
 }
 
+interface InstallPlanMatchState extends InstallNameState {
+  installPlan: FluxoraInstallPlan | null;
+}
+
+const normalizedInstallIdentityName = (value: string): string =>
+  value.trim().toLocaleLowerCase();
+
+export const matchedInstallTargetForCurrentName = (
+  current: InstallPlanMatchState
+): FluxoraInstallPlan['matchedTarget'] => {
+  const matchedTarget = current.installPlan?.matchedTarget ?? null;
+  if (!matchedTarget || current.modNameSource !== 'user') {
+    return matchedTarget;
+  }
+
+  const currentName = normalizedInstallIdentityName(current.modName);
+  return currentName === normalizedInstallIdentityName(matchedTarget.displayName) ||
+    currentName === normalizedInstallIdentityName(matchedTarget.folderName)
+    ? matchedTarget
+    : null;
+};
+
+export const installPlanNeedsUserNameReplan = (
+  current: InstallPlanMatchState
+): boolean =>
+  current.modNameSource === 'user' && matchedInstallTargetForCurrentName(current) === null;
+
 export const attachBackgroundInstallPlan = <State extends InstallPlanState>(
   current: State,
   plan: FluxoraInstallPlan
@@ -17,7 +44,7 @@ export const attachBackgroundInstallPlan = <State extends InstallPlanState>(
     ...current,
     installPlan: plan
   };
-  if (current.installerKind !== 'standard') {
+  if (current.installerKind === 'pending') {
     return withPlan;
   }
 
@@ -28,6 +55,7 @@ export const attachBackgroundInstallPlan = <State extends InstallPlanState>(
   );
   return {
     ...withPlan,
-    ...nameState
+    modName: nameState.modName,
+    modNameSource: nameState.modNameSource
   };
 };

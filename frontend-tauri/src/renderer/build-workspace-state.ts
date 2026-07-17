@@ -11,6 +11,7 @@ import type {
 export interface BuildPathDraft extends FluxoraBuildPathSettingsSaveRequest {
   projectDirectory: string;
   gameExecutablePath: string;
+  downloadsDirectory: string;
 }
 
 export interface BuildActionAvailability {
@@ -108,7 +109,6 @@ export const buildPathSaveRequest = (
   gameDirectory: draft.gameDirectory.trim(),
   modsDirectory: draft.modsDirectory.trim(),
   profilesDirectory: draft.profilesDirectory.trim(),
-  downloadsDirectory: draft.downloadsDirectory.trim(),
   overwriteDirectory: draft.overwriteDirectory.trim()
 });
 

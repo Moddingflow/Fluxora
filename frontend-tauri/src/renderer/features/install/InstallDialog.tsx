@@ -19,6 +19,7 @@ import {
   createPlacementOverrideForDrop,
   normalizeInstallModName,
   toggleFomodOption,
+  updateFomodManualDecisions,
   validateInstallModName,
   type EvaluatedFomodWizard,
   type InstallModOrderPlacement,
@@ -30,7 +31,9 @@ import type { InstallNameSource } from './install-name-state';
 import type {
   FluxoraContentLayoutPreview,
   FluxoraExistingModInstallMode,
+  FluxoraFomodDecisionEvidence,
   FluxoraFomodInstaller,
+  FluxoraFomodOptionDecision,
   FluxoraInstallPlan
 } from '../../../shared/fluxora-api';
 
@@ -51,6 +54,8 @@ export interface InstallDialogState {
   installerKind: InstallDialogInstallerKind;
   fomodInstaller: FluxoraFomodInstaller | null;
   selectedFomodOptionIds: string[];
+  manualFomodDecisions?: { optionId: string; selected: boolean }[];
+  isRecalculatingFomod?: boolean;
   fomodStepIndex: number;
   activeFomodOptionId: string | null;
   layoutPreview: FluxoraContentLayoutPreview | null;
@@ -77,6 +82,8 @@ interface InstallDialogProps {
   onMoveFomodStep: (direction: 1 | -1) => void;
   onOpenDetails: () => void;
   onPatch: (patch: Partial<InstallDialogState>) => void;
+  onRecalculateFomod: () => void;
+  onResetFomod: () => void;
   onResolveExistingMod: (decision: 1 | 2 | 'installNew') => void;
   onSubmitInstallOptions: () => void;
 }
@@ -85,6 +92,87 @@ const archiveTreeRowHeight = 32;
 const archiveTreeVisibleRows = 32;
 const archiveTreeOverscanRows = 10;
 type InstallIconStyle = CSSProperties & { '--install-icon': string };
+
+const fomodEvidenceText = (evidence: FluxoraFomodDecisionEvidence): string => {
+  const owner = evidence.sourceName ? ` (${evidence.sourceName})` : '';
+  switch (evidence.code) {
+    case 'profile.file.match':
+      return evidence.actual === 'Active'
+        ? `${evidence.subject} найден и активен${owner}.`
+        : `${evidence.subject}: ${evidence.actual || 'состояние неизвестно'}${owner}.`;
+    case 'fomod.flag.match':
+      return `XML-условие ${evidence.subject} = ${evidence.expected} совпало.`;
+    case 'profile.version.match':
+      return `Версия ${evidence.subject}: ${evidence.actual}; требуется ${evidence.expected}.`;
+    case 'tes4.master.active':
+      return `Master ${evidence.subject} активен${owner}.`;
+    case 'tes4.master.provided':
+      return `Master ${evidence.subject} будет установлен вариантом ${evidence.sourceName}.`;
+    case 'tes4.master.inactive':
+      return `Master ${evidence.subject} найден, но неактивен${owner}.`;
+    case 'tes4.master.missing':
+      return `Master ${evidence.subject} отсутствует.`;
+    case 'tes4.master.providerNotSelected':
+      return `Master ${evidence.subject} есть в FOMOD, но его вариант не выбран.`;
+    default:
+      return `${evidence.subject || 'Условие'}: ${evidence.actual || evidence.expected || evidence.code}.`;
+  }
+};
+
+const fomodReasonText = (decision: FluxoraFomodOptionDecision | null): string[] => {
+  if (!decision) {
+    return ['Для этого варианта нет автоматического решения.'];
+  }
+
+  const reasons = decision.reasonCodes.map((reason) => {
+    switch (reason) {
+      case 'manual.session':
+        return 'Вы изменили этот вариант вручную.';
+      case 'memory.contextual':
+      case 'memory.global':
+      case 'memory.v1WeakHint':
+        return 'Использовано сохранённое личное предпочтение.';
+      case 'author.recommended':
+        return 'Автор FOMOD пометил вариант как Recommended.';
+      case 'author.optional':
+        return 'Автор FOMOD оставил вариант необязательным.';
+      case 'profile.exactRecommendation':
+        return 'Условия FOMOD совпали с текущим профилем.';
+      case 'tes4.masters.satisfied':
+        return 'Все master-зависимости варианта доступны.';
+      case 'fomod.required':
+      case 'fomod.selectAll':
+        return 'FOMOD требует установить этот вариант.';
+      case 'fomod.notUsable':
+        return 'FOMOD пометил вариант как NotUsable.';
+      case 'dependency.cycle':
+        return 'Обнаружен цикл условий; выбор оставлен пользователю.';
+      case 'dependency.unknown':
+        return 'Не удалось надёжно проверить зависимость.';
+      case 'group.ambiguous':
+        return 'Несколько вариантов имеют одинаковый приоритет.';
+      case 'tes4.reviewRequired':
+      case 'tes4.masterUnavailable':
+        return 'TES4 master-зависимости требуют ручной проверки.';
+      default:
+        return reason || 'Решение принято по правилам FOMOD.';
+    }
+  });
+  return [...reasons, ...decision.evidence.map(fomodEvidenceText)];
+};
+
+const fomodWarningText = (warning: string): string => {
+  switch (warning) {
+    case 'moduleDependencies.unknown':
+      return 'Версию игры или script extender не удалось определить. Автовыбор отключён; выберите вручную.';
+    case 'moduleDependencies.unsatisfied':
+      return 'Требования FOMOD к версии игры или инструментов не выполнены.';
+    case 'autoselect.unavailable':
+      return 'Автовыбор недоступен для этой игры; варианты остаются доступными вручную.';
+    default:
+      return 'Некоторые зависимости не удалось проверить автоматически.';
+  }
+};
 
 const useFomodImageSource = (imagePath: string) => {
   const normalizedPath = imagePath.trim();
@@ -142,6 +230,8 @@ export function InstallDialog({
   onMoveFomodStep,
   onOpenDetails,
   onPatch,
+  onRecalculateFomod,
+  onResetFomod,
   onResolveExistingMod,
   onSubmitInstallOptions
 }: InstallDialogProps) {
@@ -152,6 +242,13 @@ export function InstallDialog({
     direction: 'forward' | 'backward' | 'none';
   }>({ start: 0, end: 0, direction: 'none' });
   const modNameInputFocusedRef = useRef(false);
+  const fomodRecalculateButtonRef = useRef<HTMLButtonElement>(null);
+  const fomodResetButtonRef = useRef<HTMLButtonElement>(null);
+  const fomodFinalActionButtonRef = useRef<HTMLButtonElement>(null);
+  const pendingFomodFocusRef = useRef<{
+    action: 'recalculate' | 'reset' | 'install';
+    operationId: string;
+  } | null>(null);
 
   useLayoutEffect(() => {
     const input = modNameInputRef.current;
@@ -172,6 +269,40 @@ export function InstallDialog({
       selection.direction
     );
   }, [installDialog?.modName, installDialog?.modNameSource]);
+
+  useLayoutEffect(() => {
+    const pending = pendingFomodFocusRef.current;
+    if (!pending || !installDialog) {
+      return;
+    }
+    if (pending.operationId !== installDialog.operationId) {
+      pendingFomodFocusRef.current = null;
+      return;
+    }
+    if (
+      installDialog.phase !== 'fomod' ||
+      installDialog.isRecalculatingFomod ||
+      installDialog.isSubmitting
+    ) {
+      return;
+    }
+
+    const target = pending.action === 'recalculate'
+      ? fomodRecalculateButtonRef.current
+      : pending.action === 'reset'
+        ? fomodResetButtonRef.current
+        : fomodFinalActionButtonRef.current;
+    if (target) {
+      target.focus({ preventScroll: true });
+      pendingFomodFocusRef.current = null;
+    }
+  }, [
+    installDialog?.operationId,
+    installDialog?.phase,
+    installDialog?.isRecalculatingFomod,
+    installDialog?.isSubmitting,
+    installDialog?.fomodStepIndex
+  ]);
 
   if (!installDialog) {
     return null;
@@ -245,9 +376,80 @@ export function InstallDialog({
       activeOption ?? stepOptions.find((option) => option.isSelected) ?? stepOptions[0] ?? null;
     const previewImage =
       detailsOption?.option.imagePath || installDialog.fomodInstaller.moduleImagePath || '';
+    const autoSelection = installDialog.fomodInstaller.autoSelection;
+    const profileContext = installDialog.fomodInstaller.profileContext;
+    const decisions = new Map(
+      (autoSelection?.decisions ?? []).map((decision) => [decision.optionId, decision])
+    );
+    const manualOptionIds = new Set(
+      (installDialog.manualFomodDecisions ?? []).map((decision) => decision.optionId)
+    );
+    const unresolvedOptionIds = new Set(
+      (autoSelection?.unresolvedGroups ?? []).flatMap((group) => group.optionIds)
+    );
+    const detailsDecision = detailsOption ? decisions.get(detailsOption.option.id) ?? null : null;
+    const detailsReasons = fomodReasonText(detailsDecision);
+    const detailsReasonTitle = detailsOption?.isSelected
+      ? 'Почему выбрано'
+      : detailsDecision?.action === 'manual'
+        ? 'Почему нужен ручной выбор'
+        : 'Почему не выбрано';
+    const autoSelectionAvailable = profileContext?.autoSelectionAvailable !== false && Boolean(autoSelection);
+    const summaryText = autoSelectionAvailable
+      ? `Автовыбор · ${evaluation.selectedOptionIds.length} выбрано · ${autoSelection?.unresolvedGroups.length ?? 0} требует решения`
+      : `Автовыбор недоступен${profileContext?.unavailableReason ? ` · ${profileContext.unavailableReason}` : ''}`;
 
     return (
       <div className="install-fomod-wizard">
+        <div className="fomod-smart-select-bar">
+          <div className="fomod-smart-select" aria-live="polite">
+            <span role="status">{summaryText}</span>
+            <div className="fomod-smart-select__actions">
+              <button
+                ref={fomodRecalculateButtonRef}
+                className="tool-button"
+                type="button"
+                disabled={installDialog.isSubmitting || installDialog.isRecalculatingFomod}
+                onClick={() => {
+                  pendingFomodFocusRef.current = {
+                    action: 'recalculate',
+                    operationId: installDialog.operationId
+                  };
+                  onRecalculateFomod();
+                }}
+              >
+                <RefreshCw size={14} aria-hidden="true" />
+                {installDialog.isRecalculatingFomod ? 'Пересчёт…' : 'Пересчитать'}
+              </button>
+              <button
+                ref={fomodResetButtonRef}
+                className="tool-button"
+                type="button"
+                disabled={installDialog.isSubmitting || installDialog.isRecalculatingFomod}
+                onClick={() => {
+                  pendingFomodFocusRef.current = {
+                    action: 'reset',
+                    operationId: installDialog.operationId
+                  };
+                  onResetFomod();
+                }}
+              >
+                Вернуть автоподбор
+              </button>
+            </div>
+          </div>
+          {autoSelection?.installBlocked ? (
+            <div className="install-validation" role="alert">
+              <AlertTriangle size={16} aria-hidden="true" />
+              <span>Требования FOMOD к игре или инструментам не выполнены.</span>
+            </div>
+          ) : autoSelection?.warnings.length ? (
+            <div className="fomod-smart-select__warning" role="status">
+              <AlertTriangle size={14} aria-hidden="true" />
+              <span>{fomodWarningText(autoSelection.warnings[0])}</span>
+            </div>
+          ) : null}
+        </div>
         <div className="install-fomod-body">
           <section className="install-fomod-options">
             <div className="install-section-heading">
@@ -281,6 +483,29 @@ export function InstallDialog({
                         const isRadio =
                           group.group.type === 'SelectExactlyOne' ||
                           group.group.type === 'SelectAtMostOne';
+                        const decision = decisions.get(option.option.id) ?? null;
+                        const hasMasterWarning = Boolean(
+                          decision?.reasonCodes.some((reason) =>
+                            ['tes4.reviewRequired', 'tes4.masterUnavailable'].includes(reason)
+                          ) ||
+                          decision?.evidence.some((evidence) =>
+                            ['tes4.master.inactive', 'tes4.master.missing', 'tes4.master.providerNotSelected'].includes(evidence.code)
+                          )
+                        );
+                        const optionStatus = manualOptionIds.has(option.option.id)
+                          ? 'Изменено вручную'
+                          : hasMasterWarning
+                            ? 'Предупреждение о master'
+                            : decision?.action === 'manual' || unresolvedOptionIds.has(option.option.id)
+                              ? 'Нужен выбор'
+                              : option.isSelected && (decision?.action === 'select' || decision?.action === 'locked')
+                                ? 'Выбрано автоматически'
+                                : decision?.action === 'locked'
+                                  ? 'Заблокировано FOMOD'
+                                  : decision
+                                    ? 'Не выбрано автоматически'
+                                    : '';
+                        const statusId = `${groupIdentity}-option-${optionIndex}-status`;
                         return (
                           <label
                             key={`${groupIdentity}-option-${optionIndex}`}
@@ -302,18 +527,26 @@ export function InstallDialog({
                                 name={groupIdentity}
                                 checked={option.isSelected}
                                 disabled={!option.canToggle}
-                                onChange={(event) =>
+                                aria-describedby={optionStatus ? statusId : undefined}
+                                onChange={(event) => {
+                                  const selectedFomodOptionIds = toggleFomodOption(
+                                    installDialog.fomodInstaller!,
+                                    installDialog.selectedFomodOptionIds,
+                                    option.option.id,
+                                    event.target.checked
+                                  );
                                   onPatch({
-                                    selectedFomodOptionIds: toggleFomodOption(
+                                    selectedFomodOptionIds,
+                                    manualFomodDecisions: updateFomodManualDecisions(
                                       installDialog.fomodInstaller!,
-                                      installDialog.selectedFomodOptionIds,
-                                      option.option.id,
-                                      event.target.checked
+                                      installDialog.manualFomodDecisions ?? [],
+                                      selectedFomodOptionIds,
+                                      option.option.id
                                     ),
                                     activeFomodOptionId: option.option.id,
                                     validationMessage: null
-                                  })
-                                }
+                                  });
+                                }}
                               />
                               {!isRadio && option.isSelected ? (
                                 <Check size={12} strokeWidth={3} aria-hidden="true" />
@@ -325,6 +558,16 @@ export function InstallDialog({
                               <small>{option.effectiveType}</small>
                               {option.wasPreviouslySelected ? (
                                 <small className="fomod-option__previous">Previously selected</small>
+                              ) : null}
+                              {optionStatus ? (
+                                <small
+                                  id={statusId}
+                                  className="fomod-option__smart-status"
+                                  data-warning={hasMasterWarning}
+                                >
+                                  {hasMasterWarning ? <AlertTriangle size={12} aria-hidden="true" /> : null}
+                                  {optionStatus}
+                                </small>
                               ) : null}
                             </span>
                           </label>
@@ -347,6 +590,14 @@ export function InstallDialog({
                   installDialog.fomodInstaller.moduleVersion ||
                   'No description provided.'}
               </span>
+              <section className="fomod-selection-reasons" aria-live="polite">
+                <strong>{detailsReasonTitle}</strong>
+                <ul>
+                  {detailsReasons.map((reason, index) => (
+                    <li key={`${detailsOption?.option.id ?? 'module'}:${index}`}>{reason}</li>
+                  ))}
+                </ul>
+              </section>
             </div>
           </aside>
         </div>
@@ -363,10 +614,21 @@ export function InstallDialog({
               Previous
             </button>
             <button
+              ref={fomodFinalActionButtonRef}
               className="primary-button"
               type="button"
-              disabled={installDialog.isSubmitting}
-              onClick={() => (canMoveNext ? onMoveFomodStep(1) : onContinueFromFomod())}
+              disabled={installDialog.isSubmitting || autoSelection?.installBlocked === true}
+              onClick={() => {
+                if (canMoveNext) {
+                  onMoveFomodStep(1);
+                  return;
+                }
+                pendingFomodFocusRef.current = {
+                  action: 'install',
+                  operationId: installDialog.operationId
+                };
+                onContinueFromFomod();
+              }}
             >
               {canMoveNext ? (
                 <>

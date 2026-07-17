@@ -47,7 +47,8 @@ namespace fluxora
         {
             return equalsIgnoreCase(mod.source.provider, L"nexus") &&
                 !mod.source.gameDomain.empty() &&
-                !mod.source.remoteModId.empty();
+                !mod.source.remoteModId.empty() &&
+                !mod.source.remoteFileId.empty();
         }
 
         bool isUnknownVersion(std::wstring_view value)
@@ -58,9 +59,9 @@ namespace fluxora
 
         bool hasUpdate(const InstalledModRecord& mod)
         {
-            return !isUnknownVersion(mod.version) &&
-                !isUnknownVersion(mod.source.latestVersion) &&
-                !equalsIgnoreCase(mod.version, mod.source.latestVersion);
+            return canCheckNexusUpdates(mod) &&
+                !mod.source.latestFileId.empty() &&
+                mod.source.latestFileId != mod.source.remoteFileId;
         }
 
         std::wstring updateStatusText(const InstalledModRecord& mod)
@@ -203,7 +204,9 @@ namespace fluxora
                 {},
                 record.mod.contentFingerprint,
                 mod.overwritesModIds,
-                mod.overwrittenByModIds
+                mod.overwrittenByModIds,
+                mod.latestFileId,
+                mod.updateCheckState
             };
         }
 
@@ -244,7 +247,9 @@ namespace fluxora
                 {},
                 mod.contentFingerprint,
                 summary.overwritesModIds,
-                summary.overwrittenByModIds
+                summary.overwrittenByModIds,
+                mod.source.latestFileId,
+                mod.source.updateCheckState
             };
         }
 
@@ -281,7 +286,11 @@ namespace fluxora
                 mod.source.url,
                 mod.uuid,
                 {},
-                mod.contentFingerprint
+                mod.contentFingerprint,
+                {},
+                {},
+                mod.source.latestFileId,
+                mod.source.updateCheckState
             };
         }
 

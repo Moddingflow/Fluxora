@@ -111,9 +111,14 @@ namespace fluxora::tests
     {
     public:
         TempDirectory()
-            : path_(makePath())
+            : path_(makePath()),
+              previousAppRoot_(readAppRoot())
         {
             std::filesystem::create_directories(path_);
+            // Production requires the Rust shell to provide FLUXORA_APP_ROOT. Each isolated
+            // test process gets an equally explicit, private root so parallel CTest runs do
+            // not share archive catalogs or rely on a product-side fallback.
+            setAppRoot(path_.wstring());
         }
 
         TempDirectory(const TempDirectory&) = delete;
@@ -121,6 +126,7 @@ namespace fluxora::tests
 
         ~TempDirectory()
         {
+            restoreAppRoot();
             std::error_code error;
             std::filesystem::remove_all(path_, error);
         }
@@ -139,7 +145,63 @@ namespace fluxora::tests
                 ("fluxora-core-tests-" + std::to_string(now) + "-" + std::to_string(threadHash));
         }
 
+        static std::optional<std::wstring> readAppRoot()
+        {
+#ifdef _WIN32
+            const DWORD requiredLength = GetEnvironmentVariableW(L"FLUXORA_APP_ROOT", nullptr, 0);
+            if (requiredLength == 0)
+            {
+                return std::nullopt;
+            }
+
+            std::wstring value(requiredLength, L'\0');
+            const DWORD actualLength = GetEnvironmentVariableW(
+                L"FLUXORA_APP_ROOT",
+                value.data(),
+                requiredLength);
+            if (actualLength == 0 || actualLength >= requiredLength)
+            {
+                return std::nullopt;
+            }
+            value.resize(actualLength);
+            return value;
+#else
+            const char* value = std::getenv("FLUXORA_APP_ROOT");
+            if (value == nullptr)
+            {
+                return std::nullopt;
+            }
+            const std::string narrowValue(value);
+            return std::wstring(narrowValue.begin(), narrowValue.end());
+#endif
+        }
+
+        static void setAppRoot(const std::wstring& value)
+        {
+#ifdef _WIN32
+            SetEnvironmentVariableW(L"FLUXORA_APP_ROOT", value.c_str());
+#else
+            const std::string narrowValue(value.begin(), value.end());
+            setenv("FLUXORA_APP_ROOT", narrowValue.c_str(), 1);
+#endif
+        }
+
+        void restoreAppRoot() const
+        {
+            if (previousAppRoot_.has_value())
+            {
+                setAppRoot(*previousAppRoot_);
+                return;
+            }
+#ifdef _WIN32
+            SetEnvironmentVariableW(L"FLUXORA_APP_ROOT", nullptr);
+#else
+            unsetenv("FLUXORA_APP_ROOT");
+#endif
+        }
+
         std::filesystem::path path_;
+        std::optional<std::wstring> previousAppRoot_;
     };
 
     inline void writeTextFile(const std::filesystem::path& path, const std::string& content)

@@ -22,6 +22,7 @@ namespace fluxora
     class AppSettingsService;
     class BuildPathSettingsService;
     class NexusModsAuthService;
+    class NexusUpdateApi;
     class ProjectService;
     class TemplateService;
 
@@ -54,6 +55,7 @@ namespace fluxora
         [[nodiscard]] GrassCacheService& grassCache() noexcept;
         [[nodiscard]] VirtualFileSystemService& virtualFileSystem() noexcept;
         [[nodiscard]] NexusModsAuthService& nexusModsAuth() noexcept;
+        [[nodiscard]] NexusUpdateApi& nexusUpdateApi() noexcept;
         [[nodiscard]] ProjectService& projects() noexcept;
         [[nodiscard]] TemplateService& templates() noexcept;
         [[nodiscard]] AppSettingsService& settings() noexcept;
@@ -69,6 +71,7 @@ namespace fluxora
         std::unique_ptr<ProfileOrderService> profileOrder_;
         std::unique_ptr<ProfileService> profiles_;
         std::unique_ptr<NexusModsAuthService> nexusModsAuth_;
+        std::unique_ptr<NexusUpdateApi> nexusUpdateApi_;
         std::unique_ptr<DownloadTransferLimiter> downloadTransferLimiter_;
         std::unique_ptr<DownloadService> downloads_;
         std::unique_ptr<EffectiveFileTreeService> effectiveFileTree_;

@@ -6,6 +6,7 @@
 #include "FluxoraCore/Services/ProfileService.hpp"
 #include "FluxoraCore/Services/ProfileOrderService.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
+#include "FluxoraCore/Support/FilesystemPath.hpp"
 #include "../src/Services/PreviewArchiveReader.hpp"
 #include "TestFilesystem.hpp"
 
@@ -516,7 +517,7 @@ namespace fluxora::tests
               settings_(logger_),
               pathSettings_(logger_),
               downloads_(logger_, settings_, pathSettings_, transferLimiter_),
-              mods_(logger_, settings_, pathSettings_),
+              mods_(logger_, pathSettings_),
               profiles_(logger_, pathSettings_),
               profileOrder_(logger_, mods_, pathSettings_)
         {
@@ -926,7 +927,7 @@ namespace fluxora::tests
             current->identityAliases.end());
     }
 
-    TEST_F(ModFileOperationsIntegrationTests, InstallArchiveFromExternalFileDoesNotImportDownloadMetadata)
+    TEST_F(ModFileOperationsIntegrationTests, InstallArchiveFromExternalFileImportsIntoGlobalCatalogBeforeInstalling)
     {
         const std::filesystem::path archivePath =
             temp_.path() / L"Внешние архивы" / L"Manual Texture 1.0.zip";
@@ -955,15 +956,22 @@ namespace fluxora::tests
         EXPECT_EQ(installed.name, L"Manual Texture");
         EXPECT_EQ(installed.version, L"1.0");
         EXPECT_TRUE(std::filesystem::is_regular_file(modsDirectory() / L"Manual Texture" / L"textures" / L"manual.dds"));
-        EXPECT_TRUE(downloads_.listDownloads(project_).empty());
+        const std::vector<DownloadEntry> catalogEntries = downloads_.listDownloads(project_);
+        ASSERT_EQ(catalogEntries.size(), 1U);
+        EXPECT_EQ(catalogEntries.front().fileName, L"Manual Texture 1.0.zip");
+        EXPECT_NE(normalized(catalogEntries.front().localPath), normalized(archivePath));
+        EXPECT_EQ(
+            normalized(catalogEntries.front().localPath.parent_path()),
+            normalized(pathSettings_.downloadsDirectory(project_)));
+        EXPECT_TRUE(catalogEntries.front().archiveId.starts_with(L"sha256:"));
         EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(archivePath.wstring() + L".fluxora.json")));
 
         const std::vector<InstalledModRecord> records =
             InstanceMetadataStore::listInstalledMods(project_, modsDirectory());
         const InstalledModRecord* record = findInstalledMod(records, L"Manual Texture");
         ASSERT_NE(record, nullptr);
-        EXPECT_EQ(record->source.provider, L"manual");
-        EXPECT_EQ(record->source.url, archivePath.wstring());
+        EXPECT_EQ(record->source.provider, L"local");
+        EXPECT_EQ(record->source.url, catalogEntries.front().localPath.wstring());
     }
 
     TEST_F(ModFileOperationsIntegrationTests, CreateEmptyModCreatesFolderManifestAndAppendsProfileOrder)
@@ -2345,6 +2353,26 @@ namespace fluxora::tests
         const InstalledModRecord* record = findInstalledMod(records, L"Merge Mod");
         ASSERT_NE(record, nullptr);
         EXPECT_EQ(record->version, L"2.0");
+
+        const std::vector<DownloadEntry> archives = downloads_.listDownloads(project_);
+        const auto originalArchive = std::find_if(
+            archives.begin(),
+            archives.end(),
+            [](const DownloadEntry& entry)
+            {
+                return entry.fileName == L"Merge Mod 1.0.zip";
+            });
+        const auto mergedArchive = std::find_if(
+            archives.begin(),
+            archives.end(),
+            [](const DownloadEntry& entry)
+            {
+                return entry.fileName == L"Merge Mod 2.0.zip";
+            });
+        ASSERT_NE(originalArchive, archives.end());
+        ASSERT_NE(mergedArchive, archives.end());
+        EXPECT_EQ(originalArchive->buildStatus, L"Installed");
+        EXPECT_EQ(mergedArchive->buildStatus, L"Installed");
     }
 
     TEST_F(ModFileOperationsIntegrationTests, ProfileModOrderReturnsLiveConflictSummary)
@@ -2796,6 +2824,107 @@ namespace fluxora::tests
         EXPECT_EQ(cachedDescriptor.steps[0].groups[0].options.size(), 120U);
         EXPECT_EQ(metadataBuilds.load(), 1);
         EXPECT_EQ(fullPackageBuilds.load(), 0);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, AnalyzeFomodDownloadCachesMetadataBeyondLegacyWindowsPathLimit)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Extended-length staging paths are a Windows-specific regression case.";
+#else
+        const DownloadEntry download = importArchive(
+            L"Long Path FOMOD.zip",
+            {
+                {L"fomod/ModuleConfig.xml", R"xml(<config><moduleName>Long Path FOMOD</moduleName></config>)xml"},
+                {L"fomod/info.xml", R"xml(<fomod><Name>Long Path FOMOD</Name><Version>1.0.0</Version></fomod>)xml"}
+            });
+
+        std::filesystem::path stagedLongPath;
+        InstallStagingCacheProducerHookGuard hook{
+            [&](std::wstring_view kind,
+                std::wstring_view,
+                const std::filesystem::path& payloadDirectory)
+            {
+                if (kind != L"fomod-metadata")
+                {
+                    return;
+                }
+
+                std::filesystem::path longDirectory = payloadDirectory;
+                while ((longDirectory / L"identity-probe.bin").wstring().size() <= 280U)
+                {
+                    longDirectory /= L"long-path-segment-0123456789abcdef";
+                }
+                stagedLongPath = longDirectory / L"identity-probe.bin";
+                writeTextFile(pathForFilesystemIo(stagedLongPath), "long-path-payload");
+            }};
+
+        const FomodInstallerDescriptor descriptor =
+            downloads_.analyzeFomodDownload(project_, download.localPath);
+
+        ASSERT_TRUE(descriptor.isFomod);
+        EXPECT_GT(stagedLongPath.wstring().size(), 260U);
+#endif
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, InstallFomodCopiesFilesBeyondLegacyWindowsPathLimit)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Extended-length FOMOD copy paths are a Windows-specific regression case.";
+#else
+        std::filesystem::path selectedFile = std::filesystem::path(L"payload") / L"Meshes";
+        while ((selectedFile / L"selected-mesh.nif").generic_wstring().size() <= 190U)
+        {
+            selectedFile /= L"long-path-segment-0123456789abcdef";
+        }
+        selectedFile /= L"selected-mesh.nif";
+
+        const DownloadEntry download = importArchive(
+            L"Long Selected Path FOMOD.zip",
+            {
+                {L"fomod/ModuleConfig.xml", R"xml(<config>
+  <moduleName>Long Selected Path FOMOD</moduleName>
+  <requiredInstallFiles>
+    <folder source="payload" />
+  </requiredInstallFiles>
+</config>)xml"},
+                {L"fomod/info.xml", R"xml(<fomod><Name>Long Selected Path FOMOD</Name><Version>1.0.0</Version></fomod>)xml"},
+                {selectedFile.wstring(), "selected-mesh"}
+            });
+
+        PlacementPlan plan;
+        try
+        {
+            plan = downloads_.analyzeFomodDownloadContentLayout(
+                project_,
+                download.localPath,
+                ExistingModInstallMode::FailIfExists,
+                {});
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+            throw;
+        }
+
+        ASSERT_TRUE(plan.canInstall());
+        EXPECT_GE(plan.summary.totalEntries, 1U);
+
+        const InstalledMod installed = downloads_.installFomodDownload(
+            project_,
+            download.localPath,
+            L"Long Selected Path FOMOD",
+            ExistingModInstallMode::FailIfExists,
+            {});
+        ASSERT_FALSE(installed.id.empty());
+
+        const std::filesystem::path installedFile =
+            modsDirectory() / L"Long Selected Path FOMOD" /
+            selectedFile.lexically_relative(L"payload");
+        EXPECT_EQ(readTextFile(pathForFilesystemIo(installedFile)), "selected-mesh");
+#endif
     }
 
     TEST_F(ModFileOperationsIntegrationTests, AnalyzeOrdinaryZipDoesNotBuildInstallPayload)

@@ -2,12 +2,10 @@
 
 #include "FluxoraCore/Services/VfsMountPlan.hpp"
 
-#include "FluxoraCore/Services/AppSettingsService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
-#include "FluxoraCore/Support/JsonReader.hpp"
 #include "PreviewArchiveReader.hpp"
 
 #include <algorithm>
@@ -15,11 +13,8 @@
 #include <chrono>
 #include <cstring>
 #include <cwctype>
-#include <ctime>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
-#include <initializer_list>
 #include <map>
 #include <optional>
 #include <sstream>
@@ -30,8 +25,6 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#include <wincrypt.h>
-#include <winhttp.h>
 #endif
 
 namespace fluxora
@@ -39,13 +32,6 @@ namespace fluxora
     namespace
     {
         constexpr std::size_t maxModFolderNameLength = 255;
-
-        struct NexusLatestFile
-        {
-            std::wstring version;
-            std::wstring fileId;
-            std::wstring payloadJson;
-        };
 
         std::wstring toLower(std::wstring value)
         {
@@ -71,67 +57,6 @@ namespace fluxora
         bool equalsIgnoreCase(std::wstring_view left, std::wstring_view right)
         {
             return toLower(std::wstring(left)) == toLower(std::wstring(right));
-        }
-
-        bool isDottedNumericVersion(std::wstring_view value)
-        {
-            bool segmentHasDigit = false;
-            for (const wchar_t character : value)
-            {
-                if (character >= L'0' && character <= L'9')
-                {
-                    segmentHasDigit = true;
-                    continue;
-                }
-
-                if (character != L'.' || !segmentHasDigit)
-                {
-                    return false;
-                }
-                segmentHasDigit = false;
-            }
-
-            return segmentHasDigit;
-        }
-
-        std::wstring normalizeVersionForComparison(std::wstring value)
-        {
-            value = toLower(std::move(value));
-            std::wstring numericVersion = trim(value);
-            if (!isDottedNumericVersion(numericVersion))
-            {
-                return value;
-            }
-            value = std::move(numericVersion);
-
-            while (true)
-            {
-                const std::size_t separator = value.rfind(L'.');
-                if (separator == std::wstring::npos)
-                {
-                    break;
-                }
-
-                const std::wstring_view trailingSegment(value.data() + separator + 1, value.size() - separator - 1);
-                if (trailingSegment.empty() ||
-                    !std::all_of(trailingSegment.begin(), trailingSegment.end(), [](wchar_t character)
-                    {
-                        return character == L'0';
-                    }))
-                {
-                    break;
-                }
-
-                value.erase(separator);
-            }
-
-            return value;
-        }
-
-        bool versionsEquivalent(std::wstring_view left, std::wstring_view right)
-        {
-            return normalizeVersionForComparison(std::wstring(left)) ==
-                normalizeVersionForComparison(std::wstring(right));
         }
 
         bool containsInvalidFileNameCharacter(std::wstring_view value)
@@ -221,20 +146,6 @@ namespace fluxora
             }
 
             return name;
-        }
-
-        std::wstring nowUtcText()
-        {
-            const std::time_t now = std::time(nullptr);
-            std::tm utc{};
-#ifdef _WIN32
-            gmtime_s(&utc, &now);
-#else
-            gmtime_r(&now, &utc);
-#endif
-            std::wstringstream stream;
-            stream << std::put_time(&utc, L"%Y-%m-%dT%H:%M:%SZ");
-            return stream.str();
         }
 
         std::string toUtf8(const std::wstring& value)
@@ -688,486 +599,12 @@ namespace fluxora
             };
         }
 
-        std::wstring percentEncode(std::wstring_view value)
-        {
-            const std::string utf8 = toUtf8(std::wstring(value));
-            std::wstringstream stream;
-            stream << std::uppercase << std::hex;
-            for (unsigned char character : utf8)
-            {
-                if ((character >= 'A' && character <= 'Z') ||
-                    (character >= 'a' && character <= 'z') ||
-                    (character >= '0' && character <= '9') ||
-                    character == '-' || character == '_' || character == '.' || character == '~')
-                {
-                    stream << static_cast<wchar_t>(character);
-                }
-                else
-                {
-                    stream << L'%' << std::setw(2) << std::setfill(L'0') << static_cast<int>(character);
-                }
-            }
-
-            return stream.str();
-        }
-
-#ifdef _WIN32
-        unsigned char hexNibble(wchar_t character)
-        {
-            if (character >= L'0' && character <= L'9')
-            {
-                return static_cast<unsigned char>(character - L'0');
-            }
-            if (character >= L'a' && character <= L'f')
-            {
-                return static_cast<unsigned char>(10 + character - L'a');
-            }
-            if (character >= L'A' && character <= L'F')
-            {
-                return static_cast<unsigned char>(10 + character - L'A');
-            }
-
-            throw std::runtime_error("Invalid protected NexusMods OAuth token.");
-        }
-
-        std::vector<unsigned char> hexToBytes(std::wstring_view value)
-        {
-            if (value.size() % 2 != 0)
-            {
-                throw std::runtime_error("Invalid protected NexusMods OAuth token.");
-            }
-
-            std::vector<unsigned char> bytes(value.size() / 2);
-            for (std::size_t index = 0; index < bytes.size(); ++index)
-            {
-                bytes[index] = static_cast<unsigned char>(
-                    (hexNibble(value[index * 2]) << 4) |
-                    hexNibble(value[index * 2 + 1]));
-            }
-
-            return bytes;
-        }
-#endif
-
-        std::wstring unprotectSecret(std::wstring_view protectedValue)
-        {
-            if (protectedValue.empty())
-            {
-                return {};
-            }
-
-#ifdef _WIN32
-            std::vector<unsigned char> bytes = hexToBytes(protectedValue);
-
-            DATA_BLOB input{};
-            input.pbData = bytes.data();
-            input.cbData = static_cast<DWORD>(bytes.size());
-
-            DATA_BLOB output{};
-            if (!CryptUnprotectData(
-                    &input,
-                    nullptr,
-                    nullptr,
-                    nullptr,
-                    nullptr,
-                    CRYPTPROTECT_UI_FORBIDDEN,
-                    &output))
-            {
-                throw std::runtime_error("Failed to unprotect NexusMods OAuth token.");
-            }
-
-            std::wstring value(
-                reinterpret_cast<wchar_t*>(output.pbData),
-                output.cbData / sizeof(wchar_t));
-            LocalFree(output.pbData);
-            return value;
-#else
-            return std::wstring(protectedValue);
-#endif
-        }
-
-        std::string nexusAuthUnavailableMessage(const AppSettingsService& settings)
-        {
-            const NexusModsStoredAuth auth = settings.loadNexusModsAuth();
-            if (!auth.linked || (auth.protectedAccessToken.empty() && auth.protectedApiKey.empty()))
-            {
-                return "NexusMods account is not linked. Connect NexusMods in settings.";
-            }
-
-            return "NexusMods authentication token is not available. Reconnect NexusMods in settings and try again.";
-        }
-
-        std::wstring buildNexusAuthHeader(const AppSettingsService& settings)
-        {
-            const NexusModsStoredAuth auth = settings.loadNexusModsAuth();
-            if (!auth.linked)
-            {
-                return {};
-            }
-
-            if (!auth.protectedApiKey.empty())
-            {
-                const std::wstring apiKey = unprotectSecret(auth.protectedApiKey);
-                if (!apiKey.empty())
-                {
-                    return L"apikey: " + apiKey + L"\r\n";
-                }
-            }
-
-            const std::wstring accessToken = unprotectSecret(auth.protectedAccessToken);
-            if (accessToken.empty())
-            {
-                return {};
-            }
-
-            std::wstring tokenType = trim(auth.tokenType);
-            if (tokenType.empty())
-            {
-                tokenType = L"Bearer";
-            }
-
-            return L"Authorization: " + tokenType + L" " + accessToken + L"\r\n";
-        }
-
-#ifdef _WIN32
-        std::string nexusHttpErrorMessage(DWORD statusCode)
-        {
-            if (statusCode == 401)
-            {
-                return "Nexus request returned HTTP 401. Reconnect NexusMods in settings and try again.";
-            }
-
-            return "Nexus request returned HTTP " + std::to_string(statusCode) + ".";
-        }
-
-        std::string winHttpGet(const std::wstring& url, std::wstring_view extraHeaders)
-        {
-            URL_COMPONENTS components{};
-            components.dwStructSize = sizeof(components);
-            components.dwSchemeLength = static_cast<DWORD>(-1);
-            components.dwHostNameLength = static_cast<DWORD>(-1);
-            components.dwUrlPathLength = static_cast<DWORD>(-1);
-            components.dwExtraInfoLength = static_cast<DWORD>(-1);
-
-            if (!WinHttpCrackUrl(url.c_str(), static_cast<DWORD>(url.size()), 0, &components))
-            {
-                throw std::runtime_error("Invalid Nexus request URL.");
-            }
-
-            std::wstring host(components.lpszHostName, components.dwHostNameLength);
-            std::wstring path(components.lpszUrlPath, components.dwUrlPathLength);
-            path.append(components.lpszExtraInfo, components.dwExtraInfoLength);
-
-            HINTERNET session = WinHttpOpen(
-                L"FluxoraModManager/1.0",
-                WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                WINHTTP_NO_PROXY_NAME,
-                WINHTTP_NO_PROXY_BYPASS,
-                0);
-            if (session == nullptr)
-            {
-                throw std::runtime_error("Failed to initialize Nexus HTTP session.");
-            }
-
-            HINTERNET connection = WinHttpConnect(session, host.c_str(), components.nPort, 0);
-            if (connection == nullptr)
-            {
-                WinHttpCloseHandle(session);
-                throw std::runtime_error("Failed to connect to Nexus.");
-            }
-
-            const DWORD flags = components.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
-            HINTERNET request = WinHttpOpenRequest(
-                connection,
-                L"GET",
-                path.c_str(),
-                nullptr,
-                WINHTTP_NO_REFERER,
-                WINHTTP_DEFAULT_ACCEPT_TYPES,
-                flags);
-            if (request == nullptr)
-            {
-                WinHttpCloseHandle(connection);
-                WinHttpCloseHandle(session);
-                throw std::runtime_error("Failed to open Nexus request.");
-            }
-
-            std::wstring headers =
-                L"Accept: application/json\r\n"
-                L"Application-Name: Fluxora\r\n"
-                L"Application-Version: 1.0\r\n";
-            headers += extraHeaders;
-
-            if (!WinHttpSendRequest(
-                    request,
-                    headers.c_str(),
-                    static_cast<DWORD>(headers.size()),
-                    WINHTTP_NO_REQUEST_DATA,
-                    0,
-                    0,
-                    0) ||
-                !WinHttpReceiveResponse(request, nullptr))
-            {
-                WinHttpCloseHandle(request);
-                WinHttpCloseHandle(connection);
-                WinHttpCloseHandle(session);
-                throw std::runtime_error("Nexus request failed.");
-            }
-
-            DWORD statusCode{};
-            DWORD statusCodeSize = sizeof(statusCode);
-            WinHttpQueryHeaders(
-                request,
-                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                WINHTTP_HEADER_NAME_BY_INDEX,
-                &statusCode,
-                &statusCodeSize,
-                WINHTTP_NO_HEADER_INDEX);
-            if (statusCode < 200 || statusCode >= 300)
-            {
-                WinHttpCloseHandle(request);
-                WinHttpCloseHandle(connection);
-                WinHttpCloseHandle(session);
-                throw std::runtime_error(nexusHttpErrorMessage(statusCode));
-            }
-
-            std::string body;
-            while (true)
-            {
-                DWORD available{};
-                if (!WinHttpQueryDataAvailable(request, &available) || available == 0)
-                {
-                    break;
-                }
-
-                std::string buffer(available, '\0');
-                DWORD read{};
-                if (!WinHttpReadData(request, buffer.data(), available, &read))
-                {
-                    break;
-                }
-                buffer.resize(read);
-                body += buffer;
-            }
-
-            WinHttpCloseHandle(request);
-            WinHttpCloseHandle(connection);
-            WinHttpCloseHandle(session);
-            return body;
-        }
-#endif
-
         bool canCheckNexusUpdates(const InstalledModRecord& mod)
         {
             return equalsIgnoreCase(mod.source.provider, L"nexus") &&
                 !mod.source.gameDomain.empty() &&
-                !mod.source.remoteModId.empty();
-        }
-
-        std::wstring readStringCandidate(const JsonValue& object, std::initializer_list<const wchar_t*> keys)
-        {
-            for (const wchar_t* key : keys)
-            {
-                if (const JsonValue* value = object.find(key); value != nullptr && value->isString())
-                {
-                    const std::wstring text = trim(value->asString());
-                    if (!text.empty())
-                    {
-                        return text;
-                    }
-                }
-            }
-
-            return {};
-        }
-
-        long long readIntegerCandidate(const JsonValue& object, std::initializer_list<const wchar_t*> keys)
-        {
-            for (const wchar_t* key : keys)
-            {
-                const JsonValue* value = object.find(key);
-                if (value == nullptr)
-                {
-                    continue;
-                }
-
-                try
-                {
-                    if (value->isNumber())
-                    {
-                        return std::stoll(value->asNumber());
-                    }
-                    if (value->isString())
-                    {
-                        return std::stoll(value->asString());
-                    }
-                }
-                catch (const std::exception&)
-                {
-                }
-            }
-
-            return 0;
-        }
-
-        std::wstring extractVersionFromFileObject(const JsonValue& object)
-        {
-            return readStringCandidate(
-                object,
-                {L"version", L"Version", L"mod_version", L"file_version", L"fileVersion"});
-        }
-
-        bool isOldOrArchivedFile(const JsonValue& object)
-        {
-            const std::wstring category = toLower(readStringCandidate(
-                object,
-                {L"category_name", L"categoryName", L"category"}));
-            return category.find(L"old") != std::wstring::npos ||
-                category.find(L"archiv") != std::wstring::npos ||
-                category.find(L"delete") != std::wstring::npos;
-        }
-
-        bool sameRemoteFile(const JsonValue& object, std::wstring_view fileId)
-        {
-            return !fileId.empty() &&
-                std::to_wstring(readIntegerCandidate(object, {L"file_id", L"fileId", L"id"})) == fileId;
-        }
-
-        const JsonValue* filesArrayOrNull(const JsonValue& root)
-        {
-            if (root.isArray())
-            {
-                return &root;
-            }
-
-            if (!root.isObject())
-            {
-                return nullptr;
-            }
-
-            if (const JsonValue* files = root.find(L"files"); files != nullptr && files->isArray())
-            {
-                return files;
-            }
-
-            if (const JsonValue* files = root.find(L"Files"); files != nullptr && files->isArray())
-            {
-                return files;
-            }
-
-            return nullptr;
-        }
-
-        NexusLatestFile selectLatestFile(const JsonValue& root, const ModSourceRecord& source, std::wstring payloadJson)
-        {
-            NexusLatestFile latest;
-            latest.payloadJson = std::move(payloadJson);
-
-            const JsonValue* files = filesArrayOrNull(root);
-            if (files == nullptr)
-            {
-                if (root.isObject())
-                {
-                    latest.version = extractVersionFromFileObject(root);
-                    latest.fileId = readStringCandidate(root, {L"file_id", L"fileId", L"id"});
-                }
-                return latest;
-            }
-
-            std::wstring installedCategory;
-            for (const JsonValue& item : files->asArray())
-            {
-                if (!item.isObject() || !sameRemoteFile(item, source.remoteFileId))
-                {
-                    continue;
-                }
-
-                installedCategory = readStringCandidate(item, {L"category_name", L"categoryName", L"category"});
-                if (!installedCategory.empty())
-                {
-                    break;
-                }
-            }
-
-            const JsonValue* best = nullptr;
-            long long bestScore = -1;
-            for (const JsonValue& item : files->asArray())
-            {
-                if (!item.isObject() || isOldOrArchivedFile(item))
-                {
-                    continue;
-                }
-
-                if (!installedCategory.empty())
-                {
-                    const std::wstring category = readStringCandidate(item, {L"category_name", L"categoryName", L"category"});
-                    if (!equalsIgnoreCase(category, installedCategory))
-                    {
-                        continue;
-                    }
-                }
-
-                const long long uploaded = readIntegerCandidate(
-                    item,
-                    {L"uploaded_timestamp", L"uploadedTimestamp", L"uploaded_time", L"uploadedTime"});
-                const long long fileId = readIntegerCandidate(item, {L"file_id", L"fileId", L"id"});
-                const long long score = uploaded > 0 ? uploaded : fileId;
-                if (best == nullptr || score > bestScore)
-                {
-                    best = &item;
-                    bestScore = score;
-                }
-            }
-
-            if (best == nullptr)
-            {
-                for (const JsonValue& item : files->asArray())
-                {
-                    if (item.isObject() && sameRemoteFile(item, source.remoteFileId))
-                    {
-                        best = &item;
-                        break;
-                    }
-                }
-            }
-
-            if (best != nullptr)
-            {
-                latest.version = extractVersionFromFileObject(*best);
-                latest.fileId = std::to_wstring(readIntegerCandidate(*best, {L"file_id", L"fileId", L"id"}));
-            }
-
-            return latest;
-        }
-
-        NexusLatestFile fetchLatestNexusFile(
-            const InstalledModRecord& mod,
-            const AppSettingsService& settings)
-        {
-            if (!canCheckNexusUpdates(mod))
-            {
-                return {};
-            }
-
-#ifndef _WIN32
-            (void)settings;
-            return {};
-#else
-            const std::wstring authHeader = buildNexusAuthHeader(settings);
-            if (authHeader.empty())
-            {
-                throw std::runtime_error(nexusAuthUnavailableMessage(settings));
-            }
-
-            const std::wstring endpoint =
-                L"https://api.nexusmods.com/v1/games/" + percentEncode(mod.source.gameDomain) +
-                L"/mods/" + percentEncode(mod.source.remoteModId) +
-                L"/files.json";
-            const std::string body = winHttpGet(endpoint, authHeader);
-            const std::wstring payload = fromUtf8(body);
-            const JsonValue root = JsonReader::parse(payload);
-            return selectLatestFile(root, mod.source, payload);
-#endif
+                !mod.source.remoteModId.empty() &&
+                !mod.source.remoteFileId.empty();
         }
 
         bool isUnknownVersion(std::wstring_view value)
@@ -1178,9 +615,9 @@ namespace fluxora
 
         bool hasUpdate(const InstalledModRecord& mod)
         {
-            return !isUnknownVersion(mod.version) &&
-                !isUnknownVersion(mod.source.latestVersion) &&
-                !versionsEquivalent(mod.version, mod.source.latestVersion);
+            return canCheckNexusUpdates(mod) &&
+                !mod.source.latestFileId.empty() &&
+                mod.source.latestFileId != mod.source.remoteFileId;
         }
 
         std::wstring updateStatusText(const InstalledModRecord& mod)
@@ -1266,7 +703,9 @@ namespace fluxora
                 mod.source.remoteFileId,
                 mod.source.url,
                 summary.overwritesModIds,
-                summary.overwrittenByModIds
+                summary.overwrittenByModIds,
+                mod.source.latestFileId,
+                mod.source.updateCheckState
             };
         }
 
@@ -1520,10 +959,8 @@ namespace fluxora
 
     ModService::ModService(
         Logger& logger,
-        AppSettingsService& settings,
         const BuildPathSettingsService& pathSettings) noexcept
         : logger_(logger),
-          settings_(settings),
           pathSettings_(pathSettings),
           nifPreviewResolver_(logger, pathSettings)
     {
@@ -1625,61 +1062,6 @@ namespace fluxora
         invalidateVfsContentPlacementCache(
             pathSettings_.modsDirectory(projectDirectory),
             changedPaths);
-    }
-
-    std::vector<InstalledModEntry> ModService::checkInstalledModUpdates(
-        const std::filesystem::path& projectDirectory) const
-    {
-        if (projectDirectory.empty())
-        {
-            throw std::invalid_argument("Project directory is required.");
-        }
-
-        const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
-        const std::vector<InstalledModRecord> mods =
-            InstanceMetadataStore::listInstalledMods(projectDirectory, modsDirectory);
-        int checkableCount = 0;
-        int checkedCount = 0;
-        std::string firstError;
-        for (const InstalledModRecord& mod : mods)
-        {
-            if (!canCheckNexusUpdates(mod))
-            {
-                continue;
-            }
-
-            ++checkableCount;
-            try
-            {
-                NexusLatestFile latest = fetchLatestNexusFile(mod, settings_);
-                InstanceMetadataStore::recordRemoteCheck(
-                    projectDirectory,
-                    RemoteCheckRecord{
-                        mod.folderName,
-                        mod.source,
-                        latest.version,
-                        latest.payloadJson,
-                        nowUtcText()
-                    },
-                    modsDirectory);
-                ++checkedCount;
-            }
-            catch (const std::exception& exception)
-            {
-                if (firstError.empty())
-                {
-                    firstError = exception.what();
-                }
-                logger_.write(LogLevel::Warning, std::string("Failed to check Nexus update for mod: ") + exception.what());
-            }
-        }
-
-        if (checkableCount > 0 && checkedCount == 0 && !firstError.empty())
-        {
-            throw std::runtime_error(firstError);
-        }
-
-        return listInstalledMods(projectDirectory);
     }
 
     std::vector<ModFileTreeEntry> ModService::listModFileTree(

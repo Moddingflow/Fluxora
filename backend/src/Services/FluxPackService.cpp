@@ -1417,7 +1417,6 @@ namespace fluxora
             writer.key(L"targetPaths").beginObject();
             writer.field(L"modsDirectory", L"mods");
             writer.field(L"profilesDirectory", L"profiles");
-            writer.field(L"downloadsDirectory", L"downloads");
             writer.field(L"overwriteDirectory", L"overwrite");
             writer.endObject();
             writer.endObject();
@@ -2588,8 +2587,6 @@ namespace fluxora
                     std::string("FluxPack could not read source build path settings for local archives: ") +
                         exception.what());
             }
-            addUniquePath(downloadRoots, projectDirectoryHint / L"downloads");
-
             for (const std::filesystem::path& root : downloadRoots)
             {
                 const std::filesystem::path candidate =
@@ -2684,19 +2681,31 @@ namespace fluxora
             const std::filesystem::path& archivePath,
             const FluxPackSourceReference& source)
         {
+            const DownloadMetadata current = readDownloadMetadata(archivePath);
+            const auto authoritative = [](const std::wstring& existing, std::wstring fallback)
+            {
+                return existing.empty() ? std::move(fallback) : existing;
+            };
+
             JsonWriter writer;
             writer.beginObject();
-            writer.field(L"source", sourceUrlForPack(source.source));
+            writer.field(L"source", authoritative(current.source, sourceUrlForPack(source.source)));
             writer.field(L"status", L"");
-            writer.field(L"gameDomain", source.source.gameDomain);
-            writer.field(L"modId", source.source.remoteModId);
-            writer.field(L"fileId", source.source.remoteFileId);
-            writer.field(L"nexusModName", source.displayName.empty() ? source.folderName : source.displayName);
-            writer.field(L"version", source.version);
-            writer.field(L"latestVersion", source.source.latestVersion);
-            writer.field(L"installedModName", L"");
-            writer.field(L"installedAtUtc", L"");
-            writer.field(L"destinationFileName", archivePath.filename().wstring());
+            writer.field(L"gameDomain", authoritative(current.gameDomain, source.source.gameDomain));
+            writer.field(L"modId", authoritative(current.modId, source.source.remoteModId));
+            writer.field(L"fileId", authoritative(current.fileId, source.source.remoteFileId));
+            writer.field(
+                L"nexusModName",
+                authoritative(
+                    current.nexusModName,
+                    source.displayName.empty() ? source.folderName : source.displayName));
+            writer.field(L"version", authoritative(current.version, source.version));
+            writer.field(
+                L"latestVersion",
+                authoritative(current.latestVersion, source.source.latestVersion));
+            writer.field(
+                L"destinationFileName",
+                authoritative(current.destinationFileName, archivePath.filename().wstring()));
             writer.field(L"partialPath", L"");
             writer.field(L"bytesReceived", static_cast<std::uintmax_t>(0));
             writer.field(L"totalBytes", static_cast<std::uintmax_t>(0));

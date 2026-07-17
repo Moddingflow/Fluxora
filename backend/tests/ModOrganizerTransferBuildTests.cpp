@@ -3,6 +3,7 @@
 #include "FluxoraCore/Services/ModOrganizerImportService.hpp"
 #include "FluxoraCore/Services/ProjectService.hpp"
 #include "FluxoraCore/Services/TemplateService.hpp"
+#include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
 #include "TestFilesystem.hpp"
 
@@ -109,6 +110,9 @@ namespace fluxora::tests
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
         ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+        const std::filesystem::path appRoot = temp.path() / L"Fluxora App";
+        std::filesystem::create_directories(appRoot);
+        ScopedEnvironmentVariable appRootEnvironment(L"FLUXORA_APP_ROOT", appRoot.wstring());
 
         const std::filesystem::path source = temp.path() / L"MO2";
         const std::filesystem::path base = source / L"PortableData";
@@ -149,7 +153,9 @@ namespace fluxora::tests
         expectSamePath(result.analysis.destinationRootDirectory, destinationRoot / L"Fluxora Builds");
         EXPECT_TRUE(std::filesystem::is_regular_file(target / L"mods" / L"SkyUI" / L"interface" / L"skyui.swf"));
         EXPECT_TRUE(std::filesystem::is_regular_file(target / L"profiles" / L"Default" / L"modlist.txt"));
-        EXPECT_TRUE(std::filesystem::is_regular_file(target / L"downloads" / L"SkyUI.7z"));
+        const std::filesystem::path globalDownloads = appRoot / L"Downloads" / L"skyrimse";
+        EXPECT_TRUE(std::filesystem::is_regular_file(globalDownloads / L"SkyUI.7z"));
+        EXPECT_FALSE(std::filesystem::exists(target / L"downloads"));
         EXPECT_TRUE(std::filesystem::is_regular_file(target / L"overwrite" / L"SKSE" / L"Plugins" / L"generated.log"));
         EXPECT_TRUE(std::filesystem::is_regular_file(target / L"GameRoot" / L"Data" / L"Skyrim.esm"));
         EXPECT_FALSE(std::filesystem::exists(target / L"PortableData"));
@@ -158,13 +164,13 @@ namespace fluxora::tests
         expectSamePath(settings.gameDirectory, target / L"GameRoot");
         expectSamePath(settings.modsDirectory, target / L"mods");
         expectSamePath(settings.profilesDirectory, target / L"profiles");
-        expectSamePath(settings.downloadsDirectory, target / L"downloads");
+        expectSamePath(settings.downloadsDirectory, globalDownloads);
         expectSamePath(settings.overwriteDirectory, target / L"overwrite");
 
         const std::string localPaths = readTextFile(target / L".fluxora" / L"paths.json");
         EXPECT_NE(localPaths.find("\"modsDirectory\":\"mods\""), std::string::npos);
         EXPECT_NE(localPaths.find("\"profilesDirectory\":\"profiles\""), std::string::npos);
-        EXPECT_NE(localPaths.find("\"downloadsDirectory\":\"downloads\""), std::string::npos);
+        EXPECT_EQ(localPaths.find("\"downloadsDirectory\""), std::string::npos);
         EXPECT_NE(localPaths.find("\"overwriteDirectory\":\"overwrite\""), std::string::npos);
     }
 
@@ -172,6 +178,10 @@ namespace fluxora::tests
     {
         TempDirectory temp;
         const std::filesystem::path project = temp.path() / L"Transferred Build";
+        const std::filesystem::path appRoot = temp.path() / L"Fluxora App";
+        std::filesystem::create_directories(appRoot);
+        ScopedEnvironmentVariable appRootEnvironment(L"FLUXORA_APP_ROOT", appRoot.wstring());
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
 
         writeHealthySkyrimGame(project / L"stock game");
         writeTextFile(project / L"old-mo2-root" / L"ModOrganizer.ini", "[General]\n");
@@ -189,7 +199,7 @@ namespace fluxora::tests
         expectSamePath(settings.gameDirectory, project / L"stock game");
         expectSamePath(settings.modsDirectory, project / L"mods");
         expectSamePath(settings.profilesDirectory, project / L"profiles");
-        expectSamePath(settings.downloadsDirectory, project / L"downloads");
+        expectSamePath(settings.downloadsDirectory, appRoot / L"Downloads" / L"skyrimse");
         expectSamePath(settings.overwriteDirectory, project / L"overwrite");
     }
 
@@ -197,6 +207,10 @@ namespace fluxora::tests
     {
         TempDirectory temp;
         const std::filesystem::path project = temp.path() / L"Transferred Build";
+        const std::filesystem::path appRoot = temp.path() / L"Fluxora App";
+        std::filesystem::create_directories(appRoot);
+        ScopedEnvironmentVariable appRootEnvironment(L"FLUXORA_APP_ROOT", appRoot.wstring());
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
 
         writeHealthySkyrimGame(project / L"stock game");
         writeHealthySkyrimGame(project / L"SharedGame");

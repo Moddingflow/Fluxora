@@ -1,5 +1,7 @@
 #pragma once
 
+#include "FluxoraCore/Services/InstallConflictPreviewService.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -20,6 +22,9 @@ namespace fluxora
         std::wstring url;
         std::wstring lastCheckedAt;
         std::wstring latestVersion;
+        std::wstring latestFileId;
+        std::wstring updateCheckState;
+        std::wstring lastAttemptedAt;
     };
 
     struct InstalledModRecord
@@ -106,6 +111,13 @@ namespace fluxora
         std::vector<std::wstring> rejectedModUuids;
     };
 
+    struct PendingInstallFinalizationMetadata
+    {
+        std::optional<ModIdentityPersistenceUpdate> identity;
+        std::wstring archiveSha256;
+        bool mergeArchiveLink{false};
+    };
+
     struct ModIdentityContentCacheRecord
     {
         std::vector<std::wstring> pluginFiles;
@@ -133,6 +145,22 @@ namespace fluxora
         std::wstring latestVersion;
         std::wstring payloadJson;
         std::wstring checkedAt;
+        std::wstring latestFileId;
+        std::wstring lastCheckState;
+        std::wstring lastAttemptedAt;
+    };
+
+    struct ModUpdateSweepRecord
+    {
+        std::wstring gameDomain;
+        std::wstring state;
+        std::wstring lastAttemptedAt;
+        std::wstring lastCompletedAt;
+        std::wstring baselineCompletedAt;
+        std::wstring nextEligibleAt;
+        std::wstring lastPeriod;
+        int backoffStep{0};
+        std::wstring stopReason;
     };
 
     struct ModFileSummary
@@ -152,12 +180,48 @@ namespace fluxora
         ModFileSummary summary;
     };
 
+    struct PendingInstallSessionRecord
+    {
+        std::wstring operationId;
+        std::wstring profileName;
+        InstallConflictPreviewMode mode{InstallConflictPreviewMode::Install};
+        std::wstring targetModUuid;
+        int targetPosition{-1};
+        std::uint64_t revision{0};
+        std::wstring state;
+        std::wstring finalOrderId;
+        std::wstring pendingOrderId;
+        std::vector<InstallConflictFile> files;
+        std::vector<InstallConflictProfileMod> profileRows;
+    };
+
+    struct FinalizedPendingInstallRecord
+    {
+        InstalledModRecord mod;
+        std::wstring orderId;
+        ModFileSummary summary;
+    };
+
     struct PersistedInstalledModsSnapshot
     {
         std::vector<InstalledModRecord> mods;
         // Index-aligned with mods so consumers can reuse records without a
         // second lookup or path-key map.
         std::vector<ModFileSummaryRecord> summaries;
+    };
+
+    enum class ArchiveBuildStatus
+    {
+        Ready,
+        Installing,
+        Installed,
+        Deleted
+    };
+
+    enum class ArchiveModLinkMode
+    {
+        Replace,
+        Merge
     };
 
     struct ModFileTreeEntry
@@ -248,6 +312,68 @@ namespace fluxora
         static void beginProjectActivation(
             const std::filesystem::path& projectDirectory);
 
+        [[nodiscard]] static ArchiveBuildStatus archiveBuildStatus(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view archiveSha256);
+
+        static void beginArchiveInstallAttempt(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view archiveSha256,
+            std::wstring_view operationId,
+            std::wstring_view targetFolderName);
+
+        static void completeArchiveInstallAttempt(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view archiveSha256,
+            std::wstring_view modUuid,
+            std::wstring_view operationId,
+            ArchiveModLinkMode linkMode);
+
+        static void failArchiveInstallAttempt(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view operationId);
+
+        static void beginPendingInstallSession(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view operationId,
+            std::wstring_view profileName,
+            InstallConflictPreviewMode mode,
+            std::wstring_view pendingOrderId,
+            std::wstring_view targetModUuid,
+            int targetPosition);
+
+        [[nodiscard]] static PendingInstallSessionRecord preparePendingInstallSession(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view operationId,
+            const std::vector<InstallConflictFile>& files);
+
+        [[nodiscard]] static PendingInstallSessionRecord rebasePendingInstallSession(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view operationId,
+            int targetPosition);
+
+        [[nodiscard]] static PendingInstallSessionRecord completePendingInstallSession(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view operationId,
+            std::wstring_view finalOrderId);
+
+        [[nodiscard]] static PendingInstallSessionRecord failPendingInstallSession(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view operationId);
+
+        [[nodiscard]] static PendingInstallSessionRecord pendingInstallSession(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view operationId);
+
+        [[nodiscard]] static FinalizedPendingInstallRecord finalizePendingInstalledMod(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view operationId,
+            const std::filesystem::path& modDirectory,
+            std::wstring_view displayName,
+            std::wstring_view version,
+            const ModSourceRecord& source,
+            const PendingInstallFinalizationMetadata& metadata = {});
+
 #ifdef FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS
         static void resetSqlPrepareCountForTesting();
 
@@ -262,6 +388,8 @@ namespace fluxora
         [[nodiscard]] static std::uint64_t inventorySyncCountForTesting();
 
         static void setFileCacheScanFailureAfterEntriesForTesting(int entryCount);
+
+        static void setPendingInstallFinalizeFailureForTesting(bool shouldFail);
 
         static void resetStableMetadataHandleOpenCountForTesting();
 
@@ -450,6 +578,14 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             const RemoteCheckRecord& check,
             const std::filesystem::path& modsDirectory = {});
+
+        [[nodiscard]] static std::optional<ModUpdateSweepRecord> modUpdateSweep(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view gameDomain);
+
+        static void recordModUpdateSweep(
+            const std::filesystem::path& projectDirectory,
+            const ModUpdateSweepRecord& sweep);
 
         [[nodiscard]] static ModFileSummary summarizeModFiles(
             const std::filesystem::path& projectDirectory,

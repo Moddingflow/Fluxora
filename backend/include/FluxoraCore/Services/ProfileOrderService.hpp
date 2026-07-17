@@ -47,6 +47,8 @@ namespace fluxora
         std::wstring contentFingerprint;
         std::vector<std::wstring> overwritesModIds;
         std::vector<std::wstring> overwrittenByModIds;
+        std::wstring latestFileId;
+        std::wstring updateCheckState;
     };
 
     struct ModWorkspaceSnapshot

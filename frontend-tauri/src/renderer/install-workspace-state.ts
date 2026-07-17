@@ -2,8 +2,10 @@ import type {
   FluxoraContentLayoutPreview,
   FluxoraContentLayoutPreviewEntry,
   FluxoraFomodDependency,
+  FluxoraFomodFileDependencyState,
   FluxoraFomodGroup,
   FluxoraFomodInstaller,
+  FluxoraFomodManualDecision,
   FluxoraFomodOption,
   FluxoraPlacementOverride
 } from '../shared/fluxora-api';
@@ -432,7 +434,7 @@ const normalizeDependencyFile = (file: string): string => file.trim().replace(/\
 const isDependencySatisfied = (
   dependency: FluxoraFomodDependency | null | undefined,
   flags: ReadonlyMap<string, string>,
-  fileDependencyStates: ReadonlyMap<string, boolean>
+  fileDependencyStates: ReadonlyMap<string, FluxoraFomodFileDependencyState>
 ): boolean => {
   if (!dependency?.kind) {
     return true;
@@ -443,8 +445,13 @@ const isDependencySatisfied = (
   }
 
   if (dependency.kind.toLocaleLowerCase() === 'file') {
-    const exists = fileDependencyStates.get(normalizeDependencyFile(dependency.file)) === true;
-    return dependency.state.toLocaleLowerCase() === 'missing' ? !exists : exists;
+    const fileState = fileDependencyStates.get(normalizeDependencyFile(dependency.file));
+    const expectedState = dependency.state.toLocaleLowerCase();
+    if (fileState?.state) {
+      return fileState.state.toLocaleLowerCase() === expectedState;
+    }
+    const exists = fileState?.exists === true;
+    return expectedState === 'missing' ? !exists : exists;
   }
 
   if (dependency.kind.toLocaleLowerCase() === 'composite') {
@@ -476,7 +483,7 @@ const looksLikeAcknowledgement = (text: string): boolean => {
 const effectiveOptionType = (
   option: FluxoraFomodOption,
   flags: ReadonlyMap<string, string>,
-  fileDependencyStates: ReadonlyMap<string, boolean>
+  fileDependencyStates: ReadonlyMap<string, FluxoraFomodFileDependencyState>
 ): string => {
   for (const pattern of option.typePatterns) {
     if (isDependencySatisfied(pattern.dependencies, flags, fileDependencyStates)) {
@@ -499,7 +506,7 @@ export const evaluateFomodWizard = (
   const fileDependencyStates = new Map(
     installer.fileDependencies
       .filter((dependency) => dependency.file.trim())
-      .map((dependency) => [normalizeDependencyFile(dependency.file), dependency.exists])
+      .map((dependency) => [normalizeDependencyFile(dependency.file), dependency] as const)
   );
   const flags = new Map<string, string>();
   const visibleSteps: EvaluatedFomodStep[] = [];
@@ -610,19 +617,19 @@ export const coerceFomodSelection = (
         const selectedUsable = group.options.filter((option) => option.isSelected && option.isUsable);
         const needsOne =
           isGroupType(group.group, 'SelectExactlyOne') || isGroupType(group.group, 'SelectAtLeastOne');
-        if (needsOne && selectedUsable.length === 0) {
-          const recommended =
-            group.options.find(
-              (option) =>
-                option.isUsable &&
-                option.effectiveType.toLocaleLowerCase() === 'recommended' &&
-                !looksLikeAcknowledgement(option.option.name)
-            ) ??
-            group.options.find(
-              (option) => option.isUsable && !looksLikeAcknowledgement(option.option.name)
-            );
-          if (recommended?.option.id) {
-            nextSet.add(recommended.option.id);
+        if (needsOne && selectedUsable.length === 0 && !installer.autoSelection) {
+          const recommended = group.options.filter(
+            (option) =>
+              option.isUsable &&
+              option.effectiveType.toLocaleLowerCase() === 'recommended' &&
+              !looksLikeAcknowledgement(option.option.name)
+          );
+          if (isGroupType(group.group, 'SelectAtLeastOne')) {
+            for (const option of recommended) {
+              nextSet.add(option.option.id);
+            }
+          } else if (recommended.length === 1) {
+            nextSet.add(recommended[0].option.id);
           }
         }
 
@@ -651,7 +658,8 @@ export const coerceFomodSelection = (
 export const initialFomodSelection = (installer: FluxoraFomodInstaller): string[] =>
   coerceFomodSelection(
     installer,
-    installer.hasPreviousSelection ? installer.previousSelectedOptionIds : []
+    installer.autoSelection?.initialSelectedOptionIds ??
+      (installer.hasPreviousSelection ? installer.previousSelectedOptionIds : [])
   );
 
 export const previousFomodSelection = (installer: FluxoraFomodInstaller): string[] =>
@@ -689,6 +697,61 @@ export const toggleFomodOption = (
   }
 
   return coerceFomodSelection(installer, [...next]);
+};
+
+const fomodGroupForOption = (
+  installer: FluxoraFomodInstaller,
+  optionId: string
+): FluxoraFomodGroup | null => {
+  for (const step of installer.steps) {
+    for (const group of step.groups) {
+      if (group.options.some((option) => option.id === optionId)) {
+        return group;
+      }
+    }
+  }
+  return null;
+};
+
+export const sanitizeFomodManualDecisions = (
+  installer: FluxoraFomodInstaller,
+  decisions: FluxoraFomodManualDecision[]
+): FluxoraFomodManualDecision[] => {
+  const validOptionIds = new Set(
+    installer.steps.flatMap((step) =>
+      step.groups.flatMap((group) => group.options.map((option) => option.id))
+    )
+  );
+  const byOptionId = new Map<string, boolean>();
+  for (const decision of decisions) {
+    if (decision.optionId && validOptionIds.has(decision.optionId)) {
+      byOptionId.set(decision.optionId, decision.selected);
+    }
+  }
+  return [...byOptionId].map(([optionId, selected]) => ({ optionId, selected }));
+};
+
+export const updateFomodManualDecisions = (
+  installer: FluxoraFomodInstaller,
+  current: FluxoraFomodManualDecision[],
+  selectedOptionIds: string[],
+  changedOptionId: string
+): FluxoraFomodManualDecision[] => {
+  const group = fomodGroupForOption(installer, changedOptionId);
+  if (!group) {
+    return sanitizeFomodManualDecisions(installer, current);
+  }
+
+  const selected = new Set(selectedOptionIds);
+  const affectedOptionIds =
+    isGroupType(group, 'SelectExactlyOne') || isGroupType(group, 'SelectAtMostOne')
+      ? new Set(group.options.map((option) => option.id))
+      : new Set([changedOptionId]);
+  const next = current.filter((decision) => !affectedOptionIds.has(decision.optionId));
+  for (const optionId of affectedOptionIds) {
+    next.push({ optionId, selected: selected.has(optionId) });
+  }
+  return sanitizeFomodManualDecisions(installer, next);
 };
 
 export const currentFomodStepValidation = (

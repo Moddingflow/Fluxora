@@ -168,6 +168,9 @@ namespace fluxora::tests
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
         ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+        const std::filesystem::path appRoot = temp.path() / L"Fluxora App";
+        std::filesystem::create_directories(appRoot);
+        ScopedEnvironmentVariable appRootEnvironment(L"FLUXORA_APP_ROOT", appRoot.wstring());
 
         const std::filesystem::path source = temp.path() / L"Сборка";
         const std::filesystem::path destinationRoot = temp.path() / L"SelectedDrive";
@@ -218,6 +221,9 @@ namespace fluxora::tests
         const std::filesystem::path appDataRoot = temp.path() / L"AppData" / L"Roaming";
         ScopedEnvironmentVariable appData(L"APPDATA", appDataRoot.wstring());
         ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+        const std::filesystem::path appRoot = temp.path() / L"Fluxora App";
+        std::filesystem::create_directories(appRoot);
+        ScopedEnvironmentVariable appRootEnvironment(L"FLUXORA_APP_ROOT", appRoot.wstring());
 
         const std::filesystem::path source = temp.path() / L"MO2";
         const std::filesystem::path destinationRoot = temp.path() / L"SelectedDrive";
@@ -271,6 +277,9 @@ namespace fluxora::tests
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
         ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+        const std::filesystem::path appRoot = temp.path() / L"Fluxora App";
+        std::filesystem::create_directories(appRoot);
+        ScopedEnvironmentVariable appRootEnvironment(L"FLUXORA_APP_ROOT", appRoot.wstring());
 
         const std::filesystem::path source = temp.path() / L"MO2";
         const std::filesystem::path destinationRoot = temp.path() / L"Imported";
@@ -323,6 +332,9 @@ namespace fluxora::tests
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
         ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+        const std::filesystem::path appRoot = temp.path() / L"Fluxora App";
+        std::filesystem::create_directories(appRoot);
+        ScopedEnvironmentVariable appRootEnvironment(L"FLUXORA_APP_ROOT", appRoot.wstring());
 
         const std::filesystem::path source = temp.path() / L"MO2";
         const std::filesystem::path destinationRoot = temp.path() / L"Imported";
@@ -414,6 +426,9 @@ namespace fluxora::tests
         EXPECT_EQ(skyUi->source.remoteModId, L"3863");
         EXPECT_EQ(skyUi->source.remoteFileId, L"123");
         EXPECT_EQ(skyUi->source.url, L"nxm://skyrimspecialedition/mods/3863/files/123");
+        EXPECT_EQ(skyUi->source.latestVersion, L"1");
+        EXPECT_EQ(skyUi->source.latestFileId, L"123");
+        EXPECT_EQ(skyUi->source.updateCheckState, L"baseline_pending");
         EXPECT_TRUE(skyUi->sourceIsNexus);
         EXPECT_FALSE(std::filesystem::exists(result.analysis.targetProjectDirectory / L"mods" / L"SkyUI" / L"meta.ini"));
 
@@ -539,6 +554,47 @@ namespace fluxora::tests
                 0);
             EXPECT_FALSE(error);
         }
+    }
+
+    TEST(ModOrganizerImportServiceTests, FailedImportRollsBackOnlyNewGlobalArchives)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+        const std::filesystem::path appRoot = temp.path() / L"Fluxora App";
+        const std::filesystem::path globalDownloads = appRoot / L"Downloads" / L"skyrimse";
+        std::filesystem::create_directories(globalDownloads);
+        ScopedEnvironmentVariable appRootEnvironment(L"FLUXORA_APP_ROOT", appRoot.wstring());
+
+        const std::filesystem::path source = temp.path() / L"MO2";
+        const std::filesystem::path destinationRoot = temp.path() / L"Imported";
+        writeSkyrimMo2Instance(source);
+        writeTextFile(globalDownloads / L"Existing.7z", "existing archive");
+        writeTextFile(source / L"downloads" / L"Existing Duplicate.7z", "existing archive");
+        writeTextFile(source / L"downloads" / L"New.7z", "new archive");
+
+        ModOrganizerImportHarness harness;
+        std::atomic_bool cancel{false};
+        ModOrganizerImportRequest request;
+        request.sourceDirectory = source;
+        request.destinationRootDirectory = destinationRoot;
+        request.mode = ModOrganizerImportMode::CreateNew;
+        request.cancellationRequested = [&cancel]()
+        {
+            return cancel.load(std::memory_order_relaxed);
+        };
+        request.progress = [&cancel](const ModOrganizerImportProgress& progress)
+        {
+            if (progress.phase == L"archives" && progress.currentItem == L"New.7z")
+            {
+                cancel.store(true, std::memory_order_relaxed);
+            }
+        };
+
+        EXPECT_THROW((void)harness.importer.importInstance(request), std::runtime_error);
+        EXPECT_TRUE(std::filesystem::is_regular_file(globalDownloads / L"Existing.7z"));
+        EXPECT_FALSE(std::filesystem::exists(globalDownloads / L"New.7z"));
+        EXPECT_FALSE(std::filesystem::exists(destinationRoot / L"Fluxora Builds" / L"MO2"));
     }
 
     TEST(ModOrganizerImportServiceTests, ImportRejectsSupportedGameWithBadHealth)

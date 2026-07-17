@@ -34,4 +34,6 @@ npm run release:dry-run
 
 The renderer has no direct Node.js, filesystem or native access. UI code calls the typed facade exposed as `window.fluxora`; the facade forwards only allowlisted commands to the Tauri Rust shell. Content Security Policy is set by Tauri config so dev can allow the Vite React Refresh preamble while packaged builds stay stricter. Business behavior stays in the C++ core and `fluxora.bridge.v1` host.
 
+Pending install rows are renderer orchestration state only. `use-pending-install-orchestrator.ts` creates/reuses the visible row before the native install promise, applies monotonic `FluxoraInstallConflictSnapshot` payloads from `operations.progress` or `mods.rebasePendingInstall`, and performs the temporary-to-permanent id swap or rollback. Exact file inventory, overwrite direction, profile order persistence and filesystem/SQLite commit remain C++ responsibilities.
+
 Do not recreate the removed C# WPF product frontend. New product UI belongs here, with business behavior remaining in the C++ core.

@@ -135,7 +135,7 @@ namespace fluxora::tests
                   pathSettings_(logger_),
                   templates_(logger_),
                   projects_(logger_, templates_),
-                  mods_(logger_, settings_, pathSettings_),
+                  mods_(logger_, pathSettings_),
                   profileOrder_(logger_, mods_, pathSettings_),
                   executableIcons_(logger_),
                   executables_(logger_, executableIcons_, pathSettings_)

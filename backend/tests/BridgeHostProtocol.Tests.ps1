@@ -97,6 +97,7 @@ function Invoke-BridgeHostRequest {
         $startInfo.StandardOutputEncoding = $utf8
         $startInfo.StandardErrorEncoding = $utf8
         $startInfo.Environment['FLUXORA_LOG_DIR'] = $testRoot
+        $startInfo.Environment['FLUXORA_APP_ROOT'] = $testRoot
         $startInfo.Environment['FLUXORA_OPERATION_CANCEL_DIR'] = (Join-Path $testRoot 'operation-cancel')
         if ($null -ne $EnvironmentVariables) {
             foreach ($entry in $EnvironmentVariables.GetEnumerator()) {
@@ -331,6 +332,17 @@ if ($modCacheInvalidationRouteResponse.error.code -ne 'bridge.invalidRequest') {
     throw "Expected mods.invalidateFileCaches validation rejection, received: $($modCacheInvalidationRouteResponse | ConvertTo-Json -Depth 10 -Compress)"
 }
 
+$pendingInstallRebaseRouteResponse = Invoke-BridgeHostRequest -Request @{
+    jsonrpc = '2.0'
+    id = 'mods_rebase_pending_install_route'
+    method = 'mods.rebasePendingInstall'
+    params = @{}
+    meta = $requestMeta
+}
+if ($pendingInstallRebaseRouteResponse.error.code -ne 'bridge.invalidRequest') {
+    throw "Expected mods.rebasePendingInstall validation rejection, received: $($pendingInstallRebaseRouteResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+
 foreach ($nifPreviewMethod in @(
     'mods.startNifPreview',
     'mods.prepareNifPreviewVariant',
@@ -359,6 +371,43 @@ foreach ($removedPreviewMethod in @('mods.listPreviewVariants', 'mods.readPrevie
     if ($removedPreviewRouteResponse.error.code -ne 'bridge.methodNotFound') {
         throw "Expected removed route $removedPreviewMethod to be unavailable, received: $($removedPreviewRouteResponse | ConvertTo-Json -Depth 10 -Compress)"
     }
+}
+
+$profileAwareFomodAnalyzeResponse = Invoke-BridgeHostRequest -Request @{
+    jsonrpc = '2.0'
+    id = 'downloads_analyze_fomod_profile_contract'
+    method = 'downloads.analyzeFomod'
+    params = @{
+        projectDirectory = 'C:\missing\project'
+        downloadPath = 'C:\missing\archive.zip'
+        profileName = 'Default'
+        manualDecisionsJson = '[{"optionId":"patch","selected":true}]'
+    }
+    meta = $requestMeta
+}
+if ($profileAwareFomodAnalyzeResponse.error.code -ne 'core.fomodAnalyzeFailed') {
+    throw "Expected profile-aware downloads.analyzeFomod to reach core validation, received: $($profileAwareFomodAnalyzeResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+
+$profileAwareFomodInstallResponse = Invoke-BridgeHostRequest -Request @{
+    jsonrpc = '2.0'
+    id = 'downloads_install_fomod_profile_contract'
+    method = 'downloads.installFomod'
+    params = @{
+        projectDirectory = 'C:\missing\project'
+        downloadPath = 'C:\missing\archive.zip'
+        modName = 'Missing Mod'
+        existingModMode = 0
+        selectedOptionIdsJson = '[]'
+        profileName = 'Default'
+        modOrderTargetIndex = 2
+        fomodContextId = 'fomod-context-test'
+        manualDecisionsJson = '[]'
+    }
+    meta = $requestMeta
+}
+if ($profileAwareFomodInstallResponse.error.code -ne 'core.fomodDownloadInstallFailed') {
+    throw "Expected profile-aware downloads.installFomod to reach core validation, received: $($profileAwareFomodInstallResponse | ConvertTo-Json -Depth 10 -Compress)"
 }
 
 $protocolTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
@@ -402,6 +451,28 @@ try {
     }
 
     $projectDirectory = Join-Path $installRoot $projectName
+    $modUpdatesResponse = Invoke-BridgeHostRequest -EnvironmentVariables $fixtureEnvironment -Request @{
+        jsonrpc = '2.0'
+        id = 'mods_check_updates_v2'
+        method = 'mods.checkUpdates'
+        params = @{
+            projectDirectory = $projectDirectory
+            mode = 'automatic'
+        }
+        meta = $requestMeta
+    }
+    if ($modUpdatesResponse.result.ok -ne $true) {
+        throw "Expected mods.checkUpdates typed success, received: $($modUpdatesResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+    $modUpdates = $modUpdatesResponse.result.data
+    if ($modUpdates.state -ne 'skipped' -or
+        $modUpdates.reason -ne 'noEligibleMods' -or
+        $null -eq $modUpdates.quota -or
+        $null -eq $modUpdates.counters -or
+        @($modUpdates.mods).Count -ne 0) {
+        throw "mods.checkUpdates returned an invalid v2 envelope: $($modUpdatesResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+
     $offlinePluginDirectory = Join-Path $projectDirectory 'mods\Offline Disk Mod\Data'
     New-Item -ItemType Directory -Path $offlinePluginDirectory -Force | Out-Null
     [System.IO.File]::WriteAllText((Join-Path $offlinePluginDirectory 'OfflineOnly.esp'), 'disk-only plugin')

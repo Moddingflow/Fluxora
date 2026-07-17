@@ -1685,9 +1685,8 @@ namespace fluxora
                     cancellationRequested);
             }
 
-            const std::array<std::filesystem::path, 3> extraFolders{
+            const std::array<std::filesystem::path, 2> extraFolders{
                 layout.profilesDirectory,
-                layout.downloadsDirectory,
                 layout.overwriteDirectory
             };
             for (const std::filesystem::path& path : extraFolders)
@@ -1702,7 +1701,63 @@ namespace fluxora
                 }
             }
 
+            std::error_code iteratorError;
+            for (std::filesystem::recursive_directory_iterator iterator(
+                     layout.downloadsDirectory,
+                     std::filesystem::directory_options::skip_permission_denied,
+                     iteratorError), end;
+                 iterator != end;
+                 iterator.increment(iteratorError))
+            {
+                throwIfCancellationRequested(cancellationRequested);
+                if (iteratorError)
+                {
+                    iteratorError.clear();
+                    continue;
+                }
+                std::error_code statusError;
+                if (iterator->is_regular_file(statusError) &&
+                    ArchiveCatalogService::isSupportedArchiveFile(iterator->path()))
+                {
+                    const std::uintmax_t size = iterator->file_size(statusError);
+                    if (!statusError)
+                    {
+                        total += size;
+                    }
+                }
+            }
+
             return total;
+        }
+
+        std::vector<std::filesystem::path> enumerateDownloadArchives(
+            const std::filesystem::path& downloadsDirectory,
+            const std::function<bool()>& cancellationRequested)
+        {
+            std::vector<std::filesystem::path> archives;
+            std::error_code iteratorError;
+            for (std::filesystem::recursive_directory_iterator iterator(
+                     downloadsDirectory,
+                     std::filesystem::directory_options::skip_permission_denied,
+                     iteratorError), end;
+                 iterator != end;
+                 iterator.increment(iteratorError))
+            {
+                throwIfCancellationRequested(cancellationRequested);
+                if (iteratorError)
+                {
+                    iteratorError.clear();
+                    continue;
+                }
+                std::error_code statusError;
+                if (iterator->is_regular_file(statusError) &&
+                    ArchiveCatalogService::isSupportedArchiveFile(iterator->path()))
+                {
+                    archives.push_back(iterator->path());
+                }
+            }
+            std::sort(archives.begin(), archives.end());
+            return archives;
         }
 
         bool hasExecutableExtension(const std::filesystem::path& path)
@@ -2898,7 +2953,6 @@ namespace fluxora
                 fileId = installedFileIdFromMeta(meta, modId);
             }
             std::wstring url = iniValue(meta, {L"url", L"General.url"});
-            const std::wstring newestVersion = iniValue(meta, {L"newestVersion", L"General.newestVersion"});
 
             if (url.empty() && !resolvedTemplate.nexusDomain.empty() && !modId.empty())
             {
@@ -2925,7 +2979,6 @@ namespace fluxora
             source.remoteModId = modId;
             source.remoteFileId = fileId;
             source.url = url;
-            source.latestVersion = newestVersion;
             return source;
         }
 
@@ -3054,7 +3107,8 @@ namespace fluxora
         : logger_(logger),
           templates_(templates),
           projects_(projects),
-          pathSettings_(pathSettings)
+          pathSettings_(pathSettings),
+          archiveCatalog_(logger, pathSettings)
     {
     }
 
@@ -3172,6 +3226,7 @@ namespace fluxora
         const std::filesystem::path finalProjectDirectory = plan.analysis.targetProjectDirectory;
         std::filesystem::path stagingProjectDirectory;
         std::filesystem::path replacedProjectBackup;
+        std::vector<std::filesystem::path> newlyImportedArchives;
         bool projectDirectoryActivated = false;
         std::uintmax_t copiedBytes = 0;
         std::uintmax_t copyTotalBytes = plan.analysis.totalBytes;
@@ -3249,9 +3304,8 @@ namespace fluxora
                 });
             }
 
-            const std::array<std::pair<std::filesystem::path, std::wstring_view>, 3> extraFolders{
+            const std::array<std::pair<std::filesystem::path, std::wstring_view>, 2> extraFolders{
                 std::pair{plan.sourceLayout.profilesDirectory, std::wstring_view(L"profiles")},
-                std::pair{plan.sourceLayout.downloadsDirectory, std::wstring_view(L"downloads")},
                 std::pair{plan.sourceLayout.overwriteDirectory, std::wstring_view(L"overwrite")}
             };
             for (const auto& [sourceFolder, targetFolderName] : extraFolders)
@@ -3363,6 +3417,38 @@ namespace fluxora
             stagingDescriptor.projectDirectory = stagingProjectDirectory;
             throwIfCancellationRequested(cancellationRequested);
             InstanceMetadataStore::ensureInstance(stagingDescriptor.projectDirectory, plan.resolvedTemplate.id);
+
+            const std::vector<std::filesystem::path> sourceArchives = enumerateDownloadArchives(
+                plan.sourceLayout.downloadsDirectory,
+                cancellationRequested);
+            for (std::size_t index = 0; index < sourceArchives.size(); ++index)
+            {
+                throwIfCancellationRequested(cancellationRequested);
+                const std::filesystem::path& sourceArchive = sourceArchives[index];
+                const ArchiveCatalogEntry imported = archiveCatalog_.importArchive(
+                    stagingDescriptor.projectDirectory,
+                    sourceArchive);
+                if (imported.createdNewFile)
+                {
+                    newlyImportedArchives.push_back(imported.path);
+                }
+                std::error_code sizeError;
+                copiedBytes += std::filesystem::file_size(sourceArchive, sizeError);
+                if (request.progress)
+                {
+                    request.progress(ModOrganizerImportProgress{
+                        L"archives",
+                        L"Импортирую архивы в глобальную библиотеку",
+                        sourceArchive.filename().wstring(),
+                        82,
+                        100,
+                        10,
+                        (std::min)(copiedBytes, copyTotalBytes),
+                        copyTotalBytes
+                    });
+                }
+            }
+            throwIfCancellationRequested(cancellationRequested);
 
             std::vector<InstalledModImportRecord> modsToRegister;
             modsToRegister.reserve(plan.mods.size());
@@ -3530,6 +3616,15 @@ namespace fluxora
                 cleanupDirectoryTreeBestEffort(finalProjectDirectory);
             }
 
+            for (auto iterator = newlyImportedArchives.rbegin();
+                 iterator != newlyImportedArchives.rend();
+                 ++iterator)
+            {
+                archiveCatalog_.removeArchiveSidecar(*iterator);
+                std::error_code cleanupError;
+                std::filesystem::remove(*iterator, cleanupError);
+            }
+
             throw;
         }
         catch (...)
@@ -3576,6 +3671,16 @@ namespace fluxora
             else if (!replaceExisting)
             {
                 cleanupDirectoryTreeBestEffort(finalProjectDirectory);
+            }
+
+
+            for (auto iterator = newlyImportedArchives.rbegin();
+                 iterator != newlyImportedArchives.rend();
+                 ++iterator)
+            {
+                archiveCatalog_.removeArchiveSidecar(*iterator);
+                std::error_code cleanupError;
+                std::filesystem::remove(*iterator, cleanupError);
             }
 
             throw;

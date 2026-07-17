@@ -266,6 +266,48 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('passes the typed mod-update mode and operation id to the background bridge method', async () => {
+    const updateRequest = {
+      projectDirectory: project().projectDirectory,
+      mode: 'automatic' as const
+    };
+    const request: OperationRequest = { operationId: 'op_mod_updates_auto' };
+    const result = {
+      state: 'completed' as const,
+      reason: 'none' as const,
+      nextEligibleAt: '2026-07-17T10:00:00Z',
+      quota: {
+        hourlyLimit: 1_000,
+        hourlyRemaining: 900,
+        hourlyResetAt: '2026-07-16T11:00:00Z',
+        dailyLimit: 20_000,
+        dailyRemaining: 19_000,
+        dailyResetAt: '2026-07-17T00:00:00Z',
+        capturedAt: '2026-07-16T10:00:00Z'
+      },
+      counters: {
+        apiRequests: 1,
+        cacheHits: 0,
+        checked: 1,
+        updates: 0,
+        ambiguous: 0,
+        failed: 0
+      },
+      mods: []
+    };
+    invokeMock.mockResolvedValue(result);
+
+    const api = createTauriFluxoraApi();
+    await expect(api.mods.checkUpdates(updateRequest, request)).resolves.toEqual(result);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'mods.checkUpdates',
+      params: updateRequest,
+      request,
+      timeoutMs: undefined
+    });
+  });
+
   it('gives installed-mod deletion a long file-mutation timeout', async () => {
     const request: OperationRequest = { operationId: 'op_mods_delete_installed' };
     const projectDirectory = project().projectDirectory;
@@ -781,7 +823,8 @@ describe('Tauri bridge request timeouts', () => {
     const installRequest = {
       projectDirectory: project().projectDirectory,
       downloadPath: 'E:\\Fluxora Builds\\Foundation Edition\\downloads\\large-mod.7z',
-      modName: 'Large Mod'
+      modName: 'Large Mod',
+      profileName: 'Default'
     };
     invokeMock.mockResolvedValue({
       id: 'large-mod',
@@ -862,6 +905,7 @@ describe('Tauri bridge request timeouts', () => {
         projectDirectory,
         archivePath,
         modName: 'User edit is ignored for the matched target',
+        profileName: 'Default',
         existingModMode: 1,
         resolutionId: plan.resolutionId,
         identityDecision: 'use-match',
@@ -877,6 +921,7 @@ describe('Tauri bridge request timeouts', () => {
         projectDirectory,
         archivePath,
         modName: 'User edit is ignored for the matched target',
+        profileName: 'Default',
         existingModMode: 1,
         resolutionId: 'identity-resolution-1',
         identityDecision: 'use-match',
@@ -885,6 +930,111 @@ describe('Tauri bridge request timeouts', () => {
         placementOverridesJson: ''
       },
       request: installOperation,
+      timeoutMs: 7_200_000
+    });
+  });
+
+  it('forwards the final user-edited mod name when replanning install identity', async () => {
+    const operation: OperationRequest = { operationId: 'op_install_name_replan' };
+    const projectDirectory = project().projectDirectory;
+    const archivePath = 'E:\\Incoming Mods\\Unofficial Skyrim Modders Patch RU.rar';
+    const modName = 'Unofficial Skyrim Modders Patch';
+    invokeMock.mockResolvedValueOnce({
+      suggestedModName: modName,
+      resolutionKind: 'probable',
+      matchedTarget: {
+        modUuid: 'installed-usmp',
+        displayName: modName,
+        folderName: modName
+      },
+      resolutionId: 'identity-resolution-user-name',
+      fomodInstaller: { isFomod: false },
+      evidenceCodes: ['name.normalized-exact', 'source.stable-mod-id-conflict'],
+      score: 90
+    });
+
+    const api = createTauriFluxoraApi();
+    await api.archives.planInstall(
+      projectDirectory,
+      archivePath,
+      'Default',
+      modName,
+      operation
+    );
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'archives.planInstall',
+      params: { projectDirectory, archivePath, profileName: 'Default', modName },
+      request: operation,
+      timeoutMs: 7_200_000
+    });
+  });
+
+  it('forwards profile-aware FOMOD context and manual decisions additively', async () => {
+    const operation: OperationRequest = { operationId: 'op_fomod_smart_select' };
+    const projectDirectory = project().projectDirectory;
+    const downloadPath = `${projectDirectory}\\downloads\\Patches.zip`;
+    const archivePath = 'E:\\Incoming Mods\\Patches.zip';
+    const manualDecisions = [{ optionId: 'visual-style', selected: true }];
+    invokeMock
+      .mockResolvedValueOnce({ isFomod: true, steps: [] })
+      .mockResolvedValueOnce({ suggestedModName: 'Patches', fomodInstaller: { isFomod: true } })
+      .mockResolvedValueOnce({ id: 'installed-patches', name: 'Patches' });
+
+    const api = createTauriFluxoraApi();
+    await api.downloads.analyzeFomod(
+      projectDirectory,
+      downloadPath,
+      'Default',
+      manualDecisions,
+      operation
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'fluxora_bridge_request', {
+      method: 'downloads.analyzeFomod',
+      params: {
+        projectDirectory,
+        downloadPath,
+        profileName: 'Default',
+        manualDecisionsJson: JSON.stringify(manualDecisions)
+      },
+      request: operation,
+      timeoutMs: undefined
+    });
+
+    await api.archives.planInstall(projectDirectory, archivePath, 'Default', operation);
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'fluxora_bridge_request', {
+      method: 'archives.planInstall',
+      params: { projectDirectory, archivePath, profileName: 'Default' },
+      request: operation,
+      timeoutMs: 7_200_000
+    });
+
+    await api.downloads.installFomod(
+      {
+        projectDirectory,
+        downloadPath,
+        modName: 'Patches',
+        selectedOptionIds: ['lux-patch', 'visual-style'],
+        profileName: 'Default',
+        fomodContextId: 'fomod-context-1',
+        manualDecisions
+      },
+      operation
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(3, 'fluxora_bridge_request', {
+      method: 'downloads.installFomod',
+      params: {
+        projectDirectory,
+        downloadPath,
+        modName: 'Patches',
+        profileName: 'Default',
+        fomodContextId: 'fomod-context-1',
+        existingModMode: 0,
+        placementOverridesJson: '',
+        selectedOptionIdsJson: JSON.stringify(['lux-patch', 'visual-style']),
+        manualDecisionsJson: JSON.stringify(manualDecisions)
+      },
+      request: operation,
       timeoutMs: 7_200_000
     });
   });

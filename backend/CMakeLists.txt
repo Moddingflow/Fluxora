@@ -135,6 +135,7 @@ add_library(FluxoraCore SHARED
     src/FluxoraCoreApi.cpp
     src/Core.cpp
     src/Services/AppSettingsService.cpp
+    src/Services/ArchiveCatalogService.cpp
     src/Services/BuildPathSettingsService.cpp
     src/Services/BulkFileCopyService.cpp
     src/GameSupport/DefinitionBackedGameSupport.cpp
@@ -145,6 +146,7 @@ add_library(FluxoraCore SHARED
     src/GameSupport/ProjectFingerprint.cpp
     src/GameSupport/SkyrimSpecialEditionSupport.cpp
     src/Services/HookService.cpp
+    src/Services/InstallConflictPreviewService.cpp
     src/Services/ContentLayoutService.cpp
     src/Services/DownloadService.cpp
     src/Services/DownloadTransferLimiter.cpp
@@ -152,12 +154,17 @@ add_library(FluxoraCore SHARED
     src/Services/ExecutableIconService.cpp
     src/Services/ExecutableService.cpp
     src/Services/FomodInstallerService.cpp
+    src/Services/FomodProfileContextService.cpp
+    src/Services/FomodAutoSelectionService.cpp
     src/Services/FluxPackPackage.cpp
     src/Services/FluxPackService.cpp
     src/Services/GrassCacheProcessRunner.cpp
     src/Services/GrassCacheService.cpp
     src/Services/Logger.cpp
     src/Services/ModService.cpp
+    src/Services/ModUpdateService.cpp
+    src/Services/NexusUpdateCache.cpp
+    src/Services/NexusUpdateHttpApi.cpp
     src/Services/ModIdentityResolver.cpp
     src/Services/NifPreviewResolver.cpp
     src/Services/ModOrganizerExecutableImportService.cpp
@@ -210,7 +217,7 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(FluxoraCore PRIVATE advapi32 bcrypt crypt32 gdiplus normaliz rstrtmgr shell32 winhttp ws2_32)
+    target_link_libraries(FluxoraCore PRIVATE advapi32 bcrypt crypt32 gdiplus normaliz rstrtmgr shell32 version winhttp ws2_32)
 endif()
 
 # --------------------------------------------------------------------------

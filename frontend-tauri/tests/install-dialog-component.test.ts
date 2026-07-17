@@ -51,6 +51,8 @@ describe('InstallDialog', () => {
         onMoveFomodStep: vi.fn(),
         onOpenDetails: vi.fn(),
         onPatch: vi.fn(),
+        onRecalculateFomod: vi.fn(),
+        onResetFomod: vi.fn(),
         onResolveExistingMod: vi.fn(),
         onSubmitInstallOptions: vi.fn()
       })
@@ -61,6 +63,210 @@ describe('InstallDialog', () => {
     expect(markup).not.toContain('Mod name');
     expect(markup).not.toContain('Подробнее');
     expect(markup).not.toContain('Установить');
+  });
+
+  it('renders explainable Smart Select status, actions and accessible option labels', () => {
+    const installer: FluxoraFomodInstaller = {
+      isFomod: true,
+      moduleName: 'Smart patches',
+      moduleVersion: '1.0',
+      moduleId: 'smart-patches',
+      moduleImagePath: '',
+      memoryKey: 'smart-patches',
+      hasPreviousSelection: false,
+      previousSelectedOptionIds: [],
+      fileDependencies: [],
+      requiredFiles: [],
+      conditionalFilePatterns: [],
+      profileContext: {
+        contextId: 'context-1',
+        profileName: 'Default',
+        fingerprint: 'profile-1',
+        modCatalogRevision: 4,
+        modRevision: 'mods-4',
+        pluginRevision: 'plugins-7',
+        autoSelectionAvailable: true,
+        unavailableReason: '',
+        gameVersion: {
+          kind: 'game',
+          displayName: 'Skyrim Special Edition',
+          version: '1.6.1170.0',
+          known: true
+        },
+        extenderVersions: [],
+        basePluginNames: ['Skyrim.esm'],
+        fileStates: []
+      },
+      autoSelection: {
+        contextId: 'context-1',
+        initialSelectedOptionIds: ['compatible-patch'],
+        unresolvedGroups: [
+          {
+            stepId: 'main',
+            groupId: 'choices',
+            groupName: 'Choices',
+            reasonCode: 'group.ambiguous',
+            optionIds: ['personal-style']
+          }
+        ],
+        decisions: [
+          {
+            optionId: 'compatible-patch',
+            action: 'select',
+            confidence: 'exact',
+            effectiveType: 'Recommended',
+            reasonCodes: ['tes4.masters.satisfied'],
+            evidence: [
+              {
+                code: 'tes4.master.active',
+                subject: 'Lux.esp',
+                expected: 'Active',
+                actual: 'Active',
+                sourceKind: 'mod',
+                sourceName: 'Lux'
+              }
+            ]
+          },
+          {
+            optionId: 'free-crops',
+            action: 'deselect',
+            confidence: 'strong',
+            effectiveType: 'Optional',
+            reasonCodes: ['author.optional'],
+            evidence: [
+              {
+                code: 'tes4.master.active',
+                subject: 'Unofficial Skyrim Special Edition Patch.esp',
+                expected: 'Active',
+                actual: 'Active',
+                sourceKind: 'mod',
+                sourceName: 'Unofficial Skyrim Special Edition Patch'
+              }
+            ]
+          },
+          {
+            optionId: 'personal-style',
+            action: 'manual',
+            confidence: 'none',
+            effectiveType: 'CouldBeUsable',
+            reasonCodes: ['group.ambiguous'],
+            evidence: []
+          }
+        ],
+        moduleDependencyResult: 'satisfied',
+        installBlocked: false,
+        cycleDetected: false,
+        warnings: []
+      },
+      steps: [
+        {
+          id: 'main',
+          name: 'Main',
+          visible: null,
+          groups: [
+            {
+              id: 'choices',
+              name: 'Choices',
+              type: 'SelectAny',
+              options: [
+                {
+                  id: 'compatible-patch',
+                  name: 'Compatible patch',
+                  description: 'Patch for Lux',
+                  imagePath: '',
+                  type: 'Recommended',
+                  defaultType: 'Recommended',
+                  flags: [],
+                  typePatterns: []
+                },
+                {
+                  id: 'personal-style',
+                  name: 'Personal style',
+                  description: 'Choose manually',
+                  imagePath: '',
+                  type: 'CouldBeUsable',
+                  defaultType: 'CouldBeUsable',
+                  flags: [],
+                  typePatterns: []
+                },
+                {
+                  id: 'free-crops',
+                  name: 'Free Crops',
+                  description: 'Keep crops owned by their farmers',
+                  imagePath: '',
+                  type: 'Optional',
+                  defaultType: 'Optional',
+                  flags: [],
+                  typePatterns: []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+    const state: InstallDialogState = {
+      ...detectingDialog(),
+      phase: 'fomod',
+      installerKind: 'fomod',
+      fomodInstaller: installer,
+      selectedFomodOptionIds: ['compatible-patch'],
+      manualFomodDecisions: [],
+      activeFomodOptionId: 'compatible-patch'
+    };
+    const markup = renderToStaticMarkup(
+      createElement(InstallDialog, {
+        archiveTreeScrollTop: 0,
+        evaluation: evaluateFomodWizard(installer, state.selectedFomodOptionIds),
+        existingModName: null,
+        installDialog: state,
+        onArchiveTreeScrollTopChange: vi.fn(),
+        onClose: vi.fn(),
+        onContinueFromFomod: vi.fn(),
+        onMoveFomodStep: vi.fn(),
+        onOpenDetails: vi.fn(),
+        onPatch: vi.fn(),
+        onRecalculateFomod: vi.fn(),
+        onResetFomod: vi.fn(),
+        onResolveExistingMod: vi.fn(),
+        onSubmitInstallOptions: vi.fn()
+      })
+    );
+
+    expect(markup).toContain('Автовыбор · 1 выбрано · 1 требует решения');
+    expect(markup).toContain('Пересчитать');
+    expect(markup).toContain('Вернуть автоподбор');
+    expect(markup).toContain('Выбрано автоматически');
+    expect(markup).toContain('Нужен выбор');
+    expect(markup).toContain('Почему выбрано');
+    expect(markup).toContain('Master Lux.esp активен (Lux).');
+    expect(markup).toContain('aria-live="polite"');
+    expect(markup).toContain('aria-describedby=');
+
+    const optionalMarkup = renderToStaticMarkup(
+      createElement(InstallDialog, {
+        archiveTreeScrollTop: 0,
+        evaluation: evaluateFomodWizard(installer, state.selectedFomodOptionIds),
+        existingModName: null,
+        installDialog: { ...state, activeFomodOptionId: 'free-crops' },
+        onArchiveTreeScrollTopChange: vi.fn(),
+        onClose: vi.fn(),
+        onContinueFromFomod: vi.fn(),
+        onMoveFomodStep: vi.fn(),
+        onOpenDetails: vi.fn(),
+        onPatch: vi.fn(),
+        onRecalculateFomod: vi.fn(),
+        onResetFomod: vi.fn(),
+        onResolveExistingMod: vi.fn(),
+        onSubmitInstallOptions: vi.fn()
+      })
+    );
+
+    expect(optionalMarkup).toContain('Почему не выбрано');
+    expect(optionalMarkup).toContain('Автор FOMOD оставил вариант необязательным.');
+    expect(optionalMarkup).toContain(
+      'Master Unofficial Skyrim Special Edition Patch.esp активен (Unofficial Skyrim Special Edition Patch).'
+    );
   });
 
   it('renders one check inside a selected checkbox and keeps the radio dot separate', () => {
@@ -139,6 +345,8 @@ describe('InstallDialog', () => {
         onMoveFomodStep: vi.fn(),
         onOpenDetails: vi.fn(),
         onPatch: vi.fn(),
+        onRecalculateFomod: vi.fn(),
+        onResetFomod: vi.fn(),
         onResolveExistingMod: vi.fn(),
         onSubmitInstallOptions: vi.fn()
       })
@@ -226,6 +434,8 @@ describe('InstallDialog', () => {
         onMoveFomodStep: vi.fn(),
         onOpenDetails: vi.fn(),
         onPatch: vi.fn(),
+        onRecalculateFomod: vi.fn(),
+        onResetFomod: vi.fn(),
         onResolveExistingMod: vi.fn(),
         onSubmitInstallOptions: vi.fn()
       })

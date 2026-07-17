@@ -371,7 +371,7 @@ namespace fluxora
         base_.defaultProfileName = L"Default";
         base_.dataDirectory = L"";
         base_.nexusDomain = L"";
-        base_.folders = {L"mods", L"downloads", L"profiles", L"overwrite", L"webcache", L"logs"};
+        base_.folders = {L"mods", L"profiles", L"overwrite", L"webcache", L"logs"};
         base_.profileFiles = {L"modlist.txt"};
         base_.basePlugins = {};
         base_.pluginExtensions = {};

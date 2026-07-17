@@ -317,6 +317,8 @@ TEST(InstallerCorePackageTests, InstallPackageStreamInstallsV2Payload)
     EXPECT_EQ(FluxoraInstallerResultOk, result);
     EXPECT_EQ("fake executable", fluxora::tests::readTextFile(installDirectory / L"Fluxora.exe"));
     EXPECT_EQ("profile=data", fluxora::tests::readTextFile(installDirectory / L"data" / L"config.txt"));
+    ASSERT_TRUE(std::filesystem::is_directory(installDirectory / L"Downloads"));
+    EXPECT_TRUE(std::filesystem::is_empty(installDirectory / L"Downloads"));
     EXPECT_NE(std::wstring(json.data()).find(L"Fluxora.exe"), std::wstring::npos);
     ASSERT_FALSE(progressUpdates.empty());
     EXPECT_NE(progressUpdates.back().find(L"\"phase\":\"completed\""), std::wstring::npos);
@@ -441,6 +443,9 @@ TEST(InstallerCorePackageTests, ValidPackageAtomicallyReplacesExistingInstallati
     const std::filesystem::path installDirectory = temp.path() / L"install";
     fluxora::tests::writeTextFile(installDirectory / L"Fluxora.exe", "old executable");
     fluxora::tests::writeTextFile(installDirectory / L"old-only.txt", "obsolete payload");
+    fluxora::tests::writeTextFile(
+        installDirectory / L"Downloads" / L"skyrimse" / L"kept-archive.7z",
+        "global archive bytes");
 
     const std::vector<unsigned char> package = makePackage({
         {"Fluxora.exe", "replacement executable"},
@@ -467,6 +472,10 @@ TEST(InstallerCorePackageTests, ValidPackageAtomicallyReplacesExistingInstallati
         "replacement core",
         fluxora::tests::readTextFile(
             installDirectory / L"resources" / L"native" / L"FluxoraCore.dll"));
+    EXPECT_EQ(
+        "global archive bytes",
+        fluxora::tests::readTextFile(
+            installDirectory / L"Downloads" / L"skyrimse" / L"kept-archive.7z"));
     EXPECT_FALSE(std::filesystem::exists(installDirectory / L"old-only.txt"));
 
     std::vector<std::filesystem::path> rootEntries;
@@ -566,6 +575,22 @@ TEST(InstallerCorePackageTests, RejectsWindowsNormalizedDuplicateOutputTargets)
     }
 }
 
+TEST(InstallerCorePackageTests, RejectsPayloadEntriesInsideProtectedDownloadsDirectory)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path installDirectory = temp.path() / L"install";
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", "executable"},
+        {"Downloads/skyrimse/injected.7z", "untrusted archive"}
+    });
+
+    const InstallCallResult result = installPackageForTest(package, installDirectory);
+
+    EXPECT_EQ(FluxoraInstallerResultInstallError, result.code);
+    EXPECT_NE(result.error.find(L"protected Downloads directory"), std::wstring::npos);
+    EXPECT_FALSE(std::filesystem::exists(installDirectory));
+}
+
 TEST(InstallerCorePackageTests, RejectsJunctionInstallRootWithoutTouchingItsTarget)
 {
     fluxora::tests::TempDirectory temp;
@@ -594,6 +619,41 @@ TEST(InstallerCorePackageTests, RejectsJunctionInstallRootWithoutTouchingItsTarg
     EXPECT_TRUE(std::filesystem::exists(installJunction));
 }
 
+TEST(InstallerCorePackageTests, RejectsDownloadsJunctionWithoutTouchingTheLiveInstallationOrTarget)
+{
+    fluxora::tests::TempDirectory temp;
+    const std::filesystem::path installDirectory = temp.path() / L"install";
+    const std::filesystem::path targetDirectory = temp.path() / L"downloads-target";
+    const std::filesystem::path downloadsJunction = installDirectory / L"Downloads";
+    fluxora::tests::writeTextFile(installDirectory / L"Fluxora.exe", "existing executable");
+    fluxora::tests::writeTextFile(targetDirectory / L"sentinel.7z", "outside archive");
+
+    std::error_code junctionError;
+    if (!fluxora::tests::createDirectoryJunction(targetDirectory, downloadsJunction, junctionError))
+    {
+        GTEST_SKIP() << "Directory junctions are unavailable in this test environment: "
+                     << junctionError.message();
+    }
+
+    const std::vector<unsigned char> package = makePackage({
+        {"Fluxora.exe", "replacement executable"}
+    });
+
+    const InstallCallResult result = installPackageForTest(package, installDirectory);
+
+    EXPECT_EQ(FluxoraInstallerResultInstallError, result.code);
+    EXPECT_NE(result.error.find(L"reparse point"), std::wstring::npos);
+    EXPECT_EQ(
+        "existing executable",
+        fluxora::tests::readTextFile(installDirectory / L"Fluxora.exe"));
+    EXPECT_EQ(
+        "outside archive",
+        fluxora::tests::readTextFile(targetDirectory / L"sentinel.7z"));
+    EXPECT_TRUE(std::filesystem::exists(downloadsJunction));
+
+    std::filesystem::remove(downloadsJunction);
+}
+
 TEST(InstallerCorePackageTests, ValidationRecoversOldLiveAfterCrashBetweenDirectoryRenames)
 {
     fluxora::tests::TempDirectory temp;
@@ -613,6 +673,9 @@ TEST(InstallerCorePackageTests, ValidationRecoversOldLiveAfterCrashBetweenDirect
     const std::filesystem::path markerPath = transactionMarkerPath(installDirectory);
 
     fluxora::tests::writeTextFile(backupDirectory / L"Fluxora.exe", "old executable");
+    fluxora::tests::writeTextFile(
+        backupDirectory / L"Downloads" / L"skyrimse" / L"archive.7z",
+        "preserved archive");
     fluxora::tests::writeTextFile(stagingDirectory / L"Fluxora.exe", "new executable");
     fluxora::tests::writeTextFile(
         transactionSentinelPath(stagingDirectory, transactionId),
@@ -629,6 +692,10 @@ TEST(InstallerCorePackageTests, ValidationRecoversOldLiveAfterCrashBetweenDirect
 
     EXPECT_EQ(FluxoraInstallerResultOk, result);
     EXPECT_EQ("old executable", fluxora::tests::readTextFile(installDirectory / L"Fluxora.exe"));
+    EXPECT_EQ(
+        "preserved archive",
+        fluxora::tests::readTextFile(
+            installDirectory / L"Downloads" / L"skyrimse" / L"archive.7z"));
     EXPECT_FALSE(std::filesystem::exists(stagingDirectory));
     EXPECT_FALSE(std::filesystem::exists(backupDirectory));
     EXPECT_FALSE(std::filesystem::exists(markerPath));

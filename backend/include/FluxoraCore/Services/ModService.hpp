@@ -11,7 +11,6 @@
 
 namespace fluxora
 {
-    class AppSettingsService;
     class BuildPathSettingsService;
     class Logger;
 
@@ -53,6 +52,8 @@ namespace fluxora
         std::wstring sourceUrl;
         std::vector<std::wstring> overwritesModIds;
         std::vector<std::wstring> overwrittenByModIds;
+        std::wstring latestFileId;
+        std::wstring updateCheckState;
     };
 
     struct ModTextFileDocument
@@ -99,7 +100,6 @@ namespace fluxora
     public:
         ModService(
             Logger& logger,
-            AppSettingsService& settings,
             const BuildPathSettingsService& pathSettings) noexcept;
 
         void initialize() override;
@@ -115,8 +115,6 @@ namespace fluxora
         void invalidateFileCaches(
             const std::filesystem::path& projectDirectory,
             const std::vector<std::filesystem::path>& changedPaths) const;
-        [[nodiscard]] std::vector<InstalledModEntry> checkInstalledModUpdates(
-            const std::filesystem::path& projectDirectory) const;
         [[nodiscard]] std::vector<ModFileTreeEntry> listModFileTree(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& modPath,
@@ -186,7 +184,6 @@ namespace fluxora
 
     private:
         Logger& logger_;
-        AppSettingsService& settings_;
         const BuildPathSettingsService& pathSettings_;
         NifPreviewResolver nifPreviewResolver_;
         std::vector<ModDescriptor> mods_;

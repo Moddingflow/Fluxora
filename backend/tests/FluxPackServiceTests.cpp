@@ -27,6 +27,29 @@ namespace fluxora::tests
 {
     namespace
     {
+        class ScopedFluxPackAppRoot final
+        {
+        public:
+            explicit ScopedFluxPackAppRoot(const TempDirectory& temp)
+                : root_(temp.path() / L"Fluxora App"),
+                  environment_(L"FLUXORA_APP_ROOT", root_.wstring())
+            {
+                std::filesystem::create_directories(root_);
+            }
+
+            [[nodiscard]] std::filesystem::path downloads(
+                std::wstring_view gameId = L"skyrimse") const
+            {
+                const std::filesystem::path result = root_ / L"Downloads" / gameId;
+                std::filesystem::create_directories(result);
+                return result;
+            }
+
+        private:
+            std::filesystem::path root_;
+            ScopedEnvironmentVariable environment_;
+        };
+
         std::string projectManifest()
         {
             return "{"
@@ -433,6 +456,7 @@ namespace fluxora::tests
 #else
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
 
         const std::filesystem::path installRoot = temp.path() / L"Builds";
         const std::filesystem::path project = installRoot / L"FluxPack Test Build";
@@ -440,7 +464,7 @@ namespace fluxora::tests
         const std::filesystem::path config = temp.path() / L"configs" / L"FluxPack Test Build.json";
         const std::filesystem::path mods = project / L"mods";
         const std::filesystem::path profiles = project / L"profiles";
-        const std::filesystem::path downloads = project / L"downloads";
+        const std::filesystem::path downloads = fluxoraApp.downloads();
         const std::filesystem::path overwrite = project / L"overwrite";
 
         writeTextFile(game / L"SkyrimSE.exe", "MZ");
@@ -558,6 +582,7 @@ namespace fluxora::tests
         EXPECT_NE(manifest.find("\"customPatches\""), std::string::npos);
         EXPECT_NE(manifest.find("\"customConfigs\""), std::string::npos);
         EXPECT_NE(manifest.find("\"source-archives\""), std::string::npos);
+        EXPECT_EQ(manifest.find("\"downloadsDirectory\""), std::string::npos);
         EXPECT_NE(manifest.find("\"status\":\"matched-local-download\""), std::string::npos);
         EXPECT_NE(manifest.find("\"url\":\"nxm://skyrimspecialedition/mods/3863/files/123\""), std::string::npos);
         EXPECT_EQ(manifest.find("Old MO2 Archive.7z.meta"), std::string::npos);
@@ -640,6 +665,7 @@ namespace fluxora::tests
         TempDirectory temp;
         ExtendedPathCleanup extendedPathCleanup(temp.path());
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
 
         const std::filesystem::path installRoot = temp.path() / L"Builds";
         const std::filesystem::path project = installRoot / L"FluxPack Embedded Build";
@@ -941,6 +967,7 @@ namespace fluxora::tests
 #else
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
 
         const std::filesystem::path installRoot = temp.path() / L"Installed";
         const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
@@ -1050,6 +1077,7 @@ namespace fluxora::tests
     {
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
 
         const std::filesystem::path fluxPack = temp.path() / L"Foundation.fluxpack";
         writeTextFile(
@@ -1089,7 +1117,7 @@ namespace fluxora::tests
             "\"defaultProfile\":\"Default\","
             "\"stages\":[{\"id\":\"source-archives\",\"title\":\"Download\",\"policy\":\"reference-only\",\"requires\":[]}],"
             "\"profileOrder\":[],"
-            "\"targetPaths\":{}"
+            "\"targetPaths\":{\"downloadsDirectory\":\"downloads\"}"
             "}"
             "}");
 
@@ -1155,6 +1183,7 @@ namespace fluxora::tests
 #else
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
 
         const std::filesystem::path installRoot = temp.path() / L"Installed";
         const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
@@ -1238,7 +1267,7 @@ namespace fluxora::tests
         EXPECT_EQ(result.pendingSourceCount, 0U);
         EXPECT_EQ(result.failedSourceCount, 1U);
         EXPECT_TRUE(result.hasWarnings);
-        const std::filesystem::path downloadsDirectory = result.projectDirectory / L"downloads";
+        const std::filesystem::path downloadsDirectory = fluxoraApp.downloads();
         if (std::filesystem::exists(downloadsDirectory))
         {
             for (const auto& entry : std::filesystem::directory_iterator(downloadsDirectory))
@@ -1321,16 +1350,18 @@ namespace fluxora::tests
 #else
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
 
         const std::filesystem::path sourceProject = temp.path() / L"Transferred Foundation";
         const std::filesystem::path sourceGame = sourceProject / L"stock game";
-        const std::filesystem::path sourceArchive = sourceProject / L"downloads" / L"SkyUI.bsa";
+        const std::filesystem::path sourceArchive = fluxoraApp.downloads() / L"SkyUI.bsa";
         const std::filesystem::path installRoot = temp.path() / L"Installed";
         const std::filesystem::path fluxPack = temp.path() / L"Foundation.fluxpack";
         std::filesystem::create_directories(installRoot);
         writeTextFile(sourceGame / L"SkyrimSE.exe", "MZ");
         writeTextFile(sourceGame / L"Data" / L"Skyrim.esm", "master");
         writeTextFile(sourceArchive, "archive");
+        InstanceMetadataStore::ensureInstance(sourceProject, L"skyrimse");
 
         const std::string fluxPackJson =
             std::string("{")
@@ -1410,8 +1441,9 @@ namespace fluxora::tests
 
         const BuildPathSettings installedPaths = pathSettings.loadForConfig(result.configPath);
         EXPECT_TRUE(std::filesystem::is_regular_file(installedPaths.modsDirectory / L"SkyUI" / L"SkyUI.bsa"));
-        EXPECT_TRUE(std::filesystem::is_regular_file(result.projectDirectory / L"downloads" / L"SkyUI.bsa"));
-        EXPECT_FALSE(std::filesystem::exists(result.projectDirectory / L"downloads" / L"skyrimspecialedition-3863-123.nxm"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(fluxoraApp.downloads() / L"SkyUI.bsa"));
+        EXPECT_FALSE(std::filesystem::exists(
+            fluxoraApp.downloads() / L"skyrimspecialedition-3863-123.nxm"));
 
         const std::vector<InstalledModRecord> installedMods =
             InstanceMetadataStore::listInstalledMods(result.projectDirectory, installedPaths.modsDirectory);
@@ -1460,6 +1492,7 @@ namespace fluxora::tests
 #else
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
 
         const std::filesystem::path sourceProject = temp.path() / L"Source Foundation";
         const std::filesystem::path sourceGame = sourceProject / L"stock game";
@@ -1568,6 +1601,7 @@ namespace fluxora::tests
 #else
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
 
         const std::filesystem::path installRoot = temp.path() / L"Builds";
         const std::filesystem::path project = installRoot / L"Foundation Edition";
@@ -1648,6 +1682,7 @@ namespace fluxora::tests
 #else
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
 
         const std::filesystem::path projectHint = temp.path() / L"Exported Foundation";
         const std::filesystem::path game = projectHint / L"Stock Game";
@@ -1736,6 +1771,7 @@ namespace fluxora::tests
 #else
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
 
         const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
         const std::filesystem::path installRoot = temp.path() / L"Builds";
@@ -1881,6 +1917,7 @@ namespace fluxora::tests
 #else
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
 
         const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
         const std::filesystem::path installRoot = temp.path() / L"Builds";
@@ -2020,6 +2057,7 @@ namespace fluxora::tests
 #else
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedFluxPackAppRoot fluxoraApp(temp);
 
         const std::filesystem::path game = temp.path() / L"Skyrim Special Edition";
         const std::filesystem::path installRoot = temp.path() / L"Builds";

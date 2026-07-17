@@ -230,6 +230,175 @@ namespace fluxora::tests
         EXPECT_EQ(order[0].position, 0);
     }
 
+    TEST(InstanceMetadataStoreTests, ArchiveBuildStatusFollowsAttemptInstallDeleteAndReinstallTransitions)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path modPath = project / L"mods" / L"SkyUI";
+        writeTextFile(modPath / L"interface" / L"skyui.swf", "ui");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"archive-a"),
+            ArchiveBuildStatus::Ready);
+
+        InstanceMetadataStore::beginArchiveInstallAttempt(
+            project,
+            L"archive-a",
+            L"operation-a",
+            L"SkyUI");
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"archive-a"),
+            ArchiveBuildStatus::Installing);
+
+        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+            project,
+            modPath,
+            L"SkyUI",
+            L"1.0",
+            {});
+        InstanceMetadataStore::completeArchiveInstallAttempt(
+            project,
+            L"archive-a",
+            installed.uuid,
+            L"operation-a",
+            ArchiveModLinkMode::Replace);
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"archive-a"),
+            ArchiveBuildStatus::Installed);
+
+        InstanceMetadataStore::deleteInstalledMod(project, modPath);
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"archive-a"),
+            ArchiveBuildStatus::Deleted);
+
+        InstanceMetadataStore::beginArchiveInstallAttempt(
+            project,
+            L"archive-a",
+            L"operation-b",
+            L"SkyUI");
+        InstanceMetadataStore::failArchiveInstallAttempt(project, L"operation-b");
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"archive-a"),
+            ArchiveBuildStatus::Deleted);
+
+        const InstalledModRecord reinstalled = InstanceMetadataStore::registerInstalledMod(
+            project,
+            modPath,
+            L"SkyUI",
+            L"1.1",
+            {});
+        InstanceMetadataStore::beginArchiveInstallAttempt(
+            project,
+            L"archive-a",
+            L"operation-c",
+            L"SkyUI");
+        InstanceMetadataStore::completeArchiveInstallAttempt(
+            project,
+            L"archive-a",
+            reinstalled.uuid,
+            L"operation-c",
+            ArchiveModLinkMode::Replace);
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"archive-a"),
+            ArchiveBuildStatus::Installed);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, ArchiveBuildStatusHandlesReplacementSharedArchivesAndStaleAttempts)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path firstPath = project / L"mods" / L"First";
+        const std::filesystem::path secondPath = project / L"mods" / L"Second";
+        writeTextFile(firstPath / L"first.esp", "first");
+        writeTextFile(secondPath / L"second.esp", "second");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        const InstalledModRecord first = InstanceMetadataStore::registerInstalledMod(
+            project,
+            firstPath,
+            L"First",
+            L"1.0",
+            {});
+        const InstalledModRecord second = InstanceMetadataStore::registerInstalledMod(
+            project,
+            secondPath,
+            L"Second",
+            L"1.0",
+            {});
+
+        InstanceMetadataStore::beginArchiveInstallAttempt(project, L"shared", L"shared-a", L"First");
+        InstanceMetadataStore::completeArchiveInstallAttempt(
+            project,
+            L"shared",
+            first.uuid,
+            L"shared-a",
+            ArchiveModLinkMode::Replace);
+        InstanceMetadataStore::beginArchiveInstallAttempt(project, L"shared", L"shared-b", L"Second");
+        InstanceMetadataStore::completeArchiveInstallAttempt(
+            project,
+            L"shared",
+            second.uuid,
+            L"shared-b",
+            ArchiveModLinkMode::Replace);
+        InstanceMetadataStore::deleteInstalledMod(project, firstPath);
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"shared"),
+            ArchiveBuildStatus::Installed);
+
+        InstanceMetadataStore::beginArchiveInstallAttempt(
+            project,
+            L"merged-translation",
+            L"merge",
+            L"Second");
+        InstanceMetadataStore::completeArchiveInstallAttempt(
+            project,
+            L"merged-translation",
+            second.uuid,
+            L"merge",
+            ArchiveModLinkMode::Merge);
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"shared"),
+            ArchiveBuildStatus::Installed);
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"merged-translation"),
+            ArchiveBuildStatus::Installed);
+
+        InstanceMetadataStore::beginArchiveInstallAttempt(project, L"replacement", L"replace", L"Second");
+        InstanceMetadataStore::completeArchiveInstallAttempt(
+            project,
+            L"replacement",
+            second.uuid,
+            L"replace",
+            ArchiveModLinkMode::Replace);
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"shared"),
+            ArchiveBuildStatus::Deleted);
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"merged-translation"),
+            ArchiveBuildStatus::Deleted);
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"replacement"),
+            ArchiveBuildStatus::Installed);
+
+        InstanceMetadataStore::beginArchiveInstallAttempt(project, L"orphan", L"orphan-op", L"Orphan");
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"orphan"),
+            ArchiveBuildStatus::Installing);
+        InstanceMetadataStore::beginProjectActivation(project);
+        EXPECT_EQ(
+            InstanceMetadataStore::archiveBuildStatus(project, L"orphan"),
+            ArchiveBuildStatus::Ready);
+#endif
+    }
+
     TEST(InstanceMetadataStoreTests, IdentityCandidateQueryUsesDatabaseIndexAndLimitsFuzzyResults)
     {
 #ifndef _WIN32
@@ -268,7 +437,7 @@ namespace fluxora::tests
         EXPECT_TRUE(sqliteTableExists(database, "mod_identity_aliases"));
         EXPECT_TRUE(sqliteTableExists(database, "mod_identity_exclusions"));
         EXPECT_TRUE(sqliteTableExists(database, "mod_identity_cache"));
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 7);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 11);
 #endif
     }
 
@@ -626,18 +795,26 @@ namespace fluxora::tests
                  "mod_dependencies",
                  "mod_conflicts",
                  "mod_install_history",
-                 "mod_notes"
+                 "archive_mod_links",
+                 "archive_install_attempts",
+                 "pending_install_sessions",
+                 "pending_install_files",
+                 "mod_notes",
+                 "mod_update_sweeps"
              })
         {
             EXPECT_TRUE(sqliteTableExists(database, table)) << table;
         }
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 7);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 11);
 
         const std::vector<InstalledModRecord> records =
             InstanceMetadataStore::listInstalledMods(project, mods);
         const InstalledModRecord* mod = findInstalledMod(records, L"SkyUI Russian Patch");
         ASSERT_NE(mod, nullptr);
         EXPECT_TRUE(mod->sourceIsNexus);
+        EXPECT_EQ(mod->source.latestVersion, L"1.2");
+        EXPECT_EQ(mod->source.latestFileId, L"123");
+        EXPECT_EQ(mod->source.updateCheckState, L"baseline_pending");
         EXPECT_FALSE(mod->sourceIsModdingFlow);
         EXPECT_FALSE(mod->isLocal);
         EXPECT_TRUE(mod->isTranslation);
@@ -1510,7 +1687,7 @@ namespace fluxora::tests
         const std::filesystem::path project = temp.path() / L"project";
         const std::filesystem::path database = project / L"instance.db";
         std::filesystem::create_directories(project);
-        sqliteExec(database, "PRAGMA user_version = 8;");
+        sqliteExec(database, "PRAGMA user_version = 12;");
         ASSERT_FALSE(sqliteTableExists(database, "instance_metadata"));
         InstanceMetadataStore::resetSqlPrepareCountForTesting();
         InstanceMetadataStore::resetSqlExecCountForTesting();
@@ -1520,7 +1697,7 @@ namespace fluxora::tests
             std::runtime_error);
         EXPECT_EQ(InstanceMetadataStore::sqlPrepareCountForTesting(), 1U);
         EXPECT_EQ(InstanceMetadataStore::sqlExecCountForTesting(), 0U);
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 8);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
         EXPECT_FALSE(sqliteTableExists(database, "instance_metadata"));
 #endif
     }
@@ -1558,10 +1735,98 @@ namespace fluxora::tests
 
         EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
 
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 7);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 11);
         EXPECT_TRUE(sqliteTableExists(database, "mod_file_cache_state"));
+        EXPECT_TRUE(sqliteTableExists(database, "archive_mod_links"));
+        EXPECT_TRUE(sqliteTableExists(database, "archive_install_attempts"));
+        EXPECT_TRUE(sqliteTableExists(database, "pending_install_sessions"));
+        EXPECT_TRUE(sqliteTableExists(database, "pending_install_files"));
         EXPECT_GT(InstanceMetadataStore::sqlPrepareCountForTesting(), 2U);
         EXPECT_GT(InstanceMetadataStore::sqlExecCountForTesting(), 3U);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, VersionEightMigrationAddsFileUpdateStateAndBaselineSweep)
+    {
+#if !defined(_WIN32) || !defined(FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS)
+        GTEST_SKIP() << "Persistent metadata counters are enabled for Windows metadata tests.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path modPath = mods / L"Baseline Nexus Mod";
+        writeTextFile(modPath / L"Data" / L"content.bin", "content");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMod(
+            project,
+            modPath,
+            L"Baseline Nexus Mod",
+            L"opaque-v1",
+            ModSourceRecord{
+                L"nexus",
+                L"skyrimspecialedition",
+                L"100",
+                L"200",
+                L"nxm://skyrimspecialedition/mods/100/files/200"});
+
+        const std::filesystem::path database = project / L"instance.db";
+        sqliteExec(database, "DROP TABLE mod_update_sweeps;");
+        sqliteExec(database, "ALTER TABLE mod_sources DROP COLUMN latest_file_id;");
+        sqliteExec(database, "ALTER TABLE mod_sources DROP COLUMN last_check_state;");
+        sqliteExec(database, "ALTER TABLE mod_sources DROP COLUMN last_attempted_at;");
+        sqliteExec(database, "PRAGMA user_version = 8;");
+
+        EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
+
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 11);
+        EXPECT_TRUE(sqliteTableExists(database, "mod_update_sweeps"));
+        EXPECT_EQ(
+            sqliteIntScalar(
+                database,
+                "SELECT COUNT(*) FROM pragma_table_info('mod_sources') "
+                "WHERE name IN ('latest_file_id', 'last_check_state', 'last_attempted_at');"),
+            3);
+        const std::vector<InstalledModRecord> records =
+            InstanceMetadataStore::listInstalledMods(project, mods);
+        const InstalledModRecord* mod = findInstalledMod(records, L"Baseline Nexus Mod");
+        ASSERT_NE(mod, nullptr);
+        EXPECT_EQ(mod->source.latestVersion, L"opaque-v1");
+        EXPECT_EQ(mod->source.latestFileId, L"200");
+        EXPECT_EQ(mod->source.updateCheckState, L"baseline_pending");
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, VersionNineMigrationAllowsMultipleCurrentArchivesPerMod)
+    {
+#if !defined(_WIN32) || !defined(FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS)
+        GTEST_SKIP() << "Persistent metadata counters are enabled for Windows metadata tests.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path database = project / L"instance.db";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        sqliteExec(database, "DROP INDEX idx_archive_mod_links_current_archive_mod;");
+        sqliteExec(
+            database,
+            "CREATE UNIQUE INDEX idx_archive_mod_links_current_mod "
+            "ON archive_mod_links(mod_id) WHERE is_current = 1 AND mod_id IS NOT NULL;");
+        sqliteExec(database, "PRAGMA user_version = 9;");
+
+        EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
+
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 11);
+        EXPECT_EQ(
+            sqliteIntScalar(
+                database,
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' "
+                "AND name = 'idx_archive_mod_links_current_mod';"),
+            0);
+        EXPECT_EQ(
+            sqliteIntScalar(
+                database,
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' "
+                "AND name = 'idx_archive_mod_links_current_archive_mod';"),
+            1);
 #endif
     }
 
@@ -1632,6 +1897,54 @@ namespace fluxora::tests
                     entry.conflictOwners[0] == L"Bulk Conflict A" &&
                     entry.conflictOwners[1] == L"Bulk Conflict B";
             }));
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, PendingInstallFinalizationFailureRollsBackAtomicMetadata)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Pending install finalization uses the Windows SQLite metadata store.";
+#elif !defined(FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS)
+        GTEST_SKIP() << "Instance metadata failure injection hooks are disabled.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        const std::filesystem::path project = temp.path() / L"Atomic Pending Install";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path installed = mods / L"Incoming";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::beginPendingInstallSession(
+            project,
+            L"op_finalize_failure",
+            L"Default",
+            InstallConflictPreviewMode::Install,
+            L"pending-install:op_finalize_failure",
+            {},
+            0);
+        static_cast<void>(InstanceMetadataStore::preparePendingInstallSession(
+            project,
+            L"op_finalize_failure",
+            {InstallConflictFile{L"Data/Incoming.esp", 8, L"1"}}));
+        writeTextFile(installed / L"Data" / L"Incoming.esp", "incoming");
+
+        InstanceMetadataStore::setPendingInstallFinalizeFailureForTesting(true);
+        EXPECT_THROW(
+            static_cast<void>(InstanceMetadataStore::finalizePendingInstalledMod(
+                project,
+                L"op_finalize_failure",
+                installed,
+                L"Incoming",
+                L"1.0.0",
+                ModSourceRecord{L"local"})),
+            std::runtime_error);
+
+        const PendingInstallSessionRecord session =
+            InstanceMetadataStore::pendingInstallSession(project, L"op_finalize_failure");
+        EXPECT_EQ(session.state, L"ready");
+        EXPECT_TRUE(session.finalOrderId.empty());
+        EXPECT_TRUE(
+            InstanceMetadataStore::persistedInstalledModsSnapshot(project, mods).mods.empty());
+        EXPECT_FALSE(std::filesystem::exists(installed / L".flow" / L"manifest.json"));
 #endif
     }
 }

@@ -89,7 +89,6 @@ describe('build workspace state', () => {
       gameDirectory: 'C:\\Games\\Skyrim',
       modsDirectory: project.paths?.modsDirectory,
       profilesDirectory: project.paths?.profilesDirectory,
-      downloadsDirectory: project.paths?.downloadsDirectory,
       overwriteDirectory: project.paths?.overwriteDirectory
     });
   });

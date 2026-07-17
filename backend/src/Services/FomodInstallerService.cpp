@@ -1,11 +1,14 @@
 #include "FluxoraCore/Services/FomodInstallerService.hpp"
 
+#include "FluxoraCore/Services/FomodAutoSelectionService.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
+#include "FluxoraCore/Support/FilesystemPath.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
 #include "FluxoraCore/Support/JsonWriter.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cwctype>
 #include <fstream>
@@ -39,10 +42,25 @@ namespace fluxora
 
         struct FomodMemoryEntry
         {
+            struct ManualDecision
+            {
+                std::wstring optionId;
+                bool selected{false};
+            };
+
+            struct ContextSelection
+            {
+                std::wstring profileName;
+                std::wstring fingerprint;
+                std::vector<std::wstring> selectedOptionIds;
+            };
+
             std::wstring key;
             std::wstring moduleName;
             std::wstring moduleVersion;
-            std::vector<std::wstring> selectedOptionIds;
+            bool legacyV1{false};
+            std::vector<ManualDecision> globalManualDecisions;
+            std::vector<ContextSelection> contexts;
         };
 
         struct FomodEnvironment
@@ -51,6 +69,7 @@ namespace fluxora
             std::filesystem::path gameDirectory;
             std::filesystem::path modsDirectory;
             std::vector<std::wstring> gameDataFolders;
+            const FomodProfileContext* profileContext{nullptr};
         };
 
         struct SelectedOptionSet
@@ -65,6 +84,11 @@ namespace fluxora
             FomodFileEntry file;
             std::size_t sequence{0};
         };
+
+        constexpr std::size_t tes4RecordHeaderSize = 24;
+        constexpr std::uint32_t maxTes4HeaderPayloadBytes = 8 * 1024 * 1024;
+        constexpr std::size_t maxTes4Candidates = 256;
+        constexpr std::uint64_t maxTes4TotalReadBytes = 64ULL * 1024ULL * 1024ULL;
 
         [[nodiscard]] std::wstring trim(std::wstring value)
         {
@@ -90,6 +114,132 @@ namespace fluxora
         [[nodiscard]] bool equalsIgnoreCase(std::wstring_view left, std::wstring_view right)
         {
             return toLower(std::wstring(left)) == toLower(std::wstring(right));
+        }
+
+        [[nodiscard]] std::uint16_t readLittleEndian16(std::string_view bytes, std::size_t offset)
+        {
+            if (offset + 2 > bytes.size())
+            {
+                return 0;
+            }
+            return static_cast<std::uint16_t>(
+                static_cast<std::uint8_t>(bytes[offset]) |
+                (static_cast<std::uint16_t>(static_cast<std::uint8_t>(bytes[offset + 1])) << 8));
+        }
+
+        [[nodiscard]] std::uint32_t readLittleEndian32(std::string_view bytes, std::size_t offset)
+        {
+            if (offset + 4 > bytes.size())
+            {
+                return 0;
+            }
+            return static_cast<std::uint32_t>(
+                static_cast<std::uint8_t>(bytes[offset]) |
+                (static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[offset + 1])) << 8) |
+                (static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[offset + 2])) << 16) |
+                (static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[offset + 3])) << 24));
+        }
+
+        [[nodiscard]] bool pluginExtension(const std::filesystem::path& path)
+        {
+            const std::wstring extension = toLower(path.extension().wstring());
+            return extension == L".esm" || extension == L".esp" || extension == L".esl";
+        }
+
+        [[nodiscard]] std::wstring normalizedFomodPath(const std::filesystem::path& path)
+        {
+            std::wstring output = path.lexically_normal().wstring();
+            std::replace(output.begin(), output.end(), L'/', L'\\');
+            return output;
+        }
+
+        [[nodiscard]] FomodPluginHeader readTes4PluginHeader(
+            const std::filesystem::path& path,
+            std::wstring outputFile,
+            std::uint64_t& totalReadBytes)
+        {
+            std::ifstream file(pathForFilesystemIo(path), std::ios::binary);
+            std::array<char, tes4RecordHeaderSize> recordHeader{};
+            if (!file ||
+                !file.read(recordHeader.data(), static_cast<std::streamsize>(recordHeader.size())) ||
+                file.gcount() != static_cast<std::streamsize>(recordHeader.size()))
+            {
+                return FomodPluginHeader{
+                    std::move(outputFile), {}, FomodPluginHeaderStatus::Corrupt, L"tes4.corruptOrEncrypted"};
+            }
+            const std::string_view header(recordHeader.data(), recordHeader.size());
+            if (header.substr(0, 4) != "TES4")
+            {
+                return FomodPluginHeader{
+                    std::move(outputFile), {}, FomodPluginHeaderStatus::Corrupt, L"tes4.corruptOrEncrypted"};
+            }
+            const std::uint32_t payloadSize = readLittleEndian32(header, 4);
+            if (payloadSize > maxTes4HeaderPayloadBytes)
+            {
+                return FomodPluginHeader{
+                    std::move(outputFile), {}, FomodPluginHeaderStatus::Oversize, L"tes4.headerOversize"};
+            }
+            if (totalReadBytes + payloadSize > maxTes4TotalReadBytes)
+            {
+                return FomodPluginHeader{
+                    std::move(outputFile), {}, FomodPluginHeaderStatus::ReadBudgetExceeded, L"tes4.readBudgetExceeded"};
+            }
+            totalReadBytes += payloadSize;
+            std::string payload(payloadSize, '\0');
+            if (payloadSize > 0 &&
+                (!file.read(payload.data(), static_cast<std::streamsize>(payload.size())) ||
+                 file.gcount() != static_cast<std::streamsize>(payload.size())))
+            {
+                return FomodPluginHeader{
+                    std::move(outputFile), {}, FomodPluginHeaderStatus::Corrupt, L"tes4.corruptOrEncrypted"};
+            }
+
+            std::vector<std::wstring> masters;
+            std::set<std::wstring> seen;
+            std::uint32_t extendedSize = 0;
+            std::size_t offset = 0;
+            while (offset + 6 <= payload.size())
+            {
+                const std::string_view fieldType(payload.data() + offset, 4);
+                std::uint32_t fieldSize = readLittleEndian16(payload, offset + 4);
+                offset += 6;
+                if (fieldType == "XXXX" && fieldSize == 4 && offset + 4 <= payload.size())
+                {
+                    extendedSize = readLittleEndian32(payload, offset);
+                    offset += fieldSize;
+                    continue;
+                }
+                if (extendedSize != 0)
+                {
+                    fieldSize = extendedSize;
+                    extendedSize = 0;
+                }
+                if (offset + fieldSize > payload.size())
+                {
+                    return FomodPluginHeader{
+                        std::move(outputFile), {}, FomodPluginHeaderStatus::Corrupt, L"tes4.corruptOrEncrypted"};
+                }
+                if (fieldType == "MAST")
+                {
+                    const std::string_view bytes(payload.data() + offset, fieldSize);
+                    const std::size_t zero = bytes.find('\0');
+                    const std::size_t length = zero == std::string_view::npos ? bytes.size() : zero;
+                    std::wstring master;
+                    master.reserve(length);
+                    for (std::size_t index = 0; index < length; ++index)
+                    {
+                        master.push_back(static_cast<wchar_t>(static_cast<unsigned char>(bytes[index])));
+                    }
+                    master = trim(std::move(master));
+                    if (!master.empty() && seen.insert(toLower(master)).second)
+                    {
+                        masters.push_back(std::move(master));
+                    }
+                }
+                offset += fieldSize;
+            }
+            return FomodPluginHeader{
+                std::move(outputFile), std::move(masters), FomodPluginHeaderStatus::Parsed, {}};
         }
 
         [[nodiscard]] std::string toUtf8(const std::wstring& value)
@@ -166,7 +316,7 @@ namespace fluxora
 
         [[nodiscard]] std::string readBinaryFile(const std::filesystem::path& path)
         {
-            std::ifstream file(path, std::ios::in | std::ios::binary);
+            std::ifstream file(pathForFilesystemIo(path), std::ios::in | std::ios::binary);
             if (!file)
             {
                 throw std::runtime_error("Failed to open FOMOD file.");
@@ -668,6 +818,12 @@ namespace fluxora
                         ProjectStateValidation::JsonObject
                     }));
                 const JsonValue root = JsonReader::parse(fromUtf8Bytes(readBinaryFile(path)));
+                int schemaVersion = 1;
+                if (const JsonValue* schema = root.find(L"schemaVersion");
+                    schema != nullptr && schema->isNumber())
+                {
+                    schemaVersion = parseInt(schema->asNumber(), 1);
+                }
                 const JsonValue* entriesValue = root.find(L"entries");
                 if (entriesValue == nullptr || !entriesValue->isArray())
                 {
@@ -686,7 +842,57 @@ namespace fluxora
                     entry.key = readStringOrDefault(value, L"key");
                     entry.moduleName = readStringOrDefault(value, L"moduleName");
                     entry.moduleVersion = readStringOrDefault(value, L"moduleVersion");
-                    entry.selectedOptionIds = readStringArrayOrEmpty(value, L"selectedOptionIds");
+                    if (schemaVersion < 2)
+                    {
+                        entry.legacyV1 = true;
+                        for (std::wstring optionId : readStringArrayOrEmpty(value, L"selectedOptionIds"))
+                        {
+                            entry.globalManualDecisions.push_back(FomodMemoryEntry::ManualDecision{
+                                std::move(optionId), true});
+                        }
+                    }
+                    else
+                    {
+                        if (const JsonValue* decisions = value.find(L"globalManualDecisions");
+                            decisions != nullptr && decisions->isArray())
+                        {
+                            for (const JsonValue& decisionValue : decisions->asArray())
+                            {
+                                if (!decisionValue.isObject())
+                                {
+                                    continue;
+                                }
+                                const std::wstring optionId = readStringOrDefault(decisionValue, L"optionId");
+                                const JsonValue* selected = decisionValue.find(L"selected");
+                                if (!optionId.empty() && selected != nullptr &&
+                                    selected->type() == JsonValue::Type::Boolean)
+                                {
+                                    entry.globalManualDecisions.push_back(FomodMemoryEntry::ManualDecision{
+                                        optionId, selected->asBoolean()});
+                                }
+                            }
+                        }
+                        if (const JsonValue* contexts = value.find(L"contexts");
+                            contexts != nullptr && contexts->isArray())
+                        {
+                            for (const JsonValue& contextValue : contexts->asArray())
+                            {
+                                if (!contextValue.isObject())
+                                {
+                                    continue;
+                                }
+                                FomodMemoryEntry::ContextSelection selection;
+                                selection.profileName = readStringOrDefault(contextValue, L"profileName");
+                                selection.fingerprint = readStringOrDefault(contextValue, L"fingerprint");
+                                selection.selectedOptionIds =
+                                    readStringArrayOrEmpty(contextValue, L"selectedOptionIds");
+                                if (!selection.profileName.empty() && !selection.fingerprint.empty())
+                                {
+                                    entry.contexts.push_back(std::move(selection));
+                                }
+                            }
+                        }
+                    }
                     if (!entry.key.empty())
                     {
                         entries.push_back(std::move(entry));
@@ -706,7 +912,7 @@ namespace fluxora
         {
             JsonWriter writer;
             writer.beginObject();
-            writer.field(L"schemaVersion", 1);
+            writer.field(L"schemaVersion", 2);
             writer.key(L"entries").beginArray();
             for (const FomodMemoryEntry& entry : entries)
             {
@@ -714,7 +920,25 @@ namespace fluxora
                 writer.field(L"key", entry.key);
                 writer.field(L"moduleName", entry.moduleName);
                 writer.field(L"moduleVersion", entry.moduleVersion);
-                writer.stringArray(L"selectedOptionIds", entry.selectedOptionIds);
+                writer.key(L"globalManualDecisions").beginArray();
+                for (const FomodMemoryEntry::ManualDecision& decision : entry.globalManualDecisions)
+                {
+                    writer.beginObject();
+                    writer.field(L"optionId", decision.optionId);
+                    writer.field(L"selected", decision.selected);
+                    writer.endObject();
+                }
+                writer.endArray();
+                writer.key(L"contexts").beginArray();
+                for (const FomodMemoryEntry::ContextSelection& context : entry.contexts)
+                {
+                    writer.beginObject();
+                    writer.field(L"profileName", context.profileName);
+                    writer.field(L"fingerprint", context.fingerprint);
+                    writer.stringArray(L"selectedOptionIds", context.selectedOptionIds);
+                    writer.endObject();
+                }
+                writer.endArray();
                 writer.endObject();
             }
             writer.endArray();
@@ -723,10 +947,53 @@ namespace fluxora
             writeTextFile(memoryPath(projectDirectory), toUtf8(writer.str()));
         }
 
+        [[nodiscard]] std::set<std::wstring> independentOptionIds(
+            const FomodInstallerDescriptor& descriptor)
+        {
+            std::set<std::wstring> output;
+            for (const FomodStep& step : descriptor.steps)
+            {
+                if (step.visible.has_value())
+                {
+                    continue;
+                }
+                for (const FomodGroup& group : step.groups)
+                {
+                    const bool independentGroup = std::all_of(
+                        group.options.begin(),
+                        group.options.end(),
+                        [](const FomodOption& option)
+                        {
+                            return option.typePatterns.empty() &&
+                                std::all_of(
+                                    option.pluginHeaders.begin(),
+                                    option.pluginHeaders.end(),
+                                    [](const FomodPluginHeader& header)
+                                    {
+                                        return header.masters.empty();
+                                    });
+                        });
+                    if (!independentGroup)
+                    {
+                        continue;
+                    }
+                    for (const FomodOption& option : group.options)
+                    {
+                        output.insert(option.id);
+                    }
+                }
+            }
+            return output;
+        }
+
         void saveRememberedSelection(
             const std::filesystem::path& projectDirectory,
             const FomodInstallerDescriptor& descriptor,
-            const std::vector<std::wstring>& selectedOptionIds)
+            const std::vector<std::wstring>& selectedOptionIds,
+            std::wstring_view profileName,
+            std::wstring_view profileFingerprint,
+            const std::vector<FomodRememberedManualDecision>& manualDecisions,
+            bool inferLegacyManualSelections)
         {
             if (descriptor.memoryKey.empty())
             {
@@ -734,25 +1001,91 @@ namespace fluxora
             }
 
             std::vector<FomodMemoryEntry> entries = loadMemory(projectDirectory);
-            const auto match = std::find_if(entries.begin(), entries.end(), [&](const FomodMemoryEntry& entry)
+            auto match = std::find_if(entries.begin(), entries.end(), [&](const FomodMemoryEntry& entry)
             {
                 return entry.key == descriptor.memoryKey;
             });
 
-            FomodMemoryEntry next{
-                descriptor.memoryKey,
-                descriptor.moduleName,
-                descriptor.moduleVersion,
-                selectedOptionIds
-            };
-
             if (match == entries.end())
             {
-                entries.push_back(std::move(next));
+                entries.push_back(FomodMemoryEntry{});
+                match = std::prev(entries.end());
+            }
+
+            match->key = descriptor.memoryKey;
+            match->moduleName = descriptor.moduleName;
+            match->moduleVersion = descriptor.moduleVersion;
+            match->legacyV1 = false;
+            const std::set<std::wstring> independent = independentOptionIds(descriptor);
+            if (inferLegacyManualSelections)
+            {
+                match->globalManualDecisions.clear();
+                for (const std::wstring& optionId : selectedOptionIds)
+                {
+                    if (independent.contains(optionId))
+                    {
+                        match->globalManualDecisions.push_back(
+                            FomodMemoryEntry::ManualDecision{optionId, true});
+                    }
+                }
             }
             else
             {
-                *match = std::move(next);
+                for (const FomodRememberedManualDecision& decision : manualDecisions)
+                {
+                    if (!independent.contains(decision.optionId))
+                    {
+                        continue;
+                    }
+                    const auto existing = std::find_if(
+                        match->globalManualDecisions.begin(),
+                        match->globalManualDecisions.end(),
+                        [&decision](const FomodMemoryEntry::ManualDecision& saved)
+                        {
+                            return saved.optionId == decision.optionId;
+                        });
+                    if (existing == match->globalManualDecisions.end())
+                    {
+                        match->globalManualDecisions.push_back(
+                            FomodMemoryEntry::ManualDecision{decision.optionId, decision.selected});
+                    }
+                    else
+                    {
+                        existing->selected = decision.selected;
+                    }
+                }
+            }
+
+            if (!trim(std::wstring(profileName)).empty() &&
+                !trim(std::wstring(profileFingerprint)).empty())
+            {
+                const auto contextMatch = std::find_if(
+                    match->contexts.begin(),
+                    match->contexts.end(),
+                    [profileName, profileFingerprint](const FomodMemoryEntry::ContextSelection& context)
+                    {
+                        return equalsIgnoreCase(context.profileName, profileName) &&
+                            context.fingerprint == profileFingerprint;
+                    });
+                FomodMemoryEntry::ContextSelection context{
+                    std::wstring(profileName),
+                    std::wstring(profileFingerprint),
+                    selectedOptionIds
+                };
+                if (contextMatch == match->contexts.end())
+                {
+                    match->contexts.push_back(std::move(context));
+                }
+                else
+                {
+                    *contextMatch = std::move(context);
+                }
+                if (match->contexts.size() > 16)
+                {
+                    match->contexts.erase(
+                        match->contexts.begin(),
+                        match->contexts.begin() + static_cast<std::ptrdiff_t>(match->contexts.size() - 16));
+                }
             }
 
             saveMemory(projectDirectory, std::move(entries));
@@ -945,10 +1278,26 @@ namespace fluxora
                 return dependency;
             }
 
-            if (name == L"gamedependency" || name == L"fommdependency")
+            if (name == L"gamedependency" ||
+                name == L"fommdependency" ||
+                name == L"sksedependency" ||
+                name == L"fosedependency" ||
+                name == L"nvsedependency" ||
+                name == L"f4sedependency")
             {
                 FomodDependencyNode dependency;
-                dependency.kind = name == L"gamedependency" ? L"game" : L"fomm";
+                if (name == L"gamedependency")
+                {
+                    dependency.kind = L"game";
+                }
+                else if (name == L"fommdependency")
+                {
+                    dependency.kind = L"fomm";
+                }
+                else
+                {
+                    dependency.kind = name.substr(0, name.size() - std::wstring(L"dependency").size());
+                }
                 dependency.version = trim(attribute(node, L"version"));
                 return dependency;
             }
@@ -967,6 +1316,10 @@ namespace fluxora
                     childName == L"flagdependency" ||
                     childName == L"gamedependency" ||
                     childName == L"fommdependency" ||
+                    childName == L"sksedependency" ||
+                    childName == L"fosedependency" ||
+                    childName == L"nvsedependency" ||
+                    childName == L"f4sedependency" ||
                     childName == L"dependencies")
                 {
                     composite.children.push_back(parseDependencyNode(child));
@@ -1376,7 +1729,7 @@ namespace fluxora
             return exists;
         }
 
-        [[nodiscard]] bool evaluateDependency(
+        [[nodiscard]] bool evaluateLegacyDependency(
             const FomodDependencyNode& dependency,
             const std::map<std::wstring, std::wstring>& flags,
             const FomodEnvironment& environment)
@@ -1405,7 +1758,7 @@ namespace fluxora
 
             for (const FomodDependencyNode& child : dependency.children)
             {
-                const bool satisfied = evaluateDependency(child, flags, environment);
+                const bool satisfied = evaluateLegacyDependency(child, flags, environment);
                 if (useOr && satisfied)
                 {
                     return true;
@@ -1419,6 +1772,23 @@ namespace fluxora
             return !useOr;
         }
 
+        [[nodiscard]] FomodDependencyResult evaluateDependency(
+            const FomodDependencyNode& dependency,
+            const std::map<std::wstring, std::wstring>& flags,
+            const FomodEnvironment& environment)
+        {
+            if (environment.profileContext != nullptr)
+            {
+                return FomodAutoSelectionService::evaluateDependency(
+                    dependency,
+                    *environment.profileContext,
+                    flags);
+            }
+            return evaluateLegacyDependency(dependency, flags, environment)
+                ? FomodDependencyResult::Satisfied
+                : FomodDependencyResult::Unsatisfied;
+        }
+
         [[nodiscard]] std::wstring effectiveType(
             const FomodOption& option,
             const std::map<std::wstring, std::wstring>& flags,
@@ -1426,7 +1796,8 @@ namespace fluxora
         {
             for (const FomodTypePattern& pattern : option.typePatterns)
             {
-                if (evaluateDependency(pattern.dependencies, flags, environment))
+                if (evaluateDependency(pattern.dependencies, flags, environment) ==
+                    FomodDependencyResult::Satisfied)
                 {
                     return pattern.type.empty() ? L"Optional" : pattern.type;
                 }
@@ -1446,6 +1817,9 @@ namespace fluxora
                 const std::wstring key = toLower(relativePath.wstring());
                 states.try_emplace(key, FomodFileDependencyState{
                     relativePath.wstring(),
+                    {},
+                    {},
+                    {},
                     fileDependencyExists(dependency, environment)
                 });
             }
@@ -1461,6 +1835,11 @@ namespace fluxora
             const FomodEnvironment& environment)
         {
             std::map<std::wstring, FomodFileDependencyState> states;
+
+            if (descriptor.moduleDependencies.has_value())
+            {
+                collectFileDependencyStates(descriptor.moduleDependencies.value(), environment, states);
+            }
 
             for (const FomodStep& step : descriptor.steps)
             {
@@ -1494,6 +1873,152 @@ namespace fluxora
             }
 
             return result;
+        }
+
+        void inspectOptionPluginHeaders(
+            FomodInstallerDescriptor& descriptor,
+            const std::filesystem::path& packageRoot)
+        {
+            std::size_t candidateCount = 0;
+            std::uint64_t totalReadBytes = 0;
+            std::optional<FomodPluginHeaderStatus> blockedStatus;
+            std::wstring blockedIssue;
+            for (FomodStep& step : descriptor.steps)
+            {
+                for (FomodGroup& group : step.groups)
+                {
+                    for (FomodOption& option : group.options)
+                    {
+                        for (const FomodFileEntry& file : option.files)
+                        {
+                            if (trim(file.source).empty())
+                            {
+                                continue;
+                            }
+                            std::filesystem::path sourceRelative;
+                            std::filesystem::path destinationRelative;
+                            try
+                            {
+                                sourceRelative = safeRelativePath(file.source, L"source");
+                                destinationRelative = safeRelativePath(file.destination, L"destination");
+                            }
+                            catch (const std::exception&)
+                            {
+                                continue;
+                            }
+                            const std::filesystem::path sourcePath = packageRoot / sourceRelative;
+                            const std::filesystem::path ioSourcePath = pathForFilesystemIo(sourcePath);
+                            const std::filesystem::path outputPath = destinationRelative.empty()
+                                ? sourceRelative
+                                : destinationRelative;
+                            if (blockedStatus.has_value())
+                            {
+                                if (file.isFolder || pluginExtension(sourceRelative))
+                                {
+                                    option.pluginHeaders.push_back(FomodPluginHeader{
+                                        normalizedFomodPath(outputPath),
+                                        {},
+                                        blockedStatus.value(),
+                                        blockedIssue
+                                    });
+                                }
+                                continue;
+                            }
+                            if (!file.isFolder)
+                            {
+                                if (!pluginExtension(sourceRelative))
+                                {
+                                    continue;
+                                }
+                                if (!std::filesystem::exists(ioSourcePath) ||
+                                    !std::filesystem::is_regular_file(ioSourcePath))
+                                {
+                                    option.pluginHeaders.push_back(FomodPluginHeader{
+                                        normalizedFomodPath(outputPath),
+                                        {},
+                                        FomodPluginHeaderStatus::Corrupt,
+                                        L"tes4.sourceMissing"
+                                    });
+                                    continue;
+                                }
+                                if (candidateCount >= maxTes4Candidates)
+                                {
+                                    option.pluginHeaders.push_back(FomodPluginHeader{
+                                        normalizedFomodPath(outputPath),
+                                        {},
+                                        FomodPluginHeaderStatus::CandidateLimit,
+                                        L"tes4.candidateLimit"
+                                    });
+                                    blockedStatus = FomodPluginHeaderStatus::CandidateLimit;
+                                    blockedIssue = L"tes4.candidateLimit";
+                                    continue;
+                                }
+                                ++candidateCount;
+                                option.pluginHeaders.push_back(readTes4PluginHeader(
+                                    sourcePath,
+                                    normalizedFomodPath(outputPath),
+                                    totalReadBytes));
+                                if (option.pluginHeaders.back().status ==
+                                    FomodPluginHeaderStatus::ReadBudgetExceeded)
+                                {
+                                    blockedStatus = FomodPluginHeaderStatus::ReadBudgetExceeded;
+                                    blockedIssue = L"tes4.readBudgetExceeded";
+                                }
+                                continue;
+                            }
+                            if (!std::filesystem::exists(ioSourcePath) ||
+                                !std::filesystem::is_directory(ioSourcePath))
+                            {
+                                continue;
+                            }
+                            std::error_code iteratorError;
+                            std::filesystem::recursive_directory_iterator iterator(
+                                ioSourcePath,
+                                std::filesystem::directory_options::skip_permission_denied,
+                                iteratorError);
+                            const std::filesystem::recursive_directory_iterator end;
+                            while (!iteratorError && iterator != end)
+                            {
+                                const std::filesystem::directory_entry entry = *iterator;
+                                iterator.increment(iteratorError);
+                                if (!entry.is_regular_file() || !pluginExtension(entry.path()))
+                                {
+                                    continue;
+                                }
+                                const std::filesystem::path childRelative =
+                                    entry.path().lexically_relative(ioSourcePath);
+                                const std::filesystem::path childOutputPath = destinationRelative.empty()
+                                    ? childRelative
+                                    : destinationRelative / childRelative;
+                                if (candidateCount >= maxTes4Candidates)
+                                {
+                                    option.pluginHeaders.push_back(FomodPluginHeader{
+                                        normalizedFomodPath(childOutputPath),
+                                        {},
+                                        FomodPluginHeaderStatus::CandidateLimit,
+                                        L"tes4.candidateLimit"
+                                    });
+                                    blockedStatus = FomodPluginHeaderStatus::CandidateLimit;
+                                    blockedIssue = L"tes4.candidateLimit";
+                                    break;
+                                }
+                                ++candidateCount;
+                                option.pluginHeaders.push_back(readTes4PluginHeader(
+                                    entry.path(),
+                                    normalizedFomodPath(childOutputPath),
+                                    totalReadBytes));
+                                if (!option.pluginHeaders.empty() &&
+                                    option.pluginHeaders.back().status == FomodPluginHeaderStatus::ReadBudgetExceeded)
+                                {
+                                    blockedStatus = FomodPluginHeaderStatus::ReadBudgetExceeded;
+                                    blockedIssue = L"tes4.readBudgetExceeded";
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         [[nodiscard]] bool isUsableType(std::wstring_view type)
@@ -1566,14 +2091,18 @@ namespace fluxora
                 (equalsIgnoreCase(group.type, L"SelectExactlyOne") ||
                  equalsIgnoreCase(group.type, L"SelectAtLeastOne")))
             {
+                std::vector<const FomodOption*> recommended;
                 for (const FomodOption& option : group.options)
                 {
                     const std::wstring type = effectiveType(option, flags, environment);
                     if (isUsableType(type) && isRecommendedType(type))
                     {
-                        options.push_back(&option);
-                        break;
+                        recommended.push_back(&option);
                     }
+                }
+                if (equalsIgnoreCase(group.type, L"SelectAtLeastOne") || recommended.size() == 1)
+                {
+                    options = std::move(recommended);
                 }
             }
 
@@ -1610,7 +2139,8 @@ namespace fluxora
             for (const FomodStep& step : descriptor.steps)
             {
                 if (step.visible.has_value() &&
-                    !evaluateDependency(step.visible.value(), selected.flags, environment))
+                    evaluateDependency(step.visible.value(), selected.flags, environment) ==
+                        FomodDependencyResult::Unsatisfied)
                 {
                     continue;
                 }
@@ -1654,7 +2184,8 @@ namespace fluxora
 
             for (const FomodConditionalFilePattern& pattern : descriptor.conditionalFilePatterns)
             {
-                if (evaluateDependency(pattern.dependencies, selected.flags, environment))
+                if (evaluateDependency(pattern.dependencies, selected.flags, environment) ==
+                    FomodDependencyResult::Satisfied)
                 {
                     addPlannedFiles(plan, pattern.files, sequence);
                 }
@@ -1681,11 +2212,13 @@ namespace fluxora
             const PathSafetyService safety;
             const std::filesystem::path sourceRelative = safeRelativePath(entry.source, L"source");
             const std::filesystem::path sourcePath = packageRoot / sourceRelative;
+            const std::filesystem::path ioSourcePath = pathForFilesystemIo(sourcePath);
             safety.validateContainedPath(packageRoot, sourcePath)
                 .throwIfUnsafe("FOMOD source path is unsafe");
             if (entry.isFolder)
             {
-                if (!std::filesystem::exists(sourcePath) || !std::filesystem::is_directory(sourcePath))
+                if (!std::filesystem::exists(ioSourcePath) ||
+                    !std::filesystem::is_directory(ioSourcePath))
                 {
                     throw std::runtime_error("FOMOD source folder is missing: " + toUtf8(entry.source));
                 }
@@ -1696,19 +2229,21 @@ namespace fluxora
                     : destinationRoot / destinationRelative;
                 safety.validateWritePath(destinationRoot, destinationDirectory)
                     .throwIfUnsafe("FOMOD destination folder is unsafe");
-                std::filesystem::create_directories(destinationDirectory);
+                std::filesystem::create_directories(pathForFilesystemIo(destinationDirectory));
 
-                for (const auto& child : std::filesystem::recursive_directory_iterator(sourcePath))
+                for (const auto& child : std::filesystem::recursive_directory_iterator(ioSourcePath))
                 {
-                    safety.validateContainedPath(sourcePath, child.path())
+                    const std::filesystem::path relative =
+                        child.path().lexically_relative(ioSourcePath);
+                    const std::filesystem::path logicalChildPath = sourcePath / relative;
+                    safety.validateContainedPath(sourcePath, logicalChildPath)
                         .throwIfUnsafe("FOMOD child source path is unsafe");
-                    const std::filesystem::path relative = std::filesystem::relative(child.path(), sourcePath);
                     const std::filesystem::path target = destinationDirectory / relative;
                     if (child.is_directory())
                     {
                         safety.validateWritePath(destinationRoot, target)
                             .throwIfUnsafe("FOMOD child destination folder is unsafe");
-                        std::filesystem::create_directories(target);
+                        std::filesystem::create_directories(pathForFilesystemIo(target));
                         continue;
                     }
                     if (!child.is_regular_file())
@@ -1716,20 +2251,25 @@ namespace fluxora
                         continue;
                     }
 
-                    std::filesystem::create_directories(target.parent_path());
+                    std::filesystem::create_directories(pathForFilesystemIo(target.parent_path()));
                     std::error_code sizeError;
-                    const std::uintmax_t bytes = child.file_size(sizeError);
+                    const std::uintmax_t bytes =
+                        std::filesystem::file_size(pathForFilesystemIo(logicalChildPath), sizeError);
                     safety.validateWritePath(
                         destinationRoot,
                         target,
                         PathSafetyWriteOptions{sizeError ? 0 : bytes, false})
                         .throwIfUnsafe("FOMOD child destination file is unsafe");
-                    std::filesystem::copy_file(child.path(), target, std::filesystem::copy_options::overwrite_existing);
+                    std::filesystem::copy_file(
+                        pathForFilesystemIo(logicalChildPath),
+                        pathForFilesystemIo(target),
+                        std::filesystem::copy_options::overwrite_existing);
                 }
                 return;
             }
 
-            if (!std::filesystem::exists(sourcePath) || !std::filesystem::is_regular_file(sourcePath))
+            if (!std::filesystem::exists(ioSourcePath) ||
+                !std::filesystem::is_regular_file(ioSourcePath))
             {
                 throw std::runtime_error("FOMOD source file is missing: " + toUtf8(entry.source));
             }
@@ -1741,20 +2281,25 @@ namespace fluxora
             }
             const std::filesystem::path target = destinationRoot / destinationRelative;
             std::error_code sizeError;
-            const std::uintmax_t bytes = std::filesystem::file_size(sourcePath, sizeError);
+            const std::uintmax_t bytes = std::filesystem::file_size(ioSourcePath, sizeError);
             safety.validateWritePath(
                 destinationRoot,
                 target,
                 PathSafetyWriteOptions{sizeError ? 0 : bytes, false})
                 .throwIfUnsafe("FOMOD destination file is unsafe");
-            std::filesystem::create_directories(target.parent_path());
-            std::filesystem::copy_file(sourcePath, target, std::filesystem::copy_options::overwrite_existing);
+            std::filesystem::create_directories(pathForFilesystemIo(target.parent_path()));
+            std::filesystem::copy_file(
+                ioSourcePath,
+                pathForFilesystemIo(target),
+                std::filesystem::copy_options::overwrite_existing);
         }
 
         [[nodiscard]] FomodInstallerDescriptor parseDescriptor(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& packageRoot,
-            const FomodPackageIdentity& identity)
+            const FomodPackageIdentity& identity,
+            std::wstring_view profileName = {},
+            std::wstring_view profileFingerprint = {})
         {
             const std::filesystem::path configPath = moduleConfigPath(packageRoot);
             if (configPath.empty())
@@ -1780,8 +2325,13 @@ namespace fluxora
                 descriptor.moduleImagePath = trim(attribute(*moduleImage, L"path"));
             }
             descriptor.requiredFiles = parseFileList(firstChild(config, L"requiredInstallFiles"));
+            if (const XmlNode* dependencies = firstChild(config, L"moduleDependencies"); dependencies != nullptr)
+            {
+                descriptor.moduleDependencies = parseDependencyNode(*dependencies);
+            }
             descriptor.steps = parseSteps(config);
             descriptor.conditionalFilePatterns = parseConditionalPatterns(config);
+            inspectOptionPluginHeaders(descriptor, packageRoot);
 
             const std::filesystem::path metadataPath = infoPath(packageRoot);
             if (!metadataPath.empty())
@@ -1813,8 +2363,39 @@ namespace fluxora
             {
                 if (entry.key == descriptor.memoryKey)
                 {
-                    descriptor.hasPreviousSelection = !entry.selectedOptionIds.empty();
-                    descriptor.previousSelectedOptionIds = entry.selectedOptionIds;
+                    const std::set<std::wstring> independent = independentOptionIds(descriptor);
+                    const auto contextMatch = std::find_if(
+                        entry.contexts.begin(),
+                        entry.contexts.end(),
+                        [profileName, profileFingerprint](const FomodMemoryEntry::ContextSelection& context)
+                        {
+                            return !trim(std::wstring(profileName)).empty() &&
+                                !trim(std::wstring(profileFingerprint)).empty() &&
+                                equalsIgnoreCase(context.profileName, profileName) &&
+                                context.fingerprint == profileFingerprint;
+                        });
+                    if (contextMatch != entry.contexts.end())
+                    {
+                        descriptor.previousSelectionContextual = true;
+                        descriptor.previousSelectedOptionIds = contextMatch->selectedOptionIds;
+                    }
+                    else
+                    {
+                        descriptor.previousSelectionWeak = entry.legacyV1;
+                        for (const FomodMemoryEntry::ManualDecision& decision : entry.globalManualDecisions)
+                        {
+                            if (!independent.contains(decision.optionId))
+                            {
+                                continue;
+                            }
+                            (decision.selected
+                                ? descriptor.previousSelectedOptionIds
+                                : descriptor.previousDeselectedOptionIds).push_back(decision.optionId);
+                        }
+                    }
+                    descriptor.hasPreviousSelection =
+                        !descriptor.previousSelectedOptionIds.empty() ||
+                        !descriptor.previousDeselectedOptionIds.empty();
                     break;
                 }
             }
@@ -1834,7 +2415,9 @@ namespace fluxora
         const std::filesystem::path& modsDirectory,
         const std::filesystem::path& packageDirectory,
         const FomodPackageIdentity& identity,
-        const std::vector<std::wstring>& gameDataFolders)
+        const std::vector<std::wstring>& gameDataFolders,
+        std::wstring_view profileName,
+        std::wstring_view profileFingerprint)
     {
         const std::filesystem::path packageRoot = packageRootWithFomod(packageDirectory);
         if (packageRoot.empty())
@@ -1842,7 +2425,12 @@ namespace fluxora
             return {};
         }
 
-        FomodInstallerDescriptor descriptor = parseDescriptor(projectDirectory, packageRoot, identity);
+        FomodInstallerDescriptor descriptor = parseDescriptor(
+            projectDirectory,
+            packageRoot,
+            identity,
+            profileName,
+            profileFingerprint);
         descriptor.fileDependencyStates = collectFileDependencyStates(
             descriptor,
             FomodEnvironment{
@@ -1870,7 +2458,8 @@ namespace fluxora
             context.projectDirectory,
             context.gameDirectory,
             context.modsDirectory,
-            context.gameDataFolders
+            context.gameDataFolders,
+            context.profileContext
         };
         SelectedOptionSet selected;
         selected.requestedIds.insert(context.selectedOptionIds.begin(), context.selectedOptionIds.end());
@@ -1878,7 +2467,7 @@ namespace fluxora
         const std::vector<PlannedFile> plan = buildPlan(descriptor, environment, selected);
         PathSafetyService().validateDirectoryWriteRoot(context.destinationDirectory)
             .throwIfUnsafe("FOMOD destination root is unsafe");
-        std::filesystem::create_directories(context.destinationDirectory);
+        std::filesystem::create_directories(pathForFilesystemIo(context.destinationDirectory));
         for (const PlannedFile& item : plan)
         {
             copyFileEntry(packageRoot, context.destinationDirectory, item.file);
@@ -1887,11 +2476,90 @@ namespace fluxora
         return std::vector<std::wstring>(selected.appliedIds.begin(), selected.appliedIds.end());
     }
 
+    std::vector<std::wstring> FomodInstallerService::referencedProfileFiles(
+        const FomodInstallerDescriptor& descriptor)
+    {
+        std::vector<std::wstring> output;
+        std::set<std::wstring> seen;
+        const auto collectDependency = [&](const auto& self, const FomodDependencyNode& dependency) -> void
+        {
+            if (dependency.kind == L"file" && !trim(dependency.file).empty())
+            {
+                const std::filesystem::path relative = safeRelativePath(dependency.file, L"fileDependency");
+                const std::wstring normalized = normalizedFomodPath(relative);
+                if (seen.insert(toLower(normalized)).second)
+                {
+                    output.push_back(normalized);
+                }
+            }
+            for (const FomodDependencyNode& child : dependency.children)
+            {
+                self(self, child);
+            }
+        };
+        if (descriptor.moduleDependencies.has_value())
+        {
+            collectDependency(collectDependency, descriptor.moduleDependencies.value());
+        }
+        for (const FomodStep& step : descriptor.steps)
+        {
+            if (step.visible.has_value())
+            {
+                collectDependency(collectDependency, step.visible.value());
+            }
+            for (const FomodGroup& group : step.groups)
+            {
+                for (const FomodOption& option : group.options)
+                {
+                    for (const FomodTypePattern& pattern : option.typePatterns)
+                    {
+                        collectDependency(collectDependency, pattern.dependencies);
+                    }
+                    for (const FomodPluginHeader& header : option.pluginHeaders)
+                    {
+                        for (const std::wstring& master : header.masters)
+                        {
+                            const std::wstring normalized = normalizedFomodPath(
+                                safeRelativePath(master, L"plugin master"));
+                            if (seen.insert(toLower(normalized)).second)
+                            {
+                                output.push_back(normalized);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (const FomodConditionalFilePattern& pattern : descriptor.conditionalFilePatterns)
+        {
+            collectDependency(collectDependency, pattern.dependencies);
+        }
+        return output;
+    }
+
     void FomodInstallerService::rememberSelection(
         const std::filesystem::path& projectDirectory,
         const FomodInstallerDescriptor& descriptor,
         const std::vector<std::wstring>& selectedOptionIds)
     {
-        saveRememberedSelection(projectDirectory, descriptor, selectedOptionIds);
+        saveRememberedSelection(projectDirectory, descriptor, selectedOptionIds, {}, {}, {}, true);
+    }
+
+    void FomodInstallerService::rememberSelection(
+        const std::filesystem::path& projectDirectory,
+        const FomodInstallerDescriptor& descriptor,
+        const std::vector<std::wstring>& selectedOptionIds,
+        std::wstring_view profileName,
+        std::wstring_view profileFingerprint,
+        const std::vector<FomodRememberedManualDecision>& manualDecisions)
+    {
+        saveRememberedSelection(
+            projectDirectory,
+            descriptor,
+            selectedOptionIds,
+            profileName,
+            profileFingerprint,
+            manualDecisions,
+            false);
     }
 }

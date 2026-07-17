@@ -54,6 +54,8 @@ const modItem = (
   name,
   version: '1.0.0',
   latestVersion: '',
+  latestFileId: '',
+  updateCheckState: '',
   lastCheckedAt: '',
   updateStatus: '',
   conflictStatus: '',
@@ -119,6 +121,60 @@ describe('mod workspace state', () => {
     expect(filterModOrderItems(items, 'visuals')).toEqual([items[0]]);
     expect(filterModOrderItems(items, 'update available')).toEqual([items[1]]);
     expect(filterModOrderItems(items, '')).toEqual(items);
+  });
+
+  it('clears a non-matching search while revealing and selecting the installed mod', () => {
+    const groupedItems = [
+      ...items,
+      separatorItem('sep_audio', 'Audio', 3),
+      modItem('mod_music', 'Music - HQ', 4)
+    ];
+    const state = {
+      ...emptyModWorkspaceState(),
+      items: groupedItems,
+      selectedOrderId: 'mod_music',
+      selectedOrderIds: new Set(['mod_skyui', 'mod_music']),
+      selectionAnchorOrderId: 'mod_music',
+      collapsedSeparatorOrderIds: new Set(['sep_visuals', 'sep_audio']),
+      searchText: 'unrelated search',
+      loadState: 'ready' as const
+    };
+
+    const revealed = modWorkspaceReducer(state, {
+      type: 'item-reveal-requested',
+      orderId: 'mod_skyui'
+    });
+
+    expect(revealed.searchText).toBe('');
+    expect([...revealed.collapsedSeparatorOrderIds]).toEqual(['sep_audio']);
+    expect(revealed.selectedOrderId).toBe('mod_skyui');
+    expect([...revealed.selectedOrderIds]).toEqual(['mod_skyui']);
+    expect(revealed.selectionAnchorOrderId).toBe('mod_skyui');
+  });
+
+  it('keeps search when the installed mod already matches the visible results', () => {
+    const state = {
+      ...emptyModWorkspaceState(),
+      items,
+      collapsedSeparatorOrderIds: new Set(['sep_visuals']),
+      searchText: 'skyui',
+      loadState: 'ready' as const
+    };
+
+    const revealed = modWorkspaceReducer(state, {
+      type: 'item-reveal-requested',
+      orderId: 'mod_skyui'
+    });
+
+    expect(revealed.searchText).toBe('skyui');
+    expect(
+      visibleModOrderItems(
+        revealed.items,
+        revealed.searchText,
+        revealed.collapsedSeparatorOrderIds
+      ).map((item) => item.orderId)
+    ).toEqual(['mod_skyui']);
+    expect(revealed.selectedOrderId).toBe('mod_skyui');
   });
 
   it('assigns one-based priorities to mods without counting separators or overwrite rows', () => {
@@ -377,6 +433,8 @@ describe('mod workspace state', () => {
       version: '1.4.0',
       isEnabled: true,
       latestVersion: '1.4.0',
+      latestFileId: '770345',
+      updateCheckState: 'baseline_pending',
       sourceIsNexus: true,
       sourceIsModdingFlow: false,
       sourceProvider: 'nexus',
@@ -387,6 +445,14 @@ describe('mod workspace state', () => {
       isLocal: false,
       isTranslation: false,
       isPatch: false,
+      modUuid: 'uuid-cabbage',
+      orderId: '',
+      fileCount: 12,
+      conflictingFileCount: 0,
+      overwrittenFileCount: 0,
+      overwritingFileCount: 0,
+      overwritesModIds: [],
+      overwrittenByModIds: [],
       operationId: 'op_install_cabbage'
     };
 
@@ -428,6 +494,72 @@ describe('mod workspace state', () => {
       isLocal: false
     });
     expect(optimistic.installedOrderId).toBe('pending-install:op_install_cabbage');
+  });
+
+  it('keeps a mod at the user-selected priority when its installation completes later', () => {
+    const installed: FluxoraInstalledModSummary = {
+      id: 'C:\\Builds\\Skyrim\\mods\\Cabbage CS Preset',
+      name: 'Cabbage CS Preset',
+      version: '1.4.0',
+      isEnabled: true,
+      latestVersion: '1.4.0',
+      latestFileId: '770345',
+      updateCheckState: 'baseline_pending',
+      sourceIsNexus: true,
+      sourceIsModdingFlow: false,
+      sourceProvider: 'nexus',
+      sourceGameDomain: 'skyrimspecialedition',
+      sourceModId: '182366',
+      sourceFileId: '770345',
+      sourceUrl: 'nxm://skyrimspecialedition/mods/182366/files/770345',
+      isLocal: false,
+      isTranslation: false,
+      isPatch: false,
+      modUuid: 'uuid-cabbage',
+      orderId: 'mod_cabbage',
+      fileCount: 12,
+      conflictingFileCount: 0,
+      overwrittenFileCount: 0,
+      overwritingFileCount: 0,
+      overwritesModIds: [],
+      overwrittenByModIds: [],
+      operationId: 'op_install_cabbage'
+    };
+    const installing = {
+      ...modItem('mod_cabbage', installed.name, 1),
+      id: installed.id,
+      version: 'Installing'
+    };
+    const userReorderedItems = [items[0], installing, items[1], items[2]].map(
+      (item, index) => ({ ...item, order: index })
+    );
+    const state = {
+      ...emptyModWorkspaceState(),
+      items: userReorderedItems,
+      loadState: 'ready' as const
+    };
+
+    const completed = modWorkspaceReducer(state, {
+      type: 'install-completed',
+      installed,
+      placement: {
+        targetOrderId: 'mod_smoothcam',
+        placement: 'after'
+      }
+    });
+
+    expect(completed.items.map((item) => item.orderId)).toEqual([
+      'sep_visuals',
+      'mod_cabbage',
+      'mod_skyui',
+      'mod_smoothcam'
+    ]);
+    expect(completed.items[1]).toMatchObject({
+      orderId: 'mod_cabbage',
+      version: '1.4.0',
+      sourceFileId: '770345'
+    });
+    expect(completed.selectedOrderId).toBe('mod_cabbage');
   });
 
   it('applies optimistic enabled state without changing the current row context', () => {

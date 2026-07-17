@@ -443,6 +443,14 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    // requestJson: { "projectDirectory": string, "mode": "automatic" | "manual" }
+    FLUXORA_CORE_API int fluxora_check_mod_updates_v2(
+        const wchar_t* requestJson,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_get_mod_file_tree(
         const wchar_t* projectDirectory,
         const wchar_t* modPath,
@@ -666,6 +674,36 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_plan_download_install_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_plan_download_install_for_profile_with_name(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* profileName,
+        const wchar_t* modName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_plan_archive_install_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* profileName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_plan_archive_install_for_profile_with_name(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* profileName,
+        const wchar_t* modName,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_install_download(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
@@ -710,6 +748,23 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_install_download_planned_with_progress(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        int modOrderTargetIndex,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_install_archive_with_mode(
         const wchar_t* projectDirectory,
         const wchar_t* archivePath,
@@ -737,6 +792,23 @@ extern "C"
         int identityDecision,
         const wchar_t* targetModUuid,
         int newNamePolicy,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_install_archive_planned_with_progress(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        int modOrderTargetIndex,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
@@ -769,6 +841,14 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_analyze_fomod_download_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* profileName,
+        const wchar_t* manualDecisionsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_install_fomod_download_with_layout(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
@@ -776,6 +856,19 @@ extern "C"
         int existingModMode,
         const wchar_t* selectedOptionIdsJson,
         const wchar_t* placementOverridesJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_install_fomod_download_with_layout_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
@@ -798,6 +891,19 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_install_fomod_archive_with_layout_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_install_fomod_download_planned(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
@@ -809,6 +915,43 @@ extern "C"
         int identityDecision,
         const wchar_t* targetModUuid,
         int newNamePolicy,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_install_fomod_download_planned_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_install_fomod_download_planned_for_profile_with_progress(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        int modOrderTargetIndex,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
@@ -826,6 +969,50 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_install_fomod_archive_planned_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_install_fomod_archive_planned_for_profile_with_progress(
+        const wchar_t* projectDirectory,
+        const wchar_t* archivePath,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        int modOrderTargetIndex,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_rebase_pending_install(
+        const wchar_t* projectDirectory,
+        const wchar_t* operationId,
+        int targetIndex,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     // Returns a JSON placement plan for selected FOMOD options without
     // registering or installing a mod.
     FLUXORA_CORE_API int fluxora_analyze_fomod_download_content_layout(
@@ -833,6 +1020,17 @@ extern "C"
         const wchar_t* downloadPath,
         int existingModMode,
         const wchar_t* selectedOptionIdsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_analyze_fomod_download_content_layout_for_profile(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 

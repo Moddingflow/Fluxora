@@ -21,13 +21,15 @@ const readText = (...segments: string[]): string =>
 const renderDialog = (
   kind: DeletionConfirmationKind,
   itemName = 'SkyUI 5.2',
-  itemCount?: number
+  itemCount?: number,
+  description?: string
 ) =>
   renderToStaticMarkup(
     React.createElement(DeletionConfirmationDialog, {
       itemCount,
       itemName,
       kind,
+      description,
       onCancel: noop,
       onConfirm: noop
     })
@@ -56,6 +58,16 @@ describe('deletion confirmation dialog', () => {
     expect(renderDialog('mod', 'SkyUI 5.2', 10)).toContain('10 модов');
     expect(renderDialog('download', 'Texture Pack.7z', 2)).toContain('2 файла');
     expect(renderDialog('download', 'Texture Pack.7z', 5)).toContain('5 файлов');
+  });
+
+  it('warns that deleting an archive affects the global game library but not installed mods', () => {
+    const warning =
+      'Архив будет удалён из глобальной библиотеки Downloads для всех сборок этой игры. Уже установленные моды останутся на месте.';
+    expect(renderDialog('download', 'Texture Pack.7z', 1, warning)).toContain(warning);
+
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    expect(app).toContain('глобальной библиотеки Downloads для всех сборок этой игры');
+    expect(app).toContain('Уже установленные моды останутся на месте');
   });
 
   it('routes destructive mod, build and download actions through the in-app confirmation', () => {

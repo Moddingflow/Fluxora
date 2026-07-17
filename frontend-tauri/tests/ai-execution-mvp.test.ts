@@ -44,6 +44,8 @@ const mods: FluxoraInstalledMod[] = [
     name: 'Visual Pack',
     version: '1.0.0',
     latestVersion: '1.0.0',
+    latestFileId: '',
+    updateCheckState: 'completed',
     lastCheckedAt: '2026-06-30',
     updateStatus: 'current',
     conflictStatus: 'none',
@@ -149,7 +151,10 @@ const importedDownload: FluxoraDownloadEntry = {
   fileName: 'visual-pack.7z',
   localPath: 'C:\\Archives\\visual-pack.7z',
   source: 'Local',
-  status: 'ready',
+  archiveId: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  buildStatus: 'Ready',
+  transferState: 'idle',
+  transferMessage: '',
   sizeText: '12 MB',
   createdAtText: 'today',
   progressPercent: 100,
@@ -376,6 +381,7 @@ describe('AI Phase 10 basic build execution MVP', () => {
         installDownloadedMod: {
           downloadPath: importedDownload.localPath,
           modName: 'Visual Pack',
+          profileName: 'Default',
           projectDirectory: project.projectDirectory
         },
         moveMod: { orderItemId: 'order-mod-a', targetIndex: 0 },
@@ -440,6 +446,7 @@ describe('AI Phase 10 basic build execution MVP', () => {
         installDownloadedMod: {
           downloadPath: importedDownload.localPath,
           modName: 'Visual Pack',
+          profileName: 'Default',
           projectDirectory: project.projectDirectory
         },
         moveMod: { orderItemId: 'order-mod-a', targetIndex: 0 },

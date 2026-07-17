@@ -37,7 +37,7 @@ Public release tasks such as code signing, clean-machine installer acceptance an
 | Create/open/delete/rename build | Playwright workflow plus C++ project tests. |
 | Manage mods and order | Playwright workspace workflow plus backend mod/order tests. |
 | Manage plugins/load order | Playwright workspace workflow plus backend plugin tests. |
-| Install archives and FOMOD | Tauri install affordance and typed API routes; renderer wizard/unit coverage; backend `DownloadService`, `ContentLayoutService` and `FomodInstallerService` tests. |
+| Install archives and FOMOD | Tauri install affordance and typed API routes; Smart Select renderer/unit coverage; backend `DownloadService`, `ContentLayoutService`, profile-context and auto-selection tests; Playwright real ZIP/TES4 fixture through `FluxoraBridgeHost`. |
 | Downloads and NXM | Playwright downloads import/row action smoke; backend download/NXM tests; platform capability matrix. |
 | Profiles | Playwright create/clone/rename/delete workflow. |
 | Executables and launch | Playwright executable edit workflow and launch capability state; backend executable tests. |
@@ -80,7 +80,6 @@ Validated on 2026-06-24 after adding this final DoD guard:
 These are not reasons to keep WPF or reopen the migration architecture, but they must be completed before the matching public release:
 
 - Real archive install e2e fixture.
-- Real FOMOD archive e2e fixture.
 - Real MO2 import fixture or documented owner acceptance.
 - Clean-machine Windows installer smoke with the approved `FluxoraSetup.exe`.
 - Windows signing review.

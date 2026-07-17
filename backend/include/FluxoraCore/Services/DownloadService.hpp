@@ -1,9 +1,12 @@
 #pragma once
 
+#include "FluxoraCore/Services/ArchiveCatalogService.hpp"
 #include "FluxoraCore/Services/ContentLayoutService.hpp"
 #include "FluxoraCore/Services/DownloadTransferLimiter.hpp"
+#include "FluxoraCore/Services/FomodAutoSelectionService.hpp"
 #include "FluxoraCore/Services/FomodInstallerService.hpp"
 #include "FluxoraCore/Services/IService.hpp"
+#include "FluxoraCore/Services/InstallConflictPreviewService.hpp"
 #include "FluxoraCore/Services/ModIdentityResolver.hpp"
 
 #include <condition_variable>
@@ -31,6 +34,10 @@ namespace fluxora
         std::filesystem::path localPath;
         std::wstring source;
         std::wstring status;
+        std::wstring archiveId;
+        std::wstring buildStatus;
+        std::wstring transferState{L"idle"};
+        std::wstring transferMessage;
         std::wstring sizeText;
         std::wstring createdAtText;
         int progressPercent{0};
@@ -61,6 +68,16 @@ namespace fluxora
         bool isLocal{true};
         bool isTranslation{false};
         bool isPatch{false};
+        std::wstring latestFileId;
+        std::wstring updateCheckState;
+        std::wstring modUuid;
+        std::wstring orderId;
+        int fileCount{0};
+        int conflictingFileCount{0};
+        int overwrittenFileCount{0};
+        int overwritingFileCount{0};
+        std::vector<std::wstring> overwritesModIds;
+        std::vector<std::wstring> overwrittenByModIds;
     };
 
     enum class ExistingModInstallMode
@@ -69,6 +86,9 @@ namespace fluxora
         Replace = 1,
         Merge = 2
     };
+
+    using InstallConflictSnapshotCallback =
+        std::function<void(const FluxoraInstallConflictSnapshot& snapshot)>;
 
     class DownloadService final : public IService
     {
@@ -128,11 +148,15 @@ namespace fluxora
 
         [[nodiscard]] FluxoraInstallPlan planDownloadInstall(
             const std::filesystem::path& projectDirectory,
-            const std::filesystem::path& downloadPath) const;
+            const std::filesystem::path& downloadPath,
+            std::wstring_view profileName = {},
+            std::wstring_view requestedModName = {}) const;
 
         [[nodiscard]] FluxoraInstallPlan planArchiveInstall(
             const std::filesystem::path& projectDirectory,
-            const std::filesystem::path& archivePath) const;
+            const std::filesystem::path& archivePath,
+            std::wstring_view profileName = {},
+            std::wstring_view requestedModName = {}) const;
 
         InstalledMod installDownload(
             const std::filesystem::path& projectDirectory,
@@ -140,7 +164,10 @@ namespace fluxora
             std::wstring_view modName,
             ExistingModInstallMode existingModMode = ExistingModInstallMode::FailIfExists,
             const std::vector<PlacementOverride>& placementOverrides = {},
-            const ModIdentityInstallSelection* identitySelection = nullptr) const;
+            const ModIdentityInstallSelection* identitySelection = nullptr,
+            std::wstring_view profileName = {},
+            int modOrderTargetIndex = -1,
+            const InstallConflictSnapshotCallback& conflictProgress = {}) const;
 
         InstalledMod installArchive(
             const std::filesystem::path& projectDirectory,
@@ -148,7 +175,10 @@ namespace fluxora
             std::wstring_view modName,
             ExistingModInstallMode existingModMode = ExistingModInstallMode::FailIfExists,
             const std::vector<PlacementOverride>& placementOverrides = {},
-            const ModIdentityInstallSelection* identitySelection = nullptr) const;
+            const ModIdentityInstallSelection* identitySelection = nullptr,
+            std::wstring_view profileName = {},
+            int modOrderTargetIndex = -1,
+            const InstallConflictSnapshotCallback& conflictProgress = {}) const;
 
         [[nodiscard]] PlacementPlan analyzeDownloadContentLayout(
             const std::filesystem::path& projectDirectory,
@@ -157,13 +187,18 @@ namespace fluxora
 
         [[nodiscard]] FomodInstallerDescriptor analyzeFomodDownload(
             const std::filesystem::path& projectDirectory,
-            const std::filesystem::path& downloadPath) const;
+            const std::filesystem::path& downloadPath,
+            std::wstring_view profileName = {},
+            const std::vector<FomodManualDecision>& manualDecisions = {}) const;
 
         [[nodiscard]] PlacementPlan analyzeFomodDownloadContentLayout(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& downloadPath,
             ExistingModInstallMode existingModMode,
-            const std::vector<std::wstring>& selectedOptionIds) const;
+            const std::vector<std::wstring>& selectedOptionIds,
+            std::wstring_view profileName = {},
+            std::wstring_view fomodContextId = {},
+            const std::vector<FomodManualDecision>& manualDecisions = {}) const;
 
         InstalledMod installFomodDownload(
             const std::filesystem::path& projectDirectory,
@@ -172,7 +207,12 @@ namespace fluxora
             ExistingModInstallMode existingModMode,
             const std::vector<std::wstring>& selectedOptionIds,
             const std::vector<PlacementOverride>& placementOverrides = {},
-            const ModIdentityInstallSelection* identitySelection = nullptr) const;
+            const ModIdentityInstallSelection* identitySelection = nullptr,
+            std::wstring_view profileName = {},
+            std::wstring_view fomodContextId = {},
+            const std::vector<FomodManualDecision>& manualDecisions = {},
+            int modOrderTargetIndex = -1,
+            const InstallConflictSnapshotCallback& conflictProgress = {}) const;
 
         InstalledMod installFomodArchive(
             const std::filesystem::path& projectDirectory,
@@ -181,7 +221,12 @@ namespace fluxora
             ExistingModInstallMode existingModMode,
             const std::vector<std::wstring>& selectedOptionIds,
             const std::vector<PlacementOverride>& placementOverrides = {},
-            const ModIdentityInstallSelection* identitySelection = nullptr) const;
+            const ModIdentityInstallSelection* identitySelection = nullptr,
+            std::wstring_view profileName = {},
+            std::wstring_view fomodContextId = {},
+            const std::vector<FomodManualDecision>& manualDecisions = {},
+            int modOrderTargetIndex = -1,
+            const InstallConflictSnapshotCallback& conflictProgress = {}) const;
 
         [[nodiscard]] bool isInitialized() const noexcept;
 
@@ -195,6 +240,7 @@ namespace fluxora
     private:
         struct NxmDownloadJob
         {
+            std::filesystem::path projectDirectory;
             std::filesystem::path directory;
             std::filesystem::path pendingPath;
             std::wstring link;
@@ -210,10 +256,14 @@ namespace fluxora
         void enqueueNxmDownloadJob(NxmDownloadJob job) const;
         void runNxmDownloadWorker() const noexcept;
         [[nodiscard]] bool stopNxmDownloadWorker() noexcept;
+        [[nodiscard]] DownloadEntry buildCatalogEntry(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& path) const;
 
         Logger& logger_;
         AppSettingsService& settings_;
         const BuildPathSettingsService& pathSettings_;
+        ArchiveCatalogService archiveCatalog_;
         NexusModsAuthService* nexusAuth_{nullptr};
         mutable std::mutex nxmShutdownMutex_;
         mutable std::mutex nxmQueueMutex_;

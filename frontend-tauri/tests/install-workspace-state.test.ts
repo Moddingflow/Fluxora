@@ -11,7 +11,9 @@ import {
   installDestinationPreview,
   installSourceLabel,
   initialFomodSelection,
+  sanitizeFomodManualDecisions,
   toggleFomodOption,
+  updateFomodManualDecisions,
   validateInstallModName
 } from '../src/renderer/install-workspace-state';
 import type {
@@ -232,6 +234,34 @@ describe('install workspace state', () => {
     expect(coerceFomodSelection(fomod, [])).toContain('mcm');
   });
 
+  it('distinguishes inactive profile files from active dependencies', () => {
+    const inactiveInstaller: FluxoraFomodInstaller = {
+      ...fomod,
+      fileDependencies: [
+        {
+          file: 'Data/SKSE/skse64_loader.exe',
+          state: 'Inactive',
+          sourceKind: 'mod',
+          sourceName: 'Disabled SKSE',
+          exists: true
+        }
+      ]
+    };
+
+    const inactive = evaluateFomodWizard(inactiveInstaller, initialFomodSelection(inactiveInstaller));
+    expect(inactive.selectedOptionIds).toEqual(['mcm']);
+    expect(inactive.visibleSteps[1].groups[0].options[0].effectiveType).toBe('Optional');
+
+    const active = evaluateFomodWizard(
+      {
+        ...inactiveInstaller,
+        fileDependencies: [{ ...inactiveInstaller.fileDependencies[0], state: 'Active' }]
+      },
+      initialFomodSelection(inactiveInstaller)
+    );
+    expect(active.selectedOptionIds).toEqual(['mcm', 'loader']);
+  });
+
   it('restores a valid remembered FOMOD choice instead of replacing it with defaults', () => {
     const remembered = {
       ...fomod,
@@ -240,6 +270,79 @@ describe('install workspace state', () => {
 
     expect(initialFomodSelection(remembered)).toEqual(['classic']);
     expect(evaluateFomodWizard(remembered, initialFomodSelection(remembered)).visibleSteps).toHaveLength(1);
+  });
+
+  it('uses the core Smart Select plan without guessing ambiguous exclusive groups', () => {
+    const smartInstaller: FluxoraFomodInstaller = {
+      ...fomod,
+      autoSelection: {
+        contextId: 'fomod-context-1',
+        initialSelectedOptionIds: ['classic'],
+        unresolvedGroups: [],
+        decisions: [
+          {
+            optionId: 'mcm',
+            action: 'deselect',
+            confidence: 'strong',
+            effectiveType: 'Recommended',
+            reasonCodes: ['author.optional'],
+            evidence: []
+          },
+          {
+            optionId: 'classic',
+            action: 'select',
+            confidence: 'exact',
+            effectiveType: 'Optional',
+            reasonCodes: ['profile.exactRecommendation'],
+            evidence: []
+          }
+        ],
+        moduleDependencyResult: 'satisfied',
+        installBlocked: false,
+        cycleDetected: false,
+        warnings: []
+      }
+    };
+
+    expect(initialFomodSelection(smartInstaller)).toEqual(['classic']);
+
+    const ambiguous: FluxoraFomodInstaller = {
+      ...smartInstaller,
+      autoSelection: {
+        ...smartInstaller.autoSelection!,
+        initialSelectedOptionIds: [],
+        unresolvedGroups: [
+          {
+            stepId: 'main',
+            groupId: 'variant',
+            groupName: 'Variant',
+            reasonCode: 'group.ambiguous',
+            optionIds: ['mcm', 'classic']
+          }
+        ]
+      }
+    };
+    expect(initialFomodSelection(ambiguous)).toEqual([]);
+  });
+
+  it('records manual pins for the affected exclusive group and drops stale option ids', () => {
+    const selected = toggleFomodOption(fomod, ['mcm'], 'classic', true);
+    const manual = updateFomodManualDecisions(fomod, [], selected, 'classic');
+
+    expect(manual).toEqual([
+      { optionId: 'mcm', selected: false },
+      { optionId: 'classic', selected: true }
+    ]);
+    expect(
+      sanitizeFomodManualDecisions(fomod, [
+        ...manual,
+        { optionId: 'removed-option', selected: true },
+        { optionId: 'classic', selected: false }
+      ])
+    ).toEqual([
+      { optionId: 'mcm', selected: false },
+      { optionId: 'classic', selected: false }
+    ]);
   });
 
   it('detects existing mods case-insensitively for replace merge UX', () => {

@@ -304,6 +304,52 @@ namespace fluxora
                 sameText(left.remoteModId, right.remoteModId);
         }
 
+        bool isStrictMeaningfulNameExtension(
+            std::wstring_view possibleExtension,
+            std::wstring_view baseName)
+        {
+            if (possibleExtension.empty() || baseName.empty() ||
+                possibleExtension.size() <= baseName.size() ||
+                possibleExtension.substr(0, baseName.size()) != baseName ||
+                possibleExtension[baseName.size()] != L' ')
+            {
+                return false;
+            }
+
+            return !tokensFromNormalizedName(
+                possibleExtension.substr(baseName.size() + 1)).empty();
+        }
+
+        bool isDistinctFileOnSameStableSource(
+            const ModIdentityInput& input,
+            const ModIdentityCandidate& candidate)
+        {
+            if (!sameStableSource(input.source, candidate.source) ||
+                trim(input.source.remoteFileId).empty() ||
+                trim(candidate.source.remoteFileId).empty() ||
+                sameText(input.source.remoteFileId, candidate.source.remoteFileId))
+            {
+                return false;
+            }
+
+            const std::wstring inputName = normalizedIdentityText(input.displayName, true);
+            const std::wstring candidateDisplayName =
+                normalizedIdentityText(candidate.target.displayName, true);
+            const std::wstring candidateFolderName =
+                normalizedIdentityText(candidate.target.folderName, true);
+            if (inputName.empty() ||
+                inputName == candidateDisplayName ||
+                inputName == candidateFolderName)
+            {
+                return false;
+            }
+
+            return isStrictMeaningfulNameExtension(inputName, candidateDisplayName) ||
+                isStrictMeaningfulNameExtension(candidateDisplayName, inputName) ||
+                isStrictMeaningfulNameExtension(inputName, candidateFolderName) ||
+                isStrictMeaningfulNameExtension(candidateFolderName, inputName);
+        }
+
         bool conflictsWithStableSource(const ModIdentitySource& left, const ModIdentitySource& right)
         {
             return hasStableSource(left) &&
@@ -311,6 +357,46 @@ namespace fluxora
                 sameText(left.provider, right.provider) &&
                 sameText(left.game, right.game) &&
                 !sameText(left.remoteModId, right.remoteModId);
+        }
+
+        bool hasSameSafeIdentityName(
+            const ModIdentityInput& input,
+            const ModIdentityCandidate& candidate)
+        {
+            const std::wstring inputDisplayName = normalizedIdentityText(input.displayName, true);
+            const std::wstring inputFolderName = normalizedIdentityText(input.folderName, true);
+            const std::wstring candidateDisplayName =
+                normalizedIdentityText(candidate.target.displayName, true);
+            const std::wstring candidateFolderName =
+                normalizedIdentityText(candidate.target.folderName, true);
+            return (!inputDisplayName.empty() &&
+                    (inputDisplayName == candidateDisplayName ||
+                     inputDisplayName == candidateFolderName)) ||
+                (!inputFolderName.empty() &&
+                    (inputFolderName == candidateDisplayName ||
+                     inputFolderName == candidateFolderName));
+        }
+
+        std::size_t sharedContentAnchorKindCount(
+            const ModIdentityInput& input,
+            const ModIdentityCandidate& candidate)
+        {
+            std::size_t count = 0;
+            count += sharesAnchor(input.content.pluginFiles, candidate.content.pluginFiles) ? 1 : 0;
+            count += sharesAnchor(input.content.archiveFiles, candidate.content.archiveFiles) ? 1 : 0;
+            count += sharesAnchor(
+                input.content.scriptExtenderDlls,
+                candidate.content.scriptExtenderDlls) ? 1 : 0;
+            return count;
+        }
+
+        bool isCorroboratedCrossSourceMatch(
+            const ModIdentityInput& input,
+            const ModIdentityCandidate& candidate)
+        {
+            return conflictsWithStableSource(input.source, candidate.source) &&
+                hasSameSafeIdentityName(input, candidate) &&
+                sharedContentAnchorKindCount(input, candidate) >= 2;
         }
 
         struct StoredInstallPlan
@@ -444,7 +530,8 @@ namespace fluxora
         std::size_t stableMatchCount = 0;
         for (const ModIdentityCandidate& candidate : candidates)
         {
-            if (!sameStableSource(input.source, candidate.source))
+            if (!sameStableSource(input.source, candidate.source) ||
+                isDistinctFileOnSameStableSource(input, candidate))
             {
                 continue;
             }
@@ -464,11 +551,51 @@ namespace fluxora
             return resolution;
         }
 
+        const ModIdentityCandidate* crossSourceMatch = nullptr;
+        std::size_t crossSourceMatchCount = 0;
+        for (const ModIdentityCandidate& candidate : candidates)
+        {
+            if (candidate.excluded || !isCorroboratedCrossSourceMatch(input, candidate))
+            {
+                continue;
+            }
+            crossSourceMatch = &candidate;
+            ++crossSourceMatchCount;
+        }
+        if (crossSourceMatchCount == 1 && crossSourceMatch != nullptr)
+        {
+            resolution.kind = ModIdentityResolutionKind::Probable;
+            resolution.suggestedModName = crossSourceMatch->target.displayName;
+            resolution.matchedTarget = crossSourceMatch->target;
+            resolution.score = 94;
+            resolution.evidenceCodes = {
+                L"source.cross-page-update",
+                L"name.safe-normalized"
+            };
+            if (sharesAnchor(input.content.pluginFiles, crossSourceMatch->content.pluginFiles))
+            {
+                resolution.evidenceCodes.push_back(L"content.plugin");
+            }
+            if (sharesAnchor(input.content.archiveFiles, crossSourceMatch->content.archiveFiles))
+            {
+                resolution.evidenceCodes.push_back(L"content.archive");
+            }
+            if (sharesAnchor(
+                    input.content.scriptExtenderDlls,
+                    crossSourceMatch->content.scriptExtenderDlls))
+            {
+                resolution.evidenceCodes.push_back(L"content.skse-dll");
+            }
+            return resolution;
+        }
+
         const ModIdentityCandidate* aliasMatch = nullptr;
         std::size_t aliasMatchCount = 0;
         for (const ModIdentityCandidate& candidate : candidates)
         {
-            if (candidate.excluded || conflictsWithStableSource(input.source, candidate.source))
+            if (candidate.excluded ||
+                conflictsWithStableSource(input.source, candidate.source) ||
+                isDistinctFileOnSameStableSource(input, candidate))
             {
                 continue;
             }
@@ -501,6 +628,7 @@ namespace fluxora
             {
                 if (candidate.excluded ||
                     conflictsWithStableSource(input.source, candidate.source) ||
+                    isDistinctFileOnSameStableSource(input, candidate) ||
                     !sameText(input.fomodModuleId, candidate.fomodModuleId))
                 {
                     continue;
@@ -528,7 +656,7 @@ namespace fluxora
             std::size_t exactNameMatchCount = 0;
             for (const ModIdentityCandidate& candidate : candidates)
             {
-                if (candidate.excluded || conflictsWithStableSource(input.source, candidate.source))
+                if (candidate.excluded || isDistinctFileOnSameStableSource(input, candidate))
                 {
                     continue;
                 }
@@ -549,11 +677,19 @@ namespace fluxora
 
             if (exactNameMatchCount == 1 && exactNameMatch != nullptr)
             {
-                resolution.kind = ModIdentityResolutionKind::Exact;
+                const bool stableSourceConflict =
+                    conflictsWithStableSource(input.source, exactNameMatch->source);
+                resolution.kind = stableSourceConflict
+                    ? ModIdentityResolutionKind::Probable
+                    : ModIdentityResolutionKind::Exact;
                 resolution.suggestedModName = exactNameMatch->target.displayName;
                 resolution.matchedTarget = exactNameMatch->target;
-                resolution.score = 94;
+                resolution.score = stableSourceConflict ? 90 : 94;
                 resolution.evidenceCodes = {L"name.normalized-exact"};
+                if (stableSourceConflict)
+                {
+                    resolution.evidenceCodes.push_back(L"source.stable-mod-id-conflict");
+                }
                 return resolution;
             }
         }
@@ -572,7 +708,9 @@ namespace fluxora
             safeInputName.empty() ? safeInputFolder : safeInputName);
         for (const ModIdentityCandidate& candidate : candidates)
         {
-            if (candidate.excluded || conflictsWithStableSource(input.source, candidate.source))
+            if (candidate.excluded ||
+                conflictsWithStableSource(input.source, candidate.source) ||
+                isDistinctFileOnSameStableSource(input, candidate))
             {
                 continue;
             }

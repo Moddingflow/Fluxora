@@ -45,12 +45,18 @@ export type ModWorkspaceAction =
   | { type: 'load-started' }
   | { type: 'load-failed'; message: string; silent?: boolean }
   | { type: 'items-loaded'; items: FluxoraModOrderItem[] }
+  | {
+      type: 'install-completed';
+      installed: FluxoraInstalledModSummary;
+      placement: InstallModOrderPlacement | null;
+    }
   | { type: 'items-reordered'; orderId: string; targetIndex: number }
   | { type: 'item-enabled-set'; orderId: string; isEnabled: boolean }
   | { type: 'all-items-enabled-set'; isEnabled: boolean }
   | { type: 'separator-collapse-toggled'; orderId: string }
   | { type: 'all-separators-collapse-set'; isCollapsed: boolean }
   | { type: 'search-changed'; searchText: string }
+  | { type: 'item-reveal-requested'; orderId: string }
   | { type: 'selected'; orderId: string | null }
   | { type: 'selection-toggled'; orderId: string; orderedOrderIds: readonly string[] }
   | {
@@ -110,6 +116,8 @@ export const createOverwriteOrderItem = (
   name: overwriteFolderLabel(projectName, language),
   version: '',
   latestVersion: '',
+  latestFileId: '',
+  updateCheckState: '',
   lastCheckedAt: '',
   updateStatus: '',
   conflictStatus: '',
@@ -681,12 +689,12 @@ const optimisticInstalledMod = (
   const canCheckUpdates =
     installed.sourceIsNexus &&
     Boolean(installed.sourceGameDomain?.trim()) &&
-    Boolean(installed.sourceModId?.trim());
+    Boolean(installed.sourceModId?.trim()) &&
+    Boolean(installed.sourceFileId?.trim());
   const hasUpdate =
-    knownVersion(installed.version) &&
-    knownVersion(installed.latestVersion) &&
-    installed.version.trim().toLocaleLowerCase() !==
-      installed.latestVersion.trim().toLocaleLowerCase();
+    canCheckUpdates &&
+    Boolean(installed.latestFileId.trim()) &&
+    installed.latestFileId !== installed.sourceFileId;
 
   return {
     id: installed.id,
@@ -695,13 +703,18 @@ const optimisticInstalledMod = (
     installedAt: existing?.installedAt,
     updatedAt: existing?.updatedAt,
     latestVersion: installed.latestVersion,
+    latestFileId: installed.latestFileId,
+    updateCheckState: installed.updateCheckState,
     lastCheckedAt: existing?.lastCheckedAt ?? '',
     updateStatus: existing?.updateStatus ?? '',
-    conflictStatus: existing?.conflictStatus ?? '',
-    fileCount: existing?.fileCount ?? -1,
-    conflictingFileCount: existing?.conflictingFileCount ?? 0,
-    overwrittenFileCount: existing?.overwrittenFileCount ?? 0,
-    overwritingFileCount: existing?.overwritingFileCount ?? 0,
+    conflictStatus:
+      installed.conflictingFileCount > 0
+        ? `${installed.conflictingFileCount} conflicting ${installed.conflictingFileCount === 1 ? 'file' : 'files'}`
+        : '',
+    fileCount: installed.fileCount,
+    conflictingFileCount: installed.conflictingFileCount,
+    overwrittenFileCount: installed.overwrittenFileCount,
+    overwritingFileCount: installed.overwritingFileCount,
     isEnabled: installed.isEnabled,
     canCheckUpdates,
     hasUpdate,
@@ -715,9 +728,20 @@ const optimisticInstalledMod = (
     isLocal: installed.isLocal,
     isTranslation: installed.isTranslation,
     isPatch: installed.isPatch,
-    overwritesModIds: existing?.overwritesModIds ?? [],
-    overwrittenByModIds: existing?.overwrittenByModIds ?? []
+    overwritesModIds: [...installed.overwritesModIds],
+    overwrittenByModIds: [...installed.overwrittenByModIds]
   };
+};
+
+export const mergeOptimisticInstalledMod = (
+  installedMods: FluxoraInstalledMod[],
+  installed: FluxoraInstalledModSummary
+): FluxoraInstalledMod[] => {
+  const existingInstalled = installedMods.find((mod) => installedModMatchesSummary(mod, installed));
+  const nextInstalled = optimisticInstalledMod(installed, existingInstalled);
+  return existingInstalled
+    ? installedMods.map((mod) => (installedModMatchesSummary(mod, installed) ? nextInstalled : mod))
+    : [...installedMods, nextInstalled];
 };
 
 export const optimisticModInstallState = (
@@ -726,11 +750,8 @@ export const optimisticModInstallState = (
   installed: FluxoraInstalledModSummary,
   placement?: InstallModOrderPlacement | null
 ): OptimisticModInstallState => {
-  const existingInstalled = installedMods.find((mod) => installedModMatchesSummary(mod, installed));
-  const nextInstalled = optimisticInstalledMod(installed, existingInstalled);
-  const nextInstalledMods = existingInstalled
-    ? installedMods.map((mod) => (installedModMatchesSummary(mod, installed) ? nextInstalled : mod))
-    : [...installedMods, nextInstalled];
+  const nextInstalledMods = mergeOptimisticInstalledMod(installedMods, installed);
+  const nextInstalled = nextInstalledMods.find((mod) => installedModMatchesSummary(mod, installed))!;
 
   const existingOrderItem = items.find(
     (item) => item.isMod && installedModMatchesSummary(item, installed)
@@ -844,6 +865,25 @@ export const modWorkspaceReducer = (
         loadState: action.silent ? state.loadState : 'error',
         errorMessage: action.message
       };
+    case 'install-completed': {
+      const alreadyVisible = state.items.some(
+        (item) => item.isMod && installedModMatchesSummary(item, action.installed)
+      );
+      const optimistic = optimisticModInstallState(
+        [],
+        state.items,
+        action.installed,
+        alreadyVisible ? null : action.placement
+      );
+      const loaded = modWorkspaceReducer(state, {
+        type: 'items-loaded',
+        items: optimistic.items
+      });
+      return modWorkspaceReducer(loaded, {
+        type: 'item-reveal-requested',
+        orderId: optimistic.installedOrderId
+      });
+    }
     case 'items-loaded': {
       const collapsedSeparatorOrderIds = pruneCollapsedSeparators(
         action.items,
@@ -945,6 +985,29 @@ export const modWorkspaceReducer = (
         ...state,
         searchText: action.searchText
       };
+    case 'item-reveal-requested': {
+      const target = state.items.find((item) => item.orderId === action.orderId);
+      if (!target) {
+        return state;
+      }
+
+      const parentSeparator = parentSeparatorForOrderItem(state.items, target.orderId);
+      const collapsedSeparatorOrderIds = new Set(state.collapsedSeparatorOrderIds);
+      if (parentSeparator) {
+        collapsedSeparatorOrderIds.delete(parentSeparator.orderId);
+      }
+
+      const searchText = filterModOrderItems([target], state.searchText).length > 0
+        ? state.searchText
+        : '';
+
+      return {
+        ...state,
+        ...selectOrderItem(state, target.orderId),
+        collapsedSeparatorOrderIds,
+        searchText
+      };
+    }
     case 'selected':
       return {
         ...state,

@@ -36,12 +36,14 @@ $FluxoraAiDirectoryName = 'Fluxora AI'
 $FluxoraAiSkillsRelativeDir = Join-Path $FluxoraAiDirectoryName 'Skills'
 $InstallerProject = Join-Path $ProjectRoot 'installer\Fluxora.Installer\Fluxora.Installer.csproj'
 $OutputDir = Join-Path $ProjectRoot 'output'
+$OutputDownloadsDir = Join-Path $OutputDir 'Downloads'
 $FluxoraAiSkillsOutputDir = Join-Path $OutputDir $FluxoraAiSkillsRelativeDir
 $SymbolsOutputDir = Join-Path $ProjectRoot 'output-symbols'
 $InstallerOutputDir = Join-Path $ProjectRoot 'output-installer'
 $InstallerPayloadDir = Join-Path $ProjectRoot 'installer\Fluxora.Installer\Resources\Payload'
 $InstallerPayloadPath = Join-Path $InstallerPayloadDir 'FluxoraPayload.flxpkg.gz'
 $BuildCacheDir = Join-Path $ProjectRoot 'build\installer-cache'
+$PreservedDownloadsStagingDir = Join-Path $BuildCacheDir 'preserved-output-downloads'
 $PayloadManifestPath = Join-Path $BuildCacheDir 'payload.manifest.json'
 $InstallerManifestPath = Join-Path $BuildCacheDir 'installer.manifest.json'
 $BuildManifestVersion = 1
@@ -363,7 +365,20 @@ function Test-IsPayloadFileExcluded {
         [string]$RelativePath
     )
 
-    return ($RelativePath -like 'logs/*.log') -or ($RelativePath -like '*.pdb')
+    return (Test-IsPayloadPathExcluded -RelativePath $RelativePath) -or
+        ($RelativePath -like 'logs/*.log') -or
+        ($RelativePath -like '*.pdb')
+}
+
+function Test-IsPayloadPathExcluded {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath
+    )
+
+    $normalized = $RelativePath.Replace('\', '/').Trim('/')
+    return [string]::Equals($normalized, 'Downloads', [System.StringComparison]::OrdinalIgnoreCase) -or
+        $normalized.StartsWith('Downloads/', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function New-FluxoraPayloadManifest {
@@ -385,6 +400,7 @@ function New-FluxoraPayloadManifest {
                 }
             } |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_.Relative) -and $_.Relative -ne '.' } |
+            Where-Object { -not (Test-IsPayloadPathExcluded -RelativePath $_.Relative) } |
             Sort-Object Relative
     )
 
@@ -698,6 +714,10 @@ function Write-FluxoraPayloadPackage {
 
     $sourceFullPath = [System.IO.Path]::GetFullPath($SourceDirectory)
     $directories = Get-ChildItem -LiteralPath $sourceFullPath -Directory -Recurse -Force |
+        Where-Object {
+            $relative = Get-PortableRelativePath -Root $sourceFullPath -Path $_.FullName
+            -not (Test-IsPayloadPathExcluded -RelativePath $relative)
+        } |
         Sort-Object FullName
     $files = Get-ChildItem -LiteralPath $sourceFullPath -File -Recurse -Force |
         Where-Object {
@@ -818,6 +838,7 @@ if (-not (Test-Path -LiteralPath $InstallerProject)) {
 }
 
 Assert-ChildPath -Path $OutputDir -ParentPath $ProjectRoot
+Assert-ChildPath -Path $OutputDownloadsDir -ParentPath $OutputDir
 Assert-ChildPath -Path $SymbolsOutputDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $InstallerOutputDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $InstallerPayloadPath -ParentPath $ProjectRoot
@@ -827,13 +848,44 @@ Assert-ChildPath -Path $TauriNativeResourcesRoot -ParentPath $ProjectRoot
 Assert-ChildPath -Path $TauriNativeResourcesDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $FluxoraSkillsSourceDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $FluxoraAiSkillsOutputDir -ParentPath $ProjectRoot
+Assert-ChildPath -Path $PreservedDownloadsStagingDir -ParentPath $ProjectRoot
 
 Invoke-BuildStep "Preparing output folders" {
+    New-Item -ItemType Directory -Path $BuildCacheDir -Force | Out-Null
+
+    if (Test-Path -LiteralPath $PreservedDownloadsStagingDir) {
+        if (Test-Path -LiteralPath $OutputDownloadsDir) {
+            throw "Both the live and staged Downloads directories exist. Resolve '$OutputDownloadsDir' and '$PreservedDownloadsStagingDir' before building."
+        }
+        New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+        Move-Item -LiteralPath $PreservedDownloadsStagingDir -Destination $OutputDownloadsDir
+        Write-Warning "Recovered Downloads preserved by an interrupted earlier build."
+    }
+
     if ((Test-Path -LiteralPath $OutputDir) -and (-not $NoClean)) {
-        Remove-Item -LiteralPath $OutputDir -Recurse -Force
+        $downloadsWereStaged = $false
+        try {
+            if (Test-Path -LiteralPath $OutputDownloadsDir) {
+                $downloadsItem = Get-Item -LiteralPath $OutputDownloadsDir -Force
+                if (($downloadsItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                    throw "Refusing to preserve output Downloads because it is a reparse point: '$OutputDownloadsDir'."
+                }
+                Move-Item -LiteralPath $OutputDownloadsDir -Destination $PreservedDownloadsStagingDir
+                $downloadsWereStaged = $true
+            }
+            Remove-Item -LiteralPath $OutputDir -Recurse -Force
+            New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+        }
+        finally {
+            if ($downloadsWereStaged -and (Test-Path -LiteralPath $PreservedDownloadsStagingDir)) {
+                New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+                Move-Item -LiteralPath $PreservedDownloadsStagingDir -Destination $OutputDownloadsDir
+            }
+        }
     }
 
     New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $OutputDownloadsDir -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $OutputDir 'logs') -Force | Out-Null
 
     if ($IncludeSymbols) {

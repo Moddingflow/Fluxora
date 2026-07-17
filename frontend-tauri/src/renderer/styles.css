@@ -3459,6 +3459,11 @@ input::placeholder {
   }
 }
 
+.right-pane-content--plugins,
+.right-pane-content--downloads {
+  padding-top: 5px;
+}
+
 .right-pane-content--plugins {
   grid-template-rows: auto auto auto minmax(0, 1fr);
 }
@@ -4804,6 +4809,34 @@ body.row-reorder-active * {
   animation: row-drop-indicator-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.mod-list-row[data-state="post-install-reveal"]::after {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  box-shadow:
+    inset 0 0 0 2px rgba(var(--flx-accent-rgb), 0.82),
+    inset 0 0 22px rgba(var(--flx-accent-rgb), 0.3);
+  opacity: 0;
+  content: "";
+  pointer-events: none;
+  animation-name: post-install-mod-reveal;
+  animation-duration: 700ms;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: 2;
+  animation-fill-mode: both;
+}
+
+@keyframes post-install-mod-reveal {
+  0%,
+  100% {
+    opacity: 0;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
 .row-drop-target-chip {
   position: absolute;
   left: 12px;
@@ -5252,6 +5285,8 @@ body.row-reorder-active * {
 
 .download-row {
   grid-template-columns: minmax(250px, 1.45fr) minmax(260px, 1.22fr) minmax(84px, 0.38fr) minmax(128px, 0.62fr);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .download-row[data-reorder-disabled="false"] {
@@ -5299,6 +5334,14 @@ body.row-reorder-active * {
 
 .download-progress[data-status="ready"] small {
   color: var(--accent);
+}
+
+.download-progress[data-status="installed"] small {
+  color: var(--flx-success);
+}
+
+.download-progress[data-status="deleted"] small {
+  color: var(--danger);
 }
 
 .download-progress[data-status="paused"] small,
@@ -5825,6 +5868,19 @@ body.row-reorder-active * {
 
 .mod-overwrite-state-cell[data-status="local"] {
   color: var(--text);
+}
+
+.mod-overwrite-state-cell[data-pending="true"] {
+  width: 64px;
+}
+
+.mod-install-pending-label {
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .mod-actions {
@@ -8141,10 +8197,53 @@ body.row-reorder-active * {
 
 .install-fomod-wizard {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   min-width: 0;
   min-height: 0;
+}
+
+.fomod-smart-select-bar {
+  display: grid;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--flx-panel-soft);
+}
+
+.fomod-smart-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  padding: 7px 14px 7px 20px;
+}
+
+.fomod-smart-select > span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fomod-smart-select__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fomod-smart-select__actions .tool-button {
+  min-height: 28px;
+  padding: 5px 9px;
+  font-size: 11px;
+}
+
+.fomod-smart-select__warning {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 20px 8px;
+  color: var(--warning);
+  font-size: 11px;
 }
 
 .install-fomod-body {
@@ -8216,6 +8315,18 @@ body.row-reorder-active * {
 
 .fomod-option__previous {
   color: var(--accent);
+}
+
+.fomod-option__smart-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.fomod-option__smart-status[data-warning="true"] {
+  color: var(--warning);
 }
 
 .fomod-option__control {
@@ -8364,6 +8475,28 @@ body.row-reorder-active * {
   line-height: 1.6;
 }
 
+.fomod-selection-reasons {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.fomod-selection-reasons > strong {
+  font-size: 12px;
+}
+
+.fomod-selection-reasons ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
 .install-grid-actions {
   justify-content: flex-end;
 }
@@ -8379,6 +8512,11 @@ body.row-reorder-active * {
 
   .install-fomod-preview {
     display: none;
+  }
+
+  .fomod-smart-select {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
 }
@@ -10720,6 +10858,10 @@ body.row-reorder-active * {
 
   .mod-list-row[data-drop-target="true"]::after,
   .plugin-row[data-drop-target="true"]::after {
+    animation: none;
+  }
+
+  .mod-list-row[data-state="post-install-reveal"]::after {
     animation: none;
   }
 
