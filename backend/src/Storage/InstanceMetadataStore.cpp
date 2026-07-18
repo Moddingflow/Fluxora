@@ -1,5 +1,6 @@
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
+#include "FluxoraCore/Services/InstallOperationStore.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
 #include "FluxoraCore/Services/ModIdentityResolver.hpp"
 #include "FluxoraCore/Support/FilesystemPath.hpp"
@@ -114,6 +115,8 @@ namespace fluxora
     PendingInstallSessionRecord InstanceMetadataStore::rebasePendingInstallSession(
         const std::filesystem::path&,
         std::wstring_view,
+        std::wstring_view,
+        std::wstring_view,
         int)
     {
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
@@ -135,6 +138,13 @@ namespace fluxora
     }
 
     PendingInstallSessionRecord InstanceMetadataStore::pendingInstallSession(
+        const std::filesystem::path&,
+        std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
+    std::vector<PendingInstallSessionRecord> InstanceMetadataStore::activePendingInstallSessions(
         const std::filesystem::path&,
         std::wstring_view)
     {
@@ -544,7 +554,7 @@ namespace fluxora
         constexpr std::wstring_view profilePluginOrderSeparatorKind = L"separator";
         constexpr std::wstring_view modInventoryRevisionKey = L"mod_inventory_revision";
         constexpr std::wstring_view generatedPgPatcherProvider = L"generated-pgpatcher";
-        constexpr int instanceDatabaseSchemaVersion = 11;
+        constexpr int instanceDatabaseSchemaVersion = 12;
         constexpr int fileCacheSchemaVersion = 2;
 
         using SqliteDestructor = void (*)(void*);
@@ -1794,6 +1804,9 @@ namespace fluxora
                 "mode INTEGER NOT NULL CHECK(mode IN (0, 1, 2)),"
                 "target_mod_uuid TEXT NOT NULL DEFAULT '',"
                 "target_position INTEGER NOT NULL DEFAULT -1,"
+                "before_order_id TEXT NOT NULL DEFAULT '',"
+                "after_order_id TEXT NOT NULL DEFAULT '',"
+                "enqueue_sequence INTEGER NOT NULL DEFAULT 0,"
                 "revision INTEGER NOT NULL DEFAULT 0,"
                 "state TEXT NOT NULL CHECK(state IN ('preparing', 'ready', 'committing', 'completed', 'failed')),"
                 "final_order_id TEXT NOT NULL DEFAULT '',"
@@ -1801,6 +1814,9 @@ namespace fluxora
                 "created_at TEXT NOT NULL,"
                 "updated_at TEXT NOT NULL"
                 ");");
+            ensureColumn(database, "pending_install_sessions", L"before_order_id", "before_order_id TEXT NOT NULL DEFAULT ''");
+            ensureColumn(database, "pending_install_sessions", L"after_order_id", "after_order_id TEXT NOT NULL DEFAULT ''");
+            ensureColumn(database, "pending_install_sessions", L"enqueue_sequence", "enqueue_sequence INTEGER NOT NULL DEFAULT 0");
             database.exec(
                 "CREATE TABLE IF NOT EXISTS pending_install_files ("
                 "operation_id TEXT NOT NULL REFERENCES pending_install_sessions(operation_id) ON DELETE CASCADE,"
@@ -1813,6 +1829,34 @@ namespace fluxora
                 "size INTEGER NOT NULL DEFAULT 0,"
                 "modified_at TEXT NOT NULL DEFAULT '',"
                 "PRIMARY KEY(operation_id, path_key)"
+                ");");
+            database.exec(
+                "CREATE TABLE IF NOT EXISTS install_operations ("
+                "operation_id TEXT PRIMARY KEY NOT NULL,"
+                "source_kind TEXT NOT NULL,"
+                "source_path TEXT NOT NULL,"
+                "archive_fingerprint TEXT NOT NULL DEFAULT '',"
+                "profile_name TEXT NOT NULL DEFAULT 'Default',"
+                "existing_mod_mode INTEGER NOT NULL DEFAULT 0,"
+                "target_mod_uuid TEXT NOT NULL DEFAULT '',"
+                "target_folder TEXT NOT NULL DEFAULT '',"
+                "selected_option_ids_json TEXT NOT NULL DEFAULT '[]',"
+                "manual_decisions_json TEXT NOT NULL DEFAULT '[]',"
+                "placement_overrides_json TEXT NOT NULL DEFAULT '[]',"
+                "identity_plan_json TEXT NOT NULL DEFAULT '{}',"
+                "request_json TEXT NOT NULL DEFAULT '{}',"
+                "before_order_id TEXT NOT NULL DEFAULT '',"
+                "after_order_id TEXT NOT NULL DEFAULT '',"
+                "enqueue_sequence INTEGER NOT NULL DEFAULT 0,"
+                "state TEXT NOT NULL DEFAULT 'queued',"
+                "stage TEXT NOT NULL DEFAULT 'queued',"
+                "progress_percent INTEGER NOT NULL DEFAULT -1,"
+                "indeterminate INTEGER NOT NULL DEFAULT 1,"
+                "error_code TEXT NOT NULL DEFAULT '',"
+                "error_message TEXT NOT NULL DEFAULT '',"
+                "result_json TEXT NOT NULL DEFAULT '',"
+                "created_at TEXT NOT NULL,"
+                "updated_at TEXT NOT NULL"
                 ");");
             database.exec(
                 "CREATE TABLE IF NOT EXISTS mod_notes ("
@@ -1915,6 +1959,8 @@ namespace fluxora
             database.exec("CREATE INDEX IF NOT EXISTS idx_pending_install_sessions_state_updated ON pending_install_sessions(state, updated_at);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_pending_install_files_operation ON pending_install_files(operation_id);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_pending_install_files_path ON pending_install_files(path_key);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_install_operations_queue ON install_operations(state, enqueue_sequence);");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_install_operations_target ON install_operations(target_mod_uuid, target_folder, state);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_notes_mod ON mod_notes(mod_id, updated_at);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_remote_cache_checked ON remote_cache(checked_at);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_update_sweeps_next ON mod_update_sweeps(next_eligible_at);");
@@ -1937,7 +1983,7 @@ namespace fluxora
                     "ELSE last_check_state END, "
                     "last_attempted_at = CASE WHEN last_attempted_at = '' THEN last_checked_at ELSE last_attempted_at END;");
             }
-            database.exec("PRAGMA user_version = 11;");
+            database.exec("PRAGMA user_version = 12;");
         }
 
         Database openInstanceDatabase(const std::filesystem::path& projectDirectory)
@@ -4558,7 +4604,8 @@ namespace fluxora
         {
             Statement session = database.prepare(
                 "SELECT operation_id, profile_name, mode, target_mod_uuid, target_position, "
-                "revision, state, final_order_id, pending_order_id "
+                "revision, state, final_order_id, pending_order_id, before_order_id, "
+                "after_order_id, enqueue_sequence "
                 "FROM pending_install_sessions WHERE operation_id = ? LIMIT 1;");
             session.bindText(1, operationId);
             if (!session.stepRow())
@@ -4584,6 +4631,12 @@ namespace fluxora
             record.state = session.columnText(6);
             record.finalOrderId = session.columnText(7);
             record.pendingOrderId = session.columnText(8);
+            record.beforeOrderId = session.columnText(9);
+            record.afterOrderId = session.columnText(10);
+            const std::int64_t enqueueSequence = session.columnInt64(11);
+            record.enqueueSequence = enqueueSequence < 0
+                ? 0
+                : static_cast<std::uint64_t>(enqueueSequence);
 
             Statement files = database.prepare(
                 "SELECT relative_path, size, modified_at "
@@ -4656,22 +4709,63 @@ namespace fluxora
             );
         }
 
+        int resolvedInstallTargetPosition(
+            Database& database,
+            const PendingInstallSessionRecord& session)
+        {
+            const std::vector<ProfileOrderItemRecord> rows = readProfileOrderItems(
+                database,
+                {},
+                session.profileName);
+            if (!session.afterOrderId.empty())
+            {
+                const auto after = std::find_if(rows.begin(), rows.end(), [&](const auto& row)
+                {
+                    return row.id == session.afterOrderId;
+                });
+                if (after != rows.end())
+                {
+                    return static_cast<int>(std::distance(rows.begin(), after));
+                }
+            }
+            if (!session.beforeOrderId.empty())
+            {
+                const auto before = std::find_if(rows.begin(), rows.end(), [&](const auto& row)
+                {
+                    return row.id == session.beforeOrderId;
+                });
+                if (before != rows.end())
+                {
+                    return static_cast<int>(std::distance(rows.begin(), before) + 1);
+                }
+            }
+            return session.targetPosition;
+        }
+
         void moveCompletedPendingInstall(
             Database& database,
             const PendingInstallSessionRecord& session,
             int targetPosition)
         {
-            if (session.finalOrderId.empty() || targetPosition < 0)
+            if (session.finalOrderId.empty())
             {
                 return;
             }
             syncProfileOrderItems(database, session.profileName);
+            const int resolvedTarget =
+                session.beforeOrderId.empty() && session.afterOrderId.empty()
+                    ? targetPosition
+                    : resolvedInstallTargetPosition(database, session);
+            if (resolvedTarget < 0)
+            {
+                return;
+            }
             moveProfileOrderStorageItems(
                 database,
                 session.profileName,
                 "profile_order_items",
                 session.finalOrderId,
-                targetPosition,
+                resolvedTarget,
                 profileOrderSeparatorKind,
                 ProfileOrderSeparatorMoveMode::Single);
         }
@@ -5357,7 +5451,9 @@ namespace fluxora
         InstallConflictPreviewMode mode,
         std::wstring_view pendingOrderId,
         std::wstring_view targetModUuid,
-        int targetPosition)
+        int targetPosition,
+        std::wstring_view beforeOrderId,
+        std::wstring_view afterOrderId)
     {
         const std::wstring operation = trim(std::wstring(operationId));
         const std::wstring pendingId = trim(std::wstring(pendingOrderId));
@@ -5377,36 +5473,82 @@ namespace fluxora
         Transaction transaction(database);
         cleanupPendingInstallSessions(database);
 
-        Statement active = database.prepare(
-            "SELECT operation_id FROM pending_install_sessions "
-            "WHERE state IN ('preparing', 'ready', 'committing') "
-            "AND operation_id <> ? LIMIT 1;");
-        active.bindText(1, operation);
-        if (active.stepRow())
-        {
-            throw std::runtime_error("Another install session is already active.");
-        }
-
         Statement removeTerminal = database.prepare(
             "DELETE FROM pending_install_sessions "
             "WHERE operation_id = ? AND state IN ('completed', 'failed');");
         removeTerminal.bindText(1, operation);
         removeTerminal.stepDone();
 
+        syncProfileOrderItems(database, profileNameOrDefault(profileName));
+        const std::vector<ProfileOrderItemRecord> profileRows = readProfileOrderItems(
+            database,
+            projectDirectory,
+            profileNameOrDefault(profileName));
+        std::wstring beforeId = trim(std::wstring(beforeOrderId));
+        std::wstring afterId = trim(std::wstring(afterOrderId));
+        if (beforeId.empty() && afterId.empty())
+        {
+            Statement persistedAnchors = database.prepare(
+                "SELECT before_order_id, after_order_id FROM install_operations "
+                "WHERE operation_id = ? LIMIT 1;");
+            persistedAnchors.bindText(1, operation);
+            if (persistedAnchors.stepRow())
+            {
+                beforeId = persistedAnchors.columnText(0);
+                afterId = persistedAnchors.columnText(1);
+            }
+        }
+        if (beforeId.empty() && afterId.empty() && targetPosition >= 0)
+        {
+            const std::size_t insertionIndex = (std::min)(
+                static_cast<std::size_t>(targetPosition),
+                profileRows.size());
+            if (insertionIndex > 0)
+            {
+                beforeId = profileRows[insertionIndex - 1].id;
+            }
+            if (insertionIndex < profileRows.size())
+            {
+                afterId = profileRows[insertionIndex].id;
+            }
+        }
+
+        std::uint64_t enqueueSequence = 0;
+        Statement operationSequence = database.prepare(
+            "SELECT enqueue_sequence FROM install_operations WHERE operation_id = ? LIMIT 1;");
+        operationSequence.bindText(1, operation);
+        if (operationSequence.stepRow())
+        {
+            const std::int64_t value = operationSequence.columnInt64(0);
+            enqueueSequence = value < 0 ? 0 : static_cast<std::uint64_t>(value);
+        }
+        if (enqueueSequence == 0)
+        {
+            Statement nextSequence = database.prepare(
+                "SELECT COALESCE(MAX(enqueue_sequence), 0) + 1 FROM pending_install_sessions;");
+            enqueueSequence = nextSequence.stepRow()
+                ? static_cast<std::uint64_t>((std::max<std::int64_t>)(1, nextSequence.columnInt64(0)))
+                : 1;
+        }
+
         const std::wstring now = nowUtcText();
         Statement insert = database.prepare(
             "INSERT OR IGNORE INTO pending_install_sessions("
-            "operation_id, profile_name, mode, target_mod_uuid, target_position, revision, "
-            "state, final_order_id, pending_order_id, created_at, updated_at"
-            ") VALUES(?, ?, ?, ?, ?, 0, 'preparing', '', ?, ?, ?);");
+            "operation_id, profile_name, mode, target_mod_uuid, target_position, before_order_id, "
+            "after_order_id, enqueue_sequence, revision, state, final_order_id, pending_order_id, "
+            "created_at, updated_at"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, 0, 'preparing', '', ?, ?, ?);");
         insert.bindText(1, operation);
         insert.bindText(2, profileNameOrDefault(profileName));
         insert.bindInt(3, static_cast<int>(mode));
         insert.bindText(4, targetUuid);
         insert.bindInt(5, targetPosition);
-        insert.bindText(6, pendingId);
-        insert.bindText(7, now);
-        insert.bindText(8, now);
+        insert.bindText(6, beforeId);
+        insert.bindText(7, afterId);
+        insert.bindInt64(8, static_cast<std::int64_t>(enqueueSequence));
+        insert.bindText(9, pendingId);
+        insert.bindText(10, now);
+        insert.bindText(11, now);
         insert.stepDone();
         transaction.commit();
     }
@@ -5498,7 +5640,9 @@ namespace fluxora
     PendingInstallSessionRecord InstanceMetadataStore::rebasePendingInstallSession(
         const std::filesystem::path& projectDirectory,
         std::wstring_view operationId,
-        int targetPosition)
+        std::wstring_view beforeOrderId,
+        std::wstring_view afterOrderId,
+        int fallbackTargetPosition)
     {
         const std::wstring operation = trim(std::wstring(operationId));
         if (projectDirectory.empty() || operation.empty())
@@ -5514,6 +5658,10 @@ namespace fluxora
             projectDirectory,
             operation,
             false);
+        current.beforeOrderId = trim(std::wstring(beforeOrderId));
+        current.afterOrderId = trim(std::wstring(afterOrderId));
+        current.targetPosition = fallbackTargetPosition;
+        const int targetPosition = resolvedInstallTargetPosition(database, current);
         if (current.state == L"failed")
         {
             throw std::runtime_error("The pending install session has failed.");
@@ -5524,11 +5672,13 @@ namespace fluxora
         }
 
         Statement update = database.prepare(
-            "UPDATE pending_install_sessions SET target_position = ?, "
-            "revision = revision + 1, updated_at = ? WHERE operation_id = ?;");
+            "UPDATE pending_install_sessions SET target_position = ?, before_order_id = ?, "
+            "after_order_id = ?, revision = revision + 1, updated_at = ? WHERE operation_id = ?;");
         update.bindInt(1, targetPosition);
-        update.bindText(2, nowUtcText());
-        update.bindText(3, operation);
+        update.bindText(2, current.beforeOrderId);
+        update.bindText(3, current.afterOrderId);
+        update.bindText(4, nowUtcText());
+        update.bindText(5, operation);
         update.stepDone();
         syncProfileOrderItems(database, current.profileName);
         transaction.commit();
@@ -5616,6 +5766,42 @@ namespace fluxora
         return readPendingInstallSession(database, projectDirectory, operation, true);
     }
 
+    std::vector<PendingInstallSessionRecord> InstanceMetadataStore::activePendingInstallSessions(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view profileName)
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+        const std::wstring selectedProfile = profileNameOrDefault(profileName);
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        Statement operations = database.prepare(
+            "SELECT operation_id FROM pending_install_sessions "
+            "WHERE profile_name = ? AND state IN ('ready', 'committing') "
+            "ORDER BY enqueue_sequence, operation_id;");
+        operations.bindText(1, selectedProfile);
+
+        std::vector<std::wstring> operationIds;
+        while (operations.stepRow())
+        {
+            operationIds.push_back(operations.columnText(0));
+        }
+
+        std::vector<PendingInstallSessionRecord> sessions;
+        sessions.reserve(operationIds.size());
+        for (const std::wstring& operationId : operationIds)
+        {
+            sessions.push_back(readPendingInstallSession(
+                database,
+                projectDirectory,
+                operationId,
+                true));
+        }
+        return sessions;
+    }
+
     FinalizedPendingInstallRecord InstanceMetadataStore::finalizePendingInstalledMod(
         const std::filesystem::path& projectDirectory,
         std::wstring_view operationId,
@@ -5643,6 +5829,24 @@ namespace fluxora
         if (session.state != L"ready" && session.state != L"committing")
         {
             throw std::runtime_error("The pending install session is not ready to finalize.");
+        }
+
+        std::wstring expectedTargetOrderId;
+        if (session.mode != InstallConflictPreviewMode::Install &&
+            !session.targetModUuid.empty())
+        {
+            Statement expectedOrder = database.prepare(
+                "SELECT oi.id FROM profile_order_items oi "
+                "JOIN mods m ON m.id = oi.mod_id "
+                "WHERE oi.profile_name = ? AND oi.kind = 'mod' AND m.uuid = ? LIMIT 1;");
+            expectedOrder.bindText(1, session.profileName);
+            expectedOrder.bindText(2, session.targetModUuid);
+            if (!expectedOrder.stepRow())
+            {
+                throw std::runtime_error(
+                    "The replace or merge target order row disappeared before commit.");
+            }
+            expectedTargetOrderId = expectedOrder.columnText(0);
         }
 
         InstalledModRecord record;
@@ -5693,14 +5897,21 @@ namespace fluxora
             throw std::runtime_error("The finalized mod order row was not created.");
         }
         const std::wstring orderId = order.columnText(0);
-        if (session.targetPosition >= 0)
+        if (!expectedTargetOrderId.empty() &&
+            (record.uuid != session.targetModUuid || orderId != expectedTargetOrderId))
+        {
+            throw std::runtime_error(
+                "Replace or merge changed the stable mod or order identity; commit was rolled back.");
+        }
+        const int resolvedTargetPosition = resolvedInstallTargetPosition(database, session);
+        if (resolvedTargetPosition >= 0)
         {
             moveProfileOrderStorageItems(
                 database,
                 session.profileName,
                 "profile_order_items",
                 orderId,
-                session.targetPosition,
+                resolvedTargetPosition,
                 profileOrderSeparatorKind,
                 ProfileOrderSeparatorMoveMode::Single);
         }
@@ -8137,6 +8348,181 @@ namespace fluxora
         }
 
         return page;
+    }
+
+    namespace
+    {
+        InstallOperationRecord readInstallOperationRecord(Statement& statement)
+        {
+            InstallOperationRecord record;
+            record.operationId = statement.columnText(0);
+            record.sourceKind = statement.columnText(1);
+            record.sourcePath = std::filesystem::path(statement.columnText(2));
+            record.archiveFingerprint = statement.columnText(3);
+            record.profileName = statement.columnText(4);
+            record.existingModMode = statement.columnInt(5);
+            record.targetModUuid = statement.columnText(6);
+            record.targetFolder = statement.columnText(7);
+            record.selectedOptionIdsJson = statement.columnText(8);
+            record.manualDecisionsJson = statement.columnText(9);
+            record.placementOverridesJson = statement.columnText(10);
+            record.identityPlanJson = statement.columnText(11);
+            record.requestJson = statement.columnText(12);
+            record.beforeOrderId = statement.columnText(13);
+            record.afterOrderId = statement.columnText(14);
+            const std::int64_t enqueueSequence = statement.columnInt64(15);
+            record.enqueueSequence = enqueueSequence < 0
+                ? 0
+                : static_cast<std::uint64_t>(enqueueSequence);
+            record.state = statement.columnText(16);
+            record.stage = statement.columnText(17);
+            record.progressPercent = statement.columnInt(18);
+            record.indeterminate = statement.columnInt(19) != 0;
+            record.errorCode = statement.columnText(20);
+            record.errorMessage = statement.columnText(21);
+            record.resultJson = statement.columnText(22);
+            return record;
+        }
+
+        constexpr const char* installOperationSelectColumns =
+            "operation_id, source_kind, source_path, archive_fingerprint, profile_name, "
+            "existing_mod_mode, target_mod_uuid, target_folder, selected_option_ids_json, "
+            "manual_decisions_json, placement_overrides_json, identity_plan_json, request_json, "
+            "before_order_id, after_order_id, enqueue_sequence, state, stage, progress_percent, "
+            "indeterminate, error_code, error_message, result_json ";
+    }
+
+    std::uint64_t InstallOperationStore::save(
+        const std::filesystem::path& projectDirectory,
+        const InstallOperationRecord& operation)
+    {
+        if (projectDirectory.empty() || trim(operation.operationId).empty() ||
+            trim(operation.sourceKind).empty() || operation.sourcePath.empty())
+        {
+            throw std::invalid_argument(
+                "Project directory, operation id, source kind, and source path are required.");
+        }
+
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        Transaction transaction(database);
+        std::uint64_t enqueueSequence = operation.enqueueSequence;
+        if (enqueueSequence == 0)
+        {
+            Statement existing = database.prepare(
+                "SELECT enqueue_sequence FROM install_operations WHERE operation_id = ? LIMIT 1;");
+            existing.bindText(1, trim(operation.operationId));
+            if (existing.stepRow() && existing.columnInt64(0) > 0)
+            {
+                enqueueSequence = static_cast<std::uint64_t>(existing.columnInt64(0));
+            }
+            else
+            {
+                Statement next = database.prepare(
+                    "SELECT COALESCE(MAX(enqueue_sequence), 0) + 1 FROM install_operations;");
+                enqueueSequence = next.stepRow()
+                    ? static_cast<std::uint64_t>((std::max<std::int64_t>)(1, next.columnInt64(0)))
+                    : 1;
+            }
+        }
+
+        const std::wstring now = nowUtcText();
+        Statement statement = database.prepare(
+            "INSERT INTO install_operations("
+            "operation_id, source_kind, source_path, archive_fingerprint, profile_name, "
+            "existing_mod_mode, target_mod_uuid, target_folder, selected_option_ids_json, "
+            "manual_decisions_json, placement_overrides_json, identity_plan_json, request_json, "
+            "before_order_id, after_order_id, enqueue_sequence, state, stage, progress_percent, "
+            "indeterminate, error_code, error_message, result_json, created_at, updated_at"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(operation_id) DO UPDATE SET "
+            "source_kind = excluded.source_kind, source_path = excluded.source_path, "
+            "archive_fingerprint = excluded.archive_fingerprint, profile_name = excluded.profile_name, "
+            "existing_mod_mode = excluded.existing_mod_mode, target_mod_uuid = excluded.target_mod_uuid, "
+            "target_folder = excluded.target_folder, selected_option_ids_json = excluded.selected_option_ids_json, "
+            "manual_decisions_json = excluded.manual_decisions_json, "
+            "placement_overrides_json = excluded.placement_overrides_json, "
+            "identity_plan_json = excluded.identity_plan_json, request_json = excluded.request_json, "
+            "before_order_id = excluded.before_order_id, after_order_id = excluded.after_order_id, "
+            "enqueue_sequence = excluded.enqueue_sequence, state = excluded.state, stage = excluded.stage, "
+            "progress_percent = excluded.progress_percent, indeterminate = excluded.indeterminate, "
+            "error_code = excluded.error_code, error_message = excluded.error_message, "
+            "result_json = excluded.result_json, updated_at = excluded.updated_at;");
+        statement.bindText(1, trim(operation.operationId));
+        statement.bindText(2, trim(operation.sourceKind));
+        statement.bindText(3, operation.sourcePath.wstring());
+        statement.bindText(4, operation.archiveFingerprint);
+        statement.bindText(5, operation.profileName.empty() ? L"Default" : operation.profileName);
+        statement.bindInt(6, operation.existingModMode);
+        statement.bindText(7, operation.targetModUuid);
+        statement.bindText(8, operation.targetFolder);
+        statement.bindText(9, operation.selectedOptionIdsJson.empty() ? L"[]" : operation.selectedOptionIdsJson);
+        statement.bindText(10, operation.manualDecisionsJson.empty() ? L"[]" : operation.manualDecisionsJson);
+        statement.bindText(11, operation.placementOverridesJson.empty() ? L"[]" : operation.placementOverridesJson);
+        statement.bindText(12, operation.identityPlanJson.empty() ? L"{}" : operation.identityPlanJson);
+        statement.bindText(13, operation.requestJson.empty() ? L"{}" : operation.requestJson);
+        statement.bindText(14, operation.beforeOrderId);
+        statement.bindText(15, operation.afterOrderId);
+        statement.bindInt64(16, static_cast<std::int64_t>(enqueueSequence));
+        statement.bindText(17, operation.state.empty() ? L"queued" : operation.state);
+        statement.bindText(18, operation.stage.empty() ? L"queued" : operation.stage);
+        statement.bindInt(19, operation.progressPercent);
+        statement.bindInt(20, operation.indeterminate ? 1 : 0);
+        statement.bindText(21, operation.errorCode);
+        statement.bindText(22, operation.errorMessage);
+        statement.bindText(23, operation.resultJson);
+        statement.bindText(24, now);
+        statement.bindText(25, now);
+        statement.stepDone();
+        transaction.commit();
+        return enqueueSequence;
+    }
+
+    std::optional<InstallOperationRecord> InstallOperationStore::get(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view operationId)
+    {
+        if (projectDirectory.empty() || trim(std::wstring(operationId)).empty())
+        {
+            throw std::invalid_argument("Project directory and operation id are required.");
+        }
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        const std::string sql = std::string("SELECT ") + installOperationSelectColumns +
+            "FROM install_operations WHERE operation_id = ? LIMIT 1;";
+        Statement statement = database.prepare(sql.c_str());
+        statement.bindText(1, operationId);
+        if (!statement.stepRow())
+        {
+            return std::nullopt;
+        }
+        return readInstallOperationRecord(statement);
+    }
+
+    std::vector<InstallOperationRecord> InstallOperationStore::list(
+        const std::filesystem::path& projectDirectory,
+        bool includeTerminal)
+    {
+        if (projectDirectory.empty())
+        {
+            throw std::invalid_argument("Project directory is required.");
+        }
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        Database database = openInstanceDatabase(projectDirectory);
+        std::string sql = std::string("SELECT ") + installOperationSelectColumns +
+            "FROM install_operations ";
+        if (!includeTerminal)
+        {
+            sql += "WHERE state NOT IN ('completed', 'failed', 'needsReview') ";
+        }
+        sql += "ORDER BY enqueue_sequence, created_at, operation_id;";
+        Statement statement = database.prepare(sql.c_str());
+        std::vector<InstallOperationRecord> operations;
+        while (statement.stepRow())
+        {
+            operations.push_back(readInstallOperationRecord(statement));
+        }
+        return operations;
     }
 }
 

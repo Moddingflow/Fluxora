@@ -168,6 +168,85 @@ namespace fluxora::tests
         ASSERT_TRUE(nextDescriptor.hasPreviousSelection);
         ASSERT_EQ(1u, nextDescriptor.previousSelectedOptionIds.size());
         EXPECT_EQ(L"choose-variant-option-b", nextDescriptor.previousSelectedOptionIds[0]);
+        EXPECT_EQ(L"restored", nextDescriptor.selectionOrigin);
+        EXPECT_FALSE(nextDescriptor.structureFingerprint.empty());
+    }
+
+    TEST(FomodInstallerServiceTests, MemoryV3DoesNotApplySelectionToChangedOptionStructure)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / "project";
+        const std::filesystem::path package = temp.path() / "package";
+        writePackage(package);
+        const FomodInstallerDescriptor original = FomodInstallerService::analyze(
+            project,
+            temp.path() / "game",
+            temp.path() / "mods",
+            package,
+            identity());
+        FomodInstallerService::rememberSelection(
+            project,
+            original,
+            {L"choose-variant-option-b"});
+
+        writeTextFile(package / "fomod" / "ModuleConfig.xml", R"xml(
+<config>
+  <moduleName>Example Mod</moduleName>
+  <installSteps order="Explicit"><installStep name="Choose"><optionalFileGroups order="Explicit">
+    <group name="Variant" type="SelectExactlyOne"><plugins order="Explicit">
+      <plugin name="Option A"><typeDescriptor><type name="Recommended" /></typeDescriptor></plugin>
+      <plugin name="Option C"><typeDescriptor><type name="Optional" /></typeDescriptor></plugin>
+    </plugins></group>
+  </optionalFileGroups></installStep></installSteps>
+</config>)xml");
+
+        const FomodInstallerDescriptor changed = FomodInstallerService::analyze(
+            project,
+            temp.path() / "game",
+            temp.path() / "mods",
+            package,
+            identity());
+        EXPECT_NE(original.structureFingerprint, changed.structureFingerprint);
+        EXPECT_FALSE(changed.hasPreviousSelection);
+        EXPECT_TRUE(changed.previousSelectedOptionIds.empty());
+        EXPECT_EQ(L"recalculated", changed.selectionOrigin);
+    }
+
+    TEST(FomodInstallerServiceTests, MemoryV3SharesSelectionAcrossNexusFileIdsForSameStructure)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / "project";
+        const std::filesystem::path package = temp.path() / "package";
+        writePackage(package);
+
+        const FomodInstallerDescriptor first = FomodInstallerService::analyze(
+            project,
+            temp.path() / "game",
+            temp.path() / "mods",
+            package,
+            identity());
+        FomodInstallerService::rememberSelection(
+            project,
+            first,
+            {L"choose-variant-option-b"});
+
+        FomodPackageIdentity anotherFile = identity();
+        anotherFile.remoteFileId = L"999";
+        anotherFile.source = L"nxm://skyrimspecialedition/mods/123/files/999";
+        anotherFile.fallbackName = L"Example Mod 32x9";
+        const FomodInstallerDescriptor replayed = FomodInstallerService::analyze(
+            project,
+            temp.path() / "game",
+            temp.path() / "mods",
+            package,
+            anotherFile);
+
+        EXPECT_EQ(first.memoryKey, replayed.memoryKey);
+        EXPECT_EQ(first.structureFingerprint, replayed.structureFingerprint);
+        EXPECT_TRUE(replayed.hasPreviousSelection);
+        EXPECT_EQ(
+            replayed.previousSelectedOptionIds,
+            std::vector<std::wstring>{L"choose-variant-option-b"});
     }
 
     TEST(FomodInstallerServiceTests, InstallCopiesOnlySelectedConditionalFiles)
@@ -492,7 +571,7 @@ namespace fluxora::tests
             L"tes4.sourceMissing");
     }
 
-    TEST(FomodInstallerServiceTests, MemoryV1IsAWeakIndependentHintAndSuccessfulInstallRewritesV2)
+    TEST(FomodInstallerServiceTests, MemoryV1IsAWeakIndependentHintAndSuccessfulInstallRewritesV3)
     {
         TempDirectory temp;
         const std::filesystem::path project = temp.path() / "project";
@@ -552,7 +631,8 @@ namespace fluxora::tests
             });
 
         const std::string memory = readTextFile(project / ".flow" / "fomod-memory.json");
-        EXPECT_NE(memory.find("\"schemaVersion\":2"), std::string::npos);
+        EXPECT_NE(memory.find("\"schemaVersion\":3"), std::string::npos);
+        EXPECT_NE(memory.find("\"structureFingerprint\":"), std::string::npos);
         FomodInstallerDescriptor contextual = FomodInstallerService::analyze(
             project,
             temp.path() / "game",

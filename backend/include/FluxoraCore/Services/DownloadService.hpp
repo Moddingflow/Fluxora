@@ -158,6 +158,11 @@ namespace fluxora
             std::wstring_view profileName = {},
             std::wstring_view requestedModName = {}) const;
 
+        // Strong, cache-backed source identity used by durable install resume.
+        // It deliberately runs on an install worker rather than the submit path.
+        [[nodiscard]] std::wstring archiveFingerprint(
+            const std::filesystem::path& archivePath) const;
+
         InstalledMod installDownload(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& downloadPath,

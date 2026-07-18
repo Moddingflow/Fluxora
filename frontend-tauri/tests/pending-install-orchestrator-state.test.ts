@@ -5,6 +5,7 @@ import {
   beginPendingInstall,
   completePendingInstall,
   pendingInstallConflictMarkerReady,
+  pendingInstallTargetIndexForPlacement,
   rollbackPendingInstall
 } from '../src/renderer/features/mods/pending-install-orchestrator-state';
 import type {
@@ -72,6 +73,39 @@ const snapshot = (
 });
 
 describe('pending install orchestrator state', () => {
+  it('places a new mod after the last child when dropped inside a separator', () => {
+    const items = [
+      mod('separator-core', '', 'Core', 0, {
+        id: 'separator-core',
+        kind: 'separator',
+        isSeparator: true,
+        isMod: false,
+        separatorTitle: 'Core'
+      }),
+      mod('order-a', 'uuid-a', 'A', 1),
+      mod('order-b', 'uuid-b', 'B', 2),
+      mod('separator-late', '', 'Late', 3, {
+        id: 'separator-late',
+        kind: 'separator',
+        isSeparator: true,
+        isMod: false,
+        separatorTitle: 'Late'
+      })
+    ];
+
+    expect(
+      pendingInstallTargetIndexForPlacement(
+        items,
+        {
+          operationId: 'install-op',
+          modName: 'Incoming',
+          mode: 0
+        },
+        { targetOrderId: 'separator-core', placement: 'inside' }
+      )
+    ).toBe(3);
+  });
+
   it('creates a movable pending row before the install promise resolves without a conflict marker', () => {
     const started = beginPendingInstall(baseItems, {
       operationId: 'install-op',
@@ -204,6 +238,22 @@ describe('pending install orchestrator state', () => {
       overwritingFileCount: 1,
       overwritesModIds: ['uuid-a']
     });
+  });
+
+  it('never moves an existing Replace or Merge row when the requested insertion index differs', () => {
+    for (const mode of [1, 2] as const) {
+      const started = beginPendingInstall(baseItems, {
+        operationId: `install-op-${mode}`,
+        modName: 'B update',
+        mode,
+        targetModUuid: 'uuid-b',
+        targetIndex: 0
+      });
+
+      expect(started.items.map((item) => item.orderId)).toEqual(['order-a', 'order-b']);
+      expect(started.session.rowOrderId).toBe('order-b');
+      expect(started.session.desiredTargetIndex).toBe(1);
+    }
   });
 
   it('rolls back through legacy separator rows that omit conflict relation arrays', () => {

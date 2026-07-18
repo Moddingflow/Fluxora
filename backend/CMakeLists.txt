@@ -147,6 +147,10 @@ add_library(FluxoraCore SHARED
     src/GameSupport/SkyrimSpecialEditionSupport.cpp
     src/Services/HookService.cpp
     src/Services/InstallConflictPreviewService.cpp
+      src/Services/InstallProjectGate.cpp
+      src/Services/InstallOperationService.cpp
+      src/Services/InstallScheduler.cpp
+      src/Services/InstallTransactionJournal.cpp
     src/Services/ContentLayoutService.cpp
     src/Services/DownloadService.cpp
     src/Services/DownloadTransferLimiter.cpp

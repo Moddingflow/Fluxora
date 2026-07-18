@@ -4,6 +4,8 @@
 #include "FluxoraCore/Services/AppSettingsService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/ContentLayoutService.hpp"
+#include "FluxoraCore/Services/InstallProjectGate.hpp"
+#include "FluxoraCore/Services/InstallTransactionJournal.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/ModIdentityResolver.hpp"
 #include "FluxoraCore/Services/NexusModsAuthService.hpp"
@@ -3176,6 +3178,16 @@ namespace fluxora
                 rollback();
             }
 
+            void attachJournal(
+                Logger& logger,
+                const std::filesystem::path& projectDirectory,
+                std::wstring_view operationId)
+            {
+                logger_ = &logger;
+                projectDirectory_ = projectDirectory;
+                operationId_ = operationId;
+            }
+
             void promote(
                 const std::filesystem::path& stagingDirectory,
                 const std::filesystem::path& targetDirectory,
@@ -3193,13 +3205,19 @@ namespace fluxora
                     backupDirectory_ = uniquePath(
                         modsDirectory,
                         L"." + std::wstring(safeName) + L".replacing");
+                }
+                writeJournal(L"prepared", stagingDirectory);
+                if (targetExisted_)
+                {
                     std::filesystem::rename(targetDirectory, backupDirectory_);
+                    writeJournal(L"targetBackedUp", stagingDirectory);
                 }
 
                 try
                 {
                     std::filesystem::rename(stagingDirectory, targetDirectory);
                     active_ = true;
+                    writeJournal(L"promoted", stagingDirectory);
                 }
                 catch (const std::exception&)
                 {
@@ -3223,15 +3241,59 @@ namespace fluxora
                     std::error_code cleanupError;
                     std::filesystem::remove_all(backupDirectory_, cleanupError);
                 }
+                try
+                {
+                    writeJournal(L"committed", {});
+                }
+                catch (...)
+                {
+                }
+                InstallTransactionJournal::remove(projectDirectory_, operationId_);
                 active_ = false;
             }
 
         private:
+            void writeJournal(
+                std::wstring stage,
+                const std::filesystem::path& stagingDirectory)
+            {
+                if (projectDirectory_.empty() || operationId_.empty())
+                {
+                    return;
+                }
+                InstallTransactionJournal::write(
+                    projectDirectory_,
+                    InstallTransactionRecord{
+                        operationId_,
+                        stage,
+                        stagingDirectory,
+                        targetDirectory_,
+                        backupDirectory_,
+                        targetExisted_
+                    });
+                if (logger_ != nullptr)
+                {
+                    logger_->writeOperation(
+                        LogLevel::Info,
+                        "InstallTransaction",
+                        "journalStage=" + toUtf8(std::wstring(stage)) +
+                            " operationId=" + toUtf8(operationId_) + ".");
+                }
+            }
+
             void rollback() noexcept
             {
                 if (!active_)
                 {
+                    InstallTransactionJournal::remove(projectDirectory_, operationId_);
                     return;
+                }
+                try
+                {
+                    writeJournal(L"rollingBack", {});
+                }
+                catch (...)
+                {
                 }
                 std::error_code cleanupError;
                 std::filesystem::remove_all(targetDirectory_, cleanupError);
@@ -3243,9 +3305,13 @@ namespace fluxora
                         targetDirectory_,
                         restoreError);
                 }
+                InstallTransactionJournal::remove(projectDirectory_, operationId_);
                 active_ = false;
             }
 
+            std::filesystem::path projectDirectory_;
+            Logger* logger_{nullptr};
+            std::wstring operationId_;
             std::filesystem::path targetDirectory_;
             std::filesystem::path backupDirectory_;
             bool targetExisted_{false};
@@ -7172,61 +7238,6 @@ namespace fluxora
             return installed;
         }
 
-        std::mutex& installCommitMutex()
-        {
-            static std::mutex mutex;
-            return mutex;
-        }
-
-        class InstallCommitGuard final
-        {
-        public:
-            explicit InstallCommitGuard(const std::filesystem::path& projectDirectory)
-                : localLock_(installCommitMutex())
-            {
-#ifdef _WIN32
-                const std::wstring projectKey = toLower(
-                    std::filesystem::absolute(projectDirectory).lexically_normal().wstring());
-                const std::wstring mutexName =
-                    L"Local\\Fluxora.ModInstall." + hashText(projectKey);
-                namedMutex_ = CreateMutexW(nullptr, FALSE, mutexName.c_str());
-                if (namedMutex_ == nullptr)
-                {
-                    throw std::runtime_error("Failed to create the cross-process install lock.");
-                }
-                const DWORD waitResult = WaitForSingleObject(namedMutex_, INFINITE);
-                if (waitResult != WAIT_OBJECT_0 && waitResult != WAIT_ABANDONED)
-                {
-                    CloseHandle(namedMutex_);
-                    namedMutex_ = nullptr;
-                    throw std::runtime_error("Failed to acquire the cross-process install lock.");
-                }
-#else
-                (void)projectDirectory;
-#endif
-            }
-
-            InstallCommitGuard(const InstallCommitGuard&) = delete;
-            InstallCommitGuard& operator=(const InstallCommitGuard&) = delete;
-
-            ~InstallCommitGuard()
-            {
-#ifdef _WIN32
-                if (namedMutex_ != nullptr)
-                {
-                    ReleaseMutex(namedMutex_);
-                    CloseHandle(namedMutex_);
-                }
-#endif
-            }
-
-        private:
-            std::unique_lock<std::mutex> localLock_;
-#ifdef _WIN32
-            HANDLE namedMutex_{nullptr};
-#endif
-        };
-
         class ArchiveUseGuard final
         {
         public:
@@ -7715,8 +7726,61 @@ namespace fluxora
             int modOrderTargetIndex,
             const InstallConflictSnapshotCallback& conflictProgress)
         {
-            InstallCommitGuard installCommitLock(projectDirectory);
             const std::wstring archiveFingerprint = fileCacheFingerprint(archivePath);
+            const std::wstring requestedName = trim(std::wstring(modName));
+            std::wstring installName = requestedName.empty()
+                ? metadata.nexusModName
+                : requestedName;
+            const std::wstring targetReservationKey =
+                identitySelection != nullptr && !trim(identitySelection->targetModUuid).empty()
+                    ? identitySelection->targetModUuid
+                    : (!installName.empty() ? installName : archivePath.wstring());
+            InstallTargetLock targetLock(projectDirectory, targetReservationKey);
+            const BuildPathSettings paths = pathSettings.loadForProjectDirectory(projectDirectory);
+            const std::filesystem::path modsDirectory = paths.modsDirectory;
+            ExistingModInstallMode effectiveInstallMode = existingModMode;
+            std::wstring safeName;
+            {
+                InstallProjectGate identityGate(projectDirectory);
+                std::optional<ValidatedModIdentityInstall> validatedIdentity;
+                if (identitySelection != nullptr)
+                {
+                    validatedIdentity = ModIdentityResolver::validateInstallPlan(
+                        projectDirectory,
+                        archiveFingerprint,
+                        *identitySelection);
+                }
+                if (validatedIdentity.has_value() &&
+                    validatedIdentity->decision == InstallIdentityDecision::UseMatch)
+                {
+                    if (!validatedIdentity->matchedTarget.has_value() ||
+                        effectiveInstallMode == ExistingModInstallMode::FailIfExists)
+                    {
+                        throw std::invalid_argument("A matched mod requires replace or merge mode.");
+                    }
+                    installName = validatedIdentity->matchedTarget->displayName;
+                    safeName = validatedIdentity->matchedTarget->folderName;
+                }
+                else if (validatedIdentity.has_value())
+                {
+                    effectiveInstallMode = ExistingModInstallMode::FailIfExists;
+                    const AllocatedInstallName allocated = allocateFirstFreeInstallName(
+                        projectDirectory,
+                        modsDirectory,
+                        installName);
+                    installName = allocated.displayName;
+                    safeName = allocated.folderName;
+                }
+                else
+                {
+                    safeName = sanitizeFileName(installName);
+                }
+            }
+            if (safeName.empty())
+            {
+                throw std::invalid_argument("Mod name is required.");
+            }
+
             std::optional<ValidatedModIdentityInstall> identity;
             if (identitySelection != nullptr)
             {
@@ -7724,43 +7788,6 @@ namespace fluxora
                     projectDirectory,
                     archiveFingerprint,
                     *identitySelection);
-            }
-
-            const std::wstring requestedName = trim(std::wstring(modName));
-            std::wstring installName = requestedName.empty()
-                ? metadata.nexusModName
-                : requestedName;
-            const BuildPathSettings paths = pathSettings.loadForProjectDirectory(projectDirectory);
-            const std::filesystem::path modsDirectory = paths.modsDirectory;
-            ExistingModInstallMode effectiveInstallMode = existingModMode;
-            std::wstring safeName;
-            if (identity.has_value() && identity->decision == InstallIdentityDecision::UseMatch)
-            {
-                if (!identity->matchedTarget.has_value() ||
-                    effectiveInstallMode == ExistingModInstallMode::FailIfExists)
-                {
-                    throw std::invalid_argument("A matched mod requires replace or merge mode.");
-                }
-                installName = identity->matchedTarget->displayName;
-                safeName = identity->matchedTarget->folderName;
-            }
-            else if (identity.has_value())
-            {
-                effectiveInstallMode = ExistingModInstallMode::FailIfExists;
-                const AllocatedInstallName allocated = allocateFirstFreeInstallName(
-                    projectDirectory,
-                    modsDirectory,
-                    installName);
-                installName = allocated.displayName;
-                safeName = allocated.folderName;
-            }
-            else
-            {
-                safeName = sanitizeFileName(installName);
-            }
-            if (safeName.empty())
-            {
-                throw std::invalid_argument("Mod name is required.");
             }
 
             ArchiveInstallAttemptGuard archiveAttempt(
@@ -7838,6 +7865,8 @@ namespace fluxora
             std::wstring detectedVersion;
             std::filesystem::path finalStagingDirectory = stagingDirectory;
             InstalledDirectoryCommit directoryCommit;
+            directoryCommit.attachJournal(logger, projectDirectory, archiveAttempt.operationId());
+            std::unique_ptr<InstallProjectGate> commitGate;
             try
             {
                 bool copiedFromCachedPayload = false;
@@ -7882,6 +7911,24 @@ namespace fluxora
                         targetDirectory,
                         modsDirectory,
                         safeName);
+                }
+                commitGate = std::make_unique<InstallProjectGate>(projectDirectory);
+                if (fileCacheFingerprint(archivePath) != archiveFingerprint)
+                {
+                    throw std::runtime_error(
+                        "The archive changed while the install was being prepared.");
+                }
+                if (identitySelection != nullptr)
+                {
+                    identity = ModIdentityResolver::validateInstallPlan(
+                        projectDirectory,
+                        archiveFingerprint,
+                        *identitySelection);
+                }
+                if (std::filesystem::exists(targetDirectory) != targetExists)
+                {
+                    throw std::runtime_error(
+                        "The install target changed while files were being prepared.");
                 }
                 static_cast<void>(conflictSession.publish(finalStagingDirectory));
                 directoryCommit.promote(
@@ -7969,6 +8016,10 @@ namespace fluxora
             archiveAttempt.commit();
             conflictSession.completed(finalized);
             directoryCommit.commit();
+            const std::chrono::milliseconds commitWait = commitGate == nullptr
+                ? std::chrono::milliseconds{0}
+                : commitGate->waitDuration();
+            commitGate.reset();
 
             logger.writeOperation(
                 LogLevel::Info,
@@ -7980,7 +8031,9 @@ namespace fluxora
                     "\", targetDirectory=\"" + toUtf8(targetDirectory.wstring()) +
                     "\", modUuid=\"" + toUtf8(record.uuid) +
                     "\", installMode=\"" + installModeName(effectiveInstallMode) +
-                    "\", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
+                    "\", targetWaitMs=" + std::to_string(targetLock.waitDuration().count()) +
+                    ", commitWaitMs=" + std::to_string(commitWait.count()) +
+                    ", placementOverrideCount=" + std::to_string(placementOverrides.size()) +
                     ", versionResult=\"" +
                     (detectedVersion.empty() ? std::string("unknown") : toUtf8(detectedVersion)) + "\".");
 
@@ -8033,7 +8086,59 @@ namespace fluxora
                     currentContext);
             };
             validateFomodContext();
-            InstallCommitGuard installCommitLock(projectDirectory);
+            const std::wstring requestedName = trim(std::wstring(modName));
+            std::wstring installName = requestedName.empty()
+                ? metadata.nexusModName
+                : requestedName;
+            const std::wstring targetReservationKey =
+                identitySelection != nullptr && !trim(identitySelection->targetModUuid).empty()
+                    ? identitySelection->targetModUuid
+                    : (!installName.empty() ? installName : archivePath.wstring());
+            InstallTargetLock targetLock(projectDirectory, targetReservationKey);
+            const std::filesystem::path modsDirectory = paths.modsDirectory;
+            ExistingModInstallMode effectiveInstallMode = existingModMode;
+            std::wstring safeName;
+            {
+                InstallProjectGate identityGate(projectDirectory);
+                std::optional<ValidatedModIdentityInstall> validatedIdentity;
+                if (identitySelection != nullptr)
+                {
+                    validatedIdentity = ModIdentityResolver::validateInstallPlan(
+                        projectDirectory,
+                        archiveFingerprint,
+                        *identitySelection);
+                }
+                if (validatedIdentity.has_value() &&
+                    validatedIdentity->decision == InstallIdentityDecision::UseMatch)
+                {
+                    if (!validatedIdentity->matchedTarget.has_value() ||
+                        effectiveInstallMode == ExistingModInstallMode::FailIfExists)
+                    {
+                        throw std::invalid_argument("A matched mod requires replace or merge mode.");
+                    }
+                    installName = validatedIdentity->matchedTarget->displayName;
+                    safeName = validatedIdentity->matchedTarget->folderName;
+                }
+                else if (validatedIdentity.has_value())
+                {
+                    effectiveInstallMode = ExistingModInstallMode::FailIfExists;
+                    const AllocatedInstallName allocated = allocateFirstFreeInstallName(
+                        projectDirectory,
+                        modsDirectory,
+                        installName);
+                    installName = allocated.displayName;
+                    safeName = allocated.folderName;
+                }
+                else
+                {
+                    safeName = sanitizeFileName(installName);
+                }
+            }
+            if (safeName.empty())
+            {
+                throw std::invalid_argument("Mod name is required.");
+            }
+
             std::optional<ValidatedModIdentityInstall> identity;
             if (identitySelection != nullptr)
             {
@@ -8042,43 +8147,6 @@ namespace fluxora
                     archiveFingerprint,
                     *identitySelection);
             }
-
-            const std::wstring requestedName = trim(std::wstring(modName));
-            std::wstring installName = requestedName.empty()
-                ? metadata.nexusModName
-                : requestedName;
-            const std::filesystem::path modsDirectory = paths.modsDirectory;
-            ExistingModInstallMode effectiveInstallMode = existingModMode;
-            std::wstring safeName;
-            if (identity.has_value() && identity->decision == InstallIdentityDecision::UseMatch)
-            {
-                if (!identity->matchedTarget.has_value() ||
-                    effectiveInstallMode == ExistingModInstallMode::FailIfExists)
-                {
-                    throw std::invalid_argument("A matched mod requires replace or merge mode.");
-                }
-                installName = identity->matchedTarget->displayName;
-                safeName = identity->matchedTarget->folderName;
-            }
-            else if (identity.has_value())
-            {
-                effectiveInstallMode = ExistingModInstallMode::FailIfExists;
-                const AllocatedInstallName allocated = allocateFirstFreeInstallName(
-                    projectDirectory,
-                    modsDirectory,
-                    installName);
-                installName = allocated.displayName;
-                safeName = allocated.folderName;
-            }
-            else
-            {
-                safeName = sanitizeFileName(installName);
-            }
-            if (safeName.empty())
-            {
-                throw std::invalid_argument("Mod name is required.");
-            }
-
 
             ArchiveInstallAttemptGuard archiveAttempt(
                 projectDirectory,
@@ -8158,6 +8226,8 @@ namespace fluxora
             std::vector<std::wstring> appliedOptionIds;
             std::filesystem::path finalStagingDirectory = stagingDirectory;
             InstalledDirectoryCommit directoryCommit;
+            directoryCommit.attachJournal(logger, projectDirectory, archiveAttempt.operationId());
+            std::unique_ptr<InstallProjectGate> commitGate;
             try
             {
                 const FomodPackageIdentity packageIdentity{
@@ -8247,6 +8317,25 @@ namespace fluxora
                         modsDirectory,
                         safeName);
                 }
+                commitGate = std::make_unique<InstallProjectGate>(projectDirectory);
+                if (fileCacheFingerprint(archivePath) != archiveFingerprint)
+                {
+                    throw std::runtime_error(
+                        "The archive changed while the FOMOD install was being prepared.");
+                }
+                if (identitySelection != nullptr)
+                {
+                    identity = ModIdentityResolver::validateInstallPlan(
+                        projectDirectory,
+                        archiveFingerprint,
+                        *identitySelection);
+                }
+                validateFomodContext();
+                if (std::filesystem::exists(targetDirectory) != targetExists)
+                {
+                    throw std::runtime_error(
+                        "The FOMOD install target changed while files were being prepared.");
+                }
                 static_cast<void>(conflictSession.publish(finalStagingDirectory));
                 directoryCommit.promote(
                     finalStagingDirectory,
@@ -8274,37 +8363,6 @@ namespace fluxora
                     break;
                 }
 
-                std::vector<FomodRememberedManualDecision> rememberedManualDecisions;
-                rememberedManualDecisions.reserve(manualDecisions.size());
-                for (const FomodManualDecision& decision : manualDecisions)
-                {
-                    rememberedManualDecisions.push_back(FomodRememberedManualDecision{
-                        decision.optionId,
-                        decision.selected
-                    });
-                }
-                if (trim(std::wstring(profileName)).empty() &&
-                    trim(std::wstring(fomodContextId)).empty() && manualDecisions.empty())
-                {
-                    FomodInstallerService::rememberSelection(
-                        projectDirectory,
-                        descriptor,
-                        appliedOptionIds);
-                }
-                else
-                {
-                    FomodInstallerService::rememberSelection(
-                        projectDirectory,
-                        descriptor,
-                        appliedOptionIds,
-                        descriptor.profileContext == nullptr
-                            ? std::wstring_view(profileName)
-                            : std::wstring_view(descriptor.profileContext->profileName),
-                        descriptor.profileContext == nullptr
-                            ? std::wstring_view{}
-                            : std::wstring_view(descriptor.profileContext->fingerprint),
-                        rememberedManualDecisions);
-                }
             }
             catch (const std::exception& exception)
             {
@@ -8367,6 +8425,53 @@ namespace fluxora
             archiveAttempt.commit();
             conflictSession.completed(finalized);
             directoryCommit.commit();
+            const std::chrono::milliseconds commitWait = commitGate == nullptr
+                ? std::chrono::milliseconds{0}
+                : commitGate->waitDuration();
+            commitGate.reset();
+
+            try
+            {
+                std::vector<FomodRememberedManualDecision> rememberedManualDecisions;
+                rememberedManualDecisions.reserve(manualDecisions.size());
+                for (const FomodManualDecision& decision : manualDecisions)
+                {
+                    rememberedManualDecisions.push_back(FomodRememberedManualDecision{
+                        decision.optionId,
+                        decision.selected
+                    });
+                }
+                if (trim(std::wstring(profileName)).empty() &&
+                    trim(std::wstring(fomodContextId)).empty() && manualDecisions.empty())
+                {
+                    FomodInstallerService::rememberSelection(
+                        projectDirectory,
+                        descriptor,
+                        appliedOptionIds);
+                }
+                else
+                {
+                    FomodInstallerService::rememberSelection(
+                        projectDirectory,
+                        descriptor,
+                        appliedOptionIds,
+                        descriptor.profileContext == nullptr
+                            ? std::wstring_view(profileName)
+                            : std::wstring_view(descriptor.profileContext->profileName),
+                        descriptor.profileContext == nullptr
+                            ? std::wstring_view{}
+                            : std::wstring_view(descriptor.profileContext->fingerprint),
+                        rememberedManualDecisions);
+                }
+            }
+            catch (const std::exception& exception)
+            {
+                logger.writeOperation(
+                    LogLevel::Warning,
+                    "FomodMemory",
+                    std::string("Installed FOMOD, but selection memory was not updated: ") +
+                        exception.what());
+            }
 
             logger.writeOperation(
                 LogLevel::Info,
@@ -8378,7 +8483,9 @@ namespace fluxora
                     "\", targetDirectory=\"" + toUtf8(targetDirectory.wstring()) +
                     "\", modUuid=\"" + toUtf8(record.uuid) +
                     "\", installMode=\"" + installModeName(effectiveInstallMode) +
-                    "\", appliedPluginRules=\"fomod options=" + std::to_string(appliedOptionIds.size()) +
+                    "\", targetWaitMs=" + std::to_string(targetLock.waitDuration().count()) +
+                    ", commitWaitMs=" + std::to_string(commitWait.count()) +
+                    ", appliedPluginRules=\"fomod options=" + std::to_string(appliedOptionIds.size()) +
                     "\", versionResult=\"" +
                     (detectedVersion.empty() ? std::string("unknown") : toUtf8(detectedVersion)) + "\".");
 
@@ -9121,7 +9228,7 @@ namespace fluxora
             const std::filesystem::path& modsDirectory,
             std::wstring_view requestedName)
         {
-            InstallCommitGuard guard(projectDirectory);
+            InstallProjectGate guard(projectDirectory);
             const AllocatedInstallName allocated = allocateFirstFreeInstallName(
                 projectDirectory,
                 modsDirectory,
@@ -10645,6 +10752,16 @@ namespace fluxora
             imported.localPath,
             profileName,
             requestedModName);
+    }
+
+    std::wstring DownloadService::archiveFingerprint(
+        const std::filesystem::path& archivePath) const
+    {
+        if (archivePath.empty() || !std::filesystem::is_regular_file(archivePath))
+        {
+            throw std::invalid_argument("Install source archive does not exist.");
+        }
+        return fileCacheFingerprint(archivePath);
     }
 
     InstalledMod DownloadService::installDownload(

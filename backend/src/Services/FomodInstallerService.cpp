@@ -58,7 +58,9 @@ namespace fluxora
             std::wstring key;
             std::wstring moduleName;
             std::wstring moduleVersion;
+            std::wstring structureFingerprint;
             bool legacyV1{false};
+            bool legacyStructure{false};
             std::vector<ManualDecision> globalManualDecisions;
             std::vector<ContextSelection> contexts;
         };
@@ -842,6 +844,8 @@ namespace fluxora
                     entry.key = readStringOrDefault(value, L"key");
                     entry.moduleName = readStringOrDefault(value, L"moduleName");
                     entry.moduleVersion = readStringOrDefault(value, L"moduleVersion");
+                    entry.structureFingerprint = readStringOrDefault(value, L"structureFingerprint");
+                    entry.legacyStructure = schemaVersion < 3 || entry.structureFingerprint.empty();
                     if (schemaVersion < 2)
                     {
                         entry.legacyV1 = true;
@@ -912,7 +916,7 @@ namespace fluxora
         {
             JsonWriter writer;
             writer.beginObject();
-            writer.field(L"schemaVersion", 2);
+            writer.field(L"schemaVersion", 3);
             writer.key(L"entries").beginArray();
             for (const FomodMemoryEntry& entry : entries)
             {
@@ -920,6 +924,7 @@ namespace fluxora
                 writer.field(L"key", entry.key);
                 writer.field(L"moduleName", entry.moduleName);
                 writer.field(L"moduleVersion", entry.moduleVersion);
+                writer.field(L"structureFingerprint", entry.structureFingerprint);
                 writer.key(L"globalManualDecisions").beginArray();
                 for (const FomodMemoryEntry::ManualDecision& decision : entry.globalManualDecisions)
                 {
@@ -986,6 +991,49 @@ namespace fluxora
             return output;
         }
 
+        [[nodiscard]] std::wstring structureFingerprint(
+            const FomodInstallerDescriptor& descriptor)
+        {
+            std::uint64_t hash = 1469598103934665603ULL;
+            const auto append = [&hash](std::wstring_view value)
+            {
+                for (const wchar_t character : value)
+                {
+                    hash ^= static_cast<std::uint32_t>(character);
+                    hash *= 1099511628211ULL;
+                }
+                hash ^= 0xffU;
+                hash *= 1099511628211ULL;
+            };
+            for (const FomodStep& step : descriptor.steps)
+            {
+                append(step.id);
+                append(step.name);
+                append(step.visible.has_value() ? L"conditional" : L"always");
+                for (const FomodGroup& group : step.groups)
+                {
+                    append(group.id);
+                    append(group.name);
+                    append(group.type);
+                    for (const FomodOption& option : group.options)
+                    {
+                        append(option.id);
+                        append(option.name);
+                        append(option.type);
+                        append(option.defaultType);
+                        for (const FomodFileEntry& file : option.files)
+                        {
+                            append(file.source);
+                            append(file.destination);
+                        }
+                    }
+                }
+            }
+            std::wostringstream output;
+            output << std::hex << hash;
+            return output.str();
+        }
+
         void saveRememberedSelection(
             const std::filesystem::path& projectDirectory,
             const FomodInstallerDescriptor& descriptor,
@@ -1003,7 +1051,8 @@ namespace fluxora
             std::vector<FomodMemoryEntry> entries = loadMemory(projectDirectory);
             auto match = std::find_if(entries.begin(), entries.end(), [&](const FomodMemoryEntry& entry)
             {
-                return entry.key == descriptor.memoryKey;
+                return entry.key == descriptor.memoryKey &&
+                    entry.structureFingerprint == descriptor.structureFingerprint;
             });
 
             if (match == entries.end())
@@ -1015,7 +1064,9 @@ namespace fluxora
             match->key = descriptor.memoryKey;
             match->moduleName = descriptor.moduleName;
             match->moduleVersion = descriptor.moduleVersion;
+            match->structureFingerprint = descriptor.structureFingerprint;
             match->legacyV1 = false;
+            match->legacyStructure = false;
             const std::set<std::wstring> independent = independentOptionIds(descriptor);
             if (inferLegacyManualSelections)
             {
@@ -2359,8 +2410,27 @@ namespace fluxora
             }
 
             descriptor.memoryKey = makeMemoryKey(identity, descriptor.moduleId, descriptor.moduleName);
-            for (const FomodMemoryEntry& entry : loadMemory(projectDirectory))
+            descriptor.structureFingerprint = structureFingerprint(descriptor);
+            const std::vector<FomodMemoryEntry> memory = loadMemory(projectDirectory);
+            const auto exactMemory = std::find_if(
+                memory.begin(),
+                memory.end(),
+                [&descriptor](const FomodMemoryEntry& entry)
+                {
+                    return entry.key == descriptor.memoryKey &&
+                        entry.structureFingerprint == descriptor.structureFingerprint;
+                });
+            const auto legacyMemory = std::find_if(
+                memory.begin(),
+                memory.end(),
+                [&descriptor](const FomodMemoryEntry& entry)
+                {
+                    return entry.key == descriptor.memoryKey && entry.legacyStructure;
+                });
+            const auto selectedMemory = exactMemory != memory.end() ? exactMemory : legacyMemory;
+            if (selectedMemory != memory.end())
             {
+                const FomodMemoryEntry& entry = *selectedMemory;
                 if (entry.key == descriptor.memoryKey)
                 {
                     const std::set<std::wstring> independent = independentOptionIds(descriptor);
@@ -2374,14 +2444,14 @@ namespace fluxora
                                 equalsIgnoreCase(context.profileName, profileName) &&
                                 context.fingerprint == profileFingerprint;
                         });
-                    if (contextMatch != entry.contexts.end())
+                    if (!entry.legacyStructure && contextMatch != entry.contexts.end())
                     {
                         descriptor.previousSelectionContextual = true;
                         descriptor.previousSelectedOptionIds = contextMatch->selectedOptionIds;
                     }
                     else
                     {
-                        descriptor.previousSelectionWeak = entry.legacyV1;
+                        descriptor.previousSelectionWeak = entry.legacyV1 || entry.legacyStructure;
                         for (const FomodMemoryEntry::ManualDecision& decision : entry.globalManualDecisions)
                         {
                             if (!independent.contains(decision.optionId))
@@ -2396,7 +2466,9 @@ namespace fluxora
                     descriptor.hasPreviousSelection =
                         !descriptor.previousSelectedOptionIds.empty() ||
                         !descriptor.previousDeselectedOptionIds.empty();
-                    break;
+                    descriptor.selectionOrigin = descriptor.hasPreviousSelection
+                        ? L"restored"
+                        : L"recalculated";
                 }
             }
 

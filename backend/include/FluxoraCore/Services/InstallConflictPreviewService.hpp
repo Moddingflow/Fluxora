@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -87,6 +88,8 @@ namespace fluxora
         std::wstring pendingOrderId;
         std::wstring targetModUuid;
         int targetIndex{-1};
+        std::wstring beforeOrderId;
+        std::wstring afterOrderId;
     };
 
     class InstallConflictPreviewService final
@@ -96,6 +99,10 @@ namespace fluxora
 
         [[nodiscard]] static FluxoraInstallConflictSnapshot calculate(
             const InstallConflictPreviewRequest& request);
+
+        [[nodiscard]] static FluxoraInstallConflictSnapshot calculateAggregate(
+            const std::vector<InstallConflictPreviewRequest>& requests,
+            std::size_t focusIndex);
 
         static void beginSession(const InstallConflictSessionStartRequest& request);
 
@@ -107,7 +114,9 @@ namespace fluxora
         [[nodiscard]] static FluxoraInstallConflictSnapshot rebase(
             const std::filesystem::path& projectDirectory,
             std::wstring_view operationId,
-            int targetIndex);
+            std::wstring_view beforeOrderId,
+            std::wstring_view afterOrderId,
+            int fallbackTargetIndex);
 
         [[nodiscard]] static FluxoraInstallConflictSnapshot completeSession(
             const std::filesystem::path& projectDirectory,

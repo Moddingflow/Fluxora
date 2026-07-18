@@ -35,6 +35,53 @@ extern "C"
     FLUXORA_CORE_API int fluxora_set_operation_context(
         const wchar_t* operationId);
 
+    // Durable asynchronous install coordinator. Submit returns after the
+    // operation has been persisted and queued; progress may arrive later from
+    // either of the two native install workers.
+    FLUXORA_CORE_API int fluxora_submit_install_operation(
+        const wchar_t* projectDirectory,
+        const wchar_t* operationId,
+        const wchar_t* sourceKind,
+        const wchar_t* sourcePath,
+        int isFomod,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        int modOrderTargetIndex,
+        const wchar_t* beforeOrderId,
+        const wchar_t* afterOrderId,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_restore_install_operations(
+        const wchar_t* projectDirectory,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_list_install_operations(
+        const wchar_t* projectDirectory,
+        int includeTerminal,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_get_install_operation(
+        const wchar_t* projectDirectory,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     // Returns the thread-local output length required by the most recent
     // FluxoraCoreResultBufferTooSmall result, including the null terminator.
     FLUXORA_CORE_API int fluxora_get_last_required_buffer_length();
@@ -1010,6 +1057,15 @@ extern "C"
         const wchar_t* projectDirectory,
         const wchar_t* operationId,
         int targetIndex,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_rebase_pending_install_with_anchors(
+        const wchar_t* projectDirectory,
+        const wchar_t* operationId,
+        const wchar_t* beforeOrderId,
+        const wchar_t* afterOrderId,
+        int fallbackTargetIndex,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 

@@ -28,7 +28,8 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{oneshot, Mutex};
+use tokio::task::JoinHandle;
 use tokio::time::{timeout, Duration};
 
 const BRIDGE_PROTOCOL_VERSION: &str = "1.0";
@@ -41,6 +42,7 @@ const PRIVATE_NEXUS_API_AUTH_HEADER_METHOD: &str = "nexus.getApiAuthHeader";
 const PRIVATE_AI_NEXUS_CREDENTIAL_FIELD: &str = "nativeNexusApiCredential";
 const AI_CREDENTIAL_SERVICE: &str = "app.fluxora.desktop.ai.provider";
 const PROGRESS_EVENT: &str = "fluxora:operations:progress";
+const INSTALL_PROGRESS_EVENT: &str = "fluxora:installs:progress";
 const AI_RUN_EVENT: &str = "fluxora:ai:run-event";
 const MAIN_WINDOW_LABEL: &str = "main";
 const SETTINGS_WINDOW_LABEL: &str = "settings";
@@ -355,7 +357,8 @@ struct BuildContentWatchEventContext {
 struct BridgeProcess {
     child: Option<Child>,
     stdin: Option<ChildStdin>,
-    stdout: Option<BufReader<ChildStdout>>,
+    pending_responses: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
+    reader_task: Option<JoinHandle<()>>,
     host_path: Option<PathBuf>,
     handshake: Option<Value>,
 }
@@ -1233,6 +1236,22 @@ where
     links
 }
 
+fn should_request_activation_window_focus(window_is_focused: Option<bool>) -> bool {
+    window_is_focused != Some(true)
+}
+
+fn show_activation_window<R: tauri::Runtime>(window: &WebviewWindow<R>, unminimize: bool) {
+    if !should_request_activation_window_focus(window.is_focused().ok()) {
+        return;
+    }
+
+    if unminimize {
+        let _ = window.unminimize();
+    }
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
 fn handle_nxm_activation_args(app: AppHandle, args: Vec<String>, source: &'static str) {
     let links = extract_nxm_links_from_args(args);
     if links.is_empty() {
@@ -1240,8 +1259,7 @@ fn handle_nxm_activation_args(app: AppHandle, args: Vec<String>, source: &'stati
     }
 
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        let _ = window.show();
-        let _ = window.set_focus();
+        show_activation_window(&window, false);
     }
 
     tauri::async_runtime::spawn(async move {
@@ -2002,14 +2020,26 @@ impl BridgeProcess {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill().await;
         }
+        if let Some(reader_task) = self.reader_task.take() {
+            reader_task.abort();
+        }
+        self.pending_responses.lock().await.clear();
         self.stdin = None;
-        self.stdout = None;
         self.handshake = None;
     }
 
     async fn ensure_started(&mut self, app: &AppHandle) -> Result<(), String> {
-        if self.child.is_some() && self.stdin.is_some() && self.stdout.is_some() {
+        if self.child.is_some()
+            && self.stdin.is_some()
+            && self
+                .reader_task
+                .as_ref()
+                .is_some_and(|reader_task| !reader_task.is_finished())
+        {
             return Ok(());
+        }
+        if self.child.is_some() || self.stdin.is_some() || self.reader_task.is_some() {
+            self.reset().await;
         }
 
         let host_path = resolve_host_path(app).await?;
@@ -2053,7 +2083,78 @@ impl BridgeProcess {
 
         let host_path_for_log = host_path.to_string_lossy().to_string();
         self.stdin = child.stdin.take();
-        self.stdout = child.stdout.take().map(BufReader::new);
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Bridge host stdout is unavailable.".to_string())?;
+        let pending_responses = Arc::clone(&self.pending_responses);
+        let reader_app = app.clone();
+        self.reader_task = Some(tokio::spawn(async move {
+            let mut reader = BufReader::new(stdout);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let bytes = match reader.read_line(&mut line).await {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        let _ = write_log(
+                            &reader_app,
+                            "main-bridge",
+                            "error",
+                            "BridgeReader",
+                            &format!("Bridge stdout reader failed: {error}"),
+                            None,
+                        )
+                        .await;
+                        break;
+                    }
+                };
+                if bytes == 0 {
+                    break;
+                }
+
+                let envelope: Value = match serde_json::from_str(line.trim()) {
+                    Ok(envelope) => envelope,
+                    Err(error) => {
+                        let _ = write_log(
+                            &reader_app,
+                            "main-bridge",
+                            "warning",
+                            "BridgeReader",
+                            &format!(
+                                "Ignored non-JSON bridge stdout: {}",
+                                sanitize_log(&error.to_string())
+                            ),
+                            None,
+                        )
+                        .await;
+                        continue;
+                    }
+                };
+
+                match envelope.get("method").and_then(Value::as_str) {
+                    Some("operations.progress") => {
+                        let payload = operation_progress_payload(&envelope);
+                        record_operation_progress(&reader_app, &payload).await;
+                        let _ = reader_app.emit(PROGRESS_EVENT, payload);
+                        continue;
+                    }
+                    Some("installs.progress") => {
+                        let payload = envelope.get("params").cloned().unwrap_or(Value::Null);
+                        let _ = reader_app.emit(INSTALL_PROGRESS_EVENT, payload);
+                        continue;
+                    }
+                    _ => {}
+                }
+
+                if let Some(request_id) = envelope.get("id").and_then(Value::as_str) {
+                    if let Some(sender) = pending_responses.lock().await.remove(request_id) {
+                        let _ = sender.send(envelope);
+                    }
+                }
+            }
+            pending_responses.lock().await.clear();
+        }));
         self.child = Some(child);
         self.host_path = Some(host_path);
         self.handshake = None;
@@ -2151,6 +2252,11 @@ impl BridgeProcess {
         )
         .await;
 
+        let (response_sender, response_receiver) = oneshot::channel();
+        self.pending_responses
+            .lock()
+            .await
+            .insert(request_id.clone(), response_sender);
         let stdin = self
             .stdin
             .as_mut()
@@ -2164,120 +2270,75 @@ impl BridgeProcess {
             return Err(error.to_string());
         }
 
-        loop {
-            let mut line = String::new();
-            let read_result = {
-                let stdout = self
-                    .stdout
-                    .as_mut()
-                    .ok_or_else(|| "Bridge host stdout is unavailable.".to_string())?;
-                timeout(
-                    Duration::from_millis(timeout_ms),
-                    stdout.read_line(&mut line),
-                )
-                .await
-            };
-            let bytes = match read_result {
-                Ok(Ok(bytes)) => bytes,
-                Ok(Err(error)) => {
-                    self.reset().await;
-                    return Err(error.to_string());
-                }
-                Err(_) => {
-                    let message = format!("Bridge request timed out: {}", method);
-                    let _ = write_log(
-                        app,
-                        "main-bridge",
-                        "error",
-                        "BridgeRequest",
-                        &format!(
-                            "{}. Host process will be restarted for the next request.",
-                            message
-                        ),
-                        Some(&operation_id),
-                    )
-                    .await;
-                    self.reset().await;
-                    return Err(message);
-                }
-            };
-            if bytes == 0 {
+        let envelope = match timeout(Duration::from_millis(timeout_ms), response_receiver).await {
+            Ok(Ok(envelope)) => envelope,
+            Ok(Err(_)) => {
                 self.reset().await;
                 return Err("Bridge host exited before replying.".to_string());
             }
-
-            let envelope: Value = match serde_json::from_str(line.trim()) {
-                Ok(envelope) => envelope,
-                Err(error) => {
-                    let _ = write_log(
-                        app,
-                        "main-bridge",
-                        "warning",
-                        "BridgeRequest",
-                        &format!(
-                            "Ignored non-JSON bridge stdout while waiting for method={}: {}",
-                            sanitize_log(method),
-                            sanitize_log(&error.to_string())
-                        ),
-                        Some(&operation_id),
-                    )
-                    .await;
-                    continue;
-                }
-            };
-            if envelope.get("id").and_then(Value::as_str) != Some(request_id.as_str()) {
-                if envelope.get("method").and_then(Value::as_str) == Some("operations.progress") {
-                    let payload = operation_progress_payload(&envelope);
-                    record_operation_progress(app, &payload).await;
-                    let _ = app.emit(PROGRESS_EVENT, payload);
-                }
-                continue;
-            }
-
-            if let Some(error) = envelope.get("error") {
-                let message = error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("Native bridge request failed.")
-                    .to_string();
+            Err(_) => {
+                self.pending_responses.lock().await.remove(&request_id);
+                let message = format!("Bridge request timed out: {}", method);
                 let _ = write_log(
                     app,
                     "main-bridge",
                     "error",
                     "BridgeRequest",
                     &format!(
-                        "Request failed. method={} durationMs={} error={}",
-                        sanitize_log(method),
-                        now_millis().saturating_sub(started_at),
-                        sanitize_log(&message)
+                        "{}. Host process will be restarted for the next request.",
+                        message
                     ),
                     Some(&operation_id),
                 )
                 .await;
-                return Err(serialize_bridge_invoke_error(method, &operation_id, error));
+                self.reset().await;
+                return Err(message);
             }
+        };
 
-            let result = envelope
-                .get("result")
-                .ok_or_else(|| "Bridge response missing result.".to_string())?;
-            if result.get("ok").and_then(Value::as_bool) != Some(true) {
-                return Err("Bridge response did not include an ok result.".to_string());
-            }
+        if let Some(error) = envelope.get("error") {
+            let message = error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("Native bridge request failed.")
+                .to_string();
             let _ = write_log(
                 app,
                 "main-bridge",
-                "info",
+                "error",
                 "BridgeRequest",
                 &format!(
-                    "Request completed. method={} durationMs={}",
+                    "Request failed. method={} durationMs={} error={}",
                     sanitize_log(method),
-                    now_millis().saturating_sub(started_at)
+                    now_millis().saturating_sub(started_at),
+                    sanitize_log(&message)
                 ),
                 Some(&operation_id),
             )
             .await;
-            return Ok(result.get("data").cloned().unwrap_or(Value::Null));
+            return Err(serialize_bridge_invoke_error(method, &operation_id, error));
         }
+
+        let result = envelope
+            .get("result")
+            .ok_or_else(|| "Bridge response missing result.".to_string())?;
+        if result.get("ok").and_then(Value::as_bool) != Some(true) {
+            return Err("Bridge response did not include an ok result.".to_string());
+        }
+        let _ = write_log(
+            app,
+            "main-bridge",
+            "info",
+            "BridgeRequest",
+            &format!(
+                "Request completed. method={} durationMs={}",
+                sanitize_log(method),
+                now_millis().saturating_sub(started_at)
+            ),
+            Some(&operation_id),
+        )
+        .await;
+        Ok(result.get("data").cloned().unwrap_or(Value::Null))
     }
 
     async fn shutdown(&mut self, app: &AppHandle, request: OperationRequest) -> Result<(), String> {
@@ -3573,6 +3634,10 @@ fn bridge_lane_for_method(method: &str) -> BridgeLane {
         | "archives.install"
         | "archives.planInstall"
         | "archives.installFomod"
+        | "installs.submit"
+        | "installs.restore"
+        | "installs.list"
+        | "installs.get"
         | "nexus.connect"
         | "textFiles.read" => BridgeLane::Interactive,
         _ => BridgeLane::Main,
@@ -5144,9 +5209,7 @@ async fn fluxora_shell_show_item_in_folder(
 #[tauri::command]
 async fn fluxora_show_main_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        show_activation_window(&window, true);
     }
     Ok(())
 }
@@ -5187,9 +5250,7 @@ async fn fluxora_window_close(window: tauri::WebviewWindow) -> Result<(), String
 #[tauri::command]
 async fn fluxora_open_settings_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        show_activation_window(&window, true);
         return Ok(());
     }
 
@@ -5234,9 +5295,7 @@ async fn fluxora_open_build_settings_window(
         stable_label_suffix(config_path)
     );
     if let Some(window) = app.get_webview_window(&label) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        show_activation_window(&window, true);
         return Ok(());
     }
 
@@ -5298,9 +5357,7 @@ async fn fluxora_open_mod_details_window(
         stable_label_suffix(&format!("{config_path}\u{0}{mod_path}\u{0}{profile_name}"))
     );
     if let Some(window) = app.get_webview_window(&label) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        show_activation_window(&window, true);
         return Ok(());
     }
 
@@ -5417,9 +5474,7 @@ async fn fluxora_open_text_editor_window(
         ))
     );
     if let Some(window) = app.get_webview_window(&label) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        show_activation_window(&window, true);
         return Ok(());
     }
 
@@ -5519,9 +5574,7 @@ async fn fluxora_open_file_preview_window(
         ))
     );
     if let Some(window) = app.get_webview_window(&label) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        show_activation_window(&window, true);
         return Ok(());
     }
 
@@ -6371,6 +6424,13 @@ mod tests {
                 "nxm://fallout4/mods/10/files/20?key=def&expires=1000"
             ]
         );
+    }
+
+    #[test]
+    fn activation_focus_is_requested_only_when_the_window_is_not_confirmed_focused() {
+        assert!(!should_request_activation_window_focus(Some(true)));
+        assert!(should_request_activation_window_focus(Some(false)));
+        assert!(should_request_activation_window_focus(None));
     }
 
     #[test]

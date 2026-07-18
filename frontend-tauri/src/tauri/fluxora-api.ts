@@ -54,6 +54,9 @@ import type {
   FluxoraInstallFomodArchiveRequest,
   FluxoraInstallFomodDownloadRequest,
   FluxoraInstallPlan,
+  FluxoraInstallOperation,
+  FluxoraInstallSubmitRequest,
+  FluxoraPendingInstallOrderAnchors,
   FluxoraInstallConflictSnapshot,
   FluxoraInstalledModSummary,
   FluxoraInstalledMod,
@@ -493,7 +496,7 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
     rebasePendingInstall: (
       projectDirectory: string,
       operationId: string,
-      targetIndex: number,
+      anchors: FluxoraPendingInstallOrderAnchors,
       request?: OperationRequest
     ) =>
       invokeTyped<FluxoraInstallConflictSnapshot>(
@@ -501,7 +504,7 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         FluxoraIpcChannels.modsRebasePendingInstall,
         projectDirectory,
         operationId,
-        targetIndex,
+        anchors,
         request
       ),
     deleteInstalled: (projectDirectory: string, modPath: string, request?: OperationRequest) =>
@@ -1179,6 +1182,48 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         FluxoraIpcChannels.archivesInstallFomod,
         request,
         operation
+      )
+  },
+  installs: {
+    submit: (request: FluxoraInstallSubmitRequest, operation?: OperationRequest) =>
+      invokeTyped<FluxoraInstallOperation>(
+        ipc,
+        FluxoraIpcChannels.installsSubmit,
+        request,
+        operation
+      ),
+    restore: (projectDirectory: string, operation?: OperationRequest) =>
+      invokeTyped<FluxoraInstallOperation[]>(
+        ipc,
+        FluxoraIpcChannels.installsRestore,
+        projectDirectory,
+        operation
+      ),
+    list: (
+      projectDirectory: string,
+      includeTerminal = true,
+      operation?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraInstallOperation[]>(
+        ipc,
+        FluxoraIpcChannels.installsList,
+        projectDirectory,
+        includeTerminal,
+        operation
+      ),
+    get: (projectDirectory: string, operationId: string, operation?: OperationRequest) =>
+      invokeTyped<FluxoraInstallOperation>(
+        ipc,
+        FluxoraIpcChannels.installsGet,
+        projectDirectory,
+        operationId,
+        operation
+      ),
+    onProgress: (callback: (operation: FluxoraInstallOperation) => void) =>
+      listenTyped<FluxoraInstallOperation>(
+        ipc,
+        FluxoraIpcChannels.installsProgress,
+        callback
       )
   },
   nxm: {
@@ -3072,7 +3117,13 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.modsRebasePendingInstall:
         return bridgeRequest(
           'mods.rebasePendingInstall',
-          { projectDirectory: args[0], operationId: args[1], targetIndex: args[2] },
+          {
+            projectDirectory: args[0],
+            operationId: args[1],
+            beforeOrderId: (args[2] as FluxoraPendingInstallOrderAnchors).beforeOrderId ?? '',
+            afterOrderId: (args[2] as FluxoraPendingInstallOrderAnchors).afterOrderId ?? '',
+            fallbackTargetIndex: (args[2] as FluxoraPendingInstallOrderAnchors).fallbackTargetIndex
+          },
           requestWithOperationId(args[3], 'mods_rebase_pending_install')
         );
       case FluxoraIpcChannels.modsCreateEmpty:
@@ -3538,6 +3589,49 @@ const createTauriInvoker = (): IpcInvoker => ({
           fileMutationTimeoutMs
         );
         return withOperationId(data, request, scope);
+      }
+      case FluxoraIpcChannels.installsSubmit: {
+        const install = (args[0] ?? {}) as Record<string, unknown>;
+        const request = requestWithOperationId(args[1], 'installs_submit');
+        const params: Record<string, unknown> = {
+          ...install,
+          operationId: optionalString(install.operationId) || operationIdOf(request, 'installs_submit'),
+          existingModMode: install.existingModMode ?? 0,
+          selectedOptionIdsJson: JSON.stringify(
+            Array.isArray(install.selectedOptionIds) ? install.selectedOptionIds : []
+          ),
+          placementOverridesJson: optionalString(install.placementOverridesJson),
+          manualDecisionsJson: JSON.stringify(
+            Array.isArray(install.manualDecisions) ? install.manualDecisions : []
+          )
+        };
+        delete params.selectedOptionIds;
+        delete params.manualDecisions;
+        return bridgeRequest<FluxoraInstallOperation>('installs.submit', params, request);
+      }
+      case FluxoraIpcChannels.installsRestore: {
+        const request = requestWithOperationId(args[1], 'installs_restore');
+        return bridgeRequest<FluxoraInstallOperation[]>(
+          'installs.restore',
+          { projectDirectory: args[0] },
+          request
+        );
+      }
+      case FluxoraIpcChannels.installsList: {
+        const request = requestWithOperationId(args[2], 'installs_list');
+        return bridgeRequest<FluxoraInstallOperation[]>(
+          'installs.list',
+          { projectDirectory: args[0], includeTerminal: args[1] !== false },
+          request
+        );
+      }
+      case FluxoraIpcChannels.installsGet: {
+        const request = requestWithOperationId(args[2], 'installs_get');
+        return bridgeRequest<FluxoraInstallOperation>(
+          'installs.get',
+          { projectDirectory: args[0], operationId: args[1] },
+          request
+        );
       }
 
       default:

@@ -128,6 +128,11 @@ export const FluxoraIpcChannels = {
   operationsGetStatus: 'fluxora:operations:get-status',
   operationsProgress: 'fluxora:operations:progress',
   operationsRecentLogs: 'fluxora:operations:recent-logs',
+  installsSubmit: 'fluxora:installs:submit',
+  installsRestore: 'fluxora:installs:restore',
+  installsList: 'fluxora:installs:list',
+  installsGet: 'fluxora:installs:get',
+  installsProgress: 'fluxora:installs:progress',
   archivesInstallFomod: 'fluxora:archives:install-fomod',
   archivesPlanInstall: 'fluxora:archives:plan-install',
   archivesInstall: 'fluxora:archives:install',
@@ -1800,7 +1805,7 @@ export interface FluxoraDownloadEntry {
   localPath: string;
   source: string;
   archiveId: string | null;
-  buildStatus: 'Ready' | 'Installing' | 'Installed' | 'Deleted' | null;
+  buildStatus: 'Ready' | 'Installing' | 'Installed' | 'Deleted' | 'Needs review' | 'Failed' | null;
   transferState:
     | 'idle'
     | 'queued'
@@ -2101,6 +2106,8 @@ export interface FluxoraFomodInstaller {
   moduleId: string;
   moduleImagePath: string;
   memoryKey: string;
+  structureFingerprint?: string;
+  selectionOrigin?: 'restored' | 'recalculated';
   hasPreviousSelection: boolean;
   previousSelectionContextual?: boolean;
   previousSelectionWeak?: boolean;
@@ -2214,6 +2221,87 @@ export interface FluxoraInstalledModSummary {
   overwritesModIds: string[];
   overwrittenByModIds: string[];
   operationId: string;
+}
+
+export type FluxoraInstallOperationState =
+  | 'queued'
+  | 'validating'
+  | 'extracting'
+  | 'configuringFomod'
+  | 'buildingStaging'
+  | 'projectingConflicts'
+  | 'waitingTarget'
+  | 'committing'
+  | 'finalizing'
+  | 'recovering'
+  | 'needsReview'
+  | 'completed'
+  | 'failed';
+
+export interface FluxoraInstallOperationResult {
+  id: string;
+  name: string;
+  version: string;
+  isEnabled: boolean;
+  modUuid: string;
+  orderId: string;
+  fileCount: number;
+  conflictingFileCount: number;
+  overwrittenFileCount: number;
+  overwritingFileCount: number;
+}
+
+export interface FluxoraInstallOperation {
+  operationId: string;
+  sourceKind: 'download' | 'archive';
+  sourcePath: string;
+  archiveFingerprint: string;
+  profileName: string;
+  existingModMode: FluxoraExistingModInstallMode;
+  targetModUuid: string;
+  targetFolder: string;
+  selectedOptionIds: string[];
+  manualDecisions: FluxoraFomodManualDecision[];
+  placementOverridesJson: string;
+  resume: {
+    isFomod?: boolean;
+    fomodContextId?: string;
+    modOrderTargetIndex?: number;
+  };
+  beforeOrderId: string;
+  afterOrderId: string;
+  enqueueSequence: number;
+  state: FluxoraInstallOperationState;
+  stage: FluxoraInstallOperationState;
+  progressPercent: number;
+  indeterminate: boolean;
+  errorCode: string;
+  errorMessage: string;
+  result: FluxoraInstallOperationResult | null;
+}
+
+export interface FluxoraInstallSubmitRequest extends FluxoraInstallIdentitySelection {
+  operationId?: string;
+  projectDirectory: string;
+  sourceKind: 'download' | 'archive';
+  sourcePath: string;
+  isFomod?: boolean;
+  modName: string;
+  profileName: string;
+  existingModMode?: FluxoraExistingModInstallMode;
+  selectedOptionIds?: string[];
+  placementOverridesJson?: string;
+  fomodContextId?: string;
+  manualDecisions?: FluxoraFomodManualDecision[];
+  modOrderTargetIndex?: number;
+  beforeOrderId?: string;
+  afterOrderId?: string;
+}
+
+export interface FluxoraPendingInstallOrderAnchors {
+  beforeOrderId?: string;
+  afterOrderId?: string;
+  fallbackTargetIndex: number;
 }
 
 export type FluxoraInstallConflictSnapshotState =
@@ -2734,7 +2822,7 @@ export interface FluxoraApi {
     rebasePendingInstall: (
       projectDirectory: string,
       operationId: string,
-      targetIndex: number,
+      anchors: FluxoraPendingInstallOrderAnchors,
       request?: OperationRequest
     ) => Promise<FluxoraInstallConflictSnapshot>;
     deleteInstalled: (
@@ -3041,6 +3129,29 @@ export interface FluxoraApi {
       request: FluxoraInstallFomodArchiveRequest,
       operation?: OperationRequest
     ) => Promise<FluxoraInstalledModSummary>;
+  };
+  installs: {
+    submit: (
+      request: FluxoraInstallSubmitRequest,
+      operation?: OperationRequest
+    ) => Promise<FluxoraInstallOperation>;
+    restore: (
+      projectDirectory: string,
+      operation?: OperationRequest
+    ) => Promise<FluxoraInstallOperation[]>;
+    list: (
+      projectDirectory: string,
+      includeTerminal?: boolean,
+      operation?: OperationRequest
+    ) => Promise<FluxoraInstallOperation[]>;
+    get: (
+      projectDirectory: string,
+      operationId: string,
+      operation?: OperationRequest
+    ) => Promise<FluxoraInstallOperation>;
+    onProgress: (
+      callback: (operation: FluxoraInstallOperation) => void
+    ) => () => void;
   };
   nxm: {
     registerProtocol: (request?: OperationRequest) => Promise<FluxoraNxmProtocolResult>;

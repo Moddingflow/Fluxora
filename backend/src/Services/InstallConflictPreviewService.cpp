@@ -158,6 +158,61 @@ namespace fluxora
             };
         }
 
+        WorkingRow applyProjection(
+            std::vector<WorkingRow>& projected,
+            const InstallConflictPreviewRequest& request)
+        {
+            const auto target = std::find_if(
+                projected.begin(),
+                projected.end(),
+                [&request](const WorkingRow& row)
+                {
+                    return !row.row.separator &&
+                        !request.targetModUuid.empty() &&
+                        row.row.modUuid == request.targetModUuid;
+                });
+
+            WorkingRow installed;
+            if (request.mode != InstallConflictPreviewMode::Install)
+            {
+                if (target == projected.end())
+                {
+                    throw std::invalid_argument(
+                        "Replace or merge conflict preview requires a profile target mod.");
+                }
+                installed = *target;
+                const std::size_t originalTargetIndex = static_cast<std::size_t>(
+                    std::distance(projected.begin(), target));
+                projected.erase(target);
+                installed.fileKeys = fileKeys(request.incomingFiles);
+                if (request.mode == InstallConflictPreviewMode::Merge)
+                {
+                    const auto oldFiles = fileKeys(installed.row.files);
+                    installed.fileKeys.insert(oldFiles.begin(), oldFiles.end());
+                }
+                installed.row.files.clear();
+                const std::size_t insertionIndex = request.targetIndex < 0
+                    ? std::min(originalTargetIndex, projected.size())
+                    : clampedTargetIndex(request.targetIndex, projected.size());
+                projected.insert(
+                    projected.begin() + static_cast<std::ptrdiff_t>(insertionIndex),
+                    installed);
+                return installed;
+            }
+
+            installed.row.orderId = request.pendingOrderId;
+            installed.row.relationId = request.pendingOrderId;
+            installed.row.enabled = true;
+            installed.fileKeys = fileKeys(request.incomingFiles);
+            const std::size_t insertionIndex = clampedTargetIndex(
+                request.targetIndex,
+                projected.size());
+            projected.insert(
+                projected.begin() + static_cast<std::ptrdiff_t>(insertionIndex),
+                installed);
+            return installed;
+        }
+
         InstallConflictSnapshotState snapshotState(std::wstring_view state)
         {
             if (state == L"ready")
@@ -180,23 +235,45 @@ namespace fluxora
         }
 
         FluxoraInstallConflictSnapshot snapshotFromSession(
+            const std::filesystem::path& projectDirectory,
             const PendingInstallSessionRecord& session)
         {
             const InstallConflictSnapshotState state = snapshotState(session.state);
             if (state == InstallConflictSnapshotState::Ready ||
                 state == InstallConflictSnapshotState::Committing)
             {
-                InstallConflictPreviewRequest request;
-                request.operationId = session.operationId;
-                request.revision = session.revision;
-                request.mode = session.mode;
-                request.pendingOrderId = session.pendingOrderId;
-                request.targetModUuid = session.targetModUuid;
-                request.targetIndex = session.targetPosition;
-                request.profileMods = session.profileRows;
-                request.incomingFiles = session.files;
+                std::vector<PendingInstallSessionRecord> sessions =
+                    InstanceMetadataStore::activePendingInstallSessions(
+                        projectDirectory,
+                        session.profileName);
+                if (sessions.empty())
+                {
+                    sessions.push_back(session);
+                }
+
+                std::vector<InstallConflictPreviewRequest> requests;
+                requests.reserve(sessions.size());
+                std::size_t focusIndex = 0;
+                for (std::size_t index = 0; index < sessions.size(); ++index)
+                {
+                    const PendingInstallSessionRecord& pending = sessions[index];
+                    InstallConflictPreviewRequest request;
+                    request.operationId = pending.operationId;
+                    request.revision = pending.revision;
+                    request.mode = pending.mode;
+                    request.pendingOrderId = pending.pendingOrderId;
+                    request.targetModUuid = pending.targetModUuid;
+                    request.targetIndex = pending.targetPosition;
+                    request.profileMods = pending.profileRows;
+                    request.incomingFiles = pending.files;
+                    requests.push_back(std::move(request));
+                    if (pending.operationId == session.operationId)
+                    {
+                        focusIndex = index;
+                    }
+                }
                 FluxoraInstallConflictSnapshot snapshot =
-                    InstallConflictPreviewService::calculate(request);
+                    InstallConflictPreviewService::calculateAggregate(requests, focusIndex);
                 snapshot.state = state;
                 snapshot.orderId = session.finalOrderId;
                 return snapshot;
@@ -240,73 +317,47 @@ namespace fluxora
     FluxoraInstallConflictSnapshot InstallConflictPreviewService::calculate(
         const InstallConflictPreviewRequest& request)
     {
-        if (request.operationId.empty())
+        return calculateAggregate({request}, 0);
+    }
+
+    FluxoraInstallConflictSnapshot InstallConflictPreviewService::calculateAggregate(
+        const std::vector<InstallConflictPreviewRequest>& requests,
+        std::size_t focusIndex)
+    {
+        if (requests.empty() || focusIndex >= requests.size())
         {
-            throw std::invalid_argument("Install conflict preview requires an operation id.");
+            throw std::invalid_argument("Aggregate install conflict preview requires a focused request.");
         }
-        if (request.pendingOrderId.empty())
+        for (const InstallConflictPreviewRequest& request : requests)
         {
-            throw std::invalid_argument("Install conflict preview requires a pending order id.");
+            if (request.operationId.empty())
+            {
+                throw std::invalid_argument("Install conflict preview requires an operation id.");
+            }
+            if (request.pendingOrderId.empty())
+            {
+                throw std::invalid_argument("Install conflict preview requires a pending order id.");
+            }
         }
 
-        std::vector<WorkingRow> original = workingRows(request.profileMods);
+        const InstallConflictPreviewRequest& focus = requests[focusIndex];
+        std::vector<WorkingRow> original = workingRows(focus.profileMods);
         const std::map<std::wstring, RowSummary> before = summarize(original);
         std::vector<WorkingRow> projected = original;
-
-        const auto target = std::find_if(
-            projected.begin(),
-            projected.end(),
-            [&request](const WorkingRow& row)
-            {
-                return !row.row.separator &&
-                    !request.targetModUuid.empty() &&
-                    row.row.modUuid == request.targetModUuid;
-            });
-
-        WorkingRow installed;
-        bool replacesExisting = request.mode != InstallConflictPreviewMode::Install;
-        if (replacesExisting)
+        std::set<std::wstring> projectedOrderIds;
+        for (const InstallConflictPreviewRequest& request : requests)
         {
-            if (target == projected.end())
-            {
-                throw std::invalid_argument(
-                    "Replace or merge conflict preview requires a profile target mod.");
-            }
-            installed = *target;
-            const std::size_t originalTargetIndex = static_cast<std::size_t>(
-                std::distance(projected.begin(), target));
-            projected.erase(target);
-            installed.fileKeys = fileKeys(request.incomingFiles);
-            if (request.mode == InstallConflictPreviewMode::Merge)
-            {
-                const auto oldFiles = fileKeys(installed.row.files);
-                installed.fileKeys.insert(oldFiles.begin(), oldFiles.end());
-            }
-            installed.row.files.clear();
-            const std::size_t insertionIndex = request.targetIndex < 0
-                ? std::min(originalTargetIndex, projected.size())
-                : clampedTargetIndex(request.targetIndex, projected.size());
-            projected.insert(projected.begin() + static_cast<std::ptrdiff_t>(insertionIndex), installed);
-        }
-        else
-        {
-            installed.row.orderId = request.pendingOrderId;
-            installed.row.relationId = request.pendingOrderId;
-            installed.row.enabled = true;
-            installed.fileKeys = fileKeys(request.incomingFiles);
-            const std::size_t insertionIndex = clampedTargetIndex(
-                request.targetIndex,
-                projected.size());
-            projected.insert(projected.begin() + static_cast<std::ptrdiff_t>(insertionIndex), installed);
+            const WorkingRow installed = applyProjection(projected, request);
+            projectedOrderIds.insert(installed.row.orderId);
         }
 
         const std::map<std::wstring, RowSummary> after = summarize(projected);
         FluxoraInstallConflictSnapshot snapshot;
-        snapshot.operationId = request.operationId;
-        snapshot.revision = request.revision;
+        snapshot.operationId = focus.operationId;
+        snapshot.revision = focus.revision;
         snapshot.state = InstallConflictSnapshotState::Ready;
-        snapshot.pendingOrderId = request.pendingOrderId;
-        snapshot.targetIndex = request.targetIndex;
+        snapshot.pendingOrderId = focus.pendingOrderId;
+        snapshot.targetIndex = focus.targetIndex;
 
         for (const WorkingRow& row : projected)
         {
@@ -320,16 +371,13 @@ namespace fluxora
             const RowSummary previous = before.contains(row.row.orderId)
                 ? before.at(row.row.orderId)
                 : RowSummary{};
-            const bool isInstalledRow = row.row.orderId == installed.row.orderId;
+            const bool isInstalledRow = projectedOrderIds.contains(row.row.orderId);
             if (isInstalledRow || current != previous)
             {
                 snapshot.rows.push_back(makePatch(row, current));
             }
         }
 
-        // Replace can remove a target's last conflict owner. Rows retained in
-        // the projection cover both sides; a removed row cannot occur because
-        // Replace/Merge deliberately reuse the target row identity.
         return snapshot;
     }
 
@@ -343,7 +391,9 @@ namespace fluxora
             request.mode,
             request.pendingOrderId,
             request.targetModUuid,
-            request.targetIndex);
+            request.targetIndex,
+            request.beforeOrderId,
+            request.afterOrderId);
     }
 
     FluxoraInstallConflictSnapshot InstallConflictPreviewService::publishExactInventory(
@@ -351,21 +401,29 @@ namespace fluxora
         std::wstring_view operationId,
         const std::vector<InstallConflictFile>& files)
     {
-        return snapshotFromSession(InstanceMetadataStore::preparePendingInstallSession(
+        return snapshotFromSession(
             projectDirectory,
-            operationId,
-            files));
+            InstanceMetadataStore::preparePendingInstallSession(
+                projectDirectory,
+                operationId,
+                files));
     }
 
     FluxoraInstallConflictSnapshot InstallConflictPreviewService::rebase(
         const std::filesystem::path& projectDirectory,
         std::wstring_view operationId,
-        int targetIndex)
+        std::wstring_view beforeOrderId,
+        std::wstring_view afterOrderId,
+        int fallbackTargetIndex)
     {
-        return snapshotFromSession(InstanceMetadataStore::rebasePendingInstallSession(
+        return snapshotFromSession(
             projectDirectory,
-            operationId,
-            targetIndex));
+            InstanceMetadataStore::rebasePendingInstallSession(
+                projectDirectory,
+                operationId,
+                beforeOrderId,
+                afterOrderId,
+                fallbackTargetIndex));
     }
 
     FluxoraInstallConflictSnapshot InstallConflictPreviewService::completeSession(
@@ -373,18 +431,22 @@ namespace fluxora
         std::wstring_view operationId,
         std::wstring_view finalOrderId)
     {
-        return snapshotFromSession(InstanceMetadataStore::completePendingInstallSession(
+        return snapshotFromSession(
             projectDirectory,
-            operationId,
-            finalOrderId));
+            InstanceMetadataStore::completePendingInstallSession(
+                projectDirectory,
+                operationId,
+                finalOrderId));
     }
 
     FluxoraInstallConflictSnapshot InstallConflictPreviewService::failSession(
         const std::filesystem::path& projectDirectory,
         std::wstring_view operationId)
     {
-        return snapshotFromSession(InstanceMetadataStore::failPendingInstallSession(
+        return snapshotFromSession(
             projectDirectory,
-            operationId));
+            InstanceMetadataStore::failPendingInstallSession(
+                projectDirectory,
+                operationId));
     }
 }

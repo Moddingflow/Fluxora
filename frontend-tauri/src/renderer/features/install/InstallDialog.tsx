@@ -395,8 +395,11 @@ export function InstallDialog({
         ? 'Почему нужен ручной выбор'
         : 'Почему не выбрано';
     const autoSelectionAvailable = profileContext?.autoSelectionAvailable !== false && Boolean(autoSelection);
+    const selectionOriginLabel = installDialog.fomodInstaller.selectionOrigin === 'restored'
+      ? 'Восстановлено'
+      : 'Пересчитано';
     const summaryText = autoSelectionAvailable
-      ? `Автовыбор · ${evaluation.selectedOptionIds.length} выбрано · ${autoSelection?.unresolvedGroups.length ?? 0} требует решения`
+      ? `${selectionOriginLabel} · ${evaluation.selectedOptionIds.length} выбрано · ${autoSelection?.unresolvedGroups.length ?? 0} требует решения`
       : `Автовыбор недоступен${profileContext?.unavailableReason ? ` · ${profileContext.unavailableReason}` : ''}`;
 
     return (

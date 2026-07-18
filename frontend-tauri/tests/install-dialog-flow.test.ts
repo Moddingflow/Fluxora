@@ -120,7 +120,7 @@ describe('install dialog flow', () => {
     expect(fomodBranch).toContain('attachBackgroundInstallPlan');
   });
 
-  it('keeps an active installation non-visual while blocking another install action', () => {
+  it('keeps install concurrency scoped to the same source without a global downloads busy state', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const submitInstallDialog = sliceBetween(
       app,
@@ -128,11 +128,10 @@ describe('install dialog flow', () => {
       '  const submitInstallOptions = async'
     );
 
-    expect(app).toContain(
-      'const downloadsActionsBusy = Boolean(downloadsBusyLabel) || installMutationInFlight;'
-    );
-    expect(submitInstallDialog).toContain('setInstallMutationInFlight(true)');
-    expect(submitInstallDialog).toContain('setInstallMutationInFlight(false)');
+    expect(app).toContain('const downloadsActionsBusy = Boolean(downloadsBusyLabel);');
+    expect(submitInstallDialog).toContain('installSubmitSourcesRef.current.has(installSourceKey)');
+    expect(submitInstallDialog).toContain('installSubmitSourcesRef.current.add(installSourceKey)');
+    expect(submitInstallDialog).not.toContain('setInstallMutationInFlight');
     expect(submitInstallDialog).not.toContain('setDownloadsBusyLabel');
     expect(submitInstallDialog).not.toContain('Updating in background');
     expect(submitInstallDialog).not.toContain('Installing in background');
@@ -184,7 +183,8 @@ describe('install dialog flow', () => {
       '  const submitInstallOptions = async'
     );
 
-    expect(dialog).toContain('Автовыбор · ${evaluation.selectedOptionIds.length} выбрано');
+    expect(dialog).toContain("installDialog.fomodInstaller.selectionOrigin === 'restored'");
+    expect(dialog).toContain('`${selectionOriginLabel} · ${evaluation.selectedOptionIds.length} выбрано');
     expect(dialog).toContain('Пересчитать');
     expect(dialog).toContain('Вернуть автоподбор');
     expect(dialog).toContain('Почему выбрано');
@@ -278,7 +278,8 @@ describe('install dialog flow', () => {
       'targetModUuid: useMatchedTarget ? matchedTarget!.modUuid : undefined'
     );
     expect(submitInstallDialog).toContain("newNamePolicy: 'first-free-copy-suffix' as const");
-    expect(submitInstallDialog.match(/\.\.\.identitySelection/g)).toHaveLength(4);
+    expect(submitInstallDialog.match(/\.\.\.identitySelection/g)).toHaveLength(1);
+    expect(submitInstallDialog).toContain('window.fluxora.installs.submit(');
     expect(submitInstallDialog).not.toContain("phase: 'installing'");
     expect(submitInstallDialog).not.toContain('mods.listInstalled');
   });
@@ -324,48 +325,70 @@ describe('install dialog flow', () => {
     expect(submitInstallDialog).toContain("submissionDialog.installerKind === 'fomod'");
   });
 
-  it('creates the pending row before mutation and completes it from the authoritative result', () => {
+  it('creates the pending row before durable submission and completes it from background progress', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const orchestrator = readText(
+      'frontend-tauri',
+      'src',
+      'renderer',
+      'features',
+      'mods',
+      'use-pending-install-orchestrator.ts'
+    );
     const submitInstallDialog = sliceBetween(
       app,
       'async function submitInstallDialog',
       '  const submitInstallOptions = async'
     );
 
-    expect(submitInstallDialog).toContain('installSubmitInFlightRef.current');
+    expect(submitInstallDialog).toContain('installSubmitSourcesRef.current');
     expect(submitInstallDialog).toContain('setInstallDialog((current) =>');
     expect(submitInstallDialog).toContain('pendingInstallOrchestrator.begin({');
-    expect(submitInstallDialog).toContain('pendingInstallOrchestrator.complete(installed)');
-    expect(submitInstallDialog).toContain('mergeOptimisticInstalledMod(current, installed)');
+    expect(submitInstallDialog).toContain('window.fluxora.installs.submit(');
+    expect(orchestrator).toContain('window.fluxora.installs.onProgress');
+    expect(orchestrator).toContain('complete(installed)');
     expect(submitInstallDialog).toContain('pendingInstallOrchestrator.rollback(');
     expect(submitInstallDialog).not.toContain("phase: 'installing'");
     expect(submitInstallDialog).not.toContain('await loadModsWorkspace(selectedProject)');
     expect(submitInstallDialog).not.toContain('await loadPluginsWorkspace(selectedProject)');
   });
 
-  it('reveals the pending row before mutation and the permanent row from the common success tail', () => {
+  it('reveals and animates the optimistic row exactly once before durable submission', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const submitInstallDialog = sliceBetween(
       app,
       'async function submitInstallDialog',
       '  const submitInstallOptions = async'
     );
-    const lastInstallBranchIndex = submitInstallDialog.lastIndexOf(
-      'window.fluxora.archives.install('
-    );
+    const submitIndex = submitInstallDialog.indexOf('window.fluxora.installs.submit(');
     const pendingRevealIndex = submitInstallDialog.indexOf('requestPostInstallModReveal({');
-    const completedRevealIndex = submitInstallDialog.lastIndexOf('requestPostInstallModReveal({');
     const catchIndex = submitInstallDialog.indexOf('} catch (error)');
 
     expect(submitInstallDialog.match(/requestPostInstallModReveal\(\{/g)).toHaveLength(2);
-    expect(lastInstallBranchIndex).toBeGreaterThan(-1);
-    expect(pendingRevealIndex).toBeLessThan(lastInstallBranchIndex);
-    expect(completedRevealIndex).toBeGreaterThan(lastInstallBranchIndex);
-    expect(completedRevealIndex).toBeLessThan(catchIndex);
+    expect(submitIndex).toBeGreaterThan(-1);
+    expect(pendingRevealIndex).toBeLessThan(submitIndex);
+    expect(pendingRevealIndex).toBeLessThan(catchIndex);
     expect(submitInstallDialog).toContain('installedId: pendingSession.pendingOrderId');
-    expect(submitInstallDialog).toContain('installedId: installed.id');
-    expect(submitInstallDialog).toContain('animate: false');
-    expect(submitInstallDialog).toContain('animate: true');
-    expect(submitInstallDialog.match(/\.\.\.identitySelection/g)).toHaveLength(4);
+    expect(submitInstallDialog).toContain('const pendingAlreadyExists =');
+    expect(submitInstallDialog).toContain('animate: !pendingAlreadyExists && existingModMode === 0');
+    expect(submitInstallDialog.match(/animate: !pendingAlreadyExists && existingModMode === 0/g)).toHaveLength(1);
+    expect(submitInstallDialog.match(/animate: false/g)).toHaveLength(1);
+    expect(submitInstallDialog.match(/\.\.\.identitySelection/g)).toHaveLength(1);
+  });
+
+  it('reopens needs-review rows with persisted FOMOD and placement decisions', () => {
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    const reopen = sliceBetween(
+      app,
+      'const reopenInstallForReview',
+      '  const resolveInstallDialogPlan'
+    );
+
+    expect(app).toContain("pendingOperation?.state === 'needsReview'");
+    expect(app).toContain('reopenInstallForReview(pendingOperation)');
+    expect(reopen).toContain('operation.selectedOptionIds ?? []');
+    expect(reopen).toContain('operation.manualDecisions ?? []');
+    expect(reopen).toContain("JSON.parse(operation.placementOverridesJson || '[]')");
+    expect(reopen).toContain('validOptionIds.has(id)');
   });
 });

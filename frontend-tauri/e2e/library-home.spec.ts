@@ -282,6 +282,24 @@ test.beforeEach(async ({ page }) => {
       ready: boolean;
     }
     const pendingInstallSessions = new Map<string, MockPendingInstallSession>();
+    const installOperations = new Map<string, any>();
+    let activeMockInstalls = 0;
+    const queuedMockInstalls: Array<() => Promise<void>> = [];
+    const scheduleMockInstall = (run: () => Promise<void>) => {
+      if (activeMockInstalls >= 2) {
+        queuedMockInstalls.push(run);
+        return false;
+      }
+      activeMockInstalls += 1;
+      void run().finally(() => {
+        activeMockInstalls -= 1;
+        const next = queuedMockInstalls.shift();
+        if (next) {
+          scheduleMockInstall(next);
+        }
+      });
+      return true;
+    };
     const mockInstallConflictSnapshot = (session: MockPendingInstallSession) => {
       const skyuiIndex = modRows.findIndex((item) => item.orderId === 'mod_skyui');
       const pendingWins = session.targetIndex > skyuiIndex;
@@ -401,11 +419,11 @@ test.beforeEach(async ({ page }) => {
         existing.name = name;
         existing.isEnabled = true;
       } else {
-        modRows.push({
+        const installedRow = {
           id,
           orderId,
           kind: 'mod',
-          order: modRows.length,
+          order: 0,
           isSeparator: false,
           isMod: true,
           modUuid,
@@ -430,6 +448,14 @@ test.beforeEach(async ({ page }) => {
           isPatch: false,
           overwritesModIds: [],
           overwrittenByModIds: []
+        };
+        const requestedIndex = Number(request.modOrderTargetIndex);
+        const insertionIndex = Number.isFinite(requestedIndex)
+          ? Math.max(0, Math.min(requestedIndex, modRows.length))
+          : modRows.length;
+        modRows.splice(insertionIndex, 0, installedRow);
+        modRows.forEach((item, index) => {
+          item.order = index;
         });
       }
 
@@ -1250,6 +1276,7 @@ test.beforeEach(async ({ page }) => {
     let buildContentSequence = 0;
     const inboundNxmCallbacks = new Set<(event: any) => void>();
     const operationProgressCallbacks = new Set<(event: any) => void>();
+    const installProgressCallbacks = new Set<(event: any) => void>();
     (window as any).__fluxoraCalls = calls;
     (window as any).__emitFluxoraBuildContentChanged = (event: any = {}) => {
       const payload = {
@@ -1562,6 +1589,15 @@ test.beforeEach(async ({ page }) => {
         list: async (projectDirectory: any) => {
           await waitForDownloadsList();
           const path = String(projectDirectory);
+          if (window.localStorage.getItem('fluxora.test.concurrentInstalls') === 'true') {
+            return [1, 2, 3].map((index) => ({
+              ...downloadRows[3],
+              id: `concurrent_archive_${index}`,
+              name: `Concurrent Mod ${index}`,
+              fileName: `Concurrent Mod ${index}.7z`,
+              localPath: `D:\\Fluxora\\Downloads\\skyrimse\\Concurrent Mod ${index}.7z`
+            }));
+          }
           if (path.includes('Playwright build') || path.includes('Fallout test lab')) {
             return [];
           }
@@ -1585,6 +1621,179 @@ test.beforeEach(async ({ page }) => {
         },
         onFolderChanged: () => () => undefined,
         resume: async () => ({})
+      },
+      installs: {
+        submit: async (request: any, operation: any) => {
+          const operationId = String(request.operationId ?? operation?.operationId ?? `install-${Date.now()}`);
+          const isFomod = request.isFomod === true;
+          const compatibilityMethod = `${request.sourceKind === 'archive' ? 'archives' : 'downloads'}.${isFomod ? 'installFomod' : 'install'}`;
+          const compatibilityRequest = {
+            ...request,
+            archivePath: request.sourcePath,
+            downloadPath: request.sourcePath
+          };
+          calls.push({ method: 'installs.submit', payload: { operation, request } });
+          calls.push({
+            method: compatibilityMethod,
+            payload: { operation, request: compatibilityRequest }
+          });
+          beginMockInstallConflictSession(request, { operationId }, operationId);
+
+          const snapshot = {
+            operationId,
+            sourceKind: request.sourceKind,
+            sourcePath: request.sourcePath,
+            archiveFingerprint: `mock:${String(request.sourcePath).toLocaleLowerCase()}`,
+            profileName: request.profileName || 'Default',
+            existingModMode: request.existingModMode ?? 0,
+            targetModUuid: request.targetModUuid ?? '',
+            targetFolder: request.modName,
+            selectedOptionIds: request.selectedOptionIds ?? [],
+            manualDecisions: request.manualDecisions ?? [],
+            placementOverridesJson: request.placementOverridesJson ?? '[]',
+            resume: {
+              isFomod,
+              fomodContextId: request.fomodContextId ?? '',
+              modOrderTargetIndex: request.modOrderTargetIndex ?? -1
+            },
+            beforeOrderId: request.beforeOrderId ?? '',
+            afterOrderId: request.afterOrderId ?? '',
+            enqueueSequence: installOperations.size + 1,
+            state: 'queued',
+            stage: 'queued',
+            progressPercent: 0,
+            indeterminate: true,
+            errorCode: '',
+            errorMessage: '',
+            result: null
+          };
+          installOperations.set(operationId, snapshot);
+
+          const emit = (patch: any) => {
+            const current = { ...installOperations.get(operationId), ...patch };
+            installOperations.set(operationId, current);
+            for (const callback of installProgressCallbacks) {
+              callback(current);
+            }
+          };
+          const started = scheduleMockInstall(async () => {
+            emit({ state: isFomod ? 'configuringFomod' : 'extracting', stage: isFomod ? 'configuringFomod' : 'extracting', progressPercent: 10 });
+            const delayMs = Number(window.localStorage.getItem('fluxora.test.installDelayMs') ?? '0');
+            if (delayMs > 0) {
+              await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+            }
+            if (window.localStorage.getItem('fluxora.test.installFailure') === 'true') {
+              emit({
+                state: 'failed',
+                stage: 'failed',
+                progressPercent: 100,
+                indeterminate: false,
+                errorCode: 'install.mockFailure',
+                errorMessage: 'Mock install failed after conflict preview.'
+              });
+              return;
+            }
+            if (isFomod) {
+              try {
+                throwFomodContextChangedOnce();
+              } catch (error) {
+                emit({
+                  state: 'needsReview',
+                  stage: 'needsReview',
+                  progressPercent: 100,
+                  indeterminate: false,
+                  errorCode: 'install.fomodContextChanged',
+                  errorMessage: error instanceof Error ? error.message : String(error)
+                });
+                return;
+              }
+            }
+            emit({ state: 'committing', stage: 'committing', progressPercent: 85, indeterminate: false });
+            const pending = pendingInstallSessions.get(operationId);
+            const installed = recordInstalledMod({
+              ...request,
+              modOrderTargetIndex: pending?.targetIndex ?? request.modOrderTargetIndex
+            }, { operationId }, operationId);
+            if (request.sourceKind === 'download') {
+              markDownloadInstalled(request.sourcePath);
+            }
+            emit({
+              state: 'completed',
+              stage: 'completed',
+              progressPercent: 100,
+              indeterminate: false,
+              result: installed
+            });
+          });
+          if (!started) {
+            window.setTimeout(() => emit({ state: 'queued', stage: 'queued', progressPercent: 0 }), 0);
+          }
+          return snapshot;
+        },
+        restore: async (_projectDirectory: any, operation: any) => {
+          calls.push({ method: 'installs.restore', payload: { operation } });
+          const persisted = window.localStorage.getItem('fluxora.test.restoredInstallOperations');
+          const restored: any[] = [];
+          if (persisted) {
+            try {
+              for (const candidate of JSON.parse(persisted)) {
+                installOperations.set(String(candidate.operationId), candidate);
+                restored.push(candidate);
+              }
+            } catch {
+              // Invalid test-only recovery data behaves as an empty queue.
+            }
+          }
+          calls.push({
+            method: 'installs.restore.result',
+            payload: { count: restored.length, operationIds: restored.map((candidate) => candidate.operationId) }
+          });
+          for (const candidate of restored) {
+            const operationId = String(candidate.operationId);
+            window.setTimeout(() => {
+              const recovering = {
+                ...installOperations.get(operationId),
+                state: 'recovering',
+                stage: 'recovering',
+                indeterminate: true
+              };
+              installOperations.set(operationId, recovering);
+              for (const callback of installProgressCallbacks) {
+                callback(recovering);
+              }
+            }, 250);
+            window.setTimeout(() => {
+              const result = recordInstalledMod({
+                modName: candidate.targetFolder,
+                modOrderTargetIndex: candidate.resume?.modOrderTargetIndex ?? modRows.length,
+                targetModUuid: candidate.targetModUuid,
+                existingModMode: candidate.existingModMode
+              }, { operationId }, operationId);
+              const completed = {
+                ...installOperations.get(operationId),
+                state: 'completed',
+                stage: 'completed',
+                progressPercent: 100,
+                indeterminate: false,
+                result
+              };
+              installOperations.set(operationId, completed);
+              for (const callback of installProgressCallbacks) {
+                callback(completed);
+              }
+            }, 8_000);
+          }
+          return [...installOperations.values()].filter((candidate) =>
+            !['completed', 'failed'].includes(String(candidate.state))
+          );
+        },
+        list: async () => [...installOperations.values()],
+        get: async (_projectDirectory: any, operationId: any) =>
+          installOperations.get(String(operationId)) ?? null,
+        onProgress: (callback: (event: any) => void) => {
+          installProgressCallbacks.add(callback);
+          return () => installProgressCallbacks.delete(callback);
+        }
       },
       executables: {
         getIcon: async () => ({ iconPath: '', operationId: 'op_icon' }),
@@ -2256,16 +2465,17 @@ test.beforeEach(async ({ page }) => {
           }
           return [...modRows];
         },
-        rebasePendingInstall: async (projectDirectory: any, operationId: any, targetIndex: any) => {
+        rebasePendingInstall: async (projectDirectory: any, operationId: any, anchors: any) => {
+          const targetIndex = Number(anchors?.fallbackTargetIndex ?? anchors);
           calls.push({
             method: 'mods.rebasePendingInstall',
-            payload: { operationId, projectDirectory, targetIndex }
+            payload: { anchors, operationId, projectDirectory, targetIndex }
           });
           const session = pendingInstallSessions.get(String(operationId));
           if (!session || !session.ready) {
             throw new Error('The mock pending install inventory is not ready.');
           }
-          session.targetIndex = Number(targetIndex);
+          session.targetIndex = targetIndex;
           session.revision += 1;
           return mockInstallConflictSnapshot(session);
         },
@@ -2528,6 +2738,8 @@ test.beforeEach(async ({ page }) => {
         log: async (payload: any) => {
           if (payload?.category === 'NifPreview.Performance') {
             calls.push({ method: 'ui.log.NifPreview.Performance', payload });
+          } else if (payload?.category === 'ModInstall') {
+            calls.push({ method: 'ui.log.ModInstall', payload });
           }
           return undefined;
         }
@@ -3254,6 +3466,37 @@ const dragDownloadToModSlot = async (
   await moveRowDragToSlot(page, source, target, placement, 'Установить сюда');
   await expect(source).toHaveAttribute('data-dragging', 'true');
   await expect(target).toHaveAttribute('data-install-drop-target', 'true');
+  await page.mouse.up();
+};
+
+const dragDownloadIntoSeparator = async (
+  page: Page,
+  source: Locator,
+  separator: Locator
+) => {
+  await page.evaluate(() => {
+    document.addEventListener('dragstart', (event) => event.preventDefault(), { capture: true });
+  });
+  const sourceBox = await source.boundingBox();
+  const separatorBox = await separator.boundingBox();
+  expect(sourceBox).not.toBeNull();
+  expect(separatorBox).not.toBeNull();
+
+  const sourceX = sourceBox!.x + sourceBox!.width / 2;
+  const sourceY = sourceBox!.y + sourceBox!.height / 2;
+  const separatorX = separatorBox!.x + separatorBox!.width / 2;
+  const separatorY = separatorBox!.y + separatorBox!.height / 2;
+
+  await page.mouse.move(sourceX, sourceY);
+  await page.mouse.down();
+  await page.mouse.move(sourceX + 8, sourceY + 8, { steps: 2 });
+  await page.mouse.move(separatorX, separatorY, { steps: 8 });
+  await expect(source).toHaveAttribute('data-dragging', 'true');
+  await expect(separator).toHaveAttribute('data-install-drop-target', 'true');
+  await expect(separator).toHaveAttribute('data-drop-placement', 'inside');
+  await expect
+    .poll(() => separator.evaluate((row) => window.getComputedStyle(row, '::after').borderStyle))
+    .toBe('solid');
   await page.mouse.up();
 };
 
@@ -5154,6 +5397,12 @@ test('uses the redesigned mods pane for real mod list operations', async ({ page
   await expect(modOrderTable.getByRole('columnheader', { name: 'Версия' })).toBeVisible();
   await expect(modOrderTable.getByRole('columnheader', { name: 'Latest' })).toBeVisible();
   await expect(modOrderTable.getByRole('columnheader', { name: 'Статус' })).toBeVisible();
+  const outdatedLatest = page.getByRole('row', { name: /SkyUI mod/ }).locator('.mod-list-row__latest');
+  await expect(outdatedLatest).toHaveAttribute('data-version-mismatch', 'true');
+  await expect(outdatedLatest).toHaveCSS('color', 'rgb(248, 113, 113)');
+  await expect(
+    page.getByRole('row', { name: /Unofficial Patch mod/ }).locator('.mod-list-row__latest')
+  ).toHaveAttribute('data-version-mismatch', 'false');
 
   const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
   await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
@@ -5422,6 +5671,89 @@ test('installs a dragged download immediately at the chosen mod position', async
     .toEqual({ installedIndex: 2, targetIndex: 3 });
 });
 
+test('shows two concurrent installs and keeps the third visible in the queue', async ({ page }) => {
+  test.setTimeout(30_000);
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    window.localStorage.setItem('fluxora.test.concurrentInstalls', 'true');
+    window.localStorage.setItem('fluxora.test.installDelayMs', '8000');
+  });
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  for (const index of [1, 2, 3]) {
+    const name = `Concurrent Mod ${index}`;
+    await rightPane.getByRole('row', { name: new RegExp(name) }).dblclick();
+    const dialog = page.getByRole('dialog', { name: new RegExp(name) });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Установить', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    if (index === 1) {
+      await expect(
+        page.locator('.mod-list-row').filter({ hasText: name })
+      ).toHaveAttribute('data-state', 'post-install-reveal');
+    }
+  }
+
+  const first = page.locator('.mod-list-row').filter({ hasText: 'Concurrent Mod 1' });
+  const second = page.locator('.mod-list-row').filter({ hasText: 'Concurrent Mod 2' });
+  const third = page.locator('.mod-list-row').filter({ hasText: 'Concurrent Mod 3' });
+  await expect(first.locator('.mod-install-pending-label')).toHaveText('Распаковка');
+  await expect(second.locator('.mod-install-pending-label')).toHaveText('Распаковка');
+  await expect(third.locator('.mod-install-pending-label')).toHaveText('В очереди');
+  await expect(rightPane.getByRole('row', { name: /Concurrent Mod 3/ })).toBeVisible();
+  await expect.poll(() => latestCallPayload(page, 'installs.submit')).not.toBeNull();
+});
+
+test('restores an interrupted install row and continues it after reopening the build', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    window.localStorage.setItem('fluxora.test.restoredInstallOperations', JSON.stringify([{
+      operationId: 'restored-install-1',
+      sourceKind: 'download',
+      sourcePath: 'D:\\Fluxora\\Downloads\\skyrimse\\Restored Install.7z',
+      archiveFingerprint: 'mock:restored',
+      profileName: 'Default',
+      existingModMode: 0,
+      targetModUuid: '',
+      targetFolder: 'Restored Install',
+      selectedOptionIds: [],
+      manualDecisions: [],
+      placementOverridesJson: '[]',
+      resume: { isFomod: false, modOrderTargetIndex: 2 },
+      beforeOrderId: 'sep_core',
+      afterOrderId: 'mod_ussep',
+      enqueueSequence: 1,
+      state: 'extracting',
+      stage: 'extracting',
+      progressPercent: 20,
+      indeterminate: true,
+      errorCode: '',
+      errorMessage: '',
+      result: null
+    }]));
+  });
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  await expect.poll(() => latestCallPayload(page, 'installs.restore')).not.toBeNull();
+  await expect.poll(() => latestCallPayload(page, 'installs.restore.result')).toEqual({
+    count: 1,
+    operationIds: ['restored-install-1']
+  });
+  await expect.poll(() => latestCallPayload(page, 'ui.log.ModInstall')).toMatchObject({
+    message: 'Restored 1 pending install projection(s) after workspace refresh.'
+  });
+  const restored = page.locator('.mod-list-row').filter({ hasText: 'Restored Install' });
+  await expect(restored).toBeVisible();
+  await expect(restored.locator('.mod-install-pending-label')).toHaveText('Восстановление');
+  await expect(restored).toHaveAttribute('data-order-id', 'mod_restored_install', {
+    timeout: 12_000
+  });
+});
+
 test('shows exact pending conflicts and rebases an install dragged before the snapshot is ready', async ({ page }) => {
   test.setTimeout(30_000);
   await page.goto(baseUrl);
@@ -5451,7 +5783,7 @@ test('shows exact pending conflicts and rebases an install dragged before the sn
     'data-pending',
     'true'
   );
-  await expect(installedRow.locator('.mod-install-pending-label')).toHaveText('Installing');
+  await expect(installedRow.locator('.mod-install-pending-label')).toHaveText('Распаковка');
   await expect(installedRow.locator('.mod-conflict-dot')).toHaveCount(0);
 
   const target = page.getByRole('row', { name: /Unofficial Patch mod/ });
@@ -5459,10 +5791,10 @@ test('shows exact pending conflicts and rebases an install dragged before the sn
 
   await expect(installedRow.locator('.mod-overwrite-state-cell')).toHaveAttribute(
     'data-pending',
-    'false'
+    'true'
   );
   await expect(installedRow).not.toHaveAttribute('data-conflict-status', '');
-  await expect(installedRow.locator('.mod-conflict-dot')).toHaveCount(1);
+  await expect(installedRow.locator('.mod-conflict-dot')).toHaveCount(0);
 
   await expect
     .poll(() => latestCallPayload(page, 'mods.rebasePendingInstall'))
@@ -5510,16 +5842,17 @@ test('rolls back the pending row and both conflict projections when install fail
   await expect(pendingRow).toHaveAttribute('data-order-id', /^pending-install:/);
   await expect(pendingRow.locator('.mod-overwrite-state-cell')).toHaveAttribute(
     'data-pending',
-    'false'
+    'true'
   );
   await expect(skyuiRow).not.toHaveAttribute(
     'data-conflict-status',
     baselineSkyuiConflict ?? ''
   );
 
-  await expect(installDialog).toBeVisible();
-  await expect(installDialog.getByText('Mock install failed after conflict preview.')).toBeVisible();
   await expect(pendingRow).toHaveCount(0);
+  await expect(
+    rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).getByText('Failed')
+  ).toBeVisible();
   await expect(skyuiRow).toHaveAttribute(
     'data-conflict-status',
     baselineSkyuiConflict ?? ''
@@ -5600,7 +5933,7 @@ test('reveals a new mod without a full workspace reconciliation and does not res
   expect(await page.evaluate(() => (window as any).__postInstallWorkspaceReads)).toBe(0);
 });
 
-test('installs a dragged download as the first mod inside a separator', async ({ page }) => {
+test('outlines a separator and installs a dragged download after its last mod', async ({ page }) => {
   await openSkyrimBuild(page);
 
   const rightPane = page.getByLabel('Right pane');
@@ -5608,7 +5941,7 @@ test('installs a dragged download as the first mod inside a separator', async ({
 
   const source = rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ });
   const separator = page.getByRole('row', { name: /Core fixes separator/ });
-  await dragDownloadToModSlot(page, source, separator, 'after');
+  await dragDownloadIntoSeparator(page, source, separator);
 
   const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
   await expect(installDialog).toBeVisible();
@@ -5622,7 +5955,7 @@ test('installs a dragged download as the first mod inside a separator', async ({
     .poll(() => latestCallPayload(page, 'downloads.install'))
     .toMatchObject({
       request: {
-        modOrderTargetIndex: 1,
+        modOrderTargetIndex: 3,
         profileName: 'Default'
       }
     });
@@ -5630,10 +5963,10 @@ test('installs a dragged download as the first mod inside a separator', async ({
   await expect
     .poll(() =>
       page.locator('.mod-list-row[data-order-id]').evaluateAll((rows) =>
-        rows.slice(0, 3).map((row) => row.getAttribute('data-order-id'))
+        rows.slice(0, 4).map((row) => row.getAttribute('data-order-id'))
       )
     )
-    .toEqual(['sep_core', 'mod_aetherius_a_race_overhaul', 'mod_ussep']);
+    .toEqual(['sep_core', 'mod_ussep', 'mod_skyui', 'mod_aetherius_a_race_overhaul']);
 });
 
 test('post-install mod reveal clears search, expands the separator and scrolls to a new virtualized row', async ({ page }) => {
@@ -5705,7 +6038,7 @@ test('post-install mod reveal clears search, expands the separator and scrolls t
   expect(revealState).toMatchObject({
     animationDuration: '0.7s',
     animationFillMode: 'both',
-    animationIterationCount: '2',
+    animationIterationCount: '1',
     animationName: 'post-install-mod-reveal'
   });
   expect(revealState.centerDelta).toBeLessThanOrEqual(revealState.maxVisibleCenterDelta);
@@ -5713,7 +6046,7 @@ test('post-install mod reveal clears search, expands the separator and scrolls t
 
   await expect
     .poll(() => postInstallRevealAnimationEvents(page), { timeout: 3_000 })
-    .toEqual(['animationiteration', 'animationend']);
+    .toEqual(['animationend']);
   await expect(installedRow).not.toHaveAttribute('data-state');
   await expect(installedRow).toBeFocused();
   expect((await callMethods(page)).filter((method) => method === 'window.openModDetails')).toEqual([]);
@@ -5723,7 +6056,7 @@ test('post-install mod reveal clears search, expands the separator and scrolls t
   await expect(separatorRow).toHaveAttribute('aria-expanded', 'true');
 });
 
-test('post-install mod reveal preserves matching search and restarts two fades for Merge and Replace', async ({ page }) => {
+test('Replace and Merge preserve the existing row without a reveal fade', async ({ page }) => {
   await openSkyrimBuild(page);
   const rightPane = page.getByLabel('Right pane');
   await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
@@ -5743,18 +6076,10 @@ test('post-install mod reveal preserves matching search and restarts two fades f
 
     await expect(searchInput).toHaveValue('SkyUI');
     await expect(installedRow).toBeVisible();
-    await expect(installedRow).toHaveAttribute('data-state', 'post-install-reveal');
+    await expect(installedRow).not.toHaveAttribute('data-state');
     await expect(installedRow).toHaveAttribute('data-selected', 'true');
     await expect(installedRow).toBeFocused();
-    expect(
-      await installedRow.evaluate(
-        (element) => window.getComputedStyle(element, '::after').animationIterationCount
-      )
-    ).toBe('2');
-    await expect
-      .poll(() => postInstallRevealAnimationEvents(page), { timeout: 3_000 })
-      .toEqual(['animationiteration', 'animationend']);
-    await expect(installedRow).not.toHaveAttribute('data-state');
+    expect(await postInstallRevealAnimationEvents(page)).toEqual([]);
   };
 
   await installAgain('Объединить');

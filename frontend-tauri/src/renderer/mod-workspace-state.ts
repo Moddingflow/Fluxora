@@ -464,6 +464,14 @@ export const modLatestVersionText = (item: FluxoraModOrderItem): string => {
   return item.canCheckUpdates ? 'not checked' : 'local';
 };
 
+export const modLatestVersionDiffers = (item: FluxoraModOrderItem): boolean => {
+  const installedVersion = item.version.trim();
+  const latestVersion = item.latestVersion.trim();
+
+  return item.isMod && installedVersion.length > 0 && latestVersion.length > 0 &&
+    installedVersion !== latestVersion;
+};
+
 export type ModTableStatusTone = 'disabled' | 'update' | 'conflict' | 'local' | 'ready';
 
 export interface ModTableStatusView {
@@ -784,12 +792,25 @@ export const optimisticModInstallState = (
     : [...items, nextOrderItem];
 
   if (placement && placement.targetOrderId !== installedOrderId) {
-    const targetIndex = targetIndexForDrop(
-      nextItems,
-      installedOrderId,
-      placement.targetOrderId,
-      placement.placement
-    );
+    const isInsideSeparator =
+      placement.placement === 'inside' &&
+      nextItems.some(
+        (item) => item.orderId === placement.targetOrderId && item.isSeparator
+      );
+    const targetIndex = isInsideSeparator
+      ? targetIndexForOrderDrop(
+          nextItems,
+          installedOrderId,
+          placement.targetOrderId,
+          'after',
+          { separatorMoveMode: 'single', treatAfterSeparatorTargetAsBlock: true }
+        )
+      : targetIndexForDrop(
+          nextItems,
+          installedOrderId,
+          placement.targetOrderId,
+          placement.placement === 'inside' ? 'after' : placement.placement
+        );
     if (targetIndex !== null) {
       nextItems = reorderModOrderItems(nextItems, installedOrderId, targetIndex) ?? nextItems;
     }

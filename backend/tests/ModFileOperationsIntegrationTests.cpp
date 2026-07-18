@@ -1,6 +1,7 @@
 #include "FluxoraCore/Services/AppSettingsService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
+#include "FluxoraCore/Services/InstallOperationService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/ModService.hpp"
 #include "FluxoraCore/Services/ProfileService.hpp"
@@ -26,6 +27,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -601,6 +603,27 @@ namespace fluxora::tests
             }
         }
 
+        InstallOperationRecord waitForInstallOperation(
+            std::wstring_view operationId,
+            std::wstring_view expectedState,
+            std::chrono::seconds timeout = std::chrono::seconds(10))
+        {
+            const auto deadline = std::chrono::steady_clock::now() + timeout;
+            while (std::chrono::steady_clock::now() < deadline)
+            {
+                const std::optional<InstallOperationRecord> operation =
+                    InstallOperationStore::get(project_, operationId);
+                if (operation.has_value() && operation->state == expectedState)
+                {
+                    return *operation;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            const std::optional<InstallOperationRecord> operation =
+                InstallOperationStore::get(project_, operationId);
+            return operation.value_or(InstallOperationRecord{});
+        }
+
         TempDirectory temp_;
         Logger logger_;
         ScopedEnvironmentVariable appData_;
@@ -613,6 +636,99 @@ namespace fluxora::tests
         ProfileService profiles_;
         ProfileOrderService profileOrder_;
     };
+
+    TEST_F(ModFileOperationsIntegrationTests, DurableInstallSubmitPersistsBeforeWorkerAndCompletesInBackground)
+    {
+        const DownloadEntry download = importArchive(
+            L"Durable Submit.zip",
+            {{L"Data/Durable.esp", "plugin"}});
+        InstallOperationService installs(logger_, downloads_);
+        installs.initialize();
+
+        InstallOperationRequest request;
+        request.operationId = L"durable-submit";
+        request.projectDirectory = project_;
+        request.sourceKind = L"download";
+        request.sourcePath = download.localPath;
+        request.modName = L"Durable Submit";
+        request.profileName = L"Default";
+        const InstallOperationRecord accepted = installs.submit(std::move(request));
+
+        EXPECT_EQ(accepted.operationId, L"durable-submit");
+        EXPECT_GT(accepted.enqueueSequence, 0U);
+        const InstallOperationRecord completed = waitForInstallOperation(
+            L"durable-submit",
+            L"completed");
+        EXPECT_EQ(completed.state, L"completed");
+        EXPECT_EQ(completed.enqueueSequence, accepted.enqueueSequence);
+        EXPECT_FALSE(completed.archiveFingerprint.empty());
+        EXPECT_FALSE(completed.resultJson.empty());
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            modsDirectory() / L"Durable Submit" / L"Durable.esp"));
+        installs.shutdown();
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, RestoreAutomaticallyRestartsUnchangedPersistedOperation)
+    {
+        const DownloadEntry download = importArchive(
+            L"Durable Restore.zip",
+            {{L"Data/Restored.esp", "plugin"}});
+        InstallOperationRecord interrupted;
+        interrupted.operationId = L"durable-restore";
+        interrupted.sourceKind = L"download";
+        interrupted.sourcePath = download.localPath;
+        interrupted.profileName = L"Default";
+        interrupted.targetFolder = L"Durable Restore";
+        interrupted.requestJson = LR"({"isFomod":false,"fomodContextId":"","modOrderTargetIndex":-1})";
+        interrupted.state = L"extracting";
+        interrupted.stage = L"extracting";
+        InstallOperationStore::save(project_, interrupted);
+
+        InstallOperationService installs(logger_, downloads_);
+        installs.initialize();
+        const std::vector<InstallOperationRecord> restored = installs.restore(project_);
+
+        ASSERT_EQ(restored.size(), 1U);
+        EXPECT_EQ(restored.front().operationId, L"durable-restore");
+        const InstallOperationRecord completed = waitForInstallOperation(
+            L"durable-restore",
+            L"completed");
+        EXPECT_EQ(completed.state, L"completed");
+        EXPECT_FALSE(completed.archiveFingerprint.empty());
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            modsDirectory() / L"Durable Restore" / L"Restored.esp"));
+        installs.shutdown();
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, RestoreRequiresReviewWhenPersistedArchiveFingerprintChanged)
+    {
+        const DownloadEntry download = importArchive(
+            L"Durable Changed.zip",
+            {{L"Data/Changed.esp", "plugin"}});
+        InstallOperationRecord interrupted;
+        interrupted.operationId = L"durable-changed";
+        interrupted.sourceKind = L"download";
+        interrupted.sourcePath = download.localPath;
+        interrupted.archiveFingerprint = L"stale-fingerprint";
+        interrupted.profileName = L"Default";
+        interrupted.targetFolder = L"Durable Changed";
+        interrupted.requestJson = LR"({"isFomod":false,"fomodContextId":"","modOrderTargetIndex":-1})";
+        interrupted.state = L"buildingStaging";
+        interrupted.stage = L"buildingStaging";
+        InstallOperationStore::save(project_, interrupted);
+
+        InstallOperationService installs(logger_, downloads_);
+        installs.initialize();
+        static_cast<void>(installs.restore(project_));
+
+        const InstallOperationRecord review = waitForInstallOperation(
+            L"durable-changed",
+            L"needsReview");
+        EXPECT_EQ(review.state, L"needsReview");
+        EXPECT_EQ(review.errorCode, L"install.sourceChanged");
+        EXPECT_FALSE(std::filesystem::exists(modsDirectory() / L"Durable Changed"));
+        installs.shutdown();
+    }
 
     TEST_F(ModFileOperationsIntegrationTests, InstallDownloadFromArchiveCreatesSkyrimFilesAndManifest)
     {
@@ -787,6 +903,18 @@ namespace fluxora::tests
             L"Spell Perks Item Distributor",
             L"7.1",
             ModSourceRecord{L"nexus", L"skyrimspecialedition", L"36869", L"100"});
+        const std::vector<ProfileOrderItemRecord> orderBefore =
+            InstanceMetadataStore::listProfileOrderItems(project_, L"Default");
+        const auto orderTargetBefore = std::find_if(
+            orderBefore.begin(),
+            orderBefore.end(),
+            [&existing](const ProfileOrderItemRecord& item)
+            {
+                return item.hasMod && item.mod.uuid == existing.uuid;
+            });
+        ASSERT_NE(orderTargetBefore, orderBefore.end());
+        const std::wstring expectedOrderId = orderTargetBefore->id;
+        const auto expectedOrderIndex = std::distance(orderBefore.begin(), orderTargetBefore);
 
         const DownloadEntry download = importArchive(
             L"SPID 7.2.zip",
@@ -845,6 +973,18 @@ namespace fluxora::tests
             std::find(current->identityAliases.begin(), current->identityAliases.end(), L"SPID 7.2"),
             current->identityAliases.end());
         EXPECT_EQ(readTextFile(existingPath / L"SKSE" / L"Plugins" / L"SPID.dll"), "new");
+        const std::vector<ProfileOrderItemRecord> orderAfter =
+            InstanceMetadataStore::listProfileOrderItems(project_, L"Default");
+        const auto orderTargetAfter = std::find_if(
+            orderAfter.begin(),
+            orderAfter.end(),
+            [&existing](const ProfileOrderItemRecord& item)
+            {
+                return item.hasMod && item.mod.uuid == existing.uuid;
+            });
+        ASSERT_NE(orderTargetAfter, orderAfter.end());
+        EXPECT_EQ(orderTargetAfter->id, expectedOrderId);
+        EXPECT_EQ(std::distance(orderAfter.begin(), orderTargetAfter), expectedOrderIndex);
     }
 
     TEST_F(ModFileOperationsIntegrationTests, PlannedMergeKeepsMatchedIdentityAndPreservesExistingFiles)
@@ -858,6 +998,18 @@ namespace fluxora::tests
             L"Merge Target",
             L"1.0",
             ModSourceRecord{L"nexus", L"skyrimspecialedition", L"900", L"100"});
+        const std::vector<ProfileOrderItemRecord> orderBefore =
+            InstanceMetadataStore::listProfileOrderItems(project_, L"Default");
+        const auto orderTargetBefore = std::find_if(
+            orderBefore.begin(),
+            orderBefore.end(),
+            [&existing](const ProfileOrderItemRecord& item)
+            {
+                return item.hasMod && item.mod.uuid == existing.uuid;
+            });
+        ASSERT_NE(orderTargetBefore, orderBefore.end());
+        const std::wstring expectedOrderId = orderTargetBefore->id;
+        const auto expectedOrderIndex = std::distance(orderBefore.begin(), orderTargetBefore);
 
         const DownloadEntry download = importArchive(
             L"Incoming Merge 2.0.zip",
@@ -925,6 +1077,18 @@ namespace fluxora::tests
                 current->identityAliases.end(),
                 L"Incoming Merge 2.0"),
             current->identityAliases.end());
+        const std::vector<ProfileOrderItemRecord> orderAfter =
+            InstanceMetadataStore::listProfileOrderItems(project_, L"Default");
+        const auto orderTargetAfter = std::find_if(
+            orderAfter.begin(),
+            orderAfter.end(),
+            [&existing](const ProfileOrderItemRecord& item)
+            {
+                return item.hasMod && item.mod.uuid == existing.uuid;
+            });
+        ASSERT_NE(orderTargetAfter, orderAfter.end());
+        EXPECT_EQ(orderTargetAfter->id, expectedOrderId);
+        EXPECT_EQ(std::distance(orderAfter.begin(), orderTargetAfter), expectedOrderIndex);
     }
 
     TEST_F(ModFileOperationsIntegrationTests, InstallArchiveFromExternalFileImportsIntoGlobalCatalogBeforeInstalling)
@@ -2638,6 +2802,58 @@ namespace fluxora::tests
                 replayed.previousSelectedOptionIds.end(),
                 rememberedOptionId),
             replayed.previousSelectedOptionIds.end());
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, FailedFomodCommitDoesNotUpdateLongTermMemory)
+    {
+        const DownloadEntry download = importArchive(
+            L"Failed Memory FOMOD.fomod",
+            {
+                {L"fomod/ModuleConfig.xml", R"xml(<config>
+  <moduleName>Failed Memory FOMOD</moduleName>
+  <installSteps order="Explicit"><installStep name="Variant"><optionalFileGroups order="Explicit">
+    <group name="Edition" type="SelectExactlyOne"><plugins order="Explicit">
+      <plugin name="Standard"><files><file source="standard/Failed.esp" destination="Failed.esp" /></files><typeDescriptor><type name="Recommended" /></typeDescriptor></plugin>
+      <plugin name="Alternate"><files><file source="alternate/Failed.esp" destination="Failed.esp" /></files><typeDescriptor><type name="Optional" /></typeDescriptor></plugin>
+    </plugins></group>
+  </optionalFileGroups></installStep></installSteps>
+</config>)xml"},
+                {L"fomod/info.xml", R"xml(<fomod><Name>Failed Memory FOMOD</Name><Version>1.0.0</Version><Id>failed-memory</Id></fomod>)xml"},
+                {L"standard/Failed.esp", "standard"},
+                {L"alternate/Failed.esp", "alternate"}
+            });
+
+        FomodInstallerDescriptor descriptor;
+        try
+        {
+            descriptor = downloads_.analyzeFomodDownload(project_, download.localPath);
+        }
+        catch (const std::exception& exception)
+        {
+            if (isMissingExtractorError(exception.what()))
+            {
+                GTEST_SKIP() << "No supported archive extractor was available: " << exception.what();
+            }
+            throw;
+        }
+        ASSERT_EQ(descriptor.steps[0].groups[0].options.size(), 2U);
+        const std::wstring alternate = descriptor.steps[0].groups[0].options[1].id;
+
+        InstanceMetadataStore::setPendingInstallFinalizeFailureForTesting(true);
+        EXPECT_THROW(
+            static_cast<void>(downloads_.installFomodDownload(
+                project_,
+                download.localPath,
+                L"Failed Memory FOMOD",
+                ExistingModInstallMode::FailIfExists,
+                {alternate})),
+            std::runtime_error);
+
+        const FomodInstallerDescriptor replayed = downloads_.analyzeFomodDownload(
+            project_,
+            download.localPath);
+        EXPECT_FALSE(replayed.hasPreviousSelection);
+        EXPECT_TRUE(replayed.previousSelectedOptionIds.empty());
     }
 
     TEST_F(ModFileOperationsIntegrationTests, AnalyzeFomodContentLayoutReturnsSelectedOutputPlanWithoutInstalling)

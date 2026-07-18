@@ -187,6 +187,9 @@ namespace fluxora
         InstallConflictPreviewMode mode{InstallConflictPreviewMode::Install};
         std::wstring targetModUuid;
         int targetPosition{-1};
+        std::wstring beforeOrderId;
+        std::wstring afterOrderId;
+        std::uint64_t enqueueSequence{0};
         std::uint64_t revision{0};
         std::wstring state;
         std::wstring finalOrderId;
@@ -340,7 +343,9 @@ namespace fluxora
             InstallConflictPreviewMode mode,
             std::wstring_view pendingOrderId,
             std::wstring_view targetModUuid,
-            int targetPosition);
+            int targetPosition,
+            std::wstring_view beforeOrderId = {},
+            std::wstring_view afterOrderId = {});
 
         [[nodiscard]] static PendingInstallSessionRecord preparePendingInstallSession(
             const std::filesystem::path& projectDirectory,
@@ -350,7 +355,9 @@ namespace fluxora
         [[nodiscard]] static PendingInstallSessionRecord rebasePendingInstallSession(
             const std::filesystem::path& projectDirectory,
             std::wstring_view operationId,
-            int targetPosition);
+            std::wstring_view beforeOrderId,
+            std::wstring_view afterOrderId,
+            int fallbackTargetPosition);
 
         [[nodiscard]] static PendingInstallSessionRecord completePendingInstallSession(
             const std::filesystem::path& projectDirectory,
@@ -364,6 +371,10 @@ namespace fluxora
         [[nodiscard]] static PendingInstallSessionRecord pendingInstallSession(
             const std::filesystem::path& projectDirectory,
             std::wstring_view operationId);
+
+        [[nodiscard]] static std::vector<PendingInstallSessionRecord> activePendingInstallSessions(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view profileName);
 
         [[nodiscard]] static FinalizedPendingInstallRecord finalizePendingInstalledMod(
             const std::filesystem::path& projectDirectory,

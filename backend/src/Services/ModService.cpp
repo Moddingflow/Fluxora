@@ -3,6 +3,7 @@
 #include "FluxoraCore/Services/VfsMountPlan.hpp"
 
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
+#include "FluxoraCore/Services/InstallProjectGate.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
@@ -1055,6 +1056,7 @@ namespace fluxora
         const std::filesystem::path& projectDirectory,
         const std::vector<std::filesystem::path>& changedPaths) const
     {
+        InstallProjectGate projectGate(projectDirectory);
         InstanceMetadataStore::invalidateModFileCaches(
             projectDirectory,
             changedPaths,
@@ -1165,6 +1167,8 @@ namespace fluxora
         PathSafetyService()
             .validateWritePath(modPath, targetPath, writeOptions)
             .throwIfUnsafe("Mod text file save");
+
+        InstallProjectGate projectGate(projectDirectory);
 
         AtomicFileStore().writeTextFile(
             targetPath,
@@ -1353,6 +1357,8 @@ namespace fluxora
             throw std::invalid_argument("Project directory is required.");
         }
 
+        InstallProjectGate projectGate(projectDirectory);
+
         const std::wstring safeName = validateModFolderName(modName);
         const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
         const std::filesystem::path targetDirectory = modsDirectory / std::filesystem::path(safeName);
@@ -1415,6 +1421,8 @@ namespace fluxora
             throw std::invalid_argument("Mod path is outside the project mods directory.");
         }
 
+        InstallProjectGate projectGate(projectDirectory);
+
         try
         {
             removeModFilesystemPath(modPath);
@@ -1457,6 +1465,8 @@ namespace fluxora
             throw std::invalid_argument("Mod path is outside the project mods directory.");
         }
 
+        InstallProjectGate projectGate(projectDirectory);
+
         InstanceMetadataStore::setInstalledModEnabled(projectDirectory, modPath, isEnabled);
     }
 
@@ -1468,6 +1478,8 @@ namespace fluxora
         {
             throw std::invalid_argument("Project directory is required.");
         }
+
+        InstallProjectGate projectGate(projectDirectory);
 
         InstanceMetadataStore::setAllInstalledModsEnabled(
             projectDirectory,
@@ -1503,6 +1515,7 @@ namespace fluxora
         safety.validateDirectoryWriteRoot(overwriteDirectory)
             .throwIfUnsafe("Overwrite directory is unsafe");
 
+        InstallProjectGate projectGate(projectDirectory);
         std::filesystem::create_directories(overwriteDirectory);
         removeDirectoryContents(overwriteDirectory);
         std::filesystem::create_directories(overwriteDirectory);

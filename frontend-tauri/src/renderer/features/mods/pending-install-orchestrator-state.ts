@@ -5,7 +5,10 @@ import type {
   FluxoraInstalledModSummary,
   FluxoraModOrderItem
 } from '../../../shared/fluxora-api';
-import { targetIndexForOrderDrop, type OrderDropPlacement } from '../../order-list-state';
+import type { InstallModOrderPlacement } from '../../install-workspace-state';
+import { targetIndexForOrderDrop } from '../../order-list-state';
+
+export type PendingInstallDropPlacement = InstallModOrderPlacement['placement'];
 
 export interface PendingInstallDraft {
   operationId: string;
@@ -17,7 +20,7 @@ export interface PendingInstallDraft {
 
 export interface PendingInstallPlacement {
   targetOrderId: string;
-  placement: OrderDropPlacement;
+  placement: PendingInstallDropPlacement;
 }
 
 export interface PendingInstallSessionState {
@@ -148,13 +151,15 @@ export const beginPendingInstall = (
   const originalTargetIndex = target
     ? items.findIndex((item) => item.orderId === target.orderId)
     : -1;
-  const desiredTargetIndex = clampedTargetIndex(draft.targetIndex, items.length);
+  const desiredTargetIndex = target
+    ? originalTargetIndex
+    : clampedTargetIndex(draft.targetIndex, items.length);
   let nextItems: FluxoraModOrderItem[];
   let rowOrderId: string;
 
   if (target) {
     rowOrderId = target.orderId;
-    nextItems = moveToIndex(items, target.orderId, desiredTargetIndex);
+    nextItems = renumber(items);
   } else {
     rowOrderId = pendingOrderId;
     nextItems = [...items];
@@ -200,12 +205,22 @@ export const pendingInstallTargetIndexForPlacement = (
       : items.length;
   }
 
+  const isInsideSeparator =
+    placement.placement === 'inside' &&
+    items.some(
+      (item) => item.orderId === placement.targetOrderId && item.isSeparator
+    );
+  const orderDropPlacement = placement.placement === 'before' ? 'before' : 'after';
+
   return targetIndexForOrderDrop(
     provisionalItems,
     sourceOrderId,
     placement.targetOrderId,
-    placement.placement,
-    { separatorMoveMode: 'single' }
+    orderDropPlacement,
+    {
+      separatorMoveMode: 'single',
+      treatAfterSeparatorTargetAsBlock: isInsideSeparator
+    }
   ) ?? (target
     ? items.findIndex((item) => item.orderId === target.orderId)
     : items.length);

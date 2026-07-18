@@ -118,6 +118,39 @@ namespace fluxora
         EXPECT_EQ(patchFor(above, L"order-a").overwritingFileCount, 1);
     }
 
+    TEST(InstallConflictPreviewServiceTests, AggregatesMultiplePendingInventoriesDeterministically)
+    {
+        InstallConflictPreviewRequest first;
+        first.operationId = L"aggregate-first";
+        first.revision = 1;
+        first.pendingOrderId = L"pending-install:aggregate-first";
+        first.targetIndex = 1;
+        first.profileMods = {
+            profileMod(L"order-base", L"uuid-base", L"base", true, {L"shared.txt"})
+        };
+        first.incomingFiles = {InstallConflictFile{L"shared.txt"}};
+
+        InstallConflictPreviewRequest second = first;
+        second.operationId = L"aggregate-second";
+        second.revision = 4;
+        second.pendingOrderId = L"pending-install:aggregate-second";
+        second.targetIndex = 2;
+
+        const FluxoraInstallConflictSnapshot snapshot =
+            InstallConflictPreviewService::calculateAggregate({first, second}, 1);
+
+        EXPECT_EQ(snapshot.operationId, second.operationId);
+        EXPECT_EQ(snapshot.revision, 4U);
+        ASSERT_EQ(snapshot.rows.size(), 3U);
+        EXPECT_EQ(
+            patchFor(snapshot, first.pendingOrderId).overwrittenByModIds,
+            std::vector<std::wstring>{second.pendingOrderId});
+        EXPECT_EQ(
+            patchFor(snapshot, second.pendingOrderId).overwritesModIds,
+            (std::vector<std::wstring>{L"base", first.pendingOrderId}));
+        EXPECT_EQ(patchFor(snapshot, L"order-base").conflictingFileCount, 1);
+    }
+
     TEST(InstallConflictPreviewServiceTests, ReplaceDropsOldFilesAndMergeUsesUnion)
     {
         InstallConflictPreviewRequest request;
@@ -186,6 +219,8 @@ namespace fluxora
             InstallConflictPreviewService::rebase(
                 project,
                 start.operationId,
+                {},
+                {},
                 1);
         EXPECT_EQ(disabled.revision, 2U);
         EXPECT_EQ(disabled.targetIndex, 1);
@@ -197,6 +232,8 @@ namespace fluxora
             InstallConflictPreviewService::rebase(
                 project,
                 start.operationId,
+                {},
+                {},
                 0);
         EXPECT_EQ(rebased.revision, 3U);
         EXPECT_EQ(rebased.targetIndex, 0);
@@ -208,6 +245,64 @@ namespace fluxora
         EXPECT_EQ(persisted.targetPosition, 0);
         EXPECT_EQ(persisted.revision, 3U);
         EXPECT_EQ(persisted.state, L"ready");
+    }
+
+    TEST(InstallConflictPreviewServiceTests, PersistsMultiplePendingSessionsWithStableAnchors)
+    {
+        tests::TempDirectory temporary;
+        const std::filesystem::path project = temporary.path() / L"Project";
+        const std::filesystem::path alphaPath = project / L"mods" / L"Alpha";
+        tests::writeTextFile(alphaPath / L"alpha.txt", "alpha");
+        InstanceMetadataStore::registerInstalledMod(
+            project,
+            alphaPath,
+            L"Alpha",
+            L"1.0",
+            ModSourceRecord{});
+        const std::vector<ProfileOrderItemRecord> order =
+            InstanceMetadataStore::listProfileOrderItems(project, L"Default");
+        ASSERT_EQ(order.size(), 1U);
+
+        InstallConflictSessionStartRequest first;
+        first.projectDirectory = project;
+        first.operationId = L"operation-first";
+        first.profileName = L"Default";
+        first.pendingOrderId = L"pending-install:operation-first";
+        first.targetIndex = 0;
+        InstallConflictPreviewService::beginSession(first);
+
+        InstallConflictSessionStartRequest second = first;
+        second.operationId = L"operation-second";
+        second.pendingOrderId = L"pending-install:operation-second";
+        second.targetIndex = 1;
+        EXPECT_NO_THROW(InstallConflictPreviewService::beginSession(second));
+
+        const PendingInstallSessionRecord persistedFirst =
+            InstanceMetadataStore::pendingInstallSession(project, first.operationId);
+        const PendingInstallSessionRecord persistedSecond =
+            InstanceMetadataStore::pendingInstallSession(project, second.operationId);
+        EXPECT_TRUE(persistedFirst.beforeOrderId.empty());
+        EXPECT_EQ(persistedFirst.afterOrderId, order[0].id);
+        EXPECT_EQ(persistedSecond.beforeOrderId, order[0].id);
+        EXPECT_TRUE(persistedSecond.afterOrderId.empty());
+        EXPECT_LT(persistedFirst.enqueueSequence, persistedSecond.enqueueSequence);
+
+        static_cast<void>(InstallConflictPreviewService::publishExactInventory(
+            project,
+            first.operationId,
+            {InstallConflictFile{L"pending-shared.txt"}}));
+        const FluxoraInstallConflictSnapshot aggregate =
+            InstallConflictPreviewService::publishExactInventory(
+                project,
+                second.operationId,
+                {InstallConflictFile{L"PENDING-SHARED.TXT"}});
+        EXPECT_EQ(aggregate.operationId, second.operationId);
+        EXPECT_EQ(
+            patchFor(aggregate, first.pendingOrderId).overwrittenByModIds,
+            std::vector<std::wstring>{second.pendingOrderId});
+        EXPECT_EQ(
+            patchFor(aggregate, second.pendingOrderId).overwritesModIds,
+            std::vector<std::wstring>{first.pendingOrderId});
     }
 #endif
 }

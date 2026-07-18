@@ -12,6 +12,7 @@ namespace fluxora
     class ProfileOrderService;
     class ProfileService;
     class DownloadService;
+    class InstallOperationService;
     class DownloadTransferLimiter;
     class EffectiveFileTreeService;
     class ExecutableService;
@@ -48,6 +49,7 @@ namespace fluxora
         [[nodiscard]] ProfileOrderService& profileOrder() noexcept;
         [[nodiscard]] ProfileService& profiles() noexcept;
         [[nodiscard]] DownloadService& downloads() noexcept;
+        [[nodiscard]] InstallOperationService& installs() noexcept;
         [[nodiscard]] EffectiveFileTreeService& effectiveFileTree() noexcept;
         [[nodiscard]] ExecutableService& executables() noexcept;
         [[nodiscard]] ExecutableIconService& executableIcons() noexcept;
@@ -74,6 +76,7 @@ namespace fluxora
         std::unique_ptr<NexusUpdateApi> nexusUpdateApi_;
         std::unique_ptr<DownloadTransferLimiter> downloadTransferLimiter_;
         std::unique_ptr<DownloadService> downloads_;
+        std::unique_ptr<InstallOperationService> installs_;
         std::unique_ptr<EffectiveFileTreeService> effectiveFileTree_;
         std::unique_ptr<ExecutableIconService> executableIcons_;
         std::unique_ptr<ExecutableService> executables_;

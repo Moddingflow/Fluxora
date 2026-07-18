@@ -152,8 +152,12 @@ import {
   modDetailsContentCacheKey,
   modDetailsContentFileTree
 } from './features/mods/mod-details-content';
+import { downloadInstallDropPlacementFromPointer } from './features/mods/download-install-drop-state';
 import { resolveModSourcePageUrl } from './features/mods/mod-source-url';
-import { pendingInstallTargetIndexForPlacement } from './features/mods/pending-install-orchestrator-state';
+import {
+  pendingInstallTargetIndexForPlacement,
+  type PendingInstallDropPlacement
+} from './features/mods/pending-install-orchestrator-state';
 import { usePostInstallModReveal } from './features/mods/use-post-install-mod-reveal';
 import { usePendingInstallOrchestrator } from './features/mods/use-pending-install-orchestrator';
 import {
@@ -195,6 +199,7 @@ import {
   modConflictMarkerStates,
   modConflictMarkerStatesForHighlight,
   modItemTitle,
+  modLatestVersionDiffers,
   modLatestVersionText,
   modOverwriteView,
   modOrderItemMatchesLookup,
@@ -205,7 +210,6 @@ import {
   modTableStatusView,
   modVersionText,
   modWorkspaceReducer,
-  mergeOptimisticInstalledMod,
   reorderModOrderItems,
   removeModOrderItems,
   selectedModOrderItem,
@@ -315,7 +319,8 @@ import {
   sanitizeFomodManualDecisions,
   validateInstallModName,
   type InstallModOrderPlacement,
-  type InstallSource
+  type InstallSource,
+  type PlacementOverrideMap
 } from './install-workspace-state';
 import { defaultModNameFromPath, shortPath } from './services/path-display-service';
 import {
@@ -364,6 +369,7 @@ import type {
   FluxoraGameTemplate,
   FluxoraInstalledMod,
   FluxoraInstalledModSummary,
+  FluxoraInstallOperation,
   FluxoraModOrganizerImportAnalysis,
   FluxoraModOrganizerImportProgress,
   FluxoraMo2TransferHandoff,
@@ -484,7 +490,8 @@ type RightPaneId = 'plugins' | 'data' | 'downloads' | 'build';
 type WorkspaceStoreId = 'mods' | 'plugins' | 'downloads' | 'profiles' | 'executables';
 type DownloadDropCue = 'idle' | 'hover' | 'importing';
 type RowReorderKind = 'mod' | 'plugin' | 'download-install';
-type RowDropPlacement = 'before' | 'after';
+type RowDropPlacement = PendingInstallDropPlacement;
+type OrderRowDropPlacement = Exclude<RowDropPlacement, 'inside'>;
 type ModDetailsTabId = 'files' | 'conflicts';
 
 interface EffectiveFileTreeRow {
@@ -1153,7 +1160,7 @@ const isEditableShortcutTarget = (target: EventTarget | null): boolean =>
 const rowDropPlacementFromPointer = (
   row: HTMLElement,
   pointerY: number
-): RowDropPlacement => {
+): OrderRowDropPlacement => {
   const rect = row.getBoundingClientRect();
   return pointerY < rect.top + rect.height / 2 ? 'before' : 'after';
 };
@@ -1247,6 +1254,8 @@ export const App = () => {
   const coordinatedWorkspaceLoadSequenceRef = useRef(0);
   const buildContentRefreshCoordinator = useMemo(createTrailingRefreshCoordinator, []);
   const pendingBuildContentModPaths = useMemo(createPendingPathAccumulator, []);
+  const installCommitOperationsRef = useRef(new Set<string>());
+  const deferredBuildContentRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const buildContentEventSequences = useMemo(createScopedSequenceTracker, []);
   const buildContentWatchKeyRef = useRef<string | null>(null);
   const buildContentWatchPromiseRef = useRef<Promise<void> | null>(null);
@@ -1473,9 +1482,11 @@ export const App = () => {
     operationId: string;
     promise: Promise<FluxoraInstallPlan>;
   } | null>(null);
-  const installSubmitInFlightRef = useRef<string | null>(null);
-  const [installMutationInFlight, setInstallMutationInFlight] = useState(false);
-  const downloadsActionsBusy = Boolean(downloadsBusyLabel) || installMutationInFlight;
+  const installSubmitSourcesRef = useRef<Set<string>>(new Set());
+  const installSourceByOperationRef = useRef<Map<string, string>>(new Map());
+  const installOperationsRef = useRef<Map<string, FluxoraInstallOperation>>(new Map());
+  const installRestoreGenerationRef = useRef(0);
+  const downloadsActionsBusy = Boolean(downloadsBusyLabel);
   const [isBuildPathsOpen, setIsBuildPathsOpen] = useState(false);
   const [buildPathDraft, setBuildPathDraft] = useState<BuildPathDraft>(() =>
     initialBuildSettingsBootstrap?.draft ??
@@ -1529,6 +1540,76 @@ export const App = () => {
         message: `Pending install rebase deferred: ${detail}`,
         operationId
       });
+    },
+    onOperationProgress: (operation) => {
+      installOperationsRef.current.set(operation.operationId, operation);
+      if (operation.state === 'committing' || operation.state === 'finalizing') {
+        installCommitOperationsRef.current.add(operation.operationId);
+      } else if (
+        operation.state === 'completed' ||
+        operation.state === 'failed' ||
+        operation.state === 'needsReview'
+      ) {
+        installCommitOperationsRef.current.delete(operation.operationId);
+        if (
+          installCommitOperationsRef.current.size === 0 &&
+          deferredBuildContentRefreshRef.current
+        ) {
+          const refresh = deferredBuildContentRefreshRef.current;
+          deferredBuildContentRefreshRef.current = null;
+          void window.fluxora.ui.log({
+            level: 'info',
+            category: 'ModInstall',
+            message: 'Install commit gate released; running one deduplicated watcher reconciliation.',
+            operationId: operation.operationId
+          });
+          void buildContentRefreshCoordinator.schedule(refresh).catch(() => undefined);
+        }
+      }
+      if (
+        operation.state !== 'completed' &&
+        operation.state !== 'failed' &&
+        operation.state !== 'needsReview'
+      ) {
+        return;
+      }
+      const sourcePath = installSourceByOperationRef.current.get(operation.operationId);
+      if (sourcePath && operation.state !== 'needsReview') {
+        installSubmitSourcesRef.current.delete(sourcePath);
+        installSourceByOperationRef.current.delete(operation.operationId);
+      }
+      if (operation.state === 'completed') {
+        if (operation.result?.orderId) {
+          dispatchModsWorkspace({
+            type: 'item-reveal-requested',
+            orderId: operation.result.orderId
+          });
+        }
+        setMessage(`Installed ${operation.result?.name || operation.targetFolder}`);
+        void refreshCurrentViewRef.current();
+      } else if (operation.state === 'needsReview') {
+        setMessage(operation.errorMessage || 'The interrupted install needs review.');
+        const source = downloadsWorkspace.items.find(
+          (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
+        );
+        if (source) {
+          dispatchDownloadsWorkspace({
+            type: 'items-upserted',
+            items: [{ ...source, buildStatus: 'Needs review' }]
+          });
+        }
+      } else {
+        setMessage(operation.errorMessage || `Could not install ${operation.targetFolder}.`);
+        const source = downloadsWorkspace.items.find(
+          (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
+        );
+        if (source) {
+          dispatchDownloadsWorkspace({
+            type: 'items-upserted',
+            items: [{ ...source, buildStatus: 'Failed' }]
+          });
+        }
+      }
     }
   });
   const pluginOrderSaveSequenceRef = useRef(0);
@@ -1584,6 +1665,84 @@ export const App = () => {
     [projects, selectedProjectId]
   );
   selectedProjectDirectoryRef.current = selectedProject?.projectDirectory ?? null;
+  useEffect(() => {
+    const projectDirectory = selectedProject?.projectDirectory;
+    if (!projectDirectory || loadedWorkspaceProjectId !== selectedProject.id) {
+      return;
+    }
+    const restoreGeneration = installRestoreGenerationRef.current + 1;
+    installRestoreGenerationRef.current = restoreGeneration;
+    const operationId = createRendererOperationId('install_restore');
+    void window.fluxora.installs.restore(projectDirectory, { operationId }).then((operations) => {
+      void window.fluxora.ui.log({
+        level: 'info',
+        category: 'ModInstall',
+        message: `Install recovery scan returned ${operations.length} active operation(s).`,
+        operationId
+      });
+      if (
+        installRestoreGenerationRef.current !== restoreGeneration ||
+        selectedProjectDirectoryRef.current !== projectDirectory
+      ) {
+        void window.fluxora.ui.log({
+          level: 'info',
+          category: 'ModInstall',
+          message: 'Install recovery result was superseded by a newer workspace scan.',
+          operationId
+        });
+        return;
+      }
+      for (const operation of operations) {
+        installOperationsRef.current.set(operation.operationId, operation);
+        const afterIndex = operation.afterOrderId
+          ? modsWorkspace.items.findIndex((item) => item.orderId === operation.afterOrderId)
+          : -1;
+        const beforeIndex = operation.beforeOrderId
+          ? modsWorkspace.items.findIndex((item) => item.orderId === operation.beforeOrderId)
+          : -1;
+        const targetIndex = afterIndex >= 0
+          ? afterIndex
+          : beforeIndex >= 0
+            ? beforeIndex + 1
+            : modsWorkspace.items.length;
+        installSubmitSourcesRef.current.add(operation.sourcePath.toLocaleLowerCase());
+        installSourceByOperationRef.current.set(
+          operation.operationId,
+          operation.sourcePath.toLocaleLowerCase()
+        );
+        const targetStillExists = Boolean(
+          operation.targetModUuid &&
+          modsWorkspace.items.some((item) => item.modUuid === operation.targetModUuid)
+        );
+        const restoredSession = pendingInstallOrchestrator.begin({
+          projectDirectory,
+          operationId: operation.operationId,
+          modName: operation.targetFolder,
+          mode: targetStillExists ? operation.existingModMode : 0,
+          targetModUuid: targetStillExists ? operation.targetModUuid : undefined,
+          targetIndex
+        });
+        void window.fluxora.ui.log({
+          level: 'info',
+          category: 'ModInstall',
+          message: `Install recovery projected ${restoredSession.rowOrderId}.`,
+          operationId: operation.operationId
+        });
+      }
+    }).catch((error) => {
+      if (
+        installRestoreGenerationRef.current === restoreGeneration &&
+        selectedProjectDirectoryRef.current === projectDirectory
+      ) {
+        void window.fluxora.ui.log({
+          level: 'warning',
+          category: 'ModInstall',
+          message: `Install recovery scan failed: ${errorMessage(error)}`,
+          operationId
+        });
+      }
+    });
+  }, [loadedWorkspaceProjectId, selectedProject?.id, selectedProject?.projectDirectory]);
   useEffect(() => {
     if (
       isSecondaryWindow ||
@@ -4014,7 +4173,7 @@ export const App = () => {
     kind: Exclude<RowReorderKind, 'download-install'>,
     sourceOrderId: string,
     targetOrderId: string,
-    placement: RowDropPlacement
+    placement: OrderRowDropPlacement
   ): number | null =>
     kind === 'mod'
       ? targetIndexForDrop(
@@ -4099,10 +4258,16 @@ export const App = () => {
     const targetOrderId = row?.dataset.orderId ?? null;
     const placement =
       row && !(session.kind === 'download-install' && row.dataset.overwrite === 'true')
-        ? rowDropPlacementFromPointer(row, session.currentY)
+        ? session.kind === 'download-install'
+          ? downloadInstallDropPlacementFromPointer(
+              row.getBoundingClientRect(),
+              session.currentY,
+              row.dataset.separator === 'true'
+            )
+          : rowDropPlacementFromPointer(row, session.currentY)
         : null;
     const targetIndex =
-      session.kind !== 'download-install' && targetOrderId && placement
+      session.kind !== 'download-install' && targetOrderId && placement && placement !== 'inside'
         ? targetIndexForRowDrop(session.kind, session.sourceOrderId, targetOrderId, placement)
         : null;
     const nextTarget =
@@ -4255,6 +4420,10 @@ export const App = () => {
       if (entry && targetOrderId && placement) {
         void installDownload(entry, { targetOrderId, placement });
       }
+      return;
+    }
+
+    if (placement === 'inside') {
       return;
     }
 
@@ -5410,7 +5579,7 @@ export const App = () => {
     placement: InstallModOrderPlacement | null = null
   ) => {
     const project = selectedProject;
-    if (!project || !downloadCapabilities.bridgeAvailable || downloadsActionsBusy) {
+    if (!project || !downloadCapabilities.bridgeAvailable) {
       return;
     }
 
@@ -5452,6 +5621,114 @@ export const App = () => {
     const planPromise = planInstallSource(source, project, operationId);
     watchInstallDetection(operationId, fallbackName, detectionPromise);
     watchInstallPlan(operationId, planPromise);
+  };
+
+  const reopenInstallForReview = (operation: FluxoraInstallOperation) => {
+    const project = selectedProject;
+    if (!project || operation.state !== 'needsReview') {
+      return;
+    }
+
+    const sourceEntry = downloadsWorkspace.items.find(
+      (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
+    );
+    const source: InstallSource = {
+      kind: operation.sourceKind,
+      sourcePath: operation.sourcePath,
+      displayName: sourceEntry ? downloadTitle(sourceEntry) : operation.targetFolder,
+      fileName: sourceEntry?.fileName || fileNameFromPath(operation.sourcePath)
+    };
+    const placementOverrides = ((): PlacementOverrideMap => {
+      try {
+        const saved = JSON.parse(operation.placementOverridesJson || '[]') as unknown;
+        if (!Array.isArray(saved)) {
+          return {};
+        }
+        return Object.fromEntries(saved.flatMap((candidate) => {
+          if (
+            !candidate ||
+            typeof candidate !== 'object' ||
+            !('sourcePath' in candidate) ||
+            !('target' in candidate) ||
+            !('targetRelativePath' in candidate) ||
+            typeof candidate.sourcePath !== 'string' ||
+            typeof candidate.target !== 'string' ||
+            typeof candidate.targetRelativePath !== 'string'
+          ) {
+            return [];
+          }
+          return [[candidate.sourcePath, {
+            target: candidate.target,
+            targetRelativePath: candidate.targetRelativePath
+          }]];
+        }));
+      } catch {
+        return {};
+      }
+    })();
+
+    setMessage('Проверьте сохранённые решения перед повторной установкой.');
+    setInstallDialog({
+      phase: 'detecting',
+      source,
+      operationId: operation.operationId,
+      installerKind: 'pending',
+      fomodInstaller: null,
+      selectedFomodOptionIds: operation.selectedOptionIds ?? [],
+      manualFomodDecisions: operation.manualDecisions ?? [],
+      isRecalculatingFomod: false,
+      fomodStepIndex: 0,
+      activeFomodOptionId: null,
+      layoutPreview: null,
+      installPlan: null,
+      modName: operation.targetFolder,
+      modNameSource: 'user',
+      modOrderPlacement: null,
+      existingModMode: operation.existingModMode,
+      placementOverrides,
+      draggedSourcePath: null,
+      validationMessage: null,
+      errorMessage: null,
+      isSubmitting: false
+    });
+
+    const detectionPromise = window.fluxora.downloads.analyzeFomod(
+      project.projectDirectory,
+      source.sourcePath,
+      operation.profileName,
+      operation.manualDecisions ?? [],
+      { operationId: operation.operationId }
+    );
+    const planPromise = planInstallSource(
+      source,
+      project,
+      operation.operationId,
+      operation.profileName,
+      operation.targetFolder
+    );
+    watchInstallDetection(operation.operationId, operation.targetFolder, detectionPromise);
+    watchInstallPlan(operation.operationId, planPromise);
+    void detectionPromise.then((installer) => {
+      if (!installer) {
+        return;
+      }
+      const validOptionIds = new Set(
+        installer.steps.flatMap((step) =>
+          step.groups.flatMap((group) => group.options.map((option) => option.id))
+        )
+      );
+      setInstallDialog((current) => current?.operationId === operation.operationId
+        ? {
+            ...current,
+            selectedFomodOptionIds: (operation.selectedOptionIds ?? []).filter((id) =>
+              validOptionIds.has(id)
+            ),
+            manualFomodDecisions: (operation.manualDecisions ?? []).filter((decision) =>
+              validOptionIds.has(decision.optionId)
+            )
+          }
+        : current);
+    }).catch(() => undefined);
   };
 
   const resolveInstallDialogPlan = async (
@@ -6234,12 +6511,39 @@ export const App = () => {
       return;
     }
 
-    if (installSubmitInFlightRef.current !== null) {
-      return;
+    const installSourceKey = installDialog.source.sourcePath.trim().toLocaleLowerCase();
+    if (installSubmitSourcesRef.current.has(installSourceKey)) {
+      const activeOperation = [...installSourceByOperationRef.current.entries()].find(
+        ([, sourcePath]) => sourcePath === installSourceKey
+      );
+      const resumesReview = activeOperation?.[0] === installDialog.operationId &&
+        installOperationsRef.current.get(installDialog.operationId)?.state === 'needsReview';
+      if (resumesReview) {
+        installOperationsRef.current.delete(installDialog.operationId);
+      } else {
+        const activeSession = activeOperation
+          ? pendingInstallOrchestrator.sessions.get(activeOperation[0])
+          : undefined;
+        if (activeSession) {
+          dispatchModsWorkspace({
+            type: 'item-reveal-requested',
+            orderId: activeSession.rowOrderId
+          });
+          requestPostInstallModReveal({
+            installedId: activeSession.pendingOrderId,
+            installedName: installDialog.modName,
+            orderId: activeSession.rowOrderId,
+            animate: false
+          });
+        }
+        setMessage('Этот источник уже устанавливается; показана текущая операция.');
+        return;
+      }
     }
-    installSubmitInFlightRef.current = installDialog.operationId;
+    installSubmitSourcesRef.current.add(installSourceKey);
     let submissionDialog = installDialog;
     let pendingInstallStarted = false;
+    let installAccepted = false;
 
     try {
       const initialModName = normalizeInstallModName(installDialog.modName);
@@ -6254,7 +6558,6 @@ export const App = () => {
       }
 
       setInstallDialogPatchForOperation(installDialog.operationId, { isSubmitting: true });
-      setInstallMutationInFlight(true);
 
       let resolvedDialog = await resolveInstallDialogPlan(installDialog);
       if (!resolvedDialog) {
@@ -6364,6 +6667,9 @@ export const App = () => {
         pendingInstallDraft,
         submissionDialog.modOrderPlacement
       );
+      const pendingAlreadyExists = pendingInstallOrchestrator.sessions.has(
+        submissionDialog.operationId
+      );
       const pendingSession = pendingInstallOrchestrator.begin({
         projectDirectory: project.projectDirectory,
         ...pendingInstallDraft,
@@ -6378,7 +6684,7 @@ export const App = () => {
         installedId: pendingSession.pendingOrderId,
         installedName: modName,
         orderId: pendingSession.rowOrderId,
-        animate: false
+        animate: !pendingAlreadyExists && existingModMode === 0
       });
 
       setInstallDialog((current) =>
@@ -6397,114 +6703,41 @@ export const App = () => {
         }
       }
 
-      let installed: FluxoraInstalledModSummary;
-      if (submissionDialog.installerKind === 'fomod') {
-        if (submissionDialog.source.kind === 'download') {
-          installed = await window.fluxora.downloads.installFomod(
-            {
-              projectDirectory: project.projectDirectory,
-              downloadPath: submissionDialog.source.sourcePath,
-              modName,
-              existingModMode,
-              selectedOptionIds: submissionDialog.selectedFomodOptionIds,
-              profileName: selectedProjectProfileName,
-              modOrderTargetIndex,
-              fomodContextId,
-              manualDecisions: manualFomodDecisions,
-              placementOverridesJson,
-              ...identitySelection
-            },
-            { operationId: submissionDialog.operationId }
-          );
-        } else {
-          installed = await window.fluxora.archives.installFomod(
-            {
-              projectDirectory: project.projectDirectory,
-              archivePath: submissionDialog.source.sourcePath,
-              modName,
-              existingModMode,
-              selectedOptionIds: submissionDialog.selectedFomodOptionIds,
-              profileName: selectedProjectProfileName,
-              modOrderTargetIndex,
-              fomodContextId,
-              manualDecisions: manualFomodDecisions,
-              placementOverridesJson,
-              ...identitySelection
-            },
-            { operationId: submissionDialog.operationId }
-          );
-        }
-      } else if (submissionDialog.source.kind === 'download') {
-        installed = await window.fluxora.downloads.install(
-          {
-            projectDirectory: project.projectDirectory,
-            downloadPath: submissionDialog.source.sourcePath,
-            modName,
-            profileName: selectedProjectProfileName,
-            modOrderTargetIndex,
-            existingModMode,
-            placementOverridesJson,
-            ...identitySelection
-          },
-          { operationId: submissionDialog.operationId }
-        );
-      } else {
-        installed = await window.fluxora.archives.install(
-          {
-            projectDirectory: project.projectDirectory,
-            archivePath: submissionDialog.source.sourcePath,
-            modName,
-            profileName: selectedProjectProfileName,
-            modOrderTargetIndex,
-            existingModMode,
-            placementOverridesJson,
-            ...identitySelection
-          },
-          { operationId: submissionDialog.operationId }
-        );
-      }
-
-      setMessage(
-        existingModMode === 1
-          ? `Replaced ${installed.name}`
-          : existingModMode === 2
-            ? `Merged ${installed.name}`
-            : `Installed ${installed.name}`
+      const anchorItems = modsWorkspace.items;
+      const beforeOrderId = modOrderTargetIndex > 0
+        ? anchorItems[modOrderTargetIndex - 1]?.orderId
+        : undefined;
+      const afterOrderId = anchorItems[modOrderTargetIndex]?.orderId;
+      installSourceByOperationRef.current.set(
+        submissionDialog.operationId,
+        installSourceKey
       );
-      try {
-        const rebased = await pendingInstallOrchestrator.flushRebase();
-        if (!rebased) {
-          await pendingInstallOrchestrator.flushRebase();
-        }
-      } catch (rebaseError) {
-        void window.fluxora.ui.log({
-          level: 'warning',
-          category: 'ModInstall',
-          message: `Committed install order rebase deferred: ${errorMessage(rebaseError)}`,
-          operationId: submissionDialog.operationId
-        });
-      }
-      const completed = pendingInstallOrchestrator.complete(installed);
-      setInstalledMods((current) => mergeOptimisticInstalledMod(current, installed));
-      dispatchModsWorkspace({
-        type: 'item-reveal-requested',
-        orderId: completed.orderId
-      });
-      requestPostInstallModReveal({
-        installedId: installed.id,
-        installedName: installed.name,
-        orderId: completed.orderId,
-        animate: true
-      });
-      setInstallDialog((current) =>
-        current?.operationId === submissionDialog.operationId ? null : current
+      const acceptedOperation = await window.fluxora.installs.submit(
+        {
+          operationId: submissionDialog.operationId,
+          projectDirectory: project.projectDirectory,
+          sourceKind: submissionDialog.source.kind,
+          sourcePath: submissionDialog.source.sourcePath,
+          isFomod: submissionDialog.installerKind === 'fomod',
+          modName,
+          profileName: selectedProjectProfileName,
+          modOrderTargetIndex,
+          beforeOrderId,
+          afterOrderId,
+          existingModMode,
+          selectedOptionIds: submissionDialog.installerKind === 'fomod'
+            ? submissionDialog.selectedFomodOptionIds
+            : [],
+          fomodContextId,
+          manualDecisions: manualFomodDecisions,
+          placementOverridesJson,
+          ...identitySelection
+        },
+        { operationId: submissionDialog.operationId }
       );
-      void loadDownloadsWorkspace(project, {
-        operationId: submissionDialog.operationId,
-        resetScroll: false,
-        showBusy: false,
-        showLoading: false
-      });
+      installOperationsRef.current.set(acceptedOperation.operationId, acceptedOperation);
+      installAccepted = true;
+      setMessage(`Queued ${modName} for installation`);
     } catch (error) {
       if (pendingInstallStarted) {
         pendingInstallOrchestrator.rollback(submissionDialog.operationId);
@@ -6623,10 +6856,10 @@ export const App = () => {
       });
       setMessage(errorMessage(error));
     } finally {
-      if (installSubmitInFlightRef.current === installDialog.operationId) {
-        installSubmitInFlightRef.current = null;
+      if (!installAccepted) {
+        installSubmitSourcesRef.current.delete(installSourceKey);
+        installSourceByOperationRef.current.delete(installDialog.operationId);
       }
-      setInstallMutationInFlight(false);
     }
   }
 
@@ -7501,8 +7734,7 @@ export const App = () => {
               .map((change) => change.path)
           );
       pendingBuildContentModPaths.add(event.projectDirectory, changedModPaths, eventRevision);
-      void buildContentRefreshCoordinator
-        .schedule(async () => {
+      const refreshTask = async () => {
           // The native route also clears plugin discovery caches. Failed and
           // unprocessed batches are restored so a transient bridge error cannot
           // silently lose cache-correctness work.
@@ -7664,8 +7896,18 @@ export const App = () => {
           if (failedScopes.length > 0) {
             throw new Error(`Build content invalidation remains pending for ${failedScopes.length} scope(s).`);
           }
-        })
-        .catch(() => undefined);
+      };
+      if (installCommitOperationsRef.current.size > 0) {
+        deferredBuildContentRefreshRef.current = refreshTask;
+        void window.fluxora.ui.log({
+          level: 'info',
+          category: 'ModInstall',
+          message: 'Watcher reconciliation deferred while an install commit is active.',
+          operationId: [...installCommitOperationsRef.current][0]
+        });
+        return;
+      }
+      void buildContentRefreshCoordinator.schedule(refreshTask).catch(() => undefined);
     });
     return unsubscribe;
   }, [
@@ -10865,6 +11107,16 @@ export const App = () => {
             const isMenuOpen = item.orderId === modMenuOrderId;
             const isOverwrite = isModOverwriteItem(item);
             const isPendingInstall = pendingInstallOrchestrator.isActiveOrderItem(item);
+            const pendingInstallEntry = isPendingInstall
+              ? [...pendingInstallOrchestrator.sessions.entries()].find(([, session]) =>
+                  session.rowOrderId === item.orderId ||
+                  session.pendingOrderId === item.orderId ||
+                  Boolean(session.targetModUuid && session.targetModUuid === item.modUuid)
+                )
+              : undefined;
+            const pendingOperation = pendingInstallEntry
+              ? installOperationsRef.current.get(pendingInstallEntry[0])
+              : undefined;
             const conflictSnapshotReady = pendingInstallOrchestrator.conflictMarkerReady(item);
             const isNested = isModNestedUnderSeparator(modsWorkspace.items, item.orderId);
             const isCollapsed =
@@ -10981,7 +11233,7 @@ export const App = () => {
                   handlePostInstallModRevealAnimationEnd(item.orderId, event)
                 }
               >
-                {isDropTarget ? (
+                {isDropTarget && dropPlacement !== 'inside' ? (
                   <span className="row-drop-target-chip" aria-hidden="true">
                     {isInstallDropTarget ? 'Установить сюда' : 'Сюда'}
                   </span>
@@ -11074,17 +11326,35 @@ export const App = () => {
                     <span className="mod-list-row__version" role="cell">
                       {modVersionText(item)}
                     </span>
-                    <span className="mod-list-row__latest" data-update={item.hasUpdate} role="cell">
+                    <span
+                      className="mod-list-row__latest"
+                      data-version-mismatch={modLatestVersionDiffers(item)}
+                      role="cell"
+                    >
                       {modLatestVersionText(item)}
                     </span>
                     <span className="mod-list-row__status" role="cell">
                       <span
                         className="mod-overwrite-state-cell"
                         data-status={status.tone}
-                        data-pending={!conflictSnapshotReady}
-                        title={status.overwrite.title}
+                        data-pending={isPendingInstall}
+                        title={isPendingInstall ? item.version : status.overwrite.title}
                       >
-                        {conflictSnapshotReady ? (
+                        {isPendingInstall ? pendingOperation?.state === 'needsReview' ? (
+                          <button
+                            className="mod-install-pending-label mod-install-pending-label--action"
+                            type="button"
+                            title="Повторно проверить установщик"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              reopenInstallForReview(pendingOperation);
+                            }}
+                          >
+                            {item.version}
+                          </button>
+                        ) : (
+                          <span className="mod-install-pending-label">{item.version}</span>
+                        ) : (
                           <StatusDot
                             className="mod-conflict-dot"
                             label={status.overwrite.title}
@@ -11092,8 +11362,6 @@ export const App = () => {
                             state={status.overwrite.state}
                             title={status.overwrite.title}
                           />
-                        ) : (
-                          <span className="mod-install-pending-label">Installing</span>
                         )}
                       </span>
                     </span>
@@ -12026,7 +12294,7 @@ export const App = () => {
         <button
           type="button"
           role="menuitem"
-          disabled={!entry.canInstall || downloadsActionsBusy}
+          disabled={!entry.canInstall}
           onClick={() => {
             setDownloadMenuId(null);
             void installDownload(entry);
@@ -12245,7 +12513,7 @@ export const App = () => {
                 tabIndex={0}
                 draggable={false}
                 data-reorder-kind="download-install"
-                data-reorder-disabled={!entry.canInstall || downloadsActionsBusy}
+                data-reorder-disabled={!entry.canInstall}
                 data-selected={isSelected}
                 data-ready={entry.canInstall}
                 data-dragging={draggedDownloadInstallId === entry.id}
@@ -12271,7 +12539,7 @@ export const App = () => {
                       event,
                       'download-install',
                       entry.id,
-                      entry.canInstall && !downloadsActionsBusy
+                      entry.canInstall
                     )
                   ) {
                     return;

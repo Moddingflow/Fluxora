@@ -865,6 +865,49 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('submits durable installs with a short acknowledgement and typed background progress channel', async () => {
+    const operation: OperationRequest = { operationId: 'op_install_submit' };
+    const install = {
+      projectDirectory: project().projectDirectory,
+      sourceKind: 'download' as const,
+      sourcePath: `${project().projectDirectory}\\downloads\\queued-mod.7z`,
+      isFomod: true,
+      modName: 'Queued Mod',
+      profileName: 'Default',
+      selectedOptionIds: ['main-option'],
+      manualDecisions: [{ optionId: 'main-option', selected: true }]
+    };
+    invokeMock.mockResolvedValue({
+      operationId: operation.operationId,
+      state: 'queued',
+      stage: 'queued'
+    });
+    listenMock.mockResolvedValue(() => undefined);
+
+    const api = createTauriFluxoraApi();
+    await api.installs.submit(install, operation);
+    api.installs.onProgress(() => undefined);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'installs.submit',
+      params: {
+        projectDirectory: install.projectDirectory,
+        sourceKind: install.sourceKind,
+        sourcePath: install.sourcePath,
+        isFomod: install.isFomod,
+        modName: install.modName,
+        profileName: install.profileName,
+        operationId: operation.operationId,
+        existingModMode: 0,
+        selectedOptionIdsJson: '["main-option"]',
+        manualDecisionsJson: '[{"optionId":"main-option","selected":true}]',
+        placementOverridesJson: ''
+      },
+      request: operation
+    });
+    expect(listenMock).toHaveBeenCalledWith('fluxora:installs:progress', expect.any(Function));
+  });
+
   it('plans install identity and forwards an opaque matched-target decision unchanged', async () => {
     const planOperation: OperationRequest = { operationId: 'op_downloads_identity_plan' };
     const installOperation: OperationRequest = { operationId: 'op_archives_identity_install' };

@@ -117,12 +117,16 @@ Phase 9 extends `fluxora.bridge.v1` from simple install to the full WPF parity i
 
 ### Instant install conflict projection
 
-- All four install mutations (`downloads.install`, `archives.install`, `downloads.installFomod` and `archives.installFomod`) require `profileName` and accept optional `modOrderTargetIndex`. The selected profile identity remains pinned for the install session. Only enabled mod rows in that profile participate in file ownership; relative paths are compared case-insensitively and the later row in bottom-up order wins.
-- `InstallConflictPreviewService` in the C++ core receives the exact final staging inventory after regular layout, manual overrides or the selected FOMOD output has been resolved and before the destination filesystem is mutated. Install New projects a virtual owner; Replace substitutes the target's old file set; Merge uses the union of the old and incoming sets. The renderer never predicts ownership from archive contents.
-- SQLite schema 11 stores the active operation in `pending_install_sessions` and its exact inventory in `pending_install_files`. A session moves through `preparing`, `ready`, `committing` and `completed` or `failed`; revisions increase monotonically. `mods.rebasePendingInstall` recalculates the snapshot after a pending-row move, another mod move or an enabled-state change. A rebase racing with commit returns the permanent `orderId` and applies the same requested target.
-- `operations.progress` may contain `installConflictSnapshot: FluxoraInstallConflictSnapshot`. Each accepted snapshot contains complete count/relation patches for every changed side. The renderer creates or reuses the row before awaiting the install promise, keeps it draggable while `preparing`, suppresses new conflict markers until an exact revision arrives, rejects stale revisions, and swaps the temporary order id for the permanent id without inserting a second row. Failure or cancellation removes the virtual row and restores the prior conflict projection.
-- Regular and FOMOD Merge build a complete replacement staging directory. The old destination backup remains recoverable until one SQLite transaction commits the installed mod row, prepared `mod_files`, cache generation state, profile order, directed conflict index, source identity/archive link and terminal pending-session state. A failure after promotion restores the previous directory and rolls back metadata; the first workspace read can use the committed file index without a rescan.
-- The additive progress-capable C ABI exports are `fluxora_install_download_planned_with_progress`, `fluxora_install_archive_planned_with_progress`, `fluxora_install_fomod_download_planned_for_profile_with_progress`, `fluxora_install_fomod_archive_planned_for_profile_with_progress` and `fluxora_rebase_pending_install`. Existing install exports remain compatibility adapters through the same implementation.
+- Renderer install mutations use durable `installs.submit`; the four synchronous `downloads.install*` / `archives.install*` methods remain native-test compatibility adapters. `InstallScheduler` owns two C++ heavy-worker slots. A same-target waiter is parked outside those slots; extraction, FOMOD evaluation and staging can overlap while the short directory/metadata commit is serialized.
+- `InstallConflictPreviewService` receives exact final staging inventories after layout, manual overrides or FOMOD resolution. All ready/committing sessions of the selected profile are ordered by `enqueueSequence` and projected together, so pending mods conflict with one another and every emitted snapshot contains the aggregate relation patches. Install New projects a virtual owner; Replace substitutes the target file set; Merge uses the union. Renderer never predicts ownership from archive contents.
+- SQLite schema 12 stores resumable operations in `install_operations` and permits multiple `pending_install_sessions`. Both records retain stable `beforeOrderId` / `afterOrderId` anchors and `enqueueSequence`; `targetPosition` is migration fallback only. Operation payloads include the archive fingerprint, identity plan, FOMOD selection/manual decisions/context, placement overrides, target, progress, typed error and result.
+- Operation states are `queued`, `validating`, `extracting`, `configuringFomod`, `buildingStaging`, `projectingConflicts`, `waitingTarget`, `committing`, `finalizing`, `recovering`, `needsReview`, `completed` and `failed`. `installs.progress` carries the complete `installOperation`; `installs.list/get` remain authoritative after a missed event or restart.
+- Renderer keeps pending sessions in a map keyed by `operationId`, inserts the optimistic row before awaiting `installs.submit`, animates it only on first insertion and preserves the existing row for Replace/Merge. A `needsReview` status reopens the installer with persisted session decisions; terminal failure removes a new row or restores the original Replace/Merge fields.
+- `mods.rebasePendingInstall` accepts stable neighbor anchors plus a fallback index. One missing neighbor uses the other; Replace/Merge retain the original mod UUID and profile-order row id, and metadata finalization aborts if either identity changes.
+- Regular and FOMOD Merge build a complete replacement staging directory while holding the target lock. Directory publication and SQLite finalization share a cross-process project gate with inventory/order mutations. The fixed acquisition order is target lock, project gate, then SQLite storage lock.
+- `.flow/install-transactions/<operationId>.json` records prepared, target-backed-up, promoted and committed stages. Restore removes only journal-confirmed staging, rolls back a confirmed backup/promotion when needed, preserves committed targets, and returns unknown or unsafe paths as `needsReview` without deleting them.
+- While an install is `committing` or `finalizing`, the Tauri watcher accumulates changed paths. Release schedules one deduplicated reconciliation. The Rust bridge process has a permanent stdout reader and synchronized line writer, so install progress continues without an active request.
+- The additive C ABI exports include durable install submit/restore/list/get and anchor-aware pending rebase; existing progress-capable synchronous install exports remain compatibility adapters through the same implementation.
 - Preview inventories, pending rows and logs stay local. Progress/log records carry operation id, stage, revision, duration, file/conflict counts and no absolute file paths. This feature adds no telemetry, upload, account data or external service, so it does not require a privacy policy or terms update.
 
 ### FOMOD Smart Select
@@ -130,7 +134,7 @@ Phase 9 extends `fluxora.bridge.v1` from simple install to the full WPF parity i
 - `FomodProfileContextService` builds an immutable snapshot for the selected profile and only resolves paths named by the FOMOD. It preserves exact `Active`, `Inactive` and `Missing` states, the winning mod/game owner, persisted plugin enablement, game version and supported script-extender versions. PE version reads and complete profile snapshots are bounded, revision-aware caches.
 - `FomodAutoSelectionService` is the sole owner of automatic decisions. It evaluates module/game/FOMM/SKSE/FOSE/NVSE/F4SE dependencies with `satisfied | unsatisfied | unknown`, applies hard FOMOD rules before manual pins, profile evidence, independent memory and author defaults, and iterates condition flags, visibility and dependency types to a fixed point. Cycles and ambiguous exclusive groups remain manual; `CouldBeUsable` is never guessed.
 - TES4 evidence is read only from declared `.esp`, `.esm` and `.esl` option outputs and acts as a compatibility guard, not as a positive recommendation: an active or selected master never promotes an `Optional` choice by itself, while an unavailable master prevents an otherwise recommended choice from being selected automatically. ZIP reads are capped at 8 MiB per header, 256 candidates and 64 MiB total; corrupt, encrypted, oversized or over-budget entries become review evidence without making an otherwise valid FOMOD un-installable.
-- `fomod-memory.json` schema v2 separates profile-fingerprinted contextual choices from global manual preferences for environment-independent groups. Schema v1 is a weak compatibility hint and is rewritten only after a successful install.
+- `fomod-memory.json` schema v3 uses provider/game/mod identity plus the descriptor structure fingerprint as its composite family identity. Nexus `fileId`, archive name and display name are excluded, so matching variants share decisions while a different FOMOD structure on the same page does not. Exact profile fingerprints restore the full selection; a changed profile carries only manual context-independent decisions. Legacy entries are accepted only when their option ids exist in the current descriptor, and long-term memory is written only after successful directory and metadata commit.
 - The additive profile-aware contract carries `profileName` through analyze/plan/layout/install and adds `FluxoraFomodProfileContext`, structured option decisions/evidence, `fomodContextId` and manual decisions. Legacy C ABI exports and typed-facade overloads remain available while new exports carry the richer contract.
 - Context plans are bound to project, profile, archive content fingerprint and mod/plugin revisions for at most 30 minutes and 128 entries. Install validates that binding before file mutation. `install.fomodContextChanged` performs no write; the renderer refreshes the open wizard, retains valid manual decisions and requires the user to press `Установить` again.
 - Renderer remains presentation-only: it displays the compact Smart Select summary, per-option accessible status and `Почему выбрано`, and exposes `Пересчитать` plus `Вернуть автоподбор`. FOMOD module names stay authoritative, there is no generic verification screen, and the last step still enters the existing fast interactive install lane directly.
@@ -300,6 +304,10 @@ Implemented MVP methods:
 - `archives.planInstall`
 - `archives.install`
 - `archives.installFomod`
+- `installs.submit`
+- `installs.restore`
+- `installs.list`
+- `installs.get`
 - `nxm.registerProtocol`
 - `nxm.captureLinks`
 - `nxm.importInboundDownloads`
@@ -894,7 +902,8 @@ directed relation arrays together with the persisted mod source identity
 that authoritative result for its immediate row, so a Nexus install must not
 appear as `Local` while the background workspace reconciliation is pending.
 `mods.rebasePendingInstall` accepts `{ projectDirectory, operationId,
-targetIndex }` and returns the latest `FluxoraInstallConflictSnapshot`.
+beforeOrderId?, afterOrderId?, fallbackTargetIndex }` and returns the latest
+aggregate `FluxoraInstallConflictSnapshot`.
 
 ### Operations
 
@@ -905,7 +914,7 @@ targetIndex }` and returns the latest `FluxoraInstallConflictSnapshot`.
 - `operations.getStatus`
 - `operations.recentLogs`
 
-`operations.getStatus` is in the typed contract. It allows renderer and AI recovery after refresh, route changes or bridge reconnects without inventing UI-only operation truth. The Tauri shell keeps a small read-only cache of recent `operations.progress` envelopes and exposes it as a compact status snapshot until the native core grows a broader persistent operation queue.
+`operations.getStatus` remains the generic typed status contract. Durable installs use the C++ `install_operations` queue through `installs.list/get/restore`; the Tauri progress cache is only a delivery aid and is not install truth.
 
 AI long-running jobs use a separate `fluxora.ai.autonomous-job.v1` / `fluxora.ai.autonomous-job-queue.v1` contract rather than overloading core operation snapshots. The AI queue records job plans, heartbeats, checkpoints, pause/cancel state and final reports for host orchestration, while C++ `operations.*` remains the source of truth for real domain operations and filesystem mutations.
 

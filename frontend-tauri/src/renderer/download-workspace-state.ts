@@ -247,6 +247,8 @@ export const downloadStatusView = (entry: FluxoraDownloadEntry): DownloadStatusV
   const tone: DownloadStatusView['tone'] =
     entry.buildStatus === 'Installed'
       ? 'installed'
+      : entry.buildStatus === 'Needs review' || entry.buildStatus === 'Failed'
+        ? 'error'
       : entry.buildStatus === 'Ready'
         ? 'ready'
         : entry.buildStatus === 'Deleted'

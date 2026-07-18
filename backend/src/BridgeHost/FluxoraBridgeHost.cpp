@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -27,6 +28,7 @@ namespace
     // Common catalog responses include path and health metadata; keep the first
     // C ABI buffer large enough for normal startup while preserving resize fallback.
     constexpr int initialBufferLength = 8192;
+    std::mutex stdoutMutex;
 
     enum class ErrorCategory
     {
@@ -59,6 +61,7 @@ namespace
     };
 
     void FLUXORA_CORE_CALL emitOperationProgress(const wchar_t* progressJson, void* userData);
+    void FLUXORA_CORE_CALL emitInstallOperationProgress(const wchar_t* progressJson, void* userData);
 
     std::wstring toWide(std::string_view value)
     {
@@ -286,6 +289,25 @@ namespace
                 false
             };
         }
+    }
+
+    bool optionalBoolField(const fluxora::JsonValue& value, std::wstring_view key, bool fallback)
+    {
+        const fluxora::JsonValue* field = value.find(key);
+        if (field == nullptr)
+        {
+            return fallback;
+        }
+        if (field->type() != fluxora::JsonValue::Type::Boolean)
+        {
+            throw BridgeError{
+                L"bridge.invalidParams",
+                L"Field '" + std::wstring(key) + L"' must be a boolean.",
+                ErrorCategory::Validation,
+                false
+            };
+        }
+        return field->asBoolean();
     }
 
     std::vector<std::wstring> requiredStringArrayField(
@@ -1677,15 +1699,23 @@ namespace
         const fluxora::JsonValue& params = requiredParamsObject(request);
         const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
         const std::wstring operationId = requiredStringField(params, L"operationId");
-        const int targetIndex = requiredIntField(params, L"targetIndex");
+        const std::wstring beforeOrderId = optionalStringField(&params, L"beforeOrderId");
+        const std::wstring afterOrderId = optionalStringField(&params, L"afterOrderId");
+        const int fallbackTargetIndex = optionalIntField(params, L"fallbackTargetIndex", -1);
         return payloadFromCoreJson(
             L"core.pendingInstallRebaseFailed",
-            [&projectDirectory, &operationId, targetIndex](wchar_t* buffer, int length)
+            [&projectDirectory,
+             &operationId,
+             &beforeOrderId,
+             &afterOrderId,
+             fallbackTargetIndex](wchar_t* buffer, int length)
             {
-                return fluxora_rebase_pending_install(
+                return fluxora_rebase_pending_install_with_anchors(
                     projectDirectory.c_str(),
                     operationId.c_str(),
-                    targetIndex,
+                    beforeOrderId.empty() ? nullptr : beforeOrderId.c_str(),
+                    afterOrderId.empty() ? nullptr : afterOrderId.c_str(),
+                    fallbackTargetIndex,
                     buffer,
                     length);
             });
@@ -2367,6 +2397,7 @@ namespace
         writer.endObject();
         writer.endObject();
 
+        const std::lock_guard lock(stdoutMutex);
         std::cout << toUtf8(writer.str()) << '\n';
         std::cout.flush();
     }
@@ -2383,6 +2414,24 @@ namespace
             L"operations.progress",
             context == nullptr ? std::wstring{} : context->operationId,
             progressJson);
+    }
+
+    void FLUXORA_CORE_CALL emitInstallOperationProgress(const wchar_t* progressJson, void*)
+    {
+        if (progressJson == nullptr)
+        {
+            return;
+        }
+        std::wstring operationId;
+        try
+        {
+            const fluxora::JsonValue progress = fluxora::JsonReader::parse(progressJson);
+            operationId = optionalStringField(&progress, L"operationId");
+        }
+        catch (...)
+        {
+        }
+        writeHostEvent(L"installs.progress", operationId, progressJson);
     }
 
     std::wstring payloadAnalyzeMo2Transfer(const BridgeRequest& request)
@@ -3047,6 +3096,129 @@ namespace
             });
     }
 
+    std::wstring payloadSubmitInstallOperation(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        std::wstring operationId = optionalStringField(&params, L"operationId");
+        if (operationId.empty())
+        {
+            operationId = currentOperationId(request);
+        }
+        const std::wstring sourceKind = requiredStringField(params, L"sourceKind");
+        const std::wstring sourcePath = requiredStringField(params, L"sourcePath");
+        const bool isFomod = optionalBoolField(params, L"isFomod", false);
+        const std::wstring modName = requiredStringField(params, L"modName");
+        const int existingModMode = optionalIntField(params, L"existingModMode", 0);
+        const std::wstring selectedOptionIdsJson = optionalStringField(&params, L"selectedOptionIdsJson");
+        const std::wstring placementOverridesJson = optionalStringField(&params, L"placementOverridesJson");
+        const std::wstring profileName = optionalStringField(&params, L"profileName");
+        const std::wstring fomodContextId = optionalStringField(&params, L"fomodContextId");
+        const std::wstring manualDecisionsJson = optionalStringField(&params, L"manualDecisionsJson");
+        const int modOrderTargetIndex = optionalIntField(params, L"modOrderTargetIndex", -1);
+        const std::wstring beforeOrderId = optionalStringField(&params, L"beforeOrderId");
+        const std::wstring afterOrderId = optionalStringField(&params, L"afterOrderId");
+        const BridgeInstallIdentitySelection identity = optionalInstallIdentitySelection(params);
+
+        return payloadFromCoreJson(
+            L"core.installSubmitFailed",
+            [&projectDirectory,
+             &operationId,
+             &sourceKind,
+             &sourcePath,
+             isFomod,
+             &modName,
+             existingModMode,
+             &selectedOptionIdsJson,
+             &placementOverridesJson,
+             &profileName,
+             &fomodContextId,
+             &manualDecisionsJson,
+             modOrderTargetIndex,
+             &beforeOrderId,
+             &afterOrderId,
+             &identity](wchar_t* buffer, int length)
+            {
+                return fluxora_submit_install_operation(
+                    projectDirectory.c_str(),
+                    operationId.empty() ? nullptr : operationId.c_str(),
+                    sourceKind.c_str(),
+                    sourcePath.c_str(),
+                    isFomod ? 1 : 0,
+                    modName.c_str(),
+                    existingModMode,
+                    selectedOptionIdsJson.empty() ? nullptr : selectedOptionIdsJson.c_str(),
+                    placementOverridesJson.empty() ? nullptr : placementOverridesJson.c_str(),
+                    identity.present ? identity.resolutionId.c_str() : nullptr,
+                    identity.present ? identity.decision : 0,
+                    identity.present && !identity.targetModUuid.empty()
+                        ? identity.targetModUuid.c_str()
+                        : nullptr,
+                    identity.present ? identity.newNamePolicy : 0,
+                    profileName.empty() ? nullptr : profileName.c_str(),
+                    fomodContextId.empty() ? nullptr : fomodContextId.c_str(),
+                    manualDecisionsJson.empty() ? nullptr : manualDecisionsJson.c_str(),
+                    modOrderTargetIndex,
+                    beforeOrderId.empty() ? nullptr : beforeOrderId.c_str(),
+                    afterOrderId.empty() ? nullptr : afterOrderId.c_str(),
+                    emitInstallOperationProgress,
+                    nullptr,
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadRestoreInstallOperations(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        return payloadFromCoreJson(
+            L"core.installRestoreFailed",
+            [&projectDirectory](wchar_t* buffer, int length)
+            {
+                return fluxora_restore_install_operations(
+                    projectDirectory.c_str(),
+                    emitInstallOperationProgress,
+                    nullptr,
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadListInstallOperations(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const bool includeTerminal = optionalBoolField(params, L"includeTerminal", true);
+        return payloadFromCoreJson(
+            L"core.installListFailed",
+            [&projectDirectory, includeTerminal](wchar_t* buffer, int length)
+            {
+                return fluxora_list_install_operations(
+                    projectDirectory.c_str(),
+                    includeTerminal ? 1 : 0,
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadGetInstallOperation(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring operationId = requiredStringField(params, L"operationId");
+        return payloadFromCoreJson(
+            L"core.installGetFailed",
+            [&projectDirectory, &operationId](wchar_t* buffer, int length)
+            {
+                return fluxora_get_install_operation(
+                    projectDirectory.c_str(),
+                    operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadOperationContext(const BridgeRequest& request, bool clear)
     {
         const std::wstring operationId = clear ? std::wstring{} : currentOperationId(request);
@@ -3442,6 +3614,22 @@ namespace
         {
             return payloadAnalyzeFomodDownloadContentLayout(request);
         }
+        if (request.method == L"installs.submit")
+        {
+            return payloadSubmitInstallOperation(request);
+        }
+        if (request.method == L"installs.restore")
+        {
+            return payloadRestoreInstallOperations(request);
+        }
+        if (request.method == L"installs.list")
+        {
+            return payloadListInstallOperations(request);
+        }
+        if (request.method == L"installs.get")
+        {
+            return payloadGetInstallOperation(request);
+        }
         if (request.method == L"downloads.install")
         {
             return payloadInstallDownload(request);
@@ -3549,6 +3737,7 @@ namespace
 
     void writeResponse(const std::wstring& response)
     {
+        const std::lock_guard lock(stdoutMutex);
         std::cout << toUtf8(response) << '\n';
         std::cout.flush();
     }

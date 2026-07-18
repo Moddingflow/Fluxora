@@ -1,5 +1,6 @@
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
+#include "FluxoraCore/Services/InstallOperationStore.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
 #include "TestFilesystem.hpp"
 
@@ -437,7 +438,7 @@ namespace fluxora::tests
         EXPECT_TRUE(sqliteTableExists(database, "mod_identity_aliases"));
         EXPECT_TRUE(sqliteTableExists(database, "mod_identity_exclusions"));
         EXPECT_TRUE(sqliteTableExists(database, "mod_identity_cache"));
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 11);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
 #endif
     }
 
@@ -805,7 +806,7 @@ namespace fluxora::tests
         {
             EXPECT_TRUE(sqliteTableExists(database, table)) << table;
         }
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 11);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
 
         const std::vector<InstalledModRecord> records =
             InstanceMetadataStore::listInstalledMods(project, mods);
@@ -1687,7 +1688,7 @@ namespace fluxora::tests
         const std::filesystem::path project = temp.path() / L"project";
         const std::filesystem::path database = project / L"instance.db";
         std::filesystem::create_directories(project);
-        sqliteExec(database, "PRAGMA user_version = 12;");
+        sqliteExec(database, "PRAGMA user_version = 13;");
         ASSERT_FALSE(sqliteTableExists(database, "instance_metadata"));
         InstanceMetadataStore::resetSqlPrepareCountForTesting();
         InstanceMetadataStore::resetSqlExecCountForTesting();
@@ -1697,7 +1698,7 @@ namespace fluxora::tests
             std::runtime_error);
         EXPECT_EQ(InstanceMetadataStore::sqlPrepareCountForTesting(), 1U);
         EXPECT_EQ(InstanceMetadataStore::sqlExecCountForTesting(), 0U);
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 13);
         EXPECT_FALSE(sqliteTableExists(database, "instance_metadata"));
 #endif
     }
@@ -1735,15 +1736,84 @@ namespace fluxora::tests
 
         EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
 
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 11);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
         EXPECT_TRUE(sqliteTableExists(database, "mod_file_cache_state"));
         EXPECT_TRUE(sqliteTableExists(database, "archive_mod_links"));
         EXPECT_TRUE(sqliteTableExists(database, "archive_install_attempts"));
         EXPECT_TRUE(sqliteTableExists(database, "pending_install_sessions"));
         EXPECT_TRUE(sqliteTableExists(database, "pending_install_files"));
+        EXPECT_TRUE(sqliteTableExists(database, "install_operations"));
         EXPECT_GT(InstanceMetadataStore::sqlPrepareCountForTesting(), 2U);
         EXPECT_GT(InstanceMetadataStore::sqlExecCountForTesting(), 3U);
 #endif
+    }
+
+    TEST(InstanceMetadataStoreTests, InstallOperationsPersistQueueStateAndResumePayload)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+
+        InstallOperationRecord first;
+        first.operationId = L"install-op-1";
+        first.sourceKind = L"download";
+        first.sourcePath = project / L"downloads" / L"SkyUI.7z";
+        first.archiveFingerprint = L"sha256:first";
+        first.profileName = L"Default";
+        first.targetFolder = L"SkyUI";
+        first.selectedOptionIdsJson = LR"(["core","wide"])";
+        first.manualDecisionsJson = LR"([{"optionId":"wide","selected":true}])";
+        first.beforeOrderId = L"order-before";
+        first.afterOrderId = L"order-after";
+        first.enqueueSequence = 41;
+        first.requestJson = LR"({"sourceKind":"download","isFomod":true})";
+        InstallOperationStore::save(project, first);
+
+        InstallOperationRecord second = first;
+        second.operationId = L"install-op-2";
+        second.sourcePath = project / L"downloads" / L"RaceMenu.7z";
+        second.targetFolder = L"RaceMenu";
+        second.enqueueSequence = 42;
+        second.state = L"waitingTarget";
+        second.stage = L"waitingTarget";
+        InstallOperationStore::save(project, second);
+
+        InstallOperationRecord automatic = first;
+        automatic.operationId = L"install-op-auto";
+        automatic.sourcePath = project / L"downloads" / L"Auto.7z";
+        automatic.targetFolder = L"Auto";
+        automatic.enqueueSequence = 0;
+        const std::uint64_t automaticSequence = InstallOperationStore::save(project, automatic);
+        automatic.state = L"extracting";
+        automatic.stage = L"extracting";
+        EXPECT_EQ(InstallOperationStore::save(project, automatic), automaticSequence);
+
+        std::vector<InstallOperationRecord> active = InstallOperationStore::list(project, false);
+        ASSERT_EQ(active.size(), 3U);
+        EXPECT_EQ(active[0].operationId, L"install-op-1");
+        EXPECT_EQ(active[1].operationId, L"install-op-2");
+        EXPECT_EQ(active[2].operationId, L"install-op-auto");
+
+        first.state = L"completed";
+        first.stage = L"finalizing";
+        first.progressPercent = 100;
+        first.indeterminate = false;
+        first.resultJson = LR"({"name":"SkyUI"})";
+        InstallOperationStore::save(project, first);
+
+        const std::optional<InstallOperationRecord> restored =
+            InstallOperationStore::get(project, L"install-op-1");
+        ASSERT_TRUE(restored.has_value());
+        EXPECT_EQ(restored->state, L"completed");
+        EXPECT_EQ(restored->resultJson, LR"({"name":"SkyUI"})");
+        EXPECT_EQ(restored->selectedOptionIdsJson, LR"(["core","wide"])" );
+        EXPECT_EQ(restored->beforeOrderId, L"order-before");
+        EXPECT_EQ(restored->afterOrderId, L"order-after");
+        automatic.state = L"needsReview";
+        automatic.stage = L"needsReview";
+        automatic.enqueueSequence = automaticSequence;
+        InstallOperationStore::save(project, automatic);
+        EXPECT_EQ(InstallOperationStore::list(project, false).size(), 1U);
     }
 
     TEST(InstanceMetadataStoreTests, VersionEightMigrationAddsFileUpdateStateAndBaselineSweep)
@@ -1778,7 +1848,7 @@ namespace fluxora::tests
 
         EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
 
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 11);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
         EXPECT_TRUE(sqliteTableExists(database, "mod_update_sweeps"));
         EXPECT_EQ(
             sqliteIntScalar(
@@ -1814,7 +1884,7 @@ namespace fluxora::tests
 
         EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
 
-        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 11);
+        EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
         EXPECT_EQ(
             sqliteIntScalar(
                 database,

@@ -13,6 +13,8 @@
 #include "FluxoraCore/Services/ExecutableService.hpp"
 #include "FluxoraCore/Services/FluxPackService.hpp"
 #include "FluxoraCore/Services/GrassCacheService.hpp"
+#include "FluxoraCore/Services/InstallOperationService.hpp"
+#include "FluxoraCore/Services/InstallProjectGate.hpp"
 #include "FluxoraCore/Services/ModService.hpp"
 #include "FluxoraCore/Services/ModUpdateService.hpp"
 #include "FluxoraCore/Services/ModOrganizerImportService.hpp"
@@ -1643,6 +1645,8 @@ namespace
         writer.field(L"moduleId", descriptor.moduleId);
         writer.field(L"moduleImagePath", descriptor.moduleImagePath);
         writer.field(L"memoryKey", descriptor.memoryKey);
+        writer.field(L"structureFingerprint", descriptor.structureFingerprint);
+        writer.field(L"selectionOrigin", descriptor.selectionOrigin);
         writer.field(L"hasPreviousSelection", descriptor.hasPreviousSelection);
         writer.field(L"previousSelectionContextual", descriptor.previousSelectionContextual);
         writer.field(L"previousSelectionWeak", descriptor.previousSelectionWeak);
@@ -2436,6 +2440,60 @@ namespace
         for (const std::wstring& value : values)
         {
             writer.value(value);
+        }
+        writer.endArray();
+        return writer.str();
+    }
+
+    std::wstring serializeInstallOperation(const fluxora::InstallOperationRecord& operation)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"operationId", operation.operationId);
+        writer.field(L"sourceKind", operation.sourceKind);
+        writer.field(L"sourcePath", operation.sourcePath.wstring());
+        writer.field(L"archiveFingerprint", operation.archiveFingerprint);
+        writer.field(L"profileName", operation.profileName);
+        writer.field(L"existingModMode", operation.existingModMode);
+        writer.field(L"targetModUuid", operation.targetModUuid);
+        writer.field(L"targetFolder", operation.targetFolder);
+        writer.key(L"selectedOptionIds");
+        writer.numberValue(operation.selectedOptionIdsJson.empty() ? L"[]" : operation.selectedOptionIdsJson);
+        writer.key(L"manualDecisions");
+        writer.numberValue(operation.manualDecisionsJson.empty() ? L"[]" : operation.manualDecisionsJson);
+        writer.field(L"placementOverridesJson", operation.placementOverridesJson);
+        writer.key(L"resume");
+        writer.numberValue(operation.requestJson.empty() ? L"{}" : operation.requestJson);
+        writer.field(L"beforeOrderId", operation.beforeOrderId);
+        writer.field(L"afterOrderId", operation.afterOrderId);
+        writer.field(L"enqueueSequence", operation.enqueueSequence);
+        writer.field(L"state", operation.state);
+        writer.field(L"stage", operation.stage);
+        writer.field(L"progressPercent", operation.progressPercent);
+        writer.field(L"indeterminate", operation.indeterminate);
+        writer.field(L"errorCode", operation.errorCode);
+        writer.field(L"errorMessage", operation.errorMessage);
+        writer.key(L"result");
+        if (operation.resultJson.empty())
+        {
+            writer.nullValue();
+        }
+        else
+        {
+            writer.numberValue(operation.resultJson);
+        }
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeInstallOperations(
+        const std::vector<fluxora::InstallOperationRecord>& operations)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginArray();
+        for (const fluxora::InstallOperationRecord& operation : operations)
+        {
+            writer.numberValue(serializeInstallOperation(operation));
         }
         writer.endArray();
         return writer.str();
@@ -3369,6 +3427,206 @@ extern "C"
         }
 
         return FluxoraCoreResultOk;
+    }
+
+    int fluxora_submit_install_operation(
+        const wchar_t* projectDirectory,
+        const wchar_t* operationId,
+        const wchar_t* sourceKind,
+        const wchar_t* sourcePath,
+        int isFomod,
+        const wchar_t* modName,
+        int existingModMode,
+        const wchar_t* selectedOptionIdsJson,
+        const wchar_t* placementOverridesJson,
+        const wchar_t* resolutionId,
+        int identityDecision,
+        const wchar_t* targetModUuid,
+        int newNamePolicy,
+        const wchar_t* profileName,
+        const wchar_t* fomodContextId,
+        const wchar_t* manualDecisionsJson,
+        int modOrderTargetIndex,
+        const wchar_t* beforeOrderId,
+        const wchar_t* afterOrderId,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(sourceKind) ||
+                isBlank(sourcePath) || isBlank(modName))
+            {
+                throw std::invalid_argument(
+                    "Project directory, source kind, source path, and mod name are required.");
+            }
+
+            fluxora::ExistingModInstallMode mode;
+            if (!tryParseExistingModInstallMode(existingModMode, mode))
+            {
+                throw std::invalid_argument("Existing mod install mode is invalid.");
+            }
+
+            fluxora::InstallOperationRequest request;
+            request.operationId = isBlank(operationId) ? std::wstring{} : std::wstring(operationId);
+            request.projectDirectory = std::filesystem::path(projectDirectory);
+            request.sourceKind = sourceKind;
+            request.sourcePath = std::filesystem::path(sourcePath);
+            request.fomod = isFomod != 0;
+            request.modName = modName;
+            request.existingModMode = mode;
+            request.selectedOptionIds = parseStringArrayJson(selectedOptionIdsJson);
+            request.placementOverrides = parsePlacementOverridesJson(placementOverridesJson);
+            request.profileName = isBlank(profileName) ? std::wstring{} : std::wstring(profileName);
+            request.fomodContextId = isBlank(fomodContextId) ? std::wstring{} : std::wstring(fomodContextId);
+            request.manualDecisions = parseFomodManualDecisionsJson(manualDecisionsJson);
+            request.modOrderTargetIndex = modOrderTargetIndex;
+            request.beforeOrderId = isBlank(beforeOrderId) ? std::wstring{} : std::wstring(beforeOrderId);
+            request.afterOrderId = isBlank(afterOrderId) ? std::wstring{} : std::wstring(afterOrderId);
+            request.selectedOptionIdsJson = isBlank(selectedOptionIdsJson)
+                ? L"[]"
+                : std::wstring(selectedOptionIdsJson);
+            request.placementOverridesJson = isBlank(placementOverridesJson)
+                ? L"[]"
+                : std::wstring(placementOverridesJson);
+            request.manualDecisionsJson = isBlank(manualDecisionsJson)
+                ? L"[]"
+                : std::wstring(manualDecisionsJson);
+
+            if (!isBlank(resolutionId))
+            {
+                fluxora::ModIdentityInstallSelection selection;
+                if (!tryParseIdentityInstallSelection(
+                        resolutionId,
+                        identityDecision,
+                        targetModUuid,
+                        newNamePolicy,
+                        selection))
+                {
+                    throw std::invalid_argument("Install identity selection is invalid.");
+                }
+                request.identitySelection = std::move(selection);
+                fluxora::JsonWriter identityWriter;
+                identityWriter.beginObject();
+                identityWriter.field(L"resolutionId", resolutionId);
+                identityWriter.field(L"decision", identityDecision);
+                identityWriter.field(
+                    L"targetModUuid",
+                    isBlank(targetModUuid) ? std::wstring{} : std::wstring(targetModUuid));
+                identityWriter.field(L"newNamePolicy", newNamePolicy);
+                identityWriter.endObject();
+                request.identityPlanJson = identityWriter.str();
+            }
+
+            const auto publish = [progressCallback, progressUserData](
+                const fluxora::InstallOperationRecord& operation)
+            {
+                if (progressCallback == nullptr)
+                {
+                    return;
+                }
+                const std::wstring json = serializeInstallOperation(operation);
+                progressCallback(json.c_str(), progressUserData);
+            };
+            const fluxora::InstallOperationRecord operation =
+                core().installs().submit(std::move(request), publish);
+            return writeToBuffer(
+                serializeInstallOperation(operation),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_restore_install_operations(
+        const wchar_t* projectDirectory,
+        FluxoraCoreProgressCallback progressCallback,
+        void* progressUserData,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                throw std::invalid_argument("Project directory is required.");
+            }
+            const auto publish = [progressCallback, progressUserData](
+                const fluxora::InstallOperationRecord& operation)
+            {
+                if (progressCallback != nullptr)
+                {
+                    const std::wstring json = serializeInstallOperation(operation);
+                    progressCallback(json.c_str(), progressUserData);
+                }
+            };
+            return writeToBuffer(
+                serializeInstallOperations(core().installs().restore(projectDirectory, publish)),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_list_install_operations(
+        const wchar_t* projectDirectory,
+        int includeTerminal,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory))
+            {
+                throw std::invalid_argument("Project directory is required.");
+            }
+            return writeToBuffer(
+                serializeInstallOperations(
+                    core().installs().list(projectDirectory, includeTerminal != 0)),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_get_install_operation(
+        const wchar_t* projectDirectory,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(operationId))
+            {
+                throw std::invalid_argument("Project directory and operation id are required.");
+            }
+            const std::optional<fluxora::InstallOperationRecord> operation =
+                core().installs().get(projectDirectory, operationId);
+            if (!operation.has_value())
+            {
+                throw std::invalid_argument("Install operation was not found.");
+            }
+            return writeToBuffer(
+                serializeInstallOperation(*operation),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
     }
 
     int fluxora_get_last_required_buffer_length()
@@ -4745,6 +5003,7 @@ extern "C"
                 return FluxoraCoreResultInvalidArgument;
             }
 
+            fluxora::InstallProjectGate projectGate(projectDirectory);
             const std::wstring json = serializeProfileModOrder(
                 core().profileOrder().createModSeparator(
                     std::filesystem::path(projectDirectory),
@@ -4774,6 +5033,7 @@ extern "C"
                 return FluxoraCoreResultInvalidArgument;
             }
 
+            fluxora::InstallProjectGate projectGate(projectDirectory);
             const std::wstring json = serializeProfileModOrder(
                 core().profileOrder().deleteModSeparator(
                     std::filesystem::path(projectDirectory),
@@ -4803,6 +5063,7 @@ extern "C"
                 return FluxoraCoreResultInvalidArgument;
             }
 
+            fluxora::InstallProjectGate projectGate(projectDirectory);
             const std::wstring json = serializeProfileModOrder(
                 core().profileOrder().moveModOrderItem(
                     std::filesystem::path(projectDirectory),
@@ -7396,6 +7657,25 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength)
     {
+        return fluxora_rebase_pending_install_with_anchors(
+            projectDirectory,
+            operationId,
+            nullptr,
+            nullptr,
+            targetIndex,
+            jsonBuffer,
+            jsonBufferLength);
+    }
+
+    int fluxora_rebase_pending_install_with_anchors(
+        const wchar_t* projectDirectory,
+        const wchar_t* operationId,
+        const wchar_t* beforeOrderId,
+        const wchar_t* afterOrderId,
+        int fallbackTargetIndex,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
         try
         {
             if (isBlank(projectDirectory) || isBlank(operationId))
@@ -7403,12 +7683,15 @@ extern "C"
                 lastError = L"Project directory and operation id are required.";
                 return FluxoraCoreResultInvalidArgument;
             }
+            fluxora::InstallProjectGate projectGate(projectDirectory);
             return writeToBuffer(
                 serializeInstallConflictSnapshot(
                     fluxora::InstallConflictPreviewService::rebase(
                         std::filesystem::path(projectDirectory),
                         operationId,
-                        targetIndex)),
+                        isBlank(beforeOrderId) ? std::wstring_view{} : std::wstring_view(beforeOrderId),
+                        isBlank(afterOrderId) ? std::wstring_view{} : std::wstring_view(afterOrderId),
+                        fallbackTargetIndex)),
                 jsonBuffer,
                 jsonBufferLength);
         }

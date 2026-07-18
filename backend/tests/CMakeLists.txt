@@ -30,6 +30,8 @@ add_executable(FluxoraCoreTests
     GameTypesTests.cpp
     HookServiceTests.cpp
     InstallConflictPreviewServiceTests.cpp
+    InstallSchedulerTests.cpp
+    InstallTransactionJournalTests.cpp
     InstanceMetadataStoreTests.cpp
     JsonSupportTests.cpp
     LaunchDescriptorStoreTests.cpp
@@ -82,6 +84,10 @@ add_executable(FluxoraCoreTests
     ../src/Services/GrassCacheService.cpp
     ../src/Services/HookService.cpp
     ../src/Services/InstallConflictPreviewService.cpp
+    ../src/Services/InstallOperationService.cpp
+    ../src/Services/InstallProjectGate.cpp
+    ../src/Services/InstallScheduler.cpp
+    ../src/Services/InstallTransactionJournal.cpp
     ../src/Services/Logger.cpp
     ../src/Services/ModOrganizerExecutableImportService.cpp
     ../src/Services/ModOrganizerImportService.cpp

@@ -12,6 +12,7 @@ import {
   modConflictMarkerStates,
   modConflictMarkerStatesForHighlight,
   modItemConflictHighlight,
+  modLatestVersionDiffers,
   modLatestVersionText,
   modOrderItemMatchesLookup,
   modPriorityByOrderId,
@@ -803,5 +804,22 @@ describe('mod workspace state', () => {
       overwrite: { state: 'none' },
       tone: 'local'
     });
+  });
+
+  it('marks Latest as different only when both displayed versions are present and unequal', () => {
+    expect(modLatestVersionDiffers(modItem('mod_outdated', 'Outdated', 8, {
+      version: '1.1.2.0',
+      latestVersion: '1.2',
+      hasUpdate: false
+    }))).toBe(true);
+    expect(modLatestVersionDiffers(modItem('mod_current', 'Current', 9, {
+      version: '1.2',
+      latestVersion: ' 1.2 '
+    }))).toBe(false);
+    expect(modLatestVersionDiffers(modItem('mod_not_checked', 'Not Checked', 10, {
+      version: '1.2',
+      latestVersion: '',
+      hasUpdate: true
+    }))).toBe(false);
   });
 });

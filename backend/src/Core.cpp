@@ -4,6 +4,7 @@
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/DownloadTransferLimiter.hpp"
+#include "FluxoraCore/Services/InstallOperationService.hpp"
 #include "FluxoraCore/Services/EffectiveFileTreeService.hpp"
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
 #include "FluxoraCore/Services/ExecutableService.hpp"
@@ -42,6 +43,7 @@ namespace fluxora
               *buildPathSettings_,
               *downloadTransferLimiter_,
               *nexusModsAuth_)),
+          installs_(std::make_unique<InstallOperationService>(*logger_, *downloads_)),
           effectiveFileTree_(std::make_unique<EffectiveFileTreeService>(*logger_, *profileOrder_, *buildPathSettings_)),
           executableIcons_(std::make_unique<ExecutableIconService>(*logger_)),
           executables_(std::make_unique<ExecutableService>(*logger_, *executableIcons_, *buildPathSettings_)),
@@ -83,6 +85,7 @@ namespace fluxora
         profiles_->initialize();
         nexusModsAuth_->initialize();
         downloads_->initialize();
+        installs_->initialize();
         effectiveFileTree_->initialize();
         executableIcons_->initialize();
         executables_->initialize();
@@ -113,6 +116,7 @@ namespace fluxora
         executables_->shutdown();
         executableIcons_->shutdown();
         effectiveFileTree_->shutdown();
+        installs_->shutdown();
         downloads_->shutdown();
         nexusModsAuth_->shutdown();
         profiles_->shutdown();
@@ -171,6 +175,11 @@ namespace fluxora
     DownloadService& Core::downloads() noexcept
     {
         return *downloads_;
+    }
+
+    InstallOperationService& Core::installs() noexcept
+    {
+        return *installs_;
     }
 
     EffectiveFileTreeService& Core::effectiveFileTree() noexcept

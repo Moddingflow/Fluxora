@@ -4809,6 +4809,18 @@ body.row-reorder-active * {
   animation: row-drop-indicator-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.mod-list-row--separator[data-install-drop-target="true"][data-drop-placement="inside"]::after {
+  inset: 2px;
+  height: auto;
+  border: 1px solid rgba(var(--flx-accent-rgb), 0.92);
+  border-radius: 4px;
+  background: rgba(var(--flx-accent-rgb), 0.035);
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--flx-accent-rgb), 0.28),
+    inset 0 0 18px rgba(var(--flx-accent-rgb), 0.12),
+    0 0 16px rgba(var(--flx-accent-rgb), 0.22);
+}
+
 .mod-list-row[data-state="post-install-reveal"]::after {
   position: absolute;
   inset: 0;
@@ -4822,7 +4834,7 @@ body.row-reorder-active * {
   animation-name: post-install-mod-reveal;
   animation-duration: 700ms;
   animation-timing-function: ease-in-out;
-  animation-iteration-count: 2;
+  animation-iteration-count: 1;
   animation-fill-mode: both;
 }
 
@@ -5838,8 +5850,8 @@ body.row-reorder-active * {
   font-variant-numeric: tabular-nums;
 }
 
-.mod-list-row__latest[data-update="true"] {
-  color: var(--accent);
+.mod-list-row__latest[data-version-mismatch="true"] {
+  color: var(--flx-conflict-overwritten);
 }
 
 .mod-list-row__status {
@@ -5881,6 +5893,20 @@ body.row-reorder-active * {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+.mod-install-pending-label--action {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.mod-install-pending-label--action:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
 }
 
 .mod-actions {

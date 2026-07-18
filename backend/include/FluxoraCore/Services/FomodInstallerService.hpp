@@ -116,6 +116,8 @@ namespace fluxora
         std::wstring moduleId;
         std::wstring moduleImagePath;
         std::wstring memoryKey;
+        std::wstring structureFingerprint;
+        std::wstring selectionOrigin{L"recalculated"};
         bool hasPreviousSelection{false};
         bool previousSelectionContextual{false};
         bool previousSelectionWeak{false};

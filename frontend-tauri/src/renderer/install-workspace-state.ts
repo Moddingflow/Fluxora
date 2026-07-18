@@ -21,7 +21,7 @@ export interface InstallSource {
 
 export interface InstallModOrderPlacement {
   targetOrderId: string;
-  placement: 'before' | 'after';
+  placement: 'before' | 'after' | 'inside';
 }
 
 export type PlacementOverrideMap = Record<

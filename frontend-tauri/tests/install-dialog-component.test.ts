@@ -233,7 +233,7 @@ describe('InstallDialog', () => {
       })
     );
 
-    expect(markup).toContain('Автовыбор · 1 выбрано · 1 требует решения');
+    expect(markup).toContain('Пересчитано · 1 выбрано · 1 требует решения');
     expect(markup).toContain('Пересчитать');
     expect(markup).toContain('Вернуть автоподбор');
     expect(markup).toContain('Выбрано автоматически');
