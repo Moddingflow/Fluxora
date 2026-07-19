@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cwctype>
 #include <mutex>
 #include <stdexcept>
@@ -27,14 +28,27 @@ namespace fluxora
         InstallOperationProgressCallback progress;
         bool resumed{false};
         std::atomic_bool waitedForTarget{false};
+        std::atomic_bool cancellationRequested{false};
+        std::condition_variable finishedChanged;
+        bool finished{false};
     };
 
     namespace
     {
         bool isTerminalState(std::wstring_view state)
         {
-            return state == L"completed" || state == L"failed" || state == L"needsReview";
+            return state == L"completed" || state == L"failed" || state == L"cancelled" ||
+                state == L"needsReview";
         }
+
+        class InstallCancellation final : public std::exception
+        {
+        public:
+            [[nodiscard]] const char* what() const noexcept override
+            {
+                return "Install operation was cancelled.";
+            }
+        };
 
         std::wstring normalizedTargetKey(const InstallOperationRequest& request)
         {
@@ -67,12 +81,27 @@ namespace fluxora
             writer.field(L"name", mod.name);
             writer.field(L"version", mod.version);
             writer.field(L"isEnabled", mod.isEnabled);
+            writer.field(L"latestVersion", mod.latestVersion);
+            writer.field(L"latestFileId", mod.latestFileId);
+            writer.field(L"updateCheckState", mod.updateCheckState);
+            writer.field(L"sourceIsNexus", mod.sourceIsNexus);
+            writer.field(L"sourceIsModdingFlow", mod.sourceIsModdingFlow);
+            writer.field(L"sourceProvider", mod.sourceProvider);
+            writer.field(L"sourceGameDomain", mod.sourceGameDomain);
+            writer.field(L"sourceModId", mod.sourceModId);
+            writer.field(L"sourceFileId", mod.sourceFileId);
+            writer.field(L"sourceUrl", mod.sourceUrl);
+            writer.field(L"isLocal", mod.isLocal);
+            writer.field(L"isTranslation", mod.isTranslation);
+            writer.field(L"isPatch", mod.isPatch);
             writer.field(L"modUuid", mod.modUuid);
             writer.field(L"orderId", mod.orderId);
             writer.field(L"fileCount", mod.fileCount);
             writer.field(L"conflictingFileCount", mod.conflictingFileCount);
             writer.field(L"overwrittenFileCount", mod.overwrittenFileCount);
             writer.field(L"overwritingFileCount", mod.overwritingFileCount);
+            writer.stringArray(L"overwritesModIds", mod.overwritesModIds);
+            writer.stringArray(L"overwrittenByModIds", mod.overwrittenByModIds);
             writer.endObject();
             return writer.str();
         }
@@ -443,7 +472,7 @@ namespace fluxora
         const std::wstring targetKey = normalizedTargetKey(context->request);
         {
             std::lock_guard activeLock(activeMutex_);
-            if (!activeOperationIds_.insert(context->record.operationId).second)
+            if (!activeOperations_.emplace(context->record.operationId, context).second)
             {
                 throw std::invalid_argument("The install operation is already scheduled.");
             }
@@ -456,8 +485,7 @@ namespace fluxora
             [this, context]
             {
                 execute(context);
-                std::lock_guard activeLock(activeMutex_);
-                activeOperationIds_.erase(context->record.operationId);
+                finish(context);
             },
             [this, context](InstallSchedulerTaskState state)
             {
@@ -476,9 +504,23 @@ namespace fluxora
         catch (...)
         {
             std::lock_guard activeLock(activeMutex_);
-            activeOperationIds_.erase(context->record.operationId);
+            activeOperations_.erase(context->record.operationId);
             throw;
         }
+    }
+
+    void InstallOperationService::finish(
+        const std::shared_ptr<OperationContext>& context) noexcept
+    {
+        {
+            std::lock_guard activeLock(activeMutex_);
+            activeOperations_.erase(context->record.operationId);
+        }
+        {
+            std::lock_guard lock(context->mutex);
+            context->finished = true;
+        }
+        context->finishedChanged.notify_all();
     }
 
     void InstallOperationService::publish(
@@ -547,11 +589,21 @@ namespace fluxora
         const std::shared_ptr<OperationContext>& context) const noexcept
     {
         OperationLogContext operationLog(context->request.operationId);
+        const auto throwIfCancellationRequested = [&context]
+        {
+            if (context->cancellationRequested.load(std::memory_order_acquire))
+            {
+                throw InstallCancellation{};
+            }
+        };
         try
         {
+            throwIfCancellationRequested();
             publish(context, L"validating", L"validating", 2, false);
+            throwIfCancellationRequested();
             const std::wstring currentFingerprint = downloads_.archiveFingerprint(
                 context->request.sourcePath);
+            throwIfCancellationRequested();
             bool fingerprintChanged = false;
             {
                 std::lock_guard lock(context->mutex);
@@ -589,10 +641,12 @@ namespace fluxora
                 L"buildingStaging",
                 20,
                 true);
+            throwIfCancellationRequested();
 
             const InstallConflictSnapshotCallback conflictProgress =
-                [this, context](const FluxoraInstallConflictSnapshot& snapshot)
+                [this, context, throwIfCancellationRequested](const FluxoraInstallConflictSnapshot& snapshot)
                 {
+                    throwIfCancellationRequested();
                     if (snapshot.state == InstallConflictSnapshotState::Ready)
                     {
                         publish(
@@ -670,7 +724,33 @@ namespace fluxora
                         conflictProgress);
             }
 
+            if (context->cancellationRequested.load(std::memory_order_acquire))
+            {
+                publish(
+                    context,
+                    L"cancelled",
+                    L"cancelled",
+                    100,
+                    false,
+                    L"install.cancelled",
+                    L"Install operation was cancelled.",
+                    serializeInstalledMod(result));
+                return;
+            }
             publish(context, L"finalizing", L"finalizing", 95, false);
+            if (context->cancellationRequested.load(std::memory_order_acquire))
+            {
+                publish(
+                    context,
+                    L"cancelled",
+                    L"cancelled",
+                    100,
+                    false,
+                    L"install.cancelled",
+                    L"Install operation was cancelled.",
+                    serializeInstalledMod(result));
+                return;
+            }
             publish(
                 context,
                 L"completed",
@@ -680,6 +760,17 @@ namespace fluxora
                 {},
                 {},
                 serializeInstalledMod(result));
+        }
+        catch (const InstallCancellation&)
+        {
+            publish(
+                context,
+                L"cancelled",
+                L"cancelled",
+                100,
+                false,
+                L"install.cancelled",
+                L"Install operation was cancelled.");
         }
         catch (const std::invalid_argument& exception)
         {
@@ -731,7 +822,7 @@ namespace fluxora
         {
             {
                 std::lock_guard activeLock(activeMutex_);
-                if (activeOperationIds_.contains(operation.operationId))
+                if (activeOperations_.contains(operation.operationId))
                 {
                     restored.push_back(operation);
                     continue;
@@ -760,7 +851,40 @@ namespace fluxora
                     " needsReview=" + (transactionRecovery.needsReview ? "1" : "0") + ".");
             if (transactionRecovery.commitCompleted)
             {
-                publish(context, L"completed", L"completed", 100, false);
+                try
+                {
+                    const std::optional<InstalledMod> completed =
+                        downloads_.completedInstallResult(
+                            projectDirectory,
+                            operation.operationId);
+                    if (!completed.has_value())
+                    {
+                        throw std::runtime_error(
+                            "The committed install result could not be reconstructed.");
+                    }
+                    publish(
+                        context,
+                        L"completed",
+                        L"completed",
+                        100,
+                        false,
+                        {},
+                        {},
+                        serializeInstalledMod(*completed));
+                }
+                catch (const std::exception& exception)
+                {
+                    publish(
+                        context,
+                        L"needsReview",
+                        L"needsReview",
+                        100,
+                        false,
+                        L"install.recoveryResultMissing",
+                        std::wstring(
+                            exception.what(),
+                            exception.what() + std::char_traits<char>::length(exception.what())));
+                }
                 std::lock_guard lock(context->mutex);
                 restored.push_back(context->record);
                 continue;
@@ -813,6 +937,63 @@ namespace fluxora
         std::wstring_view operationId) const
     {
         return InstallOperationStore::get(projectDirectory, operationId);
+    }
+
+    InstallOperationRecord InstallOperationService::cancel(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view operationId)
+    {
+        if (projectDirectory.empty() || operationId.empty())
+        {
+            throw std::invalid_argument("Project directory and operation id are required.");
+        }
+
+        std::shared_ptr<OperationContext> context;
+        {
+            std::lock_guard activeLock(activeMutex_);
+            const auto active = activeOperations_.find(std::wstring(operationId));
+            if (active != activeOperations_.end())
+            {
+                context = active->second;
+            }
+        }
+        if (!context)
+        {
+            const std::optional<InstallOperationRecord> persisted =
+                InstallOperationStore::get(projectDirectory, operationId);
+            if (!persisted.has_value())
+            {
+                throw std::invalid_argument("Install operation was not found.");
+            }
+            if (!isTerminalState(persisted->state))
+            {
+                throw std::runtime_error("Install operation is not active in this process.");
+            }
+            return *persisted;
+        }
+
+        context->cancellationRequested.store(true, std::memory_order_release);
+        logger_.write(
+            LogLevel::Info,
+            "Installs",
+            "operationId=" + utf8LogText(operationId) + " cancellationRequested=1.");
+
+        if (scheduler_ != nullptr && scheduler_->cancel(operationId))
+        {
+            publish(
+                context,
+                L"cancelled",
+                L"cancelled",
+                100,
+                false,
+                L"install.cancelled",
+                L"Install operation was cancelled.");
+            finish(context);
+        }
+
+        std::unique_lock lock(context->mutex);
+        context->finishedChanged.wait(lock, [&context] { return context->finished; });
+        return context->record;
     }
 
     bool InstallOperationService::isInitialized() const noexcept

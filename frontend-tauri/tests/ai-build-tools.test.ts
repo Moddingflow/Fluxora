@@ -191,6 +191,7 @@ const downloads: FluxoraDownloadEntry[] = [
     downloadSpeedText: '',
     isDownloading: false,
     hasKnownProgress: true,
+    hasResolvedFileName: true,
     canResume: true,
     canInstall: false,
     canDelete: true

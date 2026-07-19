@@ -402,6 +402,8 @@ namespace fluxora
 
         static void setPendingInstallFinalizeFailureForTesting(bool shouldFail);
 
+        static void withMetadataLockForTesting(const std::function<void()>& action);
+
         static void resetStableMetadataHandleOpenCountForTesting();
 
         [[nodiscard]] static std::uint64_t stableMetadataHandleOpenCountForTesting();

@@ -530,13 +530,12 @@ namespace fluxora
         std::size_t stableMatchCount = 0;
         for (const ModIdentityCandidate& candidate : candidates)
         {
-            if (!sameStableSource(input.source, candidate.source) ||
-                isDistinctFileOnSameStableSource(input, candidate))
+            if (!sameStableSource(input.source, candidate.source))
             {
                 continue;
             }
             ++stableMatchCount;
-            if (!candidate.excluded)
+            if (!candidate.excluded && !isDistinctFileOnSameStableSource(input, candidate))
             {
                 stableMatch = &candidate;
             }
@@ -689,6 +688,61 @@ namespace fluxora
                 if (stableSourceConflict)
                 {
                     resolution.evidenceCodes.push_back(L"source.stable-mod-id-conflict");
+                }
+                return resolution;
+            }
+        }
+
+        if (stableMatchCount > 1)
+        {
+            const ModIdentityCandidate* contentMatch = nullptr;
+            std::size_t bestSharedAnchorKindCount = 0;
+            bool contentMatchIsAmbiguous = false;
+            for (const ModIdentityCandidate& candidate : candidates)
+            {
+                if (candidate.excluded || !sameStableSource(input.source, candidate.source))
+                {
+                    continue;
+                }
+
+                const std::size_t sharedAnchorKindCount =
+                    sharedContentAnchorKindCount(input, candidate);
+                if (sharedAnchorKindCount > bestSharedAnchorKindCount)
+                {
+                    contentMatch = &candidate;
+                    bestSharedAnchorKindCount = sharedAnchorKindCount;
+                    contentMatchIsAmbiguous = false;
+                }
+                else if (sharedAnchorKindCount != 0 &&
+                    sharedAnchorKindCount == bestSharedAnchorKindCount)
+                {
+                    contentMatchIsAmbiguous = true;
+                }
+            }
+
+            if (contentMatch != nullptr &&
+                bestSharedAnchorKindCount != 0 &&
+                !contentMatchIsAmbiguous)
+            {
+                resolution.kind = ModIdentityResolutionKind::Probable;
+                resolution.suggestedModName = contentMatch->target.displayName;
+                resolution.matchedTarget = contentMatch->target;
+                resolution.score = 92 + static_cast<int>(
+                    (std::min<std::size_t>)(bestSharedAnchorKindCount, 3));
+                resolution.evidenceCodes = {L"source.stable-mod-id-ambiguous"};
+                if (sharesAnchor(input.content.pluginFiles, contentMatch->content.pluginFiles))
+                {
+                    resolution.evidenceCodes.push_back(L"content.plugin");
+                }
+                if (sharesAnchor(input.content.archiveFiles, contentMatch->content.archiveFiles))
+                {
+                    resolution.evidenceCodes.push_back(L"content.archive");
+                }
+                if (sharesAnchor(
+                        input.content.scriptExtenderDlls,
+                        contentMatch->content.scriptExtenderDlls))
+                {
+                    resolution.evidenceCodes.push_back(L"content.skse-dll");
                 }
                 return resolution;
             }

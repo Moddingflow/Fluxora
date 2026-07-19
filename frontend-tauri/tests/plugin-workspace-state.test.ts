@@ -9,6 +9,7 @@ import {
   isSkyrimMissingMasterStatusProject,
   mergePendingPluginEnabledStates,
   pluginMissingMasterSummary,
+  pluginOrderItemMovePlan,
   pluginCapabilityView,
   pluginHexIndex,
   pluginSeparatorChildCount,
@@ -18,6 +19,7 @@ import {
   pluginStatusText,
   pluginTypeLabel,
   pluginWorkspaceReducer,
+  reorderPluginOrderItemSelection,
   reorderPluginOrderItems,
   selectedPluginOrderItem,
   targetIndexForPluginDrop,
@@ -177,6 +179,35 @@ describe('plugin workspace state', () => {
     expect(targetIndexForPluginDrop(items, 'plugin_skyui', 'plugin_skyrim', 'after')).toBe(1);
     expect(targetIndexForPluginDrop(items, 'plugin_light', 'plugin_skyui', 'before')).toBe(2);
     expect(targetIndexForPluginDrop(items, 'plugin_skyui', 'plugin_light', 'before')).toBeNull();
+  });
+
+  it('moves every selected plugin row as one ordered drag group', () => {
+    const reordered = reorderPluginOrderItemSelection(
+      items,
+      'plugin_skyui',
+      new Set(['plugin_skyui', 'plugin_light']),
+      'sep_patches',
+      'before'
+    );
+
+    expect(reordered?.map((item) => item.orderId)).toEqual([
+      'plugin_skyrim',
+      'plugin_skyui',
+      'plugin_light',
+      'sep_patches'
+    ]);
+    expect(reordered?.map((item) => item.order)).toEqual([0, 1, 2, 3]);
+    expect(
+      reordered &&
+        pluginOrderItemMovePlan(
+          items,
+          reordered,
+          new Set(['plugin_skyui', 'plugin_light'])
+        )
+    ).toEqual([
+      { orderId: 'plugin_skyui', targetIndex: 1 },
+      { orderId: 'plugin_light', targetIndex: 2 }
+    ]);
   });
 
   it('keeps existing rows available while a refresh load is running', () => {

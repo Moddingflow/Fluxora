@@ -742,6 +742,81 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(DownloadServiceTests, CaptureNxmReturnsPendingEntryWhileMetadataCommitIsHeld)
+    {
+#if !defined(_WIN32) || !defined(FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS)
+        GTEST_SKIP() << "The metadata-lock concurrency gate is Windows-only.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+        downloads.shutdown();
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
+
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool metadataCommitHeld = false;
+        bool releaseMetadataCommit = false;
+        std::thread metadataCommit([&]()
+        {
+            InstanceMetadataStore::withMetadataLockForTesting([&]()
+            {
+                std::unique_lock lock(mutex);
+                metadataCommitHeld = true;
+                changed.notify_all();
+                changed.wait(lock, [&]() { return releaseMetadataCommit; });
+            });
+        });
+
+        bool observedMetadataCommit = false;
+        {
+            std::unique_lock lock(mutex);
+            observedMetadataCommit = changed.wait_for(
+                lock,
+                std::chrono::seconds(5),
+                [&]() { return metadataCommitHeld; });
+        }
+        EXPECT_TRUE(observedMetadataCommit);
+
+        auto capture = std::async(std::launch::async, [&]()
+        {
+            return downloads.captureNxmLinks(
+                projectDirectory,
+                {L"nxm://skyrimspecialedition/mods/3863/files/123"});
+        });
+        const std::future_status intakeStatus =
+            capture.wait_for(std::chrono::milliseconds(500));
+
+        {
+            std::lock_guard lock(mutex);
+            releaseMetadataCommit = true;
+        }
+        changed.notify_all();
+        metadataCommit.join();
+        const std::vector<DownloadEntry> entries = capture.get();
+
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+
+        EXPECT_EQ(intakeStatus, std::future_status::ready);
+        ASSERT_EQ(entries.size(), 1U);
+        EXPECT_EQ(entries.front().localPath.extension(), L".nxm");
+        EXPECT_FALSE(entries.front().hasResolvedFileName);
+#endif
+    }
+
     TEST(DownloadServiceTests, ExpiredOAuthTokenIsRejectedBeforeQueuedNexusTransfer)
     {
 #ifndef _WIN32
@@ -1756,6 +1831,153 @@ namespace fluxora::tests
             catch (...)
             {
                 ADD_FAILURE() << "Synchronous FluxPack transfer failed with an unknown error.";
+            }
+        }
+#endif
+    }
+
+    TEST(DownloadServiceTests, NexusFileInfoIsVisibleBeforeTransferPermit)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.isPremium = true;
+        auth.protectedApiKey = L"protected-test-key";
+        settings.saveNexusModsAuth(auth);
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject downloadProject(temp, projectDirectory);
+        std::mutex mutex;
+        std::condition_variable changed;
+        std::size_t activeBlockers = 0;
+        bool releaseBlockers = false;
+        bool reachedPermitWait = false;
+        bool resolvedNameVisible = false;
+        bool enteredTransfer = false;
+
+        for (std::ptrdiff_t index = 0;
+             index < DownloadTransferLimiter::MaximumActiveTransfers;
+             ++index)
+        {
+            downloads.queueTransferProbeForTest([&]()
+            {
+                std::unique_lock lock(mutex);
+                ++activeBlockers;
+                changed.notify_all();
+                changed.wait(lock, [&]() { return releaseBlockers; });
+                --activeBlockers;
+                changed.notify_all();
+            });
+        }
+
+        bool allPermitsHeld = false;
+        {
+            std::unique_lock lock(mutex);
+            allPermitsHeld = changed.wait_for(lock, std::chrono::seconds(5), [&]()
+            {
+                return activeBlockers == static_cast<std::size_t>(
+                    DownloadTransferLimiter::MaximumActiveTransfers);
+            });
+        }
+
+        const ScopedNexusArchiveTransferHooks transferHooks(
+            [&](std::wstring_view fileId)
+            {
+                if (fileId != L"999")
+                {
+                    return;
+                }
+                const std::vector<DownloadEntry> entries =
+                    downloads.listDownloads(projectDirectory);
+                const auto pending = std::find_if(
+                    entries.begin(),
+                    entries.end(),
+                    [](const DownloadEntry& entry)
+                    {
+                        return entry.source.find(L"/files/999") != std::wstring::npos;
+                    });
+                std::lock_guard lock(mutex);
+                reachedPermitWait = true;
+                resolvedNameVisible = pending != entries.end() &&
+                    pending->fileName == L"nexus-fixture-999.zip" &&
+                    pending->hasResolvedFileName;
+                changed.notify_all();
+            },
+            [&](const std::filesystem::path& directory,
+                const std::filesystem::path&,
+                std::wstring_view fileId)
+            {
+                {
+                    std::lock_guard lock(mutex);
+                    enteredTransfer = true;
+                    changed.notify_all();
+                }
+                const std::filesystem::path archivePath =
+                    directory / (L"nexus-fixture-" + std::wstring(fileId) + L".zip");
+                writeTextFile(archivePath, "fixture archive");
+                return archivePath;
+            });
+
+        std::exception_ptr downloadFailure;
+        std::thread synchronousDownload([&]()
+        {
+            try
+            {
+                static_cast<void>(downloads.downloadNxmForFluxPack(
+                    projectDirectory,
+                    L"nxm://skyrimspecialedition/mods/3863/files/999"));
+            }
+            catch (...)
+            {
+                downloadFailure = std::current_exception();
+            }
+        });
+
+        bool preflightObserved = false;
+        {
+            std::unique_lock lock(mutex);
+            preflightObserved = changed.wait_for(lock, std::chrono::seconds(5), [&]()
+            {
+                return reachedPermitWait;
+            });
+            EXPECT_FALSE(enteredTransfer);
+            releaseBlockers = true;
+        }
+        changed.notify_all();
+        synchronousDownload.join();
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+
+        EXPECT_TRUE(allPermitsHeld);
+        EXPECT_TRUE(preflightObserved);
+        EXPECT_TRUE(resolvedNameVisible);
+        EXPECT_TRUE(enteredTransfer);
+        if (downloadFailure != nullptr)
+        {
+            try
+            {
+                std::rethrow_exception(downloadFailure);
+            }
+            catch (const std::exception& exception)
+            {
+                ADD_FAILURE() << "Synchronous Nexus fixture failed: " << exception.what();
             }
         }
 #endif

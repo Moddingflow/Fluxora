@@ -38,7 +38,7 @@ const detectingDialog = (): InstallDialogState => ({
 });
 
 describe('InstallDialog', () => {
-  it('renders installer detection as a neutral busy skeleton without install controls', () => {
+  it('mirrors the standard install dialog while installer detection is busy', () => {
     const markup = renderToStaticMarkup(
       createElement(InstallDialog, {
         archiveTreeScrollTop: 0,
@@ -59,10 +59,36 @@ describe('InstallDialog', () => {
     );
 
     expect(markup).toContain('aria-busy="true"');
-    expect(markup).toContain('install-detecting-skeleton');
+    expect(markup).toContain('<strong>Установка мода</strong>');
+    expect(markup).toContain('install-simple install-detecting-skeleton');
+    expect(markup).toContain('install-detecting-skeleton__label');
+    expect(markup).toContain('install-detecting-skeleton__input');
+    expect(markup).toContain('install-dialog-actions install-dialog-actions--detecting');
+    expect(markup).toContain('install-detecting-skeleton__action--details');
+    expect(markup).toContain('install-detecting-skeleton__action--install');
     expect(markup).not.toContain('Mod name');
     expect(markup).not.toContain('Подробнее');
     expect(markup).not.toContain('Установить');
+  });
+
+  it('keeps every skeleton shimmer loop visually continuous', () => {
+    const styles = readFileSync(
+      new URL('../src/renderer/styles.css', import.meta.url),
+      'utf8'
+    );
+
+    expect(styles).toMatch(
+      /\.workspace-skeleton\s*\{[^}]*background-repeat:\s*no-repeat;[^}]*animation:\s*downloadSkeletonSweep 1\.55s linear infinite;/s
+    );
+    expect(styles).toMatch(
+      /\.download-skeleton\s*\{[^}]*background-repeat:\s*no-repeat;[^}]*animation:\s*downloadSkeletonSweep 1\.55s linear infinite;/s
+    );
+    expect(styles).toMatch(
+      /\.download-progress__bar--skeleton span\s*\{[^}]*background-size:\s*240% 100%;[^}]*background-repeat:\s*no-repeat;[^}]*animation:\s*downloadSkeletonSweep 1\.35s linear infinite;/s
+    );
+    expect(styles).toMatch(
+      /@keyframes downloadSkeletonSweep\s*\{\s*from\s*\{\s*background-position:\s*200% 0;\s*\}\s*to\s*\{\s*background-position:\s*-200% 0;/s
+    );
   });
 
   it('renders explainable Smart Select status, actions and accessible option labels', () => {

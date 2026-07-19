@@ -2,6 +2,7 @@ import type {
   FluxoraExistingModInstallMode,
   FluxoraInstallConflictSnapshot,
   FluxoraInstallConflictSnapshotState,
+  FluxoraInstallOperationResult,
   FluxoraInstalledModSummary,
   FluxoraModOrderItem
 } from '../../../shared/fluxora-api';
@@ -25,6 +26,7 @@ export interface PendingInstallPlacement {
 
 export interface PendingInstallSessionState {
   operationId: string;
+  modName: string;
   mode: FluxoraExistingModInstallMode;
   pendingOrderId: string;
   rowOrderId: string;
@@ -50,6 +52,19 @@ export interface CompletedPendingInstallState {
   items: FluxoraModOrderItem[];
   orderId: string;
 }
+
+export const installedModPathAfterPendingInstallCancellation = (
+  session: Pick<PendingInstallSessionState, 'mode'>,
+  originalModPath: string,
+  result: Pick<FluxoraInstallOperationResult, 'id'> | null | undefined
+): string | null => {
+  const committedModPath = result?.id.trim();
+  if (committedModPath) {
+    return committedModPath;
+  }
+
+  return session.mode === 0 ? null : originalModPath;
+};
 
 const normalizedIdentity = (value: string | null | undefined): string =>
   (value ?? '').trim().toLocaleLowerCase();
@@ -175,6 +190,7 @@ export const beginPendingInstall = (
     items: nextItems,
     session: {
       operationId,
+      modName,
       mode: draft.mode,
       pendingOrderId,
       rowOrderId,
@@ -485,16 +501,37 @@ export const mergePendingInstallIntoAuthoritativeItems = (
   if (session.mode === 0) {
     const pending = currentItems.find(
       (item) => item.orderId === session.rowOrderId || item.orderId === session.pendingOrderId
+    ) ?? emptyPendingOrderItem(
+      session.operationId,
+      session.modName,
+      session.desiredTargetIndex
     );
-    const alreadyCommitted = authoritativeItems.some(
-      (item) => item.orderId === session.rowOrderId && item.orderId !== session.pendingOrderId
+    const activeRowAlreadyPresent = authoritativeItems.some(
+      (item) => item.orderId === session.rowOrderId || item.orderId === session.pendingOrderId
     );
-    if (pending && !alreadyCommitted) {
+    if (!activeRowAlreadyPresent) {
       merged.splice(
         clampedTargetIndex(session.desiredTargetIndex, merged.length),
         0,
         pending
       );
+    }
+  } else {
+    const matchesTarget = (item: FluxoraModOrderItem): boolean =>
+      item.orderId === session.rowOrderId ||
+      Boolean(
+        session.targetModUuid &&
+        normalizedIdentity(item.modUuid) === normalizedIdentity(session.targetModUuid)
+      );
+    if (!merged.some(matchesTarget)) {
+      const target = currentItems.find(matchesTarget) ?? session.baselineItems.find(matchesTarget);
+      if (target) {
+        merged.splice(
+          clampedTargetIndex(session.originalTargetIndex, merged.length),
+          0,
+          target
+        );
+      }
     }
   }
 

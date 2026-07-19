@@ -1,6 +1,6 @@
 # Fluxora Tauri performance budget
 
-Дата обновления: 2026-07-14
+Дата обновления: 2026-07-18
 
 Статус: Phase 13 budget and automated smoke gates are in place. After Phase 17, WPF baseline capture is historical/superseded; ongoing acceptance uses Tauri screenshots, performance budgets and release smoke evidence.
 
@@ -26,6 +26,11 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
 | Row paint cost | stable row heights, `content-visibility`, no layout-shifting hover states | CSS system rules |
 | Motion | transform/opacity-oriented micro-interactions, reduced motion fallback | CSS system rules |
 | Long-running operations | progress/status overlay, async bridge calls, renderer remains interactive | existing operation overlays plus smoke tests |
+| Bridge queue isolation | Download lock remains available while Install and Main are occupied; a timeout/restart affects only its selected host | exhaustive Rust method-routing, lock-isolation, restart-isolation and all-lane lifecycle tests |
+| NXM intake during install | pending row visible `<= 500 ms` on a warmed active project even while install metadata finalization is running | metadata-lock gate GTest plus concurrent install/NXM Playwright smoke |
+| Nexus resolved filename | real file name within one Nexus file-info round trip plus at most one `500 ms` renderer poll | pre-transfer-permit GTest, download-state Vitest and concurrent Playwright smoke |
+| Cached conflict summary | exact counts and directed relations in `<= 500 ms` after fixture/cache preparation at the current 10k-conflict scale | covering-index SQLite GTest with bounded SQL prepare count |
+| Install metadata finalization | commit-side metadata finalization `<= 2 s` at the current production scale | correlated `InstallFinalization durationMs` operation log and install integration tests |
 | NIF preview geometry | first neutral geometry frame `< 1 s` cold / `< 500 ms` warm | Playwright progressive-preview smoke plus `NifPreview.Performance firstFrame` log |
 | NIF preview textures | all resolvable textures applied `< 3 s` cold / `< 1.5 s` warm | batched resolver/cache tests plus `texturesReady` log |
 | NIF preview main-thread slice | no preview task longer than 50 ms | worker parsing/BC fallback, transferable typed arrays and 8 ms geometry construction yields |
@@ -38,6 +43,12 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
 - `App.tsx` uses React `useDeferredValue`, matching current React guidance for keeping input responsive while expensive list rendering updates in the background.
 - `App.tsx` keeps mods/plugins/downloads/search state local to renderer. It does not move project/mod/install decisions out of C++.
 - `styles.css` defines focus, reduced-motion, row containment and shared component tokens.
+- `mod_conflicts(mod_id, relative_path COLLATE NOCASE, source)` is the covering
+  index for the cached conflict-summary query. Correlated operation logs report
+  `ConflictSummary`, `NxmIntake`, `NxmPreflight` and `InstallFinalization`
+  durations with counts only; those new entries do not include URLs or absolute
+  paths.
+- Tauri main records `bridgeQueue lane=main|interactive|background|download|install method=... queueWaitUs=...` for every request. `lane=download` and `lane=install` are separate lazy host processes; a high wait in one lane must not appear as a wait in the other.
 - The text editor is routed by `main.tsx` into a dedicated secondary-window chunk, receives the known project directory directly from the typed window contract, and preloads Monaco in parallel with the first file read. It does not execute the main `App.tsx` bridge/Nexus/catalog startup, reuses lazy mod directory reads and disposes models when tabs close. Search is intentionally bounded to open in-memory documents until a native indexed-search contract exists.
 - NIF preview C++ tests cover a ten-texture batch, priority resolution, cold/warm archive index and extracted-asset cache hits, fingerprint invalidation and 512 MiB LRU behavior.
 - NIF preview renderer tests cover a large typed-array model fixture, transferable worker messages, BC1-BC7 extension routing, BC1-BC5 software fallback, a full-mip 4K BC3 fixture, compressed GPU upload, raw/texture LRU limits and opaque facade DTOs.

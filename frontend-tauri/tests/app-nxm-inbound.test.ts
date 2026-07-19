@@ -39,5 +39,21 @@ describe('App NXM inbound handling', () => {
     expect(importer).toContain("dispatchDownloadsWorkspace({ type: 'items-upserted', items: imported });");
     expect(importer).not.toContain('await loadDownloadsWorkspace(project, {');
     expect(importer).not.toContain('window.fluxora.downloads.list');
+    expect(importer).not.toContain('setDownloadsBusyLabel');
+    expect(importer).not.toContain('setMessage(null)');
+    expect(importer).not.toContain('Imported ${imported.length} NXM link(s).');
+  });
+
+  it('keeps manual NXM import local to its own button state', () => {
+    const app = readApp();
+    const importer =
+      app.match(/const importInboundDownloads = async[\s\S]*?\n  const moveInstallFomodStep/)?.[0] ?? '';
+
+    expect(importer).toContain('setIsImportingNxmManually(true);');
+    expect(importer).toContain('setIsImportingNxmManually(false);');
+    expect(importer).not.toContain('runDownloadMutation');
+    expect(importer).not.toContain('setDownloadsBusyLabel');
+    expect(app).toContain('disabled={isImportingNxmManually}');
+    expect(app).not.toContain('disabled={downloadsActionsBusy || isImportingNxmManually}');
   });
 });

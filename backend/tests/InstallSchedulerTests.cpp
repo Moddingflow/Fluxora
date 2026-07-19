@@ -114,4 +114,49 @@ namespace fluxora
         changed.notify_all();
         scheduler.shutdown();
     }
+
+    TEST(InstallSchedulerTests, CancelsQueuedTaskBeforeItCanRun)
+    {
+        InstallScheduler scheduler(1);
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool firstRunning = false;
+        bool releaseFirst = false;
+        bool cancelledTaskRan = false;
+
+        scheduler.submit(InstallScheduledTask{
+            L"op-running",
+            L"target-running",
+            [&]
+            {
+                std::unique_lock lock(mutex);
+                firstRunning = true;
+                changed.notify_all();
+                changed.wait(lock, [&] { return releaseFirst; });
+            },
+            {}});
+        scheduler.submit(InstallScheduledTask{
+            L"op-cancelled",
+            L"target-cancelled",
+            [&] { cancelledTaskRan = true; },
+            {}});
+
+        {
+            std::unique_lock lock(mutex);
+            ASSERT_TRUE(waitUntil(changed, lock, [&] { return firstRunning; }));
+        }
+        ASSERT_EQ(scheduler.queuedCount(), 1U);
+
+        EXPECT_TRUE(scheduler.cancel(L"op-cancelled"));
+        EXPECT_FALSE(scheduler.cancel(L"op-cancelled"));
+        EXPECT_EQ(scheduler.queuedCount(), 0U);
+
+        {
+            std::lock_guard lock(mutex);
+            releaseFirst = true;
+        }
+        changed.notify_all();
+        scheduler.shutdown();
+        EXPECT_FALSE(cancelledTaskRan);
+    }
 }

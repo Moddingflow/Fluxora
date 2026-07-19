@@ -908,6 +908,27 @@ describe('Tauri bridge request timeouts', () => {
     expect(listenMock).toHaveBeenCalledWith('fluxora:installs:progress', expect.any(Function));
   });
 
+  it('cancels a durable install through the install bridge lane contract', async () => {
+    const projectDirectory = project().projectDirectory;
+    const targetOperationId = 'op_install_target';
+    const request: OperationRequest = { operationId: 'op_delete_pending_install' };
+    invokeMock.mockResolvedValue({
+      operationId: targetOperationId,
+      state: 'cancelled',
+      stage: 'cancelled'
+    });
+
+    const api = createTauriFluxoraApi();
+    await api.installs.cancel(projectDirectory, targetOperationId, request);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'installs.cancel',
+      params: { projectDirectory, operationId: targetOperationId },
+      request,
+      timeoutMs: 7_200_000
+    });
+  });
+
   it('plans install identity and forwards an opaque matched-target decision unchanged', async () => {
     const planOperation: OperationRequest = { operationId: 'op_downloads_identity_plan' };
     const installOperation: OperationRequest = { operationId: 'op_archives_identity_install' };
@@ -1041,7 +1062,7 @@ describe('Tauri bridge request timeouts', () => {
         manualDecisionsJson: JSON.stringify(manualDecisions)
       },
       request: operation,
-      timeoutMs: undefined
+      timeoutMs: 7_200_000
     });
 
     await api.archives.planInstall(projectDirectory, archivePath, 'Default', operation);

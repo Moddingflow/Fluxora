@@ -155,11 +155,15 @@ import {
 import { downloadInstallDropPlacementFromPointer } from './features/mods/download-install-drop-state';
 import { resolveModSourcePageUrl } from './features/mods/mod-source-url';
 import {
+  installedModPathAfterPendingInstallCancellation,
   pendingInstallTargetIndexForPlacement,
   type PendingInstallDropPlacement
 } from './features/mods/pending-install-orchestrator-state';
 import { usePostInstallModReveal } from './features/mods/use-post-install-mod-reveal';
-import { usePendingInstallOrchestrator } from './features/mods/use-pending-install-orchestrator';
+import {
+  restoredInstallNeedsPendingProjection,
+  usePendingInstallOrchestrator
+} from './features/mods/use-pending-install-orchestrator';
 import {
   OperationOverlay,
   type OperationOverlayState
@@ -202,6 +206,7 @@ import {
   modLatestVersionDiffers,
   modLatestVersionText,
   modOverwriteView,
+  modOrderItemMovePlan,
   modOrderItemMatchesLookup,
   modPriorityByOrderId,
   modRowConflictHighlight,
@@ -210,6 +215,7 @@ import {
   modTableStatusView,
   modVersionText,
   modWorkspaceReducer,
+  reorderModOrderItemSelection,
   reorderModOrderItems,
   removeModOrderItems,
   selectedModOrderItem,
@@ -229,6 +235,7 @@ import {
   pluginHexIndex,
   pluginItemTitle,
   pluginMissingMasterSummary,
+  pluginOrderItemMovePlan,
   pluginSeparatorChildCount,
   pluginSeparatorMissingMasterSummary,
   pluginSourceLabel,
@@ -236,6 +243,7 @@ import {
   pluginStatusText,
   pluginTypeLabel,
   pluginWorkspaceReducer,
+  reorderPluginOrderItemSelection,
   reorderPluginOrderItems,
   selectedPluginOrderItem,
   targetIndexForPluginDrop,
@@ -508,6 +516,7 @@ interface RowReorderSession {
   kind: RowReorderKind;
   pointerId: number;
   sourceOrderId: string;
+  sourceOrderIds: string[];
   startX: number;
   startY: number;
   currentX: number;
@@ -525,6 +534,7 @@ interface WorkspaceLoadOptions {
   persistedSnapshot?: boolean;
   showBusy?: boolean;
   showLoading?: boolean;
+  suppressError?: boolean;
   resetScroll?: boolean;
   operationId?: string;
   profileName?: string;
@@ -1367,7 +1377,9 @@ export const App = () => {
     useState<RowContextMenuPosition | null>(null);
   const [modCreationDialog, setModCreationDialog] = useState<ModCreationDialogState | null>(null);
   const [modListScrollTop, setModListScrollTop] = useState(0);
-  const [draggedModOrderId, setDraggedModOrderId] = useState<string | null>(null);
+  const [draggedModOrderIds, setDraggedModOrderIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>()
+  );
   const [modDropTarget, setModDropTarget] = useState<RowDropTargetState | null>(null);
   const [downloadInstallDropTarget, setDownloadInstallDropTarget] =
     useState<RowDropTargetState | null>(null);
@@ -1434,7 +1446,9 @@ export const App = () => {
   const [pluginMenuPosition, setPluginMenuPosition] =
     useState<RowContextMenuPosition | null>(null);
   const [pluginListScrollTop, setPluginListScrollTop] = useState(0);
-  const [draggedPluginOrderId, setDraggedPluginOrderId] = useState<string | null>(null);
+  const [draggedPluginOrderIds, setDraggedPluginOrderIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>()
+  );
   const [pluginDropTarget, setPluginDropTarget] = useState<RowDropTargetState | null>(null);
   const [downloadsWorkspace, dispatchDownloadsWorkspace] = useReducer(
     downloadWorkspaceReducer,
@@ -1442,6 +1456,7 @@ export const App = () => {
     emptyDownloadWorkspaceState
   );
   const [downloadsBusyLabel, setDownloadsBusyLabel] = useState<string | null>(null);
+  const [isImportingNxmManually, setIsImportingNxmManually] = useState(false);
   const [downloadMenuId, setDownloadMenuId] = useState<string | null>(null);
   const [downloadMenuPosition, setDownloadMenuPosition] =
     useState<RowContextMenuPosition | null>(null);
@@ -1548,6 +1563,7 @@ export const App = () => {
       } else if (
         operation.state === 'completed' ||
         operation.state === 'failed' ||
+        operation.state === 'cancelled' ||
         operation.state === 'needsReview'
       ) {
         installCommitOperationsRef.current.delete(operation.operationId);
@@ -1569,6 +1585,7 @@ export const App = () => {
       if (
         operation.state !== 'completed' &&
         operation.state !== 'failed' &&
+        operation.state !== 'cancelled' &&
         operation.state !== 'needsReview'
       ) {
         return;
@@ -1579,6 +1596,15 @@ export const App = () => {
         installSourceByOperationRef.current.delete(operation.operationId);
       }
       if (operation.state === 'completed') {
+        const source = downloadsWorkspace.items.find(
+          (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
+        );
+        if (source) {
+          dispatchDownloadsWorkspace({
+            type: 'items-upserted',
+            items: [{ ...source, buildStatus: 'Installed' }]
+          });
+        }
         if (operation.result?.orderId) {
           dispatchModsWorkspace({
             type: 'item-reveal-requested',
@@ -1586,7 +1612,15 @@ export const App = () => {
           });
         }
         setMessage(`Installed ${operation.result?.name || operation.targetFolder}`);
-        void refreshCurrentViewRef.current();
+        if (selectedProject) {
+          void loadDownloadsWorkspace(selectedProject, {
+            operationId: operation.operationId,
+            showBusy: false,
+            showLoading: false,
+            resetScroll: false,
+            suppressError: true
+          });
+        }
       } else if (operation.state === 'needsReview') {
         setMessage(operation.errorMessage || 'The interrupted install needs review.');
         const source = downloadsWorkspace.items.find(
@@ -1596,6 +1630,17 @@ export const App = () => {
           dispatchDownloadsWorkspace({
             type: 'items-upserted',
             items: [{ ...source, buildStatus: 'Needs review' }]
+          });
+        }
+      } else if (operation.state === 'cancelled') {
+        setMessage(`Installation cancelled: ${operation.targetFolder}.`);
+        const source = downloadsWorkspace.items.find(
+          (entry) => downloadPath(entry).toLocaleLowerCase() === operation.sourcePath.toLocaleLowerCase()
+        );
+        if (source) {
+          dispatchDownloadsWorkspace({
+            type: 'items-upserted',
+            items: [{ ...source, buildStatus: 'Ready' }]
           });
         }
       } else {
@@ -1694,6 +1739,12 @@ export const App = () => {
       }
       for (const operation of operations) {
         installOperationsRef.current.set(operation.operationId, operation);
+        const restoredSourceKey = operation.sourcePath.toLocaleLowerCase();
+        if (!restoredInstallNeedsPendingProjection(operation)) {
+          installSubmitSourcesRef.current.delete(restoredSourceKey);
+          installSourceByOperationRef.current.delete(operation.operationId);
+          continue;
+        }
         const afterIndex = operation.afterOrderId
           ? modsWorkspace.items.findIndex((item) => item.orderId === operation.afterOrderId)
           : -1;
@@ -1705,10 +1756,10 @@ export const App = () => {
           : beforeIndex >= 0
             ? beforeIndex + 1
             : modsWorkspace.items.length;
-        installSubmitSourcesRef.current.add(operation.sourcePath.toLocaleLowerCase());
+        installSubmitSourcesRef.current.add(restoredSourceKey);
         installSourceByOperationRef.current.set(
           operation.operationId,
-          operation.sourcePath.toLocaleLowerCase()
+          restoredSourceKey
         );
         const targetStillExists = Boolean(
           operation.targetModUuid &&
@@ -2695,7 +2746,7 @@ export const App = () => {
       if (resetScroll) {
         setModListScrollTop(0);
       }
-      setDraggedModOrderId(null);
+      setDraggedModOrderIds(new Set<string>());
       setModDropTarget(null);
       return true;
     } catch (error) {
@@ -3327,6 +3378,111 @@ export const App = () => {
     trackModOrderSave(save);
   };
 
+  const moveModOrderItemSelectionToOrder = async (
+    movingOrderIds: ReadonlySet<string>,
+    optimisticItems: FluxoraModOrderItem[]
+  ) => {
+    if (!selectedProject) {
+      return;
+    }
+
+    const previousItems = modsWorkspace.items;
+    const isPendingItem = (candidate: FluxoraModOrderItem) =>
+      pendingInstallOrchestrator.isActiveOrderItem(candidate);
+    const persistentItems = previousItems.filter((candidate) => !isPendingItem(candidate));
+    const persistentOptimisticItems = optimisticItems.filter(
+      (candidate) => !isPendingItem(candidate)
+    );
+    const persistentMovingOrderIds = new Set(
+      persistentItems
+        .filter((candidate) => movingOrderIds.has(candidate.orderId))
+        .map((candidate) => candidate.orderId)
+    );
+    const movePlan = modOrderItemMovePlan(
+      persistentItems,
+      persistentOptimisticItems,
+      persistentMovingOrderIds
+    );
+    const movesPendingInstall = previousItems.some(
+      (candidate) => movingOrderIds.has(candidate.orderId) && isPendingItem(candidate)
+    );
+    if (!movePlan || (movePlan.length === 0 && !movesPendingInstall)) {
+      return;
+    }
+
+    const sequence = modOrderSaveSequenceRef.current + 1;
+    modOrderSaveSequenceRef.current = sequence;
+    const project = selectedProject;
+    const profileName = modWorkspaceProfileName;
+
+    setMessage(null);
+    modOrderClientRevisionRef.current += 1;
+    dispatchModsWorkspace({ type: 'items-loaded', items: optimisticItems });
+
+    const save = (async () => {
+      const operationId = createRendererOperationId('mods_reorder');
+      try {
+        if (movesPendingInstall) {
+          await pendingInstallOrchestrator.rebase(
+            project.projectDirectory,
+            optimisticItems,
+            true
+          );
+        }
+
+        let confirmedOrder = persistentItems;
+        for (const move of movePlan) {
+          confirmedOrder = await window.fluxora.mods.moveOrderItem(
+            project.projectDirectory,
+            profileName,
+            move.orderId,
+            move.targetIndex,
+            { operationId }
+          );
+        }
+
+        if (movePlan.length === 0) {
+          return;
+        }
+
+        const orderWithPendingInstall = pendingInstallOrchestrator.mergeAuthoritativeItems(
+          confirmedOrder
+        );
+        await pendingInstallOrchestrator.rebase(
+          project.projectDirectory,
+          orderWithPendingInstall,
+          false
+        );
+
+        if (modOrderSaveSequenceRef.current === sequence) {
+          modOrderClientRevisionRef.current += 1;
+          dispatchModsWorkspace({
+            type: 'items-loaded',
+            items: pendingInstallOrchestrator.mergeAuthoritativeItems(confirmedOrder)
+          });
+        }
+      } catch (error) {
+        const message = errorMessage(error);
+        setMessage(`Could not save mod order: ${message}`);
+        if (modOrderSaveSequenceRef.current === sequence) {
+          modOrderClientRevisionRef.current += 1;
+          dispatchModsWorkspace({ type: 'items-loaded', items: previousItems });
+          void pendingInstallOrchestrator.rebase(
+            project.projectDirectory,
+            previousItems,
+            false
+          ).catch(() => undefined);
+          window.setTimeout(() => {
+            void loadModsWorkspace(project, backgroundReorderLoadOptions);
+          }, 0);
+        }
+        throw error;
+      }
+    })();
+
+    trackModOrderSave(save);
+  };
+
   const openModCreationDialog = (kind: ModCreationDialogKind) => {
     if (!selectedProject) {
       return;
@@ -3522,19 +3678,49 @@ export const App = () => {
     const previousItems = modsWorkspace.items;
     const previousInstalledMods = installedMods;
     const deletedModTitle = modItemTitle(item);
+    const pendingInstall = pendingInstallOrchestrator.activeSessionForItem(item);
+    let pendingInstallCancelled = false;
 
     const operationId = createRendererOperationId('mods_delete');
     setMessage(null);
+    if (pendingInstall) {
+      pendingInstallOrchestrator.rollback(pendingInstall.operationId);
+    }
     removeDeletedModItems([item]);
 
     try {
-      await window.fluxora.mods.deleteInstalled(project.projectDirectory, item.id, {
-        operationId
-      });
+      let modPath: string | null = item.id;
+      if (pendingInstall) {
+        const cancelled = await window.fluxora.installs.cancel(
+          project.projectDirectory,
+          pendingInstall.operationId,
+          { operationId }
+        );
+        installOperationsRef.current.set(cancelled.operationId, cancelled);
+        pendingInstallCancelled = true;
+        modPath = installedModPathAfterPendingInstallCancellation(
+          pendingInstall,
+          item.id,
+          cancelled.result
+        );
+      }
+      if (modPath) {
+        await window.fluxora.mods.deleteInstalled(project.projectDirectory, modPath, {
+          operationId
+        });
+      }
       await refreshAfterModDeletion(project);
     } catch (error) {
       const nextMessage = errorMessage(error);
-      restoreDeletedModItems(previousItems, previousInstalledMods);
+      if (pendingInstallCancelled) {
+        try {
+          await refreshAfterModDeletion(project);
+        } catch {
+          // Keep the cancelled pending projection retired when authoritative refresh is unavailable.
+        }
+      } else {
+        restoreDeletedModItems(previousItems, previousInstalledMods);
+      }
       setMessage(`Could not delete ${deletedModTitle}: ${nextMessage}`);
     }
   };
@@ -3554,21 +3740,59 @@ export const App = () => {
     const operationId = createRendererOperationId('mods_delete_bulk');
     const previousItems = modsWorkspace.items;
     const previousInstalledMods = installedMods;
+    const pendingInstalls = new Map(
+      targets.flatMap((item) => {
+        const pending = pendingInstallOrchestrator.activeSessionForItem(item);
+        return pending ? [[item.orderId, pending] as const] : [];
+      })
+    );
+    let hasCancelledPendingInstall = false;
     setMessage(null);
+    for (const pending of new Map(
+      [...pendingInstalls.values()].map((session) => [session.operationId, session] as const)
+    ).values()) {
+      pendingInstallOrchestrator.rollback(pending.operationId);
+    }
     removeDeletedModItems(targets);
 
     try {
       for (let index = 0; index < targets.length; index += 1) {
         const item = targets[index]!;
-        await window.fluxora.mods.deleteInstalled(project.projectDirectory, item.id, {
-          operationId
-        });
+        const pendingInstall = pendingInstalls.get(item.orderId);
+        let modPath: string | null = item.id;
+        if (pendingInstall) {
+          const cancelled = await window.fluxora.installs.cancel(
+            project.projectDirectory,
+            pendingInstall.operationId,
+            { operationId }
+          );
+          installOperationsRef.current.set(cancelled.operationId, cancelled);
+          hasCancelledPendingInstall = true;
+          modPath = installedModPathAfterPendingInstallCancellation(
+            pendingInstall,
+            item.id,
+            cancelled.result
+          );
+        }
+        if (modPath) {
+          await window.fluxora.mods.deleteInstalled(project.projectDirectory, modPath, {
+            operationId
+          });
+        }
       }
 
       await refreshAfterModDeletion(project);
     } catch (error) {
       const nextMessage = errorMessage(error);
-      restoreDeletedModItems(previousItems, previousInstalledMods);
+      if (hasCancelledPendingInstall) {
+        try {
+          await refreshAfterModDeletion(project);
+        } catch {
+          // Keep cancelled pending projections retired when authoritative refresh is unavailable.
+        }
+      } else {
+        restoreDeletedModItems(previousItems, previousInstalledMods);
+      }
       setMessage(`Could not delete mods: ${nextMessage}`);
     }
   };
@@ -3888,14 +4112,14 @@ export const App = () => {
 
     if (!capabilities.bridgeAvailable) {
       dispatchPluginsWorkspace({ type: 'items-loaded', items: [] });
-      setDraggedPluginOrderId(null);
+      setDraggedPluginOrderIds(new Set<string>());
       setPluginDropTarget(null);
       return true;
     }
 
     if (!capabilities.projectSupported) {
       dispatchPluginsWorkspace({ type: 'items-loaded', items: [] });
-      setDraggedPluginOrderId(null);
+      setDraggedPluginOrderIds(new Set<string>());
       setPluginDropTarget(null);
       return true;
     }
@@ -3937,7 +4161,7 @@ export const App = () => {
       if (resetScroll) {
         setPluginListScrollTop(0);
       }
-      setDraggedPluginOrderId(null);
+      setDraggedPluginOrderIds(new Set<string>());
       setPluginDropTarget(null);
       return true;
     } catch (error) {
@@ -4106,6 +4330,72 @@ export const App = () => {
     trackPluginOrderSave(save);
   };
 
+  const movePluginOrderItemSelectionToOrder = async (
+    movingOrderIds: ReadonlySet<string>,
+    optimisticItems: FluxoraPluginOrderItem[]
+  ) => {
+    if (!selectedProject || !pluginCapabilities.loadOrderSupported) {
+      return;
+    }
+
+    const movePlan = pluginOrderItemMovePlan(
+      pluginsWorkspace.items,
+      optimisticItems,
+      movingOrderIds
+    );
+    if (!movePlan || movePlan.length === 0) {
+      return;
+    }
+
+    const sequence = pluginOrderSaveSequenceRef.current + 1;
+    pluginOrderSaveSequenceRef.current = sequence;
+    const previousItems = pluginsWorkspace.items;
+    const project = selectedProject;
+    const profileName = selectedProjectProfileName;
+    const contextKey = pluginWorkspaceContextKey(project, profileName);
+    const snapshotSequence = pluginEnableSaveSequenceRef.current;
+
+    setMessage(null);
+    dispatchPluginsWorkspace({ type: 'items-loaded', items: optimisticItems });
+
+    const save = (async () => {
+      const operationId = createRendererOperationId('plugins_reorder');
+      try {
+        let confirmedOrder = previousItems;
+        for (const move of movePlan) {
+          confirmedOrder = await window.fluxora.plugins.move(
+            project.projectDirectory,
+            project.templateId,
+            profileName,
+            move.orderId,
+            move.targetIndex,
+            { operationId }
+          );
+        }
+
+        if (pluginOrderSaveSequenceRef.current === sequence) {
+          dispatchPluginsWorkspace({
+            type: 'items-loaded',
+            items: applyPendingPluginEnableStates(confirmedOrder, contextKey, snapshotSequence)
+          });
+        }
+      } catch (error) {
+        const message = errorMessage(error);
+        setMessage(`Could not save plugin order: ${message}`);
+        if (pluginOrderSaveSequenceRef.current === sequence) {
+          dispatchPluginsWorkspace({
+            type: 'items-loaded',
+            items: applyPendingPluginEnableStates(previousItems, contextKey, snapshotSequence)
+          });
+          await loadPluginsWorkspace(project, backgroundReorderLoadOptions);
+        }
+        throw error;
+      }
+    })();
+
+    trackPluginOrderSave(save);
+  };
+
   const movePluginOrderItem = async (item: FluxoraPluginOrderItem, direction: -1 | 1) => {
     const targetIndex = targetIndexForPluginMove(
       pluginsWorkspace.items,
@@ -4132,9 +4422,9 @@ export const App = () => {
       modOrderDragSettledResolversRef.current.clear();
       resolvers.forEach((resolve) => resolve());
     }
-    setDraggedModOrderId(null);
+    setDraggedModOrderIds(new Set<string>());
     setModDropTarget(null);
-    setDraggedPluginOrderId(null);
+    setDraggedPluginOrderIds(new Set<string>());
     setPluginDropTarget(null);
     setDraggedDownloadInstallId(null);
     setDownloadInstallDropTarget(null);
@@ -4186,6 +4476,31 @@ export const App = () => {
       : targetIndexForPluginDrop(
           pluginsWorkspace.items,
           sourceOrderId,
+          targetOrderId,
+          placement,
+          pluginsWorkspace.collapsedSeparatorOrderIds
+        );
+
+  const reorderedItemsForRowDrop = (
+    kind: Exclude<RowReorderKind, 'download-install'>,
+    sourceOrderId: string,
+    sourceOrderIds: readonly string[],
+    targetOrderId: string,
+    placement: OrderRowDropPlacement
+  ): FluxoraModOrderItem[] | FluxoraPluginOrderItem[] | null =>
+    kind === 'mod'
+      ? reorderModOrderItemSelection(
+          modsWorkspace.items,
+          sourceOrderId,
+          new Set(sourceOrderIds),
+          targetOrderId,
+          placement,
+          modsWorkspace.collapsedSeparatorOrderIds
+        )
+      : reorderPluginOrderItemSelection(
+          pluginsWorkspace.items,
+          sourceOrderId,
+          new Set(sourceOrderIds),
           targetOrderId,
           placement,
           pluginsWorkspace.collapsedSeparatorOrderIds
@@ -4266,14 +4581,20 @@ export const App = () => {
             )
           : rowDropPlacementFromPointer(row, session.currentY)
         : null;
-    const targetIndex =
+    const reorderedItems =
       session.kind !== 'download-install' && targetOrderId && placement && placement !== 'inside'
-        ? targetIndexForRowDrop(session.kind, session.sourceOrderId, targetOrderId, placement)
+        ? reorderedItemsForRowDrop(
+            session.kind,
+            session.sourceOrderId,
+            session.sourceOrderIds,
+            targetOrderId,
+            placement
+          )
         : null;
     const nextTarget =
       targetOrderId &&
       placement &&
-      (session.kind === 'download-install' || targetIndex !== null)
+      (session.kind === 'download-install' || reorderedItems !== null)
         ? { orderId: targetOrderId, placement }
         : null;
 
@@ -4335,10 +4656,28 @@ export const App = () => {
 
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    const sourceOrderIds =
+      kind === 'mod' && modsWorkspace.selectedOrderIds.has(sourceOrderId)
+        ? modsWorkspace.items
+            .filter(
+              (item) =>
+                modsWorkspace.selectedOrderIds.has(item.orderId) && !isModOverwriteItem(item)
+            )
+            .map((item) => item.orderId)
+        : kind === 'plugin' && pluginsWorkspace.selectedOrderIds.has(sourceOrderId)
+          ? pluginsWorkspace.items
+              .filter(
+                (item) =>
+                  pluginsWorkspace.selectedOrderIds.has(item.orderId) &&
+                  canDragPluginOrderItem(pluginsWorkspace.items, item.orderId)
+              )
+              .map((item) => item.orderId)
+          : [sourceOrderId];
     rowReorderSessionRef.current = {
       kind,
       pointerId: event.pointerId,
       sourceOrderId,
+      sourceOrderIds,
       startX: event.clientX,
       startY: event.clientY,
       currentX: event.clientX,
@@ -4373,9 +4712,9 @@ export const App = () => {
       session.active = true;
       document.body.classList.add('row-reorder-active');
       if (session.kind === 'mod') {
-        setDraggedModOrderId(session.sourceOrderId);
+        setDraggedModOrderIds(new Set(session.sourceOrderIds));
       } else if (session.kind === 'plugin') {
-        setDraggedPluginOrderId(session.sourceOrderId);
+        setDraggedPluginOrderIds(new Set(session.sourceOrderIds));
       } else {
         setDraggedDownloadInstallId(session.sourceOrderId);
       }
@@ -4405,6 +4744,7 @@ export const App = () => {
     const targetOrderId = session.targetOrderId;
     const placement = session.placement;
     const sourceOrderId = session.sourceOrderId;
+    const sourceOrderIds = session.sourceOrderIds;
     const kind = session.kind;
     const wasActive = session.active;
     clearRowReorderSession();
@@ -4424,6 +4764,36 @@ export const App = () => {
     }
 
     if (placement === 'inside') {
+      return;
+    }
+
+    const optimisticItems =
+      targetOrderId && placement
+        ? reorderedItemsForRowDrop(
+            kind,
+            sourceOrderId,
+            sourceOrderIds,
+            targetOrderId,
+            placement
+          )
+        : null;
+    if (!optimisticItems) {
+      return;
+    }
+
+    if (sourceOrderIds.length > 1) {
+      const movingOrderIds = new Set(sourceOrderIds);
+      if (kind === 'mod') {
+        void moveModOrderItemSelectionToOrder(
+          movingOrderIds,
+          optimisticItems as FluxoraModOrderItem[]
+        );
+      } else {
+        void movePluginOrderItemSelectionToOrder(
+          movingOrderIds,
+          optimisticItems as FluxoraPluginOrderItem[]
+        );
+      }
       return;
     }
 
@@ -5856,7 +6226,9 @@ export const App = () => {
       }
       const message = errorMessage(error);
       dispatchDownloadsWorkspace({ type: 'load-failed', message, silent: !showLoading });
-      setMessage(message);
+      if (!options.suppressError) {
+        setMessage(message);
+      }
       return false;
     } finally {
       if (workspaceStoreBusyLoadSequenceRef.current.downloads === loadSequence) {
@@ -6317,17 +6689,9 @@ export const App = () => {
 
   const importInboundDownloadsForProject = async (
     project: FluxoraProject,
-    event: Pick<FluxoraNxmInboundLinksCaptured, 'count' | 'operationId'>,
-    options: {
-      showBusy?: boolean;
-    } = {}
+    event: Pick<FluxoraNxmInboundLinksCaptured, 'count' | 'operationId'>
   ) => {
     const operationId = event.operationId || createRendererOperationId('nxm_inbound_event');
-    const showBusy = options.showBusy ?? false;
-    if (showBusy) {
-      setDownloadsBusyLabel('Importing NXM');
-    }
-    setMessage(null);
 
     try {
       const imported = await window.fluxora.nxm.importInboundDownloads(
@@ -6337,32 +6701,33 @@ export const App = () => {
       if (imported.length > 0) {
         dispatchDownloadsWorkspace({ type: 'items-upserted', items: imported });
       }
-      setMessage(
-        imported.length === 0
-          ? 'No inbound NXM links found.'
-          : `Imported ${imported.length} NXM link(s).`
-      );
     } catch (error) {
       setMessage(errorMessage(error));
-    } finally {
-      if (showBusy) {
-        setDownloadsBusyLabel(null);
-      }
     }
   };
 
   const importInboundDownloads = async () => {
-    if (!selectedProject) {
+    if (!selectedProject || isImportingNxmManually) {
       return;
     }
 
-    await runDownloadMutation('Importing NXM queue', async (operationId) => {
+    const operationId = createRendererOperationId('nxm_manual_import');
+    setIsImportingNxmManually(true);
+    setMessage(null);
+    try {
       const imported = await window.fluxora.nxm.importInboundDownloads(
         selectedProject.projectDirectory,
         { operationId }
       );
+      if (imported.length > 0) {
+        dispatchDownloadsWorkspace({ type: 'items-upserted', items: imported });
+      }
       setMessage(imported.length === 0 ? 'No inbound NXM links found.' : `Imported ${imported.length} NXM link(s).`);
-    });
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setIsImportingNxmManually(false);
+    }
   };
 
   const moveInstallFomodStep = async (direction: 1 | -1) => {
@@ -6684,7 +7049,7 @@ export const App = () => {
         installedId: pendingSession.pendingOrderId,
         installedName: modName,
         orderId: pendingSession.rowOrderId,
-        animate: !pendingAlreadyExists && existingModMode === 0
+        animate: !pendingAlreadyExists
       });
 
       setInstallDialog((current) =>
@@ -8050,9 +8415,7 @@ export const App = () => {
       }
 
       pendingInboundNxmEventRef.current = null;
-      void importInboundDownloadsForProject(selectedProject, event, {
-        showBusy: activeRoute === 'build' || activeRoute === 'downloads'
-      });
+      void importInboundDownloadsForProject(selectedProject, event);
     });
   }, [
     activeRoute,
@@ -11144,9 +11507,9 @@ export const App = () => {
               ? modSeparatorChildCount(modsWorkspace.items, item.orderId)
               : 0;
             const priority = modPrioritiesByOrderId.get(item.orderId);
-            const isDragging = draggedModOrderId === item.orderId;
+            const isDragging = draggedModOrderIds.has(item.orderId);
             const isOrderDropTarget =
-              modDropTarget?.orderId === item.orderId && draggedModOrderId !== item.orderId;
+              modDropTarget?.orderId === item.orderId && !draggedModOrderIds.has(item.orderId);
             const isInstallDropTarget =
               downloadInstallDropTarget?.orderId === item.orderId && !isOverwrite;
             const isDropTarget = isOrderDropTarget || isInstallDropTarget;
@@ -11220,7 +11583,9 @@ export const App = () => {
                     return;
                   }
 
-                  dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
+                  if (!modsWorkspace.selectedOrderIds.has(item.orderId)) {
+                    dispatchModsWorkspace({ type: 'selected', orderId: item.orderId });
+                  }
                   setModMenuOrderId(null);
                 }}
                 onPointerMove={updateRowReorderDrag}
@@ -11987,9 +12352,9 @@ export const App = () => {
             const separatorPluginCount = item.isSeparator
               ? pluginSeparatorChildCount(pluginsWorkspace.items, item.orderId)
               : 0;
-            const isDragging = draggedPluginOrderId === item.orderId;
+            const isDragging = draggedPluginOrderIds.has(item.orderId);
             const isDropTarget =
-              pluginDropTarget?.orderId === item.orderId && draggedPluginOrderId !== item.orderId;
+              pluginDropTarget?.orderId === item.orderId && !draggedPluginOrderIds.has(item.orderId);
             const canDragPluginRow =
               pluginCapabilities.loadOrderSupported &&
               !pluginsBusyLabel &&
@@ -12066,7 +12431,9 @@ export const App = () => {
                     return;
                   }
 
-                  dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
+                  if (!pluginsWorkspace.selectedOrderIds.has(item.orderId)) {
+                    dispatchPluginsWorkspace({ type: 'selected', orderId: item.orderId });
+                  }
                   setPluginMenuOrderId(null);
                 }}
                 onPointerMove={updateRowReorderDrag}
@@ -13203,11 +13570,11 @@ export const App = () => {
               <button
                 className="tool-button"
                 type="button"
-                disabled={downloadsActionsBusy}
+                disabled={isImportingNxmManually}
                 onClick={() => void importInboundDownloads()}
               >
                 <ExternalLink size={16} aria-hidden="true" />
-                NXM queue
+                {isImportingNxmManually ? 'Importing NXM…' : 'NXM queue'}
               </button>
               <button
                 className="tool-button"

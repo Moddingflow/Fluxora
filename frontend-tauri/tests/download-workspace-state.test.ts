@@ -41,6 +41,7 @@ const downloadEntry = (
   downloadSpeedText: '',
   isDownloading: false,
   hasKnownProgress: true,
+  hasResolvedFileName: true,
   canResume: false,
   canInstall: true,
   canDelete: true,
@@ -200,6 +201,14 @@ describe('download workspace state', () => {
         })
       ])
     ).toBe(true);
+    expect(
+      hasActiveDownload([
+        downloadEntry('pending-name', 'skyrimse-182366-770345.nxm-pending', {
+          hasResolvedFileName: false,
+          transferState: 'queued'
+        })
+      ])
+    ).toBe(true);
   });
 
   it('keeps rows visible during silent refreshes', () => {
@@ -309,6 +318,17 @@ describe('download workspace state', () => {
     );
 
     expect(downloadTitle(entry)).toBe('Cabbage CS Preset');
+  });
+
+  it('keeps unresolved NXM placeholders neutral until the file name is known', () => {
+    const unresolved = downloadEntry('nxm-pending', 'skyrimspecialedition-3863-123.nxm', {
+      name: 'skyrimspecialedition-3863-123',
+      hasResolvedFileName: false
+    });
+    const resolved = downloadEntry('nxm-resolved', 'SkyUI 5.2 SE-3863-5-2-1579093884.7z');
+
+    expect(downloadTitle(unresolved)).toBe('Получаем название…');
+    expect(downloadTitle(resolved)).toBe('SkyUI 5.2 SE');
   });
 
   it('describes download capabilities from bridge feature state', () => {

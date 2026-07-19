@@ -195,6 +195,32 @@ namespace fluxora
         state_->changed.notify_all();
     }
 
+    bool InstallScheduler::cancel(std::wstring_view operationId)
+    {
+        if (operationId.empty())
+        {
+            return false;
+        }
+
+        std::lock_guard lock(state_->mutex);
+        const auto pending = std::find_if(
+            state_->pending.begin(),
+            state_->pending.end(),
+            [operationId](const State::PendingTask& candidate)
+            {
+                return candidate.task.operationId == operationId;
+            });
+        if (pending == state_->pending.end())
+        {
+            return false;
+        }
+
+        state_->knownOperations.erase(pending->task.operationId);
+        state_->pending.erase(pending);
+        state_->changed.notify_all();
+        return true;
+    }
+
     void InstallScheduler::shutdown() noexcept
     {
         if (!state_)

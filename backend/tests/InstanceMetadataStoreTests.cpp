@@ -807,6 +807,14 @@ namespace fluxora::tests
             EXPECT_TRUE(sqliteTableExists(database, table)) << table;
         }
         EXPECT_EQ(sqliteIntScalar(database, "PRAGMA user_version;"), 12);
+        EXPECT_EQ(
+            sqliteIntScalar(
+                database,
+                "SELECT COUNT(*) FROM sqlite_master "
+                "WHERE type = 'index' "
+                "AND name = 'idx_mod_conflicts_mod_path_source' "
+                "AND sql LIKE '%mod_id, relative_path COLLATE NOCASE, source%';"),
+            1);
 
         const std::vector<InstalledModRecord> records =
             InstanceMetadataStore::listInstalledMods(project, mods);
@@ -1703,7 +1711,7 @@ namespace fluxora::tests
 #endif
     }
 
-    TEST(InstanceMetadataStoreTests, CurrentSchemaReopenSkipsSchemaDdlAndColumnProbes)
+    TEST(InstanceMetadataStoreTests, CurrentSchemaGameIdUsesValidatedEnsureCache)
     {
 #if !defined(_WIN32) || !defined(FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS)
         GTEST_SKIP() << "Persistent metadata counters are enabled for Windows metadata tests.";
@@ -1716,8 +1724,28 @@ namespace fluxora::tests
 
         EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
 
-        EXPECT_EQ(InstanceMetadataStore::sqlPrepareCountForTesting(), 2U);
-        EXPECT_EQ(InstanceMetadataStore::sqlExecCountForTesting(), 3U);
+        EXPECT_EQ(InstanceMetadataStore::sqlPrepareCountForTesting(), 0U);
+        EXPECT_EQ(InstanceMetadataStore::sqlExecCountForTesting(), 0U);
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, ProjectActivationCachesGameIdOnlyAfterSchemaValidation)
+    {
+#if !defined(_WIN32) || !defined(FLUXORA_INSTANCE_METADATA_SQL_TEST_HOOKS)
+        GTEST_SKIP() << "Persistent metadata counters are enabled for Windows metadata tests.";
+#else
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::beginProjectActivation(project);
+        InstanceMetadataStore::resetSqlPrepareCountForTesting();
+        InstanceMetadataStore::resetSqlExecCountForTesting();
+
+        EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
+        EXPECT_EQ(InstanceMetadataStore::gameId(project), L"skyrimse");
+
+        EXPECT_EQ(InstanceMetadataStore::sqlPrepareCountForTesting(), 0U);
+        EXPECT_EQ(InstanceMetadataStore::sqlExecCountForTesting(), 0U);
 #endif
     }
 
@@ -1929,12 +1957,16 @@ namespace fluxora::tests
         ASSERT_EQ(warmSummaries.size(), 2U);
 
         InstanceMetadataStore::resetSqlPrepareCountForTesting();
+        const auto summaryStartedAt = std::chrono::steady_clock::now();
         const std::vector<ModFileSummaryRecord> summaries =
             InstanceMetadataStore::summarizeInstalledModFiles(project, mods);
+        const auto summaryDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - summaryStartedAt);
         const std::uint64_t summaryPrepareCount =
             InstanceMetadataStore::sqlPrepareCountForTesting();
 
         EXPECT_LE(summaryPrepareCount, 32ULL);
+        EXPECT_LT(summaryDuration, std::chrono::milliseconds(500));
         const ModFileSummaryRecord* firstSummary = findSummary(summaries, L"Bulk Conflict A");
         const ModFileSummaryRecord* secondSummary = findSummary(summaries, L"Bulk Conflict B");
         ASSERT_NE(firstSummary, nullptr);
@@ -2015,6 +2047,88 @@ namespace fluxora::tests
         EXPECT_TRUE(
             InstanceMetadataStore::persistedInstalledModsSnapshot(project, mods).mods.empty());
         EXPECT_FALSE(std::filesystem::exists(installed / L".flow" / L"manifest.json"));
+#endif
+    }
+
+    TEST(InstanceMetadataStoreTests, CompletedPendingInstallIgnoresDelayedRebaseAcrossSeparator)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Pending install finalization uses the Windows SQLite metadata store.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        const std::filesystem::path project = temp.path() / L"Completed Rebase";
+        const std::filesystem::path mods = project / L"mods";
+        const std::filesystem::path first = mods / L"First Mod";
+        const std::filesystem::path second = mods / L"Second Mod";
+        const std::filesystem::path incoming = mods / L"Incoming Mod";
+        writeTextFile(first / L"Data" / L"First.esp", "first");
+        writeTextFile(second / L"Data" / L"Second.esp", "second");
+
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMods(
+            project,
+            {
+                InstalledModImportRecord{first, L"First Mod", {}, true, {}},
+                InstalledModImportRecord{second, L"Second Mod", {}, true, {}}
+            });
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"separator", {}, L"First Section"},
+                ProfileOrderImportItemRecord{L"mod", L"First Mod", {}},
+                ProfileOrderImportItemRecord{L"separator", {}, L"Second Section"},
+                ProfileOrderImportItemRecord{L"mod", L"Second Mod", {}}
+            });
+        const std::vector<ProfileOrderItemRecord> before =
+            InstanceMetadataStore::listCachedProfileOrderItems(project, L"Default", mods);
+        ASSERT_EQ(before.size(), 4U);
+        writeTextFile(incoming / L"Data" / L"Incoming.esp", "incoming");
+
+        InstanceMetadataStore::beginPendingInstallSession(
+            project,
+            L"op_completed_rebase",
+            L"Default",
+            InstallConflictPreviewMode::Install,
+            L"pending-install:op_completed_rebase",
+            {},
+            4,
+            before[3].id,
+            {});
+        static_cast<void>(InstanceMetadataStore::preparePendingInstallSession(
+            project,
+            L"op_completed_rebase",
+            {InstallConflictFile{L"Data/Incoming.esp", 8, L"1"}}));
+        const FinalizedPendingInstallRecord finalized =
+            InstanceMetadataStore::finalizePendingInstalledMod(
+                project,
+                L"op_completed_rebase",
+                incoming,
+                L"Incoming Mod",
+                L"1.0.0",
+                ModSourceRecord{L"local"});
+
+        const PendingInstallSessionRecord replay =
+            InstanceMetadataStore::rebasePendingInstallSession(
+                project,
+                L"op_completed_rebase",
+                before[0].id,
+                before[1].id,
+                1);
+        const std::vector<ProfileOrderItemRecord> after =
+            InstanceMetadataStore::listCachedProfileOrderItems(project, L"Default", mods);
+
+        EXPECT_EQ(replay.state, L"completed");
+        EXPECT_EQ(replay.finalOrderId, finalized.orderId);
+        EXPECT_EQ(replay.beforeOrderId, before[3].id);
+        EXPECT_TRUE(replay.afterOrderId.empty());
+        ASSERT_EQ(after.size(), 5U);
+        EXPECT_EQ(after[0].id, before[0].id);
+        EXPECT_EQ(after[1].id, before[1].id);
+        EXPECT_EQ(after[2].id, before[2].id);
+        EXPECT_EQ(after[3].id, before[3].id);
+        EXPECT_EQ(after[4].id, finalized.orderId);
 #endif
     }
 }

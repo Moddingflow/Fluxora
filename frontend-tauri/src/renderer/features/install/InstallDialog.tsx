@@ -706,12 +706,15 @@ export function InstallDialog({
   };
 
   const renderInstallDetecting = () => (
-    <div className="install-detecting-skeleton" role="status" aria-live="polite">
+    <div
+      className="install-simple install-detecting-skeleton"
+      role="status"
+      aria-live="polite"
+    >
       <span className="sr-only">Определяем тип установщика</span>
-      <div className="install-detecting-skeleton__content" aria-hidden="true">
-        <span className="workspace-skeleton install-detecting-skeleton__title" />
-        <span className="workspace-skeleton install-detecting-skeleton__line" />
-        <span className="workspace-skeleton install-detecting-skeleton__line install-detecting-skeleton__line--short" />
+      <div className="field install-name-field install-detecting-skeleton__field" aria-hidden="true">
+        <span className="workspace-skeleton install-detecting-skeleton__label" />
+        <span className="workspace-skeleton install-detecting-skeleton__input" />
       </div>
     </div>
   );
@@ -951,7 +954,7 @@ export function InstallDialog({
                 aria-hidden="true"
                 style={{ '--install-icon': `url("${installModIcon}")` } as InstallIconStyle}
               />
-              <strong>{dialogTitle}</strong>
+              <strong>Установка мода</strong>
             </div>
             <button
               className="icon-button"
@@ -979,9 +982,22 @@ export function InstallDialog({
             ) : null}
           </div>
 
-          {installDialog.phase === 'options' || installDialog.phase === 'error' ? (
-            <footer className="install-dialog-actions">
-              {installDialog.phase === 'options' ? (
+          {installDialog.phase === 'detecting' ||
+          installDialog.phase === 'options' ||
+          installDialog.phase === 'error' ? (
+            <footer
+              className={
+                installDialog.phase === 'detecting'
+                  ? 'install-dialog-actions install-dialog-actions--detecting'
+                  : 'install-dialog-actions'
+              }
+            >
+              {installDialog.phase === 'detecting' ? (
+                <span
+                  className="workspace-skeleton install-detecting-skeleton__action install-detecting-skeleton__action--details"
+                  aria-hidden="true"
+                />
+              ) : installDialog.phase === 'options' ? (
                 <button
                   className="tool-button"
                   type="button"
@@ -997,7 +1013,12 @@ export function InstallDialog({
                 <span />
               )}
               <div className="install-dialog-action-group">
-                {installDialog.phase === 'error' ? (
+                {installDialog.phase === 'detecting' ? (
+                  <span
+                    className="workspace-skeleton install-detecting-skeleton__action install-detecting-skeleton__action--install"
+                    aria-hidden="true"
+                  />
+                ) : installDialog.phase === 'error' ? (
                   <button
                     className="tool-button"
                     type="button"

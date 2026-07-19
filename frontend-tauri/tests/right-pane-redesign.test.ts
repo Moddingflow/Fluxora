@@ -129,8 +129,7 @@ describe('right pane redesign', () => {
     expect(app).toContain('window.fluxora.plugins.setAllEnabled');
     expect(app).toContain('window.fluxora.plugins.move');
     expect(app).toContain('window.fluxora.downloads.importFile');
-    expect(app).toContain('window.fluxora.downloads.install');
-    expect(app).toContain('window.fluxora.archives.install');
+    expect(app).toContain('window.fluxora.installs.submit');
     expect(app).toContain('window.fluxora.nxm.importInboundDownloads');
     expect(app).toContain('window.fluxora.shell.openPath');
     expect(app).toContain('window.fluxora.mods.getEffectiveFileTreeRoot');

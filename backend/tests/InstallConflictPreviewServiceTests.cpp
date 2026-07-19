@@ -304,5 +304,142 @@ namespace fluxora
             patchFor(aggregate, second.pendingOrderId).overwritesModIds,
             std::vector<std::wstring>{first.pendingOrderId});
     }
+
+    TEST(InstallConflictPreviewServiceTests, CompletedSessionIgnoresLateRebaseAfterParallelInstalls)
+    {
+        tests::TempDirectory temporary;
+        const std::filesystem::path project = temporary.path() / L"Project";
+        const std::filesystem::path alphaPath = project / L"mods" / L"Alpha";
+        const std::filesystem::path omegaPath = project / L"mods" / L"Omega";
+        tests::writeTextFile(alphaPath / L"alpha.txt", "alpha");
+        tests::writeTextFile(omegaPath / L"omega.txt", "omega");
+        InstanceMetadataStore::registerInstalledMod(
+            project,
+            alphaPath,
+            L"Alpha",
+            L"1.0",
+            ModSourceRecord{});
+        InstanceMetadataStore::registerInstalledMod(
+            project,
+            omegaPath,
+            L"Omega",
+            L"1.0",
+            ModSourceRecord{});
+
+        const std::vector<ProfileOrderItemRecord> initialOrder =
+            InstanceMetadataStore::listProfileOrderItems(project, L"Default");
+        ASSERT_EQ(initialOrder.size(), 2U);
+
+        InstallConflictSessionStartRequest first;
+        first.projectDirectory = project;
+        first.operationId = L"operation-first-completed";
+        first.profileName = L"Default";
+        first.pendingOrderId = L"pending-install:operation-first-completed";
+        first.mode = InstallConflictPreviewMode::Install;
+        first.targetIndex = 1;
+        first.beforeOrderId = initialOrder[0].id;
+        first.afterOrderId = initialOrder[1].id;
+        InstallConflictPreviewService::beginSession(first);
+
+        InstallConflictSessionStartRequest second = first;
+        second.operationId = L"operation-second-completed";
+        second.pendingOrderId = L"pending-install:operation-second-completed";
+        second.targetIndex = 2;
+        second.beforeOrderId = initialOrder[1].id;
+        second.afterOrderId.clear();
+        InstallConflictPreviewService::beginSession(second);
+
+        static_cast<void>(InstallConflictPreviewService::publishExactInventory(
+            project,
+            first.operationId,
+            {InstallConflictFile{L"first.txt"}}));
+        static_cast<void>(InstallConflictPreviewService::publishExactInventory(
+            project,
+            second.operationId,
+            {InstallConflictFile{L"second.txt"}}));
+
+        const std::filesystem::path firstPath = project / L"mods" / L"First";
+        const std::filesystem::path secondPath = project / L"mods" / L"Second";
+        tests::writeTextFile(firstPath / L"first.txt", "first");
+        tests::writeTextFile(secondPath / L"second.txt", "second");
+        const InstalledModRecord firstMod = InstanceMetadataStore::registerInstalledMod(
+            project,
+            firstPath,
+            L"First",
+            L"1.0",
+            ModSourceRecord{});
+        const std::vector<ProfileOrderItemRecord> orderWithFirst =
+            InstanceMetadataStore::listProfileOrderItems(project, L"Default");
+        const auto persistedFirstOrderItem = std::find_if(
+            orderWithFirst.begin(),
+            orderWithFirst.end(),
+            [&](const ProfileOrderItemRecord& row)
+            {
+                return row.hasMod && row.mod.uuid == firstMod.uuid;
+            });
+        ASSERT_NE(persistedFirstOrderItem, orderWithFirst.end());
+        static_cast<void>(InstallConflictPreviewService::completeSession(
+            project,
+            first.operationId,
+            persistedFirstOrderItem->id));
+
+        const InstalledModRecord secondMod = InstanceMetadataStore::registerInstalledMod(
+            project,
+            secondPath,
+            L"Second",
+            L"1.0",
+            ModSourceRecord{});
+        const std::vector<ProfileOrderItemRecord> orderWithSecond =
+            InstanceMetadataStore::listProfileOrderItems(project, L"Default");
+        const auto persistedSecondOrderItem = std::find_if(
+            orderWithSecond.begin(),
+            orderWithSecond.end(),
+            [&](const ProfileOrderItemRecord& row)
+            {
+                return row.hasMod && row.mod.uuid == secondMod.uuid;
+            });
+        ASSERT_NE(persistedSecondOrderItem, orderWithSecond.end());
+        static_cast<void>(InstallConflictPreviewService::completeSession(
+            project,
+            second.operationId,
+            persistedSecondOrderItem->id));
+
+        const PendingInstallSessionRecord committed =
+            InstanceMetadataStore::pendingInstallSession(project, first.operationId);
+        const std::vector<ProfileOrderItemRecord> committedOrder =
+            InstanceMetadataStore::listProfileOrderItems(project, L"Default");
+        std::vector<std::wstring> committedOrderIds;
+        std::transform(
+            committedOrder.begin(),
+            committedOrder.end(),
+            std::back_inserter(committedOrderIds),
+            [](const ProfileOrderItemRecord& row) { return row.id; });
+
+        const FluxoraInstallConflictSnapshot lateRebase =
+            InstallConflictPreviewService::rebase(
+                project,
+                first.operationId,
+                persistedSecondOrderItem->id,
+                {},
+                static_cast<int>(committedOrder.size()));
+
+        const PendingInstallSessionRecord afterLateRebase =
+            InstanceMetadataStore::pendingInstallSession(project, first.operationId);
+        const std::vector<ProfileOrderItemRecord> finalOrder =
+            InstanceMetadataStore::listProfileOrderItems(project, L"Default");
+        std::vector<std::wstring> finalOrderIds;
+        std::transform(
+            finalOrder.begin(),
+            finalOrder.end(),
+            std::back_inserter(finalOrderIds),
+            [](const ProfileOrderItemRecord& row) { return row.id; });
+
+        EXPECT_EQ(lateRebase.revision, committed.revision);
+        EXPECT_EQ(afterLateRebase.beforeOrderId, committed.beforeOrderId);
+        EXPECT_EQ(afterLateRebase.afterOrderId, committed.afterOrderId);
+        EXPECT_EQ(afterLateRebase.targetPosition, committed.targetPosition);
+        EXPECT_EQ(afterLateRebase.revision, committed.revision);
+        EXPECT_EQ(finalOrderIds, committedOrderIds);
+    }
 #endif
 }

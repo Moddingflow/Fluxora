@@ -199,6 +199,14 @@ namespace fluxora
     {
     }
 
+    void InstanceMetadataStore::withMetadataLockForTesting(const std::function<void()>& action)
+    {
+        if (action)
+        {
+            action();
+        }
+    }
+
     void InstanceMetadataStore::resetStableMetadataHandleOpenCountForTesting()
     {
     }
@@ -582,9 +590,47 @@ namespace fluxora
             std::uint64_t launchInventoryValidatedGeneration{0};
         };
 
+        struct ProjectGameIdCacheState
+        {
+            struct FileStamp
+            {
+                bool readable{false};
+                bool exists{false};
+                std::uintmax_t size{0};
+                std::filesystem::file_time_type writeTime{};
+
+                bool operator==(const FileStamp&) const = default;
+            };
+
+            struct DatabaseStamp
+            {
+                FileStamp database;
+                FileStamp wal;
+
+                bool operator==(const DatabaseStamp&) const = default;
+            };
+
+            std::wstring projectKey;
+            std::wstring gameId;
+            DatabaseStamp databaseStamp;
+            bool valid{false};
+        };
+
         FileCacheValidationState& fileCacheValidationState()
         {
             static FileCacheValidationState state;
+            return state;
+        }
+
+        std::mutex& projectGameIdCacheMutex()
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        ProjectGameIdCacheState& projectGameIdCacheState()
+        {
+            static ProjectGameIdCacheState state;
             return state;
         }
 
@@ -600,6 +646,90 @@ namespace fluxora
                     return static_cast<wchar_t>(std::towlower(character));
                 });
             return value;
+        }
+
+        ProjectGameIdCacheState::FileStamp projectGameIdFileStamp(
+            const std::filesystem::path& path)
+        {
+            ProjectGameIdCacheState::FileStamp stamp;
+            std::error_code error;
+            const bool exists = std::filesystem::exists(path, error);
+            if (!exists && error == std::errc::no_such_file_or_directory)
+            {
+                error.clear();
+            }
+            if (error)
+            {
+                return stamp;
+            }
+            if (!exists)
+            {
+                stamp.readable = true;
+                return stamp;
+            }
+            stamp.exists = std::filesystem::is_regular_file(path, error);
+            if (error || !stamp.exists)
+            {
+                return stamp;
+            }
+            if (stamp.exists)
+            {
+                stamp.size = std::filesystem::file_size(path, error);
+                if (error)
+                {
+                    return stamp;
+                }
+                stamp.writeTime = std::filesystem::last_write_time(path, error);
+                if (error)
+                {
+                    return stamp;
+                }
+            }
+            stamp.readable = true;
+            return stamp;
+        }
+
+        ProjectGameIdCacheState::DatabaseStamp projectGameIdDatabaseStamp(
+            const std::filesystem::path& projectDirectory)
+        {
+            const std::filesystem::path database = projectDirectory / L"instance.db";
+            return {
+                projectGameIdFileStamp(database),
+                projectGameIdFileStamp(database.wstring() + L"-wal")
+            };
+        }
+
+        std::optional<std::wstring> cachedProjectGameId(
+            const std::filesystem::path& projectDirectory)
+        {
+            const std::lock_guard cacheLock(projectGameIdCacheMutex());
+            const ProjectGameIdCacheState& state = projectGameIdCacheState();
+            if (!state.valid || state.projectKey != normalizedProjectKey(projectDirectory))
+            {
+                return std::nullopt;
+            }
+            const ProjectGameIdCacheState::DatabaseStamp currentStamp =
+                projectGameIdDatabaseStamp(projectDirectory);
+            if (
+                !currentStamp.database.readable ||
+                !currentStamp.wal.readable ||
+                currentStamp != state.databaseStamp)
+            {
+                return std::nullopt;
+            }
+            return state.gameId;
+        }
+
+        void cacheProjectGameId(
+            const std::filesystem::path& projectDirectory,
+            std::wstring gameId)
+        {
+            const std::lock_guard cacheLock(projectGameIdCacheMutex());
+            ProjectGameIdCacheState& state = projectGameIdCacheState();
+            state.projectKey = normalizedProjectKey(projectDirectory);
+            state.gameId = std::move(gameId);
+            state.databaseStamp = projectGameIdDatabaseStamp(projectDirectory);
+            state.valid = true;
         }
 
         void beginFileCacheActivationLocked(const std::filesystem::path& projectDirectory)
@@ -1949,6 +2079,9 @@ namespace fluxora
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_tags_tag ON mod_tags(tag COLLATE NOCASE);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_dependencies_target ON mod_dependencies(target_provider, target_mod_id, target_file_id);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_conflicts_path ON mod_conflicts(relative_path COLLATE NOCASE);");
+            database.exec(
+                "CREATE INDEX IF NOT EXISTS idx_mod_conflicts_mod_path_source "
+                "ON mod_conflicts(mod_id, relative_path COLLATE NOCASE, source);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_mod_install_history_mod ON mod_install_history(mod_id, created_at);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_archive_mod_links_sha ON archive_mod_links(archive_sha256, is_current);");
             database.exec("CREATE INDEX IF NOT EXISTS idx_archive_mod_links_mod ON archive_mod_links(mod_id, is_current);");
@@ -5109,29 +5242,45 @@ namespace fluxora
         std::wstring_view gameId)
     {
         const std::lock_guard metadataLock(metadataStoreMutex());
-
-        Database database = openInstanceDatabase(projectDirectory);
-
-        Transaction transaction(database);
-        if (readMetadataValue(database, L"created_at").empty())
+        std::wstring resolvedGameId;
         {
-            setMetadataValue(database, L"created_at", nowUtcText());
+            Database database = openInstanceDatabase(projectDirectory);
+
+            Transaction transaction(database);
+            if (readMetadataValue(database, L"created_at").empty())
+            {
+                setMetadataValue(database, L"created_at", nowUtcText());
+            }
+            setMetadataValue(database, L"schema_version", L"2");
+            if (!gameId.empty())
+            {
+                setMetadataValue(database, L"game_id", gameId);
+            }
+            resolvedGameId = gameId.empty()
+                ? readMetadataValue(database, L"game_id")
+                : std::wstring(gameId);
+            transaction.commit();
         }
-        setMetadataValue(database, L"schema_version", L"2");
-        if (!gameId.empty())
-        {
-            setMetadataValue(database, L"game_id", gameId);
-        }
-        transaction.commit();
+        // The cache carries a database/WAL stamp. It keeps path resolution out
+        // of the metadata commit lock while still invalidating when another
+        // process replaces, corrupts, or changes the schema database.
+        cacheProjectGameId(projectDirectory, std::move(resolvedGameId));
     }
 
     std::wstring InstanceMetadataStore::gameId(
         const std::filesystem::path& projectDirectory)
     {
+        if (const std::optional<std::wstring> cached = cachedProjectGameId(projectDirectory))
+        {
+            return *cached;
+        }
+
         const std::lock_guard metadataLock(metadataStoreMutex());
 
         Database database = openInstanceDatabase(projectDirectory);
-        return readMetadataValue(database, L"game_id");
+        std::wstring resolvedGameId = readMetadataValue(database, L"game_id");
+        cacheProjectGameId(projectDirectory, resolvedGameId);
+        return resolvedGameId;
     }
 
     void InstanceMetadataStore::beginProjectActivation(
@@ -5143,15 +5292,18 @@ namespace fluxora
         }
         const std::lock_guard metadataLock(metadataStoreMutex());
         const std::filesystem::path databasePath = instanceDatabasePath(projectDirectory);
+        std::wstring activeGameId;
         if (std::filesystem::is_regular_file(databasePath))
         {
             Database database = openInstanceDatabase(projectDirectory);
             database.exec("DELETE FROM archive_install_attempts;");
+            activeGameId = readMetadataValue(database, L"game_id");
         }
         // Reopening the same continuously watched project is not an uncovered
         // interval. A project switch (or a new process) advances the generation;
         // live watcher events invalidate affected durable rows directly.
         beginFileCacheActivationLocked(projectDirectory);
+        cacheProjectGameId(projectDirectory, std::move(activeGameId));
     }
 
     ArchiveBuildStatus InstanceMetadataStore::archiveBuildStatus(
@@ -5658,18 +5810,19 @@ namespace fluxora
             projectDirectory,
             operation,
             false);
-        current.beforeOrderId = trim(std::wstring(beforeOrderId));
-        current.afterOrderId = trim(std::wstring(afterOrderId));
-        current.targetPosition = fallbackTargetPosition;
-        const int targetPosition = resolvedInstallTargetPosition(database, current);
         if (current.state == L"failed")
         {
             throw std::runtime_error("The pending install session has failed.");
         }
         if (current.state == L"completed")
         {
-            moveCompletedPendingInstall(database, current, targetPosition);
+            return readPendingInstallSession(database, projectDirectory, operation, true);
         }
+
+        current.beforeOrderId = trim(std::wstring(beforeOrderId));
+        current.afterOrderId = trim(std::wstring(afterOrderId));
+        current.targetPosition = fallbackTargetPosition;
+        const int targetPosition = resolvedInstallTargetPosition(database, current);
 
         Statement update = database.prepare(
             "UPDATE pending_install_sessions SET target_position = ?, before_order_id = ?, "
@@ -6051,6 +6204,15 @@ namespace fluxora
     void InstanceMetadataStore::setPendingInstallFinalizeFailureForTesting(bool shouldFail)
     {
         pendingInstallFinalizeFailureForTesting.store(shouldFail, std::memory_order_relaxed);
+    }
+
+    void InstanceMetadataStore::withMetadataLockForTesting(const std::function<void()>& action)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+        if (action)
+        {
+            action();
+        }
     }
 
     void InstanceMetadataStore::resetStableMetadataHandleOpenCountForTesting()
@@ -8513,7 +8675,7 @@ namespace fluxora
             "FROM install_operations ";
         if (!includeTerminal)
         {
-            sql += "WHERE state NOT IN ('completed', 'failed', 'needsReview') ";
+            sql += "WHERE state NOT IN ('completed', 'failed', 'cancelled', 'needsReview') ";
         }
         sql += "ORDER BY enqueue_sequence, created_at, operation_id;";
         Statement statement = database.prepare(sql.c_str());

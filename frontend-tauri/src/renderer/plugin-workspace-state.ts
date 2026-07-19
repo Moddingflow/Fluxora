@@ -5,10 +5,12 @@ import type {
 } from '../shared/fluxora-api';
 import {
   isOrderItemHiddenByCollapsedSeparator,
+  orderItemMovePlan,
   orderItemNestedUnderSeparator,
   orderMoveBlockEnd,
   parentSeparatorForOrderItem,
   pruneCollapsedSeparators,
+  reorderOrderItemSelection,
   reorderOrderItems,
   separatorChildCount,
   targetIndexForOrderDrop,
@@ -16,6 +18,7 @@ import {
   visibleOrderItems,
   type OrderDropPlacement
 } from './order-list-state';
+import type { OrderItemMove } from './order-list-state';
 import {
   emptyOrderSelectionState,
   pruneOrderSelection,
@@ -445,6 +448,57 @@ export const reorderPluginOrderItems = (
 
   return reorderOrderItems(items, orderId, targetIndex, { separatorMoveMode: 'single' });
 };
+
+export const reorderPluginOrderItemSelection = (
+  items: FluxoraPluginOrderItem[],
+  sourceOrderId: string,
+  selectedOrderIds: ReadonlySet<string>,
+  targetOrderId: string,
+  placement: OrderDropPlacement = 'after',
+  collapsedSeparatorOrderIds: ReadonlySet<string> = new Set<string>()
+): FluxoraPluginOrderItem[] | null => {
+  const source = items.find((item) => item.orderId === sourceOrderId);
+  const movingItems = selectedOrderIds.has(sourceOrderId)
+    ? items.filter((item) => selectedOrderIds.has(item.orderId))
+    : source
+      ? [source]
+      : [];
+  if (movingItems.length === 0 || movingItems.some((item) => !canDragPluginOrderItem(items, item.orderId))) {
+    return null;
+  }
+
+  const reordered = reorderOrderItemSelection(
+    items,
+    sourceOrderId,
+    new Set(movingItems.map((item) => item.orderId)),
+    targetOrderId,
+    placement,
+    {
+      collapsedSeparatorOrderIds,
+      separatorDropTargets: source?.isSeparator === true ? 'separators' : 'all',
+      separatorMoveMode: 'single',
+      treatAfterSeparatorTargetAsBlock: source?.isSeparator === true
+    }
+  );
+  if (!reordered) {
+    return null;
+  }
+
+  const firstUnlockedTargetIndex = pluginOrderFirstUnlockedTargetIndex(items);
+  const movesPluginAboveLockedRows = movingItems.some(
+    (item) =>
+      item.isPlugin &&
+      reordered.findIndex((candidate) => candidate.orderId === item.orderId) < firstUnlockedTargetIndex
+  );
+  return movesPluginAboveLockedRows ? null : reordered;
+};
+
+export const pluginOrderItemMovePlan = (
+  items: FluxoraPluginOrderItem[],
+  desiredItems: FluxoraPluginOrderItem[],
+  movingOrderIds: ReadonlySet<string>
+): OrderItemMove[] | null =>
+  orderItemMovePlan(items, desiredItems, movingOrderIds, reorderPluginOrderItems);
 
 export const mergePendingPluginEnabledStates = (
   items: FluxoraPluginOrderItem[],

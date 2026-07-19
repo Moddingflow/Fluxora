@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -46,6 +47,7 @@ namespace fluxora
         std::wstring downloadSpeedText;
         bool isDownloading{false};
         bool hasKnownProgress{false};
+        bool hasResolvedFileName{true};
         bool canResume{false};
         bool canInstall{false};
         bool canDelete{true};
@@ -162,6 +164,10 @@ namespace fluxora
         // It deliberately runs on an install worker rather than the submit path.
         [[nodiscard]] std::wstring archiveFingerprint(
             const std::filesystem::path& archivePath) const;
+
+        [[nodiscard]] std::optional<InstalledMod> completedInstallResult(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view operationId) const;
 
         InstalledMod installDownload(
             const std::filesystem::path& projectDirectory,

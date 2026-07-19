@@ -1,7 +1,6 @@
 use keyring::Entry;
 use notify_debouncer_full::{
-    new_debouncer,
-    new_debouncer_opt,
+    new_debouncer, new_debouncer_opt,
     notify::{
         event::{CreateKind, ModifyKind, RemoveKind, RenameMode},
         Config, EventKind, RecommendedWatcher, RecursiveMode,
@@ -21,7 +20,7 @@ use std::sync::{
 };
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{
-    ipc::Response, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow,
+    ipc::Response, AppHandle, Emitter, Manager, UserAttentionType, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_dialog::{DialogExt, FilePath};
@@ -216,6 +215,8 @@ struct BridgeState {
     process: Mutex<BridgeProcess>,
     interactive_process: Mutex<BridgeProcess>,
     background_process: Mutex<BridgeProcess>,
+    download_process: Mutex<BridgeProcess>,
+    install_process: Mutex<BridgeProcess>,
 }
 
 #[derive(Clone)]
@@ -809,9 +810,9 @@ fn is_transient_downloads_watch_path(path: &Path) -> bool {
     }
 
     let lower = file_name.to_ascii_lowercase();
-    let is_compact_atomic_backup = lower
-        .strip_prefix(".fb")
-        .is_some_and(|token| token.len() == 8 && token.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    let is_compact_atomic_backup = lower.strip_prefix(".fb").is_some_and(|token| {
+        token.len() == 8 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+    });
     if matches!(lower.as_str(), ".ds_store" | "thumbs.db" | "desktop.ini")
         || is_compact_atomic_backup
     {
@@ -912,9 +913,9 @@ fn is_transient_build_content_path(path: &Path) -> bool {
     }
 
     let lower = file_name.to_ascii_lowercase();
-    let is_compact_atomic_backup = lower
-        .strip_prefix(".fb")
-        .is_some_and(|token| token.len() == 8 && token.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    let is_compact_atomic_backup = lower.strip_prefix(".fb").is_some_and(|token| {
+        token.len() == 8 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+    });
     if matches!(
         lower.as_str(),
         ".ds_store" | "thumbs.db" | "desktop.ini" | ".fluxora-mod.json"
@@ -1054,10 +1055,7 @@ fn build_content_reconciliation_changes(
     profiles_directory: &Path,
     game_data_directory: Option<&Path>,
 ) -> Vec<BuildContentChange> {
-    let mut roots = vec![
-        (mods_directory, "mods"),
-        (profiles_directory, "profile"),
-    ];
+    let mut roots = vec![(mods_directory, "mods"), (profiles_directory, "profile")];
     if let Some(game_data_directory) = game_data_directory {
         roots.push((game_data_directory, "game"));
     }
@@ -1236,20 +1234,43 @@ where
     links
 }
 
-fn should_request_activation_window_focus(window_is_focused: Option<bool>) -> bool {
-    window_is_focused != Some(true)
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ActivationFocusPolicy {
+    Preserve,
+    Request,
 }
 
-fn show_activation_window<R: tauri::Runtime>(window: &WebviewWindow<R>, unminimize: bool) {
-    if !should_request_activation_window_focus(window.is_focused().ok()) {
-        return;
-    }
+fn should_request_activation_window_focus(
+    window_is_focused: Option<bool>,
+    policy: ActivationFocusPolicy,
+) -> bool {
+    policy == ActivationFocusPolicy::Request && window_is_focused == Some(false)
+}
+
+fn present_activation_window<R: tauri::Runtime>(
+    window: &WebviewWindow<R>,
+    unminimize: bool,
+    focus_policy: ActivationFocusPolicy,
+) {
+    let focus_state = window.is_focused().ok();
 
     if unminimize {
         let _ = window.unminimize();
     }
     let _ = window.show();
-    let _ = window.set_focus();
+    if should_request_activation_window_focus(focus_state, focus_policy) {
+        let _ = window.set_focus();
+    } else if focus_policy == ActivationFocusPolicy::Preserve && focus_state != Some(true) {
+        let _ = window.request_user_attention(Some(UserAttentionType::Informational));
+    }
+}
+
+fn show_activation_window<R: tauri::Runtime>(window: &WebviewWindow<R>, unminimize: bool) {
+    present_activation_window(window, unminimize, ActivationFocusPolicy::Request);
+}
+
+fn show_background_activation_window<R: tauri::Runtime>(window: &WebviewWindow<R>) {
+    present_activation_window(window, true, ActivationFocusPolicy::Preserve);
 }
 
 fn handle_nxm_activation_args(app: AppHandle, args: Vec<String>, source: &'static str) {
@@ -1259,7 +1280,7 @@ fn handle_nxm_activation_args(app: AppHandle, args: Vec<String>, source: &'stati
     }
 
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        show_activation_window(&window, false);
+        show_background_activation_window(&window);
     }
 
     tauri::async_runtime::spawn(async move {
@@ -1282,13 +1303,27 @@ async fn queue_inbound_nxm_links(app: AppHandle, links: Vec<String>, source: &'s
         "links": links
     });
 
-    let result = {
+    let queue_started_at = Instant::now();
+    let (result, queue_wait_us) = {
         let state = bridge_state(&app);
-        let mut bridge = state.interactive_process.lock().await;
-        bridge
+        let mut bridge = state.process(BridgeLane::Download).lock().await;
+        let queue_wait_us = queue_started_at.elapsed().as_micros();
+        let result = bridge
             .request(&app, "nxm.captureLinks", params, request, BRIDGE_TIMEOUT_MS)
-            .await
+            .await;
+        (result, queue_wait_us)
     };
+    let queue_message =
+        bridge_queue_performance_message("nxm.captureLinks", queue_wait_us, BridgeLane::Download);
+    let _ = write_log(
+        &app,
+        "main-bridge",
+        "info",
+        "Performance",
+        &queue_message,
+        Some(&operation_id),
+    )
+    .await;
 
     match result {
         Ok(_) => {
@@ -3596,49 +3631,77 @@ enum BridgeLane {
     Main,
     Interactive,
     Background,
+    Download,
+    Install,
 }
 
 impl BridgeLane {
+    const ALL: [Self; 5] = [
+        Self::Main,
+        Self::Interactive,
+        Self::Background,
+        Self::Download,
+        Self::Install,
+    ];
+
     fn label(self) -> &'static str {
         match self {
             Self::Main => "main",
             Self::Interactive => "interactive",
             Self::Background => "background",
+            Self::Download => "download",
+            Self::Install => "install",
+        }
+    }
+}
+
+impl BridgeState {
+    fn process(&self, lane: BridgeLane) -> &Mutex<BridgeProcess> {
+        match lane {
+            BridgeLane::Main => &self.process,
+            BridgeLane::Interactive => &self.interactive_process,
+            BridgeLane::Background => &self.background_process,
+            BridgeLane::Download => &self.download_process,
+            BridgeLane::Install => &self.install_process,
         }
     }
 }
 
 fn bridge_lane_for_method(method: &str) -> BridgeLane {
     match method {
-        "mods.checkUpdates" => BridgeLane::Background,
-        "mods.getFileTree"
-        | "mods.getModDetailsContent"
-        | "mods.readTextFile"
-        | "mods.startNifPreview"
-        | "mods.prepareNifPreviewVariant"
-        | "mods.prepareNifPreviewTextures"
-        | "mods.listInstalled"
-        | "mods.deleteInstalled"
-        | "downloads.analyzeFomod"
-        | "downloads.planInstall"
-        | "downloads.analyzeContentLayout"
-        | "downloads.analyzeFomodContentLayout"
+        "mods.checkUpdates" | "nexus.connect" => BridgeLane::Background,
+        "nxm.captureLinks"
+        | "nxm.importInboundDownloads"
         | "downloads.cancel"
         | "downloads.delete"
         | "downloads.list"
-        | "downloads.resume"
+        | "downloads.resume" => BridgeLane::Download,
+        "downloads.analyzeFomod"
+        | "downloads.planInstall"
+        | "downloads.analyzeContentLayout"
+        | "downloads.analyzeFomodContentLayout"
         | "downloads.install"
         | "downloads.installFomod"
-        | "nxm.captureLinks"
-        | "nxm.importInboundDownloads"
         | "archives.install"
         | "archives.planInstall"
         | "archives.installFomod"
         | "installs.submit"
+        | "installs.cancel"
         | "installs.restore"
         | "installs.list"
-        | "installs.get"
-        | "nexus.connect"
+        | "installs.get" => BridgeLane::Install,
+        "profiles.previewTextFile"
+        | "mods.getFileTree"
+        | "mods.getModDetailsContent"
+        | "mods.getModConflictTree"
+        | "mods.getModDetailsSummary"
+        | "mods.getEffectiveFileTreeRoot"
+        | "mods.getEffectiveFileTreeChildren"
+        | "mods.readTextFile"
+        | "mods.previewTextFile"
+        | "mods.startNifPreview"
+        | "mods.prepareNifPreviewVariant"
+        | "mods.prepareNifPreviewTextures"
         | "textFiles.read" => BridgeLane::Interactive,
         _ => BridgeLane::Main,
     }
@@ -3677,7 +3740,10 @@ fn nif_preview_public_asset(asset_id: &str, prepared: &Value) -> Result<Value, S
     }))
 }
 
-fn nif_preview_asset_record(asset_id: String, prepared: &Value) -> Result<NifPreviewAssetRecord, String> {
+fn nif_preview_asset_record(
+    asset_id: String,
+    prepared: &Value,
+) -> Result<NifPreviewAssetRecord, String> {
     let public = nif_preview_public_asset(&asset_id, prepared)?;
     let resolved_path = PathBuf::from(nif_preview_required_string(prepared, "resolvedPath")?);
     if !resolved_path.is_absolute() {
@@ -3689,17 +3755,19 @@ fn nif_preview_asset_record(asset_id: String, prepared: &Value) -> Result<NifPre
         resolved_path,
         size: public["size"].as_u64().unwrap_or_default(),
         mime_type: public["mimeType"].as_str().unwrap_or_default().to_string(),
-        relative_path: public["relativePath"].as_str().unwrap_or_default().to_string(),
+        relative_path: public["relativePath"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
         source: public["source"].as_str().unwrap_or_default().to_string(),
-        content_key: public["contentKey"].as_str().unwrap_or_default().to_string(),
+        content_key: public["contentKey"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
-fn next_nif_preview_token(
-    state: &NifPreviewSessionState,
-    prefix: &str,
-    seed: &str,
-) -> String {
+fn next_nif_preview_token(state: &NifPreviewSessionState, prefix: &str, seed: &str) -> String {
     let sequence = state.sequence.fetch_add(1, Ordering::Relaxed);
     let digest = stable_label_suffix(&format!(
         "{}:{}:{}:{}",
@@ -3850,32 +3918,11 @@ async fn fluxora_bridge_request(
     let lane = bridge_lane_for_method(&method);
     let queue_started_at = Instant::now();
     let timeout_ms = timeout_ms.unwrap_or(BRIDGE_TIMEOUT_MS);
-    let (result, queue_wait_us) = match lane {
-        BridgeLane::Main => {
-            let mut bridge = state.process.lock().await;
-            let queue_wait_us = queue_started_at.elapsed().as_micros();
-            let result = bridge
-                .request(&app, &method, params, request, timeout_ms)
-                .await;
-            (result, queue_wait_us)
-        }
-        BridgeLane::Interactive => {
-            let mut bridge = state.interactive_process.lock().await;
-            let queue_wait_us = queue_started_at.elapsed().as_micros();
-            let result = bridge
-                .request(&app, &method, params, request, timeout_ms)
-                .await;
-            (result, queue_wait_us)
-        }
-        BridgeLane::Background => {
-            let mut bridge = state.background_process.lock().await;
-            let queue_wait_us = queue_started_at.elapsed().as_micros();
-            let result = bridge
-                .request(&app, &method, params, request, timeout_ms)
-                .await;
-            (result, queue_wait_us)
-        }
-    };
+    let mut bridge = state.process(lane).lock().await;
+    let queue_wait_us = queue_started_at.elapsed().as_micros();
+    let result = bridge
+        .request(&app, &method, params, request, timeout_ms)
+        .await;
 
     let log_app = app.clone();
     let log_method = method.clone();
@@ -3974,10 +4021,11 @@ async fn fluxora_start_nif_preview(
         total_bytes: 0,
         last_access_ms: now_millis(),
     };
-    let model_handle = register_nif_preview_assets(&state, &mut session, std::slice::from_ref(model))?
-        .into_iter()
-        .next()
-        .ok_or_else(|| "NIF preview model registration failed.".to_string())?;
+    let model_handle =
+        register_nif_preview_assets(&state, &mut session, std::slice::from_ref(model))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "NIF preview model registration failed.".to_string())?;
     let public_variants = session
         .variants
         .iter()
@@ -4063,14 +4111,10 @@ async fn fluxora_prepare_nif_preview_variant(
             .get_mut(&session_id)
             .ok_or_else(|| "NIF preview session ended while preparing a variant.".to_string())?;
         ensure_nif_preview_window(session, window.label())?;
-        let handle = register_nif_preview_assets(
-            &state,
-            session,
-            std::slice::from_ref(&prepared),
-        )?
-        .into_iter()
-        .next()
-        .ok_or_else(|| "NIF preview variant registration failed.".to_string())?;
+        let handle = register_nif_preview_assets(&state, session, std::slice::from_ref(&prepared))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "NIF preview variant registration failed.".to_string())?;
         session.active_index = variant_index;
         session.last_access_ms = now_millis();
         handle
@@ -4220,11 +4264,10 @@ async fn fluxora_read_nif_preview_asset_bytes(
             .get_mut(&session_id)
             .ok_or_else(|| "NIF preview session is missing or expired.".to_string())?;
         ensure_nif_preview_window(session, window.label())?;
-        let asset = session
-            .assets
-            .get(&asset_id)
-            .cloned()
-            .ok_or_else(|| "NIF preview asset token is invalid for this session.".to_string())?;
+        let asset =
+            session.assets.get(&asset_id).cloned().ok_or_else(|| {
+                "NIF preview asset token is invalid for this session.".to_string()
+            })?;
         session.last_access_ms = now_millis();
         (asset, session.operation_id.clone())
     };
@@ -4646,19 +4689,20 @@ async fn fluxora_shutdown_bridge(
     let request = request.unwrap_or(OperationRequest {
         operation_id: Some(operation_id(None, "bridge_shutdown")),
     });
-    let main_result = {
-        let mut bridge = state.process.lock().await;
-        bridge.shutdown(&app, request.clone()).await
-    };
-    let interactive_result = {
-        let mut bridge = state.interactive_process.lock().await;
-        bridge.shutdown(&app, request.clone()).await
-    };
-    let background_result = {
-        let mut bridge = state.background_process.lock().await;
-        bridge.shutdown(&app, request).await
-    };
-    main_result.and(interactive_result).and(background_result)
+    let mut first_error = None;
+    for lane in BridgeLane::ALL {
+        let result = {
+            let mut bridge = state.process(lane).lock().await;
+            bridge.shutdown(&app, request.clone()).await
+        };
+        if first_error.is_none() {
+            first_error = result.err();
+        }
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 fn process_watch_request(
@@ -4737,7 +4781,9 @@ async fn wait_for_native_process_exit(process_id: u32) -> process_platform::Nati
         .unwrap_or(process_platform::NativeExitWait::Unavailable)
 }
 
-async fn find_remaining_vfs_process(exited_process_id: u32) -> Option<process_platform::ProcessInfo> {
+async fn find_remaining_vfs_process(
+    exited_process_id: u32,
+) -> Option<process_platform::ProcessInfo> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let spawn_result = std::thread::Builder::new()
         .name("fluxora-vfs-process-probe".to_string())
@@ -5634,8 +5680,7 @@ async fn fluxora_downloads_watch_folder(
     }
 
     let state = app.state::<DownloadsFolderWatchState>();
-    let watcher_generation =
-        reserve_build_content_watch_generation(&state.requested_generation);
+    let watcher_generation = reserve_build_content_watch_generation(&state.requested_generation);
     let active_generation = state.generation.clone();
     let sequence = state.sequence.clone();
     let app_for_events = app.clone();
@@ -5665,10 +5710,7 @@ async fn fluxora_downloads_watch_folder(
         .map_err(|error| error.to_string())?;
 
     let mut active = state.active.lock().await;
-    if !build_content_watch_install_is_current(
-        &state.requested_generation,
-        watcher_generation,
-    ) {
+    if !build_content_watch_install_is_current(&state.requested_generation, watcher_generation) {
         drop(active);
         debouncer.stop_nonblocking();
         return Ok(DownloadsFolderWatchResult {
@@ -5719,8 +5761,7 @@ async fn fluxora_downloads_unwatch_folder(
     let request = downloads_watch_request(request, "downloads_unwatch_folder");
     let operation_id = operation_id(Some(&request), "downloads_unwatch_folder");
     let state = app.state::<DownloadsFolderWatchState>();
-    let stopped_generation =
-        reserve_build_content_watch_generation(&state.requested_generation);
+    let stopped_generation = reserve_build_content_watch_generation(&state.requested_generation);
     state.generation.store(stopped_generation, Ordering::SeqCst);
 
     let mut active = state.active.lock().await;
@@ -5829,8 +5870,7 @@ async fn fluxora_build_content_watch(
     }
 
     let state = app.state::<BuildContentWatchState>();
-    let watcher_generation =
-        reserve_build_content_watch_generation(&state.requested_generation);
+    let watcher_generation = reserve_build_content_watch_generation(&state.requested_generation);
     let active_generation = state.generation.clone();
     let event_context = BuildContentWatchEventContext {
         app: app.clone(),
@@ -5849,10 +5889,7 @@ async fn fluxora_build_content_watch(
         Duration::from_millis(BUILD_CONTENT_WATCH_DEBOUNCE_MS),
         None,
         move |result: DebounceEventResult| {
-            if !build_content_watch_generation_is_current(
-                &active_generation,
-                watcher_generation,
-            ) {
+            if !build_content_watch_generation_is_current(&active_generation, watcher_generation) {
                 return;
             }
             emit_build_content_watch_result(&event_context, result);
@@ -5876,10 +5913,7 @@ async fn fluxora_build_content_watch(
     }
 
     let mut active = state.active.lock().await;
-    if !build_content_watch_install_is_current(
-        &state.requested_generation,
-        watcher_generation,
-    ) {
+    if !build_content_watch_install_is_current(&state.requested_generation, watcher_generation) {
         drop(active);
         debouncer.stop_nonblocking();
         return Ok(BuildContentWatchResult {
@@ -5940,8 +5974,7 @@ async fn fluxora_build_content_unwatch(
     let operation = build_content_watch_request(operation, "build_content_unwatch");
     let operation_id = operation_id(Some(&operation), "build_content_unwatch");
     let state = app.state::<BuildContentWatchState>();
-    let stopped_generation =
-        reserve_build_content_watch_generation(&state.requested_generation);
+    let stopped_generation = reserve_build_content_watch_generation(&state.requested_generation);
     state.generation.store(stopped_generation, Ordering::SeqCst);
 
     let mut active = state.active.lock().await;
@@ -6018,9 +6051,8 @@ pub fn run() {
             handle_nxm_activation_args(app.clone(), std::env::args().collect(), "startup");
             let cleanup_app = app.clone();
             tauri::async_runtime::spawn(async move {
-                let mut interval = tokio::time::interval(Duration::from_millis(
-                    NIF_PREVIEW_CLEANUP_INTERVAL_MS,
-                ));
+                let mut interval =
+                    tokio::time::interval(Duration::from_millis(NIF_PREVIEW_CLEANUP_INTERVAL_MS));
                 loop {
                     interval.tick().await;
                     let state = cleanup_app.state::<NifPreviewSessionState>();
@@ -6059,6 +6091,9 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if matches!(event, WindowEvent::Focused(true)) {
+                let _ = window.request_user_attention(None);
+            }
             if !matches!(
                 event,
                 WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
@@ -6135,6 +6170,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
     use std::env;
     use std::ffi::{OsStr, OsString};
     use std::fs;
@@ -6427,10 +6463,29 @@ mod tests {
     }
 
     #[test]
-    fn activation_focus_is_requested_only_when_the_window_is_not_confirmed_focused() {
-        assert!(!should_request_activation_window_focus(Some(true)));
-        assert!(should_request_activation_window_focus(Some(false)));
-        assert!(should_request_activation_window_focus(None));
+    fn background_protocol_activation_never_forces_foreground_focus() {
+        for focus_state in [Some(true), Some(false), None] {
+            assert!(!should_request_activation_window_focus(
+                focus_state,
+                ActivationFocusPolicy::Preserve
+            ));
+        }
+    }
+
+    #[test]
+    fn explicit_window_activation_focuses_only_when_confirmed_unfocused() {
+        assert!(!should_request_activation_window_focus(
+            Some(true),
+            ActivationFocusPolicy::Request
+        ));
+        assert!(should_request_activation_window_focus(
+            Some(false),
+            ActivationFocusPolicy::Request
+        ));
+        assert!(!should_request_activation_window_focus(
+            None,
+            ActivationFocusPolicy::Request
+        ));
     }
 
     #[test]
@@ -6588,12 +6643,8 @@ mod tests {
                 .to_string()
         );
 
-        let generated_only = build_content_changes(
-            vec![generated_manifest],
-            mods,
-            profiles,
-            NO_GAME_DATA,
-        );
+        let generated_only =
+            build_content_changes(vec![generated_manifest], mods, profiles, NO_GAME_DATA);
         assert!(generated_only.is_empty());
     }
 
@@ -6889,6 +6940,147 @@ mod tests {
             ),
             "bridgeQueue lane=interactive method=mods.getModDetailsContent queueWaitUs=12345"
         );
+        assert_eq!(
+            bridge_queue_performance_message("downloads.list", 12, BridgeLane::Download),
+            "bridgeQueue lane=download method=downloads.list queueWaitUs=12"
+        );
+        assert_eq!(
+            bridge_queue_performance_message("installs.submit", 34, BridgeLane::Install),
+            "bridgeQueue lane=install method=installs.submit queueWaitUs=34"
+        );
+    }
+
+    #[test]
+    fn bridge_routing_covers_every_native_method() {
+        let expected = [
+            ("system.handshake", BridgeLane::Main),
+            ("system.initialize", BridgeLane::Main),
+            ("system.getCapabilities", BridgeLane::Main),
+            ("system.getCoreStatus", BridgeLane::Main),
+            ("settings.getLanguage", BridgeLane::Main),
+            ("settings.setLanguage", BridgeLane::Main),
+            ("settings.getTheme", BridgeLane::Main),
+            ("settings.setTheme", BridgeLane::Main),
+            ("templates.list", BridgeLane::Main),
+            ("templates.resolve", BridgeLane::Main),
+            ("projects.previewDirectory", BridgeLane::Main),
+            ("projects.create", BridgeLane::Main),
+            ("projects.listConfigs", BridgeLane::Main),
+            ("projects.openConfig", BridgeLane::Main),
+            ("projects.rename", BridgeLane::Main),
+            ("projects.delete", BridgeLane::Main),
+            ("buildPaths.get", BridgeLane::Main),
+            ("buildPaths.save", BridgeLane::Main),
+            ("build.prepareWorkspaceIndexes", BridgeLane::Main),
+            ("fluxPack.export", BridgeLane::Main),
+            ("fluxPack.inspect", BridgeLane::Main),
+            ("fluxPack.planInstall", BridgeLane::Main),
+            ("fluxPack.install", BridgeLane::Main),
+            ("profiles.list", BridgeLane::Main),
+            ("profiles.previewTextFile", BridgeLane::Interactive),
+            ("profiles.create", BridgeLane::Main),
+            ("profiles.clone", BridgeLane::Main),
+            ("profiles.rename", BridgeLane::Main),
+            ("profiles.delete", BridgeLane::Main),
+            ("executables.list", BridgeLane::Main),
+            ("executables.save", BridgeLane::Main),
+            ("executables.launch", BridgeLane::Main),
+            ("executables.getIcon", BridgeLane::Main),
+            ("mods.listInstalled", BridgeLane::Main),
+            ("mods.getWorkspace", BridgeLane::Main),
+            ("mods.getPersistedWorkspace", BridgeLane::Main),
+            ("mods.invalidateFileCaches", BridgeLane::Main),
+            ("mods.getOrder", BridgeLane::Main),
+            ("mods.createSeparator", BridgeLane::Main),
+            ("mods.deleteSeparator", BridgeLane::Main),
+            ("mods.moveOrderItem", BridgeLane::Main),
+            ("mods.rebasePendingInstall", BridgeLane::Main),
+            ("mods.deleteInstalled", BridgeLane::Main),
+            ("mods.createEmpty", BridgeLane::Main),
+            ("mods.setEnabled", BridgeLane::Main),
+            ("mods.setAllEnabled", BridgeLane::Main),
+            ("mods.checkUpdates", BridgeLane::Background),
+            ("mods.clearOverwrite", BridgeLane::Main),
+            ("grassCache.generate", BridgeLane::Main),
+            ("mods.getFileTree", BridgeLane::Interactive),
+            ("mods.getModDetailsContent", BridgeLane::Interactive),
+            ("mods.getModConflictTree", BridgeLane::Interactive),
+            ("mods.getModDetailsSummary", BridgeLane::Interactive),
+            ("mods.getEffectiveFileTree", BridgeLane::Main),
+            ("mods.getEffectiveFileTreeRoot", BridgeLane::Interactive),
+            ("mods.getEffectiveFileTreeChildren", BridgeLane::Interactive),
+            ("mods.startNifPreview", BridgeLane::Interactive),
+            ("mods.prepareNifPreviewVariant", BridgeLane::Interactive),
+            ("mods.prepareNifPreviewTextures", BridgeLane::Interactive),
+            ("mods.readTextFile", BridgeLane::Interactive),
+            ("mods.previewTextFile", BridgeLane::Interactive),
+            ("mods.saveTextFile", BridgeLane::Main),
+            ("textFiles.read", BridgeLane::Interactive),
+            ("textFiles.save", BridgeLane::Main),
+            ("plugins.list", BridgeLane::Main),
+            ("plugins.listPersisted", BridgeLane::Main),
+            ("plugins.move", BridgeLane::Main),
+            ("plugins.createSeparator", BridgeLane::Main),
+            ("plugins.deleteSeparator", BridgeLane::Main),
+            ("plugins.setEnabled", BridgeLane::Main),
+            ("plugins.setAllEnabled", BridgeLane::Main),
+            ("nexus.getAuthStatus", BridgeLane::Main),
+            ("nexus.getApiAuthHeader", BridgeLane::Main),
+            ("apiLimits.list", BridgeLane::Main),
+            ("nexus.connect", BridgeLane::Background),
+            ("nexus.connectWithApiKey", BridgeLane::Main),
+            ("nexus.disconnect", BridgeLane::Main),
+            ("transfer.analyzeMo2", BridgeLane::Main),
+            ("transfer.importMo2", BridgeLane::Main),
+            ("nxm.registerProtocol", BridgeLane::Main),
+            ("nxm.captureLinks", BridgeLane::Download),
+            ("nxm.importInboundDownloads", BridgeLane::Download),
+            ("downloads.list", BridgeLane::Download),
+            ("downloads.importFile", BridgeLane::Main),
+            ("downloads.delete", BridgeLane::Download),
+            ("downloads.cancel", BridgeLane::Download),
+            ("downloads.resume", BridgeLane::Download),
+            ("downloads.analyzeContentLayout", BridgeLane::Install),
+            ("downloads.planInstall", BridgeLane::Install),
+            ("downloads.analyzeFomod", BridgeLane::Install),
+            ("downloads.analyzeFomodContentLayout", BridgeLane::Install),
+            ("installs.submit", BridgeLane::Install),
+            ("installs.cancel", BridgeLane::Install),
+            ("installs.restore", BridgeLane::Install),
+            ("installs.list", BridgeLane::Install),
+            ("installs.get", BridgeLane::Install),
+            ("downloads.install", BridgeLane::Install),
+            ("downloads.installFomod", BridgeLane::Install),
+            ("archives.install", BridgeLane::Install),
+            ("archives.planInstall", BridgeLane::Install),
+            ("archives.installFomod", BridgeLane::Install),
+            ("operations.setContext", BridgeLane::Main),
+            ("operations.clearContext", BridgeLane::Main),
+            ("operations.cancel", BridgeLane::Main),
+            ("system.shutdown", BridgeLane::Main),
+        ];
+
+        let expected_methods = expected
+            .iter()
+            .map(|(method, _)| *method)
+            .collect::<BTreeSet<_>>();
+        let native_methods = include_str!("../../../backend/src/BridgeHost/FluxoraBridgeHost.cpp")
+            .lines()
+            .filter_map(|line| {
+                line.split_once("request.method == L\"")
+                    .map(|(_, rest)| rest)
+            })
+            .filter_map(|rest| rest.split_once('"').map(|(method, _)| method))
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(native_methods, expected_methods);
+        for (method, expected_lane) in expected {
+            assert_eq!(
+                bridge_lane_for_method(method),
+                expected_lane,
+                "unexpected bridge lane for {method}"
+            );
+        }
     }
 
     #[test]
@@ -6903,17 +7095,16 @@ mod tests {
     }
 
     #[test]
-    fn nexus_oauth_uses_the_interactive_bridge_lane() {
+    fn long_running_nexus_oauth_uses_the_background_bridge_lane() {
         assert_eq!(
             bridge_lane_for_method("nexus.connect"),
-            BridgeLane::Interactive
+            BridgeLane::Background
         );
     }
 
     #[test]
-    fn install_preflight_and_mutations_use_the_interactive_bridge_lane() {
+    fn install_preflight_and_mutations_use_one_install_bridge_host() {
         for method in [
-            "mods.listInstalled",
             "downloads.analyzeFomod",
             "downloads.planInstall",
             "downloads.analyzeContentLayout",
@@ -6923,20 +7114,26 @@ mod tests {
             "archives.install",
             "archives.planInstall",
             "archives.installFomod",
+            "installs.submit",
+            "installs.cancel",
+            "installs.restore",
+            "installs.list",
+            "installs.get",
         ] {
-            assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);
+            assert_eq!(bridge_lane_for_method(method), BridgeLane::Install);
         }
     }
 
     #[test]
-    fn delete_mutations_use_the_interactive_bridge_lane() {
-        for method in ["mods.deleteInstalled", "downloads.delete"] {
-            assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);
-        }
+    fn destructive_installed_mod_delete_stays_on_the_main_bridge_lane() {
+        assert_eq!(
+            bridge_lane_for_method("mods.deleteInstalled"),
+            BridgeLane::Main
+        );
     }
 
     #[test]
-    fn nexus_download_lifecycle_uses_one_interactive_bridge_host() {
+    fn nexus_download_lifecycle_uses_one_download_bridge_host() {
         for method in [
             "nxm.captureLinks",
             "nxm.importInboundDownloads",
@@ -6945,7 +7142,7 @@ mod tests {
             "downloads.resume",
             "downloads.delete",
         ] {
-            assert_eq!(bridge_lane_for_method(method), BridgeLane::Interactive);
+            assert_eq!(bridge_lane_for_method(method), BridgeLane::Download);
         }
     }
 
@@ -7016,7 +7213,10 @@ mod tests {
 
         session.last_access_ms = now_millis().saturating_sub(NIF_PREVIEW_IDLE_TIMEOUT_MS + 1);
         let mut sessions = HashMap::from([("session".to_string(), session)]);
-        assert_eq!(purge_expired_nif_preview_sessions(&mut sessions, now_millis()), 1);
+        assert_eq!(
+            purge_expired_nif_preview_sessions(&mut sessions, now_millis()),
+            1
+        );
         assert!(sessions.is_empty());
     }
 
@@ -7095,6 +7295,71 @@ mod tests {
 
             assert!(background_lane.is_ok());
         });
+    }
+
+    #[test]
+    fn download_bridge_lane_does_not_wait_for_install_or_main_lane_locks() {
+        tauri::async_runtime::block_on(async {
+            let state = BridgeState::default();
+            let _main_lane = state.process.lock().await;
+            let _install_lane = state.install_process.lock().await;
+            let download_lane =
+                timeout(Duration::from_millis(50), state.download_process.lock()).await;
+
+            assert!(download_lane.is_ok());
+        });
+    }
+
+    #[test]
+    fn restarting_one_bridge_lane_preserves_other_host_sessions() {
+        tauri::async_runtime::block_on(async {
+            let state = BridgeState::default();
+            state.process(BridgeLane::Main).lock().await.handshake = Some(json!({
+                "host": "main"
+            }));
+            state.process(BridgeLane::Install).lock().await.handshake = Some(json!({
+                "host": "install"
+            }));
+            state.process(BridgeLane::Download).lock().await.handshake = Some(json!({
+                "host": "download"
+            }));
+
+            state
+                .process(BridgeLane::Download)
+                .lock()
+                .await
+                .reset()
+                .await;
+
+            assert!(state
+                .process(BridgeLane::Download)
+                .lock()
+                .await
+                .handshake
+                .is_none());
+            assert_eq!(
+                state.process(BridgeLane::Install).lock().await.handshake,
+                Some(json!({ "host": "install" }))
+            );
+            assert_eq!(
+                state.process(BridgeLane::Main).lock().await.handshake,
+                Some(json!({ "host": "main" }))
+            );
+        });
+    }
+
+    #[test]
+    fn bridge_lifecycle_enumerates_every_independent_host() {
+        assert_eq!(
+            BridgeLane::ALL,
+            [
+                BridgeLane::Main,
+                BridgeLane::Interactive,
+                BridgeLane::Background,
+                BridgeLane::Download,
+                BridgeLane::Install,
+            ]
+        );
     }
 
     #[cfg(windows)]

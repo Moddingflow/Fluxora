@@ -58,6 +58,52 @@ namespace fluxora
         EXPECT_EQ(resolution.suggestedModName, L"Imperial Forts Remake PBR Lod Helper");
     }
 
+    TEST(ModIdentityResolverTests, AmbiguousSameSourceUsesContentToSelectTheBaseUpdate)
+    {
+        ModIdentityInput incoming;
+        incoming.displayName = L"Dynamic Footprints Skse BASE v3.0";
+        incoming.source = {L"nexus", L"skyrimspecialedition", L"175254", L"766239"};
+        incoming.content.scriptExtenderDlls = {L"NMN_DynamicFootprints.dll"};
+
+        ModIdentityCandidate base;
+        base.target = {
+            L"dynamic-footprints-base",
+            L"Dynamic Footprints Skse",
+            L"Dynamic Footprints Skse"
+        };
+        base.source = {L"nexus", L"skyrimspecialedition", L"175254", L"745065"};
+        base.content.scriptExtenderDlls = {L"NMN_DynamicFootprints.dll"};
+
+        ModIdentityCandidate previousSeparateInstall;
+        previousSeparateInstall.target = {
+            L"dynamic-footprints-tomatoes",
+            L"DynamicFootprintsSkse Tomato's",
+            L"DynamicFootprintsSkse Tomato's"
+        };
+        previousSeparateInstall.source = {
+            L"nexus",
+            L"skyrimspecialedition",
+            L"175254",
+            L"745077"
+        };
+        previousSeparateInstall.content.pluginFiles = {L"NMN_DynamicFootprints.esp"};
+
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {base, previousSeparateInstall});
+
+        ASSERT_TRUE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(resolution.matchedTarget->modUuid, L"dynamic-footprints-base");
+        EXPECT_EQ(resolution.suggestedModName, L"Dynamic Footprints Skse");
+        EXPECT_NE(
+            std::find(
+                resolution.evidenceCodes.begin(),
+                resolution.evidenceCodes.end(),
+                L"content.skse-dll"),
+            resolution.evidenceCodes.end());
+    }
+
     TEST(ModIdentityResolverTests, SelectsExactWidescreenVariantAmongSamePageFiles)
     {
         ModIdentityInput incoming;
@@ -403,6 +449,69 @@ namespace fluxora
             });
         ASSERT_TRUE(validated.matchedTarget.has_value());
         EXPECT_EQ(validated.matchedTarget->displayName, L"Spell Perks Item Distributor");
+#endif
+    }
+
+    TEST(ModIdentityResolverTests, InstallPlanInspectsContentBeforeChoosingAmongSamePageFiles)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        tests::TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path mods = project / L"mods";
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+
+        const std::filesystem::path basePath = mods / L"Dynamic Footprints Skse";
+        tests::writeTextFile(
+            basePath / L"SKSE" / L"Plugins" / L"NMN_DynamicFootprints.dll",
+            "plugin");
+        const InstalledModRecord base = InstanceMetadataStore::registerInstalledMod(
+            project,
+            basePath,
+            L"Dynamic Footprints Skse",
+            L"2.3",
+            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"175254", L"745065"});
+
+        const std::filesystem::path addonPath = mods / L"DynamicFootprintsSkse Tomato's";
+        tests::writeTextFile(
+            addonPath / L"NMN_DynamicFootprints.esp",
+            "plugin");
+        (void)InstanceMetadataStore::registerInstalledMod(
+            project,
+            addonPath,
+            L"DynamicFootprintsSkse Tomato's",
+            L"2.3",
+            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"175254", L"745077"});
+
+        bool contentWasInspected = false;
+        ModIdentityPlanRequest request;
+        request.projectDirectory = project;
+        request.archiveFingerprint = L"dynamic-footprints-base-3.0";
+        request.input.displayName = L"Dynamic Footprints Skse BASE v3.0";
+        request.input.folderName = request.input.displayName;
+        request.input.source = {
+            L"nexus",
+            L"skyrimspecialedition",
+            L"175254",
+            L"766239"
+        };
+        request.loadIncomingContent = [&contentWasInspected]()
+        {
+            contentWasInspected = true;
+            ModIdentityContentAnchors content;
+            content.scriptExtenderDlls = {L"NMN_DynamicFootprints.dll"};
+            return content;
+        };
+
+        const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(
+            std::move(request));
+
+        EXPECT_TRUE(contentWasInspected);
+        ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(plan.matchedTarget->modUuid, base.uuid);
+        EXPECT_EQ(plan.suggestedModName, L"Dynamic Footprints Skse");
 #endif
     }
 

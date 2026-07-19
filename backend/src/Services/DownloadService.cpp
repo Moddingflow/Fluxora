@@ -3623,6 +3623,7 @@ namespace fluxora
             }
 
             std::wstring fileName = path.filename().wstring();
+            bool hasResolvedFileName = !isPending;
             if (isPending)
             {
                 const std::wstring destinationFileName =
@@ -3630,6 +3631,7 @@ namespace fluxora
                 if (!destinationFileName.empty())
                 {
                     fileName = destinationFileName;
+                    hasResolvedFileName = true;
                 }
             }
             const std::wstring stem = path.stem().wstring();
@@ -3721,6 +3723,7 @@ namespace fluxora
             entry.downloadSpeedText = shouldShowProgress ? formatDownloadSpeed(metadata) : std::wstring();
             entry.isDownloading = metadata.isDownloading;
             entry.hasKnownProgress = hasKnownProgress;
+            entry.hasResolvedFileName = hasResolvedFileName;
             entry.canResume = canResume;
             entry.canInstall = !isPending && !metadata.isDownloading;
             entry.canDelete = !metadata.isDownloading;
@@ -8003,6 +8006,7 @@ namespace fluxora
             {
                 finalizationMetadata.identity = installIdentityUpdate(*identity, installName);
             }
+            const auto finalizationStartedAt = std::chrono::steady_clock::now();
             FinalizedPendingInstallRecord finalized =
                 InstanceMetadataStore::finalizePendingInstalledMod(
                 projectDirectory,
@@ -8012,6 +8016,15 @@ namespace fluxora
                 detectedVersion,
                 source,
                 finalizationMetadata);
+            const auto finalizationDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - finalizationStartedAt);
+            logger.writeOperation(
+                LogLevel::Info,
+                "InstallFinalization",
+                std::string("durationMs=") + std::to_string(finalizationDuration.count()) +
+                    ", fileCount=" + std::to_string(finalized.summary.fileCount) +
+                    ", conflictCount=" +
+                    std::to_string(finalized.summary.conflictingFileCount) + ".");
             InstalledModRecord record = finalized.mod;
             archiveAttempt.commit();
             conflictSession.completed(finalized);
@@ -8412,6 +8425,7 @@ namespace fluxora
             {
                 finalizationMetadata.identity = installIdentityUpdate(*identity, installName);
             }
+            const auto finalizationStartedAt = std::chrono::steady_clock::now();
             FinalizedPendingInstallRecord finalized =
                 InstanceMetadataStore::finalizePendingInstalledMod(
                 projectDirectory,
@@ -8421,6 +8435,15 @@ namespace fluxora
                 detectedVersion,
                 source,
                 finalizationMetadata);
+            const auto finalizationDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - finalizationStartedAt);
+            logger.writeOperation(
+                LogLevel::Info,
+                "InstallFinalization",
+                std::string("durationMs=") + std::to_string(finalizationDuration.count()) +
+                    ", fileCount=" + std::to_string(finalized.summary.fileCount) +
+                    ", conflictCount=" +
+                    std::to_string(finalized.summary.conflictingFileCount) + ".");
             InstalledModRecord record = finalized.mod;
             archiveAttempt.commit();
             conflictSession.completed(finalized);
@@ -9101,6 +9124,7 @@ namespace fluxora
         }
 
         NexusDownloadedFile downloadNxm(
+            Logger& logger,
             const std::filesystem::path& directory,
             const NxmDownloadRequest& request,
             NexusModsAuthService* nexusAuth,
@@ -9110,6 +9134,7 @@ namespace fluxora
         {
             ActiveDownloadRegistration activeDownload(progressPath);
             NexusDownloadedFile result;
+            const auto preflightStartedAt = std::chrono::steady_clock::now();
 
             const auto throwIfCancellationRequested = [&]()
             {
@@ -9119,9 +9144,6 @@ namespace fluxora
                 }
             };
 
-            progressMetadata.status = L"Ожидает свободный слот";
-            progressMetadata.isDownloading = true;
-            writeMetadata(progressPath, progressMetadata);
 #ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
             NexusDownloadBeforeAcquireHook beforeAcquireHook;
             NexusArchiveTransferHook transferHook;
@@ -9130,6 +9152,81 @@ namespace fluxora
                 beforeAcquireHook = nexusDownloadBeforeAcquireHook;
                 transferHook = nexusArchiveTransferHook;
             }
+
+            if (transferHook)
+            {
+                result.nexusModName = L"Nexus transfer fixture";
+                result.version = L"1.0.0";
+                result.latestVersion = result.version;
+                progressMetadata.nexusModName = result.nexusModName;
+                progressMetadata.version = result.version;
+                progressMetadata.latestVersion = result.latestVersion;
+                progressMetadata.destinationFileName =
+                    L"nexus-fixture-" + request.fileId + L".zip";
+            }
+#endif
+            std::wstring authHeader;
+            NexusFileInfo fileInfo;
+#ifndef _WIN32
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+            if (!transferHook)
+#endif
+            {
+                throw std::runtime_error("Nexus downloads are currently implemented for Windows builds.");
+            }
+#else
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+            if (nexusAuth != nullptr)
+            {
+                authHeader = nexusRequestHeaders(nexusAuth);
+            }
+#endif
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+            if (!transferHook)
+#endif
+            {
+                if (authHeader.empty())
+                {
+                    authHeader = nexusRequestHeaders(nexusAuth);
+                }
+                result.nexusModName = fetchNexusModName(request, authHeader);
+                throwIfCancellationRequested();
+                progressMetadata.nexusModName = result.nexusModName;
+
+                fileInfo = fetchNexusFileInfo(request, authHeader);
+                throwIfCancellationRequested();
+                result.version = fileInfo.version;
+                result.latestVersion = fileInfo.version;
+                result.filePayloadJson = fileInfo.payloadJson;
+                progressMetadata.version = fileInfo.version;
+                progressMetadata.latestVersion = fileInfo.version;
+
+                if (!fileInfo.fileName.empty() || !fileInfo.displayName.empty())
+                {
+                    const std::wstring preflightFileName = archiveFileNameOrFallback(
+                        fileInfo.fileName,
+                        request,
+                        result.nexusModName);
+                    progressMetadata.destinationFileName = nexusDisplayArchiveFileName(
+                        fileInfo.displayName,
+                        preflightFileName);
+                }
+            }
+#endif
+
+            progressMetadata.status = L"Ожидает свободный слот";
+            progressMetadata.isDownloading = true;
+            writeMetadata(progressPath, progressMetadata);
+            const auto preflightDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - preflightStartedAt);
+            logger.writeOperation(
+                LogLevel::Info,
+                "NxmPreflight",
+                "durationMs=" + std::to_string(preflightDuration.count()) +
+                    ", resolvedFileName=" +
+                    std::to_string(!progressMetadata.destinationFileName.empty()) +
+                    ", resolvedVersion=" + std::to_string(!progressMetadata.version.empty()) + ".");
+#ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
             if (beforeAcquireHook)
             {
                 beforeAcquireHook(request.fileId);
@@ -9140,19 +9237,11 @@ namespace fluxora
             progressMetadata.status = L"Подготовка загрузки";
             writeMetadata(progressPath, progressMetadata);
             throwIfCancellationRequested();
-            std::wstring authHeader;
-            if (nexusAuth != nullptr)
-            {
-                authHeader = nexusRequestHeaders(nexusAuth);
-            }
 #ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
             if (transferHook)
             {
                 progressMetadata.status = L"Скачивается";
                 writeMetadata(progressPath, progressMetadata);
-                result.nexusModName = L"Nexus transfer fixture";
-                result.version = L"1.0.0";
-                result.latestVersion = result.version;
                 result.path = transferHook(directory, progressPath, request.fileId);
                 return result;
             }
@@ -9160,30 +9249,12 @@ namespace fluxora
 #ifndef _WIN32
             throw std::runtime_error("Nexus downloads are currently implemented for Windows builds.");
 #else
-            if (authHeader.empty())
-            {
-                authHeader = nexusRequestHeaders(nexusAuth);
-            }
             const std::wstring downloadUri = resolveNexusDownloadUri(request, authHeader);
             throwIfCancellationRequested();
             if (downloadUri.empty())
             {
                 return result;
             }
-
-            result.nexusModName = fetchNexusModName(request, authHeader);
-            throwIfCancellationRequested();
-            progressMetadata.nexusModName = result.nexusModName;
-            writeMetadata(progressPath, progressMetadata);
-
-            const NexusFileInfo fileInfo = fetchNexusFileInfo(request, authHeader);
-            throwIfCancellationRequested();
-            result.version = fileInfo.version;
-            result.latestVersion = fileInfo.version;
-            result.filePayloadJson = fileInfo.payloadJson;
-            progressMetadata.version = fileInfo.version;
-            progressMetadata.latestVersion = fileInfo.version;
-            writeMetadata(progressPath, progressMetadata);
 
             const std::wstring fallbackFileName = archiveFileNameOrFallback(
                 fileInfo.fileName.empty() ? fileNameFromUriPath(downloadUri) : fileInfo.fileName,
@@ -9702,6 +9773,7 @@ namespace fluxora
             writeMetadata(job.pendingPath, progressMetadata);
 
             NexusDownloadedFile downloadedFile = downloadNxm(
+                logger_,
                 job.directory,
                 request,
                 nexusAuth_,
@@ -10202,6 +10274,7 @@ namespace fluxora
         const std::filesystem::path& projectDirectory,
         const std::vector<std::wstring>& nxmLinks) const
     {
+        const auto intakeStartedAt = std::chrono::steady_clock::now();
         const std::filesystem::path directory = pathSettings_.downloadsDirectory(projectDirectory);
         std::filesystem::create_directories(directory);
 
@@ -10250,6 +10323,14 @@ namespace fluxora
             }
         }
 
+        const auto intakeDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - intakeStartedAt);
+        logger_.writeOperation(
+            LogLevel::Info,
+            "NxmIntake",
+            "durationMs=" + std::to_string(intakeDuration.count()) +
+                ", inputCount=" + std::to_string(nxmLinks.size()) +
+                ", acceptedCount=" + std::to_string(entries.size()) + ".");
         return entries;
     }
 
@@ -10335,6 +10416,7 @@ namespace fluxora
         try
         {
             const NexusDownloadedFile downloadedFile = downloadNxm(
+                logger_,
                 directory,
                 request,
                 nexusAuth_,
@@ -10762,6 +10844,46 @@ namespace fluxora
             throw std::invalid_argument("Install source archive does not exist.");
         }
         return fileCacheFingerprint(archivePath);
+    }
+
+    std::optional<InstalledMod> DownloadService::completedInstallResult(
+        const std::filesystem::path& projectDirectory,
+        std::wstring_view operationId) const
+    {
+        const PendingInstallSessionRecord session =
+            InstanceMetadataStore::pendingInstallSession(projectDirectory, operationId);
+        if (session.state != L"completed" || session.finalOrderId.empty())
+        {
+            return std::nullopt;
+        }
+
+        const BuildPathSettings paths = pathSettings_.loadForProjectDirectory(projectDirectory);
+        const std::vector<ProfileOrderItemRecord> order =
+            InstanceMetadataStore::listCachedProfileOrderItems(
+                projectDirectory,
+                session.profileName,
+                paths.modsDirectory);
+        const auto row = std::find_if(order.begin(), order.end(), [&](const auto& item)
+        {
+            return item.id == session.finalOrderId && item.hasMod;
+        });
+        if (row == order.end())
+        {
+            return std::nullopt;
+        }
+
+        const std::vector<ModFileSummaryRecord> summaries =
+            InstanceMetadataStore::summarizePersistedInstalledModFiles(
+                projectDirectory,
+                paths.modsDirectory);
+        const auto summary = std::find_if(summaries.begin(), summaries.end(), [&](const auto& item)
+        {
+            return item.folderName == row->mod.folderName;
+        });
+        return installedModFromRecord(
+            row->mod,
+            row->id,
+            summary == summaries.end() ? nullptr : &summary->summary);
     }
 
     InstalledMod DownloadService::installDownload(

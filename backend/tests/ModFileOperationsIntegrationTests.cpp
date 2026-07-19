@@ -2,12 +2,15 @@
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/InstallOperationService.hpp"
+#include "FluxoraCore/Services/InstallProjectGate.hpp"
+#include "FluxoraCore/Services/InstallTransactionJournal.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/ModService.hpp"
 #include "FluxoraCore/Services/ProfileService.hpp"
 #include "FluxoraCore/Services/ProfileOrderService.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 #include "FluxoraCore/Support/FilesystemPath.hpp"
+#include "FluxoraCore/Support/JsonReader.hpp"
 #include "../src/Services/PreviewArchiveReader.hpp"
 #include "TestFilesystem.hpp"
 
@@ -19,11 +22,13 @@
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <future>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -639,9 +644,30 @@ namespace fluxora::tests
 
     TEST_F(ModFileOperationsIntegrationTests, DurableInstallSubmitPersistsBeforeWorkerAndCompletesInBackground)
     {
+        const DownloadEntry baselineDownload = importArchive(
+            L"Durable Baseline.zip",
+            {{L"Data/Durable.esp", "baseline-plugin"}});
+        const InstalledMod baseline = downloads_.installDownload(
+            project_,
+            baselineDownload.localPath,
+            L"Durable Baseline");
         const DownloadEntry download = importArchive(
             L"Durable Submit.zip",
             {{L"Data/Durable.esp", "plugin"}});
+        writeTextFile(
+            download.localPath.wstring() + L".fluxora.json",
+            R"json({
+                "source":"nxm://skyrimspecialedition/mods/321/files/654",
+                "gameDomain":"skyrimspecialedition",
+                "modId":"321",
+                "fileId":"654",
+                "nexusModName":"Durable Submit",
+                "version":"2.0.0",
+                "latestVersion":"2.1.0",
+                "latestFileId":"777",
+                "updateCheckState":"update_available",
+                "isDownloading":false
+            })json");
         InstallOperationService installs(logger_, downloads_);
         installs.initialize();
 
@@ -663,8 +689,159 @@ namespace fluxora::tests
         EXPECT_EQ(completed.enqueueSequence, accepted.enqueueSequence);
         EXPECT_FALSE(completed.archiveFingerprint.empty());
         EXPECT_FALSE(completed.resultJson.empty());
+        const JsonValue result = JsonReader::parse(completed.resultJson);
+        ASSERT_NE(result.find(L"latestVersion"), nullptr);
+        EXPECT_EQ(result.find(L"latestVersion")->asString(), L"2.0.0");
+        EXPECT_EQ(result.find(L"latestFileId")->asString(), L"654");
+        EXPECT_EQ(result.find(L"updateCheckState")->asString(), L"baseline_pending");
+        EXPECT_TRUE(result.find(L"sourceIsNexus")->asBoolean());
+        EXPECT_FALSE(result.find(L"sourceIsModdingFlow")->asBoolean());
+        EXPECT_EQ(result.find(L"sourceProvider")->asString(), L"nexus");
+        EXPECT_EQ(result.find(L"sourceGameDomain")->asString(), L"skyrimspecialedition");
+        EXPECT_EQ(result.find(L"sourceModId")->asString(), L"321");
+        EXPECT_EQ(result.find(L"sourceFileId")->asString(), L"654");
+        EXPECT_EQ(
+            result.find(L"sourceUrl")->asString(),
+            L"nxm://skyrimspecialedition/mods/321/files/654");
+        EXPECT_FALSE(result.find(L"isLocal")->asBoolean());
+        EXPECT_FALSE(result.find(L"isTranslation")->asBoolean());
+        EXPECT_FALSE(result.find(L"isPatch")->asBoolean());
+        const JsonValue* overwritesModIds = result.find(L"overwritesModIds");
+        ASSERT_NE(overwritesModIds, nullptr);
+        ASSERT_TRUE(overwritesModIds->isArray());
+        ASSERT_EQ(overwritesModIds->asArray().size(), 1U);
+        EXPECT_EQ(overwritesModIds->asArray()[0].asString(), baseline.id.wstring());
+        const JsonValue* overwrittenByModIds = result.find(L"overwrittenByModIds");
+        ASSERT_NE(overwrittenByModIds, nullptr);
+        EXPECT_TRUE(overwrittenByModIds->isArray());
+        EXPECT_TRUE(overwrittenByModIds->asArray().empty());
         EXPECT_TRUE(std::filesystem::is_regular_file(
             modsDirectory() / L"Durable Submit" / L"Durable.esp"));
+        installs.shutdown();
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, CancellingRunningDurableInstallStopsBeforePublishingTheMod)
+    {
+        using namespace std::chrono_literals;
+
+        const DownloadEntry download = importArchive(
+            L"Durable Cancel.zip",
+            {{L"Data/Cancelled.esp", "plugin"}});
+        InstallOperationService installs(logger_, downloads_);
+        installs.initialize();
+
+        std::mutex progressMutex;
+        std::condition_variable progressChanged;
+        bool validatingEntered = false;
+        bool releaseValidation = false;
+
+        InstallOperationRequest request;
+        request.operationId = L"durable-cancel";
+        request.projectDirectory = project_;
+        request.sourceKind = L"download";
+        request.sourcePath = download.localPath;
+        request.modName = L"Durable Cancel";
+        request.profileName = L"Default";
+        static_cast<void>(installs.submit(
+            std::move(request),
+            [&](const InstallOperationRecord& operation)
+            {
+                if (operation.state != L"validating")
+                {
+                    return;
+                }
+                std::unique_lock lock(progressMutex);
+                validatingEntered = true;
+                progressChanged.notify_all();
+                progressChanged.wait(lock, [&] { return releaseValidation; });
+            }));
+
+        {
+            std::unique_lock lock(progressMutex);
+            ASSERT_TRUE(progressChanged.wait_for(lock, 2s, [&] { return validatingEntered; }));
+        }
+
+        std::future<InstallOperationRecord> cancellation = std::async(
+            std::launch::async,
+            [&] { return installs.cancel(project_, L"durable-cancel"); });
+        EXPECT_EQ(cancellation.wait_for(50ms), std::future_status::timeout);
+        {
+            std::lock_guard lock(progressMutex);
+            releaseValidation = true;
+        }
+        progressChanged.notify_all();
+
+        const InstallOperationRecord cancelled = cancellation.get();
+        EXPECT_EQ(cancelled.state, L"cancelled");
+        EXPECT_EQ(cancelled.stage, L"cancelled");
+        EXPECT_EQ(cancelled.errorCode, L"install.cancelled");
+        EXPECT_FALSE(std::filesystem::exists(modsDirectory() / L"Durable Cancel"));
+        EXPECT_TRUE(installs.list(project_, false).empty());
+        installs.shutdown();
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, LateCancellationReturnsCommittedResultForDeletion)
+    {
+        using namespace std::chrono_literals;
+
+        const DownloadEntry download = importArchive(
+            L"Durable Late Cancel.zip",
+            {{L"Data/LateCancelled.esp", "plugin"}});
+        InstallOperationService installs(logger_, downloads_);
+        installs.initialize();
+
+        std::mutex progressMutex;
+        std::condition_variable progressChanged;
+        bool finalizingEntered = false;
+        bool releaseFinalizing = false;
+
+        InstallOperationRequest request;
+        request.operationId = L"durable-late-cancel";
+        request.projectDirectory = project_;
+        request.sourceKind = L"download";
+        request.sourcePath = download.localPath;
+        request.modName = L"Durable Late Cancel";
+        request.profileName = L"Default";
+        static_cast<void>(installs.submit(
+            std::move(request),
+            [&](const InstallOperationRecord& operation)
+            {
+                if (operation.state != L"finalizing")
+                {
+                    return;
+                }
+                std::unique_lock lock(progressMutex);
+                finalizingEntered = true;
+                progressChanged.notify_all();
+                progressChanged.wait(lock, [&] { return releaseFinalizing; });
+            }));
+
+        {
+            std::unique_lock lock(progressMutex);
+            ASSERT_TRUE(progressChanged.wait_for(lock, 5s, [&] { return finalizingEntered; }));
+        }
+
+        std::future<InstallOperationRecord> cancellation = std::async(
+            std::launch::async,
+            [&] { return installs.cancel(project_, L"durable-late-cancel"); });
+        EXPECT_EQ(cancellation.wait_for(50ms), std::future_status::timeout);
+        {
+            std::lock_guard lock(progressMutex);
+            releaseFinalizing = true;
+        }
+        progressChanged.notify_all();
+
+        const InstallOperationRecord cancelled = cancellation.get();
+        ASSERT_EQ(cancelled.state, L"cancelled");
+        ASSERT_FALSE(cancelled.resultJson.empty());
+        const JsonValue result = JsonReader::parse(cancelled.resultJson);
+        const JsonValue* installedId = result.find(L"id");
+        ASSERT_NE(installedId, nullptr);
+        const std::filesystem::path installedPath(installedId->asString());
+        ASSERT_TRUE(std::filesystem::exists(installedPath));
+
+        mods_.deleteInstalledMod(project_, installedPath);
+        EXPECT_FALSE(std::filesystem::exists(installedPath));
         installs.shutdown();
     }
 
@@ -697,6 +874,119 @@ namespace fluxora::tests
         EXPECT_FALSE(completed.archiveFingerprint.empty());
         EXPECT_TRUE(std::filesystem::is_regular_file(
             modsDirectory() / L"Durable Restore" / L"Restored.esp"));
+        installs.shutdown();
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, RestoreReconstructsCompletedResultAfterExitBetweenCommitAndPublish)
+    {
+        const std::wstring operationId = L"durable-commit-publish-gap";
+        const std::filesystem::path targetDirectory =
+            modsDirectory() / L"Recovered Commit Result";
+        std::filesystem::create_directories(targetDirectory);
+        writeTextFile(targetDirectory / L"Recovered.esp", "plugin");
+
+        InstallOperationRecord interrupted;
+        interrupted.operationId = operationId;
+        interrupted.sourceKind = L"download";
+        interrupted.sourcePath = project_ / L"downloads" / L"Recovered.zip";
+        interrupted.profileName = L"Default";
+        interrupted.targetFolder = L"Recovered Commit Result";
+        interrupted.state = L"finalizing";
+        interrupted.stage = L"finalizing";
+        InstallOperationStore::save(project_, interrupted);
+
+        InstanceMetadataStore::beginPendingInstallSession(
+            project_,
+            operationId,
+            L"Default",
+            InstallConflictPreviewMode::Install,
+            L"pending-install:durable-commit-publish-gap",
+            {},
+            0);
+        static_cast<void>(InstanceMetadataStore::preparePendingInstallSession(
+            project_,
+            operationId,
+            {{L"Recovered.esp", 6, L"1"}}));
+        const FinalizedPendingInstallRecord finalized =
+            InstanceMetadataStore::finalizePendingInstalledMod(
+                project_,
+                operationId,
+                targetDirectory,
+                L"Recovered Commit Result",
+                L"1.0.0",
+                ModSourceRecord{L"local"});
+        InstallTransactionJournal::write(
+            project_,
+            InstallTransactionRecord{
+                operationId,
+                L"committed",
+                {},
+                targetDirectory,
+                {},
+                false
+            });
+
+        InstallOperationService installs(logger_, downloads_);
+        installs.initialize();
+        const std::vector<InstallOperationRecord> restored = installs.restore(project_);
+
+        ASSERT_EQ(restored.size(), 1U);
+        EXPECT_EQ(restored.front().state, L"completed");
+        ASSERT_FALSE(restored.front().resultJson.empty());
+        const JsonValue result = JsonReader::parse(restored.front().resultJson);
+        EXPECT_EQ(result.find(L"name")->asString(), L"Recovered Commit Result");
+        EXPECT_EQ(result.find(L"modUuid")->asString(), finalized.mod.uuid);
+        EXPECT_EQ(result.find(L"orderId")->asString(), finalized.orderId);
+        const std::optional<InstallOperationRecord> persisted =
+            InstallOperationStore::get(project_, operationId);
+        ASSERT_TRUE(persisted.has_value());
+        EXPECT_EQ(persisted->state, L"completed");
+        EXPECT_EQ(persisted->resultJson, restored.front().resultJson);
+        installs.shutdown();
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, RestoreRequiresReviewWhenCommittedResultCannotBeReconstructed)
+    {
+        const std::wstring operationId = L"durable-commit-without-metadata";
+        const std::filesystem::path targetDirectory =
+            modsDirectory() / L"Untracked Commit Result";
+        std::filesystem::create_directories(targetDirectory);
+        writeTextFile(targetDirectory / L"Untracked.esp", "plugin");
+
+        InstallOperationRecord interrupted;
+        interrupted.operationId = operationId;
+        interrupted.sourceKind = L"download";
+        interrupted.sourcePath = project_ / L"downloads" / L"Untracked.zip";
+        interrupted.profileName = L"Default";
+        interrupted.targetFolder = L"Untracked Commit Result";
+        interrupted.state = L"finalizing";
+        interrupted.stage = L"finalizing";
+        InstallOperationStore::save(project_, interrupted);
+        InstallTransactionJournal::write(
+            project_,
+            InstallTransactionRecord{
+                operationId,
+                L"committed",
+                {},
+                targetDirectory,
+                {},
+                false
+            });
+
+        InstallOperationService installs(logger_, downloads_);
+        installs.initialize();
+        const std::vector<InstallOperationRecord> restored = installs.restore(project_);
+
+        ASSERT_EQ(restored.size(), 1U);
+        EXPECT_EQ(restored.front().state, L"needsReview");
+        EXPECT_EQ(restored.front().errorCode, L"install.recoveryResultMissing");
+        EXPECT_TRUE(restored.front().resultJson.empty());
+        EXPECT_TRUE(std::filesystem::is_regular_file(targetDirectory / L"Untracked.esp"));
+        const std::optional<InstallOperationRecord> persisted =
+            InstallOperationStore::get(project_, operationId);
+        ASSERT_TRUE(persisted.has_value());
+        EXPECT_EQ(persisted->state, L"needsReview");
+        EXPECT_EQ(persisted->errorCode, L"install.recoveryResultMissing");
         installs.shutdown();
     }
 
@@ -2652,6 +2942,41 @@ namespace fluxora::tests
             InstanceMetadataStore::listInstalledMods(project_, modsDirectory());
         EXPECT_EQ(findInstalledMod(records, L"First Mod"), nullptr);
         ASSERT_NE(findInstalledMod(records, L"Second Mod"), nullptr);
+    }
+
+    TEST_F(ModFileOperationsIntegrationTests, DeleteInstalledModWaitsForInstallProjectCommitGate)
+    {
+        std::string installError;
+        const std::optional<InstalledMod> installed = tryInstallArchive(
+            L"Commit Gate Delete.zip",
+            {{L"textures/commit-gate.dds", "fixture"}},
+            L"Commit Gate Delete",
+            installError);
+        if (!installed.has_value() && isMissingExtractorError(installError))
+        {
+            GTEST_SKIP() << "No supported archive extractor was available: " << installError;
+        }
+        ASSERT_TRUE(installed.has_value()) << installError;
+
+        std::future<void> deletion;
+        {
+            InstallProjectGate commitGate(project_);
+            deletion = std::async(std::launch::async, [&]()
+            {
+                mods_.deleteInstalledMod(project_, installed->id);
+            });
+
+            EXPECT_EQ(
+                deletion.wait_for(std::chrono::milliseconds(100)),
+                std::future_status::timeout);
+            EXPECT_TRUE(std::filesystem::exists(installed->id));
+        }
+
+        ASSERT_EQ(
+            deletion.wait_for(std::chrono::seconds(5)),
+            std::future_status::ready);
+        EXPECT_NO_THROW(deletion.get());
+        EXPECT_FALSE(std::filesystem::exists(installed->id));
     }
 
     TEST_F(ModFileOperationsIntegrationTests, InstallFomodDownloadDoesNotExposePackageDirectoryAsMod)

@@ -46,6 +46,7 @@ export interface PendingInstallOrchestrator {
   ) => Promise<FluxoraInstallConflictSnapshot | null>;
   flushRebase: () => Promise<FluxoraInstallConflictSnapshot | null>;
   mergeAuthoritativeItems: (items: FluxoraModOrderItem[]) => FluxoraModOrderItem[];
+  activeSessionForItem: (item: FluxoraModOrderItem) => PendingInstallSessionState | null;
   isActiveOrderItem: (item: FluxoraModOrderItem) => boolean;
   conflictMarkerReady: (item: FluxoraModOrderItem) => boolean;
 }
@@ -87,13 +88,14 @@ const installStateLabel = (operation: FluxoraInstallOperation): string => {
     case 'committing': return 'Применение';
     case 'finalizing': return 'Применение';
     case 'recovering': return 'Восстановление';
+    case 'cancelled': return 'Отменено';
     case 'needsReview': return 'Требуется проверка';
     case 'failed': return 'Ошибка установки';
     case 'completed': return operation.result?.version || 'Установлен';
   }
 };
 
-const installedSummaryFromOperation = (
+export const installedSummaryFromOperation = (
   operation: FluxoraInstallOperation
 ): FluxoraInstalledModSummary | null => {
   const result = operation.result;
@@ -102,19 +104,16 @@ const installedSummaryFromOperation = (
   }
   return {
     ...result,
-    latestVersion: '',
-    latestFileId: '',
-    updateCheckState: '',
-    sourceIsNexus: false,
-    sourceIsModdingFlow: false,
-    isLocal: true,
-    isTranslation: false,
-    isPatch: false,
-    overwritesModIds: [],
-    overwrittenByModIds: [],
     operationId: operation.operationId
   };
 };
+
+export const restoredInstallNeedsPendingProjection = (
+  operation: FluxoraInstallOperation
+): boolean =>
+  operation.state !== 'completed' &&
+  operation.state !== 'failed' &&
+  operation.state !== 'cancelled';
 
 export const usePendingInstallOrchestrator = (
   options: PendingInstallOrchestratorOptions
@@ -292,6 +291,12 @@ export const usePendingInstallOrchestrator = (
     []
   );
 
+  const activeSessionForItem = useCallback(
+    (item: FluxoraModOrderItem) =>
+      [...sessionsRef.current.values()].find((session) => activeItemMatches(session, item)) ?? null,
+    []
+  );
+
   const conflictMarkerReady = useCallback((item: FluxoraModOrderItem) => {
     const session = [...sessionsRef.current.values()].find((candidate) =>
       activeItemMatches(candidate, item)
@@ -360,8 +365,10 @@ export const usePendingInstallOrchestrator = (
         const installed = installedSummaryFromOperation(operation);
         if (installed) {
           complete(installed);
+        } else {
+          rollback(operation.operationId);
         }
-      } else if (operation.state === 'failed') {
+      } else if (operation.state === 'failed' || operation.state === 'cancelled') {
         rollback(operation.operationId);
       }
     }
@@ -378,6 +385,7 @@ export const usePendingInstallOrchestrator = (
     rebase,
     flushRebase,
     mergeAuthoritativeItems,
+    activeSessionForItem,
     isActiveOrderItem,
     conflictMarkerReady
   };

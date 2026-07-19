@@ -6,9 +6,11 @@ import type {
 } from '../shared/fluxora-api';
 import {
   isOrderItemHiddenByCollapsedSeparator,
+  orderItemMovePlan,
   orderItemNestedUnderSeparator,
   parentSeparatorForOrderItem,
   pruneCollapsedSeparators,
+  reorderOrderItemSelection,
   reorderOrderItems,
   separatorChildCount,
   targetIndexForOrderDrop,
@@ -16,6 +18,7 @@ import {
   visibleOrderItems,
   type OrderDropPlacement
 } from './order-list-state';
+import type { OrderItemMove } from './order-list-state';
 import {
   emptyOrderSelectionState,
   pruneOrderSelection,
@@ -671,6 +674,37 @@ export const reorderModOrderItems = (
   targetIndex: number
 ): FluxoraModOrderItem[] | null =>
   reorderOrderItems(items, orderId, targetIndex, { separatorMoveMode: 'single' });
+
+export const reorderModOrderItemSelection = (
+  items: FluxoraModOrderItem[],
+  sourceOrderId: string,
+  selectedOrderIds: ReadonlySet<string>,
+  targetOrderId: string,
+  placement: OrderDropPlacement = 'after',
+  collapsedSeparatorOrderIds: ReadonlySet<string> = new Set<string>()
+): FluxoraModOrderItem[] | null => {
+  const source = items.find((item) => item.orderId === sourceOrderId);
+  return reorderOrderItemSelection(
+    items,
+    sourceOrderId,
+    selectedOrderIds,
+    targetOrderId,
+    placement,
+    {
+      collapsedSeparatorOrderIds,
+      separatorDropTargets: source?.isSeparator === true ? 'separators' : 'all',
+      separatorMoveMode: 'single',
+      treatAfterSeparatorTargetAsBlock: source?.isSeparator === true
+    }
+  );
+};
+
+export const modOrderItemMovePlan = (
+  items: FluxoraModOrderItem[],
+  desiredItems: FluxoraModOrderItem[],
+  movingOrderIds: ReadonlySet<string>
+): OrderItemMove[] | null =>
+  orderItemMovePlan(items, desiredItems, movingOrderIds, reorderModOrderItems);
 
 export interface OptimisticModInstallState {
   installedMods: FluxoraInstalledMod[];

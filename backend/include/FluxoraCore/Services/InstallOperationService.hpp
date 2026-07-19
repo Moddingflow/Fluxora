@@ -7,10 +7,10 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -72,6 +72,10 @@ namespace fluxora
             const std::filesystem::path& projectDirectory,
             std::wstring_view operationId) const;
 
+        [[nodiscard]] InstallOperationRecord cancel(
+            const std::filesystem::path& projectDirectory,
+            std::wstring_view operationId);
+
         [[nodiscard]] bool isInitialized() const noexcept;
 
     private:
@@ -88,12 +92,13 @@ namespace fluxora
             std::wstring errorMessage = {},
             std::wstring resultJson = {}) const noexcept;
         void execute(const std::shared_ptr<OperationContext>& context) const noexcept;
+        void finish(const std::shared_ptr<OperationContext>& context) noexcept;
 
         Logger& logger_;
         DownloadService& downloads_;
         std::unique_ptr<InstallScheduler> scheduler_;
         mutable std::mutex activeMutex_;
-        std::set<std::wstring> activeOperationIds_;
+        std::map<std::wstring, std::shared_ptr<OperationContext>> activeOperations_;
         bool initialized_{false};
     };
 }

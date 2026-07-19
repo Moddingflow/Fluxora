@@ -1241,6 +1241,7 @@ namespace fluxora::tests
         EXPECT_NE(json.find(L"\"archiveId\":\"sha256:"), std::wstring::npos);
         EXPECT_NE(json.find(L"\"buildStatus\":\"Ready\""), std::wstring::npos);
         EXPECT_NE(json.find(L"\"transferState\":\"idle\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"hasResolvedFileName\":true"), std::wstring::npos);
         EXPECT_NE(json.find(L"\"canInstall\":true"), std::wstring::npos);
         EXPECT_EQ(json.find(L"Legacy Archive.7z"), std::wstring::npos);
         EXPECT_EQ(json.find(L"\"status\":"), std::wstring::npos);

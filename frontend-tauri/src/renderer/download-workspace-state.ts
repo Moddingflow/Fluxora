@@ -142,10 +142,14 @@ export const downloadDisplayName = (rawName: string): string => {
 };
 
 export const downloadTitle = (entry: FluxoraDownloadEntry): string =>
-  downloadDisplayName(entry.fileName || entry.name || entry.id) || 'Download';
+  entry.hasResolvedFileName
+    ? downloadDisplayName(entry.fileName || entry.name || entry.id) || 'Download'
+    : 'Получаем название…';
 
 export const downloadRawTitle = (entry: FluxoraDownloadEntry): string =>
-  entry.fileName || entry.name || entry.localPath || entry.id || 'Download';
+  entry.hasResolvedFileName
+    ? entry.fileName || entry.name || entry.localPath || entry.id || 'Download'
+    : 'Получаем название…';
 
 export const selectedDownloadEntry = (
   items: FluxoraDownloadEntry[],
@@ -158,7 +162,10 @@ export const selectedDownloadEntry = (
 
 export const hasActiveDownload = (items: FluxoraDownloadEntry[]): boolean =>
   items.some(
-    (entry) => entry.transferState === 'downloading' || entry.transferState === 'indexing'
+    (entry) =>
+      !entry.hasResolvedFileName ||
+      entry.transferState === 'downloading' ||
+      entry.transferState === 'indexing'
   );
 
 export const filterDownloadEntries = (

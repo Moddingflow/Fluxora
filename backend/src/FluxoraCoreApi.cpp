@@ -1078,6 +1078,7 @@ namespace
         writer.field(L"downloadSpeedText", download.downloadSpeedText);
         writer.field(L"isDownloading", download.isDownloading);
         writer.field(L"hasKnownProgress", download.hasKnownProgress);
+        writer.field(L"hasResolvedFileName", download.hasResolvedFileName);
         writer.field(L"canResume", download.canResume);
         writer.field(L"canInstall", download.canInstall);
         writer.field(L"canDelete", download.canDelete);
@@ -1112,8 +1113,6 @@ namespace
         writer.field(L"version", mod.version);
         writer.field(L"isEnabled", mod.isEnabled);
         writer.field(L"latestVersion", mod.latestVersion);
-        writer.field(L"latestFileId", mod.latestFileId);
-        writer.field(L"updateCheckState", mod.updateCheckState);
         writer.field(L"latestFileId", mod.latestFileId);
         writer.field(L"updateCheckState", mod.updateCheckState);
         writer.field(L"sourceIsNexus", mod.sourceIsNexus);
@@ -3567,6 +3566,29 @@ extern "C"
             };
             return writeToBuffer(
                 serializeInstallOperations(core().installs().restore(projectDirectory, publish)),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_cancel_install_operation(
+        const wchar_t* projectDirectory,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(operationId))
+            {
+                throw std::invalid_argument("Project directory and operation id are required.");
+            }
+            return writeToBuffer(
+                serializeInstallOperation(core().installs().cancel(projectDirectory, operationId)),
                 jsonBuffer,
                 jsonBufferLength);
         }

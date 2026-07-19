@@ -44,7 +44,8 @@ describe('install dialog flow', () => {
     );
 
     expect(dialog).toContain('const dialogTitle =');
-    expect(dialog).toContain('<strong>{dialogTitle}</strong>');
+    expect(dialog).toContain('const dialogAriaLabel = `Install ${dialogTitle}`;');
+    expect(dialog).toContain('<strong>Установка мода</strong>');
     expect(dialog).toContain('Закрыть окно установки');
     expect(dialog).toContain('Подробнее');
     expect(dialog).toContain('Установить');
@@ -353,7 +354,7 @@ describe('install dialog flow', () => {
     expect(submitInstallDialog).not.toContain('await loadPluginsWorkspace(selectedProject)');
   });
 
-  it('reveals and animates the optimistic row exactly once before durable submission', () => {
+  it('reveals and animates the optimistic row for new, Replace, and Merge installs', () => {
     const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
     const submitInstallDialog = sliceBetween(
       app,
@@ -370,8 +371,9 @@ describe('install dialog flow', () => {
     expect(pendingRevealIndex).toBeLessThan(catchIndex);
     expect(submitInstallDialog).toContain('installedId: pendingSession.pendingOrderId');
     expect(submitInstallDialog).toContain('const pendingAlreadyExists =');
-    expect(submitInstallDialog).toContain('animate: !pendingAlreadyExists && existingModMode === 0');
-    expect(submitInstallDialog.match(/animate: !pendingAlreadyExists && existingModMode === 0/g)).toHaveLength(1);
+    expect(submitInstallDialog).toContain('animate: !pendingAlreadyExists');
+    expect(submitInstallDialog).not.toContain('existingModMode === 0');
+    expect(submitInstallDialog.match(/animate: !pendingAlreadyExists/g)).toHaveLength(1);
     expect(submitInstallDialog.match(/animate: false/g)).toHaveLength(1);
     expect(submitInstallDialog.match(/\.\.\.identitySelection/g)).toHaveLength(1);
   });

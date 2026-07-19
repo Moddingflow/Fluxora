@@ -3185,6 +3185,23 @@ namespace
             });
     }
 
+    std::wstring payloadCancelInstallOperation(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring operationId = requiredStringField(params, L"operationId");
+        return payloadFromCoreJson(
+            L"core.installCancelFailed",
+            [&projectDirectory, &operationId](wchar_t* buffer, int length)
+            {
+                return fluxora_cancel_install_operation(
+                    projectDirectory.c_str(),
+                    operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadListInstallOperations(const BridgeRequest& request)
     {
         const fluxora::JsonValue& params = requiredParamsObject(request);
@@ -3617,6 +3634,10 @@ namespace
         if (request.method == L"installs.submit")
         {
             return payloadSubmitInstallOperation(request);
+        }
+        if (request.method == L"installs.cancel")
+        {
+            return payloadCancelInstallOperation(request);
         }
         if (request.method == L"installs.restore")
         {

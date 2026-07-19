@@ -200,6 +200,15 @@ const listenTyped = <T>(
   };
 };
 
+const normalizeDownloadEntry = (entry: FluxoraDownloadEntry): FluxoraDownloadEntry => ({
+  ...entry,
+  hasResolvedFileName: entry.hasResolvedFileName ?? true
+});
+
+const normalizeDownloadEntries = (
+  entries: FluxoraDownloadEntry[]
+): FluxoraDownloadEntry[] => entries.map(normalizeDownloadEntry);
+
 export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   app: {
     getInfo: () => invokeTyped<FluxoraAppInfo>(ipc, FluxoraIpcChannels.appGetInfo)
@@ -1028,7 +1037,7 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         FluxoraIpcChannels.downloadsList,
         projectDirectory,
         request
-      ),
+      ).then(normalizeDownloadEntries),
     importFile: (projectDirectory: string, sourcePath: string, request?: OperationRequest) =>
       invokeTyped<FluxoraDownloadEntry>(
         ipc,
@@ -1036,7 +1045,7 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         projectDirectory,
         sourcePath,
         request
-      ),
+      ).then(normalizeDownloadEntry),
     delete: (projectDirectory: string, downloadPath: string, request?: OperationRequest) =>
       invokeTyped<FluxoraDownloadMutationResult>(
         ipc,
@@ -1060,7 +1069,7 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         projectDirectory,
         downloadPath,
         request
-      ),
+      ).then(normalizeDownloadEntry),
     watchFolder: (
       projectDirectory: string,
       downloadsDirectory: string,
@@ -1192,6 +1201,14 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         request,
         operation
       ),
+    cancel: (projectDirectory: string, operationId: string, operation?: OperationRequest) =>
+      invokeTyped<FluxoraInstallOperation>(
+        ipc,
+        FluxoraIpcChannels.installsCancel,
+        projectDirectory,
+        operationId,
+        operation
+      ),
     restore: (projectDirectory: string, operation?: OperationRequest) =>
       invokeTyped<FluxoraInstallOperation[]>(
         ipc,
@@ -1244,14 +1261,14 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         projectDirectory,
         links,
         request
-      ),
+      ).then(normalizeDownloadEntries),
     importInboundDownloads: (projectDirectory: string, request?: OperationRequest) =>
       invokeTyped<FluxoraDownloadEntry[]>(
         ipc,
         FluxoraIpcChannels.nxmImportInboundDownloads,
         projectDirectory,
         request
-      ),
+      ).then(normalizeDownloadEntries),
     onInboundLinksCaptured: (callback: (event: FluxoraNxmInboundLinksCaptured) => void) =>
       listenTyped<FluxoraNxmInboundLinksCaptured>(
         ipc,
@@ -3514,7 +3531,8 @@ const createTauriInvoker = (): IpcInvoker => ({
         return bridgeRequest(
           'downloads.analyzeFomod',
           params,
-          requestWithOperationId(profileAware ? args[4] : args[2], 'downloads_analyze_fomod')
+          requestWithOperationId(profileAware ? args[4] : args[2], 'downloads_analyze_fomod'),
+          fileMutationTimeoutMs
         );
       }
       case FluxoraIpcChannels.downloadsAnalyzeContentLayout:
@@ -3608,6 +3626,15 @@ const createTauriInvoker = (): IpcInvoker => ({
         delete params.selectedOptionIds;
         delete params.manualDecisions;
         return bridgeRequest<FluxoraInstallOperation>('installs.submit', params, request);
+      }
+      case FluxoraIpcChannels.installsCancel: {
+        const request = requestWithOperationId(args[2], 'installs_cancel');
+        return bridgeRequest<FluxoraInstallOperation>(
+          'installs.cancel',
+          { projectDirectory: args[0], operationId: args[1] },
+          request,
+          fileMutationTimeoutMs
+        );
       }
       case FluxoraIpcChannels.installsRestore: {
         const request = requestWithOperationId(args[1], 'installs_restore');

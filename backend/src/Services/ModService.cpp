@@ -1004,8 +1004,16 @@ namespace fluxora
         const std::filesystem::path& projectDirectory) const
     {
         const std::filesystem::path modsDirectory = pathSettings_.modsDirectory(projectDirectory);
+        const auto summaryStartedAt = std::chrono::steady_clock::now();
         const std::vector<ModFileSummaryRecord> summaries =
             InstanceMetadataStore::summarizeInstalledModFiles(projectDirectory, modsDirectory);
+        const auto summaryDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - summaryStartedAt);
+        logger_.writeOperation(
+            LogLevel::Info,
+            "ConflictSummary",
+            "durationMs=" + std::to_string(summaryDuration.count()) +
+                ", modCount=" + std::to_string(summaries.size()) + ".");
         const std::vector<InstalledModRecord> mods =
             InstanceMetadataStore::listInstalledMods(projectDirectory, modsDirectory);
 

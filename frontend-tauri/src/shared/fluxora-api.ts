@@ -129,6 +129,7 @@ export const FluxoraIpcChannels = {
   operationsProgress: 'fluxora:operations:progress',
   operationsRecentLogs: 'fluxora:operations:recent-logs',
   installsSubmit: 'fluxora:installs:submit',
+  installsCancel: 'fluxora:installs:cancel',
   installsRestore: 'fluxora:installs:restore',
   installsList: 'fluxora:installs:list',
   installsGet: 'fluxora:installs:get',
@@ -1823,6 +1824,7 @@ export interface FluxoraDownloadEntry {
   downloadSpeedText: string;
   isDownloading: boolean;
   hasKnownProgress: boolean;
+  hasResolvedFileName: boolean;
   canResume: boolean;
   canInstall: boolean;
   canDelete: boolean;
@@ -2234,6 +2236,7 @@ export type FluxoraInstallOperationState =
   | 'committing'
   | 'finalizing'
   | 'recovering'
+  | 'cancelled'
   | 'needsReview'
   | 'completed'
   | 'failed';
@@ -2243,12 +2246,27 @@ export interface FluxoraInstallOperationResult {
   name: string;
   version: string;
   isEnabled: boolean;
+  latestVersion: string;
+  latestFileId: string;
+  updateCheckState: string;
+  sourceIsNexus: boolean;
+  sourceIsModdingFlow: boolean;
+  sourceProvider?: string;
+  sourceGameDomain?: string;
+  sourceModId?: string;
+  sourceFileId?: string;
+  sourceUrl?: string;
+  isLocal: boolean;
+  isTranslation: boolean;
+  isPatch: boolean;
   modUuid: string;
   orderId: string;
   fileCount: number;
   conflictingFileCount: number;
   overwrittenFileCount: number;
   overwritingFileCount: number;
+  overwritesModIds: string[];
+  overwrittenByModIds: string[];
 }
 
 export interface FluxoraInstallOperation {
@@ -3133,6 +3151,11 @@ export interface FluxoraApi {
   installs: {
     submit: (
       request: FluxoraInstallSubmitRequest,
+      operation?: OperationRequest
+    ) => Promise<FluxoraInstallOperation>;
+    cancel: (
+      projectDirectory: string,
+      operationId: string,
       operation?: OperationRequest
     ) => Promise<FluxoraInstallOperation>;
     restore: (

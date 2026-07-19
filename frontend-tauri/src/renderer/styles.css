@@ -5458,10 +5458,12 @@ body.row-reorder-active * {
       rgba(255, 255, 255, 0.045) 100%
     );
   background-size: 240% 100%;
+  background-color: rgba(255, 255, 255, 0.045);
+  background-repeat: no-repeat;
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.025),
     0 0 18px rgba(var(--flx-accent-rgb), 0.025);
-  animation: downloadSkeletonSweep 1.55s var(--ease-standard) infinite;
+  animation: downloadSkeletonSweep 1.55s linear infinite;
 }
 
 .workspace-skeleton--toggle,
@@ -5520,10 +5522,12 @@ body.row-reorder-active * {
       rgba(255, 255, 255, 0.045) 100%
     );
   background-size: 240% 100%;
+  background-color: rgba(255, 255, 255, 0.045);
+  background-repeat: no-repeat;
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.025),
     0 0 18px rgba(var(--flx-accent-rgb), 0.025);
-  animation: downloadSkeletonSweep 1.55s var(--ease-standard) infinite;
+  animation: downloadSkeletonSweep 1.55s linear infinite;
 }
 
 .download-skeleton--title {
@@ -5558,17 +5562,18 @@ body.row-reorder-active * {
       rgba(var(--flx-accent-rgb), 0.46),
       rgba(var(--flx-accent-hover-rgb), 0.34)
     );
-  background-size: 180% 100%;
-  animation: downloadSkeletonSweep 1.35s var(--ease-standard) infinite;
+  background-size: 240% 100%;
+  background-repeat: no-repeat;
+  animation: downloadSkeletonSweep 1.35s linear infinite;
 }
 
 @keyframes downloadSkeletonSweep {
   from {
-    background-position: 140% 0;
+    background-position: 200% 0;
   }
 
   to {
-    background-position: -80% 0;
+    background-position: -200% 0;
   }
 }
 
@@ -8120,27 +8125,40 @@ body.row-reorder-active * {
 
 .install-detecting-skeleton {
   min-width: 0;
-  padding: 24px 22px 26px;
+  cursor: progress;
 }
 
-.install-detecting-skeleton__content {
-  display: grid;
-  gap: 12px;
+.install-detecting-skeleton__field {
   min-width: 0;
 }
 
-.install-detecting-skeleton__title {
-  width: min(44%, 188px);
-  height: 14px;
+.install-detecting-skeleton__label {
+  width: 70px;
+  height: 16px;
+  border-radius: 4px;
 }
 
-.install-detecting-skeleton__line {
+.install-detecting-skeleton__input {
   width: 100%;
   height: 36px;
+  border-radius: var(--radius-sm);
 }
 
-.install-detecting-skeleton__line--short {
-  width: 72%;
+.install-dialog-actions--detecting {
+  cursor: progress;
+}
+
+.install-detecting-skeleton__action {
+  height: var(--control-h);
+  border-radius: var(--radius-md);
+}
+
+.install-detecting-skeleton__action--details {
+  width: 108px;
+}
+
+.install-detecting-skeleton__action--install {
+  width: 112px;
 }
 
 .install-name-field {
@@ -10950,6 +10968,8 @@ body.row-reorder-active * {
       rgba(64, 82, 60, 0.07) 100%
     );
   background-size: 240% 100%;
+  background-color: rgba(64, 82, 60, 0.07);
+  background-repeat: no-repeat;
   box-shadow:
     inset 0 0 0 1px rgba(25, 35, 25, 0.035),
     0 0 14px rgba(25, 35, 25, 0.035);
@@ -10963,7 +10983,8 @@ body.row-reorder-active * {
       rgba(var(--flx-accent-rgb), 0.34),
       rgba(var(--flx-accent-hover-rgb), 0.22)
     );
-  background-size: 180% 100%;
+  background-size: 240% 100%;
+  background-repeat: no-repeat;
 }
 
 :root[data-theme="light"] .install-modal-backdrop {

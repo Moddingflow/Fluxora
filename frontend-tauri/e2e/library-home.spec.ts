@@ -178,7 +178,7 @@ test.beforeEach(async ({ page }) => {
       summary: 'Bethesda RPG',
       uiTemplateId: 'skyrim'
     };
-    const modRows = [
+    const modRows: any[] = [
       {
         id: 'sep_core',
         orderId: 'sep_core',
@@ -283,6 +283,7 @@ test.beforeEach(async ({ page }) => {
     }
     const pendingInstallSessions = new Map<string, MockPendingInstallSession>();
     const installOperations = new Map<string, any>();
+    (window as any).__fluxoraInstallOperations = installOperations;
     let activeMockInstalls = 0;
     const queuedMockInstalls: Array<() => Promise<void>> = [];
     const scheduleMockInstall = (run: () => Promise<void>) => {
@@ -410,7 +411,10 @@ test.beforeEach(async ({ page }) => {
         (item) => item.isMod && String(item.name).toLocaleLowerCase() === name.toLocaleLowerCase()
       );
       const id = existing?.id ?? `${skyrimProject.paths.modsDirectory}\\${name}`;
-      const version = existing?.version ?? '';
+      const returnNexusLatest =
+        window.localStorage.getItem('fluxora.test.installedNexusLatest') === 'true';
+      const version = returnNexusLatest ? '2.0.0' : (existing?.version ?? '');
+      const latestVersion = returnNexusLatest ? '2.1.0' : (existing?.latestVersion ?? version);
       const orderId = existing?.orderId ??
         `mod_${name.toLocaleLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}`;
       const modUuid = existing?.modUuid || orderId;
@@ -430,7 +434,9 @@ test.beforeEach(async ({ page }) => {
           separatorTitle: '',
           name,
           version,
-          latestVersion: '',
+          latestVersion,
+          latestFileId: returnNexusLatest ? '777' : '',
+          updateCheckState: returnNexusLatest ? 'update_available' : '',
           lastCheckedAt: '',
           updateStatus: '',
           conflictStatus: '',
@@ -439,11 +445,18 @@ test.beforeEach(async ({ page }) => {
           overwrittenFileCount: 0,
           overwritingFileCount: 0,
           isEnabled: true,
-          canCheckUpdates: false,
-          hasUpdate: false,
-          sourceIsNexus: false,
+          canCheckUpdates: returnNexusLatest,
+          hasUpdate: returnNexusLatest,
+          sourceIsNexus: returnNexusLatest,
           sourceIsModdingFlow: false,
-          isLocal: true,
+          sourceProvider: returnNexusLatest ? 'nexus' : undefined,
+          sourceGameDomain: returnNexusLatest ? 'skyrimspecialedition' : undefined,
+          sourceModId: returnNexusLatest ? '26686' : undefined,
+          sourceFileId: returnNexusLatest ? '654' : undefined,
+          sourceUrl: returnNexusLatest
+            ? 'nxm://skyrimspecialedition/mods/26686/files/654'
+            : undefined,
+          isLocal: !returnNexusLatest,
           isTranslation: false,
           isPatch: false,
           overwritesModIds: [],
@@ -468,18 +481,24 @@ test.beforeEach(async ({ page }) => {
         id,
         name,
         version,
-        latestVersion: existing?.latestVersion ?? version,
-        latestFileId: (existing as any)?.latestFileId ?? '',
-        updateCheckState: (existing as any)?.updateCheckState ?? '',
+        latestVersion,
+        latestFileId: returnNexusLatest ? '777' : ((existing as any)?.latestFileId ?? ''),
+        updateCheckState: returnNexusLatest
+          ? 'update_available'
+          : ((existing as any)?.updateCheckState ?? ''),
         isEnabled: true,
-        sourceIsNexus: existing?.sourceIsNexus ?? false,
+        sourceIsNexus: returnNexusLatest || (existing?.sourceIsNexus ?? false),
         sourceIsModdingFlow: existing?.sourceIsModdingFlow ?? false,
-        sourceProvider: existing?.sourceProvider,
-        sourceGameDomain: existing?.sourceGameDomain,
-        sourceModId: existing?.sourceModId,
-        sourceFileId: existing?.sourceFileId,
-        sourceUrl: existing?.sourceUrl,
-        isLocal: existing?.isLocal ?? true,
+        sourceProvider: returnNexusLatest ? 'nexus' : existing?.sourceProvider,
+        sourceGameDomain: returnNexusLatest
+          ? 'skyrimspecialedition'
+          : existing?.sourceGameDomain,
+        sourceModId: returnNexusLatest ? '26686' : existing?.sourceModId,
+        sourceFileId: returnNexusLatest ? '654' : existing?.sourceFileId,
+        sourceUrl: returnNexusLatest
+          ? 'nxm://skyrimspecialedition/mods/26686/files/654'
+          : existing?.sourceUrl,
+        isLocal: returnNexusLatest ? false : (existing?.isLocal ?? true),
         isTranslation: existing?.isTranslation ?? false,
         isPatch: existing?.isPatch ?? false,
         modUuid,
@@ -580,7 +599,7 @@ test.beforeEach(async ({ page }) => {
         missingMasters: ['Zed.esm', 'Update.esm', 'Aardvark.esm']
       }
     ];
-    const downloadRows = [
+    const downloadRows: any[] = [
       {
         id: 'skyui_archive',
         name: 'SkyUI',
@@ -599,6 +618,7 @@ test.beforeEach(async ({ page }) => {
         downloadSpeedText: '',
         isDownloading: false,
         hasKnownProgress: true,
+        hasResolvedFileName: true,
         canResume: false,
         canInstall: true,
         canDelete: true
@@ -621,6 +641,7 @@ test.beforeEach(async ({ page }) => {
         downloadSpeedText: '',
         isDownloading: false,
         hasKnownProgress: true,
+        hasResolvedFileName: true,
         canResume: true,
         canInstall: false,
         canDelete: true
@@ -644,6 +665,7 @@ test.beforeEach(async ({ page }) => {
         downloadSpeedText: '',
         isDownloading: false,
         hasKnownProgress: true,
+        hasResolvedFileName: true,
         canResume: false,
         canInstall: true,
         canDelete: true
@@ -667,11 +689,40 @@ test.beforeEach(async ({ page }) => {
         downloadSpeedText: '',
         isDownloading: false,
         hasKnownProgress: true,
+        hasResolvedFileName: true,
         canResume: false,
         canInstall: true,
         canDelete: true
       }
     ];
+    let inboundNxmResolveAt = 0;
+    const inboundNxmDownload = (resolved: boolean) => ({
+      id: 'nxm_cabbage_cs_preset',
+      name: resolved ? 'Cabbage CS Preset' : 'skyrimse-182366-770345.nxm-pending',
+      fileName: resolved
+        ? 'Cabbage CS Preset.7z'
+        : 'skyrimse-182366-770345.nxm-pending',
+      localPath: resolved
+        ? 'D:\\Fluxora\\Downloads\\skyrimse\\Cabbage CS Preset.7z'
+        : 'D:\\Fluxora\\Downloads\\skyrimse\\skyrimse-182366-770345.nxm-pending',
+      source: 'Nexus Mods',
+      archiveId: null,
+      buildStatus: resolved ? 'Ready' : null,
+      transferState: resolved ? 'idle' : 'queued',
+      transferMessage: resolved ? '' : 'Queued',
+      sizeText: resolved ? '4.2 MB' : '',
+      createdAtText: 'now',
+      progressPercent: resolved ? 100 : 0,
+      progressText: resolved ? '100%' : '',
+      etaText: '',
+      downloadSpeedText: '',
+      isDownloading: !resolved,
+      hasKnownProgress: resolved,
+      hasResolvedFileName: resolved,
+      canResume: false,
+      canInstall: resolved,
+      canDelete: true
+    });
     const markDownloadInstalled = (downloadPath: unknown) => {
       const installedDownload = downloadRows.find(
         (entry) => entry.localPath === String(downloadPath ?? '')
@@ -1304,6 +1355,26 @@ test.beforeEach(async ({ page }) => {
         callback(payload);
       }
     };
+    (window as any).__emitFluxoraInstallConflictSnapshot = (
+      operationId: string,
+      targetIndex: number
+    ) => {
+      const session = pendingInstallSessions.get(String(operationId));
+      if (!session) {
+        return;
+      }
+      session.targetIndex = Number(targetIndex);
+      session.revision += 1;
+      const installConflictSnapshot = mockInstallConflictSnapshot(session);
+      for (const callback of operationProgressCallbacks) {
+        callback({
+          operationId,
+          phase: 'install-conflict-preview',
+          statusMessage: 'Late exact install conflicts',
+          installConflictSnapshot
+        });
+      }
+    };
     (window as any).fluxora = {
       app: {
         getInfo: async () => ({
@@ -1606,7 +1677,15 @@ test.beforeEach(async ({ page }) => {
               entry.id === 'skyui_archive' ? { ...entry, buildStatus: 'Deleted' } : { ...entry }
             );
           }
-          return downloadRows.map((entry) => ({ ...entry }));
+          const rows = downloadRows.map((entry) => ({ ...entry }));
+          if (
+            window.localStorage.getItem('fluxora.test.returnInboundDownload') ===
+              'pending-then-resolved' &&
+            inboundNxmResolveAt > 0
+          ) {
+            rows.push(inboundNxmDownload(Date.now() >= inboundNxmResolveAt));
+          }
+          return rows;
         },
         watchFolder: async (projectDirectory: any, downloadsDirectory: any, operation: any) => {
           calls.push({
@@ -1682,6 +1761,9 @@ test.beforeEach(async ({ page }) => {
             if (delayMs > 0) {
               await new Promise((resolve) => window.setTimeout(resolve, delayMs));
             }
+            if (installOperations.get(operationId)?.state === 'cancelled') {
+              return;
+            }
             if (window.localStorage.getItem('fluxora.test.installFailure') === 'true') {
               emit({
                 state: 'failed',
@@ -1718,6 +1800,21 @@ test.beforeEach(async ({ page }) => {
               markDownloadInstalled(request.sourcePath);
             }
             emit({
+              state: 'finalizing',
+              stage: 'finalizing',
+              progressPercent: 95,
+              indeterminate: false
+            });
+            const finalizationDelayMs = Number(
+              window.localStorage.getItem('fluxora.test.installFinalizationDelayMs') ?? '0'
+            );
+            if (finalizationDelayMs > 0) {
+              await new Promise((resolve) => window.setTimeout(resolve, finalizationDelayMs));
+            }
+            if (installOperations.get(operationId)?.state === 'cancelled') {
+              return;
+            }
+            emit({
               state: 'completed',
               stage: 'completed',
               progressPercent: 100,
@@ -1729,6 +1826,31 @@ test.beforeEach(async ({ page }) => {
             window.setTimeout(() => emit({ state: 'queued', stage: 'queued', progressPercent: 0 }), 0);
           }
           return snapshot;
+        },
+        cancel: async (projectDirectory: any, operationIdValue: any, operation: any) => {
+          const operationId = String(operationIdValue);
+          calls.push({
+            method: 'installs.cancel',
+            payload: { operation, operationId, projectDirectory }
+          });
+          const current = installOperations.get(operationId);
+          if (!current) {
+            throw new Error('Install operation was not found.');
+          }
+          const cancelled = {
+            ...current,
+            state: 'cancelled',
+            stage: 'cancelled',
+            progressPercent: 100,
+            indeterminate: false,
+            errorCode: 'install.cancelled',
+            errorMessage: 'Install operation was cancelled.'
+          };
+          installOperations.set(operationId, cancelled);
+          for (const callback of installProgressCallbacks) {
+            callback(cancelled);
+          }
+          return cancelled;
         },
         restore: async (_projectDirectory: any, operation: any) => {
           calls.push({ method: 'installs.restore', payload: { operation } });
@@ -1750,6 +1872,9 @@ test.beforeEach(async ({ page }) => {
           });
           for (const candidate of restored) {
             const operationId = String(candidate.operationId);
+            if (['completed', 'failed', 'cancelled'].includes(String(candidate.state))) {
+              continue;
+            }
             window.setTimeout(() => {
               const recovering = {
                 ...installOperations.get(operationId),
@@ -1783,8 +1908,10 @@ test.beforeEach(async ({ page }) => {
               }
             }, 8_000);
           }
+          const returnTerminal =
+            window.localStorage.getItem('fluxora.test.returnTerminalRestoredInstalls') === 'true';
           return [...installOperations.values()].filter((candidate) =>
-            !['completed', 'failed'].includes(String(candidate.state))
+            returnTerminal || !['completed', 'failed', 'cancelled'].includes(String(candidate.state))
           );
         },
         list: async () => [...installOperations.values()],
@@ -1942,6 +2069,10 @@ test.beforeEach(async ({ page }) => {
         },
         deleteInstalled: async (projectDirectory: any, modId: any, operation: any) => {
           calls.push({ method: 'mods.deleteInstalled', payload: { modId, operation, projectDirectory } });
+          const delayMs = Number(window.localStorage.getItem('fluxora.test.deleteInstalledDelayMs') ?? '0');
+          if (delayMs > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+          }
           return {};
         },
         deleteSeparator: async (projectDirectory: any, profileName: any, orderId: any, operation: any) => {
@@ -2517,7 +2648,12 @@ test.beforeEach(async ({ page }) => {
         captureLinks: async () => [],
         importInboundDownloads: async (projectDirectory: any, operation: any) => {
           calls.push({ method: 'nxm.importInboundDownloads', payload: { operation, projectDirectory } });
-          return window.localStorage.getItem('fluxora.test.returnInboundDownload') === 'true'
+          const inboundMode = window.localStorage.getItem('fluxora.test.returnInboundDownload');
+          if (inboundMode === 'pending-then-resolved') {
+            inboundNxmResolveAt = Date.now() + 300;
+            return [inboundNxmDownload(false)];
+          }
+          return inboundMode === 'true'
             ? [
                 {
                   id: 'nxm_cabbage_cs_preset',
@@ -2538,6 +2674,7 @@ test.beforeEach(async ({ page }) => {
                   downloadSpeedText: '',
                   isDownloading: false,
                   hasKnownProgress: false,
+                  hasResolvedFileName: true,
                   canResume: false,
                   canInstall: false,
                   canDelete: true
@@ -3914,6 +4051,106 @@ test('shows optimistic Installing before the persisted archive status becomes In
 
   await expect(skyUiRow.getByText('Installing', { exact: true })).toBeVisible({ timeout: 500 });
   await expect(skyUiRow.getByText('Installed', { exact: true })).toBeVisible({ timeout: 5_000 });
+});
+
+test('deleting a pending mod cancels its durable install and it does not reappear', async ({
+  page
+}) => {
+  await openSkyrimBuild(page);
+  await page.evaluate(() => window.localStorage.setItem('fluxora.test.installDelayMs', '900'));
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ }).dblclick();
+  const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
+  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+
+  const pendingRow = page.locator('.mod-list-row').filter({
+    hasText: 'Aetherius - A Race Overhaul'
+  });
+  await expect(pendingRow).toHaveAttribute('data-order-id', /^pending-install:/);
+  await pendingRow.click();
+  await pendingRow.press('Delete');
+  await page.getByRole('dialog', { name: 'Удаление мода' })
+    .getByRole('button', { name: 'Удалить' })
+    .click();
+
+  await expect.poll(() => callMethods(page)).toContain('installs.cancel');
+  await expect(pendingRow).toHaveCount(0);
+  await page.waitForTimeout(1_100);
+  await expect(pendingRow).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      (window as any).__fluxoraCalls.filter(
+        (call: { method: string; payload?: { modId?: string } }) =>
+          call.method === 'mods.deleteInstalled' &&
+          String(call.payload?.modId ?? '').startsWith('pending-install:')
+      ).length
+    )
+  ).toBe(0);
+});
+
+test('keeps the standard install dialog stable while its skeleton resolves', async ({ page }) => {
+  await openSkyrimBuild(page);
+  await page.evaluate(() => window.localStorage.setItem('fluxora.test.fomodAnalyzeDelayMs', '900'));
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
+
+  const dialog = page.getByRole('dialog', { name: /SkyUI/ });
+  const dialogSurface = dialog.locator('.install-dialog');
+  await expect(dialog).toHaveAttribute('aria-busy', 'true');
+  await expect(dialog.locator('.install-dialog-title')).toHaveText('Установка мода');
+
+  const detectingBox = await dialogSurface.boundingBox();
+  const shimmer = await dialog.locator('.workspace-skeleton').first().evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      animationIterationCount: style.animationIterationCount,
+      animationName: style.animationName,
+      animationTimingFunction: style.animationTimingFunction,
+      backgroundRepeat: style.backgroundRepeat
+    };
+  });
+  expect(shimmer).toEqual({
+    animationIterationCount: 'infinite',
+    animationName: 'downloadSkeletonSweep',
+    animationTimingFunction: 'linear',
+    backgroundRepeat: 'no-repeat'
+  });
+
+  await expect(dialog).toHaveAttribute('aria-busy', 'false');
+  await expect(dialog.getByRole('button', { name: 'Установить', exact: true })).toBeVisible();
+  const optionsBox = await dialogSurface.boundingBox();
+
+  expect(detectingBox).not.toBeNull();
+  expect(optionsBox).not.toBeNull();
+  expect(detectingBox?.width).toBe(optionsBox?.width);
+  expect(detectingBox?.height).toBe(optionsBox?.height);
+});
+
+test('keeps download search input usable after closing the install dialog', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
+
+  const dialog = page.getByRole('dialog', { name: /SkyUI/ });
+  await dialog.getByRole('button', { name: 'Закрыть окно установки' }).click();
+  await expect(dialog).toHaveCount(0);
+
+  const searchInput = rightPane.getByRole('textbox', { name: 'Search downloads' });
+  await searchInput.focus();
+  await page.keyboard.down('Alt');
+  await page.keyboard.press('Shift');
+  await page.keyboard.up('Alt');
+  await expect(searchInput).toBeFocused();
+
+  await searchInput.pressSequentially('skyui');
+  await expect(searchInput).toHaveValue('skyui');
+  await expect(rightPane.getByRole('row', { name: /SkyUI/ })).toBeVisible();
 });
 
 test('imports an external archive before starting install from the global Downloads path', async ({
@@ -5557,6 +5794,49 @@ test('drags mod order rows with pointer placement feedback', async ({ page }) =>
   await expect(target.locator('.mod-list-row__priority')).toHaveText('1');
 });
 
+test('drags every selected mod row as one ordered group', async ({ page }) => {
+  await openSkyrimBuild(page);
+
+  const separator = page.getByRole('row', { name: /Core fixes separator/ });
+  const patch = page.getByRole('row', { name: /Unofficial Patch mod/ });
+  const skyui = page.getByRole('row', { name: /SkyUI mod/ });
+  await patch.click();
+  await page.keyboard.down('Control');
+  await skyui.click();
+  await page.keyboard.up('Control');
+
+  await moveRowDragToSlot(page, patch, separator, 'before');
+  await expect(patch).toHaveAttribute('data-dragging', 'true');
+  await expect(skyui).toHaveAttribute('data-dragging', 'true');
+  await page.mouse.up();
+
+  await expect
+    .poll(() =>
+      page.locator('.mod-list-row[data-order-id]').evaluateAll((rows) =>
+        rows.slice(0, 3).map((row) => row.getAttribute('data-order-id'))
+      )
+    )
+    .toEqual(['mod_ussep', 'mod_skyui', 'sep_core']);
+  await expect(patch).toHaveAttribute('data-selected', 'true');
+  await expect(skyui).toHaveAttribute('data-selected', 'true');
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          (window as typeof window & {
+            __fluxoraCalls?: Array<{ method: string; payload?: { orderId?: string; targetIndex?: number } }>;
+          }).__fluxoraCalls ?? []
+        )
+          .filter((call) => call.method === 'mods.moveOrderItem')
+          .map((call) => call.payload)
+      )
+    )
+    .toEqual([
+      expect.objectContaining({ orderId: 'mod_ussep', targetIndex: 0 }),
+      expect.objectContaining({ orderId: 'mod_skyui', targetIndex: 1 })
+    ]);
+});
+
 test('continuously scrolls the mod list while a dragged row stays at either edge', async ({ page }) => {
   await page.goto(baseUrl);
   await page.evaluate(() => {
@@ -5752,6 +6032,54 @@ test('restores an interrupted install row and continues it after reopening the b
   await expect(restored).toHaveAttribute('data-order-id', 'mod_restored_install', {
     timeout: 12_000
   });
+});
+
+test('does not create a ghost row when recovery returns an already completed install', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    window.localStorage.setItem('fluxora.test.returnTerminalRestoredInstalls', 'true');
+    window.localStorage.setItem('fluxora.test.restoredInstallOperations', JSON.stringify([{
+      operationId: 'restored-completed-install',
+      sourceKind: 'download',
+      sourcePath: 'D:\\Fluxora\\Downloads\\skyrimse\\SkyUI.7z',
+      archiveFingerprint: 'mock:completed',
+      profileName: 'Default',
+      existingModMode: 2,
+      targetModUuid: 'mod_skyui',
+      targetFolder: 'SkyUI',
+      selectedOptionIds: [],
+      manualDecisions: [],
+      placementOverridesJson: '[]',
+      resume: { isFomod: false, modOrderTargetIndex: 2 },
+      beforeOrderId: 'mod_ussep',
+      afterOrderId: 'mod_skyui',
+      enqueueSequence: 1,
+      state: 'completed',
+      stage: 'completed',
+      progressPercent: 100,
+      indeterminate: false,
+      errorCode: '',
+      errorMessage: '',
+      result: null
+    }]));
+  });
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  await expect.poll(() => latestCallPayload(page, 'installs.restore.result')).toEqual({
+    count: 1,
+    operationIds: ['restored-completed-install']
+  });
+  await expect(page.locator('.mod-list-row[data-order-id="mod_skyui"]')).toHaveCount(1);
+  await expect(page.locator('.mod-list-row[data-order-id^="pending-install:"]')).toHaveCount(0);
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() =>
+    (window as any).__fluxoraCalls.filter(
+      (call: { method: string; payload?: { message?: string } }) =>
+        call.method === 'ui.log.ModInstall' &&
+        String(call.payload?.message ?? '').startsWith('Restored ')
+    ).length
+  )).toBe(0);
 });
 
 test('shows exact pending conflicts and rebases an install dragged before the snapshot is ready', async ({ page }) => {
@@ -6056,16 +6384,17 @@ test('post-install mod reveal clears search, expands the separator and scrolls t
   await expect(separatorRow).toHaveAttribute('aria-expanded', 'true');
 });
 
-test('Replace and Merge preserve the existing row without a reveal fade', async ({ page }) => {
+test('Replace and Merge reveal and highlight the existing row', async ({ page }) => {
   await openSkyrimBuild(page);
   const rightPane = page.getByLabel('Right pane');
   await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
   const searchInput = page.getByLabel('Search mods');
-  await searchInput.fill('SkyUI');
   const installedRow = page.locator('.mod-list-row[data-order-id="mod_skyui"]');
   await expect(installedRow).toBeVisible();
 
   const installAgain = async (mode: 'Объединить' | 'Заменить') => {
+    await searchInput.fill('Aetherius');
+    await expect(installedRow).toHaveCount(0);
     await resetPostInstallRevealAnimationProbe(page, 'mod_skyui');
     await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
     const dialog = page.getByRole('dialog', { name: /SkyUI/ });
@@ -6074,12 +6403,15 @@ test('Replace and Merge preserve the existing row without a reveal fade', async 
     await dialog.getByRole('button', { name: new RegExp(mode) }).click();
     await expect(dialog).toHaveCount(0);
 
-    await expect(searchInput).toHaveValue('SkyUI');
+    await expect(searchInput).toHaveValue('');
     await expect(installedRow).toBeVisible();
-    await expect(installedRow).not.toHaveAttribute('data-state');
+    await expect(installedRow).toHaveAttribute('data-state', 'post-install-reveal');
     await expect(installedRow).toHaveAttribute('data-selected', 'true');
     await expect(installedRow).toBeFocused();
-    expect(await postInstallRevealAnimationEvents(page)).toEqual([]);
+    await expect
+      .poll(() => postInstallRevealAnimationEvents(page), { timeout: 3_000 })
+      .toEqual(['animationend']);
+    await expect(installedRow).not.toHaveAttribute('data-state');
   };
 
   await installAgain('Объединить');
@@ -6147,6 +6479,123 @@ test('shows an accepted inbound Nexus download before any native list refresh', 
       )
     )
     .toBe(listCallsBeforeInbound);
+});
+
+test('keeps NXM responsive while two installs finalize and preserves the terminal row identity and position', async ({ page }) => {
+  test.setTimeout(30_000);
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    window.localStorage.setItem('fluxora.test.installDelayMs', '200');
+    window.localStorage.setItem('fluxora.test.installFinalizationDelayMs', '1200');
+    window.localStorage.setItem('fluxora.test.installConflictSnapshotDelayMs', '150');
+    window.localStorage.setItem('fluxora.test.returnInboundDownload', 'pending-then-resolved');
+    window.localStorage.setItem('fluxora.test.installedNexusLatest', 'true');
+  });
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  const source = rightPane.getByRole('row', { name: /Aetherius - A Race Overhaul/ });
+  const separator = page.getByRole('row', { name: /Core fixes separator/ });
+  await dragDownloadIntoSeparator(page, source, separator);
+  const installDialog = page.getByRole('dialog', { name: /Aetherius - A Race Overhaul/ });
+  await installDialog.getByLabel(/Mod name/).fill('Aetherius - A Race Overhaul');
+  await installDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+
+  await rightPane.getByRole('row', { name: /SkyUI/ }).dblclick();
+  const secondInstallDialog = page.getByRole('dialog', { name: /SkyUI/ });
+  await secondInstallDialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await secondInstallDialog.getByRole('button', { name: /Объединить/ }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const operations = [...(window as any).__fluxoraInstallOperations.values()];
+        return operations.filter((operation: { state?: string }) => operation.state === 'finalizing').length;
+      })
+    )
+    .toBe(2);
+
+  await page.evaluate(() => {
+    (window as any).__emitFluxoraInboundNxm({ operationId: 'op_nxm_during_install' });
+  });
+  await expect(rightPane.getByText('Importing NXM', { exact: true })).toHaveCount(0);
+  await expect(rightPane.getByRole('row', { name: /Получаем название/ })).toBeVisible({
+    timeout: 500
+  });
+  await expect(rightPane.getByRole('row', { name: /Cabbage CS Preset/ })).toBeVisible({
+    timeout: 1_500
+  });
+
+  const installedRow = page.locator(
+    '.mod-list-row[data-order-id="mod_aetherius_a_race_overhaul"]'
+  );
+  await expect(installedRow).toBeVisible();
+  await expect(installedRow.locator('.mod-list-row__latest')).toHaveText('2.1.0');
+  const installedIndex = await installedRow.evaluate((row) =>
+    [...document.querySelectorAll('.mod-list-row[data-order-id]')].indexOf(row)
+  );
+  expect(installedIndex).toBe(3);
+
+  const submit = await page.evaluate(() =>
+    (window as any).__fluxoraCalls
+      .filter((call: { method: string; payload?: { request?: { modName?: string } } }) =>
+        call.method === 'installs.submit' &&
+        call.payload?.request?.modName === 'Aetherius - A Race Overhaul'
+      )
+      .at(-1)?.payload
+  ) as any;
+  const operationId = String(submit?.request?.operationId ?? '');
+  const rebasesBeforeLateSnapshot = (await callMethods(page)).filter(
+    (method) => method === 'mods.rebasePendingInstall'
+  ).length;
+  await page.evaluate(({ operationId }) => {
+    (window as any).__emitFluxoraInstallConflictSnapshot(operationId, 0);
+  }, { operationId });
+  await page.waitForTimeout(200);
+
+  await expect(installedRow).toBeVisible();
+  expect(await installedRow.evaluate((row) =>
+    [...document.querySelectorAll('.mod-list-row[data-order-id]')].indexOf(row)
+  )).toBe(installedIndex);
+  expect((await callMethods(page)).filter(
+    (method) => method === 'mods.rebasePendingInstall'
+  ).length).toBe(rebasesBeforeLateSnapshot);
+  await expect(page.getByText(/Bridge request timed out/i)).toHaveCount(0);
+});
+
+test('keeps NXM responsive while a destructive main-lane delete is pending', async ({ page }) => {
+  test.setTimeout(30_000);
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    window.localStorage.setItem('fluxora.test.deleteInstalledDelayMs', '1200');
+    window.localStorage.setItem('fluxora.test.returnInboundDownload', 'pending-then-resolved');
+  });
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  const modRow = page.getByRole('row', { name: /SkyUI mod/ });
+  await modRow.click();
+  await modRow.press('Delete');
+  await page.getByRole('dialog', { name: 'Удаление мода' })
+    .getByRole('button', { name: 'Удалить' })
+    .click();
+  await expect.poll(() => callMethods(page)).toContain('mods.deleteInstalled');
+
+  await page.evaluate(() => {
+    (window as any).__emitFluxoraInboundNxm({ operationId: 'op_nxm_during_delete' });
+  });
+  await expect(rightPane.getByText('Importing NXM', { exact: true })).toHaveCount(0);
+  await expect(rightPane.getByRole('row', { name: /Получаем название/ })).toBeVisible({
+    timeout: 500
+  });
+  await expect(rightPane.getByRole('row', { name: /Cabbage CS Preset/ })).toBeVisible({
+    timeout: 1_500
+  });
+  await expect(page.locator('.operation-overlay')).toHaveCount(0);
+  await expect(page.getByText(/Bridge request timed out/i)).toHaveCount(0);
 });
 
 test('keeps downloads rows visible during delayed refresh', async ({ page }) => {
@@ -6599,6 +7048,96 @@ test('drags plugin rows without selecting text', async ({ page }) => {
       orderId: 'plugin_skyui',
       targetIndex: 1
     });
+});
+
+test('drags every movable selected plugin row and separator as one ordered group', async ({
+  page
+}) => {
+  await page.goto(baseUrl);
+  await page.evaluate(async () => {
+    const scope = window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+      fluxora: any;
+    };
+    const originalRows = await scope.fluxora.plugins.list('', '', null, {
+      operationId: 'plugin_group_drag_fixture'
+    });
+    const template = originalRows.find((item: any) => item.orderId === 'plugin_skyui');
+    let pluginRows = [
+      ...structuredClone(originalRows),
+      {
+        ...structuredClone(template),
+        id: 'RaceMenu.esp',
+        orderId: 'plugin_racemenu',
+        order: originalRows.length,
+        name: 'RaceMenu.esp',
+        sourceMod: 'RaceMenu',
+        missingMasters: []
+      }
+    ];
+    scope.fluxora.plugins.list = async () => structuredClone(pluginRows);
+    scope.fluxora.plugins.listPersisted = async () => structuredClone(pluginRows);
+    scope.fluxora.plugins.move = async (
+      projectDirectory: string,
+      templateId: string,
+      profileName: string | null,
+      orderId: string,
+      targetIndex: number,
+      operation: unknown
+    ) => {
+      scope.__fluxoraCalls?.push({
+        method: 'plugins.move',
+        payload: { operation, orderId, profileName, projectDirectory, targetIndex, templateId }
+      });
+      const sourceIndex = pluginRows.findIndex((item: any) => item.orderId === orderId);
+      const [moving] = pluginRows.splice(sourceIndex, 1);
+      pluginRows.splice(Math.max(0, Math.min(targetIndex, pluginRows.length)), 0, moving);
+      pluginRows = pluginRows.map((item: any, order: number) => ({ ...item, order }));
+      return structuredClone(pluginRows);
+    };
+  });
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  const separator = rightPane.getByRole('row', { name: /Late patches separator/ });
+  const skyui = rightPane.getByRole('row', { name: /SkyUI\.esp plugin/ });
+  const racemenu = rightPane.getByRole('row', { name: /RaceMenu\.esp plugin/ });
+  await separator.click();
+  await page.keyboard.down('Control');
+  await skyui.click();
+  await page.keyboard.up('Control');
+
+  await moveRowDragToSlot(page, skyui, racemenu, 'after');
+  await expect(separator).toHaveAttribute('data-dragging', 'true');
+  await expect(skyui).toHaveAttribute('data-dragging', 'true');
+  await page.mouse.up();
+
+  await expect
+    .poll(() =>
+      rightPane.locator('.plugin-row[data-order-id]').evaluateAll((rows) =>
+        rows.map((row) => row.getAttribute('data-order-id'))
+      )
+    )
+    .toEqual(['plugin_skyrim', 'plugin_racemenu', 'sep_patches', 'plugin_skyui']);
+  await expect(separator).toHaveAttribute('data-selected', 'true');
+  await expect(skyui).toHaveAttribute('data-selected', 'true');
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          (window as typeof window & {
+            __fluxoraCalls?: Array<{ method: string; payload?: { orderId?: string; targetIndex?: number } }>;
+          }).__fluxoraCalls ?? []
+        )
+          .filter((call) => call.method === 'plugins.move')
+          .map((call) => call.payload)
+      )
+    )
+    .toEqual([
+      expect.objectContaining({ orderId: 'plugin_skyui', targetIndex: 3 }),
+      expect.objectContaining({ orderId: 'sep_patches', targetIndex: 2 })
+    ]);
 });
 
 test('auto-fills SPID identity and installs separate copies as (2) then (3)', async ({ page }) => {

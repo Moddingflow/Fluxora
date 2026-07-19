@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace fluxora
 {
@@ -36,6 +37,7 @@ namespace fluxora
         InstallScheduler& operator=(const InstallScheduler&) = delete;
 
         void submit(InstallScheduledTask task);
+        [[nodiscard]] bool cancel(std::wstring_view operationId);
         void shutdown() noexcept;
 
         [[nodiscard]] std::size_t activeCount() const noexcept;

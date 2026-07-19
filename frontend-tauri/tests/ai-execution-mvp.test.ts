@@ -163,6 +163,7 @@ const importedDownload: FluxoraDownloadEntry = {
   downloadSpeedText: '',
   isDownloading: false,
   hasKnownProgress: true,
+  hasResolvedFileName: true,
   canResume: false,
   canInstall: true,
   canDelete: true

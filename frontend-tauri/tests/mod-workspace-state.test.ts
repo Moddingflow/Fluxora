@@ -14,6 +14,7 @@ import {
   modItemConflictHighlight,
   modLatestVersionDiffers,
   modLatestVersionText,
+  modOrderItemMovePlan,
   modOrderItemMatchesLookup,
   modPriorityByOrderId,
   optimisticModInstallState,
@@ -21,6 +22,7 @@ import {
   modOverwriteView,
   modRowConflictHighlight,
   removeModOrderItems,
+  reorderModOrderItemSelection,
   reorderModOrderItems,
   modSeparatorConflictMarkerStates,
   modSeparatorChildCount,
@@ -338,6 +340,71 @@ describe('mod workspace state', () => {
       'sep_visuals',
       'mod_skyui',
       'mod_smoothcam'
+    ]);
+  });
+
+  it('moves every selected mod row as one ordered drag group', () => {
+    const reordered = reorderModOrderItemSelection(
+      items,
+      'mod_skyui',
+      new Set(['mod_skyui', 'mod_smoothcam']),
+      'sep_visuals',
+      'before'
+    );
+
+    expect(reordered?.map((item) => item.orderId)).toEqual([
+      'mod_skyui',
+      'mod_smoothcam',
+      'sep_visuals'
+    ]);
+    expect(reordered?.map((item) => item.order)).toEqual([0, 1, 2]);
+    expect(
+      reordered &&
+        modOrderItemMovePlan(items, reordered, new Set(['mod_skyui', 'mod_smoothcam']))
+    ).toEqual([
+      { orderId: 'mod_skyui', targetIndex: 0 },
+      { orderId: 'mod_smoothcam', targetIndex: 1 }
+    ]);
+  });
+
+  it('moves multiple selected separators together without changing their relative order', () => {
+    const groupedItems = [
+      separatorItem('sep_core', 'Core', 0),
+      modItem('mod_core', 'Core mod', 1),
+      separatorItem('sep_visuals', 'Visuals', 2),
+      modItem('mod_visuals', 'Visual mod', 3),
+      separatorItem('sep_audio', 'Audio', 4),
+      modItem('mod_audio', 'Audio mod', 5),
+      separatorItem('sep_late', 'Late', 6)
+    ];
+    const reordered = reorderModOrderItemSelection(
+      groupedItems,
+      'sep_visuals',
+      new Set(['sep_core', 'sep_visuals', 'sep_audio']),
+      'sep_late',
+      'after'
+    );
+
+    expect(reordered?.map((item) => item.orderId)).toEqual([
+      'mod_core',
+      'mod_visuals',
+      'mod_audio',
+      'sep_late',
+      'sep_core',
+      'sep_visuals',
+      'sep_audio'
+    ]);
+    expect(
+      reordered &&
+        modOrderItemMovePlan(
+          groupedItems,
+          reordered,
+          new Set(['sep_core', 'sep_visuals', 'sep_audio'])
+        )
+    ).toEqual([
+      { orderId: 'sep_audio', targetIndex: 6 },
+      { orderId: 'sep_visuals', targetIndex: 5 },
+      { orderId: 'sep_core', targetIndex: 4 }
     ]);
   });
 

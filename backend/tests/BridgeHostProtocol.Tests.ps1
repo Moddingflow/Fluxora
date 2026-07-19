@@ -343,6 +343,17 @@ if ($pendingInstallRebaseRouteResponse.error.code -ne 'bridge.invalidRequest') {
     throw "Expected mods.rebasePendingInstall validation rejection, received: $($pendingInstallRebaseRouteResponse | ConvertTo-Json -Depth 10 -Compress)"
 }
 
+$cancelInstallRouteResponse = Invoke-BridgeHostRequest -Request @{
+    jsonrpc = '2.0'
+    id = 'installs_cancel_route'
+    method = 'installs.cancel'
+    params = @{}
+    meta = $requestMeta
+}
+if ($cancelInstallRouteResponse.error.code -ne 'bridge.invalidRequest') {
+    throw "Expected installs.cancel validation rejection, received: $($cancelInstallRouteResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+
 foreach ($nifPreviewMethod in @(
     'mods.startNifPreview',
     'mods.prepareNifPreviewVariant',

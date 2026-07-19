@@ -17,6 +17,11 @@ interface OrderReorderOptions {
   separatorMoveMode?: 'block' | 'single';
 }
 
+export interface OrderItemMove {
+  orderId: string;
+  targetIndex: number;
+}
+
 export const separatorChildCount = <T extends SeparatorOrderItem>(
   items: T[],
   separatorOrderId: string
@@ -175,6 +180,105 @@ export const reorderOrderItems = <T extends SeparatorOrderItem>(
   const moving = nextItems.splice(sourceIndex, blockLength);
   nextItems.splice(destination, 0, ...moving);
   return withSequentialOrder(nextItems);
+};
+
+export const reorderOrderItemSelection = <T extends SeparatorOrderItem>(
+  items: T[],
+  sourceOrderId: string,
+  selectedOrderIds: ReadonlySet<string>,
+  targetOrderId: string,
+  placement: OrderDropPlacement = 'after',
+  options: OrderTargetOptions = {}
+): T[] | null => {
+  const sourceIndex = items.findIndex((item) => item.orderId === sourceOrderId);
+  const targetIndex = items.findIndex((item) => item.orderId === targetOrderId);
+  const source = items[sourceIndex];
+  const target = items[targetIndex];
+  if (sourceIndex < 0 || targetIndex < 0 || !source || !target) {
+    return null;
+  }
+
+  const movingOrderIds = selectedOrderIds.has(sourceOrderId)
+    ? new Set(items.filter((item) => selectedOrderIds.has(item.orderId)).map((item) => item.orderId))
+    : new Set([sourceOrderId]);
+  if (movingOrderIds.size === 0 || movingOrderIds.has(targetOrderId)) {
+    return null;
+  }
+
+  if (
+    source.isSeparator &&
+    options.separatorDropTargets === 'separators' &&
+    !target.isSeparator
+  ) {
+    return null;
+  }
+
+  const slotIndex = dropSlotIndex(items, targetIndex, placement, options);
+  const moving = items.filter((item) => movingOrderIds.has(item.orderId));
+  const remaining = items.filter((item) => !movingOrderIds.has(item.orderId));
+  const destination = items
+    .slice(0, slotIndex)
+    .filter((item) => !movingOrderIds.has(item.orderId)).length;
+  const nextItems = [...remaining];
+  nextItems.splice(destination, 0, ...moving);
+
+  if (nextItems.every((item, index) => item.orderId === items[index]?.orderId)) {
+    return null;
+  }
+
+  return withSequentialOrder(nextItems);
+};
+
+export const orderItemMovePlan = <T extends SeparatorOrderItem>(
+  items: T[],
+  desiredItems: T[],
+  movingOrderIds: ReadonlySet<string>,
+  applyMove: (currentItems: T[], orderId: string, targetIndex: number) => T[] | null
+): OrderItemMove[] | null => {
+  if (
+    items.length !== desiredItems.length ||
+    items.some((item) => !desiredItems.some((candidate) => candidate.orderId === item.orderId))
+  ) {
+    return null;
+  }
+
+  const orderedMovingIds = desiredItems
+    .filter((item) => movingOrderIds.has(item.orderId))
+    .map((item) => item.orderId);
+  if (orderedMovingIds.length === 0) {
+    return items.every((item, index) => item.orderId === desiredItems[index]?.orderId) ? [] : null;
+  }
+
+  const currentFirstIndex = items.findIndex((item) => movingOrderIds.has(item.orderId));
+  const desiredFirstIndex = desiredItems.findIndex((item) => movingOrderIds.has(item.orderId));
+  const moveOrderIds =
+    desiredFirstIndex > currentFirstIndex ? [...orderedMovingIds].reverse() : orderedMovingIds;
+  const moves: OrderItemMove[] = [];
+  let currentItems = items;
+
+  for (const orderId of moveOrderIds) {
+    const sourceIndex = currentItems.findIndex((item) => item.orderId === orderId);
+    const targetIndex = desiredItems.findIndex((item) => item.orderId === orderId);
+    if (sourceIndex < 0 || targetIndex < 0) {
+      return null;
+    }
+    if (sourceIndex === targetIndex) {
+      continue;
+    }
+
+    const nextItems = applyMove(currentItems, orderId, targetIndex);
+    if (!nextItems) {
+      return null;
+    }
+    currentItems = nextItems;
+    moves.push({ orderId, targetIndex });
+  }
+
+  return currentItems.every(
+    (item, index) => item.orderId === desiredItems[index]?.orderId
+  )
+    ? moves
+    : null;
 };
 
 export const targetIndexForOrderDrop = <T extends SeparatorOrderItem>(

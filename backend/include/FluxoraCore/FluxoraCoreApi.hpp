@@ -70,6 +70,12 @@ extern "C"
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
+    FLUXORA_CORE_API int fluxora_cancel_install_operation(
+        const wchar_t* projectDirectory,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     FLUXORA_CORE_API int fluxora_list_install_operations(
         const wchar_t* projectDirectory,
         int includeTerminal,
