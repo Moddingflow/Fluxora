@@ -69,6 +69,25 @@ afterEach(() => {
 });
 
 describe('Tauri bridge request timeouts', () => {
+  it('keeps AI editor dirty state and opaque editor bootstrap in the Tauri shell', async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const api = createTauriFluxoraApi();
+
+    await api.ai.setFileDirty('opaque-file-ref', true);
+    await api.windowControls.openAiTextEditor('chat-1', 'opaque-file-ref', 'settings.ini', 17);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_ai_file_set_dirty', {
+      fileRef: 'opaque-file-ref',
+      dirty: true
+    });
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_open_ai_text_editor_window', {
+      chatId: 'chat-1',
+      fileRef: 'opaque-file-ref',
+      fileName: 'settings.ini',
+      firstChangedLine: 17
+    });
+  });
+
   it('gives heavy project config opens enough time for cold MO2-migrated builds', async () => {
     const configPath =
       'C:\\Users\\Валера\\AppData\\Roaming\\Fluxora\\Builds\\Foundation Edition-9.json';
@@ -206,6 +225,55 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('uses one three-second shell envelope for generic startup restore', async () => {
+    const request: OperationRequest = { operationId: 'op_connections_restore' };
+    const snapshot = {
+      providers: [],
+      requestedAtUtc: '2026-07-19T09:00:00Z',
+      completedAtUtc: '2026-07-19T09:00:01Z',
+      durationMs: 1_000,
+      timedOut: false,
+      operationId: request.operationId
+    };
+    invokeMock.mockResolvedValue(snapshot);
+
+    const api = createTauriFluxoraApi();
+    await expect(api.connections.restoreAll(2, request)).resolves.toEqual(snapshot);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'connections.restoreAll',
+      params: { attempt: 2 },
+      request,
+      timeoutMs: 3_000
+    });
+  });
+
+  it('keeps generic connection login on the OAuth envelope', async () => {
+    const request: OperationRequest = { operationId: 'op_connections_connect' };
+    invokeMock.mockResolvedValue({
+      providerId: 'nexus',
+      label: 'Nexus Mods',
+      state: 'ready',
+      accountName: 'Playwright user',
+      hasStoredSession: true,
+      retryable: false,
+      requiresUserAction: false,
+      message: 'Ready',
+      checkedAtUtc: '2026-07-19T09:00:00Z',
+      operationId: request.operationId
+    });
+
+    const api = createTauriFluxoraApi();
+    await api.connections.connect('nexus', request);
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'connections.connect',
+      params: { providerId: 'nexus' },
+      request,
+      timeoutMs: 180_000
+    });
+  });
+
   it('gives executable launches enough time for VFS preparation', async () => {
     const executable: FluxoraExecutable = {
       id: 'skse',
@@ -304,7 +372,7 @@ describe('Tauri bridge request timeouts', () => {
       method: 'mods.checkUpdates',
       params: updateRequest,
       request,
-      timeoutMs: undefined
+      timeoutMs: 70_000
     });
   });
 

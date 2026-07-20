@@ -6,12 +6,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { SettingsWorkspace } from '../src/renderer/features/settings/SettingsWorkspace';
-import { createCheckingNexusAuthStatus } from '../src/renderer/settings-workspace-state';
 import { TransferSettingsPanel } from '../src/renderer/TransferSettingsPanel';
 import type {
   FluxoraApiLimitProvider,
   FluxoraAppInfo,
-  FluxoraNexusModsAuthStatus
+  FluxoraExternalConnectionStatus
 } from '../src/shared/fluxora-api';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -59,8 +58,8 @@ const baseSettingsWorkspaceProps: SettingsWorkspaceProps = {
   isTransferRunning: false,
   languageBusy: null,
   lastBuildDate: '2026-07-03T10:15:00.000Z',
-  nexusBusy: false,
-  nexusStatus: null,
+  connectionBusyProviderId: null,
+  connectionProviders: [],
   section: 'developers',
   settingsBusyLabel: null,
   settingsCapabilities: {
@@ -74,22 +73,21 @@ const baseSettingsWorkspaceProps: SettingsWorkspaceProps = {
   onOpenTransfer: () => undefined,
   onSectionChange: () => undefined,
   onSetLanguage: () => undefined,
-  onToggleNexusConnection: () => undefined
+  onToggleConnection: () => undefined
 };
 
-const cachedNativeNexusStatus: FluxoraNexusModsAuthStatus = {
-  isConfigured: true,
-  isLinked: true,
-  isPremium: true,
-  hasApiKey: true,
-  displayName: 'Cached user',
-  userId: 'cached-user',
-  message: 'Linked',
-  clientId: 'fluxora',
-  redirectUri: 'http://127.0.0.1:8089/callback',
+const cachedNexusStatus: FluxoraExternalConnectionStatus = {
+  providerId: 'nexus',
+  label: 'Nexus Mods',
+  state: 'restoring',
+  accountName: 'Cached user',
+  hasStoredSession: true,
+  retryable: true,
+  requiresUserAction: false,
+  message: 'Restoring saved session.',
+  checkedAtUtc: '',
   operationId: 'op_cached_nexus'
 };
-const cachedNexusStatus = createCheckingNexusAuthStatus(cachedNativeNexusStatus, 'op_cached_nexus');
 
 const exampleApiLimitProvider: FluxoraApiLimitProvider = {
   id: 'example-api',
@@ -165,6 +163,7 @@ describe('settings redesign', () => {
     expect(settingsWorkspace).toContain('settings-service-row--api-limit');
     expect(settingsWorkspace).toContain('<LanguageSelect');
     expect(settingsWorkspace).not.toContain('<AiSettingsPanel');
+    expect(settingsWorkspace).not.toContain("case 'ai'");
     expect(languageSelect).toContain('settings-language-row');
     expect(languageSelect).toContain('../../../../../Icons/flag-united-kingdom.svg');
     expect(languageSelect).toContain('languageMenuViewportHeight = 330');
@@ -206,14 +205,14 @@ describe('settings redesign', () => {
     expect(settingsWorkspace).not.toContain('Link Nexus Mods with OAuth');
     expect(settingsWorkspace).not.toContain('Refresh status');
     expect(app).toContain('window.fluxora.settings.setLanguage');
-    expect(app).toContain('window.fluxora.nexus.getAuthStatus');
+    expect(app).toContain('window.fluxora.connections.listStatus');
     expect(app).toContain('window.fluxora.apiLimits.list');
-    expect(app).toContain('window.fluxora.nexus.connect');
-    expect(app).toContain('window.fluxora.nexus.disconnect');
-    expect(app).toContain('loadCachedNexusAuthStatus(window.localStorage)');
-    expect(app).toContain('saveCachedNexusAuthStatus(window.localStorage, status)');
+    expect(app).toContain('window.fluxora.connections.connect');
+    expect(app).toContain('window.fluxora.connections.disconnect');
+    expect(app).toContain('loadCachedConnectionSnapshot(window.localStorage)');
+    expect(app).toContain('saveCachedConnectionSnapshot(window.localStorage, snapshot)');
     expect(app).toContain("window.addEventListener('online', handleOnline)");
-    expect(app).toContain('nexus_online_retry');
+    expect(app).toContain("window.addEventListener('focus', handleFocus)");
     expect(app).not.toContain("setSettingsBusyLabel('Loading settings')");
     expect(app).toContain('window.fluxora.transfer.analyzeMo2');
     expect(app).toContain('window.fluxora.transfer.importMo2');
@@ -223,6 +222,14 @@ describe('settings redesign', () => {
     expect(settingsWorkspace).not.toContain('window.fluxora.');
     expect(settingsWorkspace).not.toContain('@tauri-apps/api');
     expect(app).toContain('window.fluxora.links.openExternal(fluxoraOriginalRepositoryUrl)');
+  });
+
+  it('does not expose a separate AI provider setup page in Settings', () => {
+    const html = renderSettingsWorkspace();
+
+    expect(html).not.toContain('AI settings');
+    expect(html).not.toContain('Google Gemini key missing');
+    expect(html).not.toContain('Connect this provider');
   });
 
   it('keeps Settings styling aligned with the compact UI-kit source', () => {
@@ -298,7 +305,7 @@ describe('settings redesign', () => {
   it('renders Nexus cached hints as checking until the native bridge verifies status', () => {
     const html = renderSettingsWorkspace({
       section: 'connections',
-      nexusStatus: cachedNexusStatus,
+      connectionProviders: [cachedNexusStatus],
       settingsCapabilities: {
         ...baseSettingsWorkspaceProps.settingsCapabilities,
         nexusAvailable: true
@@ -306,7 +313,7 @@ describe('settings redesign', () => {
     });
 
     expect(html).toContain('Nexus Mods');
-    expect(html).toContain('Checking - last linked as Cached user');
+    expect(html).toContain('Reconnecting');
     expect(html).toContain('aria-checked="false"');
     expect(html).toContain('disabled=""');
     expect(html).not.toContain('Linked - Cached user');
@@ -327,5 +334,31 @@ describe('settings redesign', () => {
     expect(html).toContain('19,876 / 20,000');
     expect(html).toContain('Reset 11:00 UTC');
     expect(html).toContain('settings-service-row--api-limit');
+  });
+
+  it('uses a generic fallback icon and exposes reauthentication as the only connection error state', () => {
+    const html = renderSettingsWorkspace({
+      section: 'connections',
+      connectionProviders: [
+        {
+          ...cachedNexusStatus,
+          providerId: 'example',
+          label: 'Example Cloud',
+          state: 'reauthRequired',
+          requiresUserAction: true,
+          retryable: false
+        }
+      ],
+      settingsCapabilities: {
+        ...baseSettingsWorkspaceProps.settingsCapabilities,
+        settingsAvailable: true
+      }
+    });
+
+    expect(html).toContain('Example Cloud');
+    expect(html).toContain('Sign in again - Cached user');
+    expect(html).toContain('data-status="error"');
+    expect(html).toContain('lucide-plug');
+    expect(html).not.toContain('settings-service-icon--nexus');
   });
 });

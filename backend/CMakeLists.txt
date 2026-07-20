@@ -137,6 +137,9 @@ add_library(FluxoraCore SHARED
     src/Services/AppSettingsService.cpp
     src/Services/ArchiveCatalogService.cpp
     src/Services/BuildPathSettingsService.cpp
+    src/Services/BuildFileDiscoveryService.cpp
+    src/Services/ConfigRecipeRegistry.cpp
+    src/Services/BuildFileWorkspaceService.cpp
     src/Services/BulkFileCopyService.cpp
     src/GameSupport/DefinitionBackedGameSupport.cpp
     src/GameSupport/GameDefinitionLoader.cpp
@@ -157,6 +160,7 @@ add_library(FluxoraCore SHARED
     src/Services/EffectiveFileTreeService.cpp
     src/Services/ExecutableIconService.cpp
     src/Services/ExecutableService.cpp
+    src/Services/ExternalConnectionService.cpp
     src/Services/FomodInstallerService.cpp
     src/Services/FomodProfileContextService.cpp
     src/Services/FomodAutoSelectionService.cpp
@@ -164,9 +168,12 @@ add_library(FluxoraCore SHARED
     src/Services/FluxPackService.cpp
     src/Services/GrassCacheProcessRunner.cpp
     src/Services/GrassCacheService.cpp
+    src/Services/ManagedAiOverrideService.cpp
     src/Services/Logger.cpp
     src/Services/ModService.cpp
     src/Services/ModUpdateService.cpp
+    src/Services/NexusDownloadDuplicateResolver.cpp
+    src/Services/NexusFileLineageResolver.cpp
     src/Services/NexusUpdateCache.cpp
     src/Services/NexusUpdateHttpApi.cpp
     src/Services/ModIdentityResolver.cpp

@@ -2,6 +2,7 @@
 
 #include "FluxoraCore/Services/IService.hpp"
 
+#include <chrono>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -49,6 +50,14 @@ namespace fluxora
         std::wstring message;
         std::wstring clientId;
         std::wstring redirectUri;
+        bool requiresReauth{false};
+    };
+
+    enum class NexusModsAuthFailureKind
+    {
+        None,
+        Temporary,
+        ReauthRequired
     };
 
     struct NexusModsApiAuthHeader
@@ -57,6 +66,27 @@ namespace fluxora
         std::wstring headerName;
         std::wstring headerValue;
         std::wstring credentialKind;
+        std::wstring message;
+        NexusModsAuthFailureKind failureKind{NexusModsAuthFailureKind::None};
+    };
+
+    enum class NexusModsConnectionState
+    {
+        NotConfigured,
+        NotLinked,
+        Restoring,
+        Ready,
+        TemporarilyUnavailable,
+        ReauthRequired
+    };
+
+    struct NexusModsConnectionStatus
+    {
+        NexusModsConnectionState state{NexusModsConnectionState::NotConfigured};
+        std::wstring accountName;
+        bool hasStoredSession{false};
+        bool retryable{false};
+        bool requiresUserAction{false};
         std::wstring message;
     };
 
@@ -69,7 +99,12 @@ namespace fluxora
         void shutdown() override;
 
         [[nodiscard]] NexusModsAuthStatus status() const;
+        [[nodiscard]] NexusModsConnectionStatus connectionStatus() const;
+        [[nodiscard]] NexusModsConnectionStatus restoreStoredSession(
+            std::chrono::steady_clock::time_point deadline);
         [[nodiscard]] NexusModsApiAuthHeader apiAuthHeader();
+        [[nodiscard]] NexusModsApiAuthHeader retryApiAuthHeaderAfterUnauthorized(
+            const NexusModsApiAuthHeader& rejectedHeader);
         [[nodiscard]] ApiLimitStatus apiLimits();
         NexusModsAuthStatus connect();
         NexusModsAuthStatus connectWithApiKey(std::wstring_view apiKey);
@@ -81,6 +116,7 @@ namespace fluxora
         Logger& logger_;
         AppSettingsService& settings_;
         mutable std::mutex refreshMutex_;
+        std::wstring refreshedOAuthHeaderValue_;
         bool initialized_{false};
     };
 }

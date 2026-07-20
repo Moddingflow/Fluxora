@@ -77,6 +77,9 @@ interface TextEditorWorkspaceProps {
   initialModPath: string;
   initialRelativePath: string;
   initialFileName: string;
+  initialAiChatId?: string;
+  initialAiFileRef?: string;
+  initialLine?: number;
 }
 
 type QuickInputMode = 'commands' | 'files' | 'language' | null;
@@ -138,7 +141,10 @@ export function TextEditorWorkspace({
   projectDirectory,
   initialModPath,
   initialRelativePath,
-  initialFileName
+  initialFileName,
+  initialAiChatId = '',
+  initialAiFileRef = '',
+  initialLine = 1
 }: TextEditorWorkspaceProps) {
   const [tabs, setTabs] = useState<TextEditorTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
@@ -288,6 +294,175 @@ export function TextEditorWorkspace({
     void loadInitialModFile();
   }, [loadInitialModFile]);
 
+  const loadInitialAiFile = useCallback(async () => {
+    if (!initialAiChatId || !initialAiFileRef) {
+      return;
+    }
+    const key = `ai\0${initialAiChatId}\0${initialAiFileRef}`;
+    if (loadedInitialRef.current === key) {
+      return;
+    }
+    loadedInitialRef.current = key;
+    const fileName = initialFileName || 'Editor';
+    const language = textEditorLanguageForFile(fileName);
+    const tabId = textEditorTabId('ai', initialAiFileRef);
+    upsertTab({
+      id: tabId,
+      source: 'ai',
+      path: fileName,
+      fileName,
+      aiChatId: initialAiChatId,
+      fileRef: initialAiFileRef,
+      content: '',
+      savedContent: '',
+      languageId: language.id,
+      languageLabel: language.label,
+      state: 'loading'
+    });
+    setStatusText(`Opening ${fileName}`);
+    try {
+      const document = await window.fluxora.ai.readFile({
+        chatId: initialAiChatId,
+        fileRef: initialAiFileRef,
+        startLine: 1,
+        maxLines: 65_536,
+        maxBytes: 64 * 1024,
+        editorMode: true,
+        operationId: createRendererOperationId('ai_text_editor_read')
+      });
+      const readOnly = document.truncated;
+      upsertTab({
+        id: tabId,
+        source: 'ai',
+        path: document.relativePath || fileName,
+        fileName,
+        relativePath: document.relativePath,
+        aiChatId: initialAiChatId,
+        fileRef: initialAiFileRef,
+        baseSha256: document.sha256,
+        content: document.content,
+        savedContent: document.content,
+        languageId: language.id,
+        languageLabel: language.label,
+        state: 'idle',
+        readOnly,
+        errorMessage: readOnly
+          ? 'This file exceeds the bounded editor read window and is open read-only.'
+          : undefined
+      });
+      pendingRevealRef.current = {
+        tabId,
+        line: initialLine,
+        column: 1,
+        matchLength: 1
+      };
+      requestAnimationFrame(() => surfaceRef.current?.reveal(initialLine, 1, 1));
+      setStatusText(readOnly ? 'Opened read-only: bounded read was truncated.' : 'Ready');
+    } catch (error) {
+      const message = errorMessage(error);
+      patchTab(tabId, { state: 'error', errorMessage: message });
+      setStatusText(message);
+    }
+  }, [
+    initialAiChatId,
+    initialAiFileRef,
+    initialFileName,
+    initialLine,
+    patchTab,
+    upsertTab
+  ]);
+
+  useEffect(() => {
+    void loadInitialAiFile();
+  }, [loadInitialAiFile]);
+
+  const dirtyAiRefs = useMemo(
+    () => tabs
+      .filter((tab) => tab.source === 'ai' && tab.fileRef && isTextEditorTabDirty(tab))
+      .map((tab) => tab.fileRef as string)
+      .sort(),
+    [tabs]
+  );
+  const registeredDirtyAiRefs = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const next = new Set(dirtyAiRefs);
+    for (const fileRef of registeredDirtyAiRefs.current) {
+      if (!next.has(fileRef)) {
+        void window.fluxora.ai.setFileDirty(fileRef, false);
+      }
+    }
+    for (const fileRef of next) {
+      if (!registeredDirtyAiRefs.current.has(fileRef)) {
+        void window.fluxora.ai.setFileDirty(fileRef, true);
+      }
+    }
+    registeredDirtyAiRefs.current = next;
+  }, [dirtyAiRefs]);
+
+  useEffect(() => () => {
+    for (const fileRef of registeredDirtyAiRefs.current) {
+      void window.fluxora.ai.setFileDirty(fileRef, false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!initialAiChatId || !initialAiFileRef) {
+      return;
+    }
+    let polling = false;
+    const refreshIfExternallyChanged = async () => {
+      if (polling) {
+        return;
+      }
+      polling = true;
+      try {
+        const currentTab = tabsRef.current.find((tab) =>
+          tab.source === 'ai' && tab.fileRef === initialAiFileRef
+        );
+        if (!currentTab || !currentTab.baseSha256 || currentTab.state !== 'idle') {
+          return;
+        }
+        const document = await window.fluxora.ai.readFile({
+          chatId: initialAiChatId,
+          fileRef: initialAiFileRef,
+          startLine: 1,
+          maxLines: 65_536,
+          maxBytes: 64 * 1024,
+          editorMode: true,
+          operationId: createRendererOperationId('ai_text_editor_external_change')
+        });
+        if (document.sha256 === currentTab.baseSha256) {
+          return;
+        }
+        if (isTextEditorTabDirty(currentTab)) {
+          setStatusText('File changed outside Fluxora Editor. Save is blocked until you reopen or resolve it.');
+          patchTab(currentTab.id, {
+            state: 'error',
+            errorMessage: 'External change detected while this tab has unsaved edits.'
+          });
+          return;
+        }
+        patchTab(currentTab.id, {
+          content: document.content,
+          savedContent: document.content,
+          baseSha256: document.sha256,
+          readOnly: document.truncated,
+          errorMessage: document.truncated
+            ? 'This file exceeds the bounded editor read window and is open read-only.'
+            : undefined
+        });
+        setStatusText('Reloaded an external file change.');
+      } catch {
+        // Transient polling failures do not replace the current editor buffer.
+      } finally {
+        polling = false;
+      }
+    };
+    const interval = window.setInterval(() => void refreshIfExternallyChanged(), 2500);
+    return () => window.clearInterval(interval);
+  }, [initialAiChatId, initialAiFileRef, patchTab]);
+
   const loadTreeDirectory = useCallback(async (relativeDirectory: string) => {
     if (!projectDirectory || !initialModPath) {
       return;
@@ -427,11 +602,64 @@ export function TextEditorWorkspace({
   };
 
   const saveTab = useCallback(async (tab: TextEditorTab): Promise<boolean> => {
+    if (tab.readOnly) {
+      setStatusText(tab.errorMessage || 'This tab is read-only.');
+      return false;
+    }
     const contentToSave = tab.content;
     patchTab(tab.id, { state: 'saving', errorMessage: undefined });
     setStatusText(`Saving ${tab.fileName}`);
     try {
       let result: FluxoraTextFileSaveResult;
+      if (tab.source === 'ai') {
+        if (!tab.aiChatId || !tab.fileRef || !tab.baseSha256) {
+          throw new Error('AI file context is unavailable.');
+        }
+        const extension = tab.fileName.toLowerCase().split('.').pop() ?? '';
+        const format = extension === 'json'
+          ? 'json'
+          : extension === 'jsonc'
+            ? 'jsonc'
+            : ['ini', 'cfg', 'conf'].includes(extension)
+              ? 'ini'
+              : extension === 'txt' || extension === 'md' || extension === 'log'
+                ? 'plain-text'
+                : 'exact-text';
+        await window.fluxora.ai.saveFile({
+          chatId: tab.aiChatId,
+          runId: createRendererOperationId('ai_text_editor_save_run'),
+          fileRef: tab.fileRef,
+          baseSha256: tab.baseSha256,
+          expectedText: tab.savedContent,
+          replacementText: contentToSave,
+          format,
+          operationId: createRendererOperationId('ai_text_editor_save')
+        });
+        const refreshed = await window.fluxora.ai.readFile({
+          chatId: tab.aiChatId,
+          fileRef: tab.fileRef,
+          startLine: 1,
+          maxLines: 65_536,
+          maxBytes: 64 * 1024,
+          editorMode: true,
+          operationId: createRendererOperationId('ai_text_editor_refresh')
+        });
+        replaceTabs((current) => current.map((item) => item.id === tab.id ? {
+          ...item,
+          path: refreshed.relativePath || item.path,
+          relativePath: refreshed.relativePath,
+          content: refreshed.content,
+          savedContent: refreshed.content,
+          baseSha256: refreshed.sha256,
+          readOnly: refreshed.truncated,
+          state: 'idle',
+          errorMessage: refreshed.truncated
+            ? 'This file exceeds the bounded editor read window and is open read-only.'
+            : undefined
+        } : item));
+        setStatusText(`Saved ${tab.fileName}`);
+        return true;
+      }
       if (tab.source === 'mod') {
         if (!projectDirectory || !tab.modPath || !tab.relativePath) {
           throw new Error('Project or mod file context is unavailable.');

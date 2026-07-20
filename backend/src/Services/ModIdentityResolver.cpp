@@ -1,5 +1,6 @@
 #include "FluxoraCore/Services/ModIdentityResolver.hpp"
 
+#include "FluxoraCore/Services/NexusFileLineageResolver.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
@@ -304,6 +305,40 @@ namespace fluxora
                 sameText(left.remoteModId, right.remoteModId);
         }
 
+        bool isNexusSource(const ModIdentitySource& source)
+        {
+            return sameText(source.provider, L"nexus");
+        }
+
+        bool isNexusPair(
+            const ModIdentitySource& left,
+            const ModIdentitySource& right)
+        {
+            return isNexusSource(left) && isNexusSource(right);
+        }
+
+        NexusFileLineageKind nexusLineageKind(
+            const ModIdentitySource& left,
+            const ModIdentitySource& right,
+            const NexusModFilesResponse* nexusFiles)
+        {
+            if (!isNexusPair(left, right) || !sameStableSource(left, right) ||
+                trim(left.remoteFileId).empty() || trim(right.remoteFileId).empty())
+            {
+                return NexusFileLineageKind::UnprovenOrDifferentBranch;
+            }
+            if (sameText(left.remoteFileId, right.remoteFileId))
+            {
+                return NexusFileLineageKind::SameFile;
+            }
+            if (nexusFiles == nullptr)
+            {
+                return NexusFileLineageKind::UnprovenOrDifferentBranch;
+            }
+            return NexusFileLineageResolver(nexusFiles->fileUpdates)
+                .resolve(left.remoteFileId, right.remoteFileId).kind;
+        }
+
         bool isStrictMeaningfulNameExtension(
             std::wstring_view possibleExtension,
             std::wstring_view baseName)
@@ -322,8 +357,18 @@ namespace fluxora
 
         bool isDistinctFileOnSameStableSource(
             const ModIdentityInput& input,
-            const ModIdentityCandidate& candidate)
+            const ModIdentityCandidate& candidate,
+            const NexusModFilesResponse* nexusFiles)
         {
+            if (isNexusPair(input.source, candidate.source))
+            {
+                const NexusFileLineageKind lineage = nexusLineageKind(
+                    input.source,
+                    candidate.source,
+                    nexusFiles);
+                return lineage != NexusFileLineageKind::SameFile &&
+                    lineage != NexusFileLineageKind::SameLineage;
+            }
             if (!sameStableSource(input.source, candidate.source) ||
                 trim(input.source.remoteFileId).empty() ||
                 trim(candidate.source.remoteFileId).empty() ||
@@ -394,9 +439,113 @@ namespace fluxora
             const ModIdentityInput& input,
             const ModIdentityCandidate& candidate)
         {
-            return conflictsWithStableSource(input.source, candidate.source) &&
+            return !isNexusPair(input.source, candidate.source) &&
+                conflictsWithStableSource(input.source, candidate.source) &&
                 hasSameSafeIdentityName(input, candidate) &&
                 sharedContentAnchorKindCount(input, candidate) >= 2;
+        }
+
+        std::wstring lineageEvidenceCode(NexusFileLineageKind kind)
+        {
+            switch (kind)
+            {
+            case NexusFileLineageKind::SameFile:
+                return L"nexus.lineage.same-file";
+            case NexusFileLineageKind::SameLineage:
+                return L"nexus.lineage.same-lineage";
+            case NexusFileLineageKind::UnprovenOrDifferentBranch:
+                return L"nexus.lineage.unproven-or-different-branch";
+            }
+            return L"nexus.lineage.unproven-or-different-branch";
+        }
+
+        std::wstring metadataEvidenceCode(NexusFileMetadataSource source)
+        {
+            switch (source)
+            {
+            case NexusFileMetadataSource::Cache: return L"nexus.metadata.cache";
+            case NexusFileMetadataSource::Network: return L"nexus.metadata.network";
+            case NexusFileMetadataSource::Unavailable: return L"nexus.metadata.unavailable";
+            }
+            return L"nexus.metadata.unavailable";
+        }
+
+        std::string metadataSourceText(NexusFileMetadataSource source)
+        {
+            switch (source)
+            {
+            case NexusFileMetadataSource::Cache: return "cache";
+            case NexusFileMetadataSource::Network: return "network";
+            case NexusFileMetadataSource::Unavailable: return "unavailable";
+            }
+            return "unavailable";
+        }
+
+        ModIdentityResolution resolveExactSameSourceArchiveName(
+            const ModIdentityPlanRequest& request,
+            const std::vector<ModIdentityCandidate>& candidates)
+        {
+            ModIdentityResolution resolution;
+            resolution.suggestedModName =
+                ModIdentityResolver::canonicalSuggestedName(request.input.displayName);
+            if (request.archivePath.empty() || !isNexusSource(request.input.source))
+            {
+                return resolution;
+            }
+
+            const std::wstring archiveName = normalizedIdentityText(
+                request.archivePath.stem().wstring(),
+                false);
+            const std::wstring inputName = normalizedIdentityText(
+                request.input.displayName,
+                false);
+            const std::wstring inputFolderName = normalizedIdentityText(
+                request.input.folderName,
+                false);
+            if (archiveName.empty() ||
+                (archiveName != inputName && archiveName != inputFolderName))
+            {
+                return resolution;
+            }
+
+            const ModIdentityCandidate* match = nullptr;
+            std::size_t matchCount = 0;
+            for (const ModIdentityCandidate& candidate : candidates)
+            {
+                if (candidate.excluded ||
+                    !isNexusPair(request.input.source, candidate.source) ||
+                    !sameStableSource(request.input.source, candidate.source))
+                {
+                    continue;
+                }
+
+                const std::wstring displayName = normalizedIdentityText(
+                    candidate.target.displayName,
+                    false);
+                const std::wstring folderName = normalizedIdentityText(
+                    candidate.target.folderName,
+                    false);
+                if (archiveName != displayName && archiveName != folderName)
+                {
+                    continue;
+                }
+
+                match = &candidate;
+                ++matchCount;
+            }
+
+            if (matchCount == 1 && match != nullptr)
+            {
+                resolution.kind = ModIdentityResolutionKind::Probable;
+                resolution.suggestedModName = match->target.displayName;
+                resolution.matchedTarget = match->target;
+                resolution.score = 95;
+                resolution.evidenceCodes = {
+                    L"archive.exact-name",
+                    L"source.stable-mod-id"
+                };
+            }
+            return resolution;
         }
 
         struct StoredInstallPlan
@@ -521,7 +670,8 @@ namespace fluxora
 
     ModIdentityResolution ModIdentityResolver::resolve(
         const ModIdentityInput& input,
-        const std::vector<ModIdentityCandidate>& candidates)
+        const std::vector<ModIdentityCandidate>& candidates,
+        const NexusModFilesResponse* nexusFiles)
     {
         ModIdentityResolution resolution;
         resolution.suggestedModName = canonicalSuggestedName(input.displayName);
@@ -534,8 +684,12 @@ namespace fluxora
             {
                 continue;
             }
-            ++stableMatchCount;
-            if (!candidate.excluded && !isDistinctFileOnSameStableSource(input, candidate))
+            const bool distinct = isDistinctFileOnSameStableSource(input, candidate, nexusFiles);
+            if (!isNexusPair(input.source, candidate.source) || !distinct)
+            {
+                ++stableMatchCount;
+            }
+            if (!candidate.excluded && !distinct)
             {
                 stableMatch = &candidate;
             }
@@ -546,7 +700,17 @@ namespace fluxora
             resolution.suggestedModName = stableMatch->target.displayName;
             resolution.matchedTarget = stableMatch->target;
             resolution.score = 100;
-            resolution.evidenceCodes = {L"source.stable-mod-id"};
+            if (isNexusPair(input.source, stableMatch->source))
+            {
+                resolution.evidenceCodes = {lineageEvidenceCode(nexusLineageKind(
+                    input.source,
+                    stableMatch->source,
+                    nexusFiles))};
+            }
+            else
+            {
+                resolution.evidenceCodes = {L"source.stable-mod-id"};
+            }
             return resolution;
         }
 
@@ -594,7 +758,7 @@ namespace fluxora
         {
             if (candidate.excluded ||
                 conflictsWithStableSource(input.source, candidate.source) ||
-                isDistinctFileOnSameStableSource(input, candidate))
+                isDistinctFileOnSameStableSource(input, candidate, nexusFiles))
             {
                 continue;
             }
@@ -627,7 +791,7 @@ namespace fluxora
             {
                 if (candidate.excluded ||
                     conflictsWithStableSource(input.source, candidate.source) ||
-                    isDistinctFileOnSameStableSource(input, candidate) ||
+                    isDistinctFileOnSameStableSource(input, candidate, nexusFiles) ||
                     !sameText(input.fomodModuleId, candidate.fomodModuleId))
                 {
                     continue;
@@ -655,7 +819,8 @@ namespace fluxora
             std::size_t exactNameMatchCount = 0;
             for (const ModIdentityCandidate& candidate : candidates)
             {
-                if (candidate.excluded || isDistinctFileOnSameStableSource(input, candidate))
+                if (candidate.excluded ||
+                    isDistinctFileOnSameStableSource(input, candidate, nexusFiles))
                 {
                     continue;
                 }
@@ -700,7 +865,9 @@ namespace fluxora
             bool contentMatchIsAmbiguous = false;
             for (const ModIdentityCandidate& candidate : candidates)
             {
-                if (candidate.excluded || !sameStableSource(input.source, candidate.source))
+                if (candidate.excluded ||
+                    !sameStableSource(input.source, candidate.source) ||
+                    isDistinctFileOnSameStableSource(input, candidate, nexusFiles))
                 {
                     continue;
                 }
@@ -764,7 +931,7 @@ namespace fluxora
         {
             if (candidate.excluded ||
                 conflictsWithStableSource(input.source, candidate.source) ||
-                isDistinctFileOnSameStableSource(input, candidate))
+                isDistinctFileOnSameStableSource(input, candidate, nexusFiles))
             {
                 continue;
             }
@@ -962,6 +1129,53 @@ namespace fluxora
         }
 
         ModIdentityResolution resolution = resolve(request.input, candidates);
+        std::optional<NexusFileMetadataLookup> metadataLookup;
+        const bool hasNexusLineageCandidate =
+            isNexusSource(request.input.source) &&
+            !trim(request.input.source.game).empty() &&
+            !trim(request.input.source.remoteModId).empty() &&
+            !trim(request.input.source.remoteFileId).empty() &&
+            std::any_of(candidates.begin(), candidates.end(), [&](const ModIdentityCandidate& candidate)
+            {
+                return isNexusPair(request.input.source, candidate.source) &&
+                    sameStableSource(request.input.source, candidate.source) &&
+                    !sameText(
+                        request.input.source.remoteFileId,
+                        candidate.source.remoteFileId);
+            });
+        if (!resolution.matchedTarget.has_value() &&
+            hasNexusLineageCandidate &&
+            request.loadNexusFiles)
+        {
+            metadataLookup = request.loadNexusFiles(
+                request.input.source.game,
+                request.input.source.remoteModId,
+                false);
+            if (metadataLookup->response.has_value())
+            {
+                resolution = resolve(
+                    request.input,
+                    candidates,
+                    &*metadataLookup->response);
+            }
+            if (!resolution.matchedTarget.has_value())
+            {
+                metadataLookup = request.loadNexusFiles(
+                    request.input.source.game,
+                    request.input.source.remoteModId,
+                    true);
+                resolution = resolve(
+                    request.input,
+                    candidates,
+                    metadataLookup->response.has_value()
+                        ? &*metadataLookup->response
+                        : nullptr);
+            }
+        }
+        if (!resolution.matchedTarget.has_value())
+        {
+            resolution = resolveExactSameSourceArchiveName(request, candidates);
+        }
         if (!resolution.matchedTarget.has_value() &&
             !candidates.empty() &&
             request.loadIncomingContent)
@@ -994,21 +1208,46 @@ namespace fluxora
             {
                 candidates[index].content = collectContentAnchors(snapshot.candidates[index].mod.path);
             }
-            resolution = resolve(request.input, candidates);
+            resolution = resolve(
+                request.input,
+                candidates,
+                metadataLookup.has_value() && metadataLookup->response.has_value()
+                    ? &*metadataLookup->response
+                    : nullptr);
         }
 
         FluxoraInstallPlan plan;
-        plan.suggestedModName = resolution.suggestedModName.empty()
-            ? canonicalSuggestedName(request.input.displayName)
-            : resolution.suggestedModName;
+        if (resolution.matchedTarget.has_value())
+        {
+            plan.suggestedModName = resolution.suggestedModName;
+        }
+        else if (!trim(request.requestedInstallName).empty())
+        {
+            plan.suggestedModName = canonicalSuggestedName(request.requestedInstallName);
+        }
+        else
+        {
+            plan.suggestedModName = resolution.suggestedModName.empty()
+                ? canonicalSuggestedName(request.input.displayName)
+                : resolution.suggestedModName;
+        }
         plan.resolutionKind = resolution.kind;
         plan.matchedTarget = resolution.matchedTarget;
         plan.resolutionId = generateResolutionId();
         plan.fomodInstaller = std::move(request.fomodInstaller);
         plan.evidenceCodes = std::move(resolution.evidenceCodes);
-        if (plan.evidenceCodes.empty())
+        if (plan.resolutionKind == ModIdentityResolutionKind::None)
         {
             plan.evidenceCodes.push_back(L"result.none");
+        }
+        if (metadataLookup.has_value())
+        {
+            plan.evidenceCodes.push_back(metadataEvidenceCode(metadataLookup->source));
+            if (plan.resolutionKind == ModIdentityResolutionKind::None)
+            {
+                plan.evidenceCodes.push_back(
+                    L"nexus.lineage.unproven-or-different-branch");
+            }
         }
         plan.score = resolution.score;
 
@@ -1027,7 +1266,14 @@ namespace fluxora
                         ? toUtf8(plan.matchedTarget->modUuid)
                         : std::string{}) +
                     "\"" +
-                    ", indexedDurationMs=" + std::to_string(indexedDuration) + ".");
+                    ", indexedDurationMs=" + std::to_string(indexedDuration) +
+                    ", metadataSource=" +
+                    (metadataLookup.has_value()
+                        ? metadataSourceText(metadataLookup->source)
+                        : std::string("unavailable")) +
+                    ", lineageDurationMs=" +
+                    std::to_string(metadataLookup.has_value() ? metadataLookup->durationMs : 0) +
+                    ".");
         }
 
         rememberInstallPlan(StoredInstallPlan{

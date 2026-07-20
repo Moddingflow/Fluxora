@@ -17,11 +17,13 @@ namespace fluxora
     class EffectiveFileTreeService;
     class ExecutableService;
     class ExecutableIconService;
+    class ExternalConnectionService;
     class FluxPackService;
     class GrassCacheService;
     class VirtualFileSystemService;
     class AppSettingsService;
     class BuildPathSettingsService;
+    class BuildFileWorkspaceService;
     class NexusModsAuthService;
     class NexusUpdateApi;
     class ProjectService;
@@ -53,6 +55,7 @@ namespace fluxora
         [[nodiscard]] EffectiveFileTreeService& effectiveFileTree() noexcept;
         [[nodiscard]] ExecutableService& executables() noexcept;
         [[nodiscard]] ExecutableIconService& executableIcons() noexcept;
+        [[nodiscard]] ExternalConnectionService& externalConnections() noexcept;
         [[nodiscard]] FluxPackService& fluxPacks() noexcept;
         [[nodiscard]] GrassCacheService& grassCache() noexcept;
         [[nodiscard]] VirtualFileSystemService& virtualFileSystem() noexcept;
@@ -62,17 +65,20 @@ namespace fluxora
         [[nodiscard]] TemplateService& templates() noexcept;
         [[nodiscard]] AppSettingsService& settings() noexcept;
         [[nodiscard]] BuildPathSettingsService& buildPathSettings() noexcept;
+        [[nodiscard]] BuildFileWorkspaceService& buildFiles() noexcept;
 
     private:
         std::unique_ptr<Logger> logger_;
         std::unique_ptr<AppSettingsService> settings_;
         std::unique_ptr<BuildPathSettingsService> buildPathSettings_;
+        std::unique_ptr<BuildFileWorkspaceService> buildFiles_;
         std::unique_ptr<HookService> hooks_;
         std::unique_ptr<ModService> mods_;
         std::unique_ptr<PluginService> plugins_;
         std::unique_ptr<ProfileOrderService> profileOrder_;
         std::unique_ptr<ProfileService> profiles_;
         std::unique_ptr<NexusModsAuthService> nexusModsAuth_;
+        std::unique_ptr<ExternalConnectionService> externalConnections_;
         std::unique_ptr<NexusUpdateApi> nexusUpdateApi_;
         std::unique_ptr<DownloadTransferLimiter> downloadTransferLimiter_;
         std::unique_ptr<DownloadService> downloads_;

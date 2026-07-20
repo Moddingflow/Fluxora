@@ -14,7 +14,7 @@
     "package": "npm run build",
     "release:dry-run": "npm run typecheck && npm test && npm run build",
     "test": "vitest run",
-    "test:ai-gate": "vitest run tests/ai-evaluation-suite.test.ts",
+    "test:ai-gate": "vitest run tests/ai-single-agent-contract.test.ts tests/ai-single-agent-state.test.ts tests/ai-single-agent-panel.test.tsx tests/ai-gateway-v2.test.ts",
     "test:parity": "vitest run tests/parity-gate.test.ts",
     "parity:gate": "npm run typecheck && npm test && npm run test:e2e",
     "test:e2e": "npm run build:frontend && node node_modules/@playwright/test/cli.js test --pass-with-no-tests"

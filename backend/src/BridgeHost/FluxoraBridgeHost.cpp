@@ -395,6 +395,64 @@ namespace
         return writer.str();
     }
 
+    void writeJsonValue(fluxora::JsonWriter& writer, const fluxora::JsonValue& value)
+    {
+        switch (value.type())
+        {
+        case fluxora::JsonValue::Type::Null:
+            writer.nullValue();
+            return;
+        case fluxora::JsonValue::Type::String:
+            writer.value(value.asString());
+            return;
+        case fluxora::JsonValue::Type::Number:
+            writer.numberValue(value.asNumber());
+            return;
+        case fluxora::JsonValue::Type::Boolean:
+            writer.value(value.asBoolean());
+            return;
+        case fluxora::JsonValue::Type::Object:
+            writer.beginObject();
+            for (const auto& [key, child] : value.asObject())
+            {
+                writer.key(key);
+                writeJsonValue(writer, child);
+            }
+            writer.endObject();
+            return;
+        case fluxora::JsonValue::Type::Array:
+            writer.beginArray();
+            for (const auto& child : value.asArray())
+            {
+                writeJsonValue(writer, child);
+            }
+            writer.endArray();
+            return;
+        }
+    }
+
+    std::wstring currentOperationId(const BridgeRequest& request);
+
+    std::wstring serializeBuildFilesParams(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        bool hasOperationId = false;
+        for (const auto& [key, value] : params.asObject())
+        {
+            hasOperationId = hasOperationId || key == L"operationId";
+            writer.key(key);
+            writeJsonValue(writer, value);
+        }
+        if (!hasOperationId)
+        {
+            writer.field(L"operationId", currentOperationId(request));
+        }
+        writer.endObject();
+        return writer.str();
+    }
+
     struct FluxPackManualSourceArchiveParams
     {
         std::vector<std::wstring> sourceIds;
@@ -571,6 +629,23 @@ namespace
     BridgeError coreError(std::wstring code)
     {
         const std::wstring message = getLastCoreError();
+        constexpr std::wstring_view buildFilesPrefix = L"build-files:";
+        if (message.starts_with(buildFilesPrefix))
+        {
+            const std::size_t codeEnd = message.find(L':', buildFilesPrefix.size());
+            if (codeEnd != std::wstring::npos)
+            {
+                const std::wstring typedCode = message.substr(
+                    buildFilesPrefix.size(),
+                    codeEnd - buildFilesPrefix.size());
+                return BridgeError{
+                    typedCode,
+                    message.substr(codeEnd + 1),
+                    ErrorCategory::Core,
+                    typedCode == L"stale-version" || typedCode == L"locked"
+                };
+            }
+        }
         if (message == L"install.identityPlanStale")
         {
             return BridgeError{
@@ -677,6 +752,24 @@ namespace
             std::vector<std::wstring>{
                 L"read",
                 L"save"
+            });
+        writer.endObject();
+        writer.key(L"aiFileToolsV1").beginObject();
+        writer.field(L"state", L"private-dev");
+        writer.stringArray(
+            L"supports",
+            std::vector<std::wstring>{
+                L"beginChat",
+                L"endChat",
+                L"search",
+                L"searchText",
+                L"stat",
+                L"readText",
+                L"queryJson",
+                L"queryIni",
+                L"apply",
+                L"rollbackFile",
+                L"rollbackRun"
             });
         writer.endObject();
         writer.key(L"plugins").beginObject();
@@ -2377,6 +2470,72 @@ namespace
             });
     }
 
+    std::wstring payloadListConnections(const BridgeRequest& request)
+    {
+        const std::wstring operationId = currentOperationId(request);
+        return payloadFromCoreJson(
+            L"core.connectionsListFailed",
+            [&operationId](wchar_t* buffer, int length)
+            {
+                return fluxora_list_external_connections(
+                    operationId.empty() ? nullptr : operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadRestoreConnections(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const int attempt = optionalIntField(params, L"attempt", 1);
+        const std::wstring operationId = currentOperationId(request);
+        return payloadFromCoreJson(
+            L"core.connectionsRestoreFailed",
+            [&operationId, attempt](wchar_t* buffer, int length)
+            {
+                return fluxora_restore_external_connections(
+                    operationId.empty() ? nullptr : operationId.c_str(),
+                    2500,
+                    attempt,
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadConnectConnection(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring providerId = requiredStringField(params, L"providerId");
+        const std::wstring operationId = currentOperationId(request);
+        return payloadFromCoreJson(
+            L"core.connectionConnectFailed",
+            [&providerId, &operationId](wchar_t* buffer, int length)
+            {
+                return fluxora_connect_external_connection(
+                    providerId.c_str(),
+                    operationId.empty() ? nullptr : operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadDisconnectConnection(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring providerId = requiredStringField(params, L"providerId");
+        const std::wstring operationId = currentOperationId(request);
+        return payloadFromCoreJson(
+            L"core.connectionDisconnectFailed",
+            [&providerId, &operationId](wchar_t* buffer, int length)
+            {
+                return fluxora_disconnect_external_connection(
+                    providerId.c_str(),
+                    operationId.empty() ? nullptr : operationId.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     void writeHostEvent(
         std::wstring_view method,
         const std::wstring& operationId,
@@ -2600,6 +2759,50 @@ namespace
                 return fluxora_resume_download(
                     projectDirectory.c_str(),
                     downloadPath.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadResolveDownloadDuplicateDecision(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring projectDirectory = requiredStringField(params, L"projectDirectory");
+        const std::wstring downloadPath = requiredStringField(params, L"downloadPath");
+        const std::wstring decisionId = requiredStringField(params, L"decisionId");
+        const std::wstring choiceText = requiredStringField(params, L"choice");
+        int choice = -1;
+        if (choiceText == L"replace")
+        {
+            choice = 0;
+        }
+        else if (choiceText == L"keepBoth")
+        {
+            choice = 1;
+        }
+        else if (choiceText == L"cancel")
+        {
+            choice = 2;
+        }
+        else
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"Duplicate download choice must be replace, keepBoth or cancel.",
+                ErrorCategory::Validation,
+                false
+            };
+        }
+
+        return payloadFromCoreJson(
+            L"core.downloadDuplicateDecisionFailed",
+            [&projectDirectory, &downloadPath, &decisionId, choice](wchar_t* buffer, int length)
+            {
+                return fluxora_resolve_download_duplicate_decision(
+                    projectDirectory.c_str(),
+                    downloadPath.c_str(),
+                    decisionId.c_str(),
+                    choice,
                     buffer,
                     length);
             });
@@ -3236,6 +3439,32 @@ namespace
             });
     }
 
+    std::wstring payloadBuildFiles(const BridgeRequest& request)
+    {
+        constexpr std::wstring_view prefix = L"buildFiles.";
+        if (!request.method.starts_with(prefix) || request.method.size() <= prefix.size())
+        {
+            throw BridgeError{
+                L"bridge.invalidRequest",
+                L"Build-files method is invalid.",
+                ErrorCategory::Validation,
+                false
+            };
+        }
+        const std::wstring method = request.method.substr(prefix.size());
+        const std::wstring paramsJson = serializeBuildFilesParams(request);
+        return payloadFromCoreJson(
+            L"core.buildFilesFailed",
+            [&method, &paramsJson](wchar_t* buffer, int length)
+            {
+                return fluxora_build_files_request(
+                    method.c_str(),
+                    paramsJson.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
     std::wstring payloadOperationContext(const BridgeRequest& request, bool clear)
     {
         const std::wstring operationId = clear ? std::wstring{} : currentOperationId(request);
@@ -3342,6 +3571,10 @@ namespace
         if (request.method == L"build.prepareWorkspaceIndexes")
         {
             return payloadPrepareWorkspaceIndexes(request);
+        }
+        if (request.method.starts_with(L"buildFiles."))
+        {
+            return payloadBuildFiles(request);
         }
         if (request.method == L"fluxPack.export")
         {
@@ -3555,6 +3788,22 @@ namespace
         {
             return payloadNexusAuthStatus();
         }
+        if (request.method == L"connections.listStatus")
+        {
+            return payloadListConnections(request);
+        }
+        if (request.method == L"connections.restoreAll")
+        {
+            return payloadRestoreConnections(request);
+        }
+        if (request.method == L"connections.connect")
+        {
+            return payloadConnectConnection(request);
+        }
+        if (request.method == L"connections.disconnect")
+        {
+            return payloadDisconnectConnection(request);
+        }
         if (request.method == L"nexus.getApiAuthHeader")
         {
             return payloadNexusApiAuthHeader();
@@ -3614,6 +3863,10 @@ namespace
         if (request.method == L"downloads.resume")
         {
             return payloadResumeDownload(request);
+        }
+        if (request.method == L"downloads.resolveDuplicateDecision")
+        {
+            return payloadResolveDownloadDuplicateDecision(request);
         }
         if (request.method == L"downloads.analyzeContentLayout")
         {

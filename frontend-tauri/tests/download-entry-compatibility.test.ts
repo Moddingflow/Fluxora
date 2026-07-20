@@ -15,8 +15,10 @@ const legacyDownloadEntry = {
 
 describe('download entry compatibility', () => {
   it('treats a missing hasResolvedFileName field from an older host as resolved', async () => {
+    const invocations: Array<{ channel: string; args: unknown[] }> = [];
     const ipc: IpcInvoker = {
-      invoke: async (channel) => {
+      invoke: async (channel, ...args) => {
+        invocations.push({ channel, args });
         switch (channel) {
           case FluxoraIpcChannels.downloadsList:
           case FluxoraIpcChannels.nxmCaptureLinks:
@@ -25,6 +27,8 @@ describe('download entry compatibility', () => {
           case FluxoraIpcChannels.downloadsImportFile:
           case FluxoraIpcChannels.downloadsResume:
             return legacyDownloadEntry;
+          case FluxoraIpcChannels.downloadsResolveDuplicateDecision:
+            return args[3] === 'cancel' ? null : legacyDownloadEntry;
           default:
             throw new Error(`Unexpected channel: ${channel}`);
         }
@@ -43,11 +47,38 @@ describe('download entry compatibility', () => {
     );
     const captured = await api.nxm.captureLinks('C:/Fluxora/Build', ['nxm://example']);
     const inbound = await api.nxm.importInboundDownloads('C:/Fluxora/Build');
+    const resolved = await api.downloads.resolveDuplicateDecision(
+      'C:/Fluxora/Build',
+      'C:/Fluxora/Build/downloads/pending.nxm',
+      'decision-1',
+      'replace',
+      { operationId: 'op-resolve' }
+    );
+    const canceled = await api.downloads.resolveDuplicateDecision(
+      'C:/Fluxora/Build',
+      'C:/Fluxora/Build/downloads/pending.nxm',
+      'decision-2',
+      'cancel',
+      { operationId: 'op-cancel' }
+    );
 
     expect(listed[0]?.hasResolvedFileName).toBe(true);
     expect(imported.hasResolvedFileName).toBe(true);
     expect(resumed.hasResolvedFileName).toBe(true);
     expect(captured[0]?.hasResolvedFileName).toBe(true);
     expect(inbound[0]?.hasResolvedFileName).toBe(true);
+    expect(listed[0]?.duplicateDecision).toBeNull();
+    expect(resolved?.duplicateDecision).toBeNull();
+    expect(canceled).toBeNull();
+    expect(invocations.at(-2)).toEqual({
+      channel: FluxoraIpcChannels.downloadsResolveDuplicateDecision,
+      args: [
+        'C:/Fluxora/Build',
+        'C:/Fluxora/Build/downloads/pending.nxm',
+        'decision-1',
+        'replace',
+        { operationId: 'op-resolve' }
+      ]
+    });
   });
 });

@@ -170,17 +170,17 @@ function Get-TauriAiHostResourceName {
 
 function Get-TauriAiHostCargoOutputName {
     if ($Runtime -like 'win-*') {
-        return 'fluxora-ai-host.exe'
+        return 'fluxora_ai_host.exe'
     }
 
-    return 'fluxora-ai-host'
+    return 'fluxora_ai_host'
 }
 
 function Build-TauriAiHost {
     $tauriRustRoot = Join-Path $TauriProject 'src-tauri'
     Push-Location $tauriRustRoot
     try {
-        Invoke-CheckedCommand -FilePath 'cargo' -Arguments @('build', '--release', '--bin', 'fluxora-ai-host')
+        Invoke-CheckedCommand -FilePath 'cargo' -Arguments @('build', '--release', '--bin', 'fluxora_ai_host')
     }
     finally {
         Pop-Location
@@ -990,6 +990,36 @@ Invoke-BuildStep "Preparing Tauri native resources ($($tauriTarget.Platform)/$($
         else {
             Write-Warning "FluxoraVfs.dll was not found for this non-Windows package."
         }
+}
+
+if ($Runtime -like 'win-*') {
+    Invoke-BuildStep "Testing native Fluxora AI task integration ($Configuration)" {
+        $tauriRustRoot = Join-Path $TauriProject 'src-tauri'
+        $previousBridgeHostPath = [Environment]::GetEnvironmentVariable('FLUXORA_BRIDGE_HOST_PATH', 'Process')
+        try {
+            $env:FLUXORA_BRIDGE_HOST_PATH = Get-NativeBridgeHostPath
+            Push-Location $tauriRustRoot
+            try {
+                Invoke-CheckedCommand -FilePath 'cargo' -Arguments @(
+                    'test', '--release',
+                    '--features', 'native-ai-integration-fixture',
+                    '--test', 'ai_task_native_integration',
+                    '--', '--nocapture'
+                )
+            }
+            finally {
+                Pop-Location
+            }
+        }
+        finally {
+            if ($null -eq $previousBridgeHostPath) {
+                Remove-Item Env:FLUXORA_BRIDGE_HOST_PATH -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:FLUXORA_BRIDGE_HOST_PATH = $previousBridgeHostPath
+            }
+        }
+    }
 }
 
 Invoke-BuildStep "Installing Tauri dependencies" {

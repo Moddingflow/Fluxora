@@ -253,6 +253,51 @@ namespace fluxora::tests
         EXPECT_EQ(result.counters.updates, 1U);
     }
 
+    TEST_F(ModUpdateServiceFixture, SweepDeadlineStopsIssuingRequestsAndReturnsPartialNetworkError)
+    {
+        registerNexusMod(L"First Deadline Mod", L"1.0", L"501", L"100");
+        registerNexusMod(L"Second Deadline Mod", L"1.0", L"502", L"100");
+        api_.filesResponse.files = {
+            NexusFileMetadata{L"100", L"1.0", L"1", true, NexusFileAvailability::Active, 100}
+        };
+        api_.fileDelay = std::chrono::milliseconds(120);
+
+        ModUpdateServiceOptions options;
+        options.cachePath = temp_.path() / L"deadline-cache.sqlite3";
+        options.maxConcurrentMetadataRequests = 1;
+        options.overallTimeout = std::chrono::milliseconds(250);
+        options.requestTimeoutBudget = std::chrono::milliseconds(150);
+        ModUpdateService service(logger_, pathSettings_, api_, std::move(options));
+        const ModUpdateCheckResult result = service.check(
+            ModUpdateCheckRequest{project_, ModUpdateCheckMode::Manual});
+
+        EXPECT_EQ(result.state, ModUpdateCheckState::Partial);
+        EXPECT_EQ(result.reason, ModUpdateCheckReason::NetworkError);
+        EXPECT_EQ(result.counters.apiRequests, 1U);
+        EXPECT_EQ(api_.fileRequests.size(), 1U);
+        EXPECT_FALSE(result.nextEligibleAt.empty());
+    }
+
+    TEST_F(ModUpdateServiceFixture, TdmLikeLineagePromotes226To227)
+    {
+        registerNexusMod(L"True Directional Movement", L"2.2.6", L"51614", L"745065");
+        api_.filesResponse.files = {
+            NexusFileMetadata{L"745065", L"2.2.6", L"1", true, NexusFileAvailability::Old, 100},
+            NexusFileMetadata{L"766239", L"2.2.7", L"1", true, NexusFileAvailability::Active, 200}
+        };
+        api_.filesResponse.fileUpdates = {
+            NexusFileUpdateLink{L"745065", L"766239", 200}
+        };
+
+        const ModUpdateCheckResult result = check();
+
+        ASSERT_EQ(result.state, ModUpdateCheckState::Completed);
+        ASSERT_EQ(result.mods.size(), 1U);
+        EXPECT_EQ(result.mods.front().latestVersion, L"2.2.7");
+        EXPECT_EQ(result.mods.front().latestFileId, L"766239");
+        EXPECT_TRUE(result.mods.front().hasUpdate);
+    }
+
     TEST_F(ModUpdateServiceFixture, DifferentFileIdsAreAnUpdateWhenVersionStringsMatch)
     {
         registerNexusMod(L"Opaque Version Mod", L"release", L"43", L"100");

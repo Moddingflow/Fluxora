@@ -30,6 +30,15 @@ extern "C"
 
     FLUXORA_CORE_API int fluxora_core_shutdown();
 
+    // Safe AI text-file workspace adapter. The method selects a buildFiles.*
+    // operation and paramsJson contains only typed DTO data; absolute paths are
+    // accepted solely by beginChat and are never returned to the caller.
+    FLUXORA_CORE_API int fluxora_build_files_request(
+        const wchar_t* method,
+        const wchar_t* paramsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
     // Sets a thread-local operation id used by native bridge/core/operation log
     // lines. Passing null or an empty string clears the current context.
     FLUXORA_CORE_API int fluxora_set_operation_context(
@@ -340,6 +349,32 @@ extern "C"
         int jsonBufferLength);
 
     FLUXORA_CORE_API int fluxora_disconnect_nexusmods(
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    // Generic external connection registry. Provider statuses are renderer-safe
+    // and never contain access tokens, refresh tokens or API keys.
+    FLUXORA_CORE_API int fluxora_list_external_connections(
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_restore_external_connections(
+        const wchar_t* operationId,
+        int deadlineMilliseconds,
+        int attempt,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_connect_external_connection(
+        const wchar_t* providerId,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    FLUXORA_CORE_API int fluxora_disconnect_external_connection(
+        const wchar_t* providerId,
+        const wchar_t* operationId,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 
@@ -710,6 +745,16 @@ extern "C"
     FLUXORA_CORE_API int fluxora_resume_download(
         const wchar_t* projectDirectory,
         const wchar_t* downloadPath,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength);
+
+    // choice: 0 = replace, 1 = keep both, 2 = cancel. Returns a download entry
+    // or JSON null after cancellation.
+    FLUXORA_CORE_API int fluxora_resolve_download_duplicate_decision(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* decisionId,
+        int choice,
         wchar_t* jsonBuffer,
         int jsonBufferLength);
 

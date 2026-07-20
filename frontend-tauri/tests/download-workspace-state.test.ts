@@ -11,6 +11,7 @@ import {
   emptyDownloadWorkspaceState,
   filterDownloadEntries,
   hasActiveDownload,
+  queuedDownloadDuplicateDecisions,
   selectedDownloadEntry
 } from '../src/renderer/download-workspace-state';
 import type {
@@ -45,6 +46,7 @@ const downloadEntry = (
   canResume: false,
   canInstall: true,
   canDelete: true,
+  duplicateDecision: null,
   ...extra
 });
 
@@ -160,6 +162,73 @@ describe('download workspace state', () => {
     expect(updated.items.map((entry) => entry.id)).toEqual(['nxm-inbound', 'skyui']);
     expect(updated.items[0]).toEqual(inbound);
     expect(updated.loadState).toBe('ready');
+  });
+
+  it('queues duplicate decisions in row order and removes a canceled pending row', () => {
+    const firstDecision = downloadEntry('decision-first', 'SkyUI 1.0.1.7z', {
+      archiveId: null,
+      buildStatus: null,
+      transferState: 'awaiting-decision',
+      transferMessage: 'Нужно решение',
+      canInstall: false,
+      canDelete: false,
+      duplicateDecision: {
+        decisionId: 'decision-1',
+        direction: 'upgrade',
+        incomingFile: {
+          id: 'incoming-101',
+          fileId: '101',
+          fileName: 'SkyUI 1.0.1.7z',
+          version: '1.0.1'
+        },
+        existingFiles: [{
+          id: 'existing-100',
+          fileId: '100',
+          fileName: 'SkyUI 1.0.0.7z',
+          version: '1.0.0'
+        }]
+      }
+    });
+    const secondDecision = downloadEntry('decision-second', 'SkyUI 0.9.0.7z', {
+      archiveId: null,
+      buildStatus: null,
+      transferState: 'awaiting-decision',
+      duplicateDecision: {
+        decisionId: 'decision-2',
+        direction: 'downgrade',
+        incomingFile: {
+          id: 'incoming-090',
+          fileId: '90',
+          fileName: 'SkyUI 0.9.0.7z',
+          version: '0.9.0'
+        },
+        existingFiles: [{
+          id: 'existing-100',
+          fileId: '100',
+          fileName: 'SkyUI 1.0.0.7z',
+          version: '1.0.0'
+        }]
+      }
+    });
+    const loaded = downloadWorkspaceReducer(emptyDownloadWorkspaceState(), {
+      type: 'items-loaded',
+      items: [firstDecision, items[0], secondDecision]
+    });
+
+    expect(queuedDownloadDuplicateDecisions(loaded.items).map((entry) => entry.id)).toEqual([
+      'decision-first',
+      'decision-second'
+    ]);
+    expect(downloadStatusText(firstDecision)).toBe('Нужно решение');
+    expect(filterDownloadEntries(loaded.items, '0.9.0')).toEqual([secondDecision]);
+
+    const canceled = downloadWorkspaceReducer(loaded, {
+      type: 'item-removed',
+      id: 'decision-first'
+    });
+    expect(queuedDownloadDuplicateDecisions(canceled.items).map((entry) => entry.id)).toEqual([
+      'decision-second'
+    ]);
   });
 
   it('tracks ctrl, shift and select-all selection across visible downloads', () => {

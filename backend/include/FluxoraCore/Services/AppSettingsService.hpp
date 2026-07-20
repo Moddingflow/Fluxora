@@ -20,6 +20,7 @@ namespace fluxora
         std::wstring protectedAccessToken;
         std::wstring protectedRefreshToken;
         std::wstring protectedApiKey;
+        bool reauthRequired{false};
     };
 
     class AppSettingsService final : public IService

@@ -149,6 +149,29 @@ namespace fluxora
             std::map<std::wstring, std::wstring> headers;
         };
 
+        enum class TokenRequestFailureKind
+        {
+            Temporary,
+            InvalidGrant
+        };
+
+        class TokenRequestError final : public std::runtime_error
+        {
+        public:
+            TokenRequestError(TokenRequestFailureKind kind, std::string message)
+                : std::runtime_error(std::move(message)), kind_(kind)
+            {
+            }
+
+            [[nodiscard]] TokenRequestFailureKind kind() const noexcept
+            {
+                return kind_;
+            }
+
+        private:
+            TokenRequestFailureKind kind_;
+        };
+
         std::wstring readEnvironment(std::wstring_view name)
         {
 #ifdef _WIN32
@@ -1412,7 +1435,26 @@ namespace fluxora
             return message;
         }
 
-        std::string postTokenRequest(const std::string& body)
+        TokenRequestFailureKind tokenRequestFailureKind(const std::string& body)
+        {
+            try
+            {
+                const JsonValue root = JsonReader::parse(fromUtf8(body));
+                const JsonValue* error = root.isObject() ? root.find(L"error") : nullptr;
+                if (error != nullptr && error->isString() && error->asString() == L"invalid_grant")
+                {
+                    return TokenRequestFailureKind::InvalidGrant;
+                }
+            }
+            catch (const std::exception&)
+            {
+            }
+            return TokenRequestFailureKind::Temporary;
+        }
+
+        std::string postTokenRequest(
+            const std::string& body,
+            std::chrono::milliseconds requestTimeout = std::chrono::seconds(30))
         {
 #ifdef FLUXORA_NEXUS_AUTH_SERVICE_TEST_HOOKS
             std::function<std::string(std::string_view)> requestHook;
@@ -1437,7 +1479,11 @@ namespace fluxora
                 throw std::runtime_error("Failed to initialize NexusMods token request.");
             }
 
-            WinHttpSetTimeouts(session, 15000, 15000, 15000, 30000);
+            const int timeoutMs = static_cast<int>(std::clamp<long long>(
+                requestTimeout.count(),
+                1,
+                30000));
+            WinHttpSetTimeouts(session, timeoutMs, timeoutMs, timeoutMs, timeoutMs);
 
             HINTERNET connection = WinHttpConnect(
                 session,
@@ -1516,7 +1562,9 @@ namespace fluxora
 
             if (statusCode < 200 || statusCode >= 300)
             {
-                throw std::runtime_error(buildTokenErrorMessage(statusCode, responseBody));
+                throw TokenRequestError(
+                    tokenRequestFailureKind(responseBody),
+                    buildTokenErrorMessage(statusCode, responseBody));
             }
 
             return responseBody;
@@ -1802,6 +1850,15 @@ namespace fluxora
             if (!root.isObject())
             {
                 throw std::runtime_error("NexusMods token response was not a JSON object.");
+            }
+
+            if (const JsonValue* error = root.find(L"error"); error != nullptr && error->isString())
+            {
+                throw TokenRequestError(
+                    error->asString() == L"invalid_grant"
+                        ? TokenRequestFailureKind::InvalidGrant
+                        : TokenRequestFailureKind::Temporary,
+                    buildTokenErrorMessage(0, body));
             }
 
             TokenResponse tokens;
@@ -2529,7 +2586,143 @@ namespace fluxora
 
     NexusModsAuthStatus NexusModsAuthService::status() const
     {
-        return buildStatus(loadConfig(), settings_.loadNexusModsAuth());
+        const NexusModsStoredAuth auth = settings_.loadNexusModsAuth();
+        NexusModsAuthStatus result = buildStatus(loadConfig(), auth);
+        result.requiresReauth = auth.reauthRequired;
+        return result;
+    }
+
+    NexusModsConnectionStatus NexusModsAuthService::connectionStatus() const
+    {
+        const NexusModsStoredAuth auth = settings_.loadNexusModsAuth();
+        const NexusModsAuthStatus publicStatus = buildStatus(loadConfig(), auth);
+        NexusModsConnectionStatus result;
+        result.accountName = publicStatus.displayName.empty()
+            ? publicStatus.userId
+            : publicStatus.displayName;
+        result.hasStoredSession = auth.linked &&
+            (!auth.protectedApiKey.empty() || !auth.protectedAccessToken.empty());
+        if (!auth.linked || !result.hasStoredSession)
+        {
+            result.state = publicStatus.isConfigured
+                ? NexusModsConnectionState::NotLinked
+                : NexusModsConnectionState::NotConfigured;
+            result.message = publicStatus.isConfigured
+                ? L"Nexus Mods is not linked."
+                : L"Nexus Mods OAuth is not configured.";
+            return result;
+        }
+        if (auth.reauthRequired)
+        {
+            result.state = NexusModsConnectionState::ReauthRequired;
+            result.requiresUserAction = true;
+            result.message = L"Nexus Mods requires reconnection.";
+            return result;
+        }
+        if (!auth.protectedApiKey.empty() || !accessTokenRequiresRefresh(auth))
+        {
+            result.state = NexusModsConnectionState::Ready;
+            result.message = L"Nexus Mods connection is ready.";
+            return result;
+        }
+        if (auth.protectedRefreshToken.empty())
+        {
+            result.state = NexusModsConnectionState::ReauthRequired;
+            result.requiresUserAction = true;
+            result.message = L"Nexus Mods refresh credentials are missing. Reconnect in Settings.";
+            return result;
+        }
+        result.state = NexusModsConnectionState::Restoring;
+        result.retryable = true;
+        result.message = L"Refreshing the saved Nexus Mods session.";
+        return result;
+    }
+
+    NexusModsConnectionStatus NexusModsAuthService::restoreStoredSession(
+        std::chrono::steady_clock::time_point deadline)
+    {
+        NexusModsConnectionStatus local = connectionStatus();
+        if (local.state != NexusModsConnectionState::Restoring)
+        {
+            return local;
+        }
+
+        std::lock_guard refreshLock(refreshMutex_);
+        NexusModsStoredAuth auth = settings_.loadNexusModsAuth();
+        if (!accessTokenRequiresRefresh(auth))
+        {
+            return connectionStatus();
+        }
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            local.state = NexusModsConnectionState::TemporarilyUnavailable;
+            local.message = L"Nexus Mods session restore timed out.";
+            return local;
+        }
+        if (auth.protectedRefreshToken.empty())
+        {
+            auth.reauthRequired = true;
+            settings_.saveNexusModsAuth(auth);
+            return connectionStatus();
+        }
+        const std::wstring refreshToken = unprotectSecret(auth.protectedRefreshToken);
+        if (refreshToken.empty())
+        {
+            auth.reauthRequired = true;
+            settings_.saveNexusModsAuth(auth);
+            return connectionStatus();
+        }
+
+        try
+        {
+            const OAuthConfig config = loadConfig(true);
+            if (config.clientId.empty())
+            {
+                throw std::runtime_error("NexusMods OAuth client_id is missing.");
+            }
+            const auto remaining = (std::max)(
+                std::chrono::milliseconds(1),
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - std::chrono::steady_clock::now()));
+            const TokenResponse tokens = parseTokenResponse(postTokenRequest(
+                buildRefreshTokenRequestBody(config, refreshToken),
+                remaining));
+            auth.protectedAccessToken = protectSecret(tokens.accessToken);
+            auth.protectedRefreshToken = tokens.refreshToken.empty()
+                ? auth.protectedRefreshToken
+                : protectSecret(tokens.refreshToken);
+            auth.tokenType = tokens.tokenType.empty() ? L"Bearer" : tokens.tokenType;
+            auth.expiresAtUtc = tokens.expiresInSeconds > 0
+                ? formatUtcExpiry(tokens.expiresInSeconds)
+                : L"";
+            auth.isPremium = parseJwtUser(tokens.accessToken).isPremium;
+            auth.reauthRequired = false;
+            settings_.saveNexusModsAuth(auth);
+            logger_.write(LogLevel::Info, "NexusMods saved OAuth session restored.");
+            return connectionStatus();
+        }
+        catch (const TokenRequestError& error)
+        {
+            if (error.kind() == TokenRequestFailureKind::InvalidGrant)
+            {
+                auth.reauthRequired = true;
+                settings_.saveNexusModsAuth(auth);
+                return connectionStatus();
+            }
+            local.state = NexusModsConnectionState::TemporarilyUnavailable;
+            local.retryable = true;
+            local.requiresUserAction = false;
+            local.message = L"Nexus Mods is temporarily unavailable. The saved session was kept.";
+            return local;
+        }
+        catch (const std::exception&)
+        {
+            local.state = NexusModsConnectionState::TemporarilyUnavailable;
+            local.retryable = true;
+            local.requiresUserAction = false;
+            local.message = L"Nexus Mods is temporarily unavailable. The saved session was kept.";
+            return local;
+        }
     }
 
     NexusModsApiAuthHeader NexusModsAuthService::apiAuthHeader()
@@ -2547,6 +2740,13 @@ namespace fluxora
         if (!auth.linked)
         {
             return unavailable(L"NexusMods account is not linked.");
+        }
+        if (auth.reauthRequired)
+        {
+            NexusModsApiAuthHeader result = unavailable(
+                L"NexusMods authentication requires reconnection in Settings.");
+            result.failureKind = NexusModsAuthFailureKind::ReauthRequired;
+            return result;
         }
 
         if (!auth.protectedApiKey.empty())
@@ -2574,15 +2774,23 @@ namespace fluxora
                 {
                     if (auth.protectedRefreshToken.empty())
                     {
-                        return unavailable(
+                        auth.reauthRequired = true;
+                        settings_.saveNexusModsAuth(auth);
+                        NexusModsApiAuthHeader result = unavailable(
                             L"NexusMods OAuth token expired and no refresh token is available. Reconnect NexusMods in settings.");
+                        result.failureKind = NexusModsAuthFailureKind::ReauthRequired;
+                        return result;
                     }
 
                     const std::wstring refreshToken = unprotectSecret(auth.protectedRefreshToken);
                     if (refreshToken.empty())
                     {
-                        return unavailable(
+                        auth.reauthRequired = true;
+                        settings_.saveNexusModsAuth(auth);
+                        NexusModsApiAuthHeader result = unavailable(
                             L"NexusMods OAuth token expired and the refresh token could not be read. Reconnect NexusMods in settings.");
+                        result.failureKind = NexusModsAuthFailureKind::ReauthRequired;
+                        return result;
                     }
 
                     try
@@ -2604,16 +2812,38 @@ namespace fluxora
                             ? formatUtcExpiry(tokens.expiresInSeconds)
                             : L"";
                         auth.isPremium = parseJwtUser(tokens.accessToken).isPremium;
+                        auth.reauthRequired = false;
                         settings_.saveNexusModsAuth(auth);
                         logger_.write(LogLevel::Info, "NexusMods OAuth token refreshed for trusted native services.");
+                    }
+                    catch (const TokenRequestError& error)
+                    {
+                        logger_.write(
+                            LogLevel::Warning,
+                            std::string("NexusMods OAuth token refresh failed: ") + error.what());
+                        if (error.kind() == TokenRequestFailureKind::InvalidGrant)
+                        {
+                            auth.reauthRequired = true;
+                            settings_.saveNexusModsAuth(auth);
+                            NexusModsApiAuthHeader result = unavailable(
+                                L"NexusMods OAuth grant was revoked. Reconnect NexusMods in settings.");
+                            result.failureKind = NexusModsAuthFailureKind::ReauthRequired;
+                            return result;
+                        }
+                        NexusModsApiAuthHeader result = unavailable(
+                            L"NexusMods OAuth token refresh is temporarily unavailable.");
+                        result.failureKind = NexusModsAuthFailureKind::Temporary;
+                        return result;
                     }
                     catch (const std::exception& error)
                     {
                         logger_.write(
                             LogLevel::Warning,
                             std::string("NexusMods OAuth token refresh failed: ") + error.what());
-                        return unavailable(
-                            L"NexusMods OAuth token expired and refresh failed. Reconnect NexusMods or retry when Nexus is reachable.");
+                        NexusModsApiAuthHeader result = unavailable(
+                            L"NexusMods OAuth token refresh is temporarily unavailable.");
+                        result.failureKind = NexusModsAuthFailureKind::Temporary;
+                        return result;
                     }
                 }
             }
@@ -2638,6 +2868,163 @@ namespace fluxora
         }
 
         return unavailable(L"NexusMods authentication token is unavailable. Reconnect NexusMods in settings.");
+    }
+
+    NexusModsApiAuthHeader NexusModsAuthService::retryApiAuthHeaderAfterUnauthorized(
+        const NexusModsApiAuthHeader& rejectedHeader)
+    {
+        const auto unavailable = [](std::wstring message) {
+            return NexusModsApiAuthHeader{
+                false,
+                {},
+                {},
+                {},
+                std::move(message)
+            };
+        };
+        NexusModsStoredAuth stored = settings_.loadNexusModsAuth();
+        if (rejectedHeader.credentialKind != L"oauth" ||
+            rejectedHeader.headerName != L"Authorization" ||
+            rejectedHeader.headerValue.empty())
+        {
+            stored.reauthRequired = true;
+            settings_.saveNexusModsAuth(stored);
+            NexusModsApiAuthHeader result = unavailable(
+                L"NexusMods rejected the current credential. Reconnect NexusMods in settings.");
+            result.failureKind = NexusModsAuthFailureKind::ReauthRequired;
+            return result;
+        }
+
+        const std::lock_guard refreshLock(refreshMutex_);
+        NexusModsStoredAuth auth = settings_.loadNexusModsAuth();
+        if (auth.reauthRequired)
+        {
+            NexusModsApiAuthHeader result = unavailable(L"NexusMods requires reconnection.");
+            result.failureKind = NexusModsAuthFailureKind::ReauthRequired;
+            return result;
+        }
+        if (!auth.linked || !auth.protectedApiKey.empty() || auth.protectedAccessToken.empty())
+        {
+            auth.reauthRequired = true;
+            settings_.saveNexusModsAuth(auth);
+            NexusModsApiAuthHeader result = unavailable(
+                L"NexusMods OAuth authentication is unavailable. Reconnect NexusMods in settings.");
+            result.failureKind = NexusModsAuthFailureKind::ReauthRequired;
+            return result;
+        }
+
+        const std::wstring currentAccessToken = unprotectSecret(auth.protectedAccessToken);
+        std::wstring tokenType = trimWhitespace(auth.tokenType);
+        if (tokenType.empty())
+        {
+            tokenType = L"Bearer";
+        }
+        const std::wstring currentHeaderValue = tokenType + L" " + currentAccessToken;
+        if (!currentAccessToken.empty() && currentHeaderValue != rejectedHeader.headerValue)
+        {
+            return NexusModsApiAuthHeader{
+                true,
+                L"Authorization",
+                currentHeaderValue,
+                L"oauth",
+                L"A refreshed NexusMods OAuth token is available for retry."
+            };
+        }
+        if (refreshedOAuthHeaderValue_ == rejectedHeader.headerValue)
+        {
+            auth.reauthRequired = true;
+            settings_.saveNexusModsAuth(auth);
+            NexusModsApiAuthHeader result = unavailable(
+                L"NexusMods rejected the refreshed OAuth credential. Reconnect NexusMods in settings.");
+            result.failureKind = NexusModsAuthFailureKind::ReauthRequired;
+            return result;
+        }
+        if (auth.protectedRefreshToken.empty())
+        {
+            auth.reauthRequired = true;
+            settings_.saveNexusModsAuth(auth);
+            NexusModsApiAuthHeader result = unavailable(
+                L"NexusMods rejected the OAuth token and no refresh token is available. Reconnect NexusMods in settings.");
+            result.failureKind = NexusModsAuthFailureKind::ReauthRequired;
+            return result;
+        }
+
+        const std::wstring refreshToken = unprotectSecret(auth.protectedRefreshToken);
+        if (refreshToken.empty())
+        {
+            auth.reauthRequired = true;
+            settings_.saveNexusModsAuth(auth);
+            NexusModsApiAuthHeader result = unavailable(
+                L"NexusMods rejected the OAuth token and the refresh token could not be read. Reconnect NexusMods in settings.");
+            result.failureKind = NexusModsAuthFailureKind::ReauthRequired;
+            return result;
+        }
+
+        try
+        {
+            const OAuthConfig config = loadConfig(true);
+            if (config.clientId.empty())
+            {
+                throw std::runtime_error("NexusMods OAuth client_id is missing.");
+            }
+            const TokenResponse tokens = parseTokenResponse(
+                postTokenRequest(buildRefreshTokenRequestBody(config, refreshToken)));
+            auth.protectedAccessToken = protectSecret(tokens.accessToken);
+            auth.protectedRefreshToken = tokens.refreshToken.empty()
+                ? auth.protectedRefreshToken
+                : protectSecret(tokens.refreshToken);
+            auth.tokenType = tokens.tokenType.empty() ? L"Bearer" : tokens.tokenType;
+            auth.expiresAtUtc = tokens.expiresInSeconds > 0
+                ? formatUtcExpiry(tokens.expiresInSeconds)
+                : L"";
+            auth.isPremium = parseJwtUser(tokens.accessToken).isPremium;
+            auth.reauthRequired = false;
+            settings_.saveNexusModsAuth(auth);
+            logger_.write(
+                LogLevel::Info,
+                "NexusMods OAuth token refreshed after the API rejected the prior credential.");
+            const std::wstring refreshedTokenType = auth.tokenType.empty()
+                ? L"Bearer"
+                : auth.tokenType;
+            NexusModsApiAuthHeader result{
+                true,
+                L"Authorization",
+                refreshedTokenType + L" " + tokens.accessToken,
+                L"oauth",
+                L"A refreshed NexusMods OAuth token is available for retry."
+            };
+            refreshedOAuthHeaderValue_ = result.headerValue;
+            return result;
+        }
+        catch (const TokenRequestError& error)
+        {
+            logger_.write(
+                LogLevel::Warning,
+                "NexusMods OAuth refresh after rejected credential failed; authentication remains unavailable.");
+            if (error.kind() == TokenRequestFailureKind::InvalidGrant)
+            {
+                auth.reauthRequired = true;
+                settings_.saveNexusModsAuth(auth);
+                NexusModsApiAuthHeader result = unavailable(
+                    L"NexusMods OAuth grant was revoked. Reconnect NexusMods in settings.");
+                result.failureKind = NexusModsAuthFailureKind::ReauthRequired;
+                return result;
+            }
+            NexusModsApiAuthHeader result = unavailable(
+                L"NexusMods OAuth refresh is temporarily unavailable.");
+            result.failureKind = NexusModsAuthFailureKind::Temporary;
+            return result;
+        }
+        catch (const std::exception&)
+        {
+            logger_.write(
+                LogLevel::Warning,
+                "NexusMods OAuth refresh after rejected credential failed temporarily.");
+            NexusModsApiAuthHeader result = unavailable(
+                L"NexusMods OAuth refresh is temporarily unavailable.");
+            result.failureKind = NexusModsAuthFailureKind::Temporary;
+            return result;
+        }
     }
 
     ApiLimitStatus NexusModsAuthService::apiLimits()
@@ -2773,6 +3160,7 @@ namespace fluxora
             stored.userId = user.userId;
         }
         stored.protectedApiKey = protectSecret(trimmedApiKey);
+        stored.reauthRequired = false;
         settings_.saveNexusModsAuth(stored);
 
         logger_.write(LogLevel::Info, "NexusMods API key linked.");

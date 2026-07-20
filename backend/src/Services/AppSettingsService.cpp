@@ -340,6 +340,7 @@ namespace fluxora
             auth.protectedAccessToken = readStringOrDefault(*nexusMods, L"protectedAccessToken");
             auth.protectedRefreshToken = readStringOrDefault(*nexusMods, L"protectedRefreshToken");
             auth.protectedApiKey = readStringOrDefault(*nexusMods, L"protectedApiKey");
+            auth.reauthRequired = readBoolOrDefault(*nexusMods, L"reauthRequired");
             auth.linked = auth.linked &&
                 (!auth.protectedAccessToken.empty() || !auth.protectedApiKey.empty());
             return auth;
@@ -364,6 +365,7 @@ namespace fluxora
         writer.field(L"protectedAccessToken", auth.protectedAccessToken);
         writer.field(L"protectedRefreshToken", auth.protectedRefreshToken);
         writer.field(L"protectedApiKey", auth.protectedApiKey);
+        writer.field(L"reauthRequired", auth.reauthRequired);
         writer.endObject();
         writer.endObject();
 

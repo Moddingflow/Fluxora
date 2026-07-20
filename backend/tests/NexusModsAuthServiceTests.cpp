@@ -109,6 +109,159 @@ namespace fluxora::tests
         settings.shutdown();
     }
 
+    TEST(NexusModsAuthServiceTests, MissingStoredSessionIsInstantlyNotLinkedWithoutNetwork)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+        std::atomic_int requestCount{0};
+        const ScopedNexusTokenRequestHook tokenRequestHook([&](std::string_view)
+        {
+            ++requestCount;
+            return std::string{};
+        });
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsConnectionStatus result = service.restoreStoredSession(
+            std::chrono::steady_clock::now() + std::chrono::seconds(1));
+
+        EXPECT_EQ(result.state, NexusModsConnectionState::NotLinked);
+        EXPECT_FALSE(result.hasStoredSession);
+        EXPECT_EQ(requestCount.load(), 0);
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, ValidStoredApiKeyIsReadyWithoutNetworkProbe)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.username = L"Safe account";
+        auth.protectedApiKey = nexus_auth_test_hooks::protectNexusSecretForTest(L"stored-key");
+        settings.saveNexusModsAuth(auth);
+        std::atomic_int requestCount{0};
+        const ScopedNexusTokenRequestHook tokenRequestHook([&](std::string_view)
+        {
+            ++requestCount;
+            return std::string{};
+        });
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsConnectionStatus result = service.restoreStoredSession(
+            std::chrono::steady_clock::now() + std::chrono::seconds(1));
+
+        EXPECT_EQ(result.state, NexusModsConnectionState::Ready);
+        EXPECT_EQ(result.accountName, L"Safe account");
+        EXPECT_TRUE(result.hasStoredSession);
+        EXPECT_EQ(requestCount.load(), 0);
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, ExpiredStoredOAuthSessionRefreshesWithinDeadline)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        ScopedEnvironmentVariable clientSecret(L"FLUXORA_NEXUS_CLIENT_SECRET", L"test-client-secret");
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.username = L"Saved user";
+        auth.tokenType = L"Bearer";
+        auth.expiresAtUtc = L"2020-01-01T00:00:00Z";
+        auth.protectedAccessToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"expired-token");
+        auth.protectedRefreshToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"refresh-token");
+        settings.saveNexusModsAuth(auth);
+        std::atomic_int requestCount{0};
+        const ScopedNexusTokenRequestHook tokenRequestHook([&](std::string_view)
+        {
+            ++requestCount;
+            return std::string(
+                R"({"access_token":"restored-token","refresh_token":"rotated-token","token_type":"Bearer","expires_in":3600})");
+        });
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsConnectionStatus result = service.restoreStoredSession(
+            std::chrono::steady_clock::now() + std::chrono::seconds(1));
+
+        EXPECT_EQ(result.state, NexusModsConnectionState::Ready);
+        EXPECT_EQ(requestCount.load(), 1);
+        EXPECT_FALSE(settings.loadNexusModsAuth().reauthRequired);
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, TemporaryRefreshFailureKeepsStoredSessionRetryable)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        ScopedEnvironmentVariable clientSecret(L"FLUXORA_NEXUS_CLIENT_SECRET", L"test-client-secret");
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.expiresAtUtc = L"2020-01-01T00:00:00Z";
+        auth.protectedAccessToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"expired-token");
+        auth.protectedRefreshToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"refresh-token");
+        settings.saveNexusModsAuth(auth);
+        const ScopedNexusTokenRequestHook tokenRequestHook([](std::string_view) -> std::string
+        {
+            throw std::runtime_error("offline");
+        });
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsConnectionStatus result = service.restoreStoredSession(
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(50));
+        const NexusModsStoredAuth persisted = settings.loadNexusModsAuth();
+
+        EXPECT_EQ(result.state, NexusModsConnectionState::TemporarilyUnavailable);
+        EXPECT_TRUE(result.retryable);
+        EXPECT_TRUE(result.hasStoredSession);
+        EXPECT_FALSE(persisted.reauthRequired);
+        EXPECT_FALSE(persisted.protectedAccessToken.empty());
+        EXPECT_FALSE(persisted.protectedRefreshToken.empty());
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, RevokedRefreshGrantRequiresReauthAndKeepsCredentials)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        ScopedEnvironmentVariable clientSecret(L"FLUXORA_NEXUS_CLIENT_SECRET", L"test-client-secret");
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.expiresAtUtc = L"2020-01-01T00:00:00Z";
+        auth.protectedAccessToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"expired-token");
+        auth.protectedRefreshToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"revoked-token");
+        settings.saveNexusModsAuth(auth);
+        const ScopedNexusTokenRequestHook tokenRequestHook([](std::string_view)
+        {
+            return std::string(R"({"error":"invalid_grant","error_description":"revoked"})");
+        });
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsConnectionStatus result = service.restoreStoredSession(
+            std::chrono::steady_clock::now() + std::chrono::seconds(1));
+        const NexusModsStoredAuth persisted = settings.loadNexusModsAuth();
+
+        EXPECT_EQ(result.state, NexusModsConnectionState::ReauthRequired);
+        EXPECT_TRUE(result.requiresUserAction);
+        EXPECT_FALSE(result.retryable);
+        EXPECT_TRUE(persisted.reauthRequired);
+        EXPECT_FALSE(persisted.protectedRefreshToken.empty());
+        settings.shutdown();
+    }
+
     TEST(NexusModsAuthServiceTests, ApiKeyOnlyAuthIsLinkedForDownloads)
     {
         TempDirectory temp;
@@ -244,6 +397,8 @@ namespace fluxora::tests
         EXPECT_FALSE(header.isAvailable);
         EXPECT_TRUE(header.headerValue.empty());
         EXPECT_NE(header.message.find(L"expired"), std::wstring::npos);
+        EXPECT_EQ(header.failureKind, NexusModsAuthFailureKind::ReauthRequired);
+        EXPECT_TRUE(settings.loadNexusModsAuth().reauthRequired);
 
         settings.shutdown();
     }
@@ -291,6 +446,149 @@ namespace fluxora::tests
             EXPECT_EQ(header.headerValue, L"Bearer refreshed-access-token");
         }
 
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, ConcurrentRejectedOAuthCredentialsRefreshOnce)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        ScopedEnvironmentVariable clientSecret(L"FLUXORA_NEXUS_CLIENT_SECRET", L"test-client-secret");
+
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.tokenType = L"Bearer";
+        auth.protectedAccessToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"rejected-access-token");
+        auth.protectedRefreshToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"refresh-token");
+        settings.saveNexusModsAuth(auth);
+
+        std::atomic_int requestCount{0};
+        const ScopedNexusTokenRequestHook tokenRequestHook(
+            [&](std::string_view)
+            {
+                ++requestCount;
+                return std::string(
+                    R"({"access_token":"replacement-access-token","refresh_token":"refresh-token","token_type":"Bearer","expires_in":3600})");
+            });
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsApiAuthHeader rejected = service.apiAuthHeader();
+        std::vector<NexusModsApiAuthHeader> headers(2);
+        std::thread first([&]() { headers[0] = service.retryApiAuthHeaderAfterUnauthorized(rejected); });
+        std::thread second([&]() { headers[1] = service.retryApiAuthHeaderAfterUnauthorized(rejected); });
+        first.join();
+        second.join();
+
+        EXPECT_EQ(requestCount.load(), 1);
+        for (const NexusModsApiAuthHeader& header : headers)
+        {
+            EXPECT_TRUE(header.isAvailable);
+            EXPECT_EQ(header.headerValue, L"Bearer replacement-access-token");
+        }
+
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, RejectedApiKeyNeverUsesOAuthRefresh)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.protectedApiKey = nexus_auth_test_hooks::protectNexusSecretForTest(L"rejected-api-key");
+        auth.protectedRefreshToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"refresh-token");
+        settings.saveNexusModsAuth(auth);
+
+        std::atomic_int requestCount{0};
+        const ScopedNexusTokenRequestHook tokenRequestHook([&](std::string_view)
+        {
+            ++requestCount;
+            return std::string{};
+        });
+        NexusModsAuthService service(logger, settings);
+        const NexusModsApiAuthHeader retry = service.retryApiAuthHeaderAfterUnauthorized(
+            service.apiAuthHeader());
+
+        EXPECT_FALSE(retry.isAvailable);
+        EXPECT_EQ(retry.failureKind, NexusModsAuthFailureKind::ReauthRequired);
+        EXPECT_EQ(requestCount.load(), 0);
+        EXPECT_TRUE(settings.loadNexusModsAuth().reauthRequired);
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, RejectedOAuthTemporaryRefreshFailureRemainsRetryable)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        ScopedEnvironmentVariable clientSecret(L"FLUXORA_NEXUS_CLIENT_SECRET", L"test-client-secret");
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.tokenType = L"Bearer";
+        auth.protectedAccessToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"rejected-access-token");
+        auth.protectedRefreshToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"refresh-token");
+        settings.saveNexusModsAuth(auth);
+
+        std::atomic_int requestCount{0};
+        const ScopedNexusTokenRequestHook tokenRequestHook([&](std::string_view) -> std::string
+        {
+            ++requestCount;
+            throw std::runtime_error("refresh rejected");
+        });
+        NexusModsAuthService service(logger, settings);
+        const NexusModsApiAuthHeader rejected = service.apiAuthHeader();
+
+        const NexusModsApiAuthHeader first = service.retryApiAuthHeaderAfterUnauthorized(rejected);
+        const NexusModsApiAuthHeader second = service.retryApiAuthHeaderAfterUnauthorized(rejected);
+        EXPECT_FALSE(first.isAvailable);
+        EXPECT_FALSE(second.isAvailable);
+        EXPECT_EQ(first.failureKind, NexusModsAuthFailureKind::Temporary);
+        EXPECT_EQ(second.failureKind, NexusModsAuthFailureKind::Temporary);
+        EXPECT_EQ(requestCount.load(), 2);
+        EXPECT_FALSE(settings.loadNexusModsAuth().reauthRequired);
+        settings.shutdown();
+    }
+
+    TEST(NexusModsAuthServiceTests, RepeatedUnauthorizedAfterSuccessfulRefreshRequiresReauth)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", temp.path().wstring());
+        ScopedEnvironmentVariable clientSecret(L"FLUXORA_NEXUS_CLIENT_SECRET", L"test-client-secret");
+        Logger logger;
+        AppSettingsService settings(logger);
+        settings.initialize();
+        NexusModsStoredAuth auth;
+        auth.linked = true;
+        auth.tokenType = L"Bearer";
+        auth.protectedAccessToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"rejected-token");
+        auth.protectedRefreshToken = nexus_auth_test_hooks::protectNexusSecretForTest(L"refresh-token");
+        settings.saveNexusModsAuth(auth);
+        const ScopedNexusTokenRequestHook tokenRequestHook([](std::string_view)
+        {
+            return std::string(
+                R"({"access_token":"refreshed-but-rejected","refresh_token":"refresh-token","token_type":"Bearer","expires_in":3600})");
+        });
+
+        NexusModsAuthService service(logger, settings);
+        const NexusModsApiAuthHeader refreshed = service.retryApiAuthHeaderAfterUnauthorized(
+            service.apiAuthHeader());
+        ASSERT_TRUE(refreshed.isAvailable);
+        const NexusModsApiAuthHeader repeated = service.retryApiAuthHeaderAfterUnauthorized(refreshed);
+
+        EXPECT_FALSE(repeated.isAvailable);
+        EXPECT_EQ(repeated.failureKind, NexusModsAuthFailureKind::ReauthRequired);
+        EXPECT_TRUE(settings.loadNexusModsAuth().reauthRequired);
         settings.shutdown();
     }
 

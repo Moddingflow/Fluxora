@@ -723,6 +723,45 @@ test.beforeEach(async ({ page }) => {
       canInstall: resolved,
       canDelete: true
     });
+    const nexusDuplicateDecisionDownload = () => ({
+      id: 'nxm_skyui_update_pending',
+      name: 'SkyUI 1.0.1',
+      fileName: 'SkyUI 1.0.1.7z',
+      localPath: 'D:\\Fluxora\\Downloads\\skyrimse\\skyui-101.nxm',
+      source: 'Nexus Mods',
+      archiveId: null,
+      buildStatus: null,
+      transferState: 'awaiting-decision',
+      transferMessage: 'Нужно решение',
+      sizeText: '',
+      createdAtText: 'now',
+      progressPercent: 0,
+      progressText: '',
+      etaText: '',
+      downloadSpeedText: '',
+      isDownloading: false,
+      hasKnownProgress: false,
+      hasResolvedFileName: true,
+      canResume: false,
+      canInstall: false,
+      canDelete: false,
+      duplicateDecision: {
+        decisionId: 'decision-skyui-100-to-101',
+        direction: 'upgrade',
+        incomingFile: {
+          id: 'incoming-skyui-101',
+          fileId: '101',
+          fileName: 'SkyUI 1.0.1.7z',
+          version: '1.0.1'
+        },
+        existingFiles: [{
+          id: 'skyui_archive',
+          fileId: '100',
+          fileName: 'SkyUI 1.0.0.7z',
+          version: '1.0.0'
+        }]
+      }
+    });
     const markDownloadInstalled = (downloadPath: unknown) => {
       const installedDownload = downloadRows.find(
         (entry) => entry.localPath === String(downloadPath ?? '')
@@ -1186,13 +1225,17 @@ test.beforeEach(async ({ page }) => {
       const isFomod = pathText.includes('NaturalVisionFomod') || isForcedFomod;
       const isSpid = pathText.includes('Spell Perks Item Distributor (SPID)');
       const isSkyUi = pathText.includes('SkyUI');
+      const nexusLineageMode = window.localStorage.getItem('fluxora.test.nexusLineageMode');
+      const isParallelNexusBranch = isSpid && nexusLineageMode === 'parallel';
       const realFixtureModuleName = String(
         (window as any).__fluxoraRealFomodInstaller?.moduleName ?? ''
       ).trim();
       const detectedModName = isFomod
         ? realFixtureModuleName || 'Natural Vision Of Tamriel'
         : isSpid
-          ? 'Spell Perks Item Distributor'
+          ? isParallelNexusBranch
+            ? 'Spell Perks Item Distributor (SPID)'
+            : 'Spell Perks Item Distributor'
           : isSkyUi
             ? 'SkyUI'
             : pathText.split(/[\\/]/).pop()?.replace(/\.(?:7z|zip|rar)$/i, '') ?? 'Archive';
@@ -1222,7 +1265,7 @@ test.beforeEach(async ({ page }) => {
               folderName: 'Natural Vision Of Tamriel'
             }
           : null
-        : isSpid
+        : isSpid && !isParallelNexusBranch
         ? {
             modUuid: 'mod_spid',
             displayName: 'Spell Perks Item Distributor',
@@ -1287,6 +1330,29 @@ test.beforeEach(async ({ page }) => {
         userId: nexusLinked ? 'playwright' : ''
       };
     };
+    const externalConnectionStatus = (operationId = 'op_connections') => {
+      nexusStatus();
+      return {
+        providerId: 'nexus',
+        label: 'Nexus Mods',
+        state: nexusLinked ? 'ready' : 'notLinked',
+        accountName: nexusLinked ? 'Playwright user' : '',
+        hasStoredSession: nexusLinked,
+        retryable: false,
+        requiresUserAction: false,
+        message: nexusLinked ? 'Nexus Mods connection is ready.' : 'Nexus Mods is not linked.',
+        checkedAtUtc: '2026-07-19T07:00:00Z',
+        operationId
+      };
+    };
+    const externalConnectionSnapshot = (operationId = 'op_connections') => ({
+      providers: [externalConnectionStatus(operationId)],
+      requestedAtUtc: '2026-07-19T07:00:00Z',
+      completedAtUtc: '2026-07-19T07:00:00Z',
+      durationMs: 1,
+      timedOut: false,
+      operationId
+    });
     const apiLimitStatus = () => ({
       generatedAtUtc: '2026-07-07T10:00:00Z',
       operationId: 'op_api_limits',
@@ -1384,6 +1450,96 @@ test.beforeEach(async ({ page }) => {
           platform: 'win32',
           version: '0.0.0-test'
         })
+      },
+      ai: {
+        getStatus: async (operation: any) => {
+          calls.push({ method: 'ai.getStatus', payload: { operation } });
+          return {
+            ready: true,
+            operationId: operation?.operationId ?? 'op_ai_status',
+            health: 'ready',
+            protocolVersion: '1.0',
+            hostVersion: 'playwright',
+            processId: 0,
+            providers: [
+              {
+                id: 'gemini',
+                displayName: 'Google Gemini',
+                kind: 'byok',
+                requiresCredential: true,
+                credentialStore: 'os-or-supabase',
+                credentialState: 'disconnected',
+                connected: false,
+                defaultModelId: 'gemini-3.1-flash-lite',
+                supportedRunModes: ['online'],
+                networkAdapters: 'available',
+                dataDisclosure: 'Prompts are sent to Google only after the provider is connected.'
+              },
+              {
+                id: 'local-dry-run',
+                displayName: 'Local dry run',
+                kind: 'local',
+                requiresCredential: false,
+                credentialStore: 'none',
+                credentialState: 'notRequired',
+                connected: true,
+                defaultModelId: 'local-dry-run',
+                supportedRunModes: ['offline'],
+                networkAdapters: 'disabled',
+                dataDisclosure: 'No external AI provider is called.'
+              }
+            ],
+            models: [
+              {
+                id: 'gemini-3.1-flash-lite',
+                providerId: 'gemini',
+                displayName: 'Gemini 3.1 Flash-Lite',
+                contextWindowTokens: 1048576,
+                inputTokenLimit: 1048576,
+                outputTokenLimit: 65536,
+                limitSource: 'provider-metadata',
+                supportsTools: true,
+                supportsWeb: false,
+                supportsStreaming: true,
+                supportsBackground: false,
+                priceMetadata: {
+                  currency: 'USD',
+                  inputPerMillionTokens: null,
+                  outputPerMillionTokens: null,
+                  cacheReadPerMillionTokens: null,
+                  cacheWritePerMillionTokens: null,
+                  source: 'playwright',
+                  isEstimated: true,
+                  remoteConfigurable: true
+                }
+              },
+              {
+                id: 'local-dry-run',
+                providerId: 'local-dry-run',
+                displayName: 'Local dry run',
+                contextWindowTokens: 8192,
+                inputTokenLimit: 8192,
+                outputTokenLimit: 2048,
+                limitSource: 'fluxora-fallback',
+                supportsTools: false,
+                supportsWeb: false,
+                supportsStreaming: false,
+                supportsBackground: false,
+                priceMetadata: {
+                  currency: 'USD',
+                  inputPerMillionTokens: null,
+                  outputPerMillionTokens: null,
+                  cacheReadPerMillionTokens: null,
+                  cacheWritePerMillionTokens: null,
+                  source: 'playwright',
+                  isEstimated: true,
+                  remoteConfigurable: true
+                }
+              }
+            ],
+            capabilities: {}
+          };
+        }
       },
       apiLimits: {
         list: async (operation: any) => {
@@ -1611,6 +1767,43 @@ test.beforeEach(async ({ page }) => {
           calls.push({ method: 'downloads.delete', payload: { downloadPath, operation, projectDirectory } });
           return {};
         },
+        resolveDuplicateDecision: async (
+          projectDirectory: any,
+          downloadPath: any,
+          decisionId: any,
+          choice: any,
+          operation: any
+        ) => {
+          calls.push({
+            method: 'downloads.resolveDuplicateDecision',
+            payload: { choice, decisionId, downloadPath, operation, projectDirectory }
+          });
+          window.localStorage.removeItem('fluxora.test.duplicateDecision');
+          if (choice === 'cancel') {
+            return null;
+          }
+          const pending = nexusDuplicateDecisionDownload();
+          return {
+            ...pending,
+            name: choice === 'keepBoth' ? 'SkyUI 1.0.1 (2)' : 'SkyUI 1.0.1',
+            fileName: choice === 'keepBoth' ? 'SkyUI 1.0.1 (2).7z' : 'SkyUI 1.0.1.7z',
+            localPath: choice === 'keepBoth'
+              ? 'D:\\Fluxora\\Downloads\\skyrimse\\SkyUI 1.0.1 (2).7z'
+              : 'D:\\Fluxora\\Downloads\\skyrimse\\SkyUI 1.0.1.7z',
+            archiveId: `sha256:${'d'.repeat(64)}`,
+            buildStatus: 'Ready',
+            transferState: 'idle',
+            transferMessage: '',
+            sizeText: '2.1 MB',
+            progressPercent: 100,
+            progressText: '100%',
+            isDownloading: false,
+            hasKnownProgress: true,
+            canInstall: true,
+            canDelete: true,
+            duplicateDecision: null
+          };
+        },
         importFile: async (projectDirectory: any, archivePath: any, operation: any) => {
           calls.push({ method: 'downloads.importFile', payload: { archivePath, operation, projectDirectory } });
           return downloadRows[0];
@@ -1678,6 +1871,9 @@ test.beforeEach(async ({ page }) => {
             );
           }
           const rows = downloadRows.map((entry) => ({ ...entry }));
+          if (window.localStorage.getItem('fluxora.test.duplicateDecision') === 'upgrade') {
+            rows.unshift(nexusDuplicateDecisionDownload() as any);
+          }
           if (
             window.localStorage.getItem('fluxora.test.returnInboundDownload') ===
               'pending-then-resolved' &&
@@ -2009,11 +2205,21 @@ test.beforeEach(async ({ page }) => {
         checkUpdates: async (updateRequest: any, operation: any) => {
           calls.push({ method: 'mods.checkUpdates', payload: { operation, updateRequest } });
           const shouldAdvanceLatest =
-            updateRequest?.mode === 'automatic' &&
             window.localStorage.getItem('fluxora.test.modUpdateLatest') === 'true';
+          const shouldReturnPartial =
+            window.localStorage.getItem('fluxora.test.modUpdatePartial') === 'authentication';
+          if (shouldAdvanceLatest && !shouldReturnPartial) {
+            const updated = modRows.find((item) => item.name === 'Unofficial Patch');
+            if (updated) {
+              updated.latestVersion = '4.4.0';
+              updated.latestFileId = '54321';
+              updated.updateCheckState = 'completed';
+              updated.hasUpdate = true;
+            }
+          }
           return {
-            state: 'completed',
-            reason: 'none',
+            state: shouldReturnPartial ? 'partial' : 'completed',
+            reason: shouldReturnPartial ? 'authenticationUnavailable' : 'none',
             nextEligibleAt: '2026-06-26T12:00:00Z',
             quota: {
               hourlyLimit: 1_000,
@@ -2030,7 +2236,7 @@ test.beforeEach(async ({ page }) => {
               checked: 2,
               updates: shouldAdvanceLatest ? 1 : 0,
               ambiguous: 0,
-              failed: 0
+              failed: shouldReturnPartial ? 2 : 0
             },
             mods: modRows
               .filter((item) => item.isMod)
@@ -2044,7 +2250,9 @@ test.beforeEach(async ({ page }) => {
                   shouldAdvanceLatest && item.name === 'Unofficial Patch'
                     ? '54321'
                     : (item.sourceFileId ?? ''),
-                updateCheckState: 'completed',
+                updateCheckState: shouldReturnPartial
+                  ? (item.updateCheckState || 'baseline_pending')
+                  : 'completed',
                 hasUpdate:
                   shouldAdvanceLatest && item.name === 'Unofficial Patch'
                     ? true
@@ -2616,6 +2824,33 @@ test.beforeEach(async ({ page }) => {
           return {};
         }
       },
+      connections: {
+        listStatus: async (operation: any) => {
+          calls.push({ method: 'connections.listStatus', payload: { operation } });
+          await waitForNexusStatus();
+          const scope = window as any;
+          const failuresRemaining = Number(scope.__fluxoraNexusStatusFailuresRemaining ?? 0);
+          if (failuresRemaining > 0) {
+            scope.__fluxoraNexusStatusFailuresRemaining = failuresRemaining - 1;
+            throw new Error('Connection status temporarily unavailable');
+          }
+          return externalConnectionSnapshot(operation?.operationId);
+        },
+        restoreAll: async (attempt: any, operation: any) => {
+          calls.push({ method: 'connections.restoreAll', payload: { attempt, operation } });
+          return externalConnectionSnapshot(operation?.operationId);
+        },
+        connect: async (providerId: any, operation: any) => {
+          calls.push({ method: 'connections.connect', payload: { operation, providerId } });
+          nexusLinked = true;
+          return externalConnectionStatus(operation?.operationId);
+        },
+        disconnect: async (providerId: any, operation: any) => {
+          calls.push({ method: 'connections.disconnect', payload: { operation, providerId } });
+          nexusLinked = false;
+          return externalConnectionStatus(operation?.operationId);
+        }
+      },
       nexus: {
         connect: async (operation: any) => {
           calls.push({ method: 'nexus.connect', payload: { operation } });
@@ -2923,6 +3158,17 @@ const openSkyrimBuild = async (page: Page) => {
   await clickSkyrimBuildOpenButton(page);
   await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Отмена', exact: true })).toBeHidden();
+};
+
+const openSkyrimBuildWithDuplicateDecision = async (page: Page) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('fluxora.test.duplicateDecision', 'upgrade');
+  });
+  await page.goto(baseUrl);
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Обновление архива Nexus' })).toBeVisible();
 };
 
 const enableLargePostInstallRevealWorkspace = async (page: Page) => {
@@ -3652,6 +3898,53 @@ const callMethods = async (page: Page) =>
         .__fluxoraCalls ?? []
     ).map((call) => call.method)
   );
+
+test('resolves the Nexus 1.0.0 to 1.0.1 conflict with Replace', async ({ page }) => {
+  await openSkyrimBuildWithDuplicateDecision(page);
+
+  await page.getByRole('button', { name: 'Заменить', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Обновление архива Nexus' })).toBeHidden();
+  await expect.poll(() => latestCallPayload(page, 'downloads.resolveDuplicateDecision')).toMatchObject({
+    choice: 'replace',
+    decisionId: 'decision-skyui-100-to-101',
+    operation: { operationId: expect.stringContaining('downloads_resolve_duplicate') }
+  });
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await expect(rightPane.getByRole('row', { name: /SkyUI 1\.0\.1/ })).toBeVisible();
+});
+
+test('resolves the Nexus 1.0.0 to 1.0.1 conflict with Keep both', async ({ page }) => {
+  await openSkyrimBuildWithDuplicateDecision(page);
+
+  await page.getByRole('button', { name: 'Сохранить оба', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Обновление архива Nexus' })).toBeHidden();
+  await expect.poll(() => latestCallPayload(page, 'downloads.resolveDuplicateDecision')).toMatchObject({
+    choice: 'keepBoth',
+    decisionId: 'decision-skyui-100-to-101'
+  });
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await expect(rightPane.getByRole('row', { name: /SkyUI 1\.0\.1 \(2\)/ })).toBeVisible();
+});
+
+test('closing the Nexus archive conflict cancels only the pending request', async ({ page }) => {
+  await openSkyrimBuildWithDuplicateDecision(page);
+
+  await page.getByRole('button', { name: 'Отменить загрузку' }).click();
+  await expect(page.getByRole('dialog', { name: 'Обновление архива Nexus' })).toBeHidden();
+  await expect.poll(() => latestCallPayload(page, 'downloads.resolveDuplicateDecision')).toMatchObject({
+    choice: 'cancel',
+    decisionId: 'decision-skyui-100-to-101'
+  });
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  await expect(rightPane.getByText('Нужно решение', { exact: true })).toHaveCount(0);
+  await expect(rightPane.getByRole('row', { name: /SkyUI/ }).first()).toBeVisible();
+});
 
 const rightPaneTransientSnapshot = async (page: Page) =>
   page.locator('.build-pane[aria-label="Right pane"]').evaluate((pane) => {
@@ -5198,6 +5491,10 @@ test('does not reuse exact mods while a watcher invalidation remains unresolved'
 });
 
 test('runs build package, check and launch actions through the facade', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as typeof window & { __fluxoraNexusInitiallyLinked?: boolean })
+      .__fluxoraNexusInitiallyLinked = true;
+  });
   await page.goto(baseUrl);
   await page.evaluate(() => {
     (window as any).__fluxoraOperationDelayMs = 500;
@@ -5590,6 +5887,8 @@ test('silently refreshes the Latest file version after the build workspace is re
   });
   await page.addInitScript(() => {
     window.localStorage.setItem('fluxora.test.modUpdateLatest', 'true');
+    (window as typeof window & { __fluxoraNexusInitiallyLinked?: boolean })
+      .__fluxoraNexusInitiallyLinked = true;
   });
   await page.goto(baseUrl);
 
@@ -5609,6 +5908,48 @@ test('silently refreshes the Latest file version after the build workspace is re
     });
   await expect(page.getByText('Checking updates', { exact: true })).toHaveCount(0);
   expect(browserDialogCount).toBe(0);
+});
+
+test('keeps automatic partial updates quiet and shows only a short manual message', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('fluxora.test.modUpdatePartial', 'authentication');
+    window.localStorage.setItem('fluxora.test.modUpdateLatest', 'true');
+    (window as typeof window & { __fluxoraNexusInitiallyLinked?: boolean })
+      .__fluxoraNexusInitiallyLinked = true;
+  });
+  await page.goto(baseUrl);
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  await expect
+    .poll(() => latestCallPayload(page, 'mods.checkUpdates'))
+    .toMatchObject({ updateRequest: { mode: 'automatic' } });
+  await expect(page.locator('.mod-update-warning')).toHaveCount(0);
+  await expect(page.getByText('Проверка обновлений завершена частично', { exact: false }))
+    .toHaveCount(0);
+  await expect(
+    page.getByRole('row', { name: /Unofficial Patch mod/ })
+      .locator('.mod-list-row__latest-freshness')
+  ).toHaveText('Не проверено');
+
+  const modsPane = page.getByRole('region', { name: 'Mods', exact: true });
+  await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
+  await page.getByRole('menu', { name: 'Действия со сборкой' })
+    .getByRole('menuitem', { name: 'Проверить обновления' })
+    .click();
+  await expect(page.getByText('Проверка обновлений завершена частично', { exact: false }))
+    .toBeVisible();
+  await expect(page.locator('.mod-update-warning')).toHaveCount(0);
+
+  await page.evaluate(() => window.localStorage.removeItem('fluxora.test.modUpdatePartial'));
+  await modsPane.getByRole('button', { name: 'Действия со сборкой' }).click();
+  await page.getByRole('menu', { name: 'Действия со сборкой' })
+    .getByRole('menuitem', { name: 'Проверить обновления' })
+    .click();
+  await expect(
+    page.getByRole('row', { name: /Unofficial Patch mod/ })
+      .locator('.mod-list-row__latest-value')
+  ).toHaveText('4.4.0');
 });
 
 test('uses the redesigned mods pane for real mod list operations', async ({ page }) => {
@@ -7200,6 +7541,32 @@ test('auto-fills SPID identity and installs separate copies as (2) then (3)', as
   await installSeparateCopy(3);
 });
 
+test('auto-fills only a proven Nexus lineage and leaves a parallel branch name intact', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => window.localStorage.setItem('fluxora.test.nexusLineageMode', 'proven'));
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  await rightPane.getByRole('tab', { name: /Загрузки/ }).click();
+  const sourceRow = rightPane.getByRole('row', {
+    name: /Spell Perks Item Distributor \(SPID\)/
+  });
+  await sourceRow.dblclick();
+  let dialog = page.getByRole('dialog', { name: /Install Spell Perks Item Distributor/ });
+  await expect(dialog.getByLabel(/Mod name/)).toHaveValue('Spell Perks Item Distributor');
+  await dialog.getByRole('button', { name: 'Установить', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: /Заменить/ })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /Объединить/ })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Закрыть окно установки' }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await page.evaluate(() => window.localStorage.setItem('fluxora.test.nexusLineageMode', 'parallel'));
+  await sourceRow.dblclick();
+  dialog = page.getByRole('dialog', { name: /Install Spell Perks Item Distributor/ });
+  await expect(dialog.getByLabel(/Mod name/)).toHaveValue('Spell Perks Item Distributor (SPID)');
+});
+
 test('uses the first free suffix gap for a separate identity install', async ({ page }) => {
   await page.goto(baseUrl);
   await page.evaluate(() => {
@@ -7771,7 +8138,7 @@ test('renders Settings Nexus status instantly while native auth status is delaye
   await page.goto(`${baseUrl}/?window=settings`);
 
   await expect(page.locator('.titlebar__brand-name')).toHaveText('Settings');
-  await expect(page.getByText('Checking - last linked as Cached Playwright user')).toBeVisible();
+  await expect(page.getByText('Reconnecting')).toBeVisible();
   await expect(page.getByText('Status not loaded')).toHaveCount(0);
   await expect(page.getByText('Loading settings')).toHaveCount(0);
   await expect(page.locator('.mod-busy-strip')).toHaveCount(0);
@@ -7782,10 +8149,10 @@ test('renders Settings Nexus status instantly while native auth status is delaye
           ?.map((call) => call.method)
       )
     )
-    .toContain('nexus.getAuthStatus');
+    .toContain('connections.listStatus');
 });
 
-test('recovers an unavailable Nexus status without starting a new OAuth action', async ({ page }) => {
+test('keeps secondary Settings connection recovery passive without starting OAuth', async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem(
       'fluxora.settings.nexusStatus',
@@ -7809,9 +8176,9 @@ test('recovers an unavailable Nexus status without starting a new OAuth action',
 
   await page.goto(`${baseUrl}/?window=settings`);
 
-  await expect(page.getByText('Unavailable - last linked as Cached Playwright user')).toBeVisible();
+  await expect(page.getByText('Reconnecting')).toBeVisible();
   const nexusSwitch = page.getByRole('switch', { name: 'Nexus Mods account' });
-  await expect(nexusSwitch).toBeEnabled();
+  await expect(nexusSwitch).toBeDisabled();
 
   const callsBeforeRetry = await page.evaluate(() =>
     (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
@@ -7820,17 +8187,10 @@ test('recovers an unavailable Nexus status without starting a new OAuth action',
   expect(callsBeforeRetry).not.toContain('nexus.connect');
   expect(callsBeforeRetry).not.toContain('nexus.disconnect');
 
-  await nexusSwitch.click();
-
-  await expect(page.getByText('Linked - Playwright user')).toBeVisible();
-  await expect(nexusSwitch).toBeChecked();
-  const callsAfterRetry = await page.evaluate(() =>
-    (window as typeof window & { __fluxoraCalls?: Array<{ method: string }> }).__fluxoraCalls
-      ?.map((call) => call.method) ?? []
-  );
-  expect(callsAfterRetry.filter((method) => method === 'nexus.getAuthStatus')).toHaveLength(3);
-  expect(callsAfterRetry).not.toContain('nexus.connect');
-  expect(callsAfterRetry).not.toContain('nexus.disconnect');
+  expect(callsBeforeRetry).toContain('connections.listStatus');
+  expect(callsBeforeRetry).not.toContain('connections.restoreAll');
+  expect(callsBeforeRetry).not.toContain('connections.connect');
+  expect(callsBeforeRetry).not.toContain('connections.disconnect');
 });
 
 test('uses the redesigned Settings window for Nexus, language and MO2 transfer actions', async ({ page }) => {
@@ -7840,11 +8200,14 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
   await expect(page.locator('.titlebar__brand-name')).toHaveText('Settings');
   await expect(page.locator('.titlebar__mark--settings')).toBeVisible();
   await expect(page.getByRole('button', { name: /Connections/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /^AI$/ })).toHaveCount(0);
+  await expect(page.locator('.settings-nav button').filter({ hasText: /^AI/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Languages/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Transfer/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Для разработчиков/ })).toBeVisible();
   await expect(page.locator('.settings-nav button').last()).toContainText('Для разработчиков');
+  await expect(page.locator('.settings-panel--ai')).toHaveCount(0);
+  await expect(page.getByText('Chat model')).toHaveCount(0);
+  await page.getByRole('button', { name: /Connections/ }).click();
   await expect(page.getByText('Account bridge')).toHaveCount(0);
   await expect(page.getByText('Nexus Mods', { exact: true })).toBeVisible();
   const connectionsPanelBox = await page.locator('.settings-panel--connections').boundingBox();
@@ -7865,8 +8228,8 @@ test('uses the redesigned Settings window for Nexus, language and MO2 transfer a
           ?.map((call) => call.method)
       )
     )
-    .toContain('nexus.connect');
-  await expect(page.getByText('Linked - Playwright user')).toBeVisible();
+    .toContain('connections.connect');
+  await expect(page.getByText('Connected - Playwright user')).toBeVisible();
   await expect(page.getByText('Playwright API')).toBeVisible();
   await expect(page.getByText('421 / 500')).toBeVisible();
   await expect(page.getByText('19,876 / 20,000')).toBeVisible();

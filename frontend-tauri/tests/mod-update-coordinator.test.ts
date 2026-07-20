@@ -176,4 +176,60 @@ describe('mod update coordinator', () => {
       hasUpdate: true
     });
   });
+
+  it('applies a partial result without discarding its reason', async () => {
+    const partial = {
+      ...result(),
+      state: 'partial' as const,
+      reason: 'authenticationUnavailable' as const
+    };
+    const onApplied = vi.fn();
+    const coordinator = createModUpdateCoordinator({
+      api: {
+        checkUpdates: vi.fn(async () => partial),
+        cancel: vi.fn(async () => undefined)
+      },
+      createOperationId: () => 'op-partial',
+      onApplied
+    });
+
+    coordinator.activate('C:\\Builds\\A');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onApplied).toHaveBeenCalledWith(
+      'C:\\Builds\\A',
+      expect.objectContaining({
+        state: 'partial',
+        reason: 'authenticationUnavailable'
+      })
+    );
+    coordinator.stop();
+  });
+
+  it('hands authenticationUnavailable to connection recovery without scheduling an update timer', async () => {
+    vi.useFakeTimers();
+    const partial = {
+      ...result(),
+      state: 'partial' as const,
+      reason: 'authenticationUnavailable' as const
+    };
+    const checkUpdates = vi.fn(async () => partial);
+    const onAuthenticationUnavailable = vi.fn();
+    const coordinator = createModUpdateCoordinator({
+      api: { checkUpdates, cancel: vi.fn(async () => undefined) },
+      createOperationId: () => 'op-auth-unavailable',
+      onApplied: vi.fn(),
+      onAuthenticationUnavailable
+    });
+
+    coordinator.activate('C:\\Builds\\A');
+    await vi.runAllTicks();
+    await Promise.resolve();
+
+    expect(onAuthenticationUnavailable).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1_000);
+    expect(checkUpdates).toHaveBeenCalledTimes(1);
+    coordinator.stop();
+  });
 });

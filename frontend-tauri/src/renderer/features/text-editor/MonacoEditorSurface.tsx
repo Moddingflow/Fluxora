@@ -421,8 +421,8 @@ export const MonacoEditorSurface = forwardRef<
   }, [tab.id, tab.languageId]);
 
   useEffect(() => {
-    editorRef.current?.updateOptions({ readOnly: tab.state === 'loading' });
-  }, [tab.state]);
+    editorRef.current?.updateOptions({ readOnly: tab.state === 'loading' || tab.readOnly === true });
+  }, [tab.readOnly, tab.state]);
 
   return <div className="text-editor-monaco" ref={hostRef} />;
 });

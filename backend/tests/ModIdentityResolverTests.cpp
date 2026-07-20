@@ -14,7 +14,7 @@ namespace fluxora
             L"Spell Perks Item Distributor");
     }
 
-    TEST(ModIdentityResolverTests, StableProviderGameAndModIdIgnoreChangingFileId)
+    TEST(ModIdentityResolverTests, DifferentNexusFileIdsRequireAProvenLineage)
     {
         ModIdentityInput incoming;
         incoming.displayName = L"SPID 7.2.0";
@@ -24,15 +24,32 @@ namespace fluxora
         installed.target = {L"mod-spid", L"Spell Perks Item Distributor", L"SPID"};
         installed.source = {L"nexus", L"skyrimspecialedition", L"36869", L"100"};
 
-        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+        const ModIdentityResolution unproven = ModIdentityResolver::resolve(
             incoming,
             {installed});
+
+        EXPECT_FALSE(unproven.matchedTarget.has_value());
+
+        NexusModFilesResponse metadata;
+        metadata.fileUpdates = {
+            NexusFileUpdateLink{L"100", L"200", 0}
+        };
+        const ModIdentityResolution resolution = ModIdentityResolver::resolve(
+            incoming,
+            {installed},
+            &metadata);
 
         ASSERT_TRUE(resolution.matchedTarget.has_value());
         EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Exact);
         EXPECT_EQ(resolution.matchedTarget->modUuid, L"mod-spid");
         EXPECT_EQ(resolution.suggestedModName, L"Spell Perks Item Distributor");
         EXPECT_EQ(resolution.score, 100);
+        EXPECT_NE(
+            std::find(
+                resolution.evidenceCodes.begin(),
+                resolution.evidenceCodes.end(),
+                L"nexus.lineage.same-lineage"),
+            resolution.evidenceCodes.end());
     }
 
     TEST(ModIdentityResolverTests, SameNexusPageDoesNotCollapseNamedAddonIntoBaseMod)
@@ -58,7 +75,7 @@ namespace fluxora
         EXPECT_EQ(resolution.suggestedModName, L"Imperial Forts Remake PBR Lod Helper");
     }
 
-    TEST(ModIdentityResolverTests, AmbiguousSameSourceUsesContentToSelectTheBaseUpdate)
+    TEST(ModIdentityResolverTests, ProvenBranchSelectsTheBaseUpdateWithoutCollapsingAParallelFile)
     {
         ModIdentityInput incoming;
         incoming.displayName = L"Dynamic Footprints Skse BASE v3.0";
@@ -88,19 +105,24 @@ namespace fluxora
         };
         previousSeparateInstall.content.pluginFiles = {L"NMN_DynamicFootprints.esp"};
 
+        NexusModFilesResponse metadata;
+        metadata.fileUpdates = {
+            NexusFileUpdateLink{L"745065", L"766239", 0}
+        };
         const ModIdentityResolution resolution = ModIdentityResolver::resolve(
             incoming,
-            {base, previousSeparateInstall});
+            {base, previousSeparateInstall},
+            &metadata);
 
         ASSERT_TRUE(resolution.matchedTarget.has_value());
-        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Exact);
         EXPECT_EQ(resolution.matchedTarget->modUuid, L"dynamic-footprints-base");
         EXPECT_EQ(resolution.suggestedModName, L"Dynamic Footprints Skse");
         EXPECT_NE(
             std::find(
                 resolution.evidenceCodes.begin(),
                 resolution.evidenceCodes.end(),
-                L"content.skse-dll"),
+                L"nexus.lineage.same-lineage"),
             resolution.evidenceCodes.end());
     }
 
@@ -144,9 +166,14 @@ namespace fluxora
             L"300"
         };
 
+        NexusModFilesResponse metadata;
+        metadata.fileUpdates = {
+            NexusFileUpdateLink{L"200", L"210", 0}
+        };
         const ModIdentityResolution resolution = ModIdentityResolver::resolve(
             incoming,
-            {base, widescreen21x9, widescreen32x9});
+            {base, widescreen21x9, widescreen32x9},
+            &metadata);
 
         ASSERT_TRUE(resolution.matchedTarget.has_value());
         EXPECT_EQ(resolution.matchedTarget->modUuid, L"dragonborn-ui-21x9");
@@ -252,7 +279,7 @@ namespace fluxora
         EXPECT_GE(resolution.score, 86);
     }
 
-    TEST(ModIdentityResolverTests, ConflictingStableSourceStillSurfacesExactNameCollision)
+    TEST(ModIdentityResolverTests, DifferentNexusPagesDoNotMatchByNameAlone)
     {
         ModIdentityInput incoming;
         incoming.displayName = L"Unofficial Skyrim Modders Patch";
@@ -271,18 +298,11 @@ namespace fluxora
             incoming,
             {installed});
 
-        ASSERT_TRUE(resolution.matchedTarget.has_value());
-        EXPECT_EQ(resolution.matchedTarget->modUuid, L"installed-usmp");
-        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Probable);
-        EXPECT_NE(
-            std::find(
-                resolution.evidenceCodes.begin(),
-                resolution.evidenceCodes.end(),
-                L"source.stable-mod-id-conflict"),
-            resolution.evidenceCodes.end());
+        EXPECT_FALSE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::None);
     }
 
-    TEST(ModIdentityResolverTests, CrossPageUpdateUsesExactNameAndContentAnchors)
+    TEST(ModIdentityResolverTests, DifferentNexusPagesDoNotMatchByContentAnchors)
     {
         ModIdentityInput incoming;
         incoming.displayName = L"Unofficial Skyrim Modder'S Patch   USMP SE";
@@ -310,12 +330,8 @@ namespace fluxora
             incoming,
             {installed});
 
-        ASSERT_TRUE(resolution.matchedTarget.has_value());
-        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::Probable);
-        EXPECT_EQ(resolution.matchedTarget->modUuid, L"installed-usmp");
-        EXPECT_EQ(
-            resolution.suggestedModName,
-            L"Unofficial Skyrim Modder's Patch - USMP SE");
+        EXPECT_FALSE(resolution.matchedTarget.has_value());
+        EXPECT_EQ(resolution.kind, ModIdentityResolutionKind::None);
     }
 
     TEST(ModIdentityResolverTests, TieWeakAndExcludedCandidatesKeepTheIncomingName)
@@ -347,7 +363,7 @@ namespace fluxora
         EXPECT_FALSE(excluded.matchedTarget.has_value());
     }
 
-    TEST(ModIdentityResolverTests, DuplicateStableSourceNeedsAnAdditionalUniqueSignal)
+    TEST(ModIdentityResolverTests, DuplicateNexusSourceRejectsNamesWithoutLineageEvidence)
     {
         ModIdentityInput incoming;
         incoming.displayName = L"Downloaded Archive";
@@ -364,8 +380,7 @@ namespace fluxora
 
         incoming.displayName = L"Spell Perks Item Distributor";
         const ModIdentityResolution named = ModIdentityResolver::resolve(incoming, {first, second});
-        ASSERT_TRUE(named.matchedTarget.has_value());
-        EXPECT_EQ(named.matchedTarget->modUuid, L"first");
+        EXPECT_FALSE(named.matchedTarget.has_value());
     }
 
     TEST(ModIdentityResolverTests, ExclusionDoesNotMakeDuplicateStableSourceUniqueAgain)
@@ -396,8 +411,7 @@ namespace fluxora
         const ModIdentityResolution named = ModIdentityResolver::resolve(
             incoming,
             {rejected, separateCopy});
-        ASSERT_TRUE(named.matchedTarget.has_value());
-        EXPECT_EQ(named.matchedTarget->modUuid, L"separate");
+        EXPECT_FALSE(named.matchedTarget.has_value());
     }
 
     TEST(ModIdentityResolverTests, InstallPlanResolvesAndValidatesStableSourceMatch)
@@ -420,11 +434,31 @@ namespace fluxora
         ModIdentityPlanRequest request;
         request.projectDirectory = project;
         request.archiveFingerprint = L"archive-fingerprint";
+        request.requestedInstallName = L"My custom install label";
         request.input.displayName = L"SPID 7.2";
         request.input.source = {L"nexus", L"skyrimspecialedition", L"36869", L"200"};
+        int networkRequests = 0;
+        request.loadNexusFiles = [&networkRequests](
+            std::wstring_view,
+            std::wstring_view,
+            bool allowNetwork)
+        {
+            if (allowNetwork)
+            {
+                ++networkRequests;
+            }
+            NexusModFilesResponse response;
+            response.fileUpdates = {NexusFileUpdateLink{L"100", L"200", 0}};
+            return NexusFileMetadataLookup{
+                NexusFileMetadataSource::Cache,
+                std::move(response),
+                2
+            };
+        };
         const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(std::move(request));
 
         ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(networkRequests, 0);
         EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Exact);
         EXPECT_EQ(plan.matchedTarget->modUuid, installed.uuid);
         EXPECT_THROW(
@@ -449,10 +483,11 @@ namespace fluxora
             });
         ASSERT_TRUE(validated.matchedTarget.has_value());
         EXPECT_EQ(validated.matchedTarget->displayName, L"Spell Perks Item Distributor");
+        EXPECT_EQ(validated.incomingName, L"SPID 7.2");
 #endif
     }
 
-    TEST(ModIdentityResolverTests, InstallPlanInspectsContentBeforeChoosingAmongSamePageFiles)
+    TEST(ModIdentityResolverTests, InstallPlanUsesOneNetworkLookupForAProvenSamePageBranch)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
@@ -496,6 +531,27 @@ namespace fluxora
             L"175254",
             L"766239"
         };
+        int networkRequests = 0;
+        request.loadNexusFiles = [&networkRequests](
+            std::wstring_view,
+            std::wstring_view,
+            bool allowNetwork)
+        {
+            if (!allowNetwork)
+            {
+                return NexusFileMetadataLookup{};
+            }
+            ++networkRequests;
+            NexusModFilesResponse response;
+            response.fileUpdates = {
+                NexusFileUpdateLink{L"745065", L"766239", 0}
+            };
+            return NexusFileMetadataLookup{
+                NexusFileMetadataSource::Network,
+                std::move(response),
+                4
+            };
+        };
         request.loadIncomingContent = [&contentWasInspected]()
         {
             contentWasInspected = true;
@@ -507,15 +563,130 @@ namespace fluxora
         const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(
             std::move(request));
 
-        EXPECT_TRUE(contentWasInspected);
+        EXPECT_FALSE(contentWasInspected);
+        EXPECT_EQ(networkRequests, 1);
         ASSERT_TRUE(plan.matchedTarget.has_value());
-        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Exact);
         EXPECT_EQ(plan.matchedTarget->modUuid, base.uuid);
         EXPECT_EQ(plan.suggestedModName, L"Dynamic Footprints Skse");
 #endif
     }
 
-    TEST(ModIdentityResolverTests, InstallPlanMatchesCrossPageUpdateAfterContentInspection)
+    TEST(ModIdentityResolverTests, InstallPlanKeepsBranchesSeparateWhenMetadataLookupIsUnavailable)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        tests::TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path modPath = project / L"mods" / L"SPID";
+        tests::writeTextFile(modPath / L"SKSE" / L"Plugins" / L"SPID.dll", "plugin");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        InstanceMetadataStore::registerInstalledMod(
+            project,
+            modPath,
+            L"Spell Perks Item Distributor",
+            L"7.1",
+            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"36869", L"100"});
+
+        ModIdentityPlanRequest request;
+        request.projectDirectory = project;
+        request.archiveFingerprint = L"spid-unknown-lineage";
+        request.input.displayName = L"Spell Perks Item Distributor";
+        request.input.source = {L"nexus", L"skyrimspecialedition", L"36869", L"200"};
+        int networkRequests = 0;
+        request.loadNexusFiles = [&networkRequests](
+            std::wstring_view,
+            std::wstring_view,
+            bool allowNetwork)
+        {
+            if (allowNetwork)
+            {
+                ++networkRequests;
+            }
+            return NexusFileMetadataLookup{};
+        };
+        request.loadIncomingContent = []
+        {
+            ModIdentityContentAnchors content;
+            content.scriptExtenderDlls = {L"SPID.dll"};
+            return content;
+        };
+
+        const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(std::move(request));
+
+        EXPECT_EQ(networkRequests, 1);
+        EXPECT_FALSE(plan.matchedTarget.has_value());
+        EXPECT_NE(
+            std::find(
+                plan.evidenceCodes.begin(),
+                plan.evidenceCodes.end(),
+                L"nexus.metadata.unavailable"),
+            plan.evidenceCodes.end());
+        EXPECT_NE(
+            std::find(
+                plan.evidenceCodes.begin(),
+                plan.evidenceCodes.end(),
+                L"nexus.lineage.unproven-or-different-branch"),
+            plan.evidenceCodes.end());
+#endif
+    }
+
+    TEST(ModIdentityResolverTests, InstallPlanUsesExactArchiveStemAsSafeSamePageFallback)
+    {
+#ifndef _WIN32
+        GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
+#else
+        tests::TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"project";
+        const std::filesystem::path modPath = project / L"mods" / L"Based Lighting Configs";
+        tests::writeTextFile(modPath / L"LightPlacer" / L"based_lighting.json", "config");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+            project,
+            modPath,
+            L"Based Lighting Configs",
+            L"3.1",
+            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"136870", L"700001"});
+
+        ModIdentityPlanRequest request;
+        request.projectDirectory = project;
+        request.archivePath = temp.path() / L"Based Lighting Configs.7z";
+        request.archiveFingerprint = L"based-lighting-configs-4.0";
+        request.input.displayName = L"Based Lighting Configs";
+        request.input.folderName = request.input.displayName;
+        request.input.source = {L"nexus", L"skyrimspecialedition", L"136870", L"769909"};
+        request.loadNexusFiles = [](
+            std::wstring_view,
+            std::wstring_view,
+            bool)
+        {
+            return NexusFileMetadataLookup{};
+        };
+        bool contentWasInspected = false;
+        request.loadIncomingContent = [&contentWasInspected]
+        {
+            contentWasInspected = true;
+            return ModIdentityContentAnchors{};
+        };
+
+        const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(std::move(request));
+
+        EXPECT_FALSE(contentWasInspected);
+        ASSERT_TRUE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Probable);
+        EXPECT_EQ(plan.matchedTarget->modUuid, installed.uuid);
+        EXPECT_EQ(plan.suggestedModName, L"Based Lighting Configs");
+        EXPECT_NE(
+            std::find(
+                plan.evidenceCodes.begin(),
+                plan.evidenceCodes.end(),
+                L"archive.exact-name"),
+            plan.evidenceCodes.end());
+#endif
+    }
+
+    TEST(ModIdentityResolverTests, InstallPlanRejectsCrossPageNexusContentMatch)
     {
 #ifndef _WIN32
         GTEST_SKIP() << "Fluxora instance metadata storage is implemented for Windows builds.";
@@ -565,12 +736,11 @@ namespace fluxora
         const FluxoraInstallPlan plan = ModIdentityResolver::createInstallPlan(
             std::move(request));
 
-        ASSERT_TRUE(plan.matchedTarget.has_value());
-        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Probable);
-        EXPECT_EQ(plan.matchedTarget->modUuid, installed.uuid);
+        EXPECT_FALSE(plan.matchedTarget.has_value());
+        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::None);
         EXPECT_EQ(
             plan.suggestedModName,
-            L"Unofficial Skyrim Modder's Patch - USMP SE");
+            L"Unofficial Skyrim Modder'S Patch   USMP SE");
 #endif
     }
 

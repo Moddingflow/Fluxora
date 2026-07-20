@@ -679,6 +679,69 @@ namespace fluxora::tests
         EXPECT_EQ(afterAutomaticInstall.previousDeselectedOptionIds, (std::vector<std::wstring>{optionA}));
     }
 
+    TEST(FomodInstallerServiceTests, MemoryV3RestoresIndependentChoiceFromMixedContextGroup)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / "project";
+        const std::filesystem::path package = temp.path() / "package";
+        writeTextFile(package / "fomod" / "ModuleConfig.xml", R"xml(
+<config>
+  <moduleName>Mixed Context Memory</moduleName>
+  <installSteps order="Explicit"><installStep name="Visuals"><optionalFileGroups order="Explicit">
+    <group name="Variant" type="SelectExactlyOne"><plugins order="Explicit">
+      <plugin name="Contextual plugin">
+        <files><file source="payload/Ghost.esp" destination="Data/Ghost.esp" /></files>
+        <typeDescriptor><type name="Optional" /></typeDescriptor>
+      </plugin>
+      <plugin name="None"><typeDescriptor><type name="Optional" /></typeDescriptor></plugin>
+    </plugins></group>
+  </optionalFileGroups></installStep></installSteps>
+</config>)xml");
+        writeTes4Plugin(package / "payload" / "Ghost.esp", {"Skyrim.esm"});
+
+        const FomodInstallerDescriptor descriptor = FomodInstallerService::analyze(
+            project,
+            temp.path() / "game",
+            temp.path() / "mods",
+            package,
+            identity(),
+            {},
+            L"Foundation Edition",
+            L"profile-before-install");
+        const FomodOption& contextual = descriptor.steps[0].groups[0].options[0];
+        const FomodOption& none = descriptor.steps[0].groups[0].options[1];
+        ASSERT_FALSE(contextual.pluginHeaders.empty());
+        ASSERT_FALSE(contextual.pluginHeaders[0].masters.empty());
+
+        FomodInstallerService::rememberSelection(
+            project,
+            descriptor,
+            {none.id},
+            L"Foundation Edition",
+            L"profile-before-install",
+            {
+                FomodRememberedManualDecision{contextual.id, false},
+                FomodRememberedManualDecision{none.id, true}
+            });
+
+        const FomodInstallerDescriptor nextProfileState = FomodInstallerService::analyze(
+            project,
+            temp.path() / "game",
+            temp.path() / "mods",
+            package,
+            identity(),
+            {},
+            L"Foundation Edition",
+            L"profile-after-install");
+
+        EXPECT_FALSE(nextProfileState.previousSelectionContextual);
+        EXPECT_TRUE(nextProfileState.hasPreviousSelection);
+        EXPECT_EQ(
+            nextProfileState.previousSelectedOptionIds,
+            (std::vector<std::wstring>{none.id}));
+        EXPECT_TRUE(nextProfileState.previousDeselectedOptionIds.empty());
+    }
+
     TEST(FomodInstallerServiceTests, FileDependencyUsesSelectedGameDataFolderForNormalizedMods)
     {
         TempDirectory temp;

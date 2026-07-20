@@ -91,7 +91,7 @@ Phase 7 extends `fluxora.bridge.v1` to the plugin/load-order workspace:
 
 Phase 8 extends `fluxora.bridge.v1` to downloads and simple archive install:
 
-- Native host routes `downloads.list`, `downloads.importFile`, `downloads.delete`, `downloads.cancel`, `downloads.resume`, `downloads.planInstall`, `downloads.install`, `archives.planInstall`, `archives.install`, `nxm.registerProtocol`, `nxm.captureLinks` and `nxm.importInboundDownloads` to C++ C ABI functions backed by `DownloadService`.
+- Native host routes `downloads.list`, `downloads.importFile`, `downloads.delete`, `downloads.cancel`, `downloads.resume`, `downloads.resolveDuplicateDecision`, `downloads.planInstall`, `downloads.install`, `archives.planInstall`, `archives.install`, `nxm.registerProtocol`, `nxm.captureLinks` and `nxm.importInboundDownloads` to C++ C ABI functions backed by `DownloadService`.
 - Tauri Rust shell/facade expose typed `window.fluxora.downloads.*`, `window.fluxora.archives.*` and `window.fluxora.nxm.*` calls only; renderer still has no Node.js, filesystem, shell or raw command access.
 - Tauri Rust shell owns `nxm://` app activation handling through startup argv and Windows/Linux/macOS `second-instance`, forwards links to the bridge inbound queue, then emits `fluxora:nxm:inbound-links-captured` so the renderer can import the queued links into the active build.
 - Renderer auto-registers the Windows `nxm://` handler once per session when a Nexus account is linked, while the Downloads workspace still exposes the manual `Register NXM` fallback.
@@ -158,17 +158,20 @@ Phase 10 extends `fluxora.bridge.v1` to WPF-parity profile management and execut
 
 Phase 11 extends `fluxora.bridge.v1` to WPF-parity settings and MO2 transfer:
 
-- Native host routes `settings.getTheme`, `settings.setTheme`, `nexus.getAuthStatus`, `nexus.connect`, `nexus.connectWithApiKey`, `nexus.disconnect`, `transfer.analyzeMo2` and `transfer.importMo2` to existing C++ C ABI functions backed by `AppSettingsService`, `NexusModsAuthService` and `ModOrganizerImportService`; the Tauri shell handles `operations.cancel` for MO2 transfer by writing an operation cancel marker outside the bridge request mutex. The theme contract currently normalizes every value to the single supported dark theme.
+- Native host routes `settings.getTheme`, `settings.setTheme`, generic `connections.listStatus`, `connections.restoreAll`, `connections.connect`, `connections.disconnect`, the compatible `nexus.*` surface, `transfer.analyzeMo2` and `transfer.importMo2` to C++ C ABI functions backed by `AppSettingsService`, `ExternalConnectionService`, `NexusModsAuthService` and `ModOrganizerImportService`; the Tauri shell handles `operations.cancel` for MO2 transfer by writing an operation cancel marker outside the bridge request mutex. The theme contract currently normalizes every value to the single supported dark theme.
+- `ExternalConnectionService` is the core-owned provider registry. Its renderer-safe snapshot uses `notConfigured | notLinked | restoring | ready | temporarilyUnavailable | reauthRequired`, restores linked providers in parallel under one native `2.5 s` deadline and returns non-linked providers from local state without network work. Nexus is the first adapter; future providers register another adapter instead of adding renderer-specific connection logic.
+- The main renderer publishes `connections.listStatus` before network restoration, gates only catalog/workspace loading on `connections.restoreAll` under the shell `3 s` timeout, and retries retryable providers after `2/5/15/30/60 s` and then every five minutes. Online, focus and visible-window events request one deduplicated immediate retry. Secondary windows do not run this startup coordinator and restoration never opens OAuth consent automatically.
 - `NexusModsAuthService` uses the public OAuth client id `fluxora` by default, but trusted runs may override the OAuth client id through `FLUXORA_NEXUS_CLIENT_ID`, `NEXUS_CLIENT_ID`, `NEXUS_OAUTH_CLIENT_ID` or the Fluxora Supabase credential RPC/table using secret names `NEXUS_CLIENT_ID` / `NEXUS_OAUTH_CLIENT_ID`.
 - When Nexus requires a confidential `client_secret` during token exchange, the C++ service resolves it from `FLUXORA_NEXUS_CLIENT_SECRET`, `NEXUS_CLIENT_SECRET`, `NEXUS_OAUTH_CLIENT_SECRET` or the Fluxora Supabase credential RPC/table using secret names `NEXUS_CLIENT_SECRET` / `NEXUS_OAUTH_CLIENT_SECRET`; the secret is never exposed through the Tauri renderer facade or bridge DTOs.
 - Nexus OAuth uses the registered loopback callback `http://127.0.0.1:8089/callback` by default. `FLUXORA_NEXUS_REDIRECT_URI`, `NEXUS_REDIRECT_URI`, `NEXUS_OAUTH_REDIRECT_URI` or matching Fluxora Supabase credential entries may override it for a different registered client, but the authorize and token exchange requests must use the exact same redirect URI.
 - Nexus downloads use the linked account automatically after OAuth login. `DownloadService` obtains its request credential through `NexusModsAuthService` immediately before Nexus API/transfer calls, so expired OAuth access tokens are refreshed instead of being copied directly from persisted settings; refresh-token rotation is serialized across concurrent native requests. C++ protects OAuth tokens locally and can still accept a legacy `apikey` credential through `nexus.connectWithApiKey` for compatibility, but the renderer must not require users to paste a Personal API Key during the normal connection flow.
-- Tauri routes the long-running `nexus.connect` callback wait through the background bridge lane and gives it a 180-second request envelope around the native 120-second loopback-listener deadline plus token exchange, so it neither inherits the normal 10-second bridge timeout nor blocks main, download, install or safe-read work. Renderer status verification and the optional API-limit probe settle independently; a failed status read becomes an explicit retryable unavailable state instead of remaining indefinitely in `Checking` or discarding a successful auth result because the quota probe failed.
+- Tauri routes generic connection calls and compatible Nexus status/connect/disconnect calls through the dedicated connection bridge lane. Interactive OAuth connect keeps a 180-second request envelope around the native 120-second loopback-listener deadline plus token exchange, so it neither inherits the normal 10-second bridge timeout nor blocks main, background, download, install or safe-read work. `apiLimits.list` remains background work and does not determine whether a provider is `ready`.
+- OAuth refresh outcomes are typed. Offline, timeout, DNS and 5xx failures produce retryable `temporarilyUnavailable` while preserving stored credentials; missing refresh credentials, `invalid_grant`, a rejected API key and a repeated `401` after successful refresh persist `reauthRequired` and stop automatic retries. Logs contain provider id, state, duration, attempt and `operationId`, never tokens, API keys or account payloads.
 - Settings API limit display uses generic `apiLimits.list` provider/window DTOs. The first provider is backed by `NexusModsAuthService`, which performs a small authenticated quota-bearing Nexus API request and reports only the quota headers returned by Nexus (`X-RL-*`, standard `X-RateLimit-*` / `RateLimit-*`, `Retry-After`), never hardcoded quota values or renderer-visible credentials. Future API providers should append another provider entry to the same snapshot instead of creating provider-specific settings UI.
 - AI Nexus research also uses the linked account automatically, but only through a trusted native-only path: Tauri main asks `FluxoraBridgeHost` for a transient Nexus API auth header, injects it into the AI host request as private `nativeNexusApiCredential`, and removes any renderer-supplied value before dispatch. The generic renderer bridge command rejects `nexus.getApiAuthHeader`, so API keys and OAuth tokens are never exposed through `window.fluxora` or stored in renderer state. If no Nexus account is linked, Nexus API research remains unavailable and the AI report must show that as missing credential evidence instead of pretending it searched.
 - Native host emits `operations.progress` JSON-RPC events during MO2 import. Tauri main subscribes through the bridge client and broadcasts them on the allowlisted `fluxora:operations:progress` channel.
-- Tauri Rust shell/facade expose typed `window.fluxora.settings.*`, `window.fluxora.nexus.*`, `window.fluxora.transfer.*` and `window.fluxora.operations.*` calls only; renderer still has no Node.js, filesystem, shell, native module or raw command access.
-- Renderer owns settings section state, language controls, single-theme mirroring into CSS, Nexus status display, MO2 source/destination form state, analysis display, transfer progress display and route/close guard while transfer is running. Theme customization controls are deferred until more supported themes are added.
+- Tauri Rust shell/facade expose typed `window.fluxora.settings.*`, `window.fluxora.connections.*`, compatible `window.fluxora.nexus.*`, `window.fluxora.transfer.*` and `window.fluxora.operations.*` calls only; renderer still has no Node.js, filesystem, shell, native module or raw command access. Nexus API-key compatibility and NXM protocol handling remain provider-specific and outside the generic connection DTO.
+- Renderer owns settings section state, language controls, single-theme mirroring into CSS, generic provider snapshot display, MO2 source/destination form state, analysis display, transfer progress display and route/close guard while transfer is running. Connection readiness, API limits and mod-update results are separate state machines. Theme customization controls are deferred until more supported themes are added.
 - C++ core remains the owner of persisted app settings, Nexus OAuth status/connect/disconnect behavior, MO2 analysis/import rules, disk-space checks, project creation/replacement, transfer cancellation checks and filesystem cleanup.
 - MO2 transfer cancellation is scoped to the transfer operation: the renderer enables `Отменить и очистить` for a running transfer, Tauri writes a marker keyed by `operationId`, and C++ stops before activation or during copy/database work and removes staging files through the existing import failure cleanup path.
 
@@ -197,10 +200,13 @@ The Downloads surface uses one game-scoped archive library at `<Fluxora.exe dire
 - `BuildPathSettingsService` returns `downloadsDirectory` as computed read-only project information for watchers, FluxPack, AI context and other consumers. `buildPaths.save` accepts legacy `downloadsDirectory`/`downloadsPath` input for compatibility but ignores it and omits it from the next `.fluxora/paths.json` write. The renderer exposes the computed path and an allowlisted shell-open action, not a path picker.
 - `ArchiveCatalogService` is the single C++ entry point for NXM/Nexus completion, drag-and-drop, Import file, Install archive, FluxPack manual sources and Mod Organizer imports. An external archive is imported before analysis or install. MO2 rollback removes only files newly created by that import operation.
 - A completed archive has `archiveId = sha256:<lowercase hash>`. SHA-256 and source metadata are cached locally in sidecars. Equal bytes deduplicate to the existing catalog object; a same-name/different-content collision becomes `<stem>-<hash8>.<ext>`. More authoritative Nexus/source identities are not replaced by weaker local metadata.
+- A Nexus archive update is recognized only for an exact `(gameDomain, modId)` pair and a single proven `file_updates` chain. Missing, cyclic, ambiguous or branching lineage is treated as a different file. Repeating the same `fileId` reuses the existing completed row without a decision.
+- A proven update persists `transferState: "awaiting-decision"` plus an opaque `decisionId`, direction and incoming/existing file snapshot in the pending sidecar before yielding the NXM worker and all five transfer permits. `downloads.resolveDuplicateDecision` accepts `replace | keepBoth | cancel` with the request `operationId`; the renderer queues one accessible dialog at a time and keeps the pending row visible as `Нужно решение`.
+- Replace revalidates the snapshot under a lineage lock and `ArchiveUseGuard`, downloads and verifies the new archive first, persists its completed metadata, and only then removes the other archive versions and their sidecars. Keep both follows normal collision naming and SHA-256 deduplication. Cancel, Escape and dialog close delete only the pending NXM request and sidecars. None of these choices changes an installed mod or its build history.
 - Explorer-added files remain visible while an asynchronous hash job reports `transferState: "indexing"`. External duplicates are not removed automatically, but identical SHA-256 values resolve to the same per-build state.
 - Each build's SQLite schema v8 stores archive-to-mod link history and active install attempts. State priority is `Installing` for an active attempt, `Installed` while at least one current linked installed/disabled mod remains, `Deleted` when prior links exist but none remain current, otherwise `Ready`. Replace/Merge deactivates the target mod's previous archive link and registers the new one atomically. Failed/canceled attempts are removed, and stale attempts are cleared when a build is opened.
 - Global sidecar `installedModName`/legacy status fields remain read-compatible metadata only; they do not decide whether an archive is installed in the selected build. History remains in the build database after the physical archive is deleted, so reimporting equal bytes restores the computed `Installed` or `Deleted` result.
-- The typed `FluxoraDownloadEntry` contract contains `archiveId: string | null`, `buildStatus: "Ready" | "Installing" | "Installed" | "Deleted" | null`, `transferState: "idle" | "queued" | "downloading" | "paused" | "canceled" | "indexing" | "failed"`, `transferMessage`, and the existing progress fields. The legacy free-form `status` field is not serialized. Incomplete transfers have `buildStatus: null`.
+- The typed `FluxoraDownloadEntry` contract contains `archiveId: string | null`, `buildStatus: "Ready" | "Installing" | "Installed" | "Deleted" | null`, `transferState: "idle" | "queued" | "awaiting-decision" | "downloading" | "paused" | "canceled" | "indexing" | "failed"`, `duplicateDecision: FluxoraDownloadDuplicateDecision | null`, `transferMessage`, and the existing progress fields. The legacy free-form `status` field is not serialized. Incomplete transfers have `buildStatus: null`; older sidecars remain readable without migration.
 - Renderer state applies an immediate optimistic `Installing` badge, then refreshes from C++. Transfer/progress information takes visual priority while the exact English build badge remains available. Switching builds changes only per-build badges over the same game catalog.
 - Physical archive deletion warns that the file disappears for every build of that game while installed mods stay in place. It is rejected while that SHA-256 is downloading or held by an install in any process/build.
 - Import, install, delete and status mutations continue carrying `operationId`. Transfer, install, bridge, core, operation and crash events keep their existing separated logs.
@@ -297,6 +303,7 @@ Implemented MVP methods:
 - `downloads.delete`
 - `downloads.cancel`
 - `downloads.resume`
+- `downloads.resolveDuplicateDecision`
 - `downloads.analyzeContentLayout`
 - `downloads.analyzeFomod`
 - `downloads.analyzeFomodContentLayout`
@@ -329,6 +336,11 @@ For compatibility with an older host, the Tauri facade normalizes an absent
 permit is acquired, while the short-lived download URL is requested only after
 the permit is available. Automatic inbound import is a silent row upsert and
 does not participate in the global Downloads mutation busy state.
+When file-info proves that completed versions belong to the same Nexus lineage,
+the pending row instead enters `awaiting-decision`. This state is durable across
+restart but holds neither an NXM worker nor a transfer permit. Resolution stays
+on the Download lane and preserves `fluxora.bridge.v1`; additive sidecar fields
+carry the snapshot while the renderer-safe DTO omits internal hashes and lineage keys.
 
 Logging paths remain separated:
 
@@ -648,8 +660,9 @@ Rules:
 
 AI intermediate run events are intentionally not `operations.progress`.
 `FluxoraAIHost` emits `ai.intermediateEvent` JSON-RPC notifications while a
-`chat.respond` request is in flight. Tauri main recognizes those notifications
-on the AI host stdout stream, validates the canonical
+`chat.respond`, `chat.beginToolRun`, or `chat.continueToolRun` request is in
+flight. Tauri main recognizes those notifications on the AI host stdout stream,
+validates the canonical
 `fluxora.ai.intermediate-event.v1` DTO, redacts text and typed payload values,
 logs the sanitized event on the AI host log with `operationId`, and emits the
 renderer channel `fluxora:ai:run-event` for
@@ -659,17 +672,48 @@ The renderer-surface event contract carries `eventId`, `runId`, `operationId`,
 monotonic `seq`, `createdAt`, canonical event `type`, `level`, `visibility`,
 `stage`, `message`, optional `percent`, and optional typed redacted `payload`.
 Supported v1 types are `progress`, `note`, `tool-started`, `tool-completed`,
-`site-visited`, `error`, and `heartbeat`. Tauri ignores unrelated JSON-RPC
+`tool-blocked`, `recovery-started`, `verification-completed`, `site-visited`,
+`error`, and `heartbeat`. `tool-completed` is valid only for `ok=true`. Tauri ignores unrelated JSON-RPC
 notifications and provider-native event names instead of forwarding them.
 
 AI events are for low-volume chat-run progress: prompt/context preparation,
 local inspection, research route decisions, Nexus/web source capture or block,
-provider attempt/fallback, finalization, heartbeat, and terminal blocked/error
-state. They never replace the final `chat.respond` response, never expose raw
-provider deltas or tool output, and never carry provider credentials,
+provider attempts, finalization, heartbeat, and terminal blocked/error state.
+For a request with a file workspace, a failed `chat.beginToolRun` is terminal
+and must not trigger an independent `chat.respond`; the file-search started
+event is emitted only after the provider accepts the declared tools. Events
+never replace the final host response, expose raw provider deltas or tool
+output, or carry provider credentials,
 `nativeNexusApiCredential`, Nexus auth headers, cookies, tokens, raw prompts,
-raw HTML/page bodies, raw stdout/stderr, or full logs. C++ remains the owner of
-domain operation progress and filesystem mutation truth.
+raw HTML/page bodies, provider response bodies, raw stdout/stderr, or full logs.
+C++ remains the owner of domain operation progress and filesystem mutation
+truth.
+
+Gemini function declarations use provider-safe names from the AI host registry.
+The unchanged bridge contract continues to use `local.*` names; Tauri receives
+only those internal names. Provider calls are mapped to internal names before
+dispatch, while matching function responses retain the provider name, call id,
+and opaque thought signature. On `generateContent`, file-tool rounds declare
+custom functions without `google_search`; chat-only rounds may declare Search,
+because the provider rejects those tool families when combined on that endpoint.
+Invalid tool schemas, transport failures, rate
+limits, and managed-gateway failures remain distinct typed errors. Their safe
+payloads contain no prompt, local path, or provider response body.
+
+The file loop uses `fluxora.ai.tool-session.v3`. The host classifies multilingual
+requests as `action` or `answer`, records `local-required`, `local-auto`,
+`web-search`, or `none`, validates calls against the declaration registry, and
+allows two correction retries. Every action receives the full supported typed
+contract from its first tool round; answers receive read-only tools, while
+inferred domain and monotonic phase remain diagnostics. Mutations are staged without side effects and a
+separate `local.files.commit` maps the whole batch to one native
+`buildFiles.apply`. The Rust shell caches duplicate read-only calls, enforces 16
+distinct targets and one mutation per target, and emits only redacted
+`fluxora.ai.file-tool-diagnostics.v2`, including native-session preopen,
+semantic-evidence/stagnation counts and phase transitions. The additive `execution` response object
+is authoritative for all domains; host, shell, and renderer reject a completed
+action without a native verified effect. File actions additionally retain the
+compatible verified `fileChangeSet`.
 
 ### Cancellation
 
@@ -832,6 +876,10 @@ The method names below are the `fluxora.bridge.v1` target surface. They are grou
 
 ### Nexus and NXM
 
+- `connections.listStatus`
+- `connections.restoreAll`
+- `connections.connect`
+- `connections.disconnect`
 - `nexus.getAuthStatus`
 - `apiLimits.list`
 - `nexus.connect`
@@ -899,6 +947,7 @@ but must not parse plugin files or invent master dependency data.
 - `downloads.delete`
 - `downloads.cancel`
 - `downloads.resume`
+- `downloads.resolveDuplicateDecision` with `{ projectDirectory, downloadPath, decisionId, choice }`
 - `downloads.planInstall` with `{ projectDirectory, downloadPath, profileName?, modName? }`
 - `downloads.install`
 - `archives.planInstall` with `{ projectDirectory, archivePath, profileName?, modName? }`
@@ -942,13 +991,14 @@ snapshots; subsequent user moves use `mods.moveOrderItem`.
 
 `operations.getStatus` remains the generic typed status contract. Durable installs use the C++ `install_operations` queue through `installs.list/get/restore`; the Tauri progress cache is only a delivery aid and is not install truth.
 
-AI long-running jobs use a separate `fluxora.ai.autonomous-job.v1` / `fluxora.ai.autonomous-job-queue.v1` contract rather than overloading core operation snapshots. The AI queue records job plans, heartbeats, checkpoints, pause/cancel state and final reports for host orchestration, while C++ `operations.*` remains the source of truth for real domain operations and filesystem mutations.
-
-`fluxora.ai.intermediate-event.v1` is the live AI run timeline contract that
-feeds the chat panel and can be persisted into the autonomous job queue as a
-bounded 80-event progress trail. It is correlated by `runId` and `operationId`,
-not by core operation subscriptions, and support bundles expose counts only
-unless a future explicit diagnostic export policy says otherwise.
+Fluxora AI uses independent build-scoped chat tabs rather than a durable
+autonomous-job queue. Each tab owns its history, summary, context cursor, runs
+and active operation. `fluxora.ai.intermediate-event.v1` is the live AI run
+timeline contract. Events are correlated by chat, `runId` and `operationId`,
+not by core operation subscriptions, and a background tab cannot update the
+currently selected tab. Cancellation marks only its target AI operation and
+does not terminate the shared sidecar. C++ `operations.*` remains the source of
+truth for real domain operations and filesystem mutations.
 
 `operations.recentLogs` is a read-only Tauri shell helper for AI/build diagnostics. It tails only Fluxora-owned log files in the app log directory, filters operation-related lines, caps output size and returns typed compact entries. The renderer does not receive arbitrary filesystem access.
 
@@ -964,7 +1014,7 @@ The native host initially maps bridge methods to the existing exported functions
 - Buffer handling: `fluxora_get_last_required_buffer_length`, `fluxora_copy_last_output`.
 - Templates/projects/build paths: `fluxora_get_game_templates`, `fluxora_resolve_template`, `fluxora_preview_project_directory`, `fluxora_create_project`, `fluxora_open_project_config`, `fluxora_list_project_configs`, `fluxora_rename_project`, `fluxora_delete_project`, `fluxora_delete_project_with_progress`, `fluxora_get_build_path_settings`, `fluxora_save_build_path_settings`.
 - FluxPack and transfer: `fluxora_export_fluxpack`, `fluxora_export_fluxpack_with_progress` (both ABI-compatible and defaulting to optimal compression), `fluxora_export_fluxpack_with_options_and_progress`, `fluxora_inspect_fluxpack`, `fluxora_plan_fluxpack_install`, `fluxora_install_fluxpack`, `fluxora_install_fluxpack_with_target`, `fluxora_install_fluxpack_with_options_and_progress`, `fluxora_analyze_mod_organizer_instance`, `fluxora_import_mod_organizer_instance`.
-- Settings/executables/Nexus/NXM: `fluxora_get_app_language`, `fluxora_set_app_language`, `fluxora_get_app_theme`, `fluxora_set_app_theme`, `fluxora_get_game_executables`, `fluxora_save_game_executables`, `fluxora_launch_game_executable`, `fluxora_get_executable_icon`, `fluxora_get_nexusmods_auth_status`, `fluxora_get_api_limit_status`, `fluxora_connect_nexusmods`, `fluxora_connect_nexusmods_with_api_key`, `fluxora_disconnect_nexusmods`, `fluxora_register_nxm_protocol`.
+- Settings/executables/connections/Nexus/NXM: `fluxora_get_app_language`, `fluxora_set_app_language`, `fluxora_get_app_theme`, `fluxora_set_app_theme`, `fluxora_get_game_executables`, `fluxora_save_game_executables`, `fluxora_launch_game_executable`, `fluxora_get_executable_icon`, `fluxora_list_external_connections`, `fluxora_restore_external_connections`, `fluxora_connect_external_connection`, `fluxora_disconnect_external_connection`, `fluxora_get_nexusmods_auth_status`, `fluxora_get_api_limit_status`, `fluxora_connect_nexusmods`, `fluxora_connect_nexusmods_with_api_key`, `fluxora_disconnect_nexusmods`, `fluxora_register_nxm_protocol`.
 - Mods/profiles/plugins/downloads/install: every exported `fluxora_get_*`, `fluxora_create_*`, `fluxora_delete_*`, `fluxora_move_*`, `fluxora_set_*`, `fluxora_capture_nxm_links`, `fluxora_import_*`, `fluxora_install_*`, `fluxora_analyze_*` function listed in `FluxoraCoreApi.hpp`, the additive `fluxora_plan_download_install_for_profile_with_name` and `fluxora_plan_archive_install_for_profile_with_name` adapters for final-name replanning, plus `fluxora_generate_ngio_grass_cache` for Skyrim NGIO cache generation.
 
 Pending install conflicts use the additive progress C ABI entry points listed in
@@ -1050,7 +1100,7 @@ Required log flow for user-triggered operations:
 
 Bridge logs must be separate from UI logs. Do not merge Tauri renderer console noise into core or operations logs.
 Tauri main starts `FluxoraBridgeHost` with `FLUXORA_LOG_DIR` set to the app log directory so native core, bridge, operation and crash logs stay discoverable alongside the Tauri UI/main logs while remaining separate files.
-Every bridge request emits a machine-readable queue measurement in the main/bridge log as `bridgeQueue lane=main|interactive|background|download|install method=<method> queueWaitUs=<value>`. In particular, download and install regressions are diagnosed through `lane=download` and `lane=install` without mixing renderer timing with native transfer/finalization timings.
+Every bridge request emits a machine-readable queue measurement in the main/bridge log as `bridgeQueue lane=main|interactive|background|connection|download|install method=<method> queueWaitUs=<value>`. In particular, connection restoration, downloads and installs are diagnosed through their own lanes without mixing renderer timing with native transfer/finalization timings.
 The shell selects the first writable log root in this order: explicit
 `FLUXORA_LOG_DIR`, `<executable>/logs`, the per-user Fluxora data directory,
 then the OS temporary Fluxora directory. Operation cancellation markers live
@@ -1059,23 +1109,28 @@ cannot prevent bridge startup.
 
 ## Concurrency
 
-Bridge v1 keeps unsafe project mutations serialized while separating independent work into five lazy, process-affine lanes. This is an internal shell routing change: no renderer-facing method was added and `fluxora.bridge.v1` was not raised.
+Bridge v1 keeps unsafe project mutations serialized while separating independent work into six lazy, process-affine lanes. The additive generic connection methods keep the same `fluxora.bridge.v1` envelope and operation/error contracts.
 
-- `Download`: `nxm.captureLinks`, `nxm.importInboundDownloads`, `downloads.list`, `downloads.cancel`, `downloads.resume` and `downloads.delete`. Tauri activation sends external NXM links directly to this lane. The NXM queue, active-download registry and complete NXM lifecycle stay in this one host. C++ accepts the pending row before metadata reconciliation, resolves file-info before acquiring a transfer permit and limits active transfers to five.
+- `Download`: `nxm.captureLinks`, `nxm.importInboundDownloads`, `downloads.list`, `downloads.cancel`, `downloads.resume`, `downloads.resolveDuplicateDecision` and `downloads.delete`. Tauri activation sends external NXM links directly to this lane. The NXM queue, active-download registry and complete NXM lifecycle stay in this one host. C++ accepts the pending row before metadata reconciliation, resolves file-info and any duplicate decision before acquiring a transfer permit, yields the worker while a decision is pending, and limits active transfers to five. Replace decisions are additionally serialized per Nexus lineage without blocking unrelated downloads or the Install lane.
 - `Install`: install analysis/planning, `installs.submit`, `installs.cancel`, `installs.restore`, `installs.list`, `installs.get` and the synchronous download/archive install compatibility adapters. Planning, resolution/session state and the two-worker `InstallScheduler` stay in this one host; a third operation is durably accepted and remains queued. Cancellation stays on the same process-affine lane so it can reach the active native operation context; cancel requests use the original install `operationId` as their target and keep the user-triggered delete `operationId` in request metadata and logs.
 - `Interactive`: only independently safe user-driven file, text, mod-detail/effective-tree and NIF reads. Text/file saves and project metadata mutations remain on `Main`.
-- `Background`: `mods.checkUpdates` and the long `nexus.connect` loopback wait.
+- `Connection`: `connections.*` plus compatible `nexus.getAuthStatus`, `nexus.connect`, `nexus.connectWithApiKey` and `nexus.disconnect`. Native-only `nexus.getApiAuthHeader` remains on Main because it is not renderer-callable.
+- `Background`: `mods.checkUpdates` and `apiLimits.list`.
 - `Main`: every other bridge method, including project/workspace mutations, local archive import, FluxPack, MO2, project lifecycle and destructive `mods.deleteInstalled`.
 
-Each `BridgeProcess` owns its own child, stdin, response map, reader task and handshake. A timeout or process exit resets only the selected lane; another lane's install workers, NXM queue and main workspace session remain alive. Shutdown walks all five lanes even when one lane was never started or failed, and each lane is restarted lazily on its next request.
+Each `BridgeProcess` owns its own child, stdin, response map, reader task and handshake. A timeout or process exit resets only the selected lane; another lane's install workers, NXM queue and main workspace session remain alive. Shutdown walks all six lanes even when one lane was never started or failed, and each lane is restarted lazily on its next request.
 
 Cross-process safety remains core-owned. `InstallProjectGate`, target/archive locks and the short commit/finalization gates serialize conflicting writes and deletes. SQLite uses WAL-backed readers and bounded write transactions, so `downloads.list` and NXM intake can remain available while install/main work is busy without moving project rules into Rust. Every request keeps the same `operationId` through renderer, Rust shell, bridge host, C++ worker and native logs.
 
 - Other parallel reads require explicit core approval and focused routing/isolation tests.
 - Renderer remains responsive because requests are asynchronous and progress/event driven.
 - The 10-second bridge timeout is reserved for short control/read calls.
+  Connection restoration uses a 3-second shell timeout around the native
+  2.5-second shared provider deadline.
   Nexus OAuth connect uses a 180-second shell timeout around the native
   120-second callback deadline plus token exchange.
+  Mod update checks use an 8-second per-HTTP-request budget, a 60-second native
+  sweep deadline and a 70-second shell timeout.
   Recursive project/mod cleanup, overwrite cleanup, local download import,
   archive/download install and FluxPack export/install use an explicit
   two-hour file-mutation budget so normal large filesystem work is not treated

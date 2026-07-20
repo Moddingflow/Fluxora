@@ -6,13 +6,29 @@ authors = ["Fluxora"]
 edition = "2021"
 default-run = "fluxora_tauri"
 
+[features]
+default = []
+native-ai-integration-fixture = []
+
 [lib]
 name = "fluxora_tauri_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "fluxora-ai-host"
+name = "fluxora_ai_host"
 path = "src/bin/fluxora_ai_host.rs"
+
+[[test]]
+name = "ai_task_native_integration"
+path = "tests/ai_task_native_integration.rs"
+required-features = ["native-ai-integration-fixture"]
+harness = false
+
+[[test]]
+name = "ai_task_live_provider_smoke"
+path = "tests/ai_task_live_provider_smoke.rs"
+required-features = ["native-ai-integration-fixture"]
+harness = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -39,6 +39,7 @@ const executable: FluxoraExecutable = {
 };
 
 const defaultProps = {
+  aiActive: false,
   buildCapabilities: {
     packageAvailable: true,
     packageReason: '',
@@ -62,6 +63,7 @@ const defaultProps = {
   onLaunch: noop,
   onProfileChange: noop,
   onSettings: noop,
+  onToggleAi: noop,
   profileOptions: ['Default', 'Testing'],
   profilesBusyLabel: null,
   project,
@@ -87,6 +89,8 @@ describe('build detail header redesign', () => {
     expect(markup).not.toContain('32.4 GB');
     expect(markup).not.toContain('Package');
     expect(markup).not.toContain('Check');
+    expect(markup).toContain('aria-label="Open Fluxora AI for this build"');
+    expect(markup).toContain('aria-keyshortcuts="Control+Shift+G"');
     expect(markup).toContain('aria-label="Build settings"');
     expect(markup).toContain('aria-label="Profile"');
     expect(markup).toContain('aria-label="Executable"');
@@ -95,6 +99,13 @@ describe('build detail header redesign', () => {
     expect(markup).not.toContain('<select');
     expect(markup).toContain('Launch');
     expect(markup).toContain('stroke-width="2.35"');
+  });
+
+  it('owns the only build-scoped AI entry state', () => {
+    const markup = renderHeader({ aiActive: true });
+
+    expect(markup).toContain('aria-label="Close Fluxora AI for this build"');
+    expect(markup).toContain('aria-pressed="true"');
   });
 
   it('surfaces capability reasons when a visible header action is unsupported', () => {

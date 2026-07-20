@@ -293,6 +293,27 @@ namespace fluxora::tests
             return std::wstring(buffer.data());
         }
 
+        std::wstring callBuildFiles(
+            std::wstring_view method,
+            const std::wstring& params)
+        {
+            std::array<wchar_t, 256> initial{};
+            const int result = fluxora_build_files_request(
+                std::wstring(method).c_str(),
+                params.c_str(),
+                initial.data(),
+                static_cast<int>(initial.size()));
+            if (result == FluxoraCoreResultBufferTooSmall)
+            {
+                return copyBufferedApiOutput();
+            }
+            if (result != FluxoraCoreResultOk)
+            {
+                throw std::runtime_error(toUtf8(lastCoreError()));
+            }
+            return std::wstring(initial.data());
+        }
+
         bool isMissingExtractorError(const std::wstring& error)
         {
             return error.find(L"Failed to extract archive") != std::wstring::npos;
@@ -315,6 +336,109 @@ namespace fluxora::tests
                 static_cast<int>(output.size())),
             FluxoraCoreResultInvalidArgument);
         EXPECT_NE(lastCoreError().find(L"package type"), std::wstring::npos);
+    }
+
+    TEST(FluxoraCoreApiTests, BuildFilesAdapterKeepsOpaqueRefsAndTypedErrors)
+    {
+        fluxora_core_shutdown();
+        TempDirectory temp;
+        const std::filesystem::path game = temp.path() / L"Game";
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+        std::array<wchar_t, 4> createBuffer{};
+        ASSERT_EQ(
+            fluxora_create_project(
+                L"AI Workspace",
+                L"skyrimse",
+                game.c_str(),
+                installRoot.c_str(),
+                createBuffer.data(),
+                static_cast<int>(createBuffer.size())),
+            FluxoraCoreResultBufferTooSmall);
+        const JsonValue created = JsonReader::parse(copyBufferedApiOutput());
+        const JsonValue* projectDirectory = created.find(L"projectDirectory");
+        ASSERT_NE(projectDirectory, nullptr);
+        const std::filesystem::path project(projectDirectory->asString());
+        const std::filesystem::path file = project / L"mods" / L"Example" / L"settings.json";
+        writeTextFile(file, "{\"enabled\":false}\n");
+
+        JsonWriter begin;
+        begin.beginObject()
+            .field(L"chatId", L"chat-api")
+            .field(L"projectDirectory", project.wstring())
+            .endObject();
+        EXPECT_NE(callBuildFiles(L"beginChat", begin.str()).find(L"\"active\":true"), std::wstring::npos);
+
+        JsonWriter search;
+        search.beginObject()
+            .field(L"chatId", L"chat-api")
+            .field(L"scope", L"build")
+            .field(L"query", L"settings.json")
+            .field(L"limit", 20)
+            .endObject();
+        const JsonValue searchResult = JsonReader::parse(callBuildFiles(L"search", search.str()));
+        ASSERT_NE(searchResult.find(L"entries"), nullptr);
+        ASSERT_EQ(searchResult.find(L"entries")->asArray().size(), 1u);
+        const JsonValue& metadata = searchResult.find(L"entries")->asArray().front();
+        const std::wstring fileRef = metadata.find(L"fileRef")->asString();
+        const std::wstring indexRevision = metadata.find(L"indexRevision")->asString();
+        EXPECT_FALSE(fileRef.empty());
+        EXPECT_FALSE(indexRevision.empty());
+        EXPECT_EQ(fileRef.find(project.wstring()), std::wstring::npos);
+
+        JsonWriter read;
+        read.beginObject()
+            .field(L"chatId", L"chat-api")
+            .field(L"fileRef", fileRef)
+            .field(L"startLine", 1)
+            .field(L"maxLines", 120)
+            .field(L"maxBytes", 8192)
+            .endObject();
+        const JsonValue readResult = JsonReader::parse(callBuildFiles(L"readText", read.str()));
+        const std::wstring hash = readResult.find(L"sha256")->asString();
+        EXPECT_FALSE(hash.empty());
+
+        JsonWriter apply;
+        apply.beginObject()
+            .field(L"chatId", L"chat-api")
+            .field(L"runId", L"run-api")
+            .field(L"operationId", L"operation-api")
+            .key(L"mutations").beginArray()
+                .beginObject()
+                    .field(L"kind", L"patch")
+                    .field(L"fileRef", fileRef)
+                    .field(L"revision", indexRevision)
+                    .field(L"baseSha256", hash)
+                    .field(L"expectedText", L"\"enabled\":false")
+                    .field(L"replacementText", L"\"enabled\":true")
+                    .field(L"format", L"json")
+                .endObject()
+            .endArray()
+            .endObject();
+        const std::wstring changeSet = callBuildFiles(L"apply", apply.str());
+        EXPECT_NE(changeSet.find(L"fluxora.ai.file-change-set.v1"), std::wstring::npos);
+        EXPECT_EQ(readTextFile(file), "{\"enabled\":false}\n");
+        EXPECT_EQ(
+            readTextFile(project / L"mods" / L"Fluxora AI Overrides" / L"settings.json"),
+            "{\"enabled\":true}\n");
+
+        JsonWriter unknown;
+        unknown.beginObject()
+            .field(L"chatId", L"chat-api")
+            .field(L"fileRef", L"fileRef_invented")
+            .endObject();
+        std::array<wchar_t, 256> errorBuffer{};
+        EXPECT_EQ(
+            fluxora_build_files_request(
+                L"stat",
+                unknown.str().c_str(),
+                errorBuffer.data(),
+                static_cast<int>(errorBuffer.size())),
+            FluxoraCoreResultCoreError);
+        EXPECT_TRUE(lastCoreError().starts_with(L"build-files:outside-scope:"));
+
+        fluxora_core_shutdown();
     }
 
     TEST(FluxoraCoreApiTests, ListProjectConfigsReturnsLightCatalogPayload)
@@ -1241,6 +1365,7 @@ namespace fluxora::tests
         EXPECT_NE(json.find(L"\"archiveId\":\"sha256:"), std::wstring::npos);
         EXPECT_NE(json.find(L"\"buildStatus\":\"Ready\""), std::wstring::npos);
         EXPECT_NE(json.find(L"\"transferState\":\"idle\""), std::wstring::npos);
+        EXPECT_NE(json.find(L"\"duplicateDecision\":null"), std::wstring::npos);
         EXPECT_NE(json.find(L"\"hasResolvedFileName\":true"), std::wstring::npos);
         EXPECT_NE(json.find(L"\"canInstall\":true"), std::wstring::npos);
         EXPECT_EQ(json.find(L"Legacy Archive.7z"), std::wstring::npos);

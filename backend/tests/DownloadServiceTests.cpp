@@ -47,6 +47,11 @@ namespace fluxora::test_hooks
             const std::filesystem::path&,
             std::wstring_view)> transfer);
 
+    void setNexusDuplicateLineageHook(
+        std::function<std::optional<NexusModFilesResponse>(
+            std::wstring_view,
+            std::wstring_view)> hook);
+
     void setResumeBeforeClaimHook(std::function<void()> hook);
 
     std::wstring nexusArchiveFileNameForTest(
@@ -207,6 +212,26 @@ namespace fluxora::tests
             }
         };
 
+        class ScopedNexusDuplicateLineageHook final
+        {
+        public:
+            explicit ScopedNexusDuplicateLineageHook(
+                std::function<std::optional<NexusModFilesResponse>(
+                    std::wstring_view,
+                    std::wstring_view)> hook)
+            {
+                test_hooks::setNexusDuplicateLineageHook(std::move(hook));
+            }
+
+            ScopedNexusDuplicateLineageHook(const ScopedNexusDuplicateLineageHook&) = delete;
+            ScopedNexusDuplicateLineageHook& operator=(const ScopedNexusDuplicateLineageHook&) = delete;
+
+            ~ScopedNexusDuplicateLineageHook()
+            {
+                test_hooks::setNexusDuplicateLineageHook({});
+            }
+        };
+
         class ScopedResumeBeforeClaimHook final
         {
         public:
@@ -223,6 +248,40 @@ namespace fluxora::tests
                 test_hooks::setResumeBeforeClaimHook({});
             }
         };
+
+        void writeCompletedNexusArchive(
+            const std::filesystem::path& path,
+            std::string_view fileId,
+            std::string_view version,
+            std::string_view content = "archive")
+        {
+            writeTextFile(path, std::string(content));
+            writeTextFile(
+                std::filesystem::path(path.wstring() + L".fluxora.json"),
+                std::string("{\"source\":\"nexus\",\"gameDomain\":\"skyrimspecialedition\",") +
+                    "\"modId\":\"3863\",\"fileId\":\"" + std::string(fileId) +
+                    "\",\"version\":\"" + std::string(version) + "\",\"isDownloading\":false}");
+        }
+
+        std::optional<DownloadEntry> waitForDownloadEntry(
+            const DownloadService& downloads,
+            const std::filesystem::path& projectDirectory,
+            const std::function<bool(const DownloadEntry&)>& predicate,
+            std::chrono::milliseconds timeout = std::chrono::seconds(5))
+        {
+            const auto deadline = std::chrono::steady_clock::now() + timeout;
+            while (std::chrono::steady_clock::now() < deadline)
+            {
+                const std::vector<DownloadEntry> entries = downloads.listDownloads(projectDirectory);
+                const auto found = std::find_if(entries.begin(), entries.end(), predicate);
+                if (found != entries.end())
+                {
+                    return *found;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            return std::nullopt;
+        }
     }
 #endif
 
@@ -695,6 +754,461 @@ namespace fluxora::tests
 #endif
     }
 
+    TEST(DownloadServiceTests, NexusUpgradeDecisionPersistsWithoutHoldingATransferSlotAndCancelRemovesOnlyPendingFiles)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        const ScopedNexusDuplicateLineageHook lineage([](auto, auto)
+        {
+            NexusModFilesResponse response;
+            response.fileUpdates.push_back({L"100", L"200", 0});
+            return std::optional<NexusModFilesResponse>(std::move(response));
+        });
+        std::atomic<int> transportCalls{0};
+        const ScopedNexusArchiveTransferHooks transferHooks(
+            {},
+            [&](const std::filesystem::path& directory, const std::filesystem::path&, std::wstring_view fileId)
+            {
+                ++transportCalls;
+                const std::filesystem::path path = directory / (L"incoming-" + std::wstring(fileId) + L".zip");
+                writeTextFile(path, "new archive");
+                return path;
+            });
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject project(temp, projectDirectory);
+        const std::filesystem::path downloadsDirectory = pathSettings.downloadsDirectory(projectDirectory);
+        std::filesystem::create_directories(downloadsDirectory);
+        const std::filesystem::path oldArchive = downloadsDirectory / L"Mod 1.0.0.zip";
+        writeCompletedNexusArchive(oldArchive, "100", "1.0.0", "old archive");
+
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+        static_cast<void>(downloads.captureNxmLinks(
+            projectDirectory,
+            {L"nxm://skyrimspecialedition/mods/3863/files/200"}));
+        const std::optional<DownloadEntry> awaiting = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [](const DownloadEntry& entry)
+            {
+                return entry.transferState == L"awaiting-decision";
+            });
+
+        ASSERT_TRUE(awaiting.has_value());
+        ASSERT_TRUE(awaiting->duplicateDecision.has_value());
+        EXPECT_EQ(awaiting->duplicateDecision->direction, L"upgrade");
+        EXPECT_EQ(awaiting->duplicateDecision->incomingFile.fileId, L"200");
+        ASSERT_EQ(awaiting->duplicateDecision->existingFiles.size(), 1U);
+        EXPECT_EQ(awaiting->duplicateDecision->existingFiles.front().fileId, L"100");
+        EXPECT_EQ(transportCalls.load(), 0);
+
+        std::vector<DownloadTransferLimiter::Permit> permits;
+        for (std::ptrdiff_t index = 0; index < DownloadTransferLimiter::MaximumActiveTransfers; ++index)
+        {
+            std::optional<DownloadTransferLimiter::Permit> permit = transferLimiter.tryAcquire();
+            ASSERT_TRUE(permit.has_value());
+            permits.push_back(std::move(*permit));
+        }
+        permits.clear();
+
+        downloads.shutdown();
+        DownloadService restarted(logger, settings, pathSettings, transferLimiter);
+        restarted.initialize();
+        const std::optional<DownloadEntry> restored = waitForDownloadEntry(
+            restarted,
+            projectDirectory,
+            [](const DownloadEntry& entry)
+            {
+                return entry.transferState == L"awaiting-decision";
+            });
+        ASSERT_TRUE(restored.has_value());
+        ASSERT_TRUE(restored->duplicateDecision.has_value());
+        EXPECT_THROW(
+            static_cast<void>(restarted.resolveDuplicateDecision(
+                projectDirectory,
+                restored->localPath,
+                L"stale-decision-id",
+                DownloadDuplicateChoice::Replace)),
+            std::invalid_argument);
+
+        const std::optional<DownloadEntry> canceled = restarted.resolveDuplicateDecision(
+            projectDirectory,
+            restored->localPath,
+            restored->duplicateDecision->decisionId,
+            DownloadDuplicateChoice::Cancel);
+        EXPECT_FALSE(canceled.has_value());
+        EXPECT_TRUE(std::filesystem::exists(oldArchive));
+        EXPECT_FALSE(std::filesystem::exists(restored->localPath));
+        EXPECT_FALSE(std::filesystem::exists(
+            std::filesystem::path(restored->localPath.wstring() + L".fluxora.json")));
+        EXPECT_EQ(transportCalls.load(), 0);
+
+        restarted.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+#endif
+    }
+
+    TEST(DownloadServiceTests, RepeatedNexusFileIdReusesTheCompletedArchiveWithoutDecisionOrTransfer)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        const ScopedNexusDuplicateLineageHook lineage([](auto, auto)
+        {
+            NexusModFilesResponse response;
+            response.fileUpdates.push_back({L"100", L"200", 0});
+            return std::optional<NexusModFilesResponse>(std::move(response));
+        });
+        std::atomic<int> transportCalls{0};
+        const ScopedNexusArchiveTransferHooks transferHooks(
+            {},
+            [&](const std::filesystem::path& directory,
+                const std::filesystem::path&,
+                std::wstring_view)
+            {
+                ++transportCalls;
+                const std::filesystem::path unexpected = directory / L"unexpected.zip";
+                writeTextFile(unexpected, "unexpected");
+                return unexpected;
+            });
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject project(temp, projectDirectory);
+        const std::filesystem::path downloadsDirectory = pathSettings.downloadsDirectory(projectDirectory);
+        std::filesystem::create_directories(downloadsDirectory);
+        const std::filesystem::path completedArchive = downloadsDirectory / L"Mod 1.0.1.zip";
+        writeCompletedNexusArchive(completedArchive, "200", "1.0.1", "completed archive");
+
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+        const std::vector<DownloadEntry> accepted = downloads.captureNxmLinks(
+            projectDirectory,
+            {L"nxm://skyrimspecialedition/mods/3863/files/200"});
+        ASSERT_EQ(accepted.size(), 1U);
+        const std::filesystem::path pendingPath = accepted.front().localPath;
+
+        const std::optional<DownloadEntry> reused = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [&](const DownloadEntry& entry)
+            {
+                return entry.localPath == completedArchive && entry.canInstall;
+            });
+        ASSERT_TRUE(reused.has_value());
+        EXPECT_FALSE(reused->duplicateDecision.has_value());
+        EXPECT_EQ(transportCalls.load(), 0);
+        EXPECT_TRUE(std::filesystem::exists(completedArchive));
+        for (int attempt = 0; attempt < 200 && std::filesystem::exists(pendingPath); ++attempt)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        EXPECT_FALSE(std::filesystem::exists(pendingPath));
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+#endif
+    }
+
+    TEST(DownloadServiceTests, ReplaceRemovesOldLineageOnlyAfterVerifiedDownloadAndKeepBothRetainsBothVersions)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        const ScopedNexusDuplicateLineageHook lineage([](auto, auto)
+        {
+            NexusModFilesResponse response;
+            response.fileUpdates.push_back({L"100", L"200", 0});
+            return std::optional<NexusModFilesResponse>(std::move(response));
+        });
+        const ScopedNexusArchiveTransferHooks transferHooks(
+            {},
+            [](const std::filesystem::path& directory, const std::filesystem::path&, std::wstring_view fileId)
+            {
+                const std::filesystem::path path = directory / (L"incoming-" + std::wstring(fileId) + L".zip");
+                writeTextFile(path, fileId == L"200" ? "archive-200" : "archive-100");
+                return path;
+            });
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject project(temp, projectDirectory);
+        const std::filesystem::path downloadsDirectory = pathSettings.downloadsDirectory(projectDirectory);
+        std::filesystem::create_directories(downloadsDirectory);
+        const std::filesystem::path oldArchive = downloadsDirectory / L"Mod 1.0.0.zip";
+        writeCompletedNexusArchive(oldArchive, "100", "1.0.0", "old archive");
+
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+        downloads.captureNxmLinks(projectDirectory, {L"nxm://skyrimspecialedition/mods/3863/files/200"});
+        const std::optional<DownloadEntry> upgrade = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [](const DownloadEntry& entry) { return entry.transferState == L"awaiting-decision"; });
+        ASSERT_TRUE(upgrade.has_value());
+        ASSERT_TRUE(upgrade->duplicateDecision.has_value());
+        const std::filesystem::path queuedUpgrade = upgrade->localPath;
+        ASSERT_TRUE(downloads.resolveDuplicateDecision(
+            projectDirectory,
+            queuedUpgrade,
+            upgrade->duplicateDecision->decisionId,
+            DownloadDuplicateChoice::Replace).has_value());
+
+        const std::filesystem::path upgradedArchive = downloadsDirectory / L"incoming-200.zip";
+        const std::optional<DownloadEntry> upgraded = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [&](const DownloadEntry& entry) { return entry.localPath == upgradedArchive && entry.canInstall; });
+        ASSERT_TRUE(upgraded.has_value());
+        for (int attempt = 0;
+             attempt < 200 &&
+             (std::filesystem::exists(oldArchive) || std::filesystem::exists(queuedUpgrade));
+             ++attempt)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        EXPECT_FALSE(std::filesystem::exists(oldArchive));
+        EXPECT_FALSE(std::filesystem::exists(queuedUpgrade));
+
+        downloads.captureNxmLinks(projectDirectory, {L"nxm://skyrimspecialedition/mods/3863/files/100"});
+        const std::optional<DownloadEntry> downgrade = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [](const DownloadEntry& entry)
+            {
+                return entry.transferState == L"awaiting-decision" &&
+                    entry.duplicateDecision.has_value() &&
+                    entry.duplicateDecision->direction == L"downgrade";
+            });
+        ASSERT_TRUE(downgrade.has_value());
+        ASSERT_TRUE(downgrade->duplicateDecision.has_value());
+        ASSERT_TRUE(downloads.resolveDuplicateDecision(
+            projectDirectory,
+            downgrade->localPath,
+            downgrade->duplicateDecision->decisionId,
+            DownloadDuplicateChoice::KeepBoth).has_value());
+
+        const std::filesystem::path downgradedArchive = downloadsDirectory / L"incoming-100.zip";
+        const std::optional<DownloadEntry> downgraded = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [&](const DownloadEntry& entry) { return entry.localPath == downgradedArchive && entry.canInstall; });
+        ASSERT_TRUE(downgraded.has_value());
+        EXPECT_TRUE(std::filesystem::exists(upgradedArchive));
+        EXPECT_TRUE(std::filesystem::exists(downgradedArchive));
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+#endif
+    }
+
+    TEST(DownloadServiceTests, FailedReplacementTransferLeavesTheExistingArchiveUntouched)
+    {
+#ifndef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
+        GTEST_SKIP() << "Download service test hooks are disabled.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        const ScopedNexusDuplicateLineageHook lineage([](auto, auto)
+        {
+            NexusModFilesResponse response;
+            response.fileUpdates.push_back({L"100", L"200", 0});
+            return std::optional<NexusModFilesResponse>(std::move(response));
+        });
+        const ScopedNexusArchiveTransferHooks transferHooks(
+            {},
+            [](const std::filesystem::path&, const std::filesystem::path&, std::wstring_view)
+                -> std::filesystem::path
+            {
+                throw std::runtime_error("Injected replacement transfer failure.");
+            });
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject project(temp, projectDirectory);
+        const std::filesystem::path downloadsDirectory = pathSettings.downloadsDirectory(projectDirectory);
+        std::filesystem::create_directories(downloadsDirectory);
+        const std::filesystem::path oldArchive = downloadsDirectory / L"Mod 1.0.0.zip";
+        writeCompletedNexusArchive(oldArchive, "100", "1.0.0", "old archive");
+
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+        downloads.captureNxmLinks(projectDirectory, {L"nxm://skyrimspecialedition/mods/3863/files/200"});
+        const std::optional<DownloadEntry> awaiting = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [](const DownloadEntry& entry) { return entry.transferState == L"awaiting-decision"; });
+        ASSERT_TRUE(awaiting.has_value());
+        ASSERT_TRUE(awaiting->duplicateDecision.has_value());
+        ASSERT_TRUE(downloads.resolveDuplicateDecision(
+            projectDirectory,
+            awaiting->localPath,
+            awaiting->duplicateDecision->decisionId,
+            DownloadDuplicateChoice::Replace).has_value());
+
+        const std::optional<DownloadEntry> failed = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [&](const DownloadEntry& entry)
+            {
+                return entry.localPath == awaiting->localPath && !entry.isDownloading;
+            });
+        ASSERT_TRUE(failed.has_value());
+        EXPECT_TRUE(std::filesystem::exists(oldArchive));
+        EXPECT_EQ(readTextFile(oldArchive), "old archive");
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+#endif
+    }
+
+    TEST(DownloadServiceTests, ReplacementWaitsWithoutStartingTransferWhileAnExistingArchiveIsInUse)
+    {
+#if !defined(_WIN32) || !defined(FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS)
+        GTEST_SKIP() << "Global archive use locks require Windows test hooks.";
+#else
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        Logger logger;
+        logger.initialize();
+        AppSettingsService settings(logger);
+        settings.initialize();
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        DownloadTransferLimiter transferLimiter;
+        const ScopedNexusDuplicateLineageHook lineage([](auto, auto)
+        {
+            NexusModFilesResponse response;
+            response.fileUpdates.push_back({L"100", L"200", 0});
+            return std::optional<NexusModFilesResponse>(std::move(response));
+        });
+        std::atomic<int> transportCalls{0};
+        const ScopedNexusArchiveTransferHooks transferHooks(
+            {},
+            [&](const std::filesystem::path& directory,
+                const std::filesystem::path&,
+                std::wstring_view)
+            {
+                ++transportCalls;
+                const std::filesystem::path unexpected = directory / L"unexpected-replacement.zip";
+                writeTextFile(unexpected, "unexpected replacement");
+                return unexpected;
+            });
+
+        const std::filesystem::path projectDirectory = temp.path() / L"Project";
+        ScopedDownloadProject project(temp, projectDirectory);
+        const std::filesystem::path downloadsDirectory = pathSettings.downloadsDirectory(projectDirectory);
+        std::filesystem::create_directories(downloadsDirectory);
+        const std::filesystem::path oldArchive = downloadsDirectory / L"Mod 1.0.0.zip";
+        writeCompletedNexusArchive(oldArchive, "100", "1.0.0", "old archive");
+        const std::string oldArchiveSha =
+            test_hooks::fileContentDigestsForTest(oldArchive).first;
+        const std::wstring oldArchiveShaWide(oldArchiveSha.begin(), oldArchiveSha.end());
+
+        DownloadService downloads(logger, settings, pathSettings, transferLimiter);
+        downloads.initialize();
+        downloads.captureNxmLinks(
+            projectDirectory,
+            {L"nxm://skyrimspecialedition/mods/3863/files/200"});
+        const std::optional<DownloadEntry> awaiting = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [](const DownloadEntry& entry) { return entry.transferState == L"awaiting-decision"; });
+        ASSERT_TRUE(awaiting.has_value());
+        ASSERT_TRUE(awaiting->duplicateDecision.has_value());
+
+        std::promise<void> lockAcquired;
+        std::promise<void> releaseLock;
+        const std::shared_future<void> releaseFuture = releaseLock.get_future().share();
+        auto archiveUser = std::async(std::launch::async, [&]()
+        {
+            test_hooks::withArchiveUseLockForTest(oldArchiveShaWide, [&]()
+            {
+                lockAcquired.set_value();
+                releaseFuture.wait();
+            });
+        });
+        ASSERT_EQ(
+            lockAcquired.get_future().wait_for(std::chrono::seconds(2)),
+            std::future_status::ready);
+
+        ASSERT_TRUE(downloads.resolveDuplicateDecision(
+            projectDirectory,
+            awaiting->localPath,
+            awaiting->duplicateDecision->decisionId,
+            DownloadDuplicateChoice::Replace).has_value());
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        EXPECT_EQ(transportCalls.load(), 0);
+        EXPECT_TRUE(std::filesystem::exists(oldArchive));
+        EXPECT_EQ(readTextFile(oldArchive), "old archive");
+
+        releaseLock.set_value();
+        archiveUser.get();
+        const std::filesystem::path replacementArchive =
+            downloadsDirectory / L"unexpected-replacement.zip";
+        const std::optional<DownloadEntry> completed = waitForDownloadEntry(
+            downloads,
+            projectDirectory,
+            [&](const DownloadEntry& entry)
+            {
+                return entry.localPath == replacementArchive && entry.canInstall;
+            });
+        ASSERT_TRUE(completed.has_value());
+        EXPECT_EQ(transportCalls.load(), 1);
+        for (int attempt = 0; attempt < 200 && std::filesystem::exists(oldArchive); ++attempt)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        EXPECT_FALSE(std::filesystem::exists(oldArchive));
+
+        downloads.shutdown();
+        pathSettings.shutdown();
+        settings.shutdown();
+        logger.shutdown();
+#endif
+    }
+
     TEST(DownloadServiceTests, CaptureNxmLinkWithOAuthAuthWithoutApiKeyQueuesOAuthDownload)
     {
 #ifndef _WIN32
@@ -1159,7 +1673,7 @@ namespace fluxora::tests
         logger.shutdown();
     }
 
-    TEST(DownloadServiceTests, PlanDownloadInstallUsesFinalUserNameForExistingModConflict)
+    TEST(DownloadServiceTests, PlanDownloadInstallKeepsFinalUserNameWithoutTreatingItAsIdentity)
     {
         TempDirectory temp;
         ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
@@ -1180,7 +1694,7 @@ namespace fluxora::tests
         const std::filesystem::path installedPath =
             pathSettings.loadForProjectDirectory(projectDirectory).modsDirectory / finalName;
         writeTextFile(installedPath / L"Unofficial Skyrim Modders Patch.esp", "original");
-        const InstalledModRecord installed = InstanceMetadataStore::registerInstalledMod(
+        InstanceMetadataStore::registerInstalledMod(
             projectDirectory,
             installedPath,
             finalName,
@@ -1200,9 +1714,7 @@ namespace fluxora::tests
             L"Default",
             finalName);
 
-        ASSERT_TRUE(plan.matchedTarget.has_value());
-        EXPECT_EQ(plan.matchedTarget->modUuid, installed.uuid);
-        EXPECT_EQ(plan.resolutionKind, ModIdentityResolutionKind::Probable);
+        EXPECT_FALSE(plan.matchedTarget.has_value());
         EXPECT_EQ(plan.suggestedModName, finalName);
 
         downloads.shutdown();

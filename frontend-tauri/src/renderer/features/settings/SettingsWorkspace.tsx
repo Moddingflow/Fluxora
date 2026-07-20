@@ -4,6 +4,7 @@ import {
   Gauge,
   Languages,
   Link2,
+  Plug,
   RefreshCw,
   UploadCloud
 } from 'lucide-react';
@@ -14,22 +15,23 @@ import {
   formatApiLimitUsage,
   formatLastBuildDate,
   languageOptions,
-  nexusActionLabel,
-  nexusCanToggle,
-  nexusConnectionSummary,
-  nexusIsVerified,
-  nexusIsVerifiedLinked,
   settingsCapabilityView,
   settingsSections,
-  type NexusAuthViewStatus,
   type SettingsSectionId
 } from '../../settings-workspace-state';
+import {
+  connectionActionLabel,
+  connectionCanToggle,
+  connectionIsReady,
+  connectionSummary
+} from '../../connection-workspace-state';
 import { TransferSettingsPanel } from '../../TransferSettingsPanel';
 import { nexusModsIcon } from '../../design-system/assets';
 import { LanguageSelect } from './LanguageSelect';
 import type {
   FluxoraApiLimitProvider,
   FluxoraAppInfo,
+  FluxoraExternalConnectionStatus,
   NativeBridgeStatus
 } from '../../../shared/fluxora-api';
 
@@ -44,14 +46,14 @@ interface SettingsWorkspaceProps {
   isTransferRunning: boolean;
   languageBusy: string | null;
   lastBuildDate: string;
-  nexusBusy: boolean;
-  nexusStatus: NexusAuthViewStatus | null;
+  connectionBusyProviderId: string | null;
+  connectionProviders: FluxoraExternalConnectionStatus[];
   onDeveloperModeChange: (enabled: boolean) => void;
   onOpenTransfer: () => void;
   onOpenRepository: () => void;
   onSectionChange: (section: SettingsSectionId) => void;
   onSetLanguage: (language: string) => void;
-  onToggleNexusConnection: () => void;
+  onToggleConnection: (providerId: string) => void;
   section: SettingsSectionId;
   settingsBusyLabel: string | null;
   settingsCapabilities: SettingsCapabilities;
@@ -66,14 +68,14 @@ export function SettingsWorkspace({
   isTransferRunning,
   languageBusy,
   lastBuildDate,
-  nexusBusy,
-  nexusStatus,
+  connectionBusyProviderId,
+  connectionProviders,
   onDeveloperModeChange,
   onOpenTransfer,
   onOpenRepository,
   onSectionChange,
   onSetLanguage,
-  onToggleNexusConnection,
+  onToggleConnection,
   section,
   settingsBusyLabel,
   settingsCapabilities
@@ -117,46 +119,59 @@ export function SettingsWorkspace({
     </aside>
   );
 
-  const renderNexusSettings = () => {
-    const accountText = nexusConnectionSummary(nexusStatus);
-    const canToggleNexus = nexusCanToggle(nexusStatus, settingsCapabilities.nexusAvailable);
-    const actionText = nexusActionLabel(nexusStatus);
-    const connectionStatus = nexusStatus?.verificationState === 'unavailable'
-      ? 'error'
-      : !nexusStatus || !nexusIsVerified(nexusStatus)
-        ? 'checking'
-        : nexusIsVerifiedLinked(nexusStatus)
-          ? 'ready'
-          : nexusStatus.isConfigured
-            ? 'checking'
-            : 'error';
-
+  const renderConnectionSettings = () => {
     return (
       <div className="settings-panel settings-panel--connections" aria-label="Connections settings">
         <div className="settings-connections-list">
-          <div className="settings-service-row settings-service-row--connection" data-status={connectionStatus}>
-            <div className="settings-service-main">
-              <span className="settings-service-icon settings-service-icon--nexus">
-                <img src={nexusModsIcon} alt="" />
-              </span>
-              <span className="settings-service-copy">
-                <strong>Nexus Mods</strong>
-                <span>{accountText}</span>
-              </span>
-            </div>
-            <button
-              className="settings-switch"
-              type="button"
-              role="switch"
-              aria-checked={nexusIsVerifiedLinked(nexusStatus)}
-              aria-label="Nexus Mods account"
-              title={nexusStatus?.message || actionText}
-              disabled={nexusBusy || !canToggleNexus}
-              onClick={onToggleNexusConnection}
-            >
-              <span aria-hidden="true" />
-            </button>
-          </div>
+          {connectionProviders.map((provider) => {
+            const providerAvailable = provider.providerId === 'nexus'
+              ? settingsCapabilities.nexusAvailable
+              : settingsCapabilities.settingsAvailable;
+            const actionText = connectionActionLabel(provider);
+            const connectionStatus = provider.state === 'reauthRequired'
+              ? 'error'
+              : provider.state === 'ready'
+                ? 'ready'
+                : 'checking';
+            return (
+              <div
+                className="settings-service-row settings-service-row--connection"
+                data-status={connectionStatus}
+                key={provider.providerId}
+              >
+                <div className="settings-service-main">
+                  <span
+                    className={`settings-service-icon${
+                      provider.providerId === 'nexus' ? ' settings-service-icon--nexus' : ''
+                    }`}
+                  >
+                    {provider.providerId === 'nexus'
+                      ? <img src={nexusModsIcon} alt="" />
+                      : <Plug size={20} aria-hidden="true" />}
+                  </span>
+                  <span className="settings-service-copy">
+                    <strong>{provider.label}</strong>
+                    <span>{connectionSummary(provider)}</span>
+                  </span>
+                </div>
+                <button
+                  className="settings-switch"
+                  type="button"
+                  role="switch"
+                  aria-checked={connectionIsReady(provider)}
+                  aria-label={`${provider.label} account`}
+                  title={provider.message || actionText}
+                  disabled={
+                    connectionBusyProviderId === provider.providerId ||
+                    !connectionCanToggle(provider, providerAvailable)
+                  }
+                  onClick={() => onToggleConnection(provider.providerId)}
+                >
+                  <span aria-hidden="true" />
+                </button>
+              </div>
+            );
+          })}
           {apiLimitsBusy && apiLimitProviders.length === 0 ? (
             <div className="settings-service-row settings-service-row--api-limit" data-status="checking">
               <div className="settings-service-main">
@@ -303,7 +318,7 @@ export function SettingsWorkspace({
   const activeSection = (() => {
     switch (section) {
       case 'connections':
-        return renderNexusSettings();
+        return renderConnectionSettings();
       case 'language':
         return renderLanguageSettings();
       case 'developers':

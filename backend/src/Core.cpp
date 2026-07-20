@@ -2,12 +2,14 @@
 
 #include "FluxoraCore/Services/AppSettingsService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
+#include "FluxoraCore/Services/BuildFileWorkspaceService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/DownloadTransferLimiter.hpp"
 #include "FluxoraCore/Services/InstallOperationService.hpp"
 #include "FluxoraCore/Services/EffectiveFileTreeService.hpp"
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
 #include "FluxoraCore/Services/ExecutableService.hpp"
+#include "FluxoraCore/Services/ExternalConnectionService.hpp"
 #include "FluxoraCore/Services/FluxPackService.hpp"
 #include "FluxoraCore/Services/GrassCacheService.hpp"
 #include "FluxoraCore/Services/HookService.hpp"
@@ -29,12 +31,14 @@ namespace fluxora
         : logger_(std::make_unique<Logger>()),
           settings_(std::make_unique<AppSettingsService>(*logger_)),
           buildPathSettings_(std::make_unique<BuildPathSettingsService>(*logger_)),
+          buildFiles_(std::make_unique<BuildFileWorkspaceService>(*logger_, *buildPathSettings_)),
           hooks_(std::make_unique<HookService>(*logger_)),
           mods_(std::make_unique<ModService>(*logger_, *buildPathSettings_)),
           plugins_(std::make_unique<PluginService>(*logger_, *buildPathSettings_)),
           profileOrder_(std::make_unique<ProfileOrderService>(*logger_, *mods_, *buildPathSettings_)),
           profiles_(std::make_unique<ProfileService>(*logger_, *buildPathSettings_)),
           nexusModsAuth_(std::make_unique<NexusModsAuthService>(*logger_, *settings_)),
+          externalConnections_(std::make_unique<ExternalConnectionService>(*logger_)),
           nexusUpdateApi_(createNexusUpdateApi(*logger_, *nexusModsAuth_)),
           downloadTransferLimiter_(std::make_unique<DownloadTransferLimiter>()),
           downloads_(std::make_unique<DownloadService>(
@@ -61,6 +65,8 @@ namespace fluxora
               *profileOrder_,
               *buildPathSettings_))
     {
+        externalConnections_->registerProvider(
+            createNexusExternalConnectionProvider(*nexusModsAuth_));
     }
 
     Core::~Core()
@@ -78,12 +84,14 @@ namespace fluxora
         logger_->initialize();
         settings_->initialize();
         buildPathSettings_->initialize();
+        buildFiles_->initialize();
         hooks_->initialize();
         mods_->initialize();
         plugins_->initialize();
         profileOrder_->initialize();
         profiles_->initialize();
         nexusModsAuth_->initialize();
+        externalConnections_->initialize();
         downloads_->initialize();
         installs_->initialize();
         effectiveFileTree_->initialize();
@@ -118,6 +126,7 @@ namespace fluxora
         effectiveFileTree_->shutdown();
         installs_->shutdown();
         downloads_->shutdown();
+        externalConnections_->shutdown();
         nexusModsAuth_->shutdown();
         profiles_->shutdown();
         profileOrder_->shutdown();
@@ -125,6 +134,7 @@ namespace fluxora
         mods_->shutdown();
         hooks_->shutdown();
         settings_->shutdown();
+        buildFiles_->shutdown();
         buildPathSettings_->shutdown();
         logger_->write(LogLevel::Info, "Fluxora core shut down.");
         logger_->shutdown();
@@ -217,6 +227,11 @@ namespace fluxora
         return *nexusModsAuth_;
     }
 
+    ExternalConnectionService& Core::externalConnections() noexcept
+    {
+        return *externalConnections_;
+    }
+
     NexusUpdateApi& Core::nexusUpdateApi() noexcept
     {
         return *nexusUpdateApi_;
@@ -240,5 +255,10 @@ namespace fluxora
     BuildPathSettingsService& Core::buildPathSettings() noexcept
     {
         return *buildPathSettings_;
+    }
+
+    BuildFileWorkspaceService& Core::buildFiles() noexcept
+    {
+        return *buildFiles_;
     }
 }

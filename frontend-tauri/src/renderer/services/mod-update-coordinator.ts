@@ -21,6 +21,7 @@ export interface ModUpdateCoordinatorOptions {
   api: ModUpdateCoordinatorApi;
   createOperationId: (scope: string) => string;
   onApplied: (projectDirectory: string, result: FluxoraModUpdateCheckResult) => void;
+  onAuthenticationUnavailable?: () => void;
   now?: () => number;
   setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
@@ -159,7 +160,12 @@ export const createModUpdateCoordinator = (
           result.state !== 'cancelled'
         ) {
           options.onApplied(projectDirectory, result);
-          scheduleAutomatic(result);
+          if (result.state === 'partial' && result.reason === 'authenticationUnavailable') {
+            options.onAuthenticationUnavailable?.();
+            clearScheduledCheck();
+          } else {
+            scheduleAutomatic(result);
+          }
         }
         return result;
       })

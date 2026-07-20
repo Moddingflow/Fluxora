@@ -1192,7 +1192,7 @@ namespace fluxora::tests
             existingPath,
             L"Spell Perks Item Distributor",
             L"7.1",
-            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"36869", L"100"});
+            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"36869", L"200"});
         const std::vector<ProfileOrderItemRecord> orderBefore =
             InstanceMetadataStore::listProfileOrderItems(project_, L"Default");
         const auto orderTargetBefore = std::find_if(
@@ -1287,7 +1287,7 @@ namespace fluxora::tests
             existingPath,
             L"Merge Target",
             L"1.0",
-            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"900", L"100"});
+            ModSourceRecord{L"nexus", L"skyrimspecialedition", L"900", L"200"});
         const std::vector<ProfileOrderItemRecord> orderBefore =
             InstanceMetadataStore::listProfileOrderItems(project_, L"Default");
         const auto orderTargetBefore = std::find_if(

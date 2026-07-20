@@ -299,6 +299,36 @@ if ($invalidPackageTypeResponse.error.code -ne 'bridge.invalidRequest') {
     throw "Expected invalid FluxPack package type rejection, received: $($invalidPackageTypeResponse | ConvertTo-Json -Depth 10 -Compress)"
 }
 
+$missingDuplicateDecisionFieldsResponse = Invoke-BridgeHostRequest -Request @{
+    jsonrpc = '2.0'
+    id = 'downloads_resolve_duplicate_missing_fields'
+    method = 'downloads.resolveDuplicateDecision'
+    params = @{
+        projectDirectory = 'C:\missing\build'
+        choice = 'replace'
+    }
+    meta = $requestMeta
+}
+if ($missingDuplicateDecisionFieldsResponse.error.code -ne 'bridge.invalidRequest') {
+    throw "Expected downloads.resolveDuplicateDecision required-field rejection, received: $($missingDuplicateDecisionFieldsResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+
+$invalidDuplicateDecisionChoiceResponse = Invoke-BridgeHostRequest -Request @{
+    jsonrpc = '2.0'
+    id = 'downloads_resolve_duplicate_invalid_choice'
+    method = 'downloads.resolveDuplicateDecision'
+    params = @{
+        projectDirectory = 'C:\missing\build'
+        downloadPath = 'C:\missing\build\downloads\pending.nxm'
+        decisionId = 'decision-test'
+        choice = 'overwrite'
+    }
+    meta = $requestMeta
+}
+if ($invalidDuplicateDecisionChoiceResponse.error.code -ne 'bridge.invalidRequest') {
+    throw "Expected downloads.resolveDuplicateDecision choice rejection, received: $($invalidDuplicateDecisionChoiceResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+
 $modWorkspaceRouteResponse = Invoke-BridgeHostRequest -Request @{
     jsonrpc = '2.0'
     id = 'mods_workspace_route'
@@ -443,6 +473,51 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $gameDataDirectory 'Skyrim.esm'), 'master')
 
     $fixtureEnvironment = @{ APPDATA = $appDataDirectory }
+
+    $connectionsStatusResponse = Invoke-BridgeHostRequest -EnvironmentVariables $fixtureEnvironment -Request @{
+        jsonrpc = '2.0'
+        id = 'connections_list_status'
+        method = 'connections.listStatus'
+        params = @{}
+        meta = $requestMeta
+    }
+    if ($connectionsStatusResponse.result.ok -ne $true) {
+        throw "Expected connections.listStatus success, received: $($connectionsStatusResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+    $connectionProviders = @($connectionsStatusResponse.result.data.providers)
+    if ($connectionProviders.Count -ne 1 -or
+        $connectionProviders[0].providerId -ne 'nexus' -or
+        $connectionProviders[0].state -notin @('notConfigured', 'notLinked') -or
+        $connectionProviders[0].operationId -ne 'op_bridge_protocol_test') {
+        throw "connections.listStatus returned an invalid provider snapshot: $($connectionsStatusResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+
+    $connectionsRestoreResponse = Invoke-BridgeHostRequest -EnvironmentVariables $fixtureEnvironment -Request @{
+        jsonrpc = '2.0'
+        id = 'connections_restore_all'
+        method = 'connections.restoreAll'
+        params = @{ attempt = 1 }
+        meta = $requestMeta
+    }
+    if ($connectionsRestoreResponse.result.ok -ne $true -or
+        $connectionsRestoreResponse.result.data.durationMs -ge 2500 -or
+        $connectionsRestoreResponse.result.data.operationId -ne 'op_bridge_protocol_test') {
+        throw "Expected bounded connections.restoreAll success, received: $($connectionsRestoreResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+
+    $connectionsDisconnectResponse = Invoke-BridgeHostRequest -EnvironmentVariables $fixtureEnvironment -Request @{
+        jsonrpc = '2.0'
+        id = 'connections_disconnect'
+        method = 'connections.disconnect'
+        params = @{ providerId = 'nexus' }
+        meta = $requestMeta
+    }
+    if ($connectionsDisconnectResponse.result.ok -ne $true -or
+        $connectionsDisconnectResponse.result.data.providerId -ne 'nexus' -or
+        $connectionsDisconnectResponse.result.data.state -notin @('notConfigured', 'notLinked')) {
+        throw "Expected connections.disconnect compatibility success, received: $($connectionsDisconnectResponse | ConvertTo-Json -Depth 10 -Compress)"
+    }
+
     $createProjectResponse = Invoke-BridgeHostRequest `
         -EnvironmentVariables $fixtureEnvironment `
         -Request @{

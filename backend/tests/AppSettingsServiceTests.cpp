@@ -91,6 +91,7 @@ namespace fluxora::tests
         saved.expiresAtUtc = L"2026-06-16T10:00:00Z";
         saved.protectedAccessToken = L"access-token";
         saved.protectedRefreshToken = L"refresh-token";
+        saved.reauthRequired = true;
         saved.protectedApiKey = L"api-key";
 
         service.saveNexusModsAuth(saved);
@@ -104,6 +105,7 @@ namespace fluxora::tests
         EXPECT_EQ(loaded.expiresAtUtc, saved.expiresAtUtc);
         EXPECT_EQ(loaded.protectedAccessToken, saved.protectedAccessToken);
         EXPECT_EQ(loaded.protectedRefreshToken, saved.protectedRefreshToken);
+        EXPECT_TRUE(loaded.reauthRequired);
         EXPECT_EQ(loaded.protectedApiKey, saved.protectedApiKey);
 
         service.clearNexusModsAuth();

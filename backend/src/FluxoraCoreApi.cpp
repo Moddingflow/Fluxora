@@ -7,10 +7,12 @@
 #include "FluxoraCore/GameSupport/ProjectFingerprint.hpp"
 #include "FluxoraCore/Services/AppSettingsService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
+#include "FluxoraCore/Services/BuildFileWorkspaceService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/EffectiveFileTreeService.hpp"
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
 #include "FluxoraCore/Services/ExecutableService.hpp"
+#include "FluxoraCore/Services/ExternalConnectionService.hpp"
 #include "FluxoraCore/Services/FluxPackService.hpp"
 #include "FluxoraCore/Services/GrassCacheService.hpp"
 #include "FluxoraCore/Services/InstallOperationService.hpp"
@@ -967,6 +969,7 @@ namespace
         writer.field(L"message", status.message);
         writer.field(L"clientId", status.clientId);
         writer.field(L"redirectUri", status.redirectUri);
+        writer.field(L"requiresReauth", status.requiresReauth);
         writer.endObject();
         return writer.str();
     }
@@ -980,6 +983,59 @@ namespace
         writer.field(L"headerValue", authHeader.headerValue);
         writer.field(L"credentialKind", authHeader.credentialKind);
         writer.field(L"message", authHeader.message);
+        writer.field(
+            L"failureKind",
+            authHeader.failureKind == fluxora::NexusModsAuthFailureKind::ReauthRequired
+                ? L"reauthRequired"
+                : authHeader.failureKind == fluxora::NexusModsAuthFailureKind::Temporary
+                    ? L"temporary"
+                    : L"none");
+        writer.endObject();
+        return writer.str();
+    }
+
+    void writeExternalConnectionStatus(
+        fluxora::JsonWriter& writer,
+        const fluxora::ExternalConnectionStatus& status)
+    {
+        writer.beginObject();
+        writer.field(L"providerId", status.providerId);
+        writer.field(L"label", status.label);
+        writer.field(L"state", fluxora::externalConnectionStateName(status.state));
+        writer.field(L"accountName", status.accountName);
+        writer.field(L"hasStoredSession", status.hasStoredSession);
+        writer.field(L"retryable", status.retryable);
+        writer.field(L"requiresUserAction", status.requiresUserAction);
+        writer.field(L"message", status.message);
+        writer.field(L"checkedAtUtc", status.checkedAtUtc);
+        writer.field(L"operationId", status.operationId);
+        writer.endObject();
+    }
+
+    std::wstring serializeExternalConnectionStatus(
+        const fluxora::ExternalConnectionStatus& status)
+    {
+        fluxora::JsonWriter writer;
+        writeExternalConnectionStatus(writer, status);
+        return writer.str();
+    }
+
+    std::wstring serializeExternalConnectionSnapshot(
+        const fluxora::ExternalConnectionSnapshot& snapshot)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.key(L"providers").beginArray();
+        for (const auto& provider : snapshot.providers)
+        {
+            writeExternalConnectionStatus(writer, provider);
+        }
+        writer.endArray();
+        writer.field(L"requestedAtUtc", snapshot.requestedAtUtc);
+        writer.field(L"completedAtUtc", snapshot.completedAtUtc);
+        writer.key(L"durationMs").numberValue(std::to_wstring(snapshot.durationMs));
+        writer.field(L"timedOut", snapshot.timedOut);
+        writer.field(L"operationId", snapshot.operationId);
         writer.endObject();
         return writer.str();
     }
@@ -1042,6 +1098,18 @@ namespace
         return writer.str();
     }
 
+    void writeDownloadDuplicateFile(
+        fluxora::JsonWriter& writer,
+        const fluxora::DownloadDuplicateFile& file)
+    {
+        writer.beginObject();
+        writer.field(L"id", file.id);
+        writer.field(L"fileId", file.fileId);
+        writer.field(L"fileName", file.fileName);
+        writer.field(L"version", file.version);
+        writer.endObject();
+    }
+
     void writeDownloadEntry(fluxora::JsonWriter& writer, const fluxora::DownloadEntry& download)
     {
         writer.beginObject();
@@ -1082,6 +1150,27 @@ namespace
         writer.field(L"canResume", download.canResume);
         writer.field(L"canInstall", download.canInstall);
         writer.field(L"canDelete", download.canDelete);
+        writer.key(L"duplicateDecision");
+        if (!download.duplicateDecision.has_value())
+        {
+            writer.nullValue();
+        }
+        else
+        {
+            const fluxora::DownloadDuplicateDecision& decision = *download.duplicateDecision;
+            writer.beginObject();
+            writer.field(L"decisionId", decision.decisionId);
+            writer.field(L"direction", decision.direction);
+            writer.key(L"incomingFile");
+            writeDownloadDuplicateFile(writer, decision.incomingFile);
+            writer.key(L"existingFiles").beginArray();
+            for (const fluxora::DownloadDuplicateFile& file : decision.existingFiles)
+            {
+                writeDownloadDuplicateFile(writer, file);
+            }
+            writer.endArray();
+            writer.endObject();
+        }
         writer.endObject();
     }
 
@@ -3317,6 +3406,656 @@ namespace
         }
     }
 
+    std::wstring buildFilesRequiredString(
+        const fluxora::JsonValue& object,
+        std::wstring_view field)
+    {
+        const fluxora::JsonValue* value = object.find(field);
+        if (value == nullptr || !value->isString() || value->asString().empty())
+        {
+            throw std::invalid_argument("Required build-files string field is missing.");
+        }
+        return value->asString();
+    }
+
+    std::wstring buildFilesLower(std::wstring value)
+    {
+        std::transform(value.begin(), value.end(), value.begin(), [](wchar_t character)
+        {
+            return static_cast<wchar_t>(std::towlower(character));
+        });
+        return value;
+    }
+
+    std::wstring buildFilesOptionalString(
+        const fluxora::JsonValue& object,
+        std::wstring_view field)
+    {
+        const fluxora::JsonValue* value = object.find(field);
+        return value != nullptr && value->isString() ? value->asString() : L"";
+    }
+
+    int buildFilesOptionalInt(
+        const fluxora::JsonValue& object,
+        std::wstring_view field,
+        int fallback)
+    {
+        const fluxora::JsonValue* value = object.find(field);
+        if (value == nullptr)
+        {
+            return fallback;
+        }
+        if (!value->isNumber())
+        {
+            throw std::invalid_argument("Build-files numeric field is invalid.");
+        }
+        return std::stoi(value->asNumber());
+    }
+
+    bool buildFilesOptionalBool(
+        const fluxora::JsonValue& object,
+        std::wstring_view field,
+        bool fallback)
+    {
+        const fluxora::JsonValue* value = object.find(field);
+        if (value == nullptr)
+        {
+            return fallback;
+        }
+        if (value->type() != fluxora::JsonValue::Type::Boolean)
+        {
+            throw std::invalid_argument("Build-files boolean field is invalid.");
+        }
+        return value->asBoolean();
+    }
+
+    std::vector<std::wstring> buildFilesOptionalStringArray(
+        const fluxora::JsonValue& object,
+        std::wstring_view field)
+    {
+        const fluxora::JsonValue* value = object.find(field);
+        if (value == nullptr)
+        {
+            return {};
+        }
+        if (!value->isArray())
+        {
+            throw std::invalid_argument("Build-files string-array field is invalid.");
+        }
+        std::vector<std::wstring> result;
+        result.reserve(value->asArray().size());
+        for (const auto& item : value->asArray())
+        {
+            if (!item.isString())
+            {
+                throw std::invalid_argument("Build-files string-array item is invalid.");
+            }
+            result.push_back(item.asString());
+        }
+        return result;
+    }
+
+    fluxora::BuildFileScope buildFileScopeFromText(std::wstring value)
+    {
+        value = buildFilesLower(std::move(value));
+        if (value == L"build") return fluxora::BuildFileScope::Build;
+        if (value == L"game") return fluxora::BuildFileScope::Game;
+        if (value == L"downloads") return fluxora::BuildFileScope::Downloads;
+        throw std::invalid_argument("Build-files scope is invalid.");
+    }
+
+    std::vector<fluxora::BuildFileScope> buildFilesOptionalScopes(
+        const fluxora::JsonValue& object)
+    {
+        std::vector<fluxora::BuildFileScope> result;
+        for (auto scope : buildFilesOptionalStringArray(object, L"scopes"))
+        {
+            result.push_back(buildFileScopeFromText(std::move(scope)));
+        }
+        return result;
+    }
+
+    std::wstring buildFileScopeText(fluxora::BuildFileScope scope)
+    {
+        switch (scope)
+        {
+        case fluxora::BuildFileScope::Build: return L"build";
+        case fluxora::BuildFileScope::Game: return L"game";
+        case fluxora::BuildFileScope::Downloads: return L"downloads";
+        }
+        return L"build";
+    }
+
+    std::wstring buildFileKindText(fluxora::BuildFileKind kind)
+    {
+        switch (kind)
+        {
+        case fluxora::BuildFileKind::Directory: return L"directory";
+        case fluxora::BuildFileKind::Text: return L"text";
+        case fluxora::BuildFileKind::Archive: return L"archive";
+        case fluxora::BuildFileKind::Unsupported: return L"unsupported";
+        }
+        return L"unsupported";
+    }
+
+    std::wstring buildFileEncodingText(fluxora::BuildFileTextEncoding encoding)
+    {
+        switch (encoding)
+        {
+        case fluxora::BuildFileTextEncoding::Utf8: return L"utf-8";
+        case fluxora::BuildFileTextEncoding::Utf8Bom: return L"utf-8-bom";
+        case fluxora::BuildFileTextEncoding::Utf16Le: return L"utf-16-le";
+        case fluxora::BuildFileTextEncoding::Utf16Be: return L"utf-16-be";
+        case fluxora::BuildFileTextEncoding::Windows1251: return L"windows-1251";
+        case fluxora::BuildFileTextEncoding::Windows1252: return L"windows-1252";
+        case fluxora::BuildFileTextEncoding::Unsupported: return L"unsupported";
+        }
+        return L"unsupported";
+    }
+
+    std::wstring buildFileLineEndingText(fluxora::BuildFileLineEnding lineEnding)
+    {
+        switch (lineEnding)
+        {
+        case fluxora::BuildFileLineEnding::None: return L"none";
+        case fluxora::BuildFileLineEnding::Lf: return L"lf";
+        case fluxora::BuildFileLineEnding::CrLf: return L"crlf";
+        case fluxora::BuildFileLineEnding::Mixed: return L"mixed";
+        }
+        return L"none";
+    }
+
+    std::wstring buildFileChangeStatusText(fluxora::BuildFileChangeStatus status)
+    {
+        switch (status)
+        {
+        case fluxora::BuildFileChangeStatus::Applied: return L"applied";
+        case fluxora::BuildFileChangeStatus::Created: return L"created";
+        case fluxora::BuildFileChangeStatus::RolledBack: return L"rolled-back";
+        case fluxora::BuildFileChangeStatus::Conflict: return L"conflict";
+        }
+        return L"conflict";
+    }
+
+    std::wstring buildFileRollbackStateText(fluxora::BuildFileRollbackState state)
+    {
+        switch (state)
+        {
+        case fluxora::BuildFileRollbackState::Available: return L"available";
+        case fluxora::BuildFileRollbackState::RolledBack: return L"rolled-back";
+        case fluxora::BuildFileRollbackState::Conflict: return L"conflict";
+        case fluxora::BuildFileRollbackState::Unavailable: return L"unavailable";
+        }
+        return L"unavailable";
+    }
+
+    std::wstring buildFileResolutionText(fluxora::BuildFileResolution resolution)
+    {
+        switch (resolution)
+        {
+        case fluxora::BuildFileResolution::Unique: return L"unique";
+        case fluxora::BuildFileResolution::Ambiguous: return L"ambiguous";
+        case fluxora::BuildFileResolution::NotFound: return L"not-found";
+        }
+        return L"not-found";
+    }
+
+    fluxora::BuildFileMutationFormat buildFileMutationFormatFromText(std::wstring value)
+    {
+        value = buildFilesLower(std::move(value));
+        if (value == L"plain-text") return fluxora::BuildFileMutationFormat::PlainText;
+        if (value == L"json") return fluxora::BuildFileMutationFormat::Json;
+        if (value == L"jsonc") return fluxora::BuildFileMutationFormat::Jsonc;
+        if (value == L"ini") return fluxora::BuildFileMutationFormat::Ini;
+        return fluxora::BuildFileMutationFormat::ExactText;
+    }
+
+    void writeBuildFileMetadata(
+        fluxora::JsonWriter& writer,
+        const fluxora::BuildFileMetadata& metadata)
+    {
+        writer.beginObject();
+        writer.field(L"fileRef", metadata.fileRef);
+        writer.field(L"parentRef", metadata.parentRef);
+        writer.field(L"scope", buildFileScopeText(metadata.scope));
+        writer.field(L"kind", buildFileKindText(metadata.kind));
+        writer.field(L"ownerMod", metadata.ownerMod);
+        writer.field(L"relativePath", metadata.relativePath);
+        writer.field(L"fileName", metadata.fileName);
+        writer.field(L"extension", metadata.extension);
+        writer.field(L"size", metadata.size);
+        writer.field(L"createdAt", metadata.createdAt);
+        writer.field(L"modifiedAt", metadata.modifiedAt);
+        writer.field(L"readOnly", metadata.readOnly);
+        writer.field(L"hidden", metadata.hidden);
+        writer.stringArray(L"conflictingOwners", metadata.conflictingOwners);
+        writer.field(L"indexRevision", metadata.indexRevision);
+        writer.field(L"version", metadata.version);
+        writer.endObject();
+    }
+
+    void writeBuildFileChange(
+        fluxora::JsonWriter& writer,
+        const fluxora::BuildFileChange& change)
+    {
+        writer.beginObject();
+        writer.field(L"fileRef", change.fileRef);
+        writer.field(L"scope", buildFileScopeText(change.scope));
+        writer.field(L"ownerMod", change.ownerMod);
+        writer.field(L"relativePath", change.relativePath);
+        writer.field(L"status", buildFileChangeStatusText(change.status));
+        writer.field(L"addedLines", static_cast<std::uintmax_t>(change.addedLines));
+        writer.field(L"removedLines", static_cast<std::uintmax_t>(change.removedLines));
+        writer.field(L"validation", change.validation);
+        writer.field(L"verification", change.verification);
+        writer.field(L"beforeVersion", change.beforeVersion);
+        writer.field(L"afterVersion", change.afterVersion);
+        writer.field(L"rollbackState", buildFileRollbackStateText(change.rollbackState));
+        writer.key(L"hunks").beginArray();
+        for (const auto& hunk : change.hunks)
+        {
+            writer.beginObject();
+            writer.field(L"oldStart", static_cast<std::uintmax_t>(hunk.oldStart));
+            writer.field(L"oldLines", static_cast<std::uintmax_t>(hunk.oldLines));
+            writer.field(L"newStart", static_cast<std::uintmax_t>(hunk.newStart));
+            writer.field(L"newLines", static_cast<std::uintmax_t>(hunk.newLines));
+            writer.stringArray(L"lines", hunk.lines);
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.endObject();
+    }
+
+    std::wstring serializeBuildFileSearch(const fluxora::BuildFileSearchPage& page)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.key(L"entries").beginArray();
+        for (const auto& entry : page.entries)
+        {
+            writeBuildFileMetadata(writer, entry);
+        }
+        writer.endArray();
+        writer.field(L"nextCursor", page.nextCursor);
+        writer.field(L"revision", page.revision);
+        writer.field(L"totalMatches", static_cast<std::uintmax_t>(page.totalMatches));
+        writer.field(L"indexedCount", static_cast<std::uintmax_t>(page.indexedCount));
+        writer.field(L"complete", page.complete);
+        writer.field(L"cancelled", page.cancelled);
+        writer.field(L"indexed", page.indexed);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeBuildFileDiscovery(const fluxora::BuildFileDiscoveryPage& page)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.key(L"candidates").beginArray();
+        for (const auto& candidate : page.candidates)
+        {
+            writer.beginObject();
+            writer.key(L"file");
+            writeBuildFileMetadata(writer, candidate.file);
+            writer.key(L"confidence").numberValue(std::to_wstring(candidate.confidence));
+            writer.stringArray(L"matchReasons", candidate.matchReasons);
+            writer.field(L"virtualPath", candidate.virtualPath);
+            writer.field(L"effectiveOwner", candidate.effectiveOwner);
+            writer.field(L"effectiveWinner", candidate.effectiveWinner);
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.key(L"statistics").beginObject();
+        writer.field(L"scannedEntries", static_cast<std::uintmax_t>(page.statistics.scannedEntries));
+        writer.field(L"skippedEntries", static_cast<std::uintmax_t>(page.statistics.skippedEntries));
+        writer.field(L"unavailableRoots", static_cast<std::uintmax_t>(page.statistics.unavailableRoots));
+        writer.field(L"candidateCount", static_cast<std::uintmax_t>(page.statistics.candidateCount));
+        writer.endObject();
+        writer.field(L"revision", page.revision);
+        writer.field(L"nextCursor", page.nextCursor);
+        writer.field(L"totalMatches", static_cast<std::uintmax_t>(page.totalMatches));
+        writer.field(L"indexedCount", static_cast<std::uintmax_t>(page.indexedCount));
+        writer.field(L"resolution", buildFileResolutionText(page.resolution));
+        writer.field(L"complete", page.complete);
+        writer.field(L"cancelled", page.cancelled);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeBuildFileRead(const fluxora::BuildFileTextRead& read)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"fileRef", read.fileRef);
+        writer.field(L"scope", buildFileScopeText(read.scope));
+        writer.field(L"relativePath", read.relativePath);
+        writer.field(L"content", read.content);
+        writer.field(L"startLine", static_cast<std::uintmax_t>(read.startLine));
+        writer.field(L"endLine", static_cast<std::uintmax_t>(read.endLine));
+        writer.field(L"truncated", read.truncated);
+        writer.field(L"encoding", buildFileEncodingText(read.encoding));
+        writer.field(L"lineEnding", buildFileLineEndingText(read.lineEnding));
+        writer.field(L"sha256", read.sha256);
+        writer.field(L"revision", read.revision);
+        writer.field(L"version", read.version);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeBuildFileQuery(const fluxora::BuildFileQueryResult& query)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"fileRef", query.fileRef);
+        writer.field(L"query", query.query);
+        writer.field(L"kind", query.kind);
+        writer.field(L"value", query.value);
+        writer.field(L"sha256", query.sha256);
+        writer.field(L"version", query.version);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeConfigRecipeInspection(const fluxora::ConfigRecipeInspection& inspection)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"matched", inspection.matched);
+        writer.field(L"recipeId", inspection.recipeId);
+        writer.field(L"format", inspection.format);
+        writer.field(L"targetPointer", inspection.targetPointer);
+        writer.field(L"currentValue", inspection.currentValue);
+        writer.field(L"encodedValue", inspection.encodedValue);
+        writer.field(L"needsInput", inspection.needsInput);
+        writer.field(L"question", inspection.question);
+        writer.key(L"conflicts").beginArray();
+        for (const auto& conflict : inspection.conflicts)
+        {
+            writer.beginObject();
+            writer.field(L"semanticKey", conflict.semanticKey);
+            writer.field(L"encodedValue", conflict.encodedValue);
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeBuildFileTextSearch(const fluxora::BuildFileTextSearchPage& page)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.key(L"matches").beginArray();
+        for (const auto& match : page.matches)
+        {
+            writer.beginObject();
+            writer.field(L"fileRef", match.fileRef);
+            writer.field(L"scope", buildFileScopeText(match.scope));
+            writer.field(L"relativePath", match.relativePath);
+            writer.field(L"line", static_cast<std::uintmax_t>(match.line));
+            writer.field(L"before", match.before);
+            writer.field(L"match", match.match);
+            writer.field(L"after", match.after);
+            writer.endObject();
+        }
+        writer.endArray();
+        writer.field(L"nextCursor", page.nextCursor);
+        writer.field(L"revision", page.revision);
+        writer.field(L"totalMatches", static_cast<std::uintmax_t>(page.totalMatches));
+        writer.field(L"indexedCount", static_cast<std::uintmax_t>(page.indexedCount));
+        writer.field(L"complete", page.complete);
+        writer.field(L"cancelled", page.cancelled);
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeBuildFileChangeSet(const fluxora::FluxoraAiFileChangeSet& changeSet)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"schema", L"fluxora.ai.file-change-set.v1");
+        writer.field(L"operationId", changeSet.operationId);
+        writer.field(L"runId", changeSet.runId);
+        writer.field(L"chatId", changeSet.chatId);
+        writer.field(L"rollbackState", buildFileRollbackStateText(changeSet.rollbackState));
+        writer.key(L"files").beginArray();
+        for (const auto& file : changeSet.files)
+        {
+            writeBuildFileChange(writer, file);
+        }
+        writer.endArray();
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeBuildFileRollback(const fluxora::BuildFileRollbackResult& rollback)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"operationId", rollback.operationId);
+        writer.field(L"runId", rollback.runId);
+        writer.field(L"state", buildFileRollbackStateText(rollback.state));
+        writer.key(L"files").beginArray();
+        for (const auto& file : rollback.files)
+        {
+            writeBuildFileChange(writer, file);
+        }
+        writer.endArray();
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::vector<fluxora::BuildFileMutation> parseBuildFileMutations(
+        const fluxora::JsonValue& params)
+    {
+        const fluxora::JsonValue* mutations = params.find(L"mutations");
+        if (mutations == nullptr || !mutations->isArray())
+        {
+            throw std::invalid_argument("Build-files mutations array is required.");
+        }
+        std::vector<fluxora::BuildFileMutation> result;
+        for (const auto& item : mutations->asArray())
+        {
+            if (!item.isObject())
+            {
+                throw std::invalid_argument("Build-files mutation item is invalid.");
+            }
+            const std::wstring kind = buildFilesLower(buildFilesRequiredString(item, L"kind"));
+            const auto format = buildFileMutationFormatFromText(
+                buildFilesOptionalString(item, L"format"));
+            if (kind == L"create")
+            {
+                auto mutation = fluxora::BuildFileMutation::create(
+                    buildFilesRequiredString(item, L"parentRef"),
+                    buildFilesRequiredString(item, L"fileName"),
+                    buildFilesOptionalString(item, L"content"),
+                    format);
+                mutation.expectedAbsent = buildFilesOptionalBool(item, L"expectedAbsent", false);
+                result.push_back(std::move(mutation));
+            }
+            else if (kind == L"patch" || kind == L"replace-document")
+            {
+                auto mutation = fluxora::BuildFileMutation::patch(
+                    buildFilesRequiredString(item, L"fileRef"),
+                    buildFilesRequiredString(item, L"baseSha256"),
+                    kind == L"replace-document"
+                        ? buildFilesOptionalString(item, L"expectedText")
+                        : buildFilesRequiredString(item, L"expectedText"),
+                    buildFilesOptionalString(item, L"replacementText"),
+                    format);
+                mutation.wholeDocument = kind == L"replace-document";
+                result.push_back(std::move(mutation));
+            }
+            else if (kind == L"ini-set" || kind == L"ini-add" || kind == L"ini-remove")
+            {
+                const auto operation = kind == L"ini-set"
+                    ? fluxora::BuildFileMutationOperation::IniSetKey
+                    : kind == L"ini-add"
+                        ? fluxora::BuildFileMutationOperation::IniAddKey
+                        : fluxora::BuildFileMutationOperation::IniRemoveKey;
+                auto mutation = fluxora::BuildFileMutation::iniKey(
+                    operation,
+                    buildFilesRequiredString(item, L"fileRef"),
+                    buildFilesRequiredString(item, L"baseSha256"),
+                    buildFilesOptionalString(item, L"section"),
+                    buildFilesRequiredString(item, L"key"),
+                    buildFilesOptionalString(item, L"value"));
+                mutation.expectedValue = buildFilesOptionalString(item, L"expectedValue");
+                result.push_back(std::move(mutation));
+            }
+            else if (kind == L"json-set-pointer")
+            {
+                auto mutation = fluxora::BuildFileMutation::jsonPointer(
+                    buildFilesRequiredString(item, L"fileRef"),
+                    buildFilesRequiredString(item, L"baseSha256"),
+                    buildFilesRequiredString(item, L"pointer"),
+                    buildFilesRequiredString(item, L"expectedValue"),
+                    buildFilesRequiredString(item, L"value"));
+                mutation.format = format == fluxora::BuildFileMutationFormat::Jsonc
+                    ? fluxora::BuildFileMutationFormat::Jsonc
+                    : fluxora::BuildFileMutationFormat::Json;
+                mutation.allowKnownConflict = buildFilesOptionalBool(
+                    item,
+                    L"allowKnownConflict",
+                    false);
+                result.push_back(std::move(mutation));
+            }
+            else
+            {
+                throw std::invalid_argument("Build-files mutation kind is invalid.");
+            }
+            result.back().revision = buildFilesOptionalString(item, L"revision");
+        }
+        return result;
+    }
+
+    std::wstring dispatchBuildFilesRequest(
+        std::wstring_view method,
+        const fluxora::JsonValue& params)
+    {
+        const std::wstring chatId = buildFilesRequiredString(params, L"chatId");
+        if (method == L"beginChat")
+        {
+            core().buildFiles().beginChat(
+                chatId,
+                std::filesystem::path(buildFilesRequiredString(params, L"projectDirectory")),
+                buildFilesOptionalString(params, L"profile"));
+            return L"{\"active\":true}";
+        }
+        if (method == L"endChat")
+        {
+            core().buildFiles().endChat(chatId);
+            return L"{\"active\":false}";
+        }
+        if (method == L"search")
+        {
+            return serializeBuildFileSearch(core().buildFiles().search(
+                chatId,
+                fluxora::BuildFileSearchRequest{
+                    buildFileScopeFromText(buildFilesRequiredString(params, L"scope")),
+                    buildFilesOptionalString(params, L"query"),
+                    static_cast<std::size_t>(buildFilesOptionalInt(params, L"limit", 20)),
+                    buildFilesOptionalString(params, L"cursor"),
+                    {},
+                    buildFilesOptionalString(params, L"revision")
+                }));
+        }
+        if (method == L"discover")
+        {
+            return serializeBuildFileDiscovery(core().buildFiles().discover(
+                chatId,
+                fluxora::BuildFileDiscoveryRequest{
+                    buildFilesOptionalScopes(params),
+                    buildFilesOptionalStringArray(params, L"aliases"),
+                    buildFilesOptionalStringArray(params, L"extensions"),
+                    buildFilesOptionalStringArray(params, L"configHints"),
+                    buildFilesOptionalStringArray(params, L"semanticKeys"),
+                    static_cast<std::size_t>(buildFilesOptionalInt(params, L"limit", 20)),
+                    buildFilesOptionalString(params, L"revision"),
+                    buildFilesOptionalString(params, L"cursor"),
+                    {}}));
+        }
+        if (method == L"searchText")
+        {
+            return serializeBuildFileTextSearch(core().buildFiles().searchText(
+                chatId,
+                fluxora::BuildFileSearchRequest{
+                    buildFileScopeFromText(buildFilesRequiredString(params, L"scope")),
+                    buildFilesRequiredString(params, L"query"),
+                    static_cast<std::size_t>(buildFilesOptionalInt(params, L"limit", 20)),
+                    buildFilesOptionalString(params, L"cursor"),
+                    {},
+                    buildFilesOptionalString(params, L"revision")}));
+        }
+        if (method == L"stat")
+        {
+            fluxora::JsonWriter writer;
+            writeBuildFileMetadata(
+                writer,
+                core().buildFiles().stat(chatId, buildFilesRequiredString(params, L"fileRef")));
+            return writer.str();
+        }
+        if (method == L"readText")
+        {
+            return serializeBuildFileRead(core().buildFiles().readText(
+                chatId,
+                fluxora::BuildFileTextReadRequest{
+                    buildFilesRequiredString(params, L"fileRef"),
+                    static_cast<std::size_t>(buildFilesOptionalInt(params, L"startLine", 1)),
+                    static_cast<std::size_t>(buildFilesOptionalInt(params, L"maxLines", 120)),
+                    static_cast<std::size_t>(buildFilesOptionalInt(params, L"maxBytes", 8192)),
+                    buildFilesOptionalBool(params, L"editorMode", false)
+                }));
+        }
+        if (method == L"queryJson")
+        {
+            return serializeBuildFileQuery(core().buildFiles().queryJson(
+                chatId,
+                buildFilesRequiredString(params, L"fileRef"),
+                buildFilesOptionalString(params, L"pointer")));
+        }
+        if (method == L"queryIni")
+        {
+            return serializeBuildFileQuery(core().buildFiles().queryIni(
+                chatId,
+                buildFilesRequiredString(params, L"fileRef"),
+                buildFilesOptionalString(params, L"section"),
+                buildFilesOptionalString(params, L"key")));
+        }
+        if (method == L"inspectConfigRecipe")
+        {
+            return serializeConfigRecipeInspection(core().buildFiles().inspectConfigRecipe(
+                chatId,
+                buildFilesRequiredString(params, L"fileRef"),
+                buildFilesOptionalString(params, L"targetPointer"),
+                buildFilesRequiredString(params, L"requestedValue")));
+        }
+        if (method == L"apply")
+        {
+            return serializeBuildFileChangeSet(core().buildFiles().apply(
+                chatId,
+                buildFilesRequiredString(params, L"runId"),
+                buildFilesRequiredString(params, L"operationId"),
+                parseBuildFileMutations(params)));
+        }
+        if (method == L"rollbackFile")
+        {
+            return serializeBuildFileRollback(core().buildFiles().rollbackFile(
+                chatId,
+                buildFilesRequiredString(params, L"runId"),
+                buildFilesRequiredString(params, L"fileRef"),
+                buildFilesRequiredString(params, L"operationId")));
+        }
+        if (method == L"rollbackRun")
+        {
+            return serializeBuildFileRollback(core().buildFiles().rollbackRun(
+                chatId,
+                buildFilesRequiredString(params, L"runId"),
+                buildFilesRequiredString(params, L"operationId")));
+        }
+        throw std::invalid_argument("Unsupported build-files method.");
+    }
+
     int installArchiveWithMode(
         const wchar_t* projectDirectory,
         const wchar_t* archivePath,
@@ -3382,6 +4121,42 @@ namespace
 
 extern "C"
 {
+    int fluxora_build_files_request(
+        const wchar_t* method,
+        const wchar_t* paramsJson,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(method) || isBlank(paramsJson))
+            {
+                lastError = L"Build-files method and params are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const fluxora::JsonValue params = fluxora::JsonReader::parse(paramsJson);
+            if (!params.isObject())
+            {
+                lastError = L"Build-files params must be an object.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            return writeToBuffer(
+                dispatchBuildFilesRequest(method, params),
+                jsonBuffer,
+                jsonBufferLength);
+        }
+        catch (const fluxora::BuildFileWorkspaceError& exception)
+        {
+            lastError = L"build-files:" + messageToWide(exception.code()) + L":" +
+                messageToWide(exception.what());
+            return FluxoraCoreResultCoreError;
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
     int fluxora_core_is_available()
     {
         try
@@ -4619,6 +5394,95 @@ extern "C"
                 "Settings",
                 "Saved app language: " + textForLog(languageCode));
             return FluxoraCoreResultOk;
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_list_external_connections(
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            const std::wstring json = serializeExternalConnectionSnapshot(
+                core().externalConnections().listStatus(operationId == nullptr ? L"" : operationId));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_restore_external_connections(
+        const wchar_t* operationId,
+        int deadlineMilliseconds,
+        int attempt,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            const std::wstring json = serializeExternalConnectionSnapshot(
+                core().externalConnections().restoreAll(
+                    operationId == nullptr ? L"" : operationId,
+                    std::chrono::milliseconds((std::max)(1, deadlineMilliseconds)),
+                    static_cast<std::size_t>((std::max)(1, attempt))));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_connect_external_connection(
+        const wchar_t* providerId,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(providerId))
+            {
+                lastError = L"External connection provider id is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const std::wstring json = serializeExternalConnectionStatus(
+                core().externalConnections().connect(
+                    providerId,
+                    operationId == nullptr ? L"" : operationId));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_disconnect_external_connection(
+        const wchar_t* providerId,
+        const wchar_t* operationId,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(providerId))
+            {
+                lastError = L"External connection provider id is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const std::wstring json = serializeExternalConnectionStatus(
+                core().externalConnections().disconnect(
+                    providerId,
+                    operationId == nullptr ? L"" : operationId));
+            return writeToBuffer(json, jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)
         {
@@ -6383,6 +7247,42 @@ extern "C"
                     std::filesystem::path(downloadPath))),
                 jsonBuffer,
                 jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_resolve_download_duplicate_decision(
+        const wchar_t* projectDirectory,
+        const wchar_t* downloadPath,
+        const wchar_t* decisionId,
+        int choice,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(projectDirectory) || isBlank(downloadPath) || isBlank(decisionId) ||
+                choice < static_cast<int>(fluxora::DownloadDuplicateChoice::Replace) ||
+                choice > static_cast<int>(fluxora::DownloadDuplicateChoice::Cancel))
+            {
+                lastError = L"Project directory, download path, decision id and valid choice are required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+
+            const std::optional<fluxora::DownloadEntry> download =
+                core().downloads().resolveDuplicateDecision(
+                    std::filesystem::path(projectDirectory),
+                    std::filesystem::path(downloadPath),
+                    std::wstring_view(decisionId),
+                    static_cast<fluxora::DownloadDuplicateChoice>(choice));
+            if (!download.has_value())
+            {
+                return writeToBuffer(L"null", jsonBuffer, jsonBufferLength);
+            }
+            return writeToBuffer(serializeDownload(*download), jsonBuffer, jsonBufferLength);
         }
         catch (const std::exception& exception)
         {

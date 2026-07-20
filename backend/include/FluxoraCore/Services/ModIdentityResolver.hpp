@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FluxoraCore/Services/FomodInstallerService.hpp"
+#include "FluxoraCore/Services/ModUpdateService.hpp"
 
 #include <filesystem>
 #include <functional>
@@ -93,14 +94,33 @@ namespace fluxora
         FirstFreeCopySuffix
     };
 
+    enum class NexusFileMetadataSource
+    {
+        Cache,
+        Network,
+        Unavailable
+    };
+
+    struct NexusFileMetadataLookup
+    {
+        NexusFileMetadataSource source{NexusFileMetadataSource::Unavailable};
+        std::optional<NexusModFilesResponse> response;
+        long long durationMs{0};
+    };
+
     struct ModIdentityPlanRequest
     {
         std::filesystem::path projectDirectory;
         std::filesystem::path archivePath;
         std::wstring archiveFingerprint;
+        std::wstring requestedInstallName;
         ModIdentityInput input;
         FomodInstallerDescriptor fomodInstaller;
         std::function<ModIdentityContentAnchors()> loadIncomingContent;
+        std::function<NexusFileMetadataLookup(
+            std::wstring_view gameDomain,
+            std::wstring_view modId,
+            bool allowNetwork)> loadNexusFiles;
     };
 
     struct ModIdentityInstallSelection
@@ -141,7 +161,8 @@ namespace fluxora
 
         [[nodiscard]] static ModIdentityResolution resolve(
             const ModIdentityInput& input,
-            const std::vector<ModIdentityCandidate>& candidates);
+            const std::vector<ModIdentityCandidate>& candidates,
+            const NexusModFilesResponse* nexusFiles = nullptr);
 
         [[nodiscard]] static FluxoraInstallPlan createInstallPlan(
             ModIdentityPlanRequest request,

@@ -17,12 +17,14 @@ add_executable(FluxoraCoreTests
     AppSettingsServiceTests.cpp
     ArchiveCatalogServiceTests.cpp
     AtomicFileStoreTests.cpp
+    BuildFileWorkspaceServiceTests.cpp
     BuildPathSettingsServiceTests.cpp
     ContentLayoutServiceTests.cpp
     DownloadServiceTests.cpp
     DownloadTransferLimiterTests.cpp
     EffectiveFileTreeServiceTests.cpp
     ExecutableServiceTests.cpp
+    ExternalConnectionServiceTests.cpp
     PgPatcherExecutableServiceTests.cpp
     GameDetectionHealthServiceTests.cpp
     GameDefinitionLoaderTests.cpp
@@ -44,6 +46,8 @@ add_executable(FluxoraCoreTests
     ModFileOperationsIntegrationTests.cpp
     ModIdentityResolverTests.cpp
     ModUpdateServiceTests.cpp
+    NexusDownloadDuplicateResolverTests.cpp
+    NexusFileLineageResolverTests.cpp
     ModOrganizerTransferBuildTests.cpp
     ModOrganizerImportServiceTests.cpp
     ModOrganizerPluginGroupServiceTests.cpp
@@ -62,6 +66,9 @@ add_executable(FluxoraCoreTests
     ../src/Services/AppSettingsService.cpp
     ../src/Services/ArchiveCatalogService.cpp
     ../src/Services/BulkFileCopyService.cpp
+    ../src/Services/BuildFileDiscoveryService.cpp
+    ../src/Services/ConfigRecipeRegistry.cpp
+    ../src/Services/BuildFileWorkspaceService.cpp
     ../src/Services/BuildPathSettingsService.cpp
     ../src/Services/ContentLayoutService.cpp
     ../src/GameSupport/DefinitionBackedGameSupport.cpp
@@ -76,12 +83,14 @@ add_executable(FluxoraCoreTests
     ../src/Services/EffectiveFileTreeService.cpp
     ../src/Services/ExecutableIconService.cpp
     ../src/Services/ExecutableService.cpp
+    ../src/Services/ExternalConnectionService.cpp
     ../src/Services/FomodInstallerService.cpp
     ../src/Services/FomodProfileContextService.cpp
     ../src/Services/FomodAutoSelectionService.cpp
     ../src/Services/FluxPackPackage.cpp
     ../src/Services/FluxPackService.cpp
     ../src/Services/GrassCacheService.cpp
+    ../src/Services/ManagedAiOverrideService.cpp
     ../src/Services/HookService.cpp
     ../src/Services/InstallConflictPreviewService.cpp
     ../src/Services/InstallOperationService.cpp
@@ -93,6 +102,8 @@ add_executable(FluxoraCoreTests
     ../src/Services/ModOrganizerImportService.cpp
     ../src/Services/ModService.cpp
     ../src/Services/ModUpdateService.cpp
+    ../src/Services/NexusDownloadDuplicateResolver.cpp
+    ../src/Services/NexusFileLineageResolver.cpp
     ../src/Services/NexusUpdateCache.cpp
     ../src/Services/NexusUpdateHttpApi.cpp
     ../src/Services/ModIdentityResolver.cpp
@@ -248,6 +259,19 @@ if(WIN32)
             -HostPath "$<TARGET_FILE:FluxoraBridgeHost>")
     set_tests_properties(FluxoraBridgeHostProtocol PROPERTIES
         LABELS "bridge;smoke"
+        TIMEOUT 30)
+
+    add_test(
+        NAME FluxoraBuildFilesBridgeProtocol
+        COMMAND "${FLUXORA_POWERSHELL_EXECUTABLE}"
+            -NoProfile
+            -NonInteractive
+            -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/BuildFilesBridgeProtocol.Tests.ps1"
+            -HostPath "$<TARGET_FILE:FluxoraBridgeHost>")
+    set_tests_properties(FluxoraBuildFilesBridgeProtocol PROPERTIES
+        LABELS "bridge;smoke;ai-files"
+        PASS_REGULAR_EXPRESSION "Build-files bridge protocol passed"
         TIMEOUT 30)
 
     add_test(

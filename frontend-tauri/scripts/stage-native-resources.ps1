@@ -11,7 +11,7 @@ $configuration = if ($env:FLUXORA_NATIVE_CONFIGURATION) { $env:FLUXORA_NATIVE_CO
 $requiredArtifacts = @('FluxoraBridgeHost.exe', 'FluxoraCore.dll')
 $isWindows = [string]::Equals($env:OS, 'Windows_NT', [System.StringComparison]::OrdinalIgnoreCase)
 $optionalArtifacts = @()
-$aiHostCargoName = if ($isWindows) { 'fluxora-ai-host.exe' } else { 'fluxora-ai-host' }
+$aiHostCargoName = if ($isWindows) { 'fluxora_ai_host.exe' } else { 'fluxora_ai_host' }
 $aiHostResourceName = if ($isWindows) { 'FluxoraAIHost.exe' } else { 'FluxoraAIHost' }
 
 if ($isWindows) {
@@ -69,9 +69,9 @@ foreach ($artifact in $optionalArtifacts) {
 
 Push-Location $tauriRustRoot
 try {
-    & cargo build --release --bin fluxora-ai-host
+    & cargo build --release --bin fluxora_ai_host
     if ($LASTEXITCODE -ne 0) {
-        throw "cargo build --release --bin fluxora-ai-host failed with exit code $LASTEXITCODE."
+        throw "cargo build --release --bin fluxora_ai_host failed with exit code $LASTEXITCODE."
     }
 }
 finally {

@@ -12,6 +12,7 @@
 #include <initializer_list>
 #include <map>
 #include <memory>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -498,8 +499,11 @@ namespace fluxora
         class NexusUpdateHttpApi final : public NexusUpdateApi
         {
         public:
-            NexusUpdateHttpApi(Logger& logger, NexusModsAuthService& auth) noexcept
-                : logger_(logger), auth_(auth)
+            NexusUpdateHttpApi(
+                Logger& logger,
+                NexusModsAuthService& auth,
+                std::chrono::milliseconds overallTimeout) noexcept
+                : logger_(logger), auth_(auth), overallTimeout_(overallTimeout)
             {
             }
 
@@ -531,8 +535,48 @@ namespace fluxora
                         NexusUpdateApiErrorKind::AuthenticationUnavailable,
                         "NexusMods authentication is unavailable.");
                 }
+                const std::chrono::steady_clock::time_point deadline =
+                    overallTimeout_.count() > 0
+                    ? std::chrono::steady_clock::now() + overallTimeout_
+                    : (std::chrono::steady_clock::time_point::max)();
+                return getWithAuth(pathAndQuery, authHeader, true, deadline);
+            }
 
+            HttpResponse getWithAuth(
+                const std::wstring& pathAndQuery,
+                const NexusModsApiAuthHeader& authHeader,
+                bool allowUnauthorizedRefresh,
+                std::chrono::steady_clock::time_point deadline)
+            {
 #ifdef _WIN32
+                const auto applyRemainingTimeout = [&](HINTERNET handle)
+                {
+                    if (overallTimeout_.count() <= 0)
+                    {
+                        return;
+                    }
+                    const auto now = std::chrono::steady_clock::now();
+                    if (now >= deadline)
+                    {
+                        throw NexusUpdateApiError(
+                            NexusUpdateApiErrorKind::Offline,
+                            "NexusMods update request exceeded its overall timeout.");
+                    }
+                    const long long remainingMs = (std::max)(
+                        1LL,
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            deadline - now).count());
+                    const int timeoutMs = static_cast<int>((std::min)(
+                        remainingMs,
+                        static_cast<long long>((std::numeric_limits<int>::max)())));
+                    WinHttpSetTimeouts(
+                        handle,
+                        timeoutMs,
+                        timeoutMs,
+                        timeoutMs,
+                        timeoutMs);
+                };
+
                 InternetHandle session(WinHttpOpen(
                     L"Fluxora/0.1",
                     WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -545,7 +589,14 @@ namespace fluxora
                         NexusUpdateApiErrorKind::Network,
                         "Failed to initialize NexusMods update request.");
                 }
-                WinHttpSetTimeouts(session.get(), 15'000, 15'000, 15'000, 30'000);
+                if (overallTimeout_.count() > 0)
+                {
+                    applyRemainingTimeout(session.get());
+                }
+                else
+                {
+                    WinHttpSetTimeouts(session.get(), 15'000, 15'000, 15'000, 30'000);
+                }
 
                 InternetHandle connection(WinHttpConnect(
                     session.get(),
@@ -579,6 +630,7 @@ namespace fluxora
                     L"Application-Name: Fluxora\r\n"
                     L"Application-Version: 0.1.0\r\n" +
                     authHeader.headerName + L": " + authHeader.headerValue + L"\r\n";
+                applyRemainingTimeout(request.get());
                 if (!WinHttpSendRequest(
                         request.get(),
                         headers.c_str(),
@@ -586,8 +638,15 @@ namespace fluxora
                         WINHTTP_NO_REQUEST_DATA,
                         0,
                         0,
-                        0) ||
-                    !WinHttpReceiveResponse(request.get(), nullptr))
+                        0))
+                {
+                    const DWORD error = GetLastError();
+                    throw NexusUpdateApiError(
+                        networkErrorKind(error),
+                        "NexusMods update request failed.");
+                }
+                applyRemainingTimeout(request.get());
+                if (!WinHttpReceiveResponse(request.get(), nullptr))
                 {
                     const DWORD error = GetLastError();
                     throw NexusUpdateApiError(
@@ -623,10 +682,16 @@ namespace fluxora
                 }
 
                 DWORD available = 0;
-                while (WinHttpQueryDataAvailable(request.get(), &available) && available > 0)
+                for (;;)
                 {
+                    applyRemainingTimeout(request.get());
+                    if (!WinHttpQueryDataAvailable(request.get(), &available) || available == 0)
+                    {
+                        break;
+                    }
                     std::vector<char> chunk(available);
                     DWORD read = 0;
+                    applyRemainingTimeout(request.get());
                     if (!WinHttpReadData(request.get(), chunk.data(), available, &read))
                     {
                         const DWORD error = GetLastError();
@@ -646,6 +711,21 @@ namespace fluxora
                         "NexusMods update request was rate limited.",
                         quota,
                         retryAtFromHeaders(response.headers, quota));
+                }
+                if (statusCode == 401 &&
+                    allowUnauthorizedRefresh &&
+                    authHeader.credentialKind == L"oauth")
+                {
+                    const NexusModsApiAuthHeader retryHeader =
+                        auth_.retryApiAuthHeaderAfterUnauthorized(authHeader);
+                    if (retryHeader.isAvailable)
+                    {
+                        logger_.writeOperation(
+                            LogLevel::Info,
+                            "ModUpdates",
+                            "Nexus request received HTTP 401; retrying once after synchronized OAuth refresh.");
+                        return getWithAuth(pathAndQuery, retryHeader, false, deadline);
+                    }
                 }
                 if (statusCode == 401 || statusCode == 403)
                 {
@@ -672,13 +752,15 @@ namespace fluxora
 
             Logger& logger_;
             NexusModsAuthService& auth_;
+            std::chrono::milliseconds overallTimeout_;
         };
     }
 
     std::unique_ptr<NexusUpdateApi> createNexusUpdateApi(
         Logger& logger,
-        NexusModsAuthService& auth)
+        NexusModsAuthService& auth,
+        std::chrono::milliseconds overallTimeout)
     {
-        return std::make_unique<NexusUpdateHttpApi>(logger, auth);
+        return std::make_unique<NexusUpdateHttpApi>(logger, auth, overallTimeout);
     }
 }

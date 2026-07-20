@@ -964,27 +964,20 @@ namespace fluxora
                 }
                 for (const FomodGroup& group : step.groups)
                 {
-                    const bool independentGroup = std::all_of(
-                        group.options.begin(),
-                        group.options.end(),
-                        [](const FomodOption& option)
-                        {
-                            return option.typePatterns.empty() &&
-                                std::all_of(
-                                    option.pluginHeaders.begin(),
-                                    option.pluginHeaders.end(),
-                                    [](const FomodPluginHeader& header)
-                                    {
-                                        return header.masters.empty();
-                                    });
-                        });
-                    if (!independentGroup)
-                    {
-                        continue;
-                    }
                     for (const FomodOption& option : group.options)
                     {
-                        output.insert(option.id);
+                        const bool independentOption = option.typePatterns.empty() &&
+                            std::all_of(
+                                option.pluginHeaders.begin(),
+                                option.pluginHeaders.end(),
+                                [](const FomodPluginHeader& header)
+                                {
+                                    return header.masters.empty();
+                                });
+                        if (independentOption)
+                        {
+                            output.insert(option.id);
+                        }
                     }
                 }
             }

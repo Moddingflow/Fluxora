@@ -8,6 +8,7 @@
 #include "FluxoraCore/Services/IService.hpp"
 #include "FluxoraCore/Services/InstallConflictPreviewService.hpp"
 #include "FluxoraCore/Services/ModIdentityResolver.hpp"
+#include "FluxoraCore/Services/NexusDownloadDuplicateResolver.hpp"
 
 #include <condition_variable>
 #include <deque>
@@ -26,6 +27,34 @@ namespace fluxora
     class BuildPathSettingsService;
     class Logger;
     class NexusModsAuthService;
+
+    struct DownloadDuplicateFile
+    {
+        std::wstring id;
+        std::wstring fileId;
+        std::wstring fileName;
+        std::wstring version;
+        // Durable snapshot-only field. It is persisted in the local sidecar but omitted
+        // from the renderer DTO.
+        std::wstring sha256;
+    };
+
+    struct DownloadDuplicateDecision
+    {
+        std::wstring decisionId;
+        std::wstring direction;
+        DownloadDuplicateFile incomingFile;
+        std::vector<DownloadDuplicateFile> existingFiles;
+        // Opaque native serialization key used only to serialize replacements.
+        std::wstring lineageKey;
+    };
+
+    enum class DownloadDuplicateChoice
+    {
+        Replace = 0,
+        KeepBoth = 1,
+        Cancel = 2
+    };
 
     struct DownloadEntry
     {
@@ -51,6 +80,7 @@ namespace fluxora
         bool canResume{false};
         bool canInstall{false};
         bool canDelete{true};
+        std::optional<DownloadDuplicateDecision> duplicateDecision;
     };
 
     struct InstalledMod
@@ -147,6 +177,12 @@ namespace fluxora
         DownloadEntry resumeDownload(
             const std::filesystem::path& projectDirectory,
             const std::filesystem::path& downloadPath) const;
+
+        [[nodiscard]] std::optional<DownloadEntry> resolveDuplicateDecision(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& downloadPath,
+            std::wstring_view decisionId,
+            DownloadDuplicateChoice choice) const;
 
         [[nodiscard]] FluxoraInstallPlan planDownloadInstall(
             const std::filesystem::path& projectDirectory,
@@ -257,6 +293,8 @@ namespace fluxora
             std::wstring link;
             std::wstring nexusModName;
             std::string operationId;
+            std::optional<DownloadDuplicateDecision> duplicateDecision;
+            std::optional<DownloadDuplicateChoice> duplicateChoice;
 #ifdef FLUXORA_DOWNLOAD_SERVICE_TEST_HOOKS
             std::function<void()> transferProbe;
 #endif

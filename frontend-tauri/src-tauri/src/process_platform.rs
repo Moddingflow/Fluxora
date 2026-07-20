@@ -29,7 +29,6 @@ mod platform {
     type Handle = *mut c_void;
 
     const INVALID_HANDLE_VALUE: Handle = -1isize as Handle;
-    const PROCESS_TERMINATE: u32 = 0x0001;
     const SYNCHRONIZE: u32 = 0x0010_0000;
     const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
     const TH32CS_SNAPMODULE: u32 = 0x0000_0008;
@@ -70,7 +69,6 @@ mod platform {
     extern "system" {
         fn OpenProcess(dw_desired_access: u32, b_inherit_handle: i32, dw_process_id: u32)
             -> Handle;
-        fn TerminateProcess(h_process: Handle, u_exit_code: u32) -> i32;
         fn WaitForSingleObject(h_handle: Handle, dw_milliseconds: u32) -> u32;
         fn CloseHandle(h_object: Handle) -> i32;
         fn CreateToolhelp32Snapshot(dw_flags: u32, th32_process_id: u32) -> Handle;
@@ -206,22 +204,6 @@ mod platform {
         }
     }
 
-    pub fn terminate_process(process_id: u32) -> bool {
-        if process_id == 0 {
-            return false;
-        }
-
-        let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
-        if handle.is_null() {
-            return false;
-        }
-        let terminated = unsafe { TerminateProcess(handle, 1) } != 0;
-        unsafe {
-            CloseHandle(handle);
-        }
-        terminated
-    }
-
     pub fn find_process_by_names(names: &[String]) -> Option<(u32, String)> {
         if names.is_empty() {
             return None;
@@ -298,14 +280,12 @@ mod platform {
 
 #[cfg(windows)]
 pub use platform::{
-    find_process_by_names, find_processes_using_module, is_process_running, terminate_process,
-    wait_for_exit_signal,
+    find_process_by_names, find_processes_using_module, is_process_running, wait_for_exit_signal,
 };
 
 #[cfg(not(windows))]
 mod platform {
     use super::{NativeExitWait, ProcessInfo};
-    use std::process::Command;
 
     pub fn is_process_running(process_id: u32) -> bool {
         process_id != 0
@@ -316,16 +296,6 @@ mod platform {
 
     pub fn find_process_by_names(_names: &[String]) -> Option<(u32, String)> {
         None
-    }
-
-    pub fn terminate_process(process_id: u32) -> bool {
-        process_id != 0
-            && Command::new("kill")
-                .arg("-TERM")
-                .arg(process_id.to_string())
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false)
     }
 
     pub fn wait_for_exit_signal(_process_id: u32) -> NativeExitWait {
@@ -339,8 +309,7 @@ mod platform {
 
 #[cfg(not(windows))]
 pub use platform::{
-    find_process_by_names, find_processes_using_module, is_process_running, terminate_process,
-    wait_for_exit_signal,
+    find_process_by_names, find_processes_using_module, is_process_running, wait_for_exit_signal,
 };
 
 #[cfg(all(test, windows))]

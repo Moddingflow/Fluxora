@@ -82,14 +82,10 @@ import {
   createAiMessage,
   createAiStreamEvent,
   initialAiChatState,
-  type AiSubagentChatMetadata,
   type AiRun
 } from './features/ai/ai-chat-state';
 import {
-  aiSessionStorageKey,
   createAiHostChatRequest,
-  createAiSupportBundleSnapshot,
-  createAiSessionForScope,
   createAiRunForPrompt,
   loadAiSession,
   saveAiSession,
@@ -97,14 +93,9 @@ import {
   type AiLocalRunHandle,
   type AiRuntimeLogEntry
 } from './features/ai/ai-chat-runtime';
-import { aiAutonomousJobQueueStorageKey } from './features/ai/ai-autonomous-jobs';
-import { collectAiBuildContext, type AiBuildOperationHint } from './features/ai/ai-build-tools';
 import {
   aiProviderDiagnostic,
   loadAiChatSettings,
-  normalizeAiChatSettings,
-  providerForModel,
-  saveAiChatSettings,
   type AiChatSettings
 } from './features/ai/ai-chat-settings';
 import {
@@ -130,6 +121,7 @@ import {
   deletionSubjectLabel,
   type DeletionConfirmationKind
 } from './features/deletion/DeletionConfirmationDialog';
+import { DownloadDuplicateDecisionDialog } from './features/downloads/DownloadDuplicateDecisionDialog';
 import { MissingMastersStatus } from './features/plugins/MissingMastersStatus';
 import {
   InstallDialog,
@@ -261,6 +253,7 @@ import {
   emptyDownloadWorkspaceState,
   filterDownloadEntries,
   hasActiveDownload,
+  queuedDownloadDuplicateDecisions,
   selectedDownloadEntry
 } from './download-workspace-state';
 import {
@@ -279,24 +272,22 @@ import {
   selectedProfileName
 } from './profiles-executables-workspace-state';
 import {
-  createCheckingNexusAuthStatus,
-  createUnavailableNexusAuthStatus,
-  createVerifiedNexusAuthStatus,
-  loadCachedNexusAuthStatus,
-  nexusCanToggle,
-  nexusIsVerified,
-  nexusIsVerifiedLinked,
   normalizeThemeMode,
   selectPreferredTransferDrive,
   fluxoraOriginalRepositoryUrl,
   loadDeveloperModeSetting,
-  saveCachedNexusAuthStatus,
   saveDeveloperModeSetting,
   settingsCapabilityView,
-  type NexusAuthViewStatus,
   type SettingsSectionId
 } from './settings-workspace-state';
-import { loadNexusStatusAndLimits } from './nexus-auth-workflow';
+import {
+  connectionCanToggle,
+  connectionIsReady,
+  loadCachedConnectionSnapshot,
+  mergeConnectionStatus,
+  providerFromSnapshot,
+  saveCachedConnectionSnapshot
+} from './connection-workspace-state';
 import {
   type TransferStepId
 } from './TransferSettingsPanel';
@@ -343,6 +334,17 @@ import {
   applyModUpdateResultToOrderItems,
   createModUpdateCoordinator
 } from './services/mod-update-coordinator';
+import {
+  createExternalConnectionCoordinator,
+  type ExternalConnectionCoordinator
+} from './services/external-connection-coordinator';
+import {
+  modUpdateFreshnessView,
+  modUpdateProjectKey,
+  modUpdateTransientMessage,
+  rememberModUpdateResult,
+  type ModUpdateResultsByProject
+} from './services/mod-update-status';
 import { installRendererRefreshShortcut } from './services/renderer-refresh-shortcut-service';
 import {
   createPendingPathAccumulator,
@@ -360,9 +362,13 @@ import { createVirtualWindow } from './ui-performance';
 import type {
   FluxoraAppInfo,
   FluxoraAiHostStatus,
+  FluxoraAiFileChange,
+  FluxoraAiFileChangeSet,
   FluxoraApiLimitProvider,
+  FluxoraExternalConnectionSnapshot,
   FluxoraContentLayoutPreview,
   FluxoraDownloadEntry,
+  FluxoraDownloadDuplicateChoice,
   FluxoraExecutable,
   FluxoraExecutableLaunchResult,
   FluxoraExistingModInstallMode,
@@ -389,7 +395,6 @@ import type {
   FluxoraModDetailsContent,
   FluxoraModFileTreeEntry,
   FluxoraModOrderItem,
-  FluxoraNexusModsAuthStatus,
   FluxoraNxmInboundLinksCaptured,
   FluxoraNxmProtocolResult,
   FluxoraPluginOrderItem,
@@ -574,6 +579,7 @@ interface PendingPluginEnableSave extends PendingPluginEnabledState {
 
 interface ActiveAiRunControl {
   cancelled: boolean;
+  chatId: string;
   handle: AiLocalRunHandle | null;
   operationId: string;
   runId: string;
@@ -642,6 +648,17 @@ const modDetailsBootstrapStoragePrefix = 'fluxora.mod-details.bootstrap.';
 
 const modDetailsBootstrapStorageKey = (key: string): string =>
   `${modDetailsBootstrapStoragePrefix}${key}`;
+
+const expandedParentsForRelativePath = (relativePath?: string): Record<string, boolean> => {
+  const parts = (relativePath ?? '').replaceAll('\\', '/').split('/').filter(Boolean);
+  const expanded: Record<string, boolean> = {};
+  let current = '';
+  for (const part of parts.slice(0, -1)) {
+    current = current ? `${current}/${part}` : part;
+    expanded[current] = true;
+  }
+  return expanded;
+};
 
 type ModDetailsBootstrapWindow = Window & {
   __FLUXORA_MOD_DETAILS_BOOTSTRAP__?: FluxoraModDetailsBootstrap;
@@ -1238,10 +1255,10 @@ export const App = () => {
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [aiChat, dispatchAiChat] = useReducer(aiChatReducer, initialAiChatState);
   const [aiHostStatus, setAiHostStatus] = useState<FluxoraAiHostStatus | null>(null);
-  const [aiChatSettings, setAiChatSettings] = useState<AiChatSettings>(() =>
+  const [aiChatSettings] = useState<AiChatSettings>(() =>
     loadAiChatSettings(window.localStorage)
   );
-  const activeAiRunRef = useRef<ActiveAiRunControl | null>(null);
+  const activeAiRunsRef = useRef<Map<string, ActiveAiRunControl>>(new Map());
   const [openingBuildSplash, setOpeningBuildSplash] =
     useState<OpeningBuildSplashState | null>(null);
   const [isOpeningBuildLocked, setIsOpeningBuildLocked] = useState(false);
@@ -1305,12 +1322,32 @@ export const App = () => {
     loadDeveloperModeSetting(window.localStorage)
   );
   const [settingsBusyLabel, setSettingsBusyLabel] = useState<string | null>(null);
-  const [nexusStatus, setNexusStatus] = useState<NexusAuthViewStatus>(() =>
-    loadCachedNexusAuthStatus(window.localStorage)
+  const [connectionSnapshot, setConnectionSnapshot] = useState<FluxoraExternalConnectionSnapshot>(() =>
+    loadCachedConnectionSnapshot(window.localStorage)
   );
-  const [nexusBusy, setNexusBusy] = useState(false);
+  const [connectionBusyProviderId, setConnectionBusyProviderId] = useState<string | null>(null);
   const [apiLimitProviders, setApiLimitProviders] = useState<FluxoraApiLimitProvider[]>([]);
   const [apiLimitsBusy, setApiLimitsBusy] = useState(false);
+  const connectionCoordinatorRef = useRef<ExternalConnectionCoordinator | null>(null);
+  const connectionCoordinator = useMemo(
+    () =>
+      createExternalConnectionCoordinator({
+        api: {
+          listStatus: (request) => window.fluxora.connections.listStatus(request),
+          restoreAll: (attempt, request) => window.fluxora.connections.restoreAll(attempt, request)
+        },
+        createOperationId: createRendererOperationId,
+        initialSnapshot: connectionSnapshot,
+        onSnapshot: (snapshot) => {
+          setConnectionSnapshot(snapshot);
+          saveCachedConnectionSnapshot(window.localStorage, snapshot);
+        }
+      }),
+    []
+  );
+  connectionCoordinatorRef.current = connectionCoordinator;
+  const nexusConnection = providerFromSnapshot(connectionSnapshot, 'nexus');
+  const nexusConnectionReady = connectionIsReady(nexusConnection);
   const nxmAutoRegistrationAttemptedRef = useRef(false);
   const pendingInboundNxmEventRef = useRef<FluxoraNxmInboundLinksCaptured | null>(null);
   const [transferSourceDirectory, setTransferSourceDirectory] = useState('');
@@ -1343,6 +1380,10 @@ export const App = () => {
     emptyModWorkspaceState
   );
   const [installedMods, setInstalledMods] = useState<FluxoraInstalledMod[]>([]);
+  const [modUpdateResultsByProject, setModUpdateResultsByProject] =
+    useState<ModUpdateResultsByProject>({});
+  const [manualModUpdateNotice, setManualModUpdateNotice] = useState<string | null>(null);
+  const manualModUpdateNoticeTimerRef = useRef<number | null>(null);
   const modUpdateApplyRef = useRef<(
     projectDirectory: string,
     result: Parameters<typeof applyModUpdateResultToInstalledMods>[1]
@@ -1351,6 +1392,9 @@ export const App = () => {
     if (selectedProjectDirectoryRef.current !== projectDirectory) {
       return;
     }
+    setModUpdateResultsByProject((current) =>
+      rememberModUpdateResult(current, projectDirectory, result)
+    );
     setInstalledMods((current) => applyModUpdateResultToInstalledMods(current, result));
     dispatchModsWorkspace({
       type: 'items-loaded',
@@ -1366,7 +1410,10 @@ export const App = () => {
         },
         createOperationId: createRendererOperationId,
         onApplied: (projectDirectory, result) =>
-          modUpdateApplyRef.current(projectDirectory, result)
+          modUpdateApplyRef.current(projectDirectory, result),
+        onAuthenticationUnavailable: () => {
+          void connectionCoordinatorRef.current?.retryNow('mod_updates_auth_unavailable');
+        }
       }),
     []
   );
@@ -1396,7 +1443,9 @@ export const App = () => {
     }
   );
   const modDetailsContentCacheRef = useRef(createModDetailsContentCache());
-  const [expandedFileTree, setExpandedFileTree] = useState<Record<string, boolean>>({});
+  const [expandedFileTree, setExpandedFileTree] = useState<Record<string, boolean>>(
+    () => expandedParentsForRelativePath(initialModDetailsBootstrap?.highlightRelativePath)
+  );
   const [fileTreeState, setFileTreeState] = useState<'idle' | 'loading' | 'ready' | 'error'>(
     () =>
       initialModDetailsBootstrap?.content || initialModDetailsBootstrap?.rootFileTree
@@ -1462,6 +1511,8 @@ export const App = () => {
     useState<RowContextMenuPosition | null>(null);
   const [downloadListScrollTop, setDownloadListScrollTop] = useState(0);
   const [downloadDropCue, setDownloadDropCueState] = useState<DownloadDropCue>('idle');
+  const [downloadDuplicateDecisionResolving, setDownloadDuplicateDecisionResolving] = useState(false);
+  const [downloadDuplicateDecisionError, setDownloadDuplicateDecisionError] = useState<string | null>(null);
   const [draggedDownloadInstallId, setDraggedDownloadInstallId] = useState<string | null>(null);
   const downloadDropCueRef = useRef<DownloadDropCue>('idle');
   const downloadDropSurfaceRef = useRef<HTMLDivElement | null>(null);
@@ -1710,6 +1761,9 @@ export const App = () => {
     [projects, selectedProjectId]
   );
   selectedProjectDirectoryRef.current = selectedProject?.projectDirectory ?? null;
+  const currentModUpdateResult = selectedProject
+    ? modUpdateResultsByProject[modUpdateProjectKey(selectedProject.projectDirectory)]
+    : undefined;
   useEffect(() => {
     const projectDirectory = selectedProject?.projectDirectory;
     if (!projectDirectory || loadedWorkspaceProjectId !== selectedProject.id) {
@@ -1798,6 +1852,7 @@ export const App = () => {
     if (
       isSecondaryWindow ||
       !bridgeStatus?.ready ||
+      !nexusConnectionReady ||
       !selectedProject ||
       loadedWorkspaceProjectId !== selectedProject.id
     ) {
@@ -1810,11 +1865,17 @@ export const App = () => {
     isSecondaryWindow,
     loadedWorkspaceProjectId,
     modUpdateCoordinator,
+    nexusConnectionReady,
     selectedProject?.id,
     selectedProject?.projectDirectory
   ]);
 
   useEffect(() => () => modUpdateCoordinator.stop(), [modUpdateCoordinator]);
+  useEffect(() => () => {
+    if (manualModUpdateNoticeTimerRef.current !== null) {
+      window.clearTimeout(manualModUpdateNoticeTimerRef.current);
+    }
+  }, []);
   const aiSessionScope = useMemo(
     () => ({
       buildLabel: selectedProject?.name,
@@ -2011,6 +2072,17 @@ export const App = () => {
     () => filterDownloadEntries(downloadsWorkspace.items, deferredDownloadSearchText),
     [downloadsWorkspace.items, deferredDownloadSearchText]
   );
+
+  const downloadDuplicateDecisionQueue = useMemo(
+    () => queuedDownloadDuplicateDecisions(downloadsWorkspace.items),
+    [downloadsWorkspace.items]
+  );
+  const activeDownloadDuplicateDecision = downloadDuplicateDecisionQueue[0] ?? null;
+
+  useEffect(() => {
+    setDownloadDuplicateDecisionError(null);
+    setDownloadDuplicateDecisionResolving(false);
+  }, [activeDownloadDuplicateDecision?.id]);
 
   const selectableDownloadIds = useMemo(
     () => filteredDownloadItems.map((entry) => entry.id),
@@ -2460,22 +2532,10 @@ export const App = () => {
     [bridgeStatus]
   );
 
-  const rememberNexusStatus = (status: FluxoraNexusModsAuthStatus) => {
-    setNexusStatus(createVerifiedNexusAuthStatus(status));
-    saveCachedNexusAuthStatus(window.localStorage, status);
-  };
   const rememberApiLimitProviders = (providers: FluxoraApiLimitProvider[]) => {
     setApiLimitProviders(providers);
   };
-  const markNexusStatusChecking = () => {
-    setNexusStatus((currentStatus) => createCheckingNexusAuthStatus(currentStatus));
-  };
-  const markNexusStatusUnavailable = (error: unknown, operationId?: string) => {
-    setNexusStatus((currentStatus) =>
-      createUnavailableNexusAuthStatus(currentStatus, errorMessage(error), operationId)
-    );
-  };
-  const nexusVerifiedLinked = nexusIsVerifiedLinked(nexusStatus);
+  const nexusVerifiedLinked = nexusConnectionReady;
 
   const isTransferRunning = transferRunningOperationId !== null;
   const operationCancellationSupported =
@@ -3855,7 +3915,10 @@ export const App = () => {
     );
   };
 
-  const openModDetailsWindow = async (item: FluxoraModOrderItem) => {
+  const openModDetailsWindow = async (
+    item: FluxoraModOrderItem,
+    highlightRelativePath?: string
+  ) => {
     if (!selectedProject || !item.isMod) {
       return;
     }
@@ -3875,6 +3938,7 @@ export const App = () => {
         item,
         rootFileTree: preloadedFileTree[''],
         content,
+        highlightRelativePath,
         createdAt: Date.now()
       };
       writeModDetailsBootstrap({
@@ -3967,7 +4031,21 @@ export const App = () => {
     }
 
     await runModMutation('Checking updates', async (operationId) => {
-      await modUpdateCoordinator.checkManual(selectedProject.projectDirectory, operationId);
+      const result = await modUpdateCoordinator.checkManual(
+        selectedProject.projectDirectory,
+        operationId
+      );
+      const transientMessage = modUpdateTransientMessage(result);
+      if (transientMessage) {
+        setManualModUpdateNotice(transientMessage);
+        if (manualModUpdateNoticeTimerRef.current !== null) {
+          window.clearTimeout(manualModUpdateNoticeTimerRef.current);
+        }
+        manualModUpdateNoticeTimerRef.current = window.setTimeout(() => {
+          setManualModUpdateNotice((current) => current === transientMessage ? null : current);
+          manualModUpdateNoticeTimerRef.current = null;
+        }, 5_000);
+      }
     });
   };
 
@@ -6642,6 +6720,47 @@ export const App = () => {
     );
   };
 
+  const resolveDownloadDuplicateDecision = async (
+    choice: FluxoraDownloadDuplicateChoice
+  ) => {
+    const project = selectedProject;
+    const entry = activeDownloadDuplicateDecision;
+    const decision = entry?.duplicateDecision;
+    if (!project || !entry || !decision || downloadDuplicateDecisionResolving) {
+      return;
+    }
+
+    const operationId = createRendererOperationId('downloads_resolve_duplicate_decision');
+    setDownloadDuplicateDecisionResolving(true);
+    setDownloadDuplicateDecisionError(null);
+    try {
+      const updated = await window.fluxora.downloads.resolveDuplicateDecision(
+        project.projectDirectory,
+        downloadPath(entry),
+        decision.decisionId,
+        choice,
+        { operationId }
+      );
+      if (updated) {
+        dispatchDownloadsWorkspace({ type: 'items-upserted', items: [updated] });
+      } else {
+        dispatchDownloadsWorkspace({ type: 'item-removed', id: entry.id });
+      }
+      void window.fluxora.ui.log({
+        level: 'info',
+        category: 'NxmDuplicate',
+        message: `Duplicate archive decision resolved: ${choice}.`,
+        operationId
+      });
+    } catch (error) {
+      const message = errorMessage(error);
+      setDownloadDuplicateDecisionError(message);
+      setMessage(message);
+    } finally {
+      setDownloadDuplicateDecisionResolving(false);
+    }
+  };
+
   const openDownloadInShell = async (entry: FluxoraDownloadEntry) => {
     const path = downloadPath(entry);
     const result = await window.fluxora.shell.showItemInFolder(path);
@@ -7264,17 +7383,21 @@ export const App = () => {
         setThemeMode(normalizeThemeMode(nextBridgeStatus.theme));
 
         if (nextBridgeStatus.ready) {
-          try {
-            const nextNexusStatus = await window.fluxora.nexus.getAuthStatus({ operationId });
-            if (isMounted) {
-              rememberNexusStatus(nextNexusStatus);
-            }
-          } catch (error) {
-            if (isMounted) {
-              markNexusStatusUnavailable(error, operationId);
+          if (!isSecondaryWindow) {
+            try {
+              await connectionCoordinator.bootstrap();
+            } catch (error) {
+              void window.fluxora.ui.log({
+                level: 'warning',
+                category: 'Connections',
+                message: `Startup connection restoration continued offline: ${errorMessage(error)}`,
+                operationId
+              });
             }
           }
-          await loadCatalog();
+          if (isMounted) {
+            await loadCatalog();
+          }
           return;
         }
 
@@ -7292,34 +7415,33 @@ export const App = () => {
 
     return () => {
       isMounted = false;
+      connectionCoordinator.stop();
     };
   }, []);
 
   useEffect(() => {
-    const handleOnline = () => {
-      const operationId = createRendererOperationId('nexus_online_retry');
-      markNexusStatusChecking();
-      setApiLimitsBusy(true);
-      void loadNexusStatusAndLimits({
-        getAuthStatus: () => window.fluxora.nexus.getAuthStatus({ operationId }),
-        listApiLimits: () => window.fluxora.apiLimits.list({ operationId })
-      }).then((result) => {
-        if (result.authStatus) {
-          rememberNexusStatus(result.authStatus);
-        } else {
-          markNexusStatusUnavailable(result.authError, operationId);
-        }
-        if (result.apiLimitProviders) {
-          rememberApiLimitProviders(result.apiLimitProviders);
-        }
-      }).finally(() => setApiLimitsBusy(false));
+    if (isSecondaryWindow) {
+      return undefined;
+    }
+    const retry = (reason: 'focus' | 'online' | 'visible') => {
+      void connectionCoordinator.retryNow(reason).catch(() => undefined);
     };
-
+    const handleOnline = () => retry('online');
+    const handleFocus = () => retry('focus');
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        retry('visible');
+      }
+    };
     window.addEventListener('online', handleOnline);
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       window.removeEventListener('online', handleOnline);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, []);
+  }, [connectionCoordinator, isSecondaryWindow]);
 
   useEffect(() => {
     if (
@@ -7386,8 +7508,11 @@ export const App = () => {
   }, [chromePlatform]);
 
   useEffect(() => {
-    activeAiRunRef.current?.handle?.dispose();
-    activeAiRunRef.current = null;
+    activeAiRunsRef.current.forEach((run) => {
+      run.handle?.dispose();
+      requestNativeAiRunCancel(run.operationId);
+    });
+    activeAiRunsRef.current.clear();
     dispatchAiChat({
       type: 'restore-session',
       session: loadAiSession(window.localStorage, aiSessionScope)
@@ -7399,20 +7524,7 @@ export const App = () => {
   }, [aiChat.session]);
 
   useEffect(() => {
-    saveAiChatSettings(window.localStorage, aiChatSettings);
-  }, [aiChatSettings]);
-
-  useEffect(() => {
-    setAiChatSettings((current) => {
-      const next = normalizeAiChatSettings(current, aiHostStatus);
-      return next.modelId === current.modelId && next.routingPreset === current.routingPreset
-        ? current
-        : next;
-    });
-  }, [aiHostStatus]);
-
-  useEffect(() => {
-    if (!aiChat.isOpen || isSecondaryWindow) {
+    if (!aiChat.isOpen || (isSecondaryWindow && !isSettingsWindow)) {
       return;
     }
 
@@ -7451,12 +7563,12 @@ export const App = () => {
     return () => {
       isCurrent = false;
     };
-  }, [aiChat.isOpen, isSecondaryWindow]);
+  }, [aiChat.isOpen, isSecondaryWindow, isSettingsWindow]);
 
   useEffect(
     () => () => {
-      activeAiRunRef.current?.handle?.dispose();
-      activeAiRunRef.current = null;
+      activeAiRunsRef.current.forEach((run) => run.handle?.dispose());
+      activeAiRunsRef.current.clear();
     },
     []
   );
@@ -7474,14 +7586,22 @@ export const App = () => {
         !isEditableShortcutTarget(event.target)
       ) {
         event.preventDefault();
-        dispatchAiChat({ type: 'toggle-open' });
+        if (selectedProject && activeRoute !== 'home') {
+          dispatchAiChat({ type: 'toggle-open' });
+        }
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
 
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isSecondaryWindow]);
+  }, [activeRoute, isSecondaryWindow, selectedProject]);
+
+  useEffect(() => {
+    if (!selectedProject && aiChat.isOpen) {
+      dispatchAiChat({ type: 'close' });
+    }
+  }, [aiChat.isOpen, selectedProject]);
 
   useEffect(() => {
     if (projectMenuId) {
@@ -8592,7 +8712,11 @@ export const App = () => {
           ? { '': initialModDetailsBootstrap.rootFileTree }
           : null;
     setFileTreeCache(bootstrapFileTree ?? {});
-    setExpandedFileTree({});
+    setExpandedFileTree(
+      bootstrapMatches
+        ? expandedParentsForRelativePath(initialModDetailsBootstrap?.highlightRelativePath)
+        : {}
+    );
     setModDetailsConflictScanState(
       bootstrapMatches && initialModDetailsBootstrap?.content ? 'ready' : 'idle'
     );
@@ -8615,6 +8739,7 @@ export const App = () => {
     activeRoute,
     initialModDetailsBootstrap?.content,
     initialModDetailsBootstrap?.modPath,
+    initialModDetailsBootstrap?.highlightRelativePath,
     initialModDetailsBootstrap?.rootFileTree,
     isModDetailsWindow,
     modDetailsSummary?.id,
@@ -10033,45 +10158,34 @@ export const App = () => {
     const operationId = createRendererOperationId('settings_load');
     setMessage(null);
     setApiLimitsBusy(true);
-    markNexusStatusChecking();
 
     try {
-      const [bridgeResult, nexusResult] = await Promise.allSettled([
-        window.fluxora.bridge.getStatus({ operationId }),
-        loadNexusStatusAndLimits({
-          getAuthStatus: () => window.fluxora.nexus.getAuthStatus({ operationId }),
-          listApiLimits: () => window.fluxora.apiLimits.list({ operationId })
-        })
+      const bridgeRequest = window.fluxora.bridge.getStatus({ operationId }).then((nextStatus) => {
+        const nextThemeMode = normalizeThemeMode(nextStatus.theme);
+        setBridgeStatus({ ...nextStatus, theme: nextThemeMode, operationId });
+        setThemeMode(nextThemeMode);
+      });
+      const connectionRequest = window.fluxora.connections.listStatus({ operationId }).then((snapshot) => {
+        connectionCoordinator.acceptSnapshot(snapshot);
+      });
+      const apiLimitsRequest = window.fluxora.apiLimits.list({ operationId }).then((status) => {
+        rememberApiLimitProviders(status.providers);
+      });
+      const [bridgeResult, connectionResult, apiLimitsResult] = await Promise.allSettled([
+        bridgeRequest,
+        connectionRequest,
+        apiLimitsRequest
       ]);
 
       const failures: unknown[] = [];
-      if (bridgeResult.status === 'fulfilled') {
-        const nextThemeMode = normalizeThemeMode(bridgeResult.value.theme);
-        setBridgeStatus({
-          ...bridgeResult.value,
-          theme: nextThemeMode,
-          operationId
-        });
-        setThemeMode(nextThemeMode);
-      } else {
+      if (bridgeResult.status === 'rejected') {
         failures.push(bridgeResult.reason);
       }
-
-      if (nexusResult.status === 'fulfilled') {
-        if (nexusResult.value.authStatus) {
-          rememberNexusStatus(nexusResult.value.authStatus);
-        } else {
-          markNexusStatusUnavailable(nexusResult.value.authError, operationId);
-          failures.push(nexusResult.value.authError);
-        }
-        if (nexusResult.value.apiLimitProviders) {
-          rememberApiLimitProviders(nexusResult.value.apiLimitProviders);
-        } else if (nexusResult.value.apiLimitsError) {
-          failures.push(nexusResult.value.apiLimitsError);
-        }
-      } else {
-        markNexusStatusUnavailable(nexusResult.reason, operationId);
-        failures.push(nexusResult.reason);
+      if (connectionResult.status === 'rejected') {
+        failures.push(connectionResult.reason);
+      }
+      if (apiLimitsResult.status === 'rejected') {
+        failures.push(apiLimitsResult.reason);
       }
 
       if (failures.length > 0) {
@@ -10082,44 +10196,42 @@ export const App = () => {
     }
   };
 
-  const toggleNexusConnection = async () => {
-    if (nexusBusy || !nexusCanToggle(nexusStatus, settingsCapabilities.nexusAvailable)) {
+  const toggleConnection = async (providerId: string) => {
+    const provider = providerFromSnapshot(connectionSnapshot, providerId);
+    const providerAvailable = providerId === 'nexus'
+      ? settingsCapabilities.nexusAvailable
+      : settingsCapabilities.settingsAvailable;
+    if (
+      connectionBusyProviderId ||
+      !connectionCanToggle(provider, providerAvailable) ||
+      !provider
+    ) {
       return;
     }
 
-    const shouldRetryStatus = !nexusIsVerified(nexusStatus);
-    const shouldDisconnect = nexusIsVerifiedLinked(nexusStatus);
+    const shouldDisconnect = connectionIsReady(provider);
     const operationId = createRendererOperationId(
-      shouldRetryStatus ? 'nexus_status_retry' : shouldDisconnect ? 'nexus_disconnect' : 'nexus_connect'
+      shouldDisconnect ? 'connection_disconnect' : 'connection_connect'
     );
-    setNexusBusy(true);
-    setApiLimitsBusy(true);
+    setConnectionBusyProviderId(providerId);
     setMessage(null);
-    markNexusStatusChecking();
 
     try {
-      const status = shouldRetryStatus
-        ? await window.fluxora.nexus.getAuthStatus({ operationId })
-        : shouldDisconnect
-          ? await window.fluxora.nexus.disconnect({ operationId })
-          : await window.fluxora.nexus.connect({ operationId });
-      rememberNexusStatus(status);
-      const successMessage =
-        status.message || (status.isLinked ? 'Nexus Mods connected.' : 'Nexus Mods disconnected.');
-
-      try {
-        const nextApiLimits = await window.fluxora.apiLimits.list({ operationId });
+      const status = shouldDisconnect
+        ? await window.fluxora.connections.disconnect(providerId, { operationId })
+        : await window.fluxora.connections.connect(providerId, { operationId });
+      connectionCoordinator.acceptSnapshot(mergeConnectionStatus(connectionSnapshot, status));
+      setMessage(status.message || (
+        status.state === 'ready' ? `${status.label} connected.` : `${status.label} disconnected.`
+      ));
+      setApiLimitsBusy(true);
+      void window.fluxora.apiLimits.list({ operationId }).then((nextApiLimits) => {
         rememberApiLimitProviders(nextApiLimits.providers);
-        setMessage(successMessage);
-      } catch (error) {
-        setMessage(`${successMessage} API limits unavailable: ${errorMessage(error)}`);
-      }
+      }).catch(() => undefined).finally(() => setApiLimitsBusy(false));
     } catch (error) {
-      markNexusStatusUnavailable(error, operationId);
       setMessage(errorMessage(error));
     } finally {
-      setNexusBusy(false);
-      setApiLimitsBusy(false);
+      setConnectionBusyProviderId(null);
     }
   };
 
@@ -11270,6 +11382,7 @@ export const App = () => {
     const checkUpdatesDisabled =
       !selectedProject ||
       !buildHeaderCapabilities.refreshAvailable ||
+      !nexusConnectionReady ||
       Boolean(modsBusyLabel) ||
       Boolean(operationOverlay?.isRunning);
     const installFluxPackDisabled = !bridgeStatus?.ready || Boolean(operationOverlay?.isRunning);
@@ -11485,6 +11598,14 @@ export const App = () => {
             const isCollapsed =
               item.isSeparator && modsWorkspace.collapsedSeparatorOrderIds.has(item.orderId);
             const status = modTableStatusView(item);
+            const appliedUpdate = currentModUpdateResult?.mods.find(
+              (mod) => mod.folderName.trim().toLocaleLowerCase('en-US') ===
+                item.name.trim().toLocaleLowerCase('en-US')
+            );
+            const updateFreshness = modUpdateFreshnessView(
+              appliedUpdate ? { ...item, updateCheckState: appliedUpdate.updateCheckState } : item,
+              currentModUpdateResult
+            );
             const conflictHighlight = modRowConflictHighlight(
               modsWorkspace.items,
               item,
@@ -11695,8 +11816,19 @@ export const App = () => {
                       className="mod-list-row__latest"
                       data-version-mismatch={modLatestVersionDiffers(item)}
                       role="cell"
+                      title={updateFreshness.title || undefined}
                     >
-                      {modLatestVersionText(item)}
+                      <span className="mod-list-row__latest-value">
+                        {modLatestVersionText(item)}
+                      </span>
+                      {updateFreshness.label ? (
+                        <span
+                          className="mod-list-row__latest-freshness"
+                          data-tone={updateFreshness.tone}
+                        >
+                          {updateFreshness.label}
+                        </span>
+                      ) : null}
                     </span>
                     <span className="mod-list-row__status" role="cell">
                       <span
@@ -11771,6 +11903,10 @@ export const App = () => {
         <div
           className="file-tree-row"
           data-conflict={hasConflict(entry)}
+          data-ai-highlight={
+            initialModDetailsBootstrap?.highlightRelativePath?.replaceAll('\\', '/') ===
+            entry.relativePath.replaceAll('\\', '/')
+          }
           key={entry.relativePath || entry.name}
           role="treeitem"
           aria-expanded={entry.isDirectory && entry.hasChildren ? isExpanded : undefined}
@@ -12883,6 +13019,7 @@ export const App = () => {
                 data-reorder-disabled={!entry.canInstall}
                 data-selected={isSelected}
                 data-ready={entry.canInstall}
+                data-awaiting-decision={entry.transferState === 'awaiting-decision'}
                 data-dragging={draggedDownloadInstallId === entry.id}
                 data-menu-open={isMenuOpen}
                 key={entry.id}
@@ -13421,6 +13558,15 @@ export const App = () => {
       onResetFomod={() => void recalculateFomodSmartSelection(true)}
       onResolveExistingMod={(mode) => void submitInstallOptions(mode)}
       onSubmitInstallOptions={() => void submitInstallOptions()}
+    />
+  );
+
+  const renderDownloadDuplicateDecision = () => (
+    <DownloadDuplicateDecisionDialog
+      entry={activeDownloadDuplicateDecision}
+      errorMessage={downloadDuplicateDecisionError}
+      isResolving={downloadDuplicateDecisionResolving}
+      onResolve={(choice) => void resolveDownloadDuplicateDecision(choice)}
     />
   );
 
@@ -14500,119 +14646,6 @@ export const App = () => {
     />
   );
 
-  const exportAiDataSnapshot = async () => {
-    const defaultPath = `fluxora-ai-snapshot-${new Date().toISOString().slice(0, 10)}.json`;
-    const picked = await window.fluxora.dialogs.saveTextFile(defaultPath, 'Export AI data snapshot');
-    if (picked.canceled || !picked.path) {
-      return;
-    }
-
-    const operationId = createRendererOperationId('ai_data_export');
-    const snapshot = createAiSupportBundleSnapshot([aiChat.session], {
-      includeRawPrompts: false,
-      now: new Date()
-    });
-
-    setSettingsBusyLabel('Exporting AI data');
-    try {
-      await window.fluxora.textFiles.save(picked.path, JSON.stringify(snapshot, null, 2), {
-        operationId
-      });
-      setMessage('AI data snapshot exported.');
-    } catch (error) {
-      setMessage(errorMessage(error));
-    } finally {
-      setSettingsBusyLabel(null);
-    }
-  };
-
-  const clearAiLocalData = () => {
-    if (!window.confirm('Clear local AI chat data for this build?')) {
-      return;
-    }
-
-    activeAiRunRef.current?.handle?.dispose();
-    activeAiRunRef.current = null;
-    window.localStorage.removeItem(aiSessionStorageKey(aiChat.session.scopeKey));
-    window.localStorage.removeItem(aiAutonomousJobQueueStorageKey(aiChat.session.scopeKey));
-    dispatchAiChat({
-      type: 'restore-session',
-      session: createAiSessionForScope(aiSessionScope)
-    });
-    setMessage('Local AI chat data cleared.');
-  };
-
-  const connectAiProvider = async (providerId: string) => {
-    const provider = aiHostStatus?.providers.find((candidate) => candidate.id === providerId);
-    if (!provider || !provider.requiresCredential || provider.connected) {
-      return;
-    }
-
-    const apiKey = window.prompt(`Enter API key for ${provider.displayName}`);
-    const secret = apiKey?.trim();
-    if (!secret) {
-      return;
-    }
-
-    setSettingsBusyLabel(`Connecting ${provider.displayName}`);
-    try {
-      const operationId = createRendererOperationId('ai_provider_connect');
-      const result = await window.fluxora.ai.connectProvider(provider.id, secret, {
-        operationId
-      });
-      if (!result.connected) {
-        setMessage(result.message);
-        return;
-      }
-
-      const refreshed = await window.fluxora.ai.getStatus({
-        operationId: createRendererOperationId('ai_status')
-      });
-      setAiHostStatus(refreshed);
-      setAiChatSettings((current) =>
-        normalizeAiChatSettings(
-          {
-            ...current,
-            modelId: provider.defaultModelId,
-            routingPreset: 'byok'
-          },
-          refreshed
-        )
-      );
-      setMessage(`${provider.displayName} connected.`);
-    } catch (error) {
-      setMessage(errorMessage(error));
-    } finally {
-      setSettingsBusyLabel(null);
-    }
-  };
-
-  const disconnectAiProvider = async (providerId: string) => {
-    const provider = aiHostStatus?.providers.find((candidate) => candidate.id === providerId);
-    if (!provider || !provider.requiresCredential) {
-      return;
-    }
-
-    if (!window.confirm(`Disconnect ${provider.displayName}?`)) {
-      return;
-    }
-
-    setSettingsBusyLabel(`Disconnecting ${provider.displayName}`);
-    try {
-      const operationId = createRendererOperationId('ai_provider_disconnect');
-      await window.fluxora.ai.disconnectProvider(provider.id, { operationId });
-      const refreshed = await window.fluxora.ai.getStatus({
-        operationId: createRendererOperationId('ai_status')
-      });
-      setAiHostStatus(refreshed);
-      setMessage(`${provider.displayName} disconnected.`);
-    } catch (error) {
-      setMessage(errorMessage(error));
-    } finally {
-      setSettingsBusyLabel(null);
-    }
-  };
-
   const setDeveloperMode = (enabled: boolean) => {
     setDeveloperModeEnabled(enabled);
     saveDeveloperModeSetting(window.localStorage, enabled);
@@ -14632,8 +14665,8 @@ export const App = () => {
       isTransferRunning={isTransferRunning}
       languageBusy={languageBusy}
       lastBuildDate={rendererBuildDate}
-      nexusBusy={nexusBusy}
-      nexusStatus={nexusStatus}
+      connectionBusyProviderId={connectionBusyProviderId}
+      connectionProviders={connectionSnapshot.providers}
       onDeveloperModeChange={setDeveloperMode}
       onOpenRepository={openOriginalRepository}
       section={settingsSection}
@@ -14642,7 +14675,7 @@ export const App = () => {
       onOpenTransfer={() => void openMo2TransferFromSettings()}
       onSectionChange={setSettingsSection}
       onSetLanguage={(language) => void setLanguage(language)}
-      onToggleNexusConnection={() => void toggleNexusConnection()}
+      onToggleConnection={(providerId) => void toggleConnection(providerId)}
     />
   );
   const renderBuildWorkspace = () => {
@@ -14663,6 +14696,7 @@ export const App = () => {
     return (
       <section className="build-page" aria-label="Selected build">
         <BuildDetailHeader
+          aiActive={aiChat.isOpen}
           buildCapabilities={buildHeaderCapabilities}
           executables={executablesWorkspace.items}
           executablesBusyLabel={executablesBusyLabel}
@@ -14685,6 +14719,7 @@ export const App = () => {
           }}
           onGenerateGrassCache={() => requestGrassCacheGeneration()}
           onSettings={() => void openBuildPathSettings()}
+          onToggleAi={() => dispatchAiChat({ type: 'toggle-open' })}
           profileOptions={buildProfileOptions}
           profilesBusyLabel={profilesBusyLabel}
           project={selectedProject}
@@ -14812,31 +14847,7 @@ export const App = () => {
     });
   };
 
-  const currentAiBuildOperationHints = (): AiBuildOperationHint[] =>
-    [
-      openingBuildSplash
-        ? {
-            label: 'opening-build',
-            operationId: openingBuildSplash.operationId,
-            state: 'running'
-          }
-        : null,
-      overwriteClearSplash
-        ? {
-            label: 'overwrite-clear',
-            operationId: overwriteClearSplash.operationId,
-            state: overwriteClearSplash.progress >= 100 ? 'completed' : 'running'
-          }
-        : null,
-      transferRunningOperationId
-        ? {
-            label: 'mo2-transfer',
-            operationId: transferRunningOperationId,
-            state: 'running'
-          }
-        : null
-    ].filter((hint): hint is AiBuildOperationHint => Boolean(hint));
-  const aiChatProviderDiagnostic = aiProviderDiagnostic(aiChatSettings, aiHostStatus);
+  const aiChatProviderDiagnostic = aiProviderDiagnostic(aiHostStatus);
 
   const finishAiRunAsStopped = (run: Pick<AiRun, 'id' | 'operationId'>) => {
     const event = createAiStreamEvent(run, 'run-cancelled', { status: 'stopped' });
@@ -14881,28 +14892,23 @@ export const App = () => {
       });
   };
 
-  const openAiSubagentChat = (subagent: AiSubagentChatMetadata) => {
-    dispatchAiChat({ type: 'open-subagent-chat', subagent });
-  };
-
   const sendAiChatMessageAsync = async () => {
     const prompt = aiChat.draft.trim();
     if (!prompt || aiChat.isRunning || !aiHostStatus?.ready || aiChatProviderDiagnostic?.level === 'error') {
       return;
     }
 
-    activeAiRunRef.current?.handle?.dispose();
-    activeAiRunRef.current = null;
     const operationId = createRendererOperationId('ai_chat_run');
     const requestSession = aiChat.session;
     const run = createAiRunForPrompt(requestSession, operationId, prompt);
     const runControl: ActiveAiRunControl = {
       cancelled: false,
+      chatId: run.sessionId,
       handle: null,
       operationId,
       runId: run.id
     };
-    activeAiRunRef.current = runControl;
+    activeAiRunsRef.current.set(run.sessionId, runControl);
     const runCreatedEvent = createAiStreamEvent(run, 'run-created', { status: 'thinking' });
     dispatchAiChat({
       type: 'submit-user-message',
@@ -14916,47 +14922,34 @@ export const App = () => {
       estimateState: 'counting'
     });
 
-    const providerId = providerForModel(
-      aiChatSettings.modelId,
-      aiHostStatus.models,
-      aiHostStatus.providers
-    )?.id;
-    const modelSupportsBackground =
-      aiHostStatus.models.find((model) => model.id === aiChatSettings.modelId)
-        ?.supportsBackground === true;
-
     try {
-      const buildContextSnapshot = await collectAiBuildContext(
-        window.fluxora,
-        {
-          activeOperationHints: currentAiBuildOperationHints(),
-          bridgeStatus,
-          defaultProfileName: selectedProjectDefaultProfileName,
-          profileName: selectedProjectProfileName,
-          prompt,
-          project: selectedProject,
-          selectedModId: selectedModItem?.isMod ? selectedModItem.id : null,
-          selectedModName: selectedModItem?.isMod ? selectedModItem.name : null
-        },
-        operationId
-      );
-      if (activeAiRunRef.current !== runControl || runControl.cancelled) {
-        return;
-      }
-
       const runSettings = {
         ...aiChatSettings,
-        buildContextSnapshot,
-        jobStorage: window.localStorage,
-        modelSupportsBackground,
-        providerId
+        fileWorkspace: selectedProject
+          ? {
+              schema: 'fluxora.ai.file-workspace-envelope.v1' as const,
+              chatId: requestSession.activeChatId,
+              projectId: selectedProject.id,
+              templateId: selectedProject.templateId,
+              buildLabel: selectedProject.name,
+              projectDirectory: selectedProject.projectDirectory,
+              game: selectedProject.gameName,
+              profile: selectedProjectProfileName,
+              counts: {
+                mods: installedMods.length,
+                plugins: pluginsWorkspace.items.length,
+                downloads: downloadsWorkspace.items.length
+              },
+              dirtyFileRefs: []
+            }
+          : undefined
       };
       const chatRequest = createAiHostChatRequest(run, requestSession, prompt, runSettings);
 
       const estimateAiContextUsage = async () => {
         try {
           const contextUsage = await window.fluxora.ai.estimateContext(chatRequest);
-          if (activeAiRunRef.current !== runControl || runControl.cancelled) {
+          if (activeAiRunsRef.current.get(run.sessionId) !== runControl || runControl.cancelled) {
             return;
           }
           dispatchAiChat({
@@ -14966,7 +14959,7 @@ export const App = () => {
             contextUsage
           });
         } catch (error) {
-          if (activeAiRunRef.current !== runControl || runControl.cancelled) {
+          if (activeAiRunsRef.current.get(run.sessionId) !== runControl || runControl.cancelled) {
             return;
           }
           dispatchAiChat({
@@ -14988,7 +14981,7 @@ export const App = () => {
         }
       };
 
-      if (activeAiRunRef.current !== runControl || runControl.cancelled) {
+      if (activeAiRunsRef.current.get(run.sessionId) !== runControl || runControl.cancelled) {
         return;
       }
 
@@ -15004,9 +14997,9 @@ export const App = () => {
         {
           onEvent: (event) => dispatchAiChat({ type: 'apply-stream-event', event }),
           onRunEvent: (event) => dispatchAiChat({ type: 'apply-run-event', event }),
-          onFinish: (message, event, status, ledgerEntry) => {
-            if (activeAiRunRef.current === runControl) {
-              activeAiRunRef.current = null;
+          onFinish: (message, event, status) => {
+            if (activeAiRunsRef.current.get(run.sessionId) === runControl) {
+              activeAiRunsRef.current.delete(run.sessionId);
             }
             if (runControl.cancelled && event.type !== 'run-cancelled') {
               return;
@@ -15020,8 +15013,7 @@ export const App = () => {
               type: 'append-assistant-message',
               message,
               event,
-              status,
-              ledgerEntry
+              status
             });
           },
           onLog: logAiRuntimeEntry
@@ -15033,11 +15025,11 @@ export const App = () => {
       }
       void estimateAiContextUsage();
     } catch (error) {
-      if (activeAiRunRef.current !== runControl || runControl.cancelled) {
+      if (activeAiRunsRef.current.get(run.sessionId) !== runControl || runControl.cancelled) {
         return;
       }
 
-      activeAiRunRef.current = null;
+      activeAiRunsRef.current.delete(run.sessionId);
       finishAiRunAsBlocked(run, error);
       logAiRuntimeEntry({
         category: 'ai-chat',
@@ -15057,7 +15049,7 @@ export const App = () => {
   };
 
   const cancelAiChatRun = () => {
-    const runControl = activeAiRunRef.current;
+    const runControl = activeAiRunsRef.current.get(aiChat.activeChatId);
     if (!runControl || runControl.cancelled) {
       return;
     }
@@ -15069,7 +15061,7 @@ export const App = () => {
       return;
     }
 
-    activeAiRunRef.current = null;
+    activeAiRunsRef.current.delete(runControl.chatId);
     finishAiRunAsStopped({
       id: runControl.runId,
       operationId: runControl.operationId
@@ -15099,13 +15091,132 @@ export const App = () => {
     void window.fluxora.links.openExternal(sourceUrl);
   };
 
+  const openAiFileChange = (
+    change: FluxoraAiFileChange,
+    firstChangedLine: number,
+    changeSet: FluxoraAiFileChangeSet
+  ) => {
+    const fileName = change.relativePath.replaceAll('\\', '/').split('/').filter(Boolean).pop()
+      ?? 'Editor';
+    void window.fluxora.windowControls.openAiTextEditor(
+      changeSet.chatId,
+      change.fileRef,
+      fileName,
+      firstChangedLine
+    ).catch((error) => setMessage(errorMessage(error)));
+  };
+
+  const openAiFileChangeMod = (change: FluxoraAiFileChange) => {
+    const owner = change.ownerMod?.trim().toLocaleLowerCase();
+    if (!owner) {
+      return;
+    }
+    const item = modsWorkspace.items.find((candidate) =>
+      candidate.isMod && (
+        candidate.id.trim().toLocaleLowerCase() === owner ||
+        modItemTitle(candidate).trim().toLocaleLowerCase() === owner
+      )
+    );
+    if (!item) {
+      setMessage(`Mod owner "${change.ownerMod}" is not present in the current build.`);
+      return;
+    }
+    const relativeInsideMod = change.relativePath
+      .replaceAll('\\', '/')
+      .split('/')
+      .slice(1)
+      .join('/');
+    void openModDetailsWindow(item, relativeInsideMod);
+  };
+
+  const rollbackAiFileChange = async (
+    changeSet: FluxoraAiFileChangeSet,
+    change: FluxoraAiFileChange
+  ) => {
+    try {
+      const result = await window.fluxora.ai.rollbackFile(
+        changeSet.chatId,
+        changeSet.runId,
+        change.fileRef,
+        { operationId: createRendererOperationId('ai_file_rollback') }
+      );
+      const files = changeSet.files.map((file) => {
+        const rolledBack = result.files.find((candidate) => candidate.fileRef === file.fileRef);
+        return rolledBack ?? file;
+      });
+      dispatchAiChat({
+        type: 'update-file-change-set',
+        changeSet: {
+          ...changeSet,
+          files,
+          rollbackState: result.state
+        }
+      });
+      setMessage(result.state === 'conflict'
+        ? 'Rollback stopped: the file changed after the AI write.'
+        : 'AI file change rolled back.');
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const rollbackAiFileRun = async (changeSet: FluxoraAiFileChangeSet) => {
+    try {
+      const result = await window.fluxora.ai.rollbackRun(
+        changeSet.chatId,
+        changeSet.runId,
+        { operationId: createRendererOperationId('ai_file_run_rollback') }
+      );
+      dispatchAiChat({
+        type: 'update-file-change-set',
+        changeSet: {
+          ...changeSet,
+          files: changeSet.files.map((file) =>
+            result.files.find((candidate) => candidate.fileRef === file.fileRef) ?? file
+          ),
+          rollbackState: result.state
+        }
+      });
+      setMessage(result.state === 'conflict'
+        ? 'Run rollback stopped because one or more files changed externally.'
+        : 'AI file run rolled back.');
+    } catch (error) {
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const rollbackAiCapability = async (compensationToken: string) => {
+    dispatchAiChat({
+      type: 'update-capability-rollback',
+      compensationToken,
+      rollbackState: 'rolling-back'
+    });
+    try {
+      await window.fluxora.ai.undoCapability(compensationToken, {
+        operationId: createRendererOperationId('ai_capability_undo')
+      });
+      dispatchAiChat({
+        type: 'update-capability-rollback',
+        compensationToken,
+        rollbackState: 'rolled-back'
+      });
+      setMessage('AI change rolled back and verified by Fluxora.');
+    } catch (error) {
+      dispatchAiChat({
+        type: 'update-capability-rollback',
+        compensationToken,
+        rollbackState: 'blocked'
+      });
+      setMessage(errorMessage(error));
+    }
+  };
+
   const aiChatLayoutStyle = {
     '--ai-chat-width': `${aiChat.isCollapsed ? AI_CHAT_PANEL_COLLAPSED_WIDTH : aiChat.width}px`
   } as CSSProperties;
 
   const renderTitlebar = (showSettingsButton: boolean) => (
     <AppTitlebar
-      aiActive={aiChat.isOpen}
       homeActive={activeRoute === 'home' && !isTransferPageOpen}
       mode={isSecondaryWindow ? 'settings' : 'main'}
       settingsActive={isSettingsWindow}
@@ -15116,7 +15227,6 @@ export const App = () => {
       onMinimize={() => void minimizeWindow()}
       onOpenSettings={() => void openSettingsWindow()}
       onRefresh={() => void refreshCurrentView()}
-      onToggleAi={showSettingsButton ? () => dispatchAiChat({ type: 'toggle-open' }) : undefined}
       onToggleMaximize={() => void toggleMaximizeWindow()}
     />
   );
@@ -15186,6 +15296,11 @@ export const App = () => {
   return (
     <main className="desktop-shell">
       {renderTitlebar(true)}
+      {manualModUpdateNotice ? (
+        <div className="transient-notice" role="status" aria-live="polite">
+          {manualModUpdateNotice}
+        </div>
+      ) : null}
 
       <section
         className="workspace-with-ai"
@@ -15229,6 +15344,7 @@ export const App = () => {
                   ? renderPlaceholder()
                   : null}
                 {renderInstallDialog()}
+                {renderDownloadDuplicateDecision()}
                 {renderModCreationDialog()}
                 {renderFluxPackExportDialog()}
                 {renderFluxPackInstallConflictDialog()}
@@ -15244,7 +15360,7 @@ export const App = () => {
           </div>
         </section>
 
-        {aiChat.isOpen ? (
+        {aiChat.isOpen && selectedProject ? (
           <AiChatPanel
             hostReady={aiHostStatus?.ready ?? false}
             providerDiagnostic={aiChatProviderDiagnostic}
@@ -15253,11 +15369,31 @@ export const App = () => {
             state={aiChat}
             onCancel={cancelAiChatRun}
             onClose={() => dispatchAiChat({ type: 'close' })}
-            onCloseChat={(chatId) => dispatchAiChat({ type: 'close-chat', chatId })}
+            onCloseChat={(chatId) => {
+              const runControl = activeAiRunsRef.current.get(chatId);
+              if (runControl && !runControl.cancelled) {
+                runControl.cancelled = true;
+                requestNativeAiRunCancel(runControl.operationId);
+                if (runControl.handle) {
+                  runControl.handle.cancel();
+                } else {
+                  activeAiRunsRef.current.delete(chatId);
+                  finishAiRunAsStopped({ id: runControl.runId, operationId: runControl.operationId });
+                }
+              }
+              void window.fluxora.ai.endFileChat(chatId, {
+                operationId: createRendererOperationId('ai_file_chat_close')
+              }).catch(() => undefined);
+              dispatchAiChat({ type: 'close-chat', chatId });
+            }}
             onCreateChat={() => dispatchAiChat({ type: 'create-chat' })}
             onDraftChange={(value) => dispatchAiChat({ type: 'set-draft', value })}
-            onOpenSubagentChat={openAiSubagentChat}
             onOpenSource={openAiSource}
+            onOpenFileChange={openAiFileChange}
+            onOpenFileChangeMod={openAiFileChangeMod}
+            onRollbackFileChange={(changeSet, change) => void rollbackAiFileChange(changeSet, change)}
+            onRollbackFileRun={(changeSet) => void rollbackAiFileRun(changeSet)}
+            onUndoCapability={(compensationToken) => void rollbackAiCapability(compensationToken)}
             onResize={(width) => dispatchAiChat({ type: 'set-width', width })}
             onSend={sendAiChatMessage}
             onSelectChat={(chatId) => dispatchAiChat({ type: 'select-chat', chatId })}

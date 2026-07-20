@@ -32,6 +32,7 @@ export type DownloadWorkspaceAction =
   | { type: 'load-failed'; message: string; silent?: boolean }
   | { type: 'items-loaded'; items: FluxoraDownloadEntry[] }
   | { type: 'items-upserted'; items: FluxoraDownloadEntry[] }
+  | { type: 'item-removed'; id: string }
   | { type: 'search-changed'; searchText: string }
   | { type: 'selected'; id: string | null }
   | { type: 'selection-toggled'; id: string; orderedIds: readonly string[] }
@@ -168,6 +169,14 @@ export const hasActiveDownload = (items: FluxoraDownloadEntry[]): boolean =>
       entry.transferState === 'indexing'
   );
 
+export const queuedDownloadDuplicateDecisions = (
+  items: FluxoraDownloadEntry[]
+): FluxoraDownloadEntry[] =>
+  items.filter(
+    (entry) =>
+      entry.transferState === 'awaiting-decision' && entry.duplicateDecision !== null
+  );
+
 export const filterDownloadEntries = (
   items: FluxoraDownloadEntry[],
   searchText: string
@@ -195,7 +204,9 @@ export const filterDownloadEntries = (
       entry.transferMessage,
       entry.sizeText,
       entry.progressText,
-      entry.downloadSpeedText
+      entry.downloadSpeedText,
+      entry.duplicateDecision?.incomingFile.version ?? '',
+      ...(entry.duplicateDecision?.existingFiles.flatMap((file) => [file.fileName, file.version]) ?? [])
     ]
       .join(' ')
       .toLocaleLowerCase();
@@ -214,6 +225,8 @@ export const downloadStatusText = (entry: FluxoraDownloadEntry | null): string =
       return entry.downloadSpeedText || entry.progressText || entry.transferMessage || 'Downloading';
     case 'queued':
       return entry.transferMessage || 'Queued';
+    case 'awaiting-decision':
+      return 'Нужно решение';
     case 'paused':
       return entry.transferMessage || 'Paused';
     case 'canceled':
@@ -356,6 +369,11 @@ export const downloadWorkspaceReducer = (
         items: [...action.items, ...state.items.filter((entry) => !incomingIds.has(entry.id))]
       });
     }
+    case 'item-removed':
+      return downloadWorkspaceReducer(state, {
+        type: 'items-loaded',
+        items: state.items.filter((entry) => entry.id !== action.id)
+      });
     case 'search-changed':
       return {
         ...state,

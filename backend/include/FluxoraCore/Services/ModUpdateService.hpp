@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -117,7 +118,8 @@ namespace fluxora
 
     [[nodiscard]] std::unique_ptr<NexusUpdateApi> createNexusUpdateApi(
         Logger& logger,
-        NexusModsAuthService& auth);
+        NexusModsAuthService& auth,
+        std::chrono::milliseconds overallTimeout = std::chrono::seconds(8));
 
     enum class ModUpdateCheckMode
     {
@@ -190,6 +192,8 @@ namespace fluxora
         std::function<bool()> cancellationRequested;
         std::function<void(std::size_t, std::size_t, std::wstring_view)> progress;
         std::size_t maxConcurrentMetadataRequests{4};
+        std::chrono::milliseconds overallTimeout{std::chrono::seconds(60)};
+        std::chrono::milliseconds requestTimeoutBudget{std::chrono::seconds(8)};
     };
 
     class ModUpdateService final

@@ -31,12 +31,24 @@ use tokio::sync::{oneshot, Mutex};
 use tokio::task::JoinHandle;
 use tokio::time::{timeout, Duration};
 
+mod ai_capability_adapters;
+#[allow(dead_code)]
+#[path = "bin/fluxora_ai_host/tool_contract.rs"]
+mod ai_tool_contract;
+
+use ai_capability_adapters::{
+    find_download_can_install, find_download_state, find_mod_enabled, find_plugin_order,
+    is_capability_tool, is_read_only_capability_tool, sanitize_downloads, sanitize_install,
+    sanitize_installs, sanitize_mod_workspace, sanitize_plugins, AiEntityKind, AiEntityRefRegistry,
+};
+use ai_tool_contract::{tool_contract, ToolDomain, ToolOperation, ToolRisk};
+
 const BRIDGE_PROTOCOL_VERSION: &str = "1.0";
 const BRIDGE_TIMEOUT_MS: u64 = 10_000;
 const BRIDGE_INVOKE_ERROR_SCHEMA: &str = "fluxora.tauri.bridge-error.v1";
 const AI_HOST_PROTOCOL_VERSION: &str = "1.0";
 const AI_HOST_TIMEOUT_MS: u64 = 5_000;
-const AI_HOST_LONG_RUNNING_TIMEOUT_MS: u64 = 45 * 60 * 1_000;
+const AI_HOST_LONG_RUNNING_TIMEOUT_MS: u64 = 10 * 60 * 1_000 + 30_000;
 const PRIVATE_NEXUS_API_AUTH_HEADER_METHOD: &str = "nexus.getApiAuthHeader";
 const PRIVATE_AI_NEXUS_CREDENTIAL_FIELD: &str = "nativeNexusApiCredential";
 const AI_CREDENTIAL_SERVICE: &str = "app.fluxora.desktop.ai.provider";
@@ -215,6 +227,7 @@ struct BridgeState {
     process: Mutex<BridgeProcess>,
     interactive_process: Mutex<BridgeProcess>,
     background_process: Mutex<BridgeProcess>,
+    connection_process: Mutex<BridgeProcess>,
     download_process: Mutex<BridgeProcess>,
     install_process: Mutex<BridgeProcess>,
 }
@@ -367,6 +380,60 @@ struct BridgeProcess {
 struct AiHostState {
     process: Mutex<AiHostProcess>,
     active_process_id: Arc<AtomicU32>,
+    active_operations: Mutex<HashSet<String>>,
+    cancelled_operations: Mutex<HashSet<String>>,
+}
+
+#[derive(Default)]
+struct AiDirtyEditorState {
+    refs: Mutex<HashSet<String>>,
+}
+
+#[derive(Clone)]
+enum AiCompensationVerification {
+    ModEnabled {
+        project_directory: String,
+        profile_name: String,
+        native_id: String,
+        expected: bool,
+    },
+    ModAbsent {
+        project_directory: String,
+        profile_name: String,
+        native_id: String,
+    },
+    PluginOrder {
+        project_directory: String,
+        template_id: String,
+        profile_name: String,
+        native_id: String,
+        expected: u64,
+    },
+    DownloadStateChanged {
+        project_directory: String,
+        native_id: String,
+        previous_state: String,
+    },
+    ProfileAbsent {
+        project_directory: String,
+        default_profile_name: String,
+        profile_name: String,
+    },
+    Language {
+        expected: String,
+    },
+}
+
+#[derive(Clone)]
+struct AiCompensationAction {
+    method: String,
+    params: Value,
+    verification: AiCompensationVerification,
+}
+
+#[derive(Default)]
+struct AiCompensationState {
+    actions: Mutex<HashMap<String, AiCompensationAction>>,
 }
 
 impl Default for AiHostState {
@@ -378,6 +445,8 @@ impl Default for AiHostState {
                 ..AiHostProcess::default()
             }),
             active_process_id,
+            active_operations: Mutex::new(HashSet::new()),
+            cancelled_operations: Mutex::new(HashSet::new()),
         }
     }
 }
@@ -1686,6 +1755,9 @@ fn supported_ai_event_type(value: &str) -> bool {
             | "note"
             | "tool-started"
             | "tool-completed"
+            | "tool-blocked"
+            | "recovery-started"
+            | "verification-completed"
             | "site-visited"
             | "error"
             | "heartbeat"
@@ -1951,9 +2023,9 @@ fn ai_host_executable_name() -> &'static str {
 
 fn ai_host_cargo_binary_name() -> &'static str {
     if cfg!(windows) {
-        "fluxora-ai-host.exe"
+        "fluxora_ai_host.exe"
     } else {
-        "fluxora-ai-host"
+        "fluxora_ai_host"
     }
 }
 
@@ -2680,7 +2752,7 @@ impl AiHostProcess {
                     Some(&operation_id),
                 )
                 .await;
-                return Err(message);
+                return Err(serde_json::to_string(error).unwrap_or(message));
             }
 
             let result = envelope
@@ -2730,6 +2802,41 @@ fn bridge_state(app: &AppHandle) -> tauri::State<'_, BridgeState> {
 
 fn ai_host_state(app: &AppHandle) -> tauri::State<'_, AiHostState> {
     app.state::<AiHostState>()
+}
+
+async fn register_ai_operation(app: &AppHandle, operation_id: &str) {
+    let state = ai_host_state(app);
+    state.cancelled_operations.lock().await.remove(operation_id);
+    state
+        .active_operations
+        .lock()
+        .await
+        .insert(operation_id.to_string());
+}
+
+async fn ai_operation_cancelled(app: &AppHandle, operation_id: &str) -> bool {
+    ai_host_state(app)
+        .cancelled_operations
+        .lock()
+        .await
+        .contains(operation_id)
+}
+
+async fn finish_ai_operation(app: &AppHandle, operation_id: &str) {
+    let state = ai_host_state(app);
+    state.active_operations.lock().await.remove(operation_id);
+    state.cancelled_operations.lock().await.remove(operation_id);
+}
+
+fn ai_cancelled_error_payload() -> Value {
+    json!({
+        "code": "ai.run.cancelled",
+        "category": "cancelled",
+        "stage": "tool-loop",
+        "retryable": false,
+        "userMessage": "The AI request was stopped.",
+        "debugId": format!("shell-{}", now_millis())
+    })
 }
 
 fn normalized_ai_provider_id(value: &str) -> Option<String> {
@@ -2846,10 +2953,8 @@ fn ai_context_usage_mode(percent: f64) -> &'static str {
 }
 
 fn ai_request_context_window_tokens(request: &Value) -> u64 {
-    match request.get("modelId").and_then(Value::as_str) {
-        Some("local-dry-run") | None => 8_192,
-        _ => 1_000_000,
-    }
+    let _ = request;
+    1_048_576
 }
 
 fn ai_request_estimated_context_tokens(request: &Value) -> u64 {
@@ -2877,8 +2982,8 @@ fn ai_context_usage_fallback(request: &Value, operation_id: &str) -> Value {
     json!({
         "schema": "fluxora.ai.context-usage.v1",
         "operationId": operation_id,
-        "providerId": request.get("providerId").and_then(Value::as_str).unwrap_or("local-dry-run"),
-        "modelId": request.get("modelId").and_then(Value::as_str).unwrap_or("local-dry-run"),
+        "providerId": "gemini",
+        "modelId": "gemini-3.1-flash-lite",
         "contextWindowTokens": context_window_tokens,
         "currentContextTokens": current_context_tokens,
         "currentContextPercent": percent,
@@ -2931,6 +3036,12 @@ async fn ai_status_payload(app: &AppHandle, request: OperationRequest) -> Value 
         }
         Err(error) => {
             let safe_error = sanitize_log(&error);
+            let typed_error = ai_host_error_payload(&error, "provider");
+            let user_message = typed_error
+                .get("userMessage")
+                .and_then(Value::as_str)
+                .unwrap_or("Gemini is unavailable. Try again in a moment.")
+                .to_string();
             let _ = write_log(
                 app,
                 "ai-host",
@@ -2947,16 +3058,8 @@ async fn ai_status_payload(app: &AppHandle, request: OperationRequest) -> Value 
                 "providers": [],
                 "models": [],
                 "capabilities": {},
-                "error": {
-                    "code": "ai.host.unavailable",
-                    "message": "AI host is unavailable.",
-                    "category": "transport",
-                    "retryable": true,
-                    "capabilityId": Value::Null,
-                    "details": {
-                        "reason": safe_error
-                    }
-                }
+                "error": typed_error,
+                "message": user_message
             })
         }
     }
@@ -3093,9 +3196,17 @@ async fn fluxora_ai_cancel_run(
 
     let state = ai_host_state(&app);
     let process_id = state.active_process_id.load(Ordering::SeqCst);
-    let accepted = process_id != 0 && process_platform::terminate_process(process_id);
+    let accepted = state
+        .active_operations
+        .lock()
+        .await
+        .contains(&target_operation_id);
     if accepted {
-        state.active_process_id.store(0, Ordering::SeqCst);
+        state
+            .cancelled_operations
+            .lock()
+            .await
+            .insert(target_operation_id.clone());
     }
 
     let _ = write_log(
@@ -3104,7 +3215,7 @@ async fn fluxora_ai_cancel_run(
         if accepted { "warning" } else { "info" },
         "AiChatCancel",
         &format!(
-            "AI run cancel requested. targetOperationId={} processId={} accepted={}",
+            "AI run cancel requested without terminating other chat sessions. targetOperationId={} processId={} accepted={}",
             sanitize_log(&target_operation_id),
             process_id,
             accepted
@@ -3525,8 +3636,1966 @@ async fn enrich_ai_request_with_private_nexus_credential(
     }
 }
 
+fn known_ai_file_tool_error_code(error: &str) -> Option<&'static str> {
+    for code in [
+        "outside-scope",
+        "protected",
+        "ambiguous",
+        "binary",
+        "unsupported-encoding",
+        "too-large",
+        "stale-version",
+        "dirty-editor",
+        "locked",
+        "permission-denied",
+        "validation-failed",
+        "rollback-conflict",
+        "needs-input",
+    ] {
+        if error.contains(code) {
+            return Some(code);
+        }
+    }
+    None
+}
+
+fn ai_core_file_tool_error_code(error: &str) -> &'static str {
+    if error.contains("AI file workspace chat is not active")
+        || error.contains("Bridge request timed out")
+    {
+        "session-inactive"
+    } else {
+        known_ai_file_tool_error_code(error).unwrap_or("native-failed")
+    }
+}
+
+fn ai_host_error_payload(error: &str, fallback_stage: &str) -> Value {
+    if let Ok(payload) = serde_json::from_str::<Value>(error) {
+        if payload.get("code").and_then(Value::as_str).is_some()
+            && payload.get("userMessage").and_then(Value::as_str).is_some()
+        {
+            return payload;
+        }
+    }
+    json!({
+        "code": "ai.host.transport",
+        "category": "transport",
+        "stage": fallback_stage,
+        "retryable": true,
+        "userMessage": "Gemini is unavailable. Try again in a moment.",
+        "debugId": format!("shell-{}", now_millis()),
+        "details": { "reason": sanitize_log(error) }
+    })
+}
+
+#[cfg(test)]
+fn ai_host_file_tool_error_code(error: &str) -> String {
+    ai_host_error_payload(error, "tool-loop")
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or("ai.tool-loop.failed")
+        .to_string()
+}
+
+fn ai_file_tool_failure_message(reason: &str) -> String {
+    match reason {
+        "session-inactive" => {
+            "Fluxora lost the native file session and could not restore it within the bounded recovery attempt."
+                .to_string()
+        }
+        "native-failed" => {
+            "The native Fluxora operation failed without a recognized recovery code. Check the correlated operation log."
+                .to_string()
+        }
+        "tool-session-invalid-response" => {
+            "Fluxora could not continue the file-tool session safely (tool-session-invalid-response)."
+                .to_string()
+        }
+        "no-new-evidence" => {
+            "Fluxora stopped the tool loop after three semantically repeated successful results produced no new evidence."
+                .to_string()
+        }
+        _ => format!("Fluxora blocked the file operation safely ({reason})."),
+    }
+}
+
+fn ai_tool_terminal_error_classification(reason: &str) -> (&'static str, &'static str) {
+    match reason {
+        "outside-scope" | "path-escape" | "protected" | "permission-denied" => {
+            ("safety", "native-guard")
+        }
+        "no-new-evidence" | "no-progress-repetition" => ("tool-loop", "tool-loop"),
+        _ => ("tool-loop", "verification"),
+    }
+}
+
+fn should_request_independent_chat_response(
+    has_file_workspace: bool,
+    tool_flow_started: bool,
+) -> bool {
+    !has_file_workspace && !tool_flow_started
+}
+
+fn ai_shell_completion_evidence_satisfied(
+    task_kind: &str,
+    response: &Value,
+    has_file_change_set: bool,
+) -> bool {
+    if task_kind != "action" {
+        return true;
+    }
+    let Some(execution) = response.get("execution") else {
+        return false;
+    };
+    let completed = execution.get("state").and_then(Value::as_str) == Some("completed");
+    let verified = execution
+        .get("verifiedEffects")
+        .and_then(Value::as_array)
+        .is_some_and(|effects| !effects.is_empty());
+    let file_evidence_satisfied =
+        execution.get("domain").and_then(Value::as_str) != Some("files") || has_file_change_set;
+    completed && verified && file_evidence_satisfied
+}
+
+fn ai_tool_string<'a>(value: &'a Value, key: &str) -> &'a str {
+    value.get(key).and_then(Value::as_str).unwrap_or_default()
+}
+
+fn ai_tool_integer(value: &Value, key: &str, fallback: u64, maximum: u64) -> u64 {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .unwrap_or(fallback)
+        .clamp(1, maximum)
+}
+
+fn ai_tool_string_array(value: &Value, key: &str) -> Value {
+    Value::Array(
+        value
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|item| Value::String(item.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    )
+}
+
+fn secret_like_line(line: &str) -> bool {
+    let normalized = line.to_ascii_lowercase();
+    [
+        "api_key",
+        "apikey",
+        "api-key",
+        "password",
+        "passwd",
+        "secret",
+        "authorization",
+        "access_token",
+        "refresh_token",
+        "private_key",
+        "-----begin private key",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+}
+
+fn redact_ai_file_text(text: &str) -> (String, bool) {
+    let mut redacted = false;
+    let value = text
+        .split_inclusive('\n')
+        .map(|line| {
+            if secret_like_line(line) {
+                redacted = true;
+                if line.ends_with('\n') {
+                    "[REDACTED SECRET-LIKE LINE]\n"
+                } else {
+                    "[REDACTED SECRET-LIKE LINE]"
+                }
+            } else {
+                line
+            }
+        })
+        .collect::<String>();
+    (value, redacted)
+}
+
+fn redact_ai_file_tool_value(value: Value) -> (Value, bool, u64) {
+    match value {
+        Value::String(text) => {
+            let local_bytes = text.len() as u64;
+            let (text, redacted) = redact_ai_file_text(&text);
+            (Value::String(text), redacted, local_bytes)
+        }
+        Value::Array(items) => {
+            let mut redacted = false;
+            let mut local_bytes = 0;
+            let items = items
+                .into_iter()
+                .map(|item| {
+                    let (item, item_redacted, item_bytes) = redact_ai_file_tool_value(item);
+                    redacted |= item_redacted;
+                    local_bytes += item_bytes;
+                    item
+                })
+                .collect();
+            (Value::Array(items), redacted, local_bytes)
+        }
+        Value::Object(fields) => {
+            let mut redacted = false;
+            let mut local_bytes = 0;
+            let fields = fields
+                .into_iter()
+                .map(|(key, value)| {
+                    let (value, value_redacted, value_bytes) = redact_ai_file_tool_value(value);
+                    redacted |= value_redacted;
+                    local_bytes += value_bytes;
+                    (key, value)
+                })
+                .collect();
+            (Value::Object(fields), redacted, local_bytes)
+        }
+        value => (value, false, 0),
+    }
+}
+
+async fn request_ai_build_files(
+    app: &AppHandle,
+    method: &str,
+    params: Value,
+    operation_id: &str,
+) -> Result<Value, String> {
+    let state = bridge_state(app);
+    let mut bridge = state.process.lock().await;
+    let timeout_ms = ai_build_files_timeout_ms(method);
+    bridge
+        .request(
+            app,
+            method,
+            params,
+            OperationRequest {
+                operation_id: Some(operation_id.to_string()),
+            },
+            timeout_ms,
+        )
+        .await
+}
+
+fn ai_build_files_timeout_ms(method: &str) -> u64 {
+    match method {
+        "buildFiles.searchText" => 120_000,
+        "buildFiles.discover" | "buildFiles.search" => 60_000,
+        "buildFiles.apply" => 120_000,
+        _ => BRIDGE_TIMEOUT_MS,
+    }
+}
+
+fn should_reopen_ai_file_session(error: &str) -> bool {
+    error.contains("AI file workspace chat is not active")
+        || error.contains("Bridge request timed out")
+}
+
+async fn request_ai_build_files_with_recovery(
+    app: &AppHandle,
+    request: &Value,
+    method: &str,
+    params: Value,
+    operation_id: &str,
+    read_only: bool,
+) -> Result<(Value, bool), String> {
+    match request_ai_build_files(app, method, params.clone(), operation_id).await {
+        Ok(data) => Ok((data, false)),
+        Err(error) if read_only && should_reopen_ai_file_session(&error) => {
+            let workspace = request.get("fileWorkspace").unwrap_or(&Value::Null);
+            let chat_id = params
+                .get("chatId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let project_directory = workspace
+                .get("projectDirectory")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if chat_id.is_empty() || project_directory.is_empty() {
+                return Err(error);
+            }
+            request_ai_build_files(
+                app,
+                "buildFiles.beginChat",
+                json!({
+                    "chatId": chat_id,
+                    "projectDirectory": project_directory,
+                    "profile": workspace.get("profile").and_then(Value::as_str).unwrap_or_default()
+                }),
+                operation_id,
+            )
+            .await?;
+            request_ai_build_files(app, method, params, operation_id)
+                .await
+                .map(|data| (data, true))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn dirty_ai_file_refs(request: &Value) -> HashSet<String> {
+    request
+        .get("fileWorkspace")
+        .and_then(|workspace| workspace.get("dirtyFileRefs"))
+        .and_then(Value::as_array)
+        .map(|refs| {
+            refs.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn is_ai_file_dirty(app: &AppHandle, file_ref: &str) -> bool {
+    if file_ref.is_empty() {
+        return false;
+    }
+    app.state::<AiDirtyEditorState>()
+        .refs
+        .lock()
+        .await
+        .contains(file_ref)
+}
+
+fn is_ai_read_only_file_tool(name: &str) -> bool {
+    tool_contract(name).is_some_and(|contract| {
+        contract.domain == ToolDomain::Files && contract.risk == ToolRisk::ReadOnly
+    })
+}
+
+fn ai_file_tool_cache_key(name: &str, args: &Value) -> String {
+    format!("{name}:{}", serde_json::to_string(args).unwrap_or_default())
+}
+
+fn normalize_ai_file_tool_args(name: &str, args: &Value) -> Value {
+    if !matches!(name, "local.files.search" | "local.text.search") {
+        return args.clone();
+    }
+    let mut normalized = args.as_object().cloned().unwrap_or_default();
+    let scope_is_empty = normalized
+        .get("scope")
+        .and_then(Value::as_str)
+        .is_none_or(|scope| scope.trim().is_empty());
+    if scope_is_empty {
+        normalized.insert("scope".to_string(), json!("build"));
+    }
+    Value::Object(normalized)
+}
+
+fn normalize_ai_file_tool_call(call: &Value) -> Value {
+    let mut normalized = call.clone();
+    let name = ai_tool_string(call, "name");
+    let args = call.get("args").cloned().unwrap_or_else(|| json!({}));
+    normalized["args"] = normalize_ai_file_tool_args(name, &args);
+    normalized
+}
+
+fn should_cache_ai_file_tool_result(result: &Value) -> bool {
+    result.pointer("/result/ok").and_then(Value::as_bool) == Some(true)
+}
+
+fn ai_staged_mutation_target(mutation: &Value) -> String {
+    if mutation.get("kind").and_then(Value::as_str) == Some("create") {
+        format!(
+            "create:{}:{}",
+            ai_tool_string(mutation, "parentRef"),
+            ai_tool_string(mutation, "fileName").to_lowercase()
+        )
+    } else {
+        format!("patch:{}", ai_tool_string(mutation, "fileRef"))
+    }
+}
+
+fn ai_local_tool_error(call: &Value, code: &str, message: &str) -> Value {
+    json!({
+        "callId": ai_tool_string(call, "callId"),
+        "name": ai_tool_string(call, "name"),
+        "result": { "ok": false, "error": { "code": code, "message": message } }
+    })
+}
+
+async fn execute_ai_file_tool_call(
+    app: &AppHandle,
+    request: &Value,
+    call: &Value,
+    chat_id: &str,
+    run_id: &str,
+    operation_id: &str,
+    write_granted: bool,
+    staged_mutations: &[Value],
+    writable_file_refs: &HashSet<String>,
+) -> (Value, bool, u64, bool, Option<Value>) {
+    let call_id = ai_tool_string(call, "callId");
+    let name = ai_tool_string(call, "name");
+    let args = call.get("args").cloned().unwrap_or_else(|| json!({}));
+    let operation = tool_contract(name).map(|contract| contract.operation);
+    let is_staging = operation == Some(ToolOperation::Stage);
+    let is_commit = operation == Some(ToolOperation::Commit);
+    let is_write = is_staging || is_commit;
+    let file_ref = ai_tool_string(&args, "fileRef");
+    if is_write && !write_granted {
+        return (
+            json!({
+                "callId": call_id,
+                "name": name,
+                "result": { "ok": false, "error": { "code": "protected", "message": "This prompt did not grant a file write." } }
+            }),
+            false,
+            0,
+            false,
+            None,
+        );
+    }
+    if is_staging
+        && !file_ref.is_empty()
+        && (dirty_ai_file_refs(request).contains(file_ref) || is_ai_file_dirty(app, file_ref).await)
+    {
+        return (
+            json!({
+                "callId": call_id,
+                "name": name,
+                "result": { "ok": false, "error": { "code": "dirty-editor", "message": "Save or close the unsaved Fluxora Editor tab before AI writes this file." } }
+            }),
+            false,
+            0,
+            false,
+            None,
+        );
+    }
+    if is_staging
+        && ["expectedText", "replacementText", "content", "value"]
+            .iter()
+            .filter_map(|key| args.get(*key).and_then(Value::as_str))
+            .any(secret_like_line)
+    {
+        return (
+            json!({
+                "callId": call_id,
+                "name": name,
+                "result": { "ok": false, "error": { "code": "protected", "message": "Secret-like text must be edited locally in Fluxora Editor." } }
+            }),
+            false,
+            0,
+            true,
+            None,
+        );
+    }
+    if is_staging && name != "local.text.stage_create" && !writable_file_refs.contains(file_ref) {
+        return (
+            json!({
+                "callId": call_id,
+                "name": name,
+                "result": {
+                    "ok": false,
+                    "error": {
+                        "code": "validation-failed",
+                        "message": "This fileRef is not a proven unique effective VFS winner. Refine discovery with local.files.search using the exact relative path, then stage the single returned fileRef."
+                    }
+                }
+            }),
+            false,
+            0,
+            false,
+            None,
+        );
+    }
+
+    let staged_mutation = if name == "local.json.stage_set_pointer" {
+        Some(json!({
+            "kind": "json-set-pointer",
+            "fileRef": file_ref,
+            "revision": ai_tool_string(&args, "revision"),
+            "baseSha256": ai_tool_string(&args, "baseSha256"),
+            "pointer": ai_tool_string(&args, "pointer"),
+            "expectedValue": ai_tool_string(&args, "expectedValue"),
+            "value": ai_tool_string(&args, "value"),
+            "format": ai_tool_string(&args, "format"),
+            "allowKnownConflict": args.get("allowKnownConflict").and_then(Value::as_bool).unwrap_or(false)
+        }))
+    } else if name == "local.ini.stage_set_key" {
+        Some(json!({
+            "kind": format!("ini-{}", ai_tool_string(&args, "operation")),
+            "fileRef": file_ref,
+            "revision": ai_tool_string(&args, "revision"),
+            "baseSha256": ai_tool_string(&args, "baseSha256"),
+            "section": ai_tool_string(&args, "section"),
+            "key": ai_tool_string(&args, "key"),
+            "expectedValue": ai_tool_string(&args, "expectedValue"),
+            "value": ai_tool_string(&args, "value"),
+            "format": "ini"
+        }))
+    } else if name == "local.text.stage_patch" {
+        Some(json!({
+            "kind": "patch",
+            "fileRef": file_ref,
+            "revision": ai_tool_string(&args, "revision"),
+            "baseSha256": ai_tool_string(&args, "baseSha256"),
+            "expectedText": ai_tool_string(&args, "expectedText"),
+            "replacementText": ai_tool_string(&args, "replacementText"),
+            "format": ai_tool_string(&args, "format")
+        }))
+    } else if name == "local.text.stage_create" {
+        Some(json!({
+            "kind": "create",
+            "parentRef": ai_tool_string(&args, "parentRef"),
+            "fileName": ai_tool_string(&args, "fileName"),
+            "content": ai_tool_string(&args, "content"),
+            "expectedAbsent": args.get("expectedAbsent").and_then(Value::as_bool).unwrap_or(false),
+            "format": ai_tool_string(&args, "format")
+        }))
+    } else {
+        None
+    };
+    if let Some(mutation) = staged_mutation {
+        return (
+            json!({
+                "callId": call_id,
+                "name": name,
+                "result": {
+                    "ok": true,
+                    "data": { "staged": true, "stagedCount": staged_mutations.len() + 1 }
+                }
+            }),
+            false,
+            0,
+            false,
+            Some(mutation),
+        );
+    }
+
+    if is_commit && staged_mutations.is_empty() {
+        return (
+            json!({
+                "callId": call_id,
+                "name": name,
+                "result": { "ok": false, "error": { "code": "nothing-staged", "message": "Stage at least one file before commit." } }
+            }),
+            false,
+            0,
+            false,
+            None,
+        );
+    }
+
+    let mapped = match name {
+        "local.files.discover" => {
+            let scopes = ai_tool_string_array(&args, "scopes");
+            Some((
+                "buildFiles.discover",
+                json!({
+                    "chatId": chat_id,
+                    "scopes": if scopes.as_array().is_some_and(|items| items.is_empty()) { json!(["build"]) } else { scopes },
+                    "aliases": ai_tool_string_array(&args, "aliases"),
+                    "extensions": ai_tool_string_array(&args, "extensions"),
+                    "configHints": ai_tool_string_array(&args, "configHints"),
+                    "semanticKeys": ai_tool_string_array(&args, "semanticKeys"),
+                    "revision": ai_tool_string(&args, "revision"),
+                    "cursor": ai_tool_string(&args, "cursor"),
+                    "limit": 20
+                }),
+            ))
+        }
+        "local.files.search" => Some((
+            "buildFiles.search",
+            json!({
+                "chatId": chat_id,
+                "scope": ai_tool_string(&args, "scope"),
+                "query": ai_tool_string(&args, "query"),
+                "revision": ai_tool_string(&args, "revision"),
+                "cursor": ai_tool_string(&args, "cursor"),
+                "limit": 20
+            }),
+        )),
+        "local.files.stat" => Some((
+            "buildFiles.stat",
+            json!({ "chatId": chat_id, "fileRef": file_ref }),
+        )),
+        "local.text.read" => Some((
+            "buildFiles.readText",
+            json!({
+                "chatId": chat_id,
+                "fileRef": file_ref,
+                "startLine": ai_tool_integer(&args, "startLine", 1, u64::MAX),
+                "maxLines": ai_tool_integer(&args, "maxLines", 120, 120),
+                "maxBytes": ai_tool_integer(&args, "maxBytes", 8192, 64 * 1024)
+            }),
+        )),
+        "local.json.query" => Some((
+            "buildFiles.queryJson",
+            json!({
+                "chatId": chat_id,
+                "fileRef": file_ref,
+                "pointer": ai_tool_string(&args, "pointer")
+            }),
+        )),
+        "local.config.inspect_recipe" => Some((
+            "buildFiles.inspectConfigRecipe",
+            json!({
+                "chatId": chat_id,
+                "fileRef": file_ref,
+                "targetPointer": ai_tool_string(&args, "targetPointer"),
+                "requestedValue": ai_tool_string(&args, "requestedValue")
+            }),
+        )),
+        "local.ini.query" => Some((
+            "buildFiles.queryIni",
+            json!({
+                "chatId": chat_id,
+                "fileRef": file_ref,
+                "section": ai_tool_string(&args, "section"),
+                "key": ai_tool_string(&args, "key")
+            }),
+        )),
+        "local.text.search" => Some((
+            "buildFiles.searchText",
+            json!({
+                "chatId": chat_id,
+                "scope": ai_tool_string(&args, "scope"),
+                "query": ai_tool_string(&args, "query"),
+                "revision": ai_tool_string(&args, "revision"),
+                "cursor": ai_tool_string(&args, "cursor"),
+                "limit": 20
+            }),
+        )),
+        "local.files.commit" => Some((
+            "buildFiles.apply",
+            json!({
+                "chatId": chat_id,
+                "runId": run_id,
+                "mutations": staged_mutations
+            }),
+        )),
+        _ => None,
+    };
+    let Some((method, params)) = mapped else {
+        return (
+            json!({
+                "callId": call_id,
+                "name": name,
+                "result": { "ok": false, "error": { "code": "protected", "message": "Undeclared file tool." } }
+            }),
+            false,
+            0,
+            false,
+            None,
+        );
+    };
+    match request_ai_build_files_with_recovery(
+        app,
+        request,
+        method,
+        params,
+        operation_id,
+        is_ai_read_only_file_tool(name),
+    )
+    .await
+    {
+        Ok((data, recovered)) => {
+            let (data, redacted, local_bytes) = redact_ai_file_tool_value(data);
+            (
+                json!({
+                    "callId": call_id,
+                    "name": name,
+                    "result": {
+                        "ok": true,
+                        "data": data,
+                        "redacted": redacted,
+                        "recoveryAction": if recovered { Some("reopen-native-session-and-retry") } else { None::<&str> }
+                    }
+                }),
+                is_commit,
+                local_bytes,
+                redacted,
+                None,
+            )
+        }
+        Err(error) => {
+            let code = ai_core_file_tool_error_code(&error);
+            let message = if code == "needs-input" {
+                "PageDown (34) is already assigned to ShaderBlockNextKey. Reassign Menu.ToggleKey to PageDown anyway?".to_string()
+            } else {
+                ai_file_tool_failure_message(&code)
+            };
+            (
+                json!({
+                    "callId": call_id,
+                    "name": name,
+                    "result": {
+                        "ok": false,
+                        "error": { "code": code, "message": message }
+                    }
+                }),
+                false,
+                0,
+                false,
+                None,
+            )
+        }
+    }
+}
+
+fn record_ai_writable_file_refs(
+    tool_name: &str,
+    result: &Value,
+    writable_file_refs: &mut HashSet<String>,
+) {
+    if result.pointer("/result/ok").and_then(Value::as_bool) != Some(true) {
+        return;
+    }
+    if tool_name == "local.files.search" {
+        let entries = result
+            .pointer("/result/data/entries")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if entries.len() == 1 {
+            if let Some(file_ref) = entries[0].get("fileRef").and_then(Value::as_str) {
+                writable_file_refs.insert(file_ref.to_string());
+            }
+        }
+        return;
+    }
+    if tool_name == "local.files.discover"
+        && result
+            .pointer("/result/data/resolution")
+            .and_then(Value::as_str)
+            == Some("unique")
+    {
+        for candidate in result
+            .pointer("/result/data/candidates")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        {
+            if candidate.get("effectiveWinner").and_then(Value::as_bool) != Some(true) {
+                continue;
+            }
+            if let Some(file_ref) = candidate.pointer("/file/fileRef").and_then(Value::as_str) {
+                writable_file_refs.insert(file_ref.to_string());
+            }
+        }
+    }
+}
+
+async fn request_ai_capability_bridge(
+    app: &AppHandle,
+    method: &str,
+    params: Value,
+    operation_id: &str,
+) -> Result<Value, String> {
+    let state = bridge_state(app);
+    let lane = bridge_lane_for_method(method);
+    let mut bridge = state.process(lane).lock().await;
+    let timeout_ms = if method == "installs.submit" {
+        120_000
+    } else {
+        30_000
+    };
+    bridge
+        .request(
+            app,
+            method,
+            params,
+            OperationRequest {
+                operation_id: Some(operation_id.to_string()),
+            },
+            timeout_ms,
+        )
+        .await
+}
+
+fn ai_capability_error(call: &Value, code: &str, message: &str, details: Value) -> Value {
+    json!({
+        "callId": ai_tool_string(call, "callId"),
+        "name": ai_tool_string(call, "name"),
+        "result": {
+            "ok": false,
+            "error": {
+                "code": code,
+                "message": message,
+                "details": details
+            }
+        }
+    })
+}
+
+fn ai_expired_entity_ref(
+    call: &Value,
+    field: &str,
+    kind: AiEntityKind,
+    refs: &AiEntityRefRegistry,
+) -> Value {
+    ai_capability_error(
+        call,
+        "expired-reference",
+        &format!(
+            "The {field} is unknown or stale. Run the matching Fluxora list tool and use one current opaque reference."
+        ),
+        json!({
+            "field": field,
+            "allowedValues": refs.current_refs(kind),
+            "recoveryAction": "rediscover-current-opaque-refs"
+        }),
+    )
+}
+
+fn ai_native_capability_error(call: &Value, error: &str) -> Value {
+    let normalized = error.to_ascii_lowercase();
+    let (code, message, recovery_action) = if normalized.contains("timeout") {
+        (
+            "native-timeout",
+            "The native capability timed out before a verified result was returned.",
+            "reread-native-state-and-retry",
+        )
+    } else if normalized.contains("stale") || normalized.contains("revision") {
+        (
+            "stale-revision",
+            "Native state changed after discovery; reread the current revision before retrying.",
+            "reread-current-revision",
+        )
+    } else if normalized.contains("notfound") || normalized.contains("not found") {
+        (
+            "expired-reference",
+            "The referenced native entity no longer exists; rediscover current opaque references.",
+            "rediscover-current-opaque-refs",
+        )
+    } else if normalized.contains("invalidparams") || normalized.contains("validation") {
+        (
+            "invalid-scope",
+            "The native capability rejected its typed arguments; normalize them to the declared scope.",
+            "normalize-arguments-and-retry",
+        )
+    } else if normalized.contains("conflict") || normalized.contains("alreadyexists") {
+        (
+            "conflict",
+            "The native capability found a conflicting current state and needs one exact user choice.",
+            "ask-one-exact-conflict-question",
+        )
+    } else if normalized.contains("permission") {
+        (
+            "permission-denied",
+            "The native capability was denied by the operating system or Fluxora policy.",
+            "inspect-permission-and-correlated-log",
+        )
+    } else {
+        (
+            "native-failed",
+            "The native capability returned no verified effect; inspect the correlated operation log before changing arguments.",
+            "inspect-correlated-native-log",
+        )
+    };
+    ai_capability_error(
+        call,
+        code,
+        message,
+        json!({ "recoveryAction": recovery_action }),
+    )
+}
+
+fn sanitize_ai_native_error_message(message: &str) -> String {
+    sanitize_log(message)
+        .split_whitespace()
+        .map(|token| {
+            let looks_like_drive_path = token.len() >= 3
+                && token.as_bytes().get(1) == Some(&b':')
+                && matches!(token.as_bytes().get(2), Some(b'\\' | b'/'));
+            if looks_like_drive_path || token.starts_with("\\\\") {
+                "[local-path]".to_string()
+            } else {
+                token.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(320)
+        .collect()
+}
+
+fn ai_capability_success(call: &Value, data: Value) -> Value {
+    json!({
+        "callId": ai_tool_string(call, "callId"),
+        "name": ai_tool_string(call, "name"),
+        "result": { "ok": true, "data": data }
+    })
+}
+
+fn ai_compensation_token(prefix: &str, operation_id: &str, call: &Value) -> String {
+    format!(
+        "{prefix}_{}",
+        stable_label_suffix(&format!(
+            "{operation_id}:{}:{}",
+            ai_tool_string(call, "callId"),
+            ai_tool_string(call, "name")
+        ))
+    )
+}
+
+async fn remember_ai_compensation(app: &AppHandle, token: String, action: AiCompensationAction) {
+    let state = app.state::<AiCompensationState>();
+    let mut actions = state.actions.lock().await;
+    if actions.len() >= 256 {
+        if let Some(expired) = actions.keys().next().cloned() {
+            actions.remove(&expired);
+        }
+    }
+    actions.insert(token, action);
+}
+
+async fn verify_ai_compensation(
+    app: &AppHandle,
+    verification: &AiCompensationVerification,
+    operation_id: &str,
+) -> Result<(), String> {
+    let verified = match verification {
+        AiCompensationVerification::ModEnabled {
+            project_directory,
+            profile_name,
+            native_id,
+            expected,
+        } => {
+            let data = request_ai_capability_bridge(
+                app,
+                "mods.getPersistedWorkspace",
+                json!({ "projectDirectory": project_directory, "profileName": profile_name }),
+                operation_id,
+            )
+            .await?;
+            find_mod_enabled(&data, native_id) == Some(*expected)
+        }
+        AiCompensationVerification::ModAbsent {
+            project_directory,
+            profile_name,
+            native_id,
+        } => {
+            let data = request_ai_capability_bridge(
+                app,
+                "mods.getPersistedWorkspace",
+                json!({ "projectDirectory": project_directory, "profileName": profile_name }),
+                operation_id,
+            )
+            .await?;
+            find_mod_enabled(&data, native_id).is_none()
+        }
+        AiCompensationVerification::PluginOrder {
+            project_directory,
+            template_id,
+            profile_name,
+            native_id,
+            expected,
+        } => {
+            let data = request_ai_capability_bridge(
+                app,
+                "plugins.listPersisted",
+                json!({
+                    "projectDirectory": project_directory,
+                    "templateId": template_id,
+                    "profileName": profile_name
+                }),
+                operation_id,
+            )
+            .await?;
+            find_plugin_order(&data, native_id) == Some(*expected)
+        }
+        AiCompensationVerification::DownloadStateChanged {
+            project_directory,
+            native_id,
+            previous_state,
+        } => {
+            let data = request_ai_capability_bridge(
+                app,
+                "downloads.list",
+                json!({ "projectDirectory": project_directory }),
+                operation_id,
+            )
+            .await?;
+            let state = find_download_state(&data, native_id).unwrap_or_default();
+            if matches!(previous_state.as_str(), "canceled" | "paused") {
+                matches!(state, "canceled" | "paused")
+            } else {
+                !matches!(state, "canceled" | "paused")
+            }
+        }
+        AiCompensationVerification::ProfileAbsent {
+            project_directory,
+            default_profile_name,
+            profile_name,
+        } => {
+            let data = request_ai_capability_bridge(
+                app,
+                "profiles.list",
+                json!({
+                    "projectDirectory": project_directory,
+                    "defaultProfileName": default_profile_name
+                }),
+                operation_id,
+            )
+            .await?;
+            data.as_array().is_some_and(|items| {
+                !items
+                    .iter()
+                    .any(|item| item.as_str() == Some(profile_name.as_str()))
+            })
+        }
+        AiCompensationVerification::Language { expected } => {
+            let data =
+                request_ai_capability_bridge(app, "settings.getLanguage", json!({}), operation_id)
+                    .await?;
+            data.get("language").and_then(Value::as_str) == Some(expected.as_str())
+        }
+    };
+    if verified {
+        Ok(())
+    } else {
+        Err("native postcondition mismatch after AI compensation".to_string())
+    }
+}
+
 #[tauri::command]
-async fn fluxora_ai_chat_respond(app: AppHandle, request: Value) -> Result<Value, String> {
+async fn fluxora_ai_undo_capability(
+    app: AppHandle,
+    compensation_token: String,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let operation_id = operation_id(request.as_ref(), "ai_capability_undo");
+    let action = app
+        .state::<AiCompensationState>()
+        .actions
+        .lock()
+        .await
+        .get(&compensation_token)
+        .cloned()
+        .ok_or_else(|| {
+            "AI compensation token is unknown, expired, or was already applied; refresh current state before continuing."
+                .to_string()
+        })?;
+    request_ai_capability_bridge(&app, &action.method, action.params.clone(), &operation_id)
+        .await?;
+    verify_ai_compensation(&app, &action.verification, &operation_id).await?;
+    app.state::<AiCompensationState>()
+        .actions
+        .lock()
+        .await
+        .remove(&compensation_token);
+    Ok(json!({
+        "state": "rolled-back",
+        "compensationToken": compensation_token,
+        "operationId": operation_id,
+        "postconditionVerified": true
+    }))
+}
+
+fn irreversible_capability_question(name: &str) -> Option<(&'static str, &'static str)> {
+    let contract = tool_contract(name)?;
+    if contract.risk != ToolRisk::Irreversible {
+        return None;
+    }
+    match name {
+        "local.installs.cancel" => Some((
+            "Cancel this active install? Cancellation is irreversible and has no compensation token.",
+            "confirm-native-install-cancellation",
+        )),
+        "local.projects.request_create" => Some((
+            "Open Fluxora's New Build dialog and choose the game directory and install root? Gemini cannot choose local filesystem paths.",
+            "open-native-project-creation-dialog",
+        )),
+        "local.fluxpack.request_selection" => Some((
+            "Select a FluxPack and confirm its native install plan? Gemini cannot provide an arbitrary local pack path.",
+            "select-fluxpack-and-confirm-native-plan",
+        )),
+        _ => None,
+    }
+}
+
+async fn execute_ai_capability_tool_call_inner(
+    app: &AppHandle,
+    request: &Value,
+    call: &Value,
+    operation_id: &str,
+    refs: &mut AiEntityRefRegistry,
+) -> Result<Value, String> {
+    let name = ai_tool_string(call, "name");
+    let args = call.get("args").cloned().unwrap_or_else(|| json!({}));
+    let workspace = request.get("fileWorkspace").unwrap_or(&Value::Null);
+    let project_directory = ai_tool_string(workspace, "projectDirectory");
+    let template_id = ai_tool_string(workspace, "templateId");
+    let profile = ai_tool_string(workspace, "profile");
+
+    if let Some((question, recovery_action)) = irreversible_capability_question(name) {
+        return Ok(ai_capability_error(
+            call,
+            "needs-input",
+            question,
+            json!({ "recoveryAction": recovery_action }),
+        ));
+    }
+
+    let result = match name {
+        "local.mods.list" => request_ai_capability_bridge(
+            app,
+            "mods.getPersistedWorkspace",
+            json!({ "projectDirectory": project_directory, "profileName": profile }),
+            operation_id,
+        )
+        .await
+        .map(|data| ai_capability_success(call, sanitize_mod_workspace(&data, refs))),
+        "local.mods.set_enabled" => {
+            let opaque_ref = ai_tool_string(&args, "modRef");
+            let Some(native_id) = refs.resolve(AiEntityKind::Mod, opaque_ref).map(str::to_string)
+            else {
+                return Ok(ai_expired_entity_ref(
+                    call,
+                    "modRef",
+                    AiEntityKind::Mod,
+                    refs,
+                ));
+            };
+            let requested = args
+                .get("isEnabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let before = request_ai_capability_bridge(
+                app,
+                "mods.getPersistedWorkspace",
+                json!({ "projectDirectory": project_directory, "profileName": profile }),
+                operation_id,
+            )
+            .await;
+            match before {
+                Ok(before) => {
+                    let previous = find_mod_enabled(&before, &native_id);
+                    if previous.is_none() {
+                        Ok(ai_expired_entity_ref(
+                            call,
+                            "modRef",
+                            AiEntityKind::Mod,
+                            refs,
+                        ))
+                    } else {
+                        request_ai_capability_bridge(
+                            app,
+                            "mods.setEnabled",
+                            json!({ "projectDirectory": project_directory, "modPath": native_id, "isEnabled": requested }),
+                            operation_id,
+                        )
+                        .await?;
+                        let verified = request_ai_capability_bridge(
+                            app,
+                            "mods.getPersistedWorkspace",
+                            json!({ "projectDirectory": project_directory, "profileName": profile }),
+                            operation_id,
+                        )
+                        .await?;
+                        let postcondition = find_mod_enabled(&verified, &native_id) == Some(requested);
+                        if !postcondition {
+                            Err("native postcondition mismatch for mods.setEnabled".to_string())
+                        } else {
+                            let previous = previous.unwrap_or(requested);
+                            let compensation_token =
+                                ai_compensation_token("undo_mod", operation_id, call);
+                            remember_ai_compensation(
+                                app,
+                                compensation_token.clone(),
+                                AiCompensationAction {
+                                    method: "mods.setEnabled".to_string(),
+                                    params: json!({
+                                        "projectDirectory": project_directory,
+                                        "modPath": native_id,
+                                        "isEnabled": previous
+                                    }),
+                                    verification: AiCompensationVerification::ModEnabled {
+                                        project_directory: project_directory.to_string(),
+                                        profile_name: profile.to_string(),
+                                        native_id: native_id.to_string(),
+                                        expected: previous,
+                                    },
+                                },
+                            )
+                            .await;
+                            Ok(ai_capability_success(
+                                call,
+                                json!({
+                                    "modRef": opaque_ref,
+                                    "isEnabled": requested,
+                                    "postconditionVerified": true,
+                                    "verification": "mods.getPersistedWorkspace",
+                                    "compensationToken": compensation_token,
+                                    "previousState": previous
+                                }),
+                            ))
+                        }
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        }
+        "local.plugins.list" => request_ai_capability_bridge(
+            app,
+            "plugins.listPersisted",
+            json!({ "projectDirectory": project_directory, "templateId": template_id, "profileName": profile }),
+            operation_id,
+        )
+        .await
+        .map(|data| ai_capability_success(call, sanitize_plugins(&data, refs))),
+        "local.plugins.move" => {
+            let opaque_ref = ai_tool_string(&args, "pluginRef");
+            let Some(native_id) = refs
+                .resolve(AiEntityKind::Plugin, opaque_ref)
+                .map(str::to_string)
+            else {
+                return Ok(ai_expired_entity_ref(
+                    call,
+                    "pluginRef",
+                    AiEntityKind::Plugin,
+                    refs,
+                ));
+            };
+            let target_index = args
+                .get("targetIndex")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let before = request_ai_capability_bridge(
+                app,
+                "plugins.listPersisted",
+                json!({ "projectDirectory": project_directory, "templateId": template_id, "profileName": profile }),
+                operation_id,
+            )
+            .await?;
+            let previous = find_plugin_order(&before, &native_id);
+            if previous.is_none() {
+                Ok(ai_expired_entity_ref(
+                    call,
+                    "pluginRef",
+                    AiEntityKind::Plugin,
+                    refs,
+                ))
+            } else {
+                request_ai_capability_bridge(
+                    app,
+                    "plugins.move",
+                    json!({
+                        "projectDirectory": project_directory,
+                        "templateId": template_id,
+                        "profileName": profile,
+                        "orderItemId": native_id,
+                        "targetIndex": target_index
+                    }),
+                    operation_id,
+                )
+                .await?;
+                let verified = request_ai_capability_bridge(
+                    app,
+                    "plugins.listPersisted",
+                    json!({ "projectDirectory": project_directory, "templateId": template_id, "profileName": profile }),
+                    operation_id,
+                )
+                .await?;
+                let actual_index = find_plugin_order(&verified, &native_id);
+                if actual_index != Some(target_index) {
+                    Err(format!(
+                        "native postcondition mismatch for plugins.move: expected index {target_index}, actual {actual_index:?}"
+                    ))
+                } else {
+                    let previous = previous.unwrap_or(target_index);
+                    let compensation_token =
+                        ai_compensation_token("undo_plugin", operation_id, call);
+                    remember_ai_compensation(
+                        app,
+                        compensation_token.clone(),
+                        AiCompensationAction {
+                            method: "plugins.move".to_string(),
+                            params: json!({
+                                "projectDirectory": project_directory,
+                                "templateId": template_id,
+                                "profileName": profile,
+                                "orderItemId": native_id,
+                                "targetIndex": previous
+                            }),
+                            verification: AiCompensationVerification::PluginOrder {
+                                project_directory: project_directory.to_string(),
+                                template_id: template_id.to_string(),
+                                profile_name: profile.to_string(),
+                                native_id: native_id.to_string(),
+                                expected: previous,
+                            },
+                        },
+                    )
+                    .await;
+                    Ok(ai_capability_success(
+                        call,
+                        json!({
+                            "pluginRef": opaque_ref,
+                            "targetIndex": target_index,
+                            "postconditionVerified": true,
+                            "verification": "plugins.listPersisted",
+                            "compensationToken": compensation_token,
+                            "previousIndex": previous
+                        }),
+                    ))
+                }
+            }
+        }
+        "local.downloads.list" => request_ai_capability_bridge(
+            app,
+            "downloads.list",
+            json!({ "projectDirectory": project_directory }),
+            operation_id,
+        )
+        .await
+        .map(|data| ai_capability_success(call, sanitize_downloads(&data, refs))),
+        "local.downloads.cancel" | "local.downloads.resume" => {
+            let opaque_ref = ai_tool_string(&args, "downloadRef");
+            let Some(native_id) = refs
+                .resolve(AiEntityKind::Download, opaque_ref)
+                .map(str::to_string)
+            else {
+                return Ok(ai_expired_entity_ref(
+                    call,
+                    "downloadRef",
+                    AiEntityKind::Download,
+                    refs,
+                ));
+            };
+            let method = match name {
+                "local.downloads.cancel" => "downloads.cancel",
+                "local.downloads.resume" => "downloads.resume",
+                _ => unreachable!("typed contract routes only download control tools here"),
+            };
+            let before = request_ai_capability_bridge(
+                app,
+                "downloads.list",
+                json!({ "projectDirectory": project_directory }),
+                operation_id,
+            )
+            .await?;
+            let Some(previous) = find_download_state(&before, &native_id).map(str::to_string) else {
+                return Ok(ai_expired_entity_ref(
+                    call,
+                    "downloadRef",
+                    AiEntityKind::Download,
+                    refs,
+                ));
+            };
+            request_ai_capability_bridge(
+                app,
+                method,
+                json!({ "projectDirectory": project_directory, "downloadPath": native_id }),
+                operation_id,
+            )
+            .await?;
+            let verified = request_ai_capability_bridge(
+                app,
+                "downloads.list",
+                json!({ "projectDirectory": project_directory }),
+                operation_id,
+            )
+            .await?;
+            let state = find_download_state(&verified, &native_id).unwrap_or_default();
+            let postcondition = if method == "downloads.cancel" {
+                matches!(state, "canceled" | "paused")
+            } else {
+                matches!(state, "queued" | "downloading" | "indexing" | "idle")
+            };
+            if !postcondition {
+                Err(format!("native postcondition mismatch for {method}"))
+            } else {
+                let compensation_method = if method == "downloads.cancel" {
+                    "downloads.resume"
+                } else {
+                    "downloads.cancel"
+                };
+                let compensation_token =
+                    ai_compensation_token("undo_download", operation_id, call);
+                remember_ai_compensation(
+                    app,
+                    compensation_token.clone(),
+                    AiCompensationAction {
+                        method: compensation_method.to_string(),
+                        params: json!({
+                            "projectDirectory": project_directory,
+                            "downloadPath": native_id
+                        }),
+                        verification: AiCompensationVerification::DownloadStateChanged {
+                            project_directory: project_directory.to_string(),
+                            native_id: native_id.to_string(),
+                            previous_state: previous.clone(),
+                        },
+                    },
+                )
+                .await;
+                Ok(ai_capability_success(
+                    call,
+                    json!({
+                        "downloadRef": opaque_ref,
+                        "transferState": state,
+                        "postconditionVerified": true,
+                        "verification": "downloads.list",
+                        "compensationToken": compensation_token,
+                        "previousState": previous
+                    }),
+                ))
+            }
+        }
+        "local.installs.list" => request_ai_capability_bridge(
+            app,
+            "installs.list",
+            json!({ "projectDirectory": project_directory, "includeTerminal": true }),
+            operation_id,
+        )
+        .await
+        .map(|data| ai_capability_success(call, sanitize_installs(&data, refs))),
+        "local.installs.submit_download" => {
+            let opaque_ref = ai_tool_string(&args, "downloadRef");
+            let Some(native_id) = refs
+                .resolve(AiEntityKind::Download, opaque_ref)
+                .map(str::to_string)
+            else {
+                return Ok(ai_expired_entity_ref(
+                    call,
+                    "downloadRef",
+                    AiEntityKind::Download,
+                    refs,
+                ));
+            };
+            let downloads = request_ai_capability_bridge(
+                app,
+                "downloads.list",
+                json!({ "projectDirectory": project_directory }),
+                operation_id,
+            )
+            .await?;
+            if find_download_can_install(&downloads, &native_id) != Some(true) {
+                return Ok(ai_capability_error(
+                    call,
+                    "precondition-failed",
+                    "The selected download is not currently installable. Refresh downloads and resolve its native transfer or indexing state first.",
+                    json!({ "downloadRef": opaque_ref, "recoveryAction": "refresh-downloads-and-resolve-state" }),
+                ));
+            }
+            let data = request_ai_capability_bridge(
+                app,
+                "installs.submit",
+                json!({
+                    "projectDirectory": project_directory,
+                    "operationId": operation_id,
+                    "sourceKind": "download",
+                    "sourcePath": native_id,
+                    "isFomod": false,
+                    "modName": ai_tool_string(&args, "modName"),
+                    "profileName": profile,
+                    "existingModMode": 0,
+                    "selectedOptionIdsJson": "[]"
+                }),
+                operation_id,
+            )
+            .await?;
+            let completed = data.get("state").and_then(Value::as_str) == Some("completed");
+            let native_mod_id = data
+                .pointer("/result/id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let mut clean = sanitize_install(&data, refs);
+            if let Some(fields) = clean.as_object_mut() {
+                fields.insert("postconditionVerified".to_string(), json!(completed));
+                fields.insert("verification".to_string(), json!("installs.get"));
+            }
+            if completed {
+                if let Some(native_mod_id) = native_mod_id {
+                    let compensation_token =
+                        ai_compensation_token("undo_install", operation_id, call);
+                    remember_ai_compensation(
+                        app,
+                        compensation_token.clone(),
+                        AiCompensationAction {
+                            method: "mods.deleteInstalled".to_string(),
+                            params: json!({
+                                "projectDirectory": project_directory,
+                                "modPath": native_mod_id
+                            }),
+                            verification: AiCompensationVerification::ModAbsent {
+                                project_directory: project_directory.to_string(),
+                                profile_name: profile.to_string(),
+                                native_id: native_mod_id,
+                            },
+                        },
+                    )
+                    .await;
+                    clean["compensationToken"] = json!(compensation_token);
+                }
+            }
+            Ok(ai_capability_success(call, clean))
+        }
+        "local.installs.cancel" => {
+            let opaque_ref = ai_tool_string(&args, "operationRef");
+            let Some(native_id) = refs
+                .resolve(AiEntityKind::Install, opaque_ref)
+                .map(str::to_string)
+            else {
+                return Ok(ai_expired_entity_ref(
+                    call,
+                    "operationRef",
+                    AiEntityKind::Install,
+                    refs,
+                ));
+            };
+            request_ai_capability_bridge(
+                app,
+                "installs.cancel",
+                json!({ "projectDirectory": project_directory, "operationId": native_id }),
+                operation_id,
+            )
+            .await?;
+            let verified = request_ai_capability_bridge(
+                app,
+                "installs.get",
+                json!({ "projectDirectory": project_directory, "operationId": native_id }),
+                operation_id,
+            )
+            .await?;
+            let clean = sanitize_install(&verified, refs);
+            if clean.get("state").and_then(Value::as_str) != Some("cancelled") {
+                Err("native postcondition mismatch for installs.cancel".to_string())
+            } else {
+                Ok(ai_capability_success(
+                    call,
+                    json!({
+                        "operationRef": opaque_ref,
+                        "state": "cancelled",
+                        "postconditionVerified": true,
+                        "verification": "installs.get"
+                    }),
+                ))
+            }
+        }
+        "local.installs.get" => {
+            let opaque_ref = ai_tool_string(&args, "operationRef");
+            let Some(native_id) = refs
+                .resolve(AiEntityKind::Install, opaque_ref)
+                .map(str::to_string)
+            else {
+                return Ok(ai_expired_entity_ref(
+                    call,
+                    "operationRef",
+                    AiEntityKind::Install,
+                    refs,
+                ));
+            };
+            let data = request_ai_capability_bridge(
+                app,
+                "installs.get",
+                json!({ "projectDirectory": project_directory, "operationId": native_id }),
+                operation_id,
+            )
+            .await?;
+            let native_mod_id = data
+                .pointer("/result/id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let native_error_message = data
+                .get("errorMessage")
+                .and_then(Value::as_str)
+                .map(sanitize_ai_native_error_message)
+                .filter(|message| !message.is_empty());
+            let mut clean = sanitize_install(&data, refs);
+            let state = clean
+                .get("state")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if matches!(state.as_str(), "failed" | "cancelled" | "needsReview") {
+                Ok(ai_capability_error(
+                    call,
+                    if state == "cancelled" { "cancelled" } else { "install-failed" },
+                    "The native install did not complete successfully. Use its typed error code and correlated operation log before retrying.",
+                    json!({
+                        "operationRef": opaque_ref,
+                        "state": state,
+                        "nativeErrorCode": clean.get("errorCode").cloned().unwrap_or(Value::Null),
+                        "nativeErrorMessage": native_error_message,
+                        "recoveryAction": "inspect-install-error-code-and-correlated-log"
+                    }),
+                ))
+            } else {
+                if let Some(fields) = clean.as_object_mut() {
+                    fields.insert(
+                        "postconditionVerified".to_string(),
+                        json!(state == "completed"),
+                    );
+                    fields.insert("verification".to_string(), json!("installs.get"));
+                }
+                if state == "completed" {
+                    if let Some(native_mod_id) = native_mod_id {
+                        let compensation_token =
+                            ai_compensation_token("undo_install", operation_id, call);
+                        remember_ai_compensation(
+                            app,
+                            compensation_token.clone(),
+                            AiCompensationAction {
+                                method: "mods.deleteInstalled".to_string(),
+                                params: json!({
+                                    "projectDirectory": project_directory,
+                                    "modPath": native_mod_id
+                                }),
+                                verification: AiCompensationVerification::ModAbsent {
+                                    project_directory: project_directory.to_string(),
+                                    profile_name: profile.to_string(),
+                                    native_id: native_mod_id,
+                                },
+                            },
+                        )
+                        .await;
+                        clean["compensationToken"] = json!(compensation_token);
+                    }
+                }
+                Ok(ai_capability_success(call, clean))
+            }
+        }
+        "local.profiles.list" => request_ai_capability_bridge(
+            app,
+            "profiles.list",
+            json!({ "projectDirectory": project_directory, "defaultProfileName": profile }),
+            operation_id,
+        )
+        .await
+        .map(|data| {
+            let revision = stable_label_suffix(&data.to_string());
+            ai_capability_success(
+                call,
+                json!({
+                    "profiles": data,
+                    "revision": revision
+                }),
+            )
+        }),
+        "local.profiles.create" => {
+            let profile_name = ai_tool_string(&args, "profileName");
+            let before = request_ai_capability_bridge(
+                app,
+                "profiles.list",
+                json!({ "projectDirectory": project_directory, "defaultProfileName": profile }),
+                operation_id,
+            )
+            .await?;
+            if before
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(profile_name)))
+            {
+                Ok(ai_capability_error(
+                    call,
+                    "conflict",
+                    "A profile with that exact name already exists. Choose one different profile name.",
+                    json!({ "allowedValues": before }),
+                ))
+            } else {
+                request_ai_capability_bridge(
+                    app,
+                    "profiles.create",
+                    json!({
+                        "projectDirectory": project_directory,
+                        "profileName": profile_name,
+                        "defaultProfileName": profile,
+                        "profileFiles": []
+                    }),
+                    operation_id,
+                )
+                .await?;
+                let verified = request_ai_capability_bridge(
+                    app,
+                    "profiles.list",
+                    json!({ "projectDirectory": project_directory, "defaultProfileName": profile }),
+                    operation_id,
+                )
+                .await?;
+                let postcondition = verified.as_array().is_some_and(|items| {
+                    items.iter().any(|item| item.as_str() == Some(profile_name))
+                });
+                if !postcondition {
+                    Err("native postcondition mismatch for profiles.create".to_string())
+                } else {
+                    let compensation_token =
+                        ai_compensation_token("undo_profile", operation_id, call);
+                    remember_ai_compensation(
+                        app,
+                        compensation_token.clone(),
+                        AiCompensationAction {
+                            method: "profiles.delete".to_string(),
+                            params: json!({
+                                "projectDirectory": project_directory,
+                                "profileName": profile_name,
+                                "defaultProfileName": profile
+                            }),
+                            verification: AiCompensationVerification::ProfileAbsent {
+                                project_directory: project_directory.to_string(),
+                                default_profile_name: profile.to_string(),
+                                profile_name: profile_name.to_string(),
+                            },
+                        },
+                    )
+                    .await;
+                    Ok(ai_capability_success(
+                        call,
+                        json!({
+                            "profileName": profile_name,
+                            "postconditionVerified": true,
+                            "verification": "profiles.list",
+                            "compensationToken": compensation_token
+                        }),
+                    ))
+                }
+            }
+        }
+        "local.settings.get_language" => request_ai_capability_bridge(
+            app,
+            "settings.getLanguage",
+            json!({}),
+            operation_id,
+        )
+        .await
+        .map(|data| {
+            ai_capability_success(
+                call,
+                json!({
+                    "language": data.get("language").cloned().unwrap_or(Value::Null),
+                    "revision": data.get("language").cloned().unwrap_or(Value::Null)
+                }),
+            )
+        }),
+        "local.settings.set_language" => {
+            let language = ai_tool_string(&args, "language");
+            let before = request_ai_capability_bridge(
+                app,
+                "settings.getLanguage",
+                json!({}),
+                operation_id,
+            )
+            .await?;
+            request_ai_capability_bridge(
+                app,
+                "settings.setLanguage",
+                json!({ "language": language }),
+                operation_id,
+            )
+            .await?;
+            let verified = request_ai_capability_bridge(
+                app,
+                "settings.getLanguage",
+                json!({}),
+                operation_id,
+            )
+            .await?;
+            if verified.get("language").and_then(Value::as_str) != Some(language) {
+                Err("native postcondition mismatch for settings.setLanguage".to_string())
+            } else {
+                let previous_language = before
+                    .get("language")
+                    .and_then(Value::as_str)
+                    .unwrap_or("en")
+                    .to_string();
+                let compensation_token =
+                    ai_compensation_token("undo_setting", operation_id, call);
+                remember_ai_compensation(
+                    app,
+                    compensation_token.clone(),
+                    AiCompensationAction {
+                        method: "settings.setLanguage".to_string(),
+                        params: json!({ "language": previous_language }),
+                        verification: AiCompensationVerification::Language {
+                            expected: previous_language.clone(),
+                        },
+                    },
+                )
+                .await;
+                Ok(ai_capability_success(
+                    call,
+                    json!({
+                        "language": language,
+                        "postconditionVerified": true,
+                        "verification": "settings.getLanguage",
+                        "compensationToken": compensation_token,
+                        "previousLanguage": previous_language
+                    }),
+                ))
+            }
+        }
+        "local.projects.current" => Ok(ai_capability_success(
+            call,
+            json!({
+                "projectRef": workspace.get("projectId").cloned().unwrap_or(Value::Null),
+                "name": workspace.get("buildLabel").cloned().unwrap_or(Value::Null),
+                "templateId": template_id,
+                "game": workspace.get("game").cloned().unwrap_or(Value::Null),
+                "profile": profile,
+                "revision": workspace.get("projectId").cloned().unwrap_or(Value::Null)
+            }),
+        )),
+        _ => Ok(ai_capability_error(
+            call,
+            "protected",
+            "This capability tool is not part of the supported Fluxora typed contract.",
+            json!({ "recoveryAction": "use-declared-typed-tools-only" }),
+        )),
+    };
+
+    result
+}
+
+async fn execute_ai_capability_tool_call(
+    app: &AppHandle,
+    request: &Value,
+    call: &Value,
+    operation_id: &str,
+    refs: &mut AiEntityRefRegistry,
+) -> (Value, bool, u64, bool, Option<Value>) {
+    let result = execute_ai_capability_tool_call_inner(app, request, call, operation_id, refs)
+        .await
+        .unwrap_or_else(|error| ai_native_capability_error(call, &error));
+    let bytes = serde_json::to_vec(&result)
+        .map(|bytes| bytes.len() as u64)
+        .unwrap_or_default();
+    (result, false, bytes, false, None)
+}
+
+#[tauri::command]
+async fn fluxora_ai_file_read(app: AppHandle, request: Value) -> Result<Value, String> {
+    let operation_id = request
+        .get("operationId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| operation_id(None, "ai_file_read"));
+    request_ai_build_files(
+        &app,
+        "buildFiles.readText",
+        json!({
+            "chatId": ai_tool_string(&request, "chatId"),
+            "fileRef": ai_tool_string(&request, "fileRef"),
+            "startLine": ai_tool_integer(&request, "startLine", 1, u64::MAX),
+            "maxLines": ai_tool_integer(
+                &request,
+                "maxLines",
+                120,
+                if request.get("editorMode").and_then(Value::as_bool).unwrap_or(false) { 65_536 } else { 120 },
+            ),
+            "maxBytes": ai_tool_integer(&request, "maxBytes", 8192, 64 * 1024),
+            "editorMode": request.get("editorMode").and_then(Value::as_bool).unwrap_or(false)
+        }),
+        &operation_id,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn fluxora_ai_file_end_chat(
+    app: AppHandle,
+    chat_id: String,
+    request: Option<OperationRequest>,
+) -> Result<(), String> {
+    let operation_id = operation_id(request.as_ref(), "ai_file_end_chat");
+    request_ai_build_files(
+        &app,
+        "buildFiles.endChat",
+        json!({ "chatId": chat_id }),
+        &operation_id,
+    )
+    .await?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn fluxora_ai_file_save(app: AppHandle, request: Value) -> Result<Value, String> {
+    let operation_id = request
+        .get("operationId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| operation_id(None, "ai_file_save"));
+    let file_ref = ai_tool_string(&request, "fileRef");
+    request_ai_build_files(
+        &app,
+        "buildFiles.apply",
+        json!({
+            "chatId": ai_tool_string(&request, "chatId"),
+            "runId": ai_tool_string(&request, "runId"),
+            "mutations": [{
+                "kind": "replace-document",
+                "fileRef": file_ref,
+                "revision": ai_tool_string(&request, "revision"),
+                "baseSha256": ai_tool_string(&request, "baseSha256"),
+                "expectedText": ai_tool_string(&request, "expectedText"),
+                "replacementText": ai_tool_string(&request, "replacementText"),
+                "format": ai_tool_string(&request, "format")
+            }]
+        }),
+        &operation_id,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn fluxora_ai_file_set_dirty(
+    app: AppHandle,
+    file_ref: String,
+    dirty: bool,
+) -> Result<(), String> {
+    let file_ref = file_ref.trim();
+    if file_ref.is_empty() {
+        return Err("AI fileRef is required.".to_string());
+    }
+    let state = app.state::<AiDirtyEditorState>();
+    let mut refs = state.refs.lock().await;
+    if dirty {
+        refs.insert(file_ref.to_string());
+    } else {
+        refs.remove(file_ref);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn fluxora_ai_file_rollback_file(
+    app: AppHandle,
+    chat_id: String,
+    run_id: String,
+    file_ref: String,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let operation_id = operation_id(request.as_ref(), "ai_file_rollback_file");
+    request_ai_build_files(
+        &app,
+        "buildFiles.rollbackFile",
+        json!({ "chatId": chat_id, "runId": run_id, "fileRef": file_ref }),
+        &operation_id,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn fluxora_ai_file_rollback_run(
+    app: AppHandle,
+    chat_id: String,
+    run_id: String,
+    request: Option<OperationRequest>,
+) -> Result<Value, String> {
+    let operation_id = operation_id(request.as_ref(), "ai_file_rollback_run");
+    request_ai_build_files(
+        &app,
+        "buildFiles.rollbackRun",
+        json!({ "chatId": chat_id, "runId": run_id }),
+        &operation_id,
+    )
+    .await
+}
+
+async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value, String> {
     let mut request = request;
     let operation_id = request
         .get("operationId")
@@ -3537,30 +5606,739 @@ async fn fluxora_ai_chat_respond(app: AppHandle, request: Value) -> Result<Value
     let operation_request = OperationRequest {
         operation_id: Some(operation_id.clone()),
     };
+    register_ai_operation(&app, &operation_id).await;
     enrich_ai_request_with_private_nexus_credential(&app, &mut request, &operation_id).await;
-    let state = ai_host_state(&app);
-    let mut host = state.process.lock().await;
-    let result = host
-        .request(
-            &app,
-            "chat.respond",
-            request,
-            operation_request,
-            AI_HOST_LONG_RUNNING_TIMEOUT_MS,
-        )
-        .await;
+    let workspace = request.get("fileWorkspace").cloned().unwrap_or(Value::Null);
+    let has_file_workspace = workspace.as_object().is_some();
+    let project_directory = ai_tool_string(&workspace, "projectDirectory").to_string();
+    let chat_id = workspace
+        .get("chatId")
+        .and_then(Value::as_str)
+        .or_else(|| request.get("sessionId").and_then(Value::as_str))
+        .unwrap_or_default()
+        .to_string();
+    let run_id = request
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or(&operation_id)
+        .to_string();
 
-    match result {
+    let mut staged_text: Option<String> = None;
+    let mut staged_response: Option<Value> = None;
+    let mut staged_change_set: Option<Value> = None;
+    let mut staged_needs_input: Option<String> = None;
+    let mut staged_blocked_reason: Option<String> = None;
+    let mut staged_error: Option<Value> = None;
+    let mut tool_flow_started = false;
+    let mut tool_call_count = 0_u64;
+    let mut tool_round_count = 0_u64;
+    let mut metadata_bytes = 0_u64;
+    let mut content_bytes = 0_u64;
+    let mut search_count = 0_u64;
+    let mut empty_result_count = 0_u64;
+    let mut candidate_count = 0_u64;
+    let mut provider_bytes = 0_u64;
+    let mut redaction_applied = false;
+    let mut mutation_count = 0_u64;
+    let mut truncated_responses = 0_u64;
+    let mut validation_retry_count = 0_u64;
+    let mut duplicate_call_count = 0_u64;
+    let mut host_new_evidence_count = 0_u64;
+    let mut host_stagnant_result_count = 0_u64;
+    let mut host_phase_transitions = Vec::<Value>::new();
+    let mut task_kind = "answer".to_string();
+    let mut thinking_level = "medium".to_string();
+    let mut provider_routing = if has_file_workspace {
+        "local-auto"
+    } else {
+        "web-search"
+    }
+    .to_string();
+    let mut staged_mutations = Vec::<Value>::new();
+    let mut staged_targets = HashSet::<String>::new();
+    let mut writable_file_refs = HashSet::<String>::new();
+    let mut read_only_cache = HashMap::<String, Value>::new();
+    let mut entity_refs = AiEntityRefRegistry::default();
+    let mut commit_completed = false;
+    let mut native_session_preopened = false;
+
+    if !project_directory.is_empty() && !chat_id.is_empty() {
+        match request_ai_build_files(
+            &app,
+            "buildFiles.beginChat",
+            json!({
+                "chatId": chat_id,
+                "projectDirectory": project_directory,
+                "profile": workspace.get("profile").and_then(Value::as_str).unwrap_or_default()
+            }),
+            &operation_id,
+        )
+        .await
+        {
+            Ok(_) => native_session_preopened = true,
+            Err(error) => {
+                let reason = ai_core_file_tool_error_code(&error).to_string();
+                staged_blocked_reason = Some(reason.clone());
+                staged_error = Some(json!({
+                    "code": format!("ai.tool.{reason}"),
+                    "category": "safety",
+                    "stage": "native-session",
+                    "retryable": reason == "session-inactive",
+                    "userMessage": ai_file_tool_failure_message(&reason),
+                    "debugId": format!("shell-{}", now_millis())
+                }));
+            }
+        }
+    }
+
+    if native_session_preopened {
+        let begin = {
+            let state = ai_host_state(&app);
+            let mut host = state.process.lock().await;
+            host.request(
+                &app,
+                "chat.beginToolRun",
+                request.clone(),
+                operation_request.clone(),
+                AI_HOST_LONG_RUNNING_TIMEOUT_MS,
+            )
+            .await
+        };
+        let begin_error = begin
+            .as_ref()
+            .err()
+            .map(|error| ai_host_error_payload(error, "session-start"));
+        if let Ok(mut turn) = begin {
+            tool_flow_started = turn.get("state").and_then(Value::as_str) != Some("fallback");
+            let mut tool_session_id = turn
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            'tool_loop: loop {
+                if ai_operation_cancelled(&app, &operation_id).await {
+                    staged_blocked_reason = Some("cancelled".to_string());
+                    staged_error = Some(ai_cancelled_error_payload());
+                    break;
+                }
+                tool_round_count = turn
+                    .get("toolRounds")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(tool_round_count);
+                tool_call_count = turn
+                    .get("toolCalls")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(tool_call_count);
+                let observed_new_evidence_count = turn
+                    .get("newEvidenceCount")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(host_new_evidence_count);
+                let new_fact = observed_new_evidence_count > host_new_evidence_count;
+                host_new_evidence_count = observed_new_evidence_count;
+                host_stagnant_result_count = turn
+                    .get("stagnantResultCount")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(host_stagnant_result_count);
+                host_phase_transitions = turn
+                    .get("phaseTransitions")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_else(|| host_phase_transitions.clone());
+                let phase = turn
+                    .pointer("/execution/phase")
+                    .or_else(|| turn.pointer("/response/execution/phase"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("discover");
+                let terminal_reason = turn
+                    .get("terminalReason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("none");
+                let _ = write_log(
+                    &app,
+                    "ai-host",
+                    "info",
+                    "AiToolLoop",
+                    &format!(
+                        "phase={} newFact={} newEvidenceCount={} stagnantResultCount={} terminalReason={}",
+                        phase,
+                        new_fact,
+                        host_new_evidence_count,
+                        host_stagnant_result_count,
+                        terminal_reason
+                    ),
+                    Some(&operation_id),
+                )
+                .await;
+                validation_retry_count = turn
+                    .get("validationRetries")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(validation_retry_count);
+                task_kind = turn
+                    .get("taskKind")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&task_kind)
+                    .to_string();
+                provider_routing = turn
+                    .get("providerRouting")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&provider_routing)
+                    .to_string();
+                thinking_level = turn
+                    .get("thinkingLevel")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&thinking_level)
+                    .to_string();
+                match turn.get("state").and_then(Value::as_str) {
+                    Some("fallback") => break,
+                    Some("final") => {
+                        staged_response = turn.get("response").cloned();
+                        staged_text = turn.get("text").and_then(Value::as_str).map(str::to_string);
+                        break;
+                    }
+                    Some("tool-calls") => {
+                        tool_session_id = turn
+                            .get("sessionId")
+                            .and_then(Value::as_str)
+                            .unwrap_or(&tool_session_id)
+                            .to_string();
+                        let write_granted = turn
+                            .get("writeGranted")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        let calls = turn
+                            .get("calls")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default();
+                        let mut results = Vec::with_capacity(calls.len());
+                        for call in &calls {
+                            if ai_operation_cancelled(&app, &operation_id).await {
+                                staged_blocked_reason = Some("cancelled".to_string());
+                                staged_error = Some(ai_cancelled_error_payload());
+                                break 'tool_loop;
+                            }
+                            let normalized_call = normalize_ai_file_tool_call(call);
+                            let tool_name = ai_tool_string(&normalized_call, "name");
+                            let args = normalized_call
+                                .get("args")
+                                .cloned()
+                                .unwrap_or_else(|| json!({}));
+                            let capability_tool = is_capability_tool(tool_name);
+                            let is_read_only = is_ai_read_only_file_tool(tool_name)
+                                || is_read_only_capability_tool(tool_name);
+                            let cacheable_read = is_ai_read_only_file_tool(tool_name);
+                            let cache_key = ai_file_tool_cache_key(tool_name, &args);
+                            let cache_hit =
+                                cacheable_read && read_only_cache.contains_key(&cache_key);
+                            let (mut result, committed, bytes, redacted, staged_mutation) =
+                                if is_read_only {
+                                    if cacheable_read {
+                                        if let Some(cached) = read_only_cache.get(&cache_key) {
+                                            duplicate_call_count += 1;
+                                            (
+                                                json!({
+                                                    "callId": ai_tool_string(&normalized_call, "callId"),
+                                                    "name": tool_name,
+                                                    "result": cached
+                                                }),
+                                                false,
+                                                0,
+                                                false,
+                                                None,
+                                            )
+                                        } else if capability_tool {
+                                            execute_ai_capability_tool_call(
+                                                &app,
+                                                &request,
+                                                &normalized_call,
+                                                &operation_id,
+                                                &mut entity_refs,
+                                            )
+                                            .await
+                                        } else {
+                                            execute_ai_file_tool_call(
+                                                &app,
+                                                &request,
+                                                &normalized_call,
+                                                &chat_id,
+                                                &run_id,
+                                                &operation_id,
+                                                write_granted,
+                                                &staged_mutations,
+                                                &writable_file_refs,
+                                            )
+                                            .await
+                                        }
+                                    } else if capability_tool {
+                                        execute_ai_capability_tool_call(
+                                            &app,
+                                            &request,
+                                            &normalized_call,
+                                            &operation_id,
+                                            &mut entity_refs,
+                                        )
+                                        .await
+                                    } else {
+                                        execute_ai_file_tool_call(
+                                            &app,
+                                            &request,
+                                            &normalized_call,
+                                            &chat_id,
+                                            &run_id,
+                                            &operation_id,
+                                            write_granted,
+                                            &staged_mutations,
+                                            &writable_file_refs,
+                                        )
+                                        .await
+                                    }
+                                } else if commit_completed && !capability_tool {
+                                    (
+                                            ai_local_tool_error(
+                                                &normalized_call,
+                                                "already-committed",
+                                                "This action already committed its one atomic file batch.",
+                                            ),
+                                            false,
+                                            0,
+                                            false,
+                                            None,
+                                        )
+                                } else if capability_tool {
+                                    execute_ai_capability_tool_call(
+                                        &app,
+                                        &request,
+                                        &normalized_call,
+                                        &operation_id,
+                                        &mut entity_refs,
+                                    )
+                                    .await
+                                } else {
+                                    execute_ai_file_tool_call(
+                                        &app,
+                                        &request,
+                                        &normalized_call,
+                                        &chat_id,
+                                        &run_id,
+                                        &operation_id,
+                                        write_granted,
+                                        &staged_mutations,
+                                        &writable_file_refs,
+                                    )
+                                    .await
+                                };
+                            if cacheable_read && !read_only_cache.contains_key(&cache_key) {
+                                if should_cache_ai_file_tool_result(&result) {
+                                    let payload = result
+                                        .get("result")
+                                        .cloned()
+                                        .expect("successful AI tool result payload");
+                                    read_only_cache.insert(cache_key, payload);
+                                }
+                            }
+                            record_ai_writable_file_refs(
+                                tool_name,
+                                &result,
+                                &mut writable_file_refs,
+                            );
+                            if let Some(mutation) = staged_mutation {
+                                let target = ai_staged_mutation_target(&mutation);
+                                if staged_mutations.len() >= 16 {
+                                    result = ai_local_tool_error(
+                                        &normalized_call,
+                                        "too-large",
+                                        "One action can stage at most 16 different files.",
+                                    );
+                                } else if !staged_targets.insert(target) {
+                                    result = ai_local_tool_error(
+                                        &normalized_call,
+                                        "duplicate-mutation",
+                                        "One action can stage only one mutation per file.",
+                                    );
+                                } else {
+                                    staged_mutations.push(mutation);
+                                    result["result"]["data"]["stagedCount"] =
+                                        json!(staged_mutations.len());
+                                }
+                            }
+                            if result.pointer("/result/error/code").and_then(Value::as_str)
+                                == Some("needs-input")
+                            {
+                                staged_needs_input = Some(
+                                        result
+                                            .pointer("/result/error/message")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or(
+                                                "PageDown (34) is already assigned to ShaderBlockNextKey. Reassign Menu.ToggleKey to PageDown anyway?",
+                                            )
+                                            .to_string(),
+                                    );
+                            }
+                            if committed {
+                                commit_completed = true;
+                                staged_change_set = result
+                                    .get("result")
+                                    .and_then(|result| result.get("data"))
+                                    .cloned();
+                                mutation_count = staged_change_set
+                                    .as_ref()
+                                    .and_then(|change_set| change_set.get("files"))
+                                    .and_then(Value::as_array)
+                                    .map(|files| files.len() as u64)
+                                    .unwrap_or_default();
+                            }
+                            if result
+                                .pointer("/result/data/truncated")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                            {
+                                truncated_responses += 1;
+                            }
+                            let is_search = matches!(
+                                tool_name,
+                                "local.files.discover" | "local.files.search" | "local.text.search"
+                            );
+                            if is_search {
+                                search_count += 1;
+                                let result_count = ["candidates", "entries", "matches"]
+                                    .iter()
+                                    .find_map(|field| {
+                                        result
+                                            .pointer(&format!("/result/data/{field}"))
+                                            .and_then(Value::as_array)
+                                            .map(|items| items.len() as u64)
+                                    })
+                                    .unwrap_or_default();
+                                if result_count == 0 {
+                                    empty_result_count += 1;
+                                }
+                                if tool_name == "local.files.discover" {
+                                    candidate_count += result_count;
+                                }
+                            }
+                            if matches!(
+                                tool_name,
+                                "local.files.discover" | "local.files.search" | "local.files.stat"
+                            ) {
+                                metadata_bytes += bytes;
+                            } else if is_read_only {
+                                content_bytes += bytes;
+                            }
+                            redaction_applied |= redacted;
+                            provider_bytes += serde_json::to_vec(&result)
+                                .map(|bytes| bytes.len() as u64)
+                                .unwrap_or_default();
+                            let validation_code = result
+                                .pointer("/result/error/validationCode")
+                                .or_else(|| result.pointer("/result/error/code"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("ok");
+                            let validation_field = result
+                                .pointer("/result/error/field")
+                                .and_then(Value::as_str)
+                                .unwrap_or("none");
+                            let outcome = if result.pointer("/result/ok").and_then(Value::as_bool)
+                                == Some(true)
+                            {
+                                "succeeded"
+                            } else {
+                                "blocked"
+                            };
+                            let _ = write_log(
+                                    &app,
+                                    "ai-host",
+                                    if outcome == "succeeded" { "info" } else { "warning" },
+                                    "AiTool",
+                                    &format!(
+                                        "tool={} round={} validationField={} validationCode={} retry={} cached={} resultCount=1 outcome={}",
+                                        tool_name,
+                                        tool_round_count,
+                                        validation_field,
+                                        validation_code,
+                                        validation_retry_count,
+                                        cache_hit,
+                                        outcome
+                                    ),
+                                    Some(&operation_id),
+                                )
+                                .await;
+                            results.push(result);
+                        }
+                        if ai_operation_cancelled(&app, &operation_id).await {
+                            staged_blocked_reason = Some("cancelled".to_string());
+                            staged_error = Some(ai_cancelled_error_payload());
+                            break;
+                        }
+                        let continued = {
+                            let state = ai_host_state(&app);
+                            let mut host = state.process.lock().await;
+                            host.request(
+                                &app,
+                                "chat.continueToolRun",
+                                json!({ "sessionId": tool_session_id, "results": results }),
+                                operation_request.clone(),
+                                AI_HOST_LONG_RUNNING_TIMEOUT_MS,
+                            )
+                            .await
+                        };
+                        match continued {
+                            Ok(next) => turn = next,
+                            Err(error) => {
+                                let payload = ai_host_error_payload(&error, "tool-loop");
+                                staged_blocked_reason = payload
+                                    .get("code")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string);
+                                staged_error = Some(payload);
+                                break;
+                            }
+                        }
+                    }
+                    _ => {
+                        staged_blocked_reason = Some("tool-session-invalid-response".to_string());
+                        break;
+                    }
+                }
+            }
+            if staged_blocked_reason.is_some() && !tool_session_id.is_empty() {
+                let state = ai_host_state(&app);
+                let mut host = state.process.lock().await;
+                let _ = host
+                    .request(
+                        &app,
+                        "chat.abortToolRun",
+                        json!({ "sessionId": tool_session_id }),
+                        operation_request.clone(),
+                        AI_HOST_TIMEOUT_MS,
+                    )
+                    .await;
+            }
+        } else {
+            staged_blocked_reason = begin_error
+                .as_ref()
+                .and_then(|payload| payload.get("code"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            staged_error = begin_error;
+        }
+    }
+
+    let mut result: Result<Value, String> =
+        if should_request_independent_chat_response(has_file_workspace, tool_flow_started) {
+            let state = ai_host_state(&app);
+            let mut host = state.process.lock().await;
+            host.request(
+                &app,
+                "chat.respond",
+                request,
+                operation_request,
+                AI_HOST_LONG_RUNNING_TIMEOUT_MS,
+            )
+            .await
+        } else if let Some(response) = staged_response {
+            Ok(response)
+        } else {
+            let reason = staged_blocked_reason
+                .clone()
+                .unwrap_or_else(|| "tool-session-invalid-response".to_string());
+            let error = staged_error.clone().unwrap_or_else(|| {
+                let user_message = ai_file_tool_failure_message(&reason);
+                json!({
+                    "code": format!("ai.tool.{reason}"),
+                    "category": "tool-loop",
+                    "stage": "tool-loop",
+                    "retryable": false,
+                    "userMessage": user_message,
+                    "debugId": format!("shell-{}", now_millis())
+                })
+            });
+            let blocked_text = error
+                .get("userMessage")
+                .and_then(Value::as_str)
+                .unwrap_or("Fluxora stopped the AI tool loop safely.")
+                .to_string();
+            Ok(json!({
+                "operationId": operation_id,
+                "providerId": "gemini",
+                "modelId": "gemini-3.1-flash-lite",
+                "status": "blocked",
+                "text": blocked_text,
+                "streamChunks": [{ "index": 0, "text": blocked_text }],
+                "sources": [],
+                "toolCallsAllowed": true,
+                "error": error
+            }))
+        };
+    if ai_operation_cancelled(&app, &operation_id).await {
+        let error = ai_cancelled_error_payload();
+        let text = error
+            .get("userMessage")
+            .and_then(Value::as_str)
+            .unwrap_or("The AI request was stopped.")
+            .to_string();
+        result = Ok(json!({
+            "operationId": operation_id,
+            "providerId": "gemini",
+            "modelId": "gemini-3.1-flash-lite",
+            "status": "blocked",
+            "text": text,
+            "streamChunks": [{ "index": 0, "text": text }],
+            "sources": [],
+            "toolCallsAllowed": false,
+            "error": error
+        }));
+    }
+    let final_result = match result {
         Ok(mut data) => {
+            thinking_level = data
+                .pointer("/internalDiagnostics/thinkingLevel")
+                .or_else(|| data.pointer("/fileToolDiagnostics/thinkingLevel"))
+                .and_then(Value::as_str)
+                .unwrap_or(&thinking_level)
+                .to_string();
+            let host_terminal_reason = data
+                .get("toolLoopTerminalReason")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             if let Value::Object(fields) = &mut data {
                 fields.insert("operationId".to_string(), json!(operation_id.clone()));
+                if let Some(text) = staged_text.filter(|text| !text.trim().is_empty()) {
+                    fields.insert("text".to_string(), json!(text.clone()));
+                    fields.insert(
+                        "streamChunks".to_string(),
+                        json!([{ "index": 0, "text": text }]),
+                    );
+                    fields.insert("toolCallsAllowed".to_string(), json!(true));
+                }
+                if let Some(change_set) = staged_change_set.clone() {
+                    fields.insert("fileChangeSet".to_string(), change_set);
+                }
+                if let Some(question) = &staged_needs_input {
+                    fields.insert("status".to_string(), json!("needs-input"));
+                    fields.insert("text".to_string(), json!(question));
+                    fields.insert(
+                        "streamChunks".to_string(),
+                        json!([{ "index": 0, "text": question }]),
+                    );
+                }
+                if let Some(reason) = &staged_blocked_reason {
+                    let error = staged_error.clone().unwrap_or_else(|| {
+                        json!({
+                            "code": format!("ai.tool.{reason}"),
+                            "category": "tool-loop",
+                            "stage": "tool-loop",
+                            "retryable": false,
+                            "userMessage": ai_file_tool_failure_message(reason),
+                            "debugId": format!("shell-{}", now_millis())
+                        })
+                    });
+                    let blocked_text = error
+                        .get("userMessage")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Fluxora stopped the AI tool loop safely.")
+                        .to_string();
+                    fields.insert("status".to_string(), json!("blocked"));
+                    fields.insert("text".to_string(), json!(blocked_text.clone()));
+                    fields.insert(
+                        "streamChunks".to_string(),
+                        json!([{ "index": 0, "text": blocked_text }]),
+                    );
+                    fields.insert("error".to_string(), error);
+                }
+                let completion_candidate = json!({
+                    "execution": fields.get("execution").cloned().unwrap_or(Value::Null)
+                });
+                if !ai_shell_completion_evidence_satisfied(
+                    &task_kind,
+                    &completion_candidate,
+                    staged_change_set.is_some(),
+                ) && staged_needs_input.is_none()
+                    && staged_blocked_reason.is_none()
+                {
+                    let is_file_action = fields
+                        .get("execution")
+                        .and_then(|execution| execution.get("domain"))
+                        .and_then(Value::as_str)
+                        == Some("files");
+                    let reason = host_terminal_reason.clone().unwrap_or_else(|| {
+                        if is_file_action {
+                            "action-without-verified-commit".to_string()
+                        } else {
+                            "action-without-verified-effect".to_string()
+                        }
+                    });
+                    let blocked_text = ai_file_tool_failure_message(&reason);
+                    let (category, stage) = ai_tool_terminal_error_classification(&reason);
+                    fields.insert("status".to_string(), json!("blocked"));
+                    fields.insert("text".to_string(), json!(blocked_text.clone()));
+                    fields.insert(
+                        "streamChunks".to_string(),
+                        json!([{ "index": 0, "text": blocked_text }]),
+                    );
+                    fields.insert("toolLoopTerminalReason".to_string(), json!(reason.clone()));
+                    fields.insert(
+                        "error".to_string(),
+                        json!({
+                            "code": format!("ai.tool.{reason}"),
+                            "category": category,
+                            "stage": stage,
+                            "retryable": false,
+                            "userMessage": ai_file_tool_failure_message(&reason),
+                            "debugId": format!("shell-{}", now_millis())
+                        }),
+                    );
+                }
+                let outcome = fields
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("blocked")
+                    .to_string();
+                let terminal_reason = fields
+                    .get("toolLoopTerminalReason")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| staged_blocked_reason.clone());
+                fields.insert(
+                    "fileToolDiagnostics".to_string(),
+                    json!({
+                        "schema": "fluxora.ai.file-tool-diagnostics.v2",
+                        "taskKind": task_kind,
+                        "providerRouting": provider_routing,
+                        "thinkingLevel": thinking_level.clone(),
+                        "outcome": outcome,
+                        "validationRetries": validation_retry_count,
+                        "duplicateCalls": duplicate_call_count,
+                        "stagedChanges": staged_mutations.len(),
+                        "verifiedMutations": mutation_count,
+                        "terminalReason": terminal_reason,
+                        "toolCalls": tool_call_count,
+                        "toolRounds": tool_round_count,
+                        "metadataBytes": metadata_bytes,
+                        "contentBytes": content_bytes,
+                        "searches": search_count,
+                        "emptyResults": empty_result_count,
+                        "candidateCount": candidate_count,
+                        "providerBytes": provider_bytes,
+                        "redactionApplied": redaction_applied,
+                        "mutations": mutation_count,
+                        "truncatedResponses": truncated_responses,
+                        "blockedReason": staged_blocked_reason,
+                        "nativeSessionPreopened": native_session_preopened,
+                        "newEvidenceCount": host_new_evidence_count,
+                        "stagnantResultCount": host_stagnant_result_count,
+                        "phaseTransitions": host_phase_transitions
+                    }),
+                );
             }
             let _ = write_log(
                 &app,
                 "ai-host",
                 "info",
                 "AiChat",
-                "Chat-only AI response completed.",
+                &format!(
+                    "AI response completed through the bounded tool-session broker. thinkingLevel={}",
+                    thinking_level
+                ),
                 Some(&operation_id),
             )
             .await;
@@ -3568,6 +6346,12 @@ async fn fluxora_ai_chat_respond(app: AppHandle, request: Value) -> Result<Value
         }
         Err(error) => {
             let safe_error = sanitize_log(&error);
+            let typed_error = ai_host_error_payload(&error, "provider");
+            let user_message = typed_error
+                .get("userMessage")
+                .and_then(Value::as_str)
+                .unwrap_or("Gemini is unavailable. Try again in a moment.")
+                .to_string();
             let _ = write_log(
                 &app,
                 "ai-host",
@@ -3579,51 +6363,24 @@ async fn fluxora_ai_chat_respond(app: AppHandle, request: Value) -> Result<Value
             .await;
             Ok(json!({
                 "operationId": operation_id,
-                "providerId": "local-dry-run",
-                "modelId": "local-dry-run",
-                "routingPreset": "free-demo",
+                "providerId": "gemini",
+                "modelId": "gemini-3.1-flash-lite",
                 "status": "blocked",
-                "text": "AI host is unavailable. Chat-only mode cannot answer until the host is ready.",
-                "streamChunks": [
-                    { "index": 0, "text": "AI host is unavailable. Chat-only mode cannot answer until the host is ready." }
-                ],
+                "text": user_message,
+                "streamChunks": [{ "index": 0, "text": user_message }],
                 "sources": [],
-                "costEstimate": {
-                    "currency": "USD",
-                    "estimatedInputTokens": 0,
-                    "estimatedOutputTokens": 0,
-                    "estimatedCost": 0.0,
-                    "actualCost": Value::Null,
-                    "internalCost": 0.0,
-                    "pricingSource": "host-unavailable",
-                    "isEstimate": true
-                },
-                "ledgerEntry": {
-                    "operationId": operation_id,
-                    "providerId": "local-dry-run",
-                    "modelId": "local-dry-run",
-                    "routingPreset": "free-demo",
-                    "estimatedInternalCost": 0.0,
-                    "actualInternalCost": Value::Null,
-                    "currency": "USD",
-                    "billable": false,
-                    "createdAt": now_millis().to_string()
-                },
-                "fallbackProviders": [],
                 "toolCallsAllowed": false,
-                "error": {
-                    "code": "ai.host.unavailable",
-                    "message": "AI host is unavailable.",
-                    "category": "transport",
-                    "retryable": true,
-                    "capabilityId": Value::Null,
-                    "details": {
-                        "reason": safe_error
-                    }
-                }
+                "error": typed_error
             }))
         }
-    }
+    };
+    finish_ai_operation(&app, &operation_id).await;
+    final_result
+}
+
+#[tauri::command]
+async fn fluxora_ai_chat_respond(app: AppHandle, request: Value) -> Result<Value, String> {
+    execute_ai_chat_request(app, request).await
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3631,15 +6388,17 @@ enum BridgeLane {
     Main,
     Interactive,
     Background,
+    Connection,
     Download,
     Install,
 }
 
 impl BridgeLane {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Main,
         Self::Interactive,
         Self::Background,
+        Self::Connection,
         Self::Download,
         Self::Install,
     ];
@@ -3649,6 +6408,7 @@ impl BridgeLane {
             Self::Main => "main",
             Self::Interactive => "interactive",
             Self::Background => "background",
+            Self::Connection => "connection",
             Self::Download => "download",
             Self::Install => "install",
         }
@@ -3661,6 +6421,7 @@ impl BridgeState {
             BridgeLane::Main => &self.process,
             BridgeLane::Interactive => &self.interactive_process,
             BridgeLane::Background => &self.background_process,
+            BridgeLane::Connection => &self.connection_process,
             BridgeLane::Download => &self.download_process,
             BridgeLane::Install => &self.install_process,
         }
@@ -3669,12 +6430,21 @@ impl BridgeState {
 
 fn bridge_lane_for_method(method: &str) -> BridgeLane {
     match method {
-        "mods.checkUpdates" | "nexus.connect" => BridgeLane::Background,
+        "mods.checkUpdates" | "apiLimits.list" => BridgeLane::Background,
+        "connections.listStatus"
+        | "connections.restoreAll"
+        | "connections.connect"
+        | "connections.disconnect"
+        | "nexus.getAuthStatus"
+        | "nexus.connect"
+        | "nexus.connectWithApiKey"
+        | "nexus.disconnect" => BridgeLane::Connection,
         "nxm.captureLinks"
         | "nxm.importInboundDownloads"
         | "downloads.cancel"
         | "downloads.delete"
         | "downloads.list"
+        | "downloads.resolveDuplicateDecision"
         | "downloads.resume" => BridgeLane::Download,
         "downloads.analyzeFomod"
         | "downloads.planInstall"
@@ -5473,6 +8243,63 @@ fn text_editor_window_url(
     )
 }
 
+fn ai_text_editor_window_url(
+    chat_id: &str,
+    file_ref: &str,
+    file_name: &str,
+    first_changed_line: usize,
+) -> String {
+    format!(
+        "/?window=text-editor&aiChat={}&fileRef={}&name={}&line={}",
+        encode_query_component(chat_id),
+        encode_query_component(file_ref),
+        encode_query_component(file_name),
+        first_changed_line.max(1)
+    )
+}
+
+#[tauri::command]
+async fn fluxora_open_ai_text_editor_window(
+    app: AppHandle,
+    chat_id: String,
+    file_ref: String,
+    file_name: String,
+    first_changed_line: usize,
+) -> Result<(), String> {
+    let chat_id = chat_id.trim();
+    let file_ref = file_ref.trim();
+    if chat_id.is_empty() || file_ref.is_empty() {
+        return Err("AI text editor requires chatId and fileRef.".to_string());
+    }
+    let file_name = if file_name.trim().is_empty() {
+        "Editor"
+    } else {
+        file_name.trim()
+    };
+    let label = format!(
+        "{TEXT_EDITOR_WINDOW_LABEL_PREFIX}:ai:{}",
+        stable_label_suffix(&format!("{chat_id}\u{0}{file_ref}"))
+    );
+    if let Some(window) = app.get_webview_window(&label) {
+        show_activation_window(&window, true);
+        return Ok(());
+    }
+    let url = ai_text_editor_window_url(chat_id, file_ref, file_name, first_changed_line);
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App(url.into()))
+        .title(format!("Editor \u{00B7} {file_name}"))
+        .inner_size(1344.0, 912.0)
+        .min_inner_size(1080.0, 720.0)
+        .resizable(true)
+        .minimizable(false)
+        .maximizable(false)
+        .decorations(false)
+        .background_color(tauri::window::Color(0x10, 0x13, 0x17, 0xff))
+        .center()
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 async fn fluxora_open_text_editor_window(
     app: AppHandle,
@@ -6027,6 +8854,595 @@ async fn fluxora_build_content_unwatch(
     })
 }
 
+#[cfg(feature = "native-ai-integration-fixture")]
+#[doc(hidden)]
+async fn run_native_ai_capability_fixture_call(
+    app: &AppHandle,
+    request: &Value,
+    refs: &mut AiEntityRefRegistry,
+    call_id: &str,
+    name: &str,
+    args: Value,
+) -> Result<Value, String> {
+    execute_ai_capability_tool_call_inner(
+        app,
+        request,
+        &json!({ "callId": call_id, "name": name, "args": args }),
+        "op_native_ai_capabilities",
+        refs,
+    )
+    .await
+}
+
+#[cfg(feature = "native-ai-integration-fixture")]
+fn native_ai_fixture_required_string(
+    value: &Value,
+    pointer: &str,
+    label: &str,
+) -> Result<String, String> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| format!("Native AI capability fixture did not return {label}: {value}"))
+}
+
+#[cfg(feature = "native-ai-integration-fixture")]
+#[doc(hidden)]
+pub fn run_native_ai_integration_fixture(
+    game_directory: &Path,
+    install_root_directory: &Path,
+    download_archive: &Path,
+) -> Result<Value, String> {
+    let app = tauri::Builder::default()
+        .manage(BridgeState::default())
+        .manage(AiHostState::default())
+        .manage(AiDirtyEditorState::default())
+        .manage(AiCompensationState::default())
+        .manage(OperationStatusState::default())
+        .manage(DownloadsFolderWatchState::default())
+        .manage(BuildContentWatchState::default())
+        .manage(NifPreviewSessionState::default())
+        .build(tauri::generate_context!())
+        .map_err(|error| format!("Tauri integration fixture could not start: {error}"))?;
+    let handle = app.handle().clone();
+
+    tauri::async_runtime::block_on(async move {
+        let operation = OperationRequest {
+            operation_id: Some("op_native_ai_integration".to_string()),
+        };
+        let created = {
+            let state = bridge_state(&handle);
+            let mut bridge = state.process.lock().await;
+            bridge
+                .request(
+                    &handle,
+                    "projects.create",
+                    json!({
+                        "projectName": "AI Native Integration",
+                        "templateId": "skyrimse",
+                        "gamePath": game_directory.to_string_lossy(),
+                        "installRootDirectory": install_root_directory.to_string_lossy()
+                    }),
+                    operation.clone(),
+                    BRIDGE_TIMEOUT_MS,
+                )
+                .await?
+        };
+        let project_directory = created
+            .get("projectDirectory")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "Native project fixture did not return projectDirectory.".to_string())?
+            .to_string();
+        {
+            let state = bridge_state(&handle);
+            let mut bridge = state.process.lock().await;
+            bridge
+                .request(
+                    &handle,
+                    "mods.createEmpty",
+                    json!({
+                        "projectDirectory": project_directory,
+                        "modName": "Cabbage CS Preset"
+                    }),
+                    operation.clone(),
+                    BRIDGE_TIMEOUT_MS,
+                )
+                .await?;
+            let initial_order = bridge
+                .request(
+                    &handle,
+                    "mods.getOrder",
+                    json!({
+                        "projectDirectory": project_directory,
+                        "profileName": "Default"
+                    }),
+                    operation.clone(),
+                    BRIDGE_TIMEOUT_MS,
+                )
+                .await?;
+            let order_item_id = initial_order
+                .as_array()
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("orderId"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Native source mod order id is unavailable.".to_string())?;
+            bridge
+                .request(
+                    &handle,
+                    "mods.moveOrderItem",
+                    json!({
+                        "projectDirectory": project_directory,
+                        "profileName": "Default",
+                        "orderItemId": order_item_id,
+                        "targetIndex": 0
+                    }),
+                    operation.clone(),
+                    BRIDGE_TIMEOUT_MS,
+                )
+                .await?;
+        }
+        let capability_request = json!({
+            "fileWorkspace": {
+                "projectDirectory": project_directory,
+                "templateId": "skyrimse",
+                "profile": "Default"
+            }
+        });
+        let plugin_fixture_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Cabbage CS Preset")
+            .join("AIIntegration.esp");
+        std::fs::write(&plugin_fixture_path, b"TES4")
+            .map_err(|error| format!("Native plugin fixture could not be written: {error}"))?;
+        std::fs::write(
+            plugin_fixture_path.with_file_name("AIIntegrationSecond.esp"),
+            b"TES4",
+        )
+        .map_err(|error| format!("Second native plugin fixture could not be written: {error}"))?;
+        let mut capability_refs = AiEntityRefRegistry::default();
+
+        let mod_list = run_native_ai_capability_fixture_call(
+            &handle,
+            &capability_request,
+            &mut capability_refs,
+            "mods-list",
+            "local.mods.list",
+            json!({}),
+        )
+        .await?;
+        let mod_ref =
+            native_ai_fixture_required_string(&mod_list, "/result/data/mods/0/modRef", "modRef")?;
+        let mod_enabled = mod_list
+            .pointer("/result/data/mods/0/isEnabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let mod_change = run_native_ai_capability_fixture_call(
+            &handle,
+            &capability_request,
+            &mut capability_refs,
+            "mods-set-enabled",
+            "local.mods.set_enabled",
+            json!({ "modRef": mod_ref, "isEnabled": !mod_enabled }),
+        )
+        .await?;
+        let mod_token = native_ai_fixture_required_string(
+            &mod_change,
+            "/result/data/compensationToken",
+            "mod compensation token",
+        )?;
+        let mod_undo = fluxora_ai_undo_capability(
+            handle.clone(),
+            mod_token,
+            Some(OperationRequest {
+                operation_id: Some("op_native_ai_mod_undo".to_string()),
+            }),
+        )
+        .await?;
+
+        let plugin_list = run_native_ai_capability_fixture_call(
+            &handle,
+            &capability_request,
+            &mut capability_refs,
+            "plugins-list",
+            "local.plugins.list",
+            json!({}),
+        )
+        .await?;
+        let plugins = plugin_list
+            .pointer("/result/data/plugins")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!("Native plugin fixture did not return plugins: {plugin_list}")
+            })?;
+        let movable_plugins = plugins
+            .iter()
+            .find(|plugin| {
+                plugin.get("isPlugin").and_then(Value::as_bool) == Some(true)
+                    && plugin.get("isLocked").and_then(Value::as_bool) != Some(true)
+            })
+            .into_iter()
+            .chain(
+                plugins
+                    .iter()
+                    .filter(|plugin| {
+                        plugin.get("isPlugin").and_then(Value::as_bool) == Some(true)
+                            && plugin.get("isLocked").and_then(Value::as_bool) != Some(true)
+                    })
+                    .skip(1),
+            )
+            .collect::<Vec<_>>();
+        let movable_plugin = movable_plugins
+            .last()
+            .copied()
+            .or_else(|| plugins.first())
+            .ok_or_else(|| "Native plugin fixture returned no plugin rows.".to_string())?;
+        let plugin_ref = movable_plugin
+            .get("pluginRef")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "Native plugin fixture did not return pluginRef.".to_string())?
+            .to_string();
+        let plugin_order = movable_plugin
+            .get("order")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let plugin_target = movable_plugins
+            .first()
+            .and_then(|plugin| plugin.get("order"))
+            .and_then(Value::as_u64)
+            .unwrap_or(plugin_order);
+        let plugin_change = run_native_ai_capability_fixture_call(
+            &handle,
+            &capability_request,
+            &mut capability_refs,
+            "plugins-move",
+            "local.plugins.move",
+            json!({ "pluginRef": plugin_ref, "targetIndex": plugin_target }),
+        )
+        .await?;
+        let plugin_token = native_ai_fixture_required_string(
+            &plugin_change,
+            "/result/data/compensationToken",
+            "plugin compensation token",
+        )?;
+        let plugin_undo = fluxora_ai_undo_capability(
+            handle.clone(),
+            plugin_token,
+            Some(OperationRequest {
+                operation_id: Some("op_native_ai_plugin_undo".to_string()),
+            }),
+        )
+        .await?;
+
+        request_ai_capability_bridge(
+            &handle,
+            "downloads.importFile",
+            json!({
+                "projectDirectory": project_directory,
+                "sourcePath": download_archive.to_string_lossy()
+            }),
+            "op_native_ai_download_import",
+        )
+        .await?;
+        let download_list = run_native_ai_capability_fixture_call(
+            &handle,
+            &capability_request,
+            &mut capability_refs,
+            "downloads-list",
+            "local.downloads.list",
+            json!({}),
+        )
+        .await?;
+        let download_ref = native_ai_fixture_required_string(
+            &download_list,
+            "/result/data/downloads/0/downloadRef",
+            "downloadRef",
+        )?;
+
+        let mut install_result = run_native_ai_capability_fixture_call(
+            &handle,
+            &capability_request,
+            &mut capability_refs,
+            "install-submit",
+            "local.installs.submit_download",
+            json!({ "downloadRef": download_ref, "modName": "AI Integration Installed Mod" }),
+        )
+        .await?;
+        let operation_ref = native_ai_fixture_required_string(
+            &install_result,
+            "/result/data/operationRef",
+            "install operationRef",
+        )?;
+        for poll in 0..80 {
+            if install_result
+                .pointer("/result/data/postconditionVerified")
+                .and_then(Value::as_bool)
+                == Some(true)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            install_result = run_native_ai_capability_fixture_call(
+                &handle,
+                &capability_request,
+                &mut capability_refs,
+                &format!("install-get-{poll}"),
+                "local.installs.get",
+                json!({ "operationRef": operation_ref }),
+            )
+            .await?;
+        }
+        let install_token = native_ai_fixture_required_string(
+            &install_result,
+            "/result/data/compensationToken",
+            "install compensation token after completion",
+        )?;
+        let install_undo = fluxora_ai_undo_capability(
+            handle.clone(),
+            install_token,
+            Some(OperationRequest {
+                operation_id: Some("op_native_ai_install_undo".to_string()),
+            }),
+        )
+        .await?;
+
+        let refreshed_downloads = run_native_ai_capability_fixture_call(
+            &handle,
+            &capability_request,
+            &mut capability_refs,
+            "downloads-refresh",
+            "local.downloads.list",
+            json!({}),
+        )
+        .await?;
+        let refreshed_download_ref = native_ai_fixture_required_string(
+            &refreshed_downloads,
+            "/result/data/downloads/0/downloadRef",
+            "refreshed downloadRef",
+        )?;
+        let profile_change = run_native_ai_capability_fixture_call(
+            &handle,
+            &capability_request,
+            &mut capability_refs,
+            "profiles-create",
+            "local.profiles.create",
+            json!({ "profileName": "AI Integration Profile" }),
+        )
+        .await?;
+        let profile_conflict = run_native_ai_capability_fixture_call(
+            &handle,
+            &capability_request,
+            &mut capability_refs,
+            "profiles-create-conflict",
+            "local.profiles.create",
+            json!({ "profileName": "AI Integration Profile" }),
+        )
+        .await?;
+        let profile_token = native_ai_fixture_required_string(
+            &profile_change,
+            "/result/data/compensationToken",
+            "profile compensation token",
+        )?;
+        let profile_undo = fluxora_ai_undo_capability(
+            handle.clone(),
+            profile_token,
+            Some(OperationRequest {
+                operation_id: Some("op_native_ai_profile_undo".to_string()),
+            }),
+        )
+        .await?;
+
+        let language = run_native_ai_capability_fixture_call(
+            &handle,
+            &capability_request,
+            &mut capability_refs,
+            "settings-get-language",
+            "local.settings.get_language",
+            json!({}),
+        )
+        .await?;
+        let original_language = language
+            .pointer("/result/data/language")
+            .and_then(Value::as_str)
+            .unwrap_or("en");
+        let requested_language = if original_language == "de" {
+            "en"
+        } else {
+            "de"
+        };
+        let setting_change = run_native_ai_capability_fixture_call(
+            &handle,
+            &capability_request,
+            &mut capability_refs,
+            "settings-set-language",
+            "local.settings.set_language",
+            json!({ "language": requested_language }),
+        )
+        .await?;
+        let setting_token = native_ai_fixture_required_string(
+            &setting_change,
+            "/result/data/compensationToken",
+            "setting compensation token",
+        )?;
+        let setting_undo = fluxora_ai_undo_capability(
+            handle.clone(),
+            setting_token,
+            Some(OperationRequest {
+                operation_id: Some("op_native_ai_setting_undo".to_string()),
+            }),
+        )
+        .await?;
+
+        let capability_scenarios = json!({
+            "mod": {
+                "postconditionVerified": mod_change.pointer("/result/data/postconditionVerified").cloned().unwrap_or(Value::Null),
+                "undo": mod_undo
+            },
+            "plugin": {
+                "postconditionVerified": plugin_change.pointer("/result/data/postconditionVerified").cloned().unwrap_or(Value::Null),
+                "undo": plugin_undo
+            },
+            "download": {
+                "postconditionVerified": !refreshed_download_ref.is_empty(),
+                "opaqueRefVerified": refreshed_download_ref.starts_with("download_")
+            },
+            "install": {
+                "postconditionVerified": install_result.pointer("/result/data/postconditionVerified").cloned().unwrap_or(Value::Null),
+                "undo": install_undo
+            },
+            "profile": {
+                "postconditionVerified": profile_change.pointer("/result/data/postconditionVerified").cloned().unwrap_or(Value::Null),
+                "conflict": profile_conflict,
+                "undo": profile_undo
+            },
+            "setting": {
+                "postconditionVerified": setting_change.pointer("/result/data/postconditionVerified").cloned().unwrap_or(Value::Null),
+                "undo": setting_undo
+            }
+        });
+        let virtual_path = PathBuf::from("SKSE")
+            .join("Plugins")
+            .join("CommunityShaders")
+            .join("SettingsUser.json");
+        let source_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Cabbage CS Preset")
+            .join(&virtual_path);
+        std::fs::create_dir_all(
+            source_path
+                .parent()
+                .ok_or_else(|| "Native fixture source parent is unavailable.".to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            &source_path,
+            b"{\r\n\"Menu\":{\r\n\"ToggleKey\":35\r\n},\r\n\"ShaderBlockNextKey\":33\r\n}\r\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let distractor_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Cabbage CS Preset")
+            .join("SKSE")
+            .join("Plugins")
+            .join("EternalFlamesCandles_SWAP.ini");
+        std::fs::write(&distractor_path, b"[Shader]\r\nPageDown=unrelated\r\n")
+            .map_err(|error| error.to_string())?;
+        let weak_match_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Cabbage CS Preset")
+            .join("Docs")
+            .join("CommunityShaders-notes.json");
+        std::fs::create_dir_all(
+            weak_match_path
+                .parent()
+                .ok_or_else(|| "Native fixture weak-match parent is unavailable.".to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(&weak_match_path, b"{\"note\":\"weak discovery match\"}\r\n")
+            .map_err(|error| error.to_string())?;
+
+        let response = execute_ai_chat_request(
+            handle.clone(),
+            json!({
+                "operationId": "op_native_ai_integration",
+                "runId": "run-native-ai-integration",
+                "sessionId": "chat-native-ai-integration",
+                "providerId": "gemini",
+                "modelId": "gemini-3.1-flash-lite",
+                "messages": [{
+                    "role": "user",
+                    "text": "Можешь в Community Shaders сделать так, чтобы Menu.ToggleKey был PageDown?"
+                }],
+                "fileWorkspace": {
+                    "schema": "fluxora.ai.file-workspace-envelope.v1",
+                    "chatId": "chat-native-ai-integration",
+                    "projectId": "native-ai-integration",
+                    "projectDirectory": project_directory,
+                    "game": "Skyrim Special Edition",
+                    "profile": "Default",
+                    "counts": { "mods": 1, "plugins": 0, "downloads": 0 },
+                    "dirtyFileRefs": []
+                }
+            }),
+        )
+        .await?;
+        let order = {
+            let state = bridge_state(&handle);
+            let mut bridge = state.process.lock().await;
+            bridge
+                .request(
+                    &handle,
+                    "mods.getOrder",
+                    json!({
+                        "projectDirectory": project_directory,
+                        "profileName": "Default"
+                    }),
+                    operation.clone(),
+                    BRIDGE_TIMEOUT_MS,
+                )
+                .await?
+        };
+        let override_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Fluxora AI Overrides")
+            .join(&virtual_path);
+        if !override_path.is_file() {
+            return Err(format!(
+                "Native fixture did not create the managed override. Response: {}",
+                serde_json::to_string(&response).unwrap_or_else(|_| "<unavailable>".to_string())
+            ));
+        }
+        let source_content = std::fs::read_to_string(&source_path)
+            .map_err(|error| format!("Native fixture source reread failed: {error}"))?;
+        let managed_content = std::fs::read_to_string(&override_path)
+            .map_err(|error| format!("Native fixture managed reread failed: {error}"))?;
+        let rollback = {
+            let state = bridge_state(&handle);
+            let mut bridge = state.process.lock().await;
+            bridge
+                .request(
+                    &handle,
+                    "buildFiles.rollbackRun",
+                    json!({
+                        "chatId": "chat-native-ai-integration",
+                        "runId": "run-native-ai-integration"
+                    }),
+                    OperationRequest {
+                        operation_id: Some("op_native_ai_integration_rollback".to_string()),
+                    },
+                    BRIDGE_TIMEOUT_MS,
+                )
+                .await?
+        };
+        let override_exists_after_rollback = override_path.exists();
+
+        {
+            let state = ai_host_state(&handle);
+            state.process.lock().await.reset().await;
+        }
+        {
+            let state = bridge_state(&handle);
+            state.process.lock().await.reset().await;
+        }
+
+        Ok(json!({
+            "response": response,
+            "projectDirectory": project_directory,
+            "sourcePath": source_path.to_string_lossy(),
+            "overridePath": override_path.to_string_lossy(),
+            "sourceContent": source_content,
+            "managedContent": managed_content,
+            "distractorPath": distractor_path.to_string_lossy(),
+            "weakMatchPath": weak_match_path.to_string_lossy(),
+            "rollback": rollback,
+            "overrideExistsAfterRollback": override_exists_after_rollback,
+            "modOrder": order,
+            "capabilityScenarios": capability_scenarios
+        }))
+    })
+}
+
 pub fn run() {
     let mut builder = tauri::Builder::default();
 
@@ -6040,6 +9456,8 @@ pub fn run() {
     builder
         .manage(BridgeState::default())
         .manage(AiHostState::default())
+        .manage(AiDirtyEditorState::default())
+        .manage(AiCompensationState::default())
         .manage(OperationStatusState::default())
         .manage(DownloadsFolderWatchState::default())
         .manage(BuildContentWatchState::default())
@@ -6127,6 +9545,13 @@ pub fn run() {
             fluxora_ai_test_provider,
             fluxora_ai_estimate_context,
             fluxora_ai_chat_respond,
+            fluxora_ai_undo_capability,
+            fluxora_ai_file_read,
+            fluxora_ai_file_end_chat,
+            fluxora_ai_file_save,
+            fluxora_ai_file_set_dirty,
+            fluxora_ai_file_rollback_file,
+            fluxora_ai_file_rollback_run,
             fluxora_bridge_request,
             fluxora_start_nif_preview,
             fluxora_prepare_nif_preview_variant,
@@ -6156,6 +9581,7 @@ pub fn run() {
             fluxora_open_build_settings_window,
             fluxora_open_mod_details_window,
             fluxora_open_text_editor_window,
+            fluxora_open_ai_text_editor_window,
             fluxora_open_file_preview_window,
             fluxora_build_settings_paths_saved,
             fluxora_downloads_watch_folder,
@@ -6733,20 +10159,12 @@ mod tests {
                 "requiresCredential": true,
                 "connected": true,
                 "credentialState": "connected"
-            },
-            {
-                "id": "local-dry-run",
-                "displayName": "Local dry run",
-                "requiresCredential": false,
-                "connected": false,
-                "credentialState": "notRequired"
             }
         ]));
 
         assert_eq!(providers[0]["connected"], true);
         assert_eq!(providers[0]["credentialState"], "connected");
-        assert_eq!(providers[1]["connected"], true);
-        assert_eq!(providers[1]["credentialState"], "notRequired");
+        assert_eq!(providers.as_array().map(Vec::len), Some(1));
     }
 
     #[test]
@@ -6933,6 +10351,10 @@ mod tests {
             BridgeLane::Background
         );
         assert_eq!(
+            bridge_lane_for_method("connections.restoreAll"),
+            BridgeLane::Connection
+        );
+        assert_eq!(
             bridge_queue_performance_message(
                 "mods.getModDetailsContent",
                 12_345,
@@ -7024,18 +10446,23 @@ mod tests {
             ("plugins.deleteSeparator", BridgeLane::Main),
             ("plugins.setEnabled", BridgeLane::Main),
             ("plugins.setAllEnabled", BridgeLane::Main),
-            ("nexus.getAuthStatus", BridgeLane::Main),
+            ("connections.listStatus", BridgeLane::Connection),
+            ("connections.restoreAll", BridgeLane::Connection),
+            ("connections.connect", BridgeLane::Connection),
+            ("connections.disconnect", BridgeLane::Connection),
+            ("nexus.getAuthStatus", BridgeLane::Connection),
             ("nexus.getApiAuthHeader", BridgeLane::Main),
-            ("apiLimits.list", BridgeLane::Main),
-            ("nexus.connect", BridgeLane::Background),
-            ("nexus.connectWithApiKey", BridgeLane::Main),
-            ("nexus.disconnect", BridgeLane::Main),
+            ("apiLimits.list", BridgeLane::Background),
+            ("nexus.connect", BridgeLane::Connection),
+            ("nexus.connectWithApiKey", BridgeLane::Connection),
+            ("nexus.disconnect", BridgeLane::Connection),
             ("transfer.analyzeMo2", BridgeLane::Main),
             ("transfer.importMo2", BridgeLane::Main),
             ("nxm.registerProtocol", BridgeLane::Main),
             ("nxm.captureLinks", BridgeLane::Download),
             ("nxm.importInboundDownloads", BridgeLane::Download),
             ("downloads.list", BridgeLane::Download),
+            ("downloads.resolveDuplicateDecision", BridgeLane::Download),
             ("downloads.importFile", BridgeLane::Main),
             ("downloads.delete", BridgeLane::Download),
             ("downloads.cancel", BridgeLane::Download),
@@ -7095,9 +10522,29 @@ mod tests {
     }
 
     #[test]
-    fn long_running_nexus_oauth_uses_the_background_bridge_lane() {
+    fn generic_and_compatible_connection_calls_use_the_connection_bridge_lane() {
+        for method in [
+            "connections.listStatus",
+            "connections.restoreAll",
+            "connections.connect",
+            "connections.disconnect",
+            "nexus.getAuthStatus",
+            "nexus.connect",
+            "nexus.connectWithApiKey",
+            "nexus.disconnect",
+        ] {
+            assert_eq!(bridge_lane_for_method(method), BridgeLane::Connection);
+        }
+    }
+
+    #[test]
+    fn update_and_api_limit_calls_stay_on_the_background_bridge_lane() {
         assert_eq!(
-            bridge_lane_for_method("nexus.connect"),
+            bridge_lane_for_method("mods.checkUpdates"),
+            BridgeLane::Background
+        );
+        assert_eq!(
+            bridge_lane_for_method("apiLimits.list"),
             BridgeLane::Background
         );
     }
@@ -7138,6 +10585,7 @@ mod tests {
             "nxm.captureLinks",
             "nxm.importInboundDownloads",
             "downloads.list",
+            "downloads.resolveDuplicateDecision",
             "downloads.cancel",
             "downloads.resume",
             "downloads.delete",
@@ -7273,6 +10721,296 @@ mod tests {
     }
 
     #[test]
+    fn ai_text_editor_url_uses_only_opaque_ref_and_reveal_line() {
+        let url =
+            ai_text_editor_window_url("chat private/1", "file_ref:opaque/42", "settings.ini", 17);
+        assert!(url.contains("window=text-editor"));
+        assert!(url.contains("aiChat=chat%20private%2F1"));
+        assert!(url.contains("fileRef=file_ref%3Aopaque%2F42"));
+        assert!(url.contains("line=17"));
+        assert!(!url.contains("C%3A"));
+    }
+
+    #[test]
+    fn ai_file_tool_redaction_and_dirty_envelope_are_local_guards() {
+        let (redacted, applied) =
+            redact_ai_file_text("safe=true\napi_key=abcdefghijklmnopqrstuvwxyz123456\nnext=value");
+        assert!(applied);
+        assert!(redacted.contains("[REDACTED SECRET-LIKE LINE]"));
+        assert!(!redacted.contains("abcdefghijklmnopqrstuvwxyz123456"));
+
+        let request = json!({
+            "fileWorkspace": { "dirtyFileRefs": ["opaque-a", "opaque-b"] }
+        });
+        let refs = dirty_ai_file_refs(&request);
+        assert!(refs.contains("opaque-a"));
+        assert!(refs.contains("opaque-b"));
+    }
+
+    #[test]
+    fn ai_host_tool_failures_do_not_impersonate_core_validation_failures() {
+        let provider_error = "Gemini returned HTTP 400 with an unsupported function schema.";
+        assert_eq!(
+            ai_host_file_tool_error_code(provider_error),
+            "ai.host.transport"
+        );
+        assert_eq!(
+            ai_core_file_tool_error_code(provider_error),
+            "native-failed"
+        );
+        assert_eq!(
+            ai_core_file_tool_error_code("stale-version: the file changed"),
+            "stale-version"
+        );
+        assert_eq!(
+            ai_core_file_tool_error_code("AI file workspace chat is not active."),
+            "session-inactive"
+        );
+        let typed = r#"{"code":"ai.provider.http","category":"provider","stage":"provider","retryable":false,"userMessage":"Gemini rejected the request.","debugId":"debug-1"}"#;
+        assert_eq!(ai_host_file_tool_error_code(typed), "ai.provider.http");
+    }
+
+    #[test]
+    fn ai_file_tool_failure_copy_distinguishes_host_outages_from_core_guards() {
+        assert_eq!(
+            ai_file_tool_failure_message("validation-failed"),
+            "Fluxora blocked the file operation safely (validation-failed)."
+        );
+    }
+
+    #[test]
+    fn ai_file_tool_cache_and_staged_targets_are_exact_and_run_local() {
+        let args = json!({ "query": "SettingsUser.json", "scope": "build" });
+        assert!(is_ai_read_only_file_tool("local.files.search"));
+        assert!(!is_ai_read_only_file_tool("local.files.commit"));
+        assert_eq!(
+            ai_file_tool_cache_key("local.files.search", &args),
+            ai_file_tool_cache_key("local.files.search", &args)
+        );
+        assert_ne!(
+            ai_file_tool_cache_key("local.files.search", &args),
+            ai_file_tool_cache_key(
+                "local.files.search",
+                &json!({ "query": "CommunityShaders", "scope": "build" })
+            )
+        );
+        assert_eq!(
+            ai_staged_mutation_target(&json!({ "kind": "patch", "fileRef": "opaque-1" })),
+            "patch:opaque-1"
+        );
+        assert_eq!(
+            ai_staged_mutation_target(&json!({
+                "kind": "create",
+                "parentRef": "folder-1",
+                "fileName": "Settings.JSON"
+            })),
+            "create:folder-1:settings.json"
+        );
+    }
+
+    #[test]
+    fn only_unique_discovery_or_single_exact_search_proves_a_writable_file_ref() {
+        let mut refs = HashSet::new();
+        record_ai_writable_file_refs(
+            "local.files.discover",
+            &json!({
+                "result": {
+                    "ok": true,
+                    "data": {
+                        "resolution": "ambiguous",
+                        "candidates": [{
+                            "effectiveWinner": true,
+                            "file": { "fileRef": "ambiguous-ref" }
+                        }]
+                    }
+                }
+            }),
+            &mut refs,
+        );
+        assert!(!refs.contains("ambiguous-ref"));
+
+        record_ai_writable_file_refs(
+            "local.files.discover",
+            &json!({
+                "result": {
+                    "ok": true,
+                    "data": {
+                        "resolution": "unique",
+                        "candidates": [{
+                            "effectiveWinner": true,
+                            "file": { "fileRef": "unique-ref" }
+                        }]
+                    }
+                }
+            }),
+            &mut refs,
+        );
+        record_ai_writable_file_refs(
+            "local.files.search",
+            &json!({
+                "result": {
+                    "ok": true,
+                    "data": { "entries": [{ "fileRef": "exact-search-ref" }] }
+                }
+            }),
+            &mut refs,
+        );
+        assert!(refs.contains("unique-ref"));
+        assert!(refs.contains("exact-search-ref"));
+    }
+
+    #[test]
+    fn ai_search_scope_is_normalized_before_native_dispatch_and_only_successes_are_cached() {
+        let missing = normalize_ai_file_tool_args(
+            "local.files.search",
+            &json!({ "query": "SettingsUser.json" }),
+        );
+        let empty = normalize_ai_file_tool_args(
+            "local.text.search",
+            &json!({ "query": "ToggleKey", "scope": "  " }),
+        );
+        assert_eq!(missing.get("scope").and_then(Value::as_str), Some("build"));
+        assert_eq!(empty.get("scope").and_then(Value::as_str), Some("build"));
+        for scope in ["game", "downloads"] {
+            let normalized = normalize_ai_file_tool_args(
+                "local.files.search",
+                &json!({ "query": "SettingsUser.json", "scope": scope }),
+            );
+            assert_eq!(normalized.get("scope").and_then(Value::as_str), Some(scope));
+        }
+        assert_eq!(
+            ai_file_tool_cache_key("local.files.search", &missing),
+            ai_file_tool_cache_key(
+                "local.files.search",
+                &json!({ "query": "SettingsUser.json", "scope": "build" })
+            )
+        );
+        assert!(should_cache_ai_file_tool_result(&json!({
+            "result": { "ok": true, "data": { "entries": [] } }
+        })));
+        assert!(!should_cache_ai_file_tool_result(&json!({
+            "result": { "ok": false, "error": { "code": "validation-failed" } }
+        })));
+    }
+
+    #[test]
+    fn ai_content_search_uses_a_non_destructive_timeout_and_session_loss_is_recoverable() {
+        assert_eq!(ai_build_files_timeout_ms("buildFiles.searchText"), 120_000);
+        assert_eq!(ai_build_files_timeout_ms("buildFiles.search"), 60_000);
+        assert_eq!(
+            ai_build_files_timeout_ms("buildFiles.readText"),
+            BRIDGE_TIMEOUT_MS
+        );
+        assert!(should_reopen_ai_file_session(
+            "Bridge request timed out: buildFiles.searchText. Host process will be restarted"
+        ));
+        assert!(should_reopen_ai_file_session(
+            "AI file workspace chat is not active."
+        ));
+        assert!(!should_reopen_ai_file_session("stale-version"));
+    }
+
+    #[test]
+    fn file_workspace_never_requests_a_second_chat_response_after_failed_begin() {
+        assert!(should_request_independent_chat_response(false, false));
+        assert!(!should_request_independent_chat_response(true, false));
+        assert!(!should_request_independent_chat_response(true, true));
+    }
+
+    #[test]
+    fn ai_shell_completion_gate_uses_verified_effects_and_requires_file_changes_only_for_files() {
+        let domain_action = json!({
+            "execution": {
+                "kind": "action",
+                "domain": "mods",
+                "state": "completed",
+                "verifiedEffects": [{ "tool": "local.mods.set_enabled" }]
+            }
+        });
+        assert!(ai_shell_completion_evidence_satisfied(
+            "action",
+            &domain_action,
+            false
+        ));
+
+        let file_action = json!({
+            "execution": {
+                "kind": "action",
+                "domain": "files",
+                "state": "completed",
+                "verifiedEffects": [{ "tool": "local.files.commit" }]
+            }
+        });
+        assert!(!ai_shell_completion_evidence_satisfied(
+            "action",
+            &file_action,
+            false
+        ));
+        assert!(ai_shell_completion_evidence_satisfied(
+            "action",
+            &file_action,
+            true
+        ));
+
+        let unverified = json!({
+            "execution": {
+                "kind": "action",
+                "domain": "mods",
+                "state": "completed",
+                "verifiedEffects": []
+            }
+        });
+        assert!(!ai_shell_completion_evidence_satisfied(
+            "action",
+            &unverified,
+            false
+        ));
+    }
+
+    #[test]
+    fn semantic_stagnation_and_native_guards_keep_distinct_error_stages() {
+        assert_eq!(
+            ai_tool_terminal_error_classification("no-new-evidence"),
+            ("tool-loop", "tool-loop")
+        );
+        assert_eq!(
+            ai_tool_terminal_error_classification("protected"),
+            ("safety", "native-guard")
+        );
+        assert_eq!(
+            ai_tool_terminal_error_classification("permission-denied"),
+            ("safety", "native-guard")
+        );
+    }
+
+    #[test]
+    fn irreversible_typed_tools_ask_one_concrete_native_question() {
+        for (tool, expected_action) in [
+            (
+                "local.installs.cancel",
+                "confirm-native-install-cancellation",
+            ),
+            (
+                "local.projects.request_create",
+                "open-native-project-creation-dialog",
+            ),
+            (
+                "local.fluxpack.request_selection",
+                "select-fluxpack-and-confirm-native-plan",
+            ),
+        ] {
+            let (question, action) = irreversible_capability_question(tool)
+                .expect("irreversible contract entry must ask exactly one question");
+            assert!(!question.trim().is_empty());
+            assert_eq!(action, expected_action);
+        }
+        assert_eq!(
+            irreversible_capability_question("local.mods.set_enabled"),
+            None
+        );
+    }
+
+    #[test]
     fn interactive_bridge_lane_does_not_wait_for_the_main_lane_lock() {
         tauri::async_runtime::block_on(async {
             let state = BridgeState::default();
@@ -7294,6 +11032,19 @@ mod tests {
                 timeout(Duration::from_millis(50), state.background_process.lock()).await;
 
             assert!(background_lane.is_ok());
+        });
+    }
+
+    #[test]
+    fn connection_bridge_lane_does_not_wait_for_background_or_main_lane_locks() {
+        tauri::async_runtime::block_on(async {
+            let state = BridgeState::default();
+            let _main_lane = state.process.lock().await;
+            let _background_lane = state.background_process.lock().await;
+            let connection_lane =
+                timeout(Duration::from_millis(50), state.connection_process.lock()).await;
+
+            assert!(connection_lane.is_ok());
         });
     }
 
@@ -7356,10 +11107,28 @@ mod tests {
                 BridgeLane::Main,
                 BridgeLane::Interactive,
                 BridgeLane::Background,
+                BridgeLane::Connection,
                 BridgeLane::Download,
                 BridgeLane::Install,
             ]
         );
+    }
+
+    #[test]
+    fn ai_compensation_tokens_are_per_effect_and_native_errors_hide_paths() {
+        let first = json!({ "callId": "call-1", "name": "local.mods.set_enabled" });
+        let second = json!({ "callId": "call-2", "name": "local.mods.set_enabled" });
+        assert_ne!(
+            ai_compensation_token("undo_mod", "operation-1", &first),
+            ai_compensation_token("undo_mod", "operation-1", &second)
+        );
+        let sanitized = sanitize_ai_native_error_message(
+            "Could not open C:\\Users\\Example\\secret.zip token=abc123",
+        );
+        assert!(!sanitized.contains("C:\\Users"));
+        assert!(!sanitized.contains("abc123"));
+        assert!(sanitized.contains("[local-path]"));
+        assert!(sanitized.contains("token=[redacted-secret]"));
     }
 
     #[cfg(windows)]

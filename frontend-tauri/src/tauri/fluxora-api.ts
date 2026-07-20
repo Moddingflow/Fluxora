@@ -12,10 +12,13 @@ import type {
   FluxoraBuildPathSettings,
   FluxoraBuildPathSettingsSaveRequest,
   FluxoraDownloadEntry,
+  FluxoraDownloadDuplicateChoice,
   FluxoraDownloadMutationResult,
   FluxoraExecutable,
   FluxoraExecutableIconResult,
   FluxoraExecutableLaunchResult,
+  FluxoraExternalConnectionSnapshot,
+  FluxoraExternalConnectionStatus,
   FluxoraFileDropEvent,
   FluxoraLaunchProcessWatchRequest,
   FluxoraIpcChannel,
@@ -25,6 +28,12 @@ import type {
   FluxoraAiCancelRunResult,
   FluxoraAiChatRequest,
   FluxoraAiChatResponse,
+  FluxoraAiCapabilityUndoResult,
+  FluxoraAiFileChangeSet,
+  FluxoraAiFileReadRequest,
+  FluxoraAiFileReadResult,
+  FluxoraAiFileRollbackResult,
+  FluxoraAiFileSaveRequest,
   FluxoraAiContextUsage,
   FluxoraAiHostStatus,
   FluxoraAiIntermediateEvent,
@@ -110,16 +119,7 @@ import type {
   FluxoraTextFileSaveResult,
   UiLogEntry
 } from '../shared/fluxora-api';
-import {
-  AI_SAFE_ACTION_CATALOG,
-  AI_SAFE_ACTION_CATALOG_CAPABILITY
-} from '../shared/ai-safe-action-catalog';
-import { createFluxoraAiTaskPlanningBundle } from '../shared/ai-task-planner';
 import { createModdingflowPublicApiDogfoodClient } from '../shared/moddingflow-public-api-dogfood';
-import {
-  FLUXORA_SKILL_CATALOG,
-  FLUXORA_SKILL_CATALOG_CAPABILITY
-} from '../shared/ai-skills';
 import { FluxoraIpcChannels } from '../shared/fluxora-api';
 
 export interface IpcInvoker {
@@ -202,7 +202,8 @@ const listenTyped = <T>(
 
 const normalizeDownloadEntry = (entry: FluxoraDownloadEntry): FluxoraDownloadEntry => ({
   ...entry,
-  hasResolvedFileName: entry.hasResolvedFileName ?? true
+  hasResolvedFileName: entry.hasResolvedFileName ?? true,
+  duplicateDecision: entry.duplicateDecision ?? null
 });
 
 const normalizeDownloadEntries = (
@@ -217,6 +218,35 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
     list: (request?: OperationRequest) =>
       invokeTyped<FluxoraApiLimitStatus>(ipc, FluxoraIpcChannels.apiLimitsList, request)
   },
+  connections: {
+    listStatus: (request?: OperationRequest) =>
+      invokeTyped<FluxoraExternalConnectionSnapshot>(
+        ipc,
+        FluxoraIpcChannels.connectionsListStatus,
+        request
+      ),
+    restoreAll: (attempt = 1, request?: OperationRequest) =>
+      invokeTyped<FluxoraExternalConnectionSnapshot>(
+        ipc,
+        FluxoraIpcChannels.connectionsRestoreAll,
+        attempt,
+        request
+      ),
+    connect: (providerId: string, request?: OperationRequest) =>
+      invokeTyped<FluxoraExternalConnectionStatus>(
+        ipc,
+        FluxoraIpcChannels.connectionsConnect,
+        providerId,
+        request
+      ),
+    disconnect: (providerId: string, request?: OperationRequest) =>
+      invokeTyped<FluxoraExternalConnectionStatus>(
+        ipc,
+        FluxoraIpcChannels.connectionsDisconnect,
+        providerId,
+        request
+      )
+  },
   publicApi: createModdingflowPublicApiDogfoodClient(),
   ai: {
     cancelRun: (operationId: string, request?: OperationRequest) =>
@@ -228,6 +258,42 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
       ),
     chatRespond: (request: FluxoraAiChatRequest) =>
       invokeTyped<FluxoraAiChatResponse>(ipc, FluxoraIpcChannels.aiChatRespond, request),
+    undoCapability: (compensationToken: string, request?: OperationRequest) =>
+      invokeTyped<FluxoraAiCapabilityUndoResult>(
+        ipc,
+        FluxoraIpcChannels.aiUndoCapability,
+        compensationToken,
+        request
+      ),
+    readFile: (request: FluxoraAiFileReadRequest) =>
+      invokeTyped<FluxoraAiFileReadResult>(ipc, FluxoraIpcChannels.aiFileRead, request),
+    endFileChat: (chatId: string, request?: OperationRequest) =>
+      invokeTyped<void>(ipc, FluxoraIpcChannels.aiFileEndChat, chatId, request),
+    saveFile: (request: FluxoraAiFileSaveRequest) =>
+      invokeTyped<FluxoraAiFileChangeSet>(ipc, FluxoraIpcChannels.aiFileSave, request),
+    setFileDirty: (fileRef: string, dirty: boolean) =>
+      invokeTyped<void>(ipc, FluxoraIpcChannels.aiFileSetDirty, fileRef, dirty),
+    rollbackFile: (
+      chatId: string,
+      runId: string,
+      fileRef: string,
+      request?: OperationRequest
+    ) => invokeTyped<FluxoraAiFileRollbackResult>(
+      ipc,
+      FluxoraIpcChannels.aiFileRollbackFile,
+      chatId,
+      runId,
+      fileRef,
+      request
+    ),
+    rollbackRun: (chatId: string, runId: string, request?: OperationRequest) =>
+      invokeTyped<FluxoraAiFileRollbackResult>(
+        ipc,
+        FluxoraIpcChannels.aiFileRollbackRun,
+        chatId,
+        runId,
+        request
+      ),
     estimateContext: (request: FluxoraAiChatRequest) =>
       invokeTyped<FluxoraAiContextUsage>(ipc, FluxoraIpcChannels.aiEstimateContext, request),
     getStatus: (request?: OperationRequest) =>
@@ -236,8 +302,6 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
       invokeTyped<FluxoraAiHostStatus>(ipc, FluxoraIpcChannels.aiRestartHost, request),
     onRunEvent: (callback: (event: FluxoraAiIntermediateEvent) => void) =>
       listenTyped<FluxoraAiIntermediateEvent>(ipc, FluxoraIpcChannels.aiRunEvent, callback),
-    listSafeActions: async () => AI_SAFE_ACTION_CATALOG,
-    listSkills: async () => FLUXORA_SKILL_CATALOG,
     listProviders: (request?: OperationRequest) =>
       invokeTyped<FluxoraAiProviderDescriptor[]>(
         ipc,
@@ -1070,6 +1134,22 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         downloadPath,
         request
       ).then(normalizeDownloadEntry),
+    resolveDuplicateDecision: (
+      projectDirectory: string,
+      downloadPath: string,
+      decisionId: string,
+      choice: FluxoraDownloadDuplicateChoice,
+      request?: OperationRequest
+    ) =>
+      invokeTyped<FluxoraDownloadEntry | null>(
+        ipc,
+        FluxoraIpcChannels.downloadsResolveDuplicateDecision,
+        projectDirectory,
+        downloadPath,
+        decisionId,
+        choice,
+        request
+      ).then((entry) => (entry ? normalizeDownloadEntry(entry) : null)),
     watchFolder: (
       projectDirectory: string,
       downloadsDirectory: string,
@@ -1588,6 +1668,19 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         kind
       ),
     openSettings: () => invokeTyped<void>(ipc, FluxoraIpcChannels.windowOpenSettings),
+    openAiTextEditor: (
+      chatId: string,
+      fileRef: string,
+      fileName: string,
+      firstChangedLine: number
+    ) => invokeTyped<void>(
+      ipc,
+      FluxoraIpcChannels.windowOpenAiTextEditor,
+      chatId,
+      fileRef,
+      fileName,
+      firstChangedLine
+    ),
     openTextEditor: (
       configPath: string,
       projectDirectory: string,
@@ -1631,6 +1724,8 @@ const transferImportTimeoutMs = 2 * 60 * 60 * 1000;
 const grassCacheGenerationTimeoutMs = 6 * 60 * 60 * 1000;
 const nexusDownloadTimeoutMs = 6 * 60 * 60 * 1000;
 const nexusOAuthTimeoutMs = 180_000;
+const connectionRestoreTimeoutMs = 3_000;
+const modUpdateTimeoutMs = 70_000;
 
 const createOperationId = (scope: string): string =>
   `op_${new Date().toISOString().replace(/[-:.TZ]/g, '')}_${scope}_${crypto.randomUUID().slice(0, 8)}`;
@@ -1650,6 +1745,9 @@ const operationIdOf = (request: OperationRequest, scope: string): string =>
 
 const optionalString = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : '';
+
+const optionalNumber = (value: unknown, fallback = 0): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 
 export const FLUXORA_BRIDGE_ERROR_SCHEMA = 'fluxora.tauri.bridge-error.v1' as const;
 
@@ -1843,115 +1941,61 @@ const normalizeStatus = (status: NativeBridgeStatus): NativeBridgeStatus => ({
 
 const browserPreviewAiProviders = (): FluxoraAiProviderDescriptor[] => [
   {
-    id: 'local-dry-run',
-    displayName: 'Local dry run',
-    kind: 'local',
-    requiresCredential: false,
-    credentialStore: 'none',
-    credentialState: 'notRequired',
-    connected: true,
-    defaultModelId: 'local-dry-run',
-    supportedRunModes: ['offline'],
-    networkAdapters: 'disabled',
-    dataDisclosure: 'Browser preview does not call external AI providers.'
+    id: 'gemini',
+    displayName: 'Gemini',
+    kind: 'managed-or-byok',
+    requiresCredential: true,
+    credentialState: 'disconnected',
+    connected: false,
+    defaultModelId: 'gemini-3.1-flash-lite',
+    dataDisclosure: 'Chat and selected build data are processed by Gemini when the managed gateway is available.'
   }
 ];
 
 const browserPreviewAiModels = (): FluxoraAiModelCapability[] => [
   {
-    id: 'local-dry-run',
-    providerId: 'local-dry-run',
-    displayName: 'Local dry run',
-    contextWindowTokens: 8192,
-    supportsTools: false,
-    supportsWeb: false,
-    supportsStreaming: false,
-    supportsBackground: false,
-    priceMetadata: {
-      currency: 'USD',
-      inputPerMillionTokens: null,
-      outputPerMillionTokens: null,
-      cacheReadPerMillionTokens: null,
-      cacheWritePerMillionTokens: null,
-      source: 'browser-preview',
-      isEstimated: true,
-      remoteConfigurable: true
-    }
+    id: 'gemini-3.1-flash-lite',
+    providerId: 'gemini',
+    displayName: 'Gemini 3.1 Flash-Lite',
+    contextWindowTokens: 1_048_576,
+    inputTokenLimit: 1_048_576,
+    outputTokenLimit: 65_536,
+    limitSource: 'fluxora-fallback',
+    supportsTools: true,
+    supportsWeb: true,
+    supportsStreaming: true
   }
 ];
 
 const browserPreviewAiStatus = (rawRequest: unknown): FluxoraAiHostStatus => {
   const request = requestWithOperationId(rawRequest, 'ai_status');
   return {
-    ready: true,
+    ready: false,
     operationId: operationIdOf(request, 'ai_status'),
-    health: 'ready',
+    health: 'unavailable',
     protocolVersion: '1.0',
     hostVersion: 'browser-preview',
     processId: 0,
     providers: browserPreviewAiProviders(),
     models: browserPreviewAiModels(),
-    capabilities: {
-      providerRegistry: { state: 'available' },
-      providerCredentialBroker: { state: 'disabled', reason: 'browser-preview' },
-      providerTestCall: { state: 'available', network: 'disabled' },
-      modelCapabilitiesRegistry: { state: 'available' },
-      planner: {
-        state: 'available',
-        schema: 'fluxora.ai.task-plan.v1',
-        owner: 'FluxoraAIHost',
-        askUserOnlyIfBlocked: true
-      },
-      subagentScheduler: {
-        state: 'available',
-        schema: 'fluxora.ai.subagent-schedule.v1',
-        defaultSubagentLimit: 3,
-        maxSubagentsForLargeTasks: 5,
-        writeActionsOnlyThroughQueue: true,
-        hiddenDestructiveActions: false
-      },
-      safeActionCatalog: AI_SAFE_ACTION_CATALOG_CAPABILITY,
-      skillCatalog: FLUXORA_SKILL_CATALOG_CAPABILITY,
-      modResearchRouter: {
-        state: 'available',
-        schema: 'fluxora.ai.mod-research-route.v1',
-        owner: 'FluxoraAIHost',
-        localFirst: true,
-        blocksWebWhenLocalHighSignalIssueExists: true,
-        searchBudgetOnlyWhenExternalVerificationNeeded: true,
-        rendererPolicyDecisions: false
-      }
+    capabilities: { singleAgent: { state: 'unavailable', reason: 'browser-preview' } },
+    error: {
+      code: 'ai.host.browser-preview',
+      category: 'transport',
+      stage: 'provider',
+      retryable: false,
+      userMessage: 'Gemini is unavailable outside the Tauri runtime.',
+      debugId: 'browser-preview'
     }
   };
 };
 
 const contextUsageLevel = (percent: number): FluxoraAiContextUsage['level'] => {
-  if (percent >= 97) {
-    return 'almost-full';
-  }
-  if (percent >= 92) {
-    return 'critical';
-  }
-  if (percent >= 80) {
-    return 'warning';
-  }
-  if (percent >= 60) {
-    return 'moderate';
-  }
+  if (percent >= 97) return 'almost-full';
+  if (percent >= 90) return 'critical';
+  if (percent >= 80) return 'warning';
+  if (percent >= 60) return 'moderate';
   return 'normal';
-};
-
-const contextUsageMode = (percent: number): FluxoraAiContextUsage['mode'] => {
-  if (percent >= 95) {
-    return 'strict';
-  }
-  if (percent >= 85) {
-    return 'compressed';
-  }
-  if (percent >= 70) {
-    return 'smart';
-  }
-  return 'full';
 };
 
 const browserPreviewAiContextUsage = (rawRequest: unknown): FluxoraAiContextUsage => {
@@ -1959,25 +2003,25 @@ const browserPreviewAiContextUsage = (rawRequest: unknown): FluxoraAiContextUsag
     ? rawRequest
     : {}) as Partial<FluxoraAiChatRequest>;
   const request = requestWithOperationId(chatRequest, 'ai_context_estimate');
-  const operationId = operationIdOf(request, 'ai_context_estimate');
-  const promptText = chatRequest.messages?.map((message) => message.text).join('\n') ?? '';
-  const currentContextTokens = Math.max(1, Math.ceil(promptText.length / 4));
-  const contextWindowTokens = chatRequest.modelId && chatRequest.modelId !== 'local-dry-run'
-    ? 1_000_000
-    : 8_192;
-  const currentContextPercent = Math.min(100, (currentContextTokens / contextWindowTokens) * 100);
-
+  const currentContextTokens = Math.max(
+    1,
+    Math.ceil((chatRequest.messages?.map((message) => message.text).join('\n').length ?? 0) / 4)
+  );
+  const contextWindowTokens = 1_048_576;
+  const currentContextPercent = currentContextTokens / contextWindowTokens * 100;
   return {
-    schema: 'fluxora.ai.context-usage.v1',
-    operationId,
-    providerId: chatRequest.providerId || 'local-dry-run',
-    modelId: chatRequest.modelId || 'local-dry-run',
+    schema: 'fluxora.ai.context-usage.v2',
+    operationId: operationIdOf(request, 'ai_context_estimate'),
+    providerId: 'gemini',
+    modelId: 'gemini-3.1-flash-lite',
     contextWindowTokens,
+    modelInputTokenLimit: contextWindowTokens,
+    modelOutputTokenLimit: 65_536,
     currentContextTokens,
     currentContextPercent,
     precision: 'estimated',
     level: contextUsageLevel(currentContextPercent),
-    mode: contextUsageMode(currentContextPercent),
+    mode: 'full',
     includedSections: ['browser-preview', 'messages'],
     autoCompressionApplied: false,
     actionRequired: currentContextPercent >= 97,
@@ -1986,190 +2030,27 @@ const browserPreviewAiContextUsage = (rawRequest: unknown): FluxoraAiContextUsag
 };
 
 const browserPreviewAiChatResponse = (rawRequest: unknown): FluxoraAiChatResponse => {
-  const chatRequest = (rawRequest && typeof rawRequest === 'object'
-    ? rawRequest
-    : {}) as Partial<FluxoraAiChatRequest>;
-  const request = requestWithOperationId(chatRequest, 'ai_chat_run');
+  const request = requestWithOperationId(rawRequest, 'ai_chat_run');
   const operationId = operationIdOf(request, 'ai_chat_run');
-  const prompt =
-    chatRequest.messages
-      ?.filter((message) => message.role === 'user')
-      .at(-1)
-      ?.text.trim() || 'Fluxora chat';
-  const text =
-    `Plan: review "${prompt}" and suggest the next safe Fluxora steps. ` +
-    'Chat-only mode cannot run tools or change the build.';
-  const estimatedInputTokens = Math.max(1, Math.ceil(prompt.length / 4));
-  const estimatedOutputTokens = Math.max(8, Math.ceil(text.length / 4));
-  const modelId = chatRequest.modelId || 'local-dry-run';
-  const routingPreset = chatRequest.routingPreset ?? 'free-demo';
-  const planningBundle = createFluxoraAiTaskPlanningBundle(prompt, operationId);
-  const contextUsage = browserPreviewAiContextUsage({ ...chatRequest, operationId });
-  const status =
-    planningBundle.taskPlan.proposedMutations.length > 0 ? 'needs-approval' : 'done';
-
+  const text = 'Gemini is unavailable outside the Tauri runtime.';
   return {
     operationId,
-    providerId: 'local-dry-run',
-    modelId,
-    routingPreset,
-    status,
+    providerId: 'gemini',
+    modelId: 'gemini-3.1-flash-lite',
+    status: 'blocked',
     text,
-    streamChunks: text.match(/.{1,36}(?:\s|$)/g)?.map((chunk, index) => ({
-      index,
-      text: chunk
-    })) ?? [{ index: 0, text }],
+    streamChunks: [{ index: 0, text }],
     sources: [],
-    costEstimate: {
-      currency: 'USD',
-      actualInternalCost: 0,
-      cacheReadTokens: 0,
-      cacheWriteTokens: estimatedInputTokens,
-      displayCost: 0,
-      estimatedInputTokens,
-      estimatedOutputTokens,
-      estimatedCost: 0,
-      actualCost: 0,
-      hardCost: 0,
-      internalCost: 0,
-      promptCache: {
-        key: `browser-preview-${operationId}`,
-        status: 'write',
-        rawPromptStored: false
-      },
-      pricingSource: 'browser-preview',
-      riskBuffer: 0,
-      usageBreakdown: {
-        inputTokens: estimatedInputTokens,
-        outputTokens: estimatedOutputTokens,
-        cacheReadTokens: 0,
-        cacheWriteTokens: estimatedInputTokens,
-        webSearchCalls: 0,
-        fetchUrlCalls: 0,
-        sandboxMinutes: 0,
-        providerRiskBuffer: 0
-      },
-      isEstimate: true
-    },
-    costPipeline: {
-      schema: 'fluxora.ai.cost-pipeline.v1',
-      generatedAt: new Date().toISOString(),
-      operationId,
-      classifyCheaply: true,
-      retrieveThroughContextGraph: true,
-      nexusApiCacheFirst: true,
-      compactContextBeforeStrongModel: true,
-      useCheapVerification: true,
-      structuredFinalReport: true,
-      promptCaching: true,
-      conversationCompaction: true,
-      deduplicateWebSources: true,
-      nexusMetadataCache: {
-        ttlMs: 3_600_000,
-        storesRateLimitHeaders: true
-      },
-      batchCheapChecks: true,
-      stopConditionsForLowValueLoops: true
-    },
-    costPreflight: {
-      schema: 'fluxora.ai.cost-preflight.v1',
-      generatedAt: new Date().toISOString(),
-      operationId,
-      routingPreset,
-      runSize: 'ordinary',
-      required: false,
-      decision: 'allowed',
-      estimatedRunCredits: 0,
-      estimatedMonthlyBudgetPercent: 0,
-      expensiveRunApprovalRequired: false,
-      wallet: {
-        tier: routingPreset === 'byok' ? 'byok' : routingPreset === 'free-demo' ? 'free' : 'paid',
-        currency: 'AI credits',
-        freeDemoWalletCredits: 0.01,
-        monthlyWalletCredits: routingPreset === 'byok' ? 0 : routingPreset === 'free-demo' ? 0.01 : 0.65,
-        remainingMonthlyCredits: routingPreset === 'byok' ? 0 : routingPreset === 'free-demo' ? 0.01 : 0.65,
-        webResearchSubBudgetCredits: routingPreset === 'byok' ? 0 : 0.12,
-        longJobPreflightBudgetCredits: routingPreset === 'byok' ? 0 : 0.25,
-        safePromptMaxMonthlyPercent: 0.2,
-        safePromptThresholdCredits: routingPreset === 'byok' ? 0 : 0.13,
-        byokChargesFluxoraBudget: false
-      },
-      fallbackChoices: ['economy', 'full', 'byok'],
-      appliedOptimizations: ['browser-preview']
-    },
-    ledgerEntry: {
-      operationId,
-      providerId: 'local-dry-run',
-      modelId,
-      routingPreset,
-      chargesFluxoraBudget: false,
-      creditDebit: 0,
-      estimatedInternalCost: 0,
-      actualInternalCost: 0,
-      currency: 'USD',
-      billable: false,
-      costPreflightDecision: 'allowed',
-      createdAt: new Date().toISOString(),
-      pricingVersion: 'browser-preview',
-      promptCacheKey: `browser-preview-${operationId}`,
-      usageBreakdown: {
-        inputTokens: estimatedInputTokens,
-        outputTokens: estimatedOutputTokens,
-        cacheReadTokens: 0,
-        cacheWriteTokens: estimatedInputTokens,
-        webSearchCalls: 0,
-        fetchUrlCalls: 0,
-        sandboxMinutes: 0,
-        providerRiskBuffer: 0
-      }
-    },
-    marginTelemetry: {
-      schema: 'fluxora.ai.margin-telemetry.v1',
-      generatedAt: new Date().toISOString(),
-      operationId,
-      metricName: 'gross_margin_after_ai_cost',
-      userTier: routingPreset === 'byok' ? 'byok' : routingPreset === 'free-demo' ? 'free' : 'paid',
-      grossRevenueEur: routingPreset === 'paid-economy' || routingPreset === 'paid-large-job' ? 4.99 : 0,
-      estimatedVatPaymentInfrastructureReserveEur:
-        routingPreset === 'paid-economy' || routingPreset === 'paid-large-job' ? 3.7 : 0,
-      aiProviderCost: 0,
-      webSearchCost: 0,
-      marginAfterAiCostEur:
-        routingPreset === 'paid-economy' || routingPreset === 'paid-large-job' ? 1.29 : 0,
-      grossMarginAfterAiCost:
-        routingPreset === 'paid-economy' || routingPreset === 'paid-large-job' ? 0.25852 : 0,
-      heavyUserDetected: false,
-      localEstimateOnly: true
-    },
-    routingDecision: {
-      schema: 'fluxora.ai.routing-decision.v1',
-      generatedAt: new Date().toISOString(),
-      operationId,
-      routingPreset,
-      runSize: 'ordinary',
-      cheapClassifierFirst: true,
-      candidateModelIds: [modelId],
-      selectedModelId: modelId,
-      selectedProviderId: 'local-dry-run',
-      selectedModelClass: 'local',
-      premiumRequiresByok: true,
-      webModelOnlyWhenNeeded: true,
-      localModelPreferredWhenPossible: true,
-      reasons: ['browser preview uses the local dry-run route']
-    },
-    contextUsage,
-    tokenUsage: {
-      inputTokens: estimatedInputTokens,
-      outputTokens: estimatedOutputTokens,
-      totalTokens: estimatedInputTokens + estimatedOutputTokens,
-      contextTokensBeforeRequest: contextUsage.currentContextTokens,
-      source: 'chars-per-token-estimate'
-    },
-    fallbackProviders: [],
-    taskPlan: planningBundle.taskPlan,
-    subagentSchedule: planningBundle.subagentSchedule,
-    selectedSkill: planningBundle.selectedSkill,
-    toolCallsAllowed: false
+    contextUsage: browserPreviewAiContextUsage(rawRequest),
+    toolCallsAllowed: false,
+    error: {
+      code: 'ai.host.browser-preview',
+      category: 'transport',
+      stage: 'provider',
+      retryable: false,
+      userMessage: text,
+      debugId: 'browser-preview'
+    }
   };
 };
 
@@ -2283,19 +2164,16 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.aiTestProvider: {
         const request = requestWithOperationId(args[1], 'ai_provider_test');
-        const providerId = optionalString(args[0]) || 'local-dry-run';
+        const providerId = optionalString(args[0]) || 'gemini';
         return {
           providerId,
-          ok: providerId === 'local-dry-run',
-          state: providerId === 'local-dry-run' ? 'ready' : 'missingCredential',
-          message:
-            providerId === 'local-dry-run'
-              ? 'Local dry-run provider is ready.'
-              : 'Provider credential is not connected.',
+          ok: false,
+          state: 'hostUnavailable',
+          message: 'Gemini is unavailable outside the Tauri runtime.',
           operationId: operationIdOf(request, 'ai_provider_test'),
           hostRoundTrip: false,
           checkedAt: Date.now(),
-          modelIds: providerId === 'local-dry-run' ? ['local-dry-run'] : []
+          modelIds: []
         } satisfies FluxoraAiProviderTestResult;
       }
 
@@ -2537,6 +2415,61 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.securityGetState:
         return invoke<FluxoraSecurityState>('fluxora_security_state', {
           allowedChannels: Object.values(FluxoraIpcChannels)
+        });
+
+      case FluxoraIpcChannels.aiFileRead:
+        return invoke<FluxoraAiFileReadResult>('fluxora_ai_file_read', {
+          request: {
+            ...(args[0] && typeof args[0] === 'object' ? args[0] as Record<string, unknown> : {}),
+            operationId: operationIdOf(
+              requestWithOperationId(args[0], 'ai_file_read'),
+              'ai_file_read'
+            )
+          }
+        });
+
+      case FluxoraIpcChannels.aiUndoCapability:
+        return invoke<FluxoraAiCapabilityUndoResult>('fluxora_ai_undo_capability', {
+          compensationToken: optionalString(args[0]),
+          request: requestWithOperationId(args[1], 'ai_capability_undo')
+        });
+
+      case FluxoraIpcChannels.aiFileEndChat:
+        return invoke('fluxora_ai_file_end_chat', {
+          chatId: optionalString(args[0]),
+          request: requestWithOperationId(args[1], 'ai_file_end_chat')
+        });
+
+      case FluxoraIpcChannels.aiFileSave:
+        return invoke<FluxoraAiFileChangeSet>('fluxora_ai_file_save', {
+          request: {
+            ...(args[0] && typeof args[0] === 'object' ? args[0] as Record<string, unknown> : {}),
+            operationId: operationIdOf(
+              requestWithOperationId(args[0], 'ai_file_save'),
+              'ai_file_save'
+            )
+          }
+        });
+
+      case FluxoraIpcChannels.aiFileSetDirty:
+        return invoke('fluxora_ai_file_set_dirty', {
+          fileRef: optionalString(args[0]),
+          dirty: args[1] === true
+        });
+
+      case FluxoraIpcChannels.aiFileRollbackFile:
+        return invoke<FluxoraAiFileRollbackResult>('fluxora_ai_file_rollback_file', {
+          chatId: optionalString(args[0]),
+          runId: optionalString(args[1]),
+          fileRef: optionalString(args[2]),
+          request: requestWithOperationId(args[3], 'ai_file_rollback_file')
+        });
+
+      case FluxoraIpcChannels.aiFileRollbackRun:
+        return invoke<FluxoraAiFileRollbackResult>('fluxora_ai_file_rollback_run', {
+          chatId: optionalString(args[0]),
+          runId: optionalString(args[1]),
+          request: requestWithOperationId(args[2], 'ai_file_rollback_run')
         });
 
       case FluxoraIpcChannels.aiGetStatus:
@@ -2852,6 +2785,14 @@ const createTauriInvoker = (): IpcInvoker => ({
           fileName: optionalString(args[4])
         });
 
+      case FluxoraIpcChannels.windowOpenAiTextEditor:
+        return invoke('fluxora_open_ai_text_editor_window', {
+          chatId: optionalString(args[0]),
+          fileRef: optionalString(args[1]),
+          fileName: optionalString(args[2]),
+          firstChangedLine: Math.max(1, optionalNumber(args[3], 1))
+        });
+
       case FluxoraIpcChannels.windowOpenSettings:
         return invoke('fluxora_open_settings_window');
 
@@ -2885,6 +2826,40 @@ const createTauriInvoker = (): IpcInvoker => ({
 
       case FluxoraIpcChannels.bridgeGetStatus:
         return normalizeStatus(await bridgeStatusWithRuntimeCapabilities(args[0]));
+
+      case FluxoraIpcChannels.connectionsListStatus: {
+        const request = requestWithOperationId(args[0], 'connections_list_status');
+        return bridgeRequest('connections.listStatus', {}, request);
+      }
+
+      case FluxoraIpcChannels.connectionsRestoreAll: {
+        const request = requestWithOperationId(args[1], 'connections_restore_all');
+        return bridgeRequest(
+          'connections.restoreAll',
+          { attempt: typeof args[0] === 'number' ? args[0] : 1 },
+          request,
+          connectionRestoreTimeoutMs
+        );
+      }
+
+      case FluxoraIpcChannels.connectionsConnect: {
+        const request = requestWithOperationId(args[1], 'connections_connect');
+        return bridgeRequest(
+          'connections.connect',
+          { providerId: optionalString(args[0]) },
+          request,
+          nexusOAuthTimeoutMs
+        );
+      }
+
+      case FluxoraIpcChannels.connectionsDisconnect: {
+        const request = requestWithOperationId(args[1], 'connections_disconnect');
+        return bridgeRequest(
+          'connections.disconnect',
+          { providerId: optionalString(args[0]) },
+          request
+        );
+      }
 
       case FluxoraIpcChannels.bridgeShutdown: {
         const request = requestWithOperationId(args[0], 'bridge_shutdown');
@@ -3146,7 +3121,12 @@ const createTauriInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.modsCreateEmpty:
         return bridgeRequest('mods.createEmpty', { projectDirectory: args[0], modName: args[1] }, requestWithOperationId(args[2], 'mods_create_empty'));
       case FluxoraIpcChannels.modsCheckUpdates:
-        return bridgeRequest('mods.checkUpdates', args[0] as Record<string, unknown>, requestWithOperationId(args[1], 'mods_check_updates'));
+        return bridgeRequest(
+          'mods.checkUpdates',
+          args[0] as Record<string, unknown>,
+          requestWithOperationId(args[1], 'mods_check_updates'),
+          modUpdateTimeoutMs
+        );
       case FluxoraIpcChannels.modsClearOverwrite: {
         const request = requestWithOperationId(args[1], 'mods_clear_overwrite');
         const data = await bridgeRequest<Record<string, unknown>>(
@@ -3494,6 +3474,17 @@ const createTauriInvoker = (): IpcInvoker => ({
         );
       case FluxoraIpcChannels.downloadsResume:
         return bridgeRequest('downloads.resume', { projectDirectory: args[0], downloadPath: args[1] }, requestWithOperationId(args[2], 'downloads_resume'));
+      case FluxoraIpcChannels.downloadsResolveDuplicateDecision:
+        return bridgeRequest(
+          'downloads.resolveDuplicateDecision',
+          {
+            projectDirectory: args[0],
+            downloadPath: args[1],
+            decisionId: args[2],
+            choice: args[3]
+          },
+          requestWithOperationId(args[4], 'downloads_resolve_duplicate_decision')
+        );
       case FluxoraIpcChannels.downloadsPlanInstall:
       case FluxoraIpcChannels.archivesPlanInstall: {
         const isArchive = channel === FluxoraIpcChannels.archivesPlanInstall;

@@ -14,6 +14,9 @@ export function TextEditorWindow() {
   const projectDirectory = parameters.get('directory')?.trim() ?? '';
   const initialModPath = parameters.get('mod')?.trim() ?? '';
   const initialRelativePath = parameters.get('path')?.trim() ?? '';
+  const initialAiChatId = parameters.get('aiChat')?.trim() ?? '';
+  const initialAiFileRef = parameters.get('fileRef')?.trim() ?? '';
+  const initialLine = Math.max(1, Number.parseInt(parameters.get('line') ?? '1', 10) || 1);
   const initialFileName = parameters.get('name')?.trim()
     || fileNameFromPath(initialRelativePath);
 
@@ -51,6 +54,9 @@ export function TextEditorWindow() {
       />
       <TextEditorWorkspace
         initialFileName={initialFileName}
+        initialAiChatId={initialAiChatId}
+        initialAiFileRef={initialAiFileRef}
+        initialLine={initialLine}
         initialModPath={initialModPath}
         initialRelativePath={initialRelativePath}
         projectDirectory={projectDirectory}

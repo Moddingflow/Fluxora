@@ -1,31 +1,16 @@
-import type { AiSafeActionCatalog, AiSafeActionToolName } from './ai-safe-action-catalog';
-import type {
-  FluxoraAiCaseState,
-  FluxoraAiDiagnosisJudge,
-  FluxoraAiExternalInvestigation,
-  FluxoraAiLocalInspection,
-  FluxoraAiModResearchNexusApiStatus,
-  FluxoraAiModResearchNexusQuotaState,
-  FluxoraAiNexusInvestigation,
-  FluxoraAiWebQueryPlan
-} from './ai-mod-research-pipeline';
-import type { FluxoraSkillCatalog, FluxoraSkillSelection } from './ai-skills';
-
-export type {
-  FluxoraAiCaseState,
-  FluxoraAiDiagnosisJudge,
-  FluxoraAiExternalInvestigation,
-  FluxoraAiLocalInspection,
-  FluxoraAiWebQueryPlan
-} from './ai-mod-research-pipeline';
-export type { FluxoraSkillCatalog, FluxoraSkillSelection } from './ai-skills';
-
 export const FluxoraIpcChannels = {
   aiCancelRun: 'fluxora:ai:cancel-run',
   aiChatRespond: 'fluxora:ai:chat-respond',
+  aiUndoCapability: 'fluxora:ai:undo-capability',
   aiEstimateContext: 'fluxora:ai:estimate-context',
   aiConnectProvider: 'fluxora:ai:connect-provider',
   aiDisconnectProvider: 'fluxora:ai:disconnect-provider',
+  aiFileRead: 'fluxora:ai:file-read',
+  aiFileEndChat: 'fluxora:ai:file-end-chat',
+  aiFileSave: 'fluxora:ai:file-save',
+  aiFileSetDirty: 'fluxora:ai:file-set-dirty',
+  aiFileRollbackFile: 'fluxora:ai:file-rollback-file',
+  aiFileRollbackRun: 'fluxora:ai:file-rollback-run',
   aiGetStatus: 'fluxora:ai:get-status',
   aiListModels: 'fluxora:ai:list-models',
   aiListProviders: 'fluxora:ai:list-providers',
@@ -33,6 +18,10 @@ export const FluxoraIpcChannels = {
   aiRunEvent: 'fluxora:ai:run-event',
   aiTestProvider: 'fluxora:ai:test-provider',
   apiLimitsList: 'fluxora:api-limits:list',
+  connectionsConnect: 'fluxora:connections:connect',
+  connectionsDisconnect: 'fluxora:connections:disconnect',
+  connectionsListStatus: 'fluxora:connections:list-status',
+  connectionsRestoreAll: 'fluxora:connections:restore-all',
   appGetInfo: 'fluxora:app:get-info',
   bridgeGetLanguage: 'fluxora:bridge:get-language',
   bridgeGetStatus: 'fluxora:bridge:get-status',
@@ -60,6 +49,7 @@ export const FluxoraIpcChannels = {
   downloadsInstall: 'fluxora:downloads:install',
   downloadsList: 'fluxora:downloads:list',
   downloadsResume: 'fluxora:downloads:resume',
+  downloadsResolveDuplicateDecision: 'fluxora:downloads:resolve-duplicate-decision',
   downloadsWatchFolder: 'fluxora:downloads:watch-folder',
   downloadsUnwatchFolder: 'fluxora:downloads:unwatch-folder',
   downloadsFolderChanged: 'fluxora:downloads:folder-changed',
@@ -173,6 +163,7 @@ export const FluxoraIpcChannels = {
   windowOpenFilePreview: 'fluxora:window:open-file-preview',
   windowOpenModDetails: 'fluxora:window:open-mod-details',
   windowOpenSettings: 'fluxora:window:open-settings',
+  windowOpenAiTextEditor: 'fluxora:window:open-ai-text-editor',
   windowOpenTextEditor: 'fluxora:window:open-text-editor',
   windowToggleMaximize: 'fluxora:window:toggle-maximize'
 } as const;
@@ -187,7 +178,6 @@ export interface FluxoraAppInfo {
   arch: NodeJS.Architecture;
   isPackaged: boolean;
 }
-
 export interface FluxoraSecurityState {
   contextIsolation: true;
   nodeIntegration: false;
@@ -242,53 +232,50 @@ export interface NativeBridgeInvokeError extends NativeBridgeError {
   operationId: string;
 }
 
-export type FluxoraAiProviderKind = 'byok' | 'hosted' | 'local';
+export const FLUXORA_AI_PROVIDER_ID = 'gemini' as const;
+export const FLUXORA_AI_MODEL_ID = 'gemini-3.1-flash-lite' as const;
 
-export type FluxoraAiCredentialState =
-  | 'connected'
-  | 'disconnected'
-  | 'notRequired'
-  | 'credentialStoreUnavailable'
-  | 'unknown';
+export interface FluxoraAiChatError {
+  code: string;
+  category: string;
+  stage:
+    | 'session-start'
+    | 'tool-schema'
+    | 'transport'
+    | 'provider'
+    | 'tool-execution'
+    | 'tool-loop'
+    | 'context'
+    | 'gateway'
+    | 'verification';
+  retryable: boolean;
+  userMessage: string;
+  debugId: string;
+  details?: Record<string, unknown>;
+}
 
 export interface FluxoraAiProviderDescriptor {
-  id: string;
+  id: typeof FLUXORA_AI_PROVIDER_ID;
   displayName: string;
-  kind: FluxoraAiProviderKind;
+  kind: 'managed-or-byok';
   requiresCredential: boolean;
-  credentialStore: 'os' | 'os-or-supabase' | 'none';
-  credentialState: FluxoraAiCredentialState;
+  credentialState: 'connected' | 'disconnected' | 'unknown';
   connected: boolean;
-  defaultModelId: string;
-  supportedRunModes: string[];
-  networkAdapters: 'phase-4' | 'available' | 'disabled';
+  defaultModelId: typeof FLUXORA_AI_MODEL_ID;
   dataDisclosure: string;
 }
 
-export interface FluxoraAiModelPriceMetadata {
-  currency: string;
-  inputPerMillionTokens: number | null;
-  outputPerMillionTokens: number | null;
-  cacheReadPerMillionTokens: number | null;
-  cacheWritePerMillionTokens: number | null;
-  source: string;
-  isEstimated: boolean;
-  remoteConfigurable: boolean;
-}
-
 export interface FluxoraAiModelCapability {
-  id: string;
-  providerId: string;
+  id: typeof FLUXORA_AI_MODEL_ID;
+  providerId: typeof FLUXORA_AI_PROVIDER_ID;
   displayName: string;
   contextWindowTokens: number;
-  inputTokenLimit?: number;
-  outputTokenLimit?: number;
-  limitSource?: 'provider-metadata' | 'fluxora-fallback' | string;
-  supportsTools: boolean;
-  supportsWeb: boolean;
-  supportsStreaming: boolean;
-  supportsBackground: boolean;
-  priceMetadata: FluxoraAiModelPriceMetadata;
+  inputTokenLimit: number;
+  outputTokenLimit: number;
+  limitSource: 'provider-metadata' | 'fluxora-fallback';
+  supportsTools: true;
+  supportsWeb: true;
+  supportsStreaming: true;
 }
 
 export interface FluxoraAiHostStatus {
@@ -302,7 +289,7 @@ export interface FluxoraAiHostStatus {
   providers: FluxoraAiProviderDescriptor[];
   models: FluxoraAiModelCapability[];
   capabilities: Record<string, unknown>;
-  error?: NativeBridgeError;
+  error?: (NativeBridgeError & Partial<FluxoraAiChatError>) | FluxoraAiChatError;
 }
 
 export interface FluxoraAiProviderConnectionResult {
@@ -340,41 +327,28 @@ export interface FluxoraAiCancelRunResult {
 
 export type FluxoraAiChatRole = 'system' | 'user' | 'assistant';
 
-export type FluxoraAiRoutingPreset =
-  | 'free-demo'
-  | 'paid-economy'
-  | 'paid-large-job'
-  | 'byok';
-
-export type FluxoraAiBudgetTier = 'free' | 'paid' | 'byok';
-
-export type FluxoraAiRunSize = 'ordinary' | 'long-running';
+export interface FluxoraAiChatMessage {
+  role: FluxoraAiChatRole;
+  text: string;
+  createdAt?: string;
+}
 
 export type FluxoraAiIntermediateEventType =
   | 'progress'
   | 'note'
   | 'tool-started'
   | 'tool-completed'
+  | 'tool-blocked'
+  | 'recovery-started'
+  | 'verification-completed'
   | 'site-visited'
-  | 'error'
-  | 'heartbeat';
+  | 'error';
 
 export type FluxoraAiIntermediateEventLevel = 'info' | 'warning' | 'error';
 
-export type FluxoraAiIntermediateEventVisibility = 'user' | 'developer' | 'audit';
-
-export type FluxoraAiIntermediateEventPayloadValue =
-  | string
-  | number
-  | boolean
-  | null
-  | string[]
-  | number[]
-  | boolean[];
-
 export interface FluxoraAiIntermediateEventPayload {
   kind: string;
-  data?: Record<string, FluxoraAiIntermediateEventPayloadValue>;
+  data?: Record<string, string | number | boolean | null | string[] | number[] | boolean[]>;
 }
 
 export interface FluxoraAiIntermediateEvent {
@@ -386,157 +360,137 @@ export interface FluxoraAiIntermediateEvent {
   createdAt: string;
   type: FluxoraAiIntermediateEventType;
   level: FluxoraAiIntermediateEventLevel;
-  visibility: FluxoraAiIntermediateEventVisibility;
+  visibility: 'user' | 'developer' | 'audit';
   stage: string;
   message: string;
   percent?: number;
   payload?: FluxoraAiIntermediateEventPayload;
 }
 
-export type FluxoraAiBudgetDecision =
-  | 'allowed'
-  | 'needs-expensive-run-approval'
-  | 'blocked';
+export type FluxoraAiFileScope = 'build' | 'game' | 'downloads';
 
-export type FluxoraAiPromptCacheStatus = 'hit' | 'write' | 'disabled';
-
-export interface FluxoraAiChatMessage {
-  role: FluxoraAiChatRole;
-  text: string;
-  createdAt?: string;
+export interface FluxoraAiFileWorkspaceEnvelope {
+  schema: 'fluxora.ai.file-workspace-envelope.v1';
+  chatId: string;
+  projectId: string;
+  templateId: string;
+  buildLabel: string;
+  projectDirectory: string;
+  game: string;
+  profile: string;
+  buildRevision?: string;
+  fileTreeRevision?: string;
+  counts: {
+    mods: number;
+    plugins: number;
+    downloads: number;
+  };
+  dirtyFileRefs: string[];
 }
 
-export interface FluxoraAiResearchRequest {
-  enabled: boolean;
-  mode: 'nexus-api-first';
-  allowAuthenticatedPages: false;
-  allowBrowserSandbox: false;
-  allowGeminiGoogleSearch: boolean;
-  allowPublicWebFetch: boolean;
-  deepResearchApproved: false;
-  auditScope?: 'targeted' | 'batch-requirements' | 'full-build-requirements';
-  maxNexusTargets?: number;
-  maxNexusInitialTargets?: number;
-  maxNexusApiRequests?: number;
+export interface FluxoraAiFileDiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
 }
 
-export type FluxoraAiModResearchRouteKind =
-  | 'no-web/local-only'
-  | 'missing-local-fields'
-  | 'nexus-api'
-  | 'nexus-api-with-search'
-  | 'google-search-only';
-
-export interface FluxoraAiModResearchSearchBudget {
-  auditScope?: 'targeted' | 'batch-requirements' | 'full-build-requirements';
-  maxExternalSources: number;
-  maxSearchQueries: number;
-  nexusApiRequests: number;
-  maxNexusTargets?: number;
-  maxNexusInitialTargets?: number;
-  maxNexusApiRequests?: number;
-  publicWebFetches: number;
-  geminiGoogleSearch: boolean;
-  coverageMode?:
-    | 'targeted-official-api'
-    | 'bounded-official-api-batch'
-    | 'full-build-official-api-audit'
-    | 'provider-google-search-only';
-  reason: string;
+export interface FluxoraAiFileChange {
+  fileRef: string;
+  scope: FluxoraAiFileScope;
+  ownerMod?: string;
+  relativePath: string;
+  status: 'applied' | 'created' | 'rolled-back' | 'conflict';
+  hunks: FluxoraAiFileDiffHunk[];
+  addedLines: number;
+  removedLines: number;
+  validation: string;
+  verification: string;
+  beforeVersion: string;
+  afterVersion: string;
+  rollbackState: 'available' | 'rolled-back' | 'conflict' | 'unavailable';
 }
 
-export type FluxoraAiCanonicalIntent =
-  | 'nexus-api-research'
-  | 'requirement-audit'
-  | 'compatibility-check'
-  | 'public-web-research'
-  | 'local-build-diagnosis'
-  | 'mutation-request'
-  | 'unknown';
-
-export interface FluxoraAiIntentSignal {
-  kind: string;
-  value: string;
-  confidence: number;
-  source: 'deterministic' | 'multilingual-examples' | 'structured-classifier' | string;
-}
-
-export interface FluxoraAiIntentTarget {
-  kind: 'nexus-url' | 'nxm-link' | 'game-domain-mod-id' | 'local-nexus-metadata' | string;
-  value?: string;
-  gameDomain?: string;
-  modId?: string;
-}
-
-export interface FluxoraAiIntentRoute {
-  schema: 'fluxora.ai.intent-route.v1';
-  promptLanguage: string;
-  replyLanguage: string;
-  confidence: number;
-  signals: FluxoraAiIntentSignal[];
-  canonicalIntent: FluxoraAiCanonicalIntent;
-  scope: string;
-  explicitTargets: FluxoraAiIntentTarget[];
-  nexusApiRequested: boolean;
-  publicWebRequested: boolean;
-  requiresExternalNetwork: boolean;
-  clarificationRequired: boolean;
-}
-
-export interface FluxoraAiModResearchRoute {
-  schema: 'fluxora.ai.mod-research-route.v1';
-  generatedAt: string;
+export interface FluxoraAiFileChangeSet {
+  schema: 'fluxora.ai.file-change-set.v1';
   operationId: string;
-  route: FluxoraAiModResearchRouteKind;
-  localFirst: true;
-  externalResearchAllowed: boolean;
-  nexusAllowed: boolean;
-  publicWebAllowed: boolean;
-  geminiGoogleSearchAllowed: boolean;
-  auditScope?: 'targeted' | 'batch-requirements' | 'full-build-requirements';
-  intentRoute?: FluxoraAiIntentRoute;
-  highSignalIssues: string[];
-  missingFields: string[];
-  reasons: string[];
-  searchBudget?: FluxoraAiModResearchSearchBudget;
+  runId: string;
+  chatId: string;
+  files: FluxoraAiFileChange[];
+  rollbackState: 'available' | 'rolled-back' | 'conflict' | 'unavailable';
+}
+
+export interface FluxoraAiFileReadRequest extends OperationRequest {
+  chatId: string;
+  fileRef: string;
+  startLine?: number;
+  maxLines?: number;
+  maxBytes?: number;
+  editorMode?: boolean;
+}
+
+export interface FluxoraAiFileReadResult {
+  fileRef: string;
+  scope: FluxoraAiFileScope;
+  relativePath: string;
+  content: string;
+  startLine: number;
+  endLine: number;
+  truncated: boolean;
+  encoding: string;
+  lineEnding: string;
+  sha256: string;
+  version: string;
+}
+
+export interface FluxoraAiFileSaveRequest extends OperationRequest {
+  chatId: string;
+  runId: string;
+  fileRef: string;
+  revision?: string;
+  baseSha256: string;
+  expectedText: string;
+  replacementText: string;
+  format: 'plain-text' | 'json' | 'jsonc' | 'ini' | 'exact-text';
+}
+
+export interface FluxoraAiFileRollbackResult {
+  operationId: string;
+  runId: string;
+  state: 'available' | 'rolled-back' | 'conflict' | 'unavailable';
+  files: FluxoraAiFileChange[];
 }
 
 export interface FluxoraAiChatRequest extends OperationRequest {
   runId: string;
   sessionId: string;
   messages: FluxoraAiChatMessage[];
-  costPolicy?: {
-    currentMonthSpentCredits?: number;
-    expensiveRunApproved?: boolean;
-  };
-  modelId?: string;
-  providerId?: string;
-  research?: FluxoraAiResearchRequest;
-  routingPreset?: FluxoraAiRoutingPreset;
+  providerId?: typeof FLUXORA_AI_PROVIDER_ID;
+  modelId?: typeof FLUXORA_AI_MODEL_ID;
   stream?: boolean;
+  fileWorkspace?: FluxoraAiFileWorkspaceEnvelope;
+  conversationSummary?: string | null;
+  providerHistoryStartIndex?: number;
 }
 
 export type FluxoraAiContextUsagePrecision = 'exact' | 'estimated';
-
 export type FluxoraAiContextUsageLevel =
   | 'normal'
   | 'moderate'
   | 'warning'
   | 'critical'
   | 'almost-full';
-
-export type FluxoraAiContextUsageMode = 'full' | 'smart' | 'compressed' | 'strict';
+export type FluxoraAiContextUsageMode = 'full' | 'compressed';
 
 export interface FluxoraAiContextUsage {
-  schema: 'fluxora.ai.context-usage.v1';
+  schema: 'fluxora.ai.context-usage.v1' | 'fluxora.ai.context-usage.v2';
   operationId: string;
-  providerId: string;
-  modelId: string;
+  providerId: typeof FLUXORA_AI_PROVIDER_ID;
+  modelId: typeof FLUXORA_AI_MODEL_ID;
   contextWindowTokens: number;
-  safeInputBudgetTokens?: number;
-  currentBudgetPercent?: number;
-  modelInputTokenLimit?: number;
-  modelOutputTokenLimit?: number;
+  modelInputTokenLimit: number;
+  modelOutputTokenLimit: number;
   currentContextTokens: number;
   currentContextPercent: number;
   precision: FluxoraAiContextUsagePrecision;
@@ -544,15 +498,8 @@ export interface FluxoraAiContextUsage {
   mode: FluxoraAiContextUsageMode;
   includedSections: string[];
   autoCompressionApplied: boolean;
-  compressionLevel?: number;
   actionRequired: boolean;
   countedAt: string;
-  trace?: {
-    schema?: 'fluxora.ai.context-usage-trace.v1';
-    policyDecisionsUseIntentRouter?: boolean;
-    routingSchemas?: string[];
-    intentRoute?: FluxoraAiIntentRoute;
-  };
 }
 
 export interface FluxoraAiTokenUsage {
@@ -574,643 +521,95 @@ export interface FluxoraAiCitation {
   trust?: 'untrusted-external-content' | 'local-context' | string;
 }
 
-export interface FluxoraAiCostEstimate {
-  currency: string;
-  actualInternalCost: number | null;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  displayCost: number;
-  estimatedInputTokens: number;
-  estimatedOutputTokens: number;
-  estimatedCost: number;
-  actualCost: number | null;
-  hardCost: number;
-  internalCost: number;
-  promptCache: {
-    key: string;
-    status: FluxoraAiPromptCacheStatus;
-    rawPromptStored: false;
-  };
-  pricingSource: string;
-  riskBuffer: number;
-  isEstimate: boolean;
-  usageBreakdown: FluxoraAiCostUsageBreakdown;
-}
-
-export interface FluxoraAiCostUsageBreakdown {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  webSearchCalls: number;
-  fetchUrlCalls: number;
-  sandboxMinutes: number;
-  providerRiskBuffer: number;
-  mainInputTokens?: number;
-  mainOutputTokens?: number;
-  orchestrationInputTokens?: number;
-  orchestrationOutputTokens?: number;
-  orchestrationEstimatedCost?: number;
-  orchestrationInternalCost?: number;
-  orchestrationRiskBuffer?: number;
-  orchestrationWebSearchCalls?: number;
-}
-
-export interface FluxoraAiCostLedgerEntry {
-  operationId: string;
-  providerId: string;
-  modelId: string;
-  routingPreset: FluxoraAiRoutingPreset;
-  chargesFluxoraBudget: boolean;
-  creditDebit: number;
-  estimatedInternalCost: number;
-  actualInternalCost: number | null;
-  currency: string;
-  billable: boolean;
-  costPreflightDecision: FluxoraAiBudgetDecision;
-  createdAt: string;
-  pricingVersion: string;
-  promptCacheKey: string;
-  usageBreakdown: FluxoraAiCostUsageBreakdown;
-}
-
-export interface FluxoraAiRoutingDecision {
-  schema: 'fluxora.ai.routing-decision.v1';
-  generatedAt: string;
-  operationId: string;
-  routingPreset: FluxoraAiRoutingPreset;
-  runSize: FluxoraAiRunSize;
-  cheapClassifierFirst: true;
-  candidateModelIds: string[];
-  selectedModelId: string;
-  selectedProviderId: string;
-  selectedModelClass: 'local' | 'cheap-worker' | 'compact-planner' | 'web' | 'byok';
-  premiumRequiresByok: true;
-  webModelOnlyWhenNeeded: true;
-  localModelPreferredWhenPossible: true;
-  reasons: string[];
-}
-
-export interface FluxoraAiModelAgentResult {
-  agentId: string;
-  contextContinuationApplied?: boolean;
-  durationMs: number;
-  error?: {
-    message: string;
-    statusCode?: number | null;
-  } | null;
-  label: string;
-  modelId: string;
-  providerId: string;
-  retryable?: boolean;
-  shard?: {
-    shardId: string;
-    shardIndex: number;
-    startIndex: number;
-    endIndex: number;
-    targetCount: number;
-  } | null;
-  status: 'completed' | 'blocked' | 'temporary';
-  text: string;
-}
-
-export interface FluxoraAiLargeAuditManifest {
-  schema: 'fluxora.ai.large-audit-manifest.v1';
-  generatedAt: string;
-  operationId: string;
-  auditKind: string;
-  targetCount: number;
-  hostTargetCount: number;
-  coveredTargetCount: number;
-  uncoveredTargetCount: number;
-  truncated: boolean;
-  shardSize: number;
-  maxWorkerJobs: number;
-  workerConcurrency: number;
-  shardCount: number;
-  shards: Array<{
-    shardId: string;
-    shardIndex: number;
-    startIndex: number;
-    endIndex: number;
-    targetCount: number;
-  }>;
-}
-
-export interface FluxoraAiMultiModelOrchestration {
-  schema: 'fluxora.ai.multi-model-orchestration.v1';
-  generatedAt: string;
-  operationId: string;
-  mode: 'chef-first';
-  strategy: string;
-  status?: 'completed' | 'partial' | 'blocked';
-  terminalStage?: 'chef-dispatch' | 'worker' | 'chef-final' | 'normal-provider' | string;
-  contextContinuationApplied?: boolean;
-  chef: {
-    agentId: string;
-    label: string;
-    providerId: string;
-    modelId: string;
-    status: 'dispatch-completed' | 'final-completed' | string;
-    durationMs: number;
-    finalDurationMs?: number;
-    dispatchPlan: string;
-  };
-  subagents: FluxoraAiModelAgentResult[];
-  largeAuditManifest?: FluxoraAiLargeAuditManifest | null;
-  developerMetadata?: Record<string, unknown> | null;
-  attemptedSubagentCount?: number;
-  completedSubagentCount: number;
-  blockedSubagentCount?: number;
-  retryableSubagentCount?: number;
-  policy: {
-    finalAnswerByChef: true;
-    subagentOutputTrustedAsInstructions: false;
-    requiresGroundedFacts: true;
-    mutationsAllowed: false;
-    askUserOnlyIfBlocked: true;
-  };
-}
-
-export type FluxoraAiOrchestrationDecisionReason =
-  | 'started'
-  | 'completed'
-  | 'free-demo-disabled'
-  | 'insufficient-remote-targets'
-  | 'ordinary-task'
-  | 'cost-preflight'
-  | 'chef-provider-error'
-  | 'partial-worker-evidence'
-  | 'worker-context-limit'
-  | 'worker-temporary-provider-failure'
-  | 'temporary-provider-failure'
-  | 'provider-context-limit-after-continuation'
-  | 'all-workers-blocked'
-  | 'missing-local-context'
-  | string;
-
-export interface FluxoraAiOrchestrationDecision {
-  schema: 'fluxora.ai.orchestration-decision.v1';
-  generatedAt: string;
-  operationId: string;
-  reason: FluxoraAiOrchestrationDecisionReason;
-  attempted: boolean;
-  completed: boolean;
-  trigger?: string;
-  largeTask?: boolean;
-  buildItemCount?: number;
-  contextCompressionApplied?: boolean;
-  contextContinuationApplied?: boolean;
-  compressionLevel?: number;
-  completedSubagentCount?: number;
-  attemptedSubagentCount?: number;
-  blockedSubagentCount?: number;
-  retryableSubagentCount?: number;
-  terminalStage?: 'chef-dispatch' | 'worker' | 'chef-final' | 'normal-provider' | string;
-}
-
-export interface FluxoraAiCreditWalletPolicy {
-  tier: FluxoraAiBudgetTier;
-  currency: 'AI credits';
-  freeDemoWalletCredits: number;
-  monthlyWalletCredits: number;
-  remainingMonthlyCredits: number;
-  webResearchSubBudgetCredits: number;
-  longJobPreflightBudgetCredits: number;
-  safePromptMaxMonthlyPercent: number;
-  safePromptThresholdCredits: number;
-  byokChargesFluxoraBudget: false;
-}
-
-export interface FluxoraAiCostPreflight {
-  schema: 'fluxora.ai.cost-preflight.v1';
-  generatedAt: string;
-  operationId: string;
-  routingPreset: FluxoraAiRoutingPreset;
-  runSize: FluxoraAiRunSize;
-  required: boolean;
-  decision: FluxoraAiBudgetDecision;
-  estimatedRunCredits: number;
-  estimatedMonthlyBudgetPercent: number;
-  expensiveRunApprovalRequired: boolean;
-  wallet: FluxoraAiCreditWalletPolicy;
-  fallbackChoices: Array<'economy' | 'full' | 'byok'>;
-  appliedOptimizations: string[];
-  blockReason?: 'monthly-wallet-exceeded' | 'free-tier-long-job' | 'ordinary-safe-percent';
-}
-
-export interface FluxoraAiCostPipelinePolicy {
-  schema: 'fluxora.ai.cost-pipeline.v1';
-  generatedAt: string;
-  operationId: string;
-  classifyCheaply: true;
-  retrieveThroughContextGraph: true;
-  nexusApiCacheFirst: true;
-  compactContextBeforeStrongModel: true;
-  useCheapVerification: true;
-  structuredFinalReport: true;
-  promptCaching: true;
-  conversationCompaction: true;
-  deduplicateWebSources: true;
-  nexusMetadataCache: {
-    ttlMs: number;
-    storesRateLimitHeaders: true;
-  };
-  batchCheapChecks: true;
-  stopConditionsForLowValueLoops: true;
-}
-
-export interface FluxoraAiMarginTelemetry {
-  schema: 'fluxora.ai.margin-telemetry.v1';
-  generatedAt: string;
-  operationId: string;
-  metricName: 'gross_margin_after_ai_cost';
-  userTier: FluxoraAiBudgetTier;
-  grossRevenueEur: number;
-  estimatedVatPaymentInfrastructureReserveEur: number;
-  aiProviderCost: number;
-  webSearchCost: number;
-  marginAfterAiCostEur: number;
-  grossMarginAfterAiCost: number;
-  heavyUserDetected: boolean;
-  localEstimateOnly: true;
-}
-
-export type FluxoraAiContextNodeKind =
-  | 'Build'
-  | 'Profile'
-  | 'Mod'
-  | 'Plugin'
-  | 'Archive'
-  | 'Download'
-  | 'NexusMod'
-  | 'File'
-  | 'Conflict'
-  | 'Operation'
-  | 'LogEvent'
-  | 'Skill'
-  | 'Source';
-
-export interface FluxoraAiContextSource {
-  id: string;
-  kind: string;
-  title: string;
-  fingerprint: string;
-  capturedAt: string;
-  stale: boolean;
-  staleReason?: string | null;
-}
-
-export interface FluxoraAiContextNode {
-  id: string;
-  kind: FluxoraAiContextNodeKind;
-  label: string;
-  summary: string;
-  sourceIds: string[];
-  tokenEstimate: number;
-}
-
-export interface FluxoraAiContextTrace {
-  nodeIds: string[];
-  sourceIds: string[];
-  staleSourceIds: string[];
-  fingerprints: Array<{
-    sourceId: string;
-    fingerprint: string;
-  }>;
-  why: string;
-}
-
-export interface FluxoraAiContextBundle {
-  schema: 'fluxora.ai.context-graph.v1';
-  generatedAt: string;
-  operationId: string;
-  query: string;
-  tokenBudget: number;
-  tokenEstimate: number;
-  storage: {
-    engine: 'sqlite';
-    fts: 'fts5';
-    embeddings: 'optional-disabled' | 'available';
-  };
-  nodeKinds: FluxoraAiContextNodeKind[];
-  retrievalPolicy: Array<Record<string, unknown>>;
-  sourceIds: string[];
-  sources: FluxoraAiContextSource[];
-  nodes: FluxoraAiContextNode[];
-  trace: FluxoraAiContextTrace;
-}
-
-export interface FluxoraAiResearchSnapshot {
-  id: string;
-  kind: string;
-  requestKind?: string;
-  title: string;
-  url: string;
-  capturedAt: string;
-  status: 'captured' | 'blocked';
-  summary?: string;
-  reason?: string;
-  httpStatus?: number;
-  request?: Record<string, unknown>;
-  facts?: Record<string, unknown>;
-  rateLimit?: Record<string, string | null>;
-  credentialSource?: string;
-  cache?: Record<string, unknown>;
-  relatedTargets?: Array<Record<string, unknown>>;
-  trust: 'untrusted-external-content';
-  instructionsAllowed: false;
-  promptInjectionFilter?: Record<string, unknown>;
-}
-
-export interface FluxoraAiResearchCoverage {
-  auditScope?: 'targeted' | 'batch-requirements' | 'full-build-requirements' | string;
-  mode?: string;
-  targetCount?: number;
-  targetAttemptCount?: number;
-  checkedTargetCount?: number;
-  targetsWithAnyCapturedSnapshot?: number;
-  targetsWithRequirementEvidence?: number;
-  remainingTargetCount?: number;
-  targetCap?: number;
-  targetCapReached?: boolean;
-  apiRequestsAttempted?: number;
-  apiRequestCap?: number;
-  apiRequestCapKind?: string;
-  apiRequestCapReached?: boolean;
-  nexusQuotaOrBackoffReached?: boolean;
-  capturedSnapshots?: number;
-  continuationRequired?: boolean;
-  fullCoverage?: boolean;
-  claimCompleteAllowed?: boolean;
-  [key: string]: unknown;
-}
-
-export interface FluxoraAiResearchReport {
-  schema: 'fluxora.ai.research.v1';
-  generatedAt: string;
-  operationId: string;
-  permissionClass: 'external-network';
-  mode: 'nexus-api-first';
-  policy: Record<string, unknown>;
-  targets: Array<Record<string, unknown>>;
-  apiAvailability?: FluxoraAiModResearchNexusApiStatus;
-  apiQuotaState?: FluxoraAiModResearchNexusQuotaState;
-  nexusInvestigation?: FluxoraAiNexusInvestigation;
-  coverage?: FluxoraAiResearchCoverage;
-  webQueryPlan?: FluxoraAiWebQueryPlan;
-  nextBestNonNexusQueries?: string[];
-  snapshots: FluxoraAiResearchSnapshot[];
-  sources: FluxoraAiCitation[];
-  issues: Array<Record<string, unknown>>;
-}
-
-export type FluxoraAiTaskPermissionClass =
-  | 'read'
-  | 'plan'
-  | 'write'
-  | 'destructive'
-  | 'external-network'
-  | 'credential';
-
-export type FluxoraAiTaskStepStatus =
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'needs-approval'
-  | 'blocked';
-
-export interface FluxoraAiTaskPlanStep {
-  id: string;
-  title: string;
-  agentId: string;
-  permissionClass: FluxoraAiTaskPermissionClass;
-  status: FluxoraAiTaskStepStatus;
-  requiresApproval: boolean;
-  canRunInParallel: boolean;
-  summary: string;
-  dependsOn?: string[];
-  toolName?: string;
-}
-
-export interface FluxoraAiProposedMutation {
-  id: string;
-  title: string;
-  permissionClass: 'write' | 'destructive';
-  requiresApproval: true;
-  approvalMode: 'plan' | 'step-by-step';
-  queued: true;
-  executorQueueId: 'ai-write-executor';
-  hidden: false;
-  summary: string;
-  rollbackNote: string;
-  targetSummary?: string;
-  toolName?: AiSafeActionToolName;
-}
-
-export interface FluxoraAiPlanReview {
-  agentId: 'plan-review';
-  status: 'ready' | 'needs-approval' | 'blocked';
-  summary: string;
-}
-
-export interface FluxoraAiTaskPlan {
-  schema: 'fluxora.ai.task-plan.v1';
-  generatedAt: string;
-  operationId: string;
-  selectedSkill?: FluxoraSkillSelection | null;
-  goal: string;
-  assumptions: string[];
-  readSteps: FluxoraAiTaskPlanStep[];
-  proposedMutations: FluxoraAiProposedMutation[];
-  validationSteps: FluxoraAiTaskPlanStep[];
-  rollbackPlan: string[];
-  expectedRisks: string[];
-  review: FluxoraAiPlanReview;
-  askUserOnlyIfBlocked: true;
-  finalResponsePolicy: 'after-verification-or-clear-blocked-state';
-}
-
-export interface FluxoraAiSubagentDescriptor {
-  id: string;
-  role: string;
-  label: string;
-  permissionClass: FluxoraAiTaskPermissionClass;
-  status: FluxoraAiTaskStepStatus;
-  canRunInParallel: boolean;
-  summary: string;
-  dependsOn?: string[];
-}
-
-export interface FluxoraAiExecutorQueuePolicy {
-  id: 'ai-write-executor';
-  writeActionsOnlyThroughQueue: true;
-  maxConcurrentMutations: 1;
-  operationLock: 'per-build';
-  hiddenDestructiveActions: false;
-  destructiveApprovalMode: 'step-by-step';
-}
-
-export interface FluxoraAiLongRunningProgressPolicy {
-  userVisibleStages: true;
-  streamInternalProgress: true;
-  finalAnswerAfterVerificationOrBlocked: true;
-}
-
-export interface FluxoraAiSubagentSchedule {
-  schema: 'fluxora.ai.subagent-schedule.v1';
-  generatedAt: string;
-  operationId: string;
-  defaultSubagentLimit: 3;
-  maxSubagentsForLargeTasks: 5;
-  requestedSubagentCount: number;
-  scheduledSubagents: FluxoraAiSubagentDescriptor[];
-  executorQueue: FluxoraAiExecutorQueuePolicy;
-  planReviewAgent: FluxoraAiSubagentDescriptor;
-  askUserOnlyIfBlocked: true;
-  longRunningProgress: FluxoraAiLongRunningProgressPolicy;
-}
-
-export type FluxoraAiAutonomousJobState =
-  | 'queued'
-  | 'running'
-  | 'paused'
-  | 'completed'
-  | 'cancelled'
-  | 'blocked';
-
-export type FluxoraAiAutonomousJobBlockedReason =
-  | 'user'
-  | 'login'
-  | 'captcha'
-  | 'missing-file'
-  | 'permission'
-  | 'budget';
-
-export type FluxoraAiAutonomousJobBackgroundMode =
-  | 'local-resumable'
-  | 'provider-background';
-
-export interface FluxoraAiAutonomousJobCheckpoint {
-  id: string;
-  createdAt: string;
-  status: 'completed' | 'blocked' | 'recovered';
-  title: string;
-  summary: string;
-}
-
-export interface FluxoraAiAutonomousJobProgressEvent {
-  id: string;
-  createdAt: string;
-  stage: string;
-  message: string;
-  percent: number;
-  internal: boolean;
-  canonicalEvent?: FluxoraAiIntermediateEvent;
-}
-
-export interface FluxoraAiAutonomousJobHeartbeat {
-  sequence: number;
-  sentAt: string;
-  deadlineAt: string;
-  missed: boolean;
-}
-
-export interface FluxoraAiAutonomousJobWatchdog {
-  heartbeatIntervalMs: number;
-  staleAfterMs: number;
-  missedHeartbeats: number;
-  lastCheckedAt: string;
-}
-
-export interface FluxoraAiAutonomousJobPolicy {
-  checkpointAfterEveryMajorStep: true;
-  cancellationSupported: true;
-  pauseSupported: true;
-  streamInternalProgress: true;
-  blockOnlyForAllowedReasons: true;
-  allowedBlockedReasons: FluxoraAiAutonomousJobBlockedReason[];
-  finalReportAfterVerification: true;
-}
-
-export interface FluxoraAiAutonomousJob {
-  schema: 'fluxora.ai.autonomous-job.v1';
-  id: string;
-  sessionId: string;
-  scopeKey: string;
-  buildLabel: string;
-  runId: string;
-  operationId: string;
-  goal: string;
-  state: FluxoraAiAutonomousJobState;
-  createdAt: string;
-  updatedAt: string;
-  modelId?: string;
-  providerId?: string;
-  backgroundMode: FluxoraAiAutonomousJobBackgroundMode;
-  providerBackgroundMode: 'available' | 'unavailable';
-  currentStage: string;
-  percent: number;
-  heartbeat: FluxoraAiAutonomousJobHeartbeat;
-  watchdog: FluxoraAiAutonomousJobWatchdog;
-  checkpoints: FluxoraAiAutonomousJobCheckpoint[];
-  progressEvents: FluxoraAiAutonomousJobProgressEvent[];
-  pauseRequested: boolean;
-  cancellationRequested: boolean;
-  blockedReason?: FluxoraAiAutonomousJobBlockedReason;
-  blockedMessage?: string;
-  finalReport?: string;
-  taskPlan: FluxoraAiTaskPlan;
-  subagentSchedule: FluxoraAiSubagentSchedule;
-  policy: FluxoraAiAutonomousJobPolicy;
-}
-
-export interface FluxoraAiAutonomousJobQueue {
-  schema: 'fluxora.ai.autonomous-job-queue.v1';
-  scopeKey: string;
-  updatedAt: string;
-  jobs: FluxoraAiAutonomousJob[];
-}
-
 export interface FluxoraAiChatStreamChunk {
   index: number;
   text: string;
 }
 
+export interface FluxoraAiFileToolDiagnostics {
+  schema: 'fluxora.ai.file-tool-diagnostics.v2';
+  taskKind: 'action' | 'answer';
+  providerRouting: 'local-required' | 'local-auto' | 'web-search' | 'none';
+  outcome: 'done' | 'blocked' | 'needs-input';
+  validationRetries: number;
+  duplicateCalls: number;
+  stagedChanges: number;
+  verifiedMutations: number;
+  terminalReason?: string | null;
+  toolCalls: number;
+  toolRounds: number;
+  metadataBytes: number;
+  contentBytes: number;
+  searches: number;
+  emptyResults: number;
+  candidateCount: number;
+  providerBytes: number;
+  redactionApplied: boolean;
+  mutations: number;
+  truncatedResponses: number;
+  blockedReason?: string | null;
+  nativeSessionPreopened: boolean;
+  newEvidenceCount: number;
+  stagnantResultCount: number;
+  phaseTransitions: string[];
+}
+
+export type FluxoraAiExecutionDomain =
+  | 'files'
+  | 'mods'
+  | 'plugins'
+  | 'downloads'
+  | 'installs'
+  | 'profiles'
+  | 'settings'
+  | 'projects'
+  | 'fluxpack'
+  | 'general';
+
+export interface FluxoraAiVerifiedEffect {
+  tool: string;
+  operationId: string;
+  verification: string;
+  compensationToken?: string;
+  rollbackState?: 'available' | 'rolling-back' | 'rolled-back' | 'blocked';
+}
+
+export interface FluxoraAiCapabilityUndoResult {
+  state: 'rolled-back';
+  compensationToken: string;
+  operationId: string;
+  postconditionVerified: true;
+}
+
+export interface FluxoraAiExecution {
+  goalId: string;
+  kind: 'action' | 'answer';
+  domain: FluxoraAiExecutionDomain;
+  phase: 'discover' | 'inspect' | 'mutate' | 'verify' | 'report';
+  state: 'running' | 'needs-input' | 'blocked' | 'completed';
+  verifiedEffects: FluxoraAiVerifiedEffect[];
+  pendingQuestion?: string | null;
+  terminalReason?: string | null;
+}
+
 export interface FluxoraAiChatResponse {
   operationId: string;
-  providerId: string;
-  modelId: string;
-  routingPreset: FluxoraAiRoutingPreset;
-  status: 'done' | 'blocked' | 'needs-approval';
+  providerId: typeof FLUXORA_AI_PROVIDER_ID;
+  modelId: typeof FLUXORA_AI_MODEL_ID;
+  status: 'done' | 'blocked' | 'needs-input';
   text: string;
   streamChunks: FluxoraAiChatStreamChunk[];
   sources: FluxoraAiCitation[];
-  costEstimate: FluxoraAiCostEstimate;
-  costPipeline: FluxoraAiCostPipelinePolicy;
-  costPreflight: FluxoraAiCostPreflight;
-  ledgerEntry: FluxoraAiCostLedgerEntry;
-  marginTelemetry: FluxoraAiMarginTelemetry;
-  routingDecision: FluxoraAiRoutingDecision;
   contextUsage?: FluxoraAiContextUsage | null;
-  intentRoute?: FluxoraAiIntentRoute | null;
   tokenUsage?: FluxoraAiTokenUsage | null;
-  modResearchRoute?: FluxoraAiModResearchRoute | null;
-  localInspection?: FluxoraAiLocalInspection | null;
-  nexusInvestigation?: FluxoraAiNexusInvestigation | null;
-  externalInvestigation?: FluxoraAiExternalInvestigation | null;
-  diagnosisJudge?: FluxoraAiDiagnosisJudge | null;
-  caseState?: FluxoraAiCaseState | null;
-  orchestration?: FluxoraAiMultiModelOrchestration | null;
-  orchestrationDecision?: FluxoraAiOrchestrationDecision | null;
-  contextBundle?: FluxoraAiContextBundle | null;
-  researchReport?: FluxoraAiResearchReport | null;
-  taskPlan?: FluxoraAiTaskPlan | null;
-  subagentSchedule?: FluxoraAiSubagentSchedule | null;
-  selectedSkill?: FluxoraSkillSelection | null;
-  fallbackProviders: string[];
-  toolCallsAllowed: false;
-  error?: NativeBridgeError;
+  conversationSummary?: string | null;
+  providerHistoryStartIndex?: number;
+  toolLoopTerminalReason?: string | null;
+  toolCallsAllowed: boolean;
+  fileChangeSet?: FluxoraAiFileChangeSet | null;
+  fileToolDiagnostics?: FluxoraAiFileToolDiagnostics | null;
+  execution?: FluxoraAiExecution | null;
+  error?: FluxoraAiChatError | null;
 }
 
 export type NativeBridgeFeatureState =
@@ -1709,6 +1108,7 @@ export interface FluxoraModDetailsBootstrap {
   item: FluxoraModOrderItem;
   rootFileTree?: FluxoraModFileTreeEntry[];
   content?: FluxoraModDetailsContent;
+  highlightRelativePath?: string;
   createdAt: number;
 }
 
@@ -1799,6 +1199,22 @@ export interface FluxoraPluginOrderItem {
   missingMasters: string[];
 }
 
+export interface FluxoraDownloadDuplicateFile {
+  id: string;
+  fileId: string;
+  fileName: string;
+  version: string;
+}
+
+export interface FluxoraDownloadDuplicateDecision {
+  decisionId: string;
+  direction: 'upgrade' | 'downgrade' | 'mixed';
+  incomingFile: FluxoraDownloadDuplicateFile;
+  existingFiles: FluxoraDownloadDuplicateFile[];
+}
+
+export type FluxoraDownloadDuplicateChoice = 'replace' | 'keepBoth' | 'cancel';
+
 export interface FluxoraDownloadEntry {
   id: string;
   name: string;
@@ -1810,6 +1226,7 @@ export interface FluxoraDownloadEntry {
   transferState:
     | 'idle'
     | 'queued'
+    | 'awaiting-decision'
     | 'downloading'
     | 'paused'
     | 'canceled'
@@ -1828,6 +1245,7 @@ export interface FluxoraDownloadEntry {
   canResume: boolean;
   canInstall: boolean;
   canDelete: boolean;
+  duplicateDecision: FluxoraDownloadDuplicateDecision | null;
 }
 
 export interface FluxoraDownloadsFolderWatchResult {
@@ -2437,6 +1855,37 @@ export interface FluxoraNexusModsAuthStatus {
   message: string;
   clientId: string;
   redirectUri: string;
+  requiresReauth?: boolean;
+  operationId: string;
+}
+
+export type FluxoraExternalConnectionState =
+  | 'notConfigured'
+  | 'notLinked'
+  | 'restoring'
+  | 'ready'
+  | 'temporarilyUnavailable'
+  | 'reauthRequired';
+
+export interface FluxoraExternalConnectionStatus {
+  providerId: string;
+  label: string;
+  state: FluxoraExternalConnectionState;
+  accountName: string;
+  hasStoredSession: boolean;
+  retryable: boolean;
+  requiresUserAction: boolean;
+  message: string;
+  checkedAtUtc: string;
+  operationId: string;
+}
+
+export interface FluxoraExternalConnectionSnapshot {
+  providers: FluxoraExternalConnectionStatus[];
+  requestedAtUtc: string;
+  completedAtUtc: string;
+  durationMs: number;
+  timedOut: boolean;
   operationId: string;
 }
 
@@ -2700,6 +2149,21 @@ export interface FluxoraApi {
   apiLimits: {
     list: (request?: OperationRequest) => Promise<FluxoraApiLimitStatus>;
   };
+  connections: {
+    listStatus: (request?: OperationRequest) => Promise<FluxoraExternalConnectionSnapshot>;
+    restoreAll: (
+      attempt?: number,
+      request?: OperationRequest
+    ) => Promise<FluxoraExternalConnectionSnapshot>;
+    connect: (
+      providerId: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraExternalConnectionStatus>;
+    disconnect: (
+      providerId: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraExternalConnectionStatus>;
+  };
   publicApi: FluxoraPublicApiClient;
   ai: {
     cancelRun: (
@@ -2707,12 +2171,29 @@ export interface FluxoraApi {
       request?: OperationRequest
     ) => Promise<FluxoraAiCancelRunResult>;
     chatRespond: (request: FluxoraAiChatRequest) => Promise<FluxoraAiChatResponse>;
+    undoCapability: (
+      compensationToken: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraAiCapabilityUndoResult>;
+    readFile: (request: FluxoraAiFileReadRequest) => Promise<FluxoraAiFileReadResult>;
+    endFileChat: (chatId: string, request?: OperationRequest) => Promise<void>;
+    saveFile: (request: FluxoraAiFileSaveRequest) => Promise<FluxoraAiFileChangeSet>;
+    setFileDirty: (fileRef: string, dirty: boolean) => Promise<void>;
+    rollbackFile: (
+      chatId: string,
+      runId: string,
+      fileRef: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraAiFileRollbackResult>;
+    rollbackRun: (
+      chatId: string,
+      runId: string,
+      request?: OperationRequest
+    ) => Promise<FluxoraAiFileRollbackResult>;
     estimateContext: (request: FluxoraAiChatRequest) => Promise<FluxoraAiContextUsage>;
     getStatus: (request?: OperationRequest) => Promise<FluxoraAiHostStatus>;
     restartHost: (request?: OperationRequest) => Promise<FluxoraAiHostStatus>;
     onRunEvent: (callback: (event: FluxoraAiIntermediateEvent) => void) => () => void;
-    listSafeActions: () => Promise<AiSafeActionCatalog>;
-    listSkills: () => Promise<FluxoraSkillCatalog>;
     listProviders: (request?: OperationRequest) => Promise<FluxoraAiProviderDescriptor[]>;
     listModels: (request?: OperationRequest) => Promise<FluxoraAiModelCapability[]>;
     connectProvider: (
@@ -3107,6 +2588,13 @@ export interface FluxoraApi {
       downloadPath: string,
       request?: OperationRequest
     ) => Promise<FluxoraDownloadEntry>;
+    resolveDuplicateDecision: (
+      projectDirectory: string,
+      downloadPath: string,
+      decisionId: string,
+      choice: FluxoraDownloadDuplicateChoice,
+      request?: OperationRequest
+    ) => Promise<FluxoraDownloadEntry | null>;
     watchFolder: (
       projectDirectory: string,
       downloadsDirectory: string,
@@ -3342,6 +2830,12 @@ export interface FluxoraApi {
       bootstrap?: FluxoraModDetailsBootstrap
     ) => Promise<void>;
     openSettings: () => Promise<void>;
+    openAiTextEditor: (
+      chatId: string,
+      fileRef: string,
+      fileName: string,
+      firstChangedLine: number
+    ) => Promise<void>;
     openTextEditor: (
       configPath: string,
       projectDirectory: string,

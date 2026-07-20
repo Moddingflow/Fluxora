@@ -92,7 +92,7 @@ const namedFileLanguages: Record<string, TextEditorLanguage> = {
   readme: { id: 'markdown', label: 'Markdown' }
 };
 
-export type TextEditorTabSource = 'mod' | 'file';
+export type TextEditorTabSource = 'mod' | 'file' | 'ai';
 export type TextEditorBusyState = 'idle' | 'loading' | 'saving' | 'error';
 export type TextEditorLineEnding = 'CRLF' | 'LF';
 
@@ -108,6 +108,10 @@ export interface TextEditorTab {
   fileName: string;
   relativePath?: string;
   modPath?: string;
+  aiChatId?: string;
+  fileRef?: string;
+  baseSha256?: string;
+  readOnly?: boolean;
   content: string;
   savedContent: string;
   languageId: string;

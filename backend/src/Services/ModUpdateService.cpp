@@ -2,6 +2,7 @@
 
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
+#include "FluxoraCore/Services/NexusFileLineageResolver.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 
 #include "NexusUpdateCache.hpp"
@@ -307,6 +308,7 @@ namespace fluxora
         {
             ResolutionState state{ResolutionState::Failed};
             const NexusFileMetadata* file{nullptr};
+            NexusFileLineageKind lineage{NexusFileLineageKind::UnprovenOrDifferentBranch};
         };
 
         Resolution resolveLatestFile(
@@ -329,44 +331,26 @@ namespace fluxora
                 return {ResolutionState::Failed, nullptr};
             }
 
-            std::unordered_map<std::wstring, std::set<std::wstring>> successors;
-            for (const NexusFileUpdateLink& link : response.fileUpdates)
+            const NexusFileLineageResolver lineageResolver(response.fileUpdates);
+            const NexusFileLineageResolution lineage =
+                lineageResolver.forwardFrom(mod.source.remoteFileId);
+            if (lineage.kind == NexusFileLineageKind::UnprovenOrDifferentBranch)
             {
-                if (!link.oldFileId.empty() && !link.newFileId.empty())
-                {
-                    successors[link.oldFileId].insert(link.newFileId);
-                }
+                return {
+                    ResolutionState::Ambiguous,
+                    nullptr,
+                    NexusFileLineageKind::UnprovenOrDifferentBranch
+                };
             }
-
             const NexusFileMetadata* selected = isActive(*installed->second)
                 ? installed->second
                 : nullptr;
-            std::wstring currentId = mod.source.remoteFileId;
-            std::set<std::wstring> visited;
-            bool followedUpdateLink = false;
-            for (;;)
+            for (std::size_t index = 1; index < lineage.fileIds.size(); ++index)
             {
-                if (!visited.insert(currentId).second)
-                {
-                    return {ResolutionState::Ambiguous, nullptr};
-                }
-
-                const auto next = successors.find(currentId);
-                if (next == successors.end() || next->second.empty())
-                {
-                    break;
-                }
-                if (next->second.size() != 1)
-                {
-                    return {ResolutionState::Ambiguous, nullptr};
-                }
-
-                followedUpdateLink = true;
-                currentId = *next->second.begin();
-                const auto nextFile = files.find(currentId);
+                const auto nextFile = files.find(lineage.fileIds[index]);
                 if (nextFile == files.end())
                 {
-                    return {ResolutionState::Failed, nullptr};
+                    return {ResolutionState::Failed, nullptr, lineage.kind};
                 }
                 if (isActive(*nextFile->second))
                 {
@@ -374,11 +358,11 @@ namespace fluxora
                 }
             }
 
-            if (followedUpdateLink)
+            if (lineage.kind == NexusFileLineageKind::SameLineage)
             {
                 return selected == nullptr
-                    ? Resolution{ResolutionState::Failed, nullptr}
-                    : Resolution{ResolutionState::Resolved, selected};
+                    ? Resolution{ResolutionState::Failed, nullptr, lineage.kind}
+                    : Resolution{ResolutionState::Resolved, selected, lineage.kind};
             }
 
             std::vector<const NexusFileMetadata*> candidates;
@@ -413,16 +397,36 @@ namespace fluxora
 
             if (candidates.size() == 1)
             {
-                return {ResolutionState::Resolved, candidates.front()};
+                return {
+                    ResolutionState::Resolved,
+                    candidates.front(),
+                    NexusFileLineageKind::UnprovenOrDifferentBranch
+                };
             }
             if (candidates.size() > 1)
             {
-                return {ResolutionState::Ambiguous, nullptr};
+                return {
+                    ResolutionState::Ambiguous,
+                    nullptr,
+                    NexusFileLineageKind::UnprovenOrDifferentBranch
+                };
             }
 
             return isActive(*installed->second)
-                ? Resolution{ResolutionState::Resolved, installed->second}
-                : Resolution{ResolutionState::Failed, nullptr};
+                ? Resolution{ResolutionState::Resolved, installed->second, NexusFileLineageKind::SameFile}
+                : Resolution{ResolutionState::Failed, nullptr, NexusFileLineageKind::SameFile};
+        }
+
+        std::string lineageText(NexusFileLineageKind kind)
+        {
+            switch (kind)
+            {
+            case NexusFileLineageKind::SameFile: return "same_file";
+            case NexusFileLineageKind::SameLineage: return "same_lineage";
+            case NexusFileLineageKind::UnprovenOrDifferentBranch:
+                return "unproven_or_different_branch";
+            }
+            return "unknown";
         }
 
         std::string modeText(ModUpdateCheckMode mode)
@@ -533,6 +537,8 @@ namespace fluxora
 
     ModUpdateCheckResult ModUpdateService::check(const ModUpdateCheckRequest& request) const
     {
+        const auto sweepStarted = std::chrono::steady_clock::now();
+        const auto sweepDeadline = sweepStarted + options_.overallTimeout;
         if (request.projectDirectory.empty())
         {
             throw std::invalid_argument("Project directory is required.");
@@ -661,6 +667,7 @@ namespace fluxora
             bool issuanceStopped = false;
             bool cancelled = false;
             bool quotaKnown = false;
+            bool deadlineStopped = false;
             std::size_t completedMetadataGroups = 0;
             const auto cancelIfRequested = [&]()
             {
@@ -672,6 +679,30 @@ namespace fluxora
                 issuanceStopped = true;
                 result.state = ModUpdateCheckState::Cancelled;
                 result.reason = ModUpdateCheckReason::Cancelled;
+                return true;
+            };
+            const auto stopForDeadline = [&]()
+            {
+                if (deadlineStopped || options_.overallTimeout.count() <= 0)
+                {
+                    return deadlineStopped;
+                }
+                const auto reserve = (std::min)(
+                    options_.requestTimeoutBudget,
+                    options_.overallTimeout);
+                if (std::chrono::steady_clock::now() + reserve < sweepDeadline)
+                {
+                    return false;
+                }
+                deadlineStopped = true;
+                issuanceStopped = true;
+                result.state = ModUpdateCheckState::Partial;
+                result.reason = ModUpdateCheckReason::NetworkError;
+                result.nextEligibleAt = addMinutes(checkedAt, 15);
+                logger_.writeOperation(
+                    LogLevel::Warning,
+                    "ModUpdates",
+                    "Update sweep reached its native deadline; returning a typed partial/networkError result.");
                 return true;
             };
             const auto applyQuota = [&](const NexusQuotaSnapshot& quota)
@@ -793,7 +824,7 @@ namespace fluxora
                 const auto currentTime = parseUtc(checkedAt);
                 for (const std::wstring& gameDomain : allGames)
                 {
-                    if (issuanceStopped || cancelIfRequested())
+                    if (issuanceStopped || cancelIfRequested() || stopForDeadline())
                     {
                         break;
                     }
@@ -849,6 +880,10 @@ namespace fluxora
 
                         if (!cacheHit)
                         {
+                            if (stopForDeadline())
+                            {
+                                break;
+                            }
                             ++result.counters.apiRequests;
                             recent = api_.fetchRecentUpdates(gameDomain, period);
                             try
@@ -914,7 +949,9 @@ namespace fluxora
             const auto processMetadataResponse = [&](
                 const GroupKey& key,
                 const std::vector<const InstalledModRecord*>& mods,
-                const NexusModFilesResponse& response)
+                const NexusModFilesResponse& response,
+                std::string_view metadataSource,
+                long long durationMs)
             {
                 applyQuota(response.quota);
                 if (cancelIfRequested())
@@ -925,6 +962,15 @@ namespace fluxora
                 for (const InstalledModRecord* mod : mods)
                 {
                     const Resolution resolution = resolveLatestFile(*mod, response);
+                    logger_.writeOperation(
+                        LogLevel::Info,
+                        "ModUpdates",
+                        "Nexus file lineage classified metadataSource=" +
+                            std::string(metadataSource) +
+                            " lineage=" + lineageText(resolution.lineage) +
+                            " durationMs=" + std::to_string(durationMs) +
+                            " gameDomain=" + asciiText(key.first) +
+                            " modId=" + asciiText(key.second) + ".");
                     if (resolution.state == ResolutionState::Ambiguous)
                     {
                         ++result.counters.ambiguous;
@@ -1003,7 +1049,7 @@ namespace fluxora
                     {
                         ++result.counters.cacheHits;
                         cacheHit = true;
-                        processMetadataResponse(key, mods, *cached);
+                        processMetadataResponse(key, mods, *cached, "cache", 0);
                     }
                 }
                 catch (const std::exception& exception)
@@ -1024,10 +1070,14 @@ namespace fluxora
             {
                 const MetadataWork* work{nullptr};
                 std::future<NexusModFilesResponse> response;
+                std::chrono::steady_clock::time_point startedAt;
             };
 
             std::size_t nextWork = 0;
-            while (nextWork < networkWork.size() && !issuanceStopped && !cancelIfRequested())
+            while (nextWork < networkWork.size() &&
+                !issuanceStopped &&
+                !cancelIfRequested() &&
+                !stopForDeadline())
             {
                 std::vector<InFlightMetadata> inFlight;
                 const std::size_t batchLimit = !quotaKnown && nextWork == 0
@@ -1036,7 +1086,8 @@ namespace fluxora
                 inFlight.reserve(batchLimit);
                 while (nextWork < networkWork.size() &&
                     inFlight.size() < batchLimit &&
-                    !issuanceStopped)
+                    !issuanceStopped &&
+                    !stopForDeadline())
                 {
                     const MetadataWork* work = &networkWork[nextWork++];
                     ++result.counters.apiRequests;
@@ -1048,7 +1099,8 @@ namespace fluxora
                             std::async(std::launch::async, [this, key]()
                             {
                                 return api_.fetchModFiles(key.first, key.second);
-                            })});
+                            }),
+                            std::chrono::steady_clock::now()});
                     }
                     catch (const std::exception& exception)
                     {
@@ -1085,7 +1137,15 @@ namespace fluxora
                                 std::string("Shared cache write failed: ") + exception.what());
                         }
 
-                        processMetadataResponse(work.key, *work.mods, response);
+                        const long long durationMs =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - pending.startedAt).count();
+                        processMetadataResponse(
+                            work.key,
+                            *work.mods,
+                            response,
+                            "network",
+                            durationMs);
                     }
                     catch (const NexusUpdateApiError& exception)
                     {

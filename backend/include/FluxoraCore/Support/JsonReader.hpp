@@ -135,7 +135,27 @@ namespace fluxora
             return object_;
         }
 
+        [[nodiscard]] Object& asObject()
+        {
+            if (!isObject())
+            {
+                throw std::runtime_error("JSON value is not an object.");
+            }
+
+            return object_;
+        }
+
         [[nodiscard]] const Array& asArray() const
+        {
+            if (!isArray())
+            {
+                throw std::runtime_error("JSON value is not an array.");
+            }
+
+            return array_;
+        }
+
+        [[nodiscard]] Array& asArray()
         {
             if (!isArray())
             {

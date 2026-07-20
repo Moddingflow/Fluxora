@@ -1,6 +1,6 @@
 # Fluxora Tauri performance budget
 
-Дата обновления: 2026-07-18
+Дата обновления: 2026-07-19
 
 Статус: Phase 13 budget and automated smoke gates are in place. After Phase 17, WPF baseline capture is historical/superseded; ongoing acceptance uses Tauri screenshots, performance budgets and release smoke evidence.
 
@@ -13,6 +13,8 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
 | Scenario | Budget | Gate |
 | --- | --- | --- |
 | Startup shell visible | Home heading and bridge/runtime state visible after app launch | Playwright startup smoke |
+| External connection startup gate | local provider snapshot published immediately; linked providers restored in parallel within `2.5 s` native / `3 s` shell; only catalog/workspace wait, and non-linked providers perform no network work | C++ provider deadline/parallel tests, coordinator Vitest and Playwright startup/settings smoke |
+| External connection recovery | retryable states use one deduplicated `2/5/15/30/60 s`, then `5 min` schedule; online/focus/visible trigger an immediate retry; `ready`, `notLinked`, `notConfigured` and `reauthRequired` stop timers | fake-timer coordinator Vitest |
 | Renderer Node exposure | `window.process` and `window.require` are unavailable | Playwright startup smoke |
 | command model | no synchronous native calls, renderer uses typed facade API, Tauri shell uses allowlisted async command handlers | code review plus `rg` check |
 | Search typing | input updates immediately while heavy result rendering can lag | React `useDeferredValue` for project/templates/mods/plugins/downloads/profiles/executables searches |
@@ -26,9 +28,11 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
 | Row paint cost | stable row heights, `content-visibility`, no layout-shifting hover states | CSS system rules |
 | Motion | transform/opacity-oriented micro-interactions, reduced motion fallback | CSS system rules |
 | Long-running operations | progress/status overlay, async bridge calls, renderer remains interactive | existing operation overlays plus smoke tests |
-| Bridge queue isolation | Download lock remains available while Install and Main are occupied; a timeout/restart affects only its selected host | exhaustive Rust method-routing, lock-isolation, restart-isolation and all-lane lifecycle tests |
+| Bridge queue isolation | Connection, Download and Install locks remain available while unrelated lanes are occupied; a timeout/restart affects only its selected host | exhaustive Rust method-routing, lock-isolation, restart-isolation and all-lane lifecycle tests |
+| Mod update network envelope | each Nexus HTTP request `<= 8 s`, native sweep `<= 60 s`, shell request `<= 70 s`; deadline exhaustion returns typed partial/networkError and stops issuing new requests | focused C++ deadline test and facade timeout Vitest |
 | NXM intake during install | pending row visible `<= 500 ms` on a warmed active project even while install metadata finalization is running | metadata-lock gate GTest plus concurrent install/NXM Playwright smoke |
 | Nexus resolved filename | real file name within one Nexus file-info round trip plus at most one `500 ms` renderer poll | pre-transfer-permit GTest, download-state Vitest and concurrent Playwright smoke |
+| Nexus duplicate decision wait | `awaiting-decision` holds none of the five transfer permits and does not block unrelated Download/Install work; same-lineage replace finalization remains serialized | transfer-limiter/restart GTest, Rust Download-lane isolation test and Replace/Keep both/Cancel Playwright smoke |
 | Cached conflict summary | exact counts and directed relations in `<= 500 ms` after fixture/cache preparation at the current 10k-conflict scale | covering-index SQLite GTest with bounded SQL prepare count |
 | Install metadata finalization | commit-side metadata finalization `<= 2 s` at the current production scale | correlated `InstallFinalization durationMs` operation log and install integration tests |
 | NIF preview geometry | first neutral geometry frame `< 1 s` cold / `< 500 ms` warm | Playwright progressive-preview smoke plus `NifPreview.Performance firstFrame` log |
@@ -48,7 +52,8 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
   `ConflictSummary`, `NxmIntake`, `NxmPreflight` and `InstallFinalization`
   durations with counts only; those new entries do not include URLs or absolute
   paths.
-- Tauri main records `bridgeQueue lane=main|interactive|background|download|install method=... queueWaitUs=...` for every request. `lane=download` and `lane=install` are separate lazy host processes; a high wait in one lane must not appear as a wait in the other.
+- Tauri main records `bridgeQueue lane=main|interactive|background|connection|download|install method=... queueWaitUs=...` for every request. Connection, download and install are separate lazy host processes; a high wait in one lane must not appear as a wait in another.
+- The main renderer publishes the cached/local generic connection snapshot before restore, migrates the former Nexus-only localStorage cache without treating stale data as `ready`, and delays only catalog/workspace. Secondary window entrypoints skip connection restoration. API-limit probes remain independent background reads.
 - The text editor is routed by `main.tsx` into a dedicated secondary-window chunk, receives the known project directory directly from the typed window contract, and preloads Monaco in parallel with the first file read. It does not execute the main `App.tsx` bridge/Nexus/catalog startup, reuses lazy mod directory reads and disposes models when tabs close. Search is intentionally bounded to open in-memory documents until a native indexed-search contract exists.
 - NIF preview C++ tests cover a ten-texture batch, priority resolution, cold/warm archive index and extracted-asset cache hits, fingerprint invalidation and 512 MiB LRU behavior.
 - NIF preview renderer tests cover a large typed-array model fixture, transferable worker messages, BC1-BC7 extension routing, BC1-BC5 software fallback, a full-mip 4K BC3 fixture, compressed GPU upload, raw/texture LRU limits and opaque facade DTOs.
@@ -59,7 +64,7 @@ Fluxora must not feel like a heavy Tauri wrapper. Renderer work stays visual and
 
 Before closing final parity:
 
-- Startup: measure time from process launch to Home shell visible.
+- Startup: measure time from process launch to Home shell visible, local connection snapshot publication, connection restore completion/timeout and catalog readiness separately.
 - Project open: measure time from selecting a build to workspace route ready.
 - List scroll: test 5k mods, 5k plugins and 5k downloads with smooth wheel/trackpad scrolling.
 - Search: test fast typing against large mods/plugins/downloads lists.

@@ -1,42 +1,50 @@
 # Fluxora AI Legal Review TODO
 
-Date: 2026-07-02
+Date: 2026-07-20
 
-Status: owner/legal review required. This is an engineering TODO, not final
-privacy-policy or terms wording.
+Status: owner/legal review required. This is an engineering checklist, not
+legal advice or approved user-facing wording.
 
-The staged web-surfing release gate expands the planned AI research surface
-beyond local/Nexus-only evidence into policy-limited non-Nexus sources such as
-official maintainer documentation, maintainer-controlled GitHub metadata,
-script extender documentation, LOOT/libloot metadata, and curated modding
-forums where access is allowed.
+The current product is a single Gemini assistant scoped to the selected build.
+Legal review must verify the English, German, and Russian privacy/terms text and
+matching in-product disclosure for:
 
-Owner/legal review must decide whether the bundled privacy policy, terms of
-use, in-app disclosures, consent/opt-in copy, and support-bundle export wording
-need updates for:
+- data sent for a request: prompt, selected tab history or structured summary,
+  system/safety instructions, action-appropriate typed tool declarations (the
+  supported typed set for an action and read-only tools for an answer), model metadata,
+  bounded local file fragments, and minimal selected capability fields such as
+  names, versions, order, enabled/transfer/install state, profile name or app
+  language explicitly needed for the task;
+- Google/Gemini Search grounding and the treatment of returned URLs, titles,
+  snippets, citations, and grounding metadata;
+- recipients/subprocessors: the Fluxora-managed Supabase Edge gateway,
+  Supabase infrastructure, Google/Gemini, and Google Search grounding;
+- the statement that the gateway does not persist prompts or build context in
+  Supabase application tables, while separately describing any unavoidable
+  infrastructure/provider logging or retention;
+- legal bases, controller/processor roles, international transfers outside the
+  EU/EEA, safeguards, opt-in/consent wording, and withdrawal behavior;
+- local retention: each build-scoped tab, full chat UI history, provider
+  summary, context cursor, source citations, tool events, and run metadata stay
+  local until the user closes/clears the tab or removes application data;
+- deletion UX and whether closing a tab is sufficiently clear as deletion from
+  Fluxora's local AI session storage;
+- selected-file processing: opaque refs and relative paths, bounded allowlisted
+  text fragments, no whole-machine scan, and exclusion of credentials,
+  protected state, binaries, executables, scripts/source, and arbitrary files;
+- staged transactions of up to 16 distinct allowlisted files, managed
+  `Fluxora AI Overrides` writes, local checkpoints/diffs, atomic rollback,
+  reread verification, Undo, and the fact that source mods are unchanged;
+- typed native actions for mods, plugins, downloads, installs, profiles and
+  settings, including opaque refs, native postcondition verification,
+  compensation/Undo policy, install cancellation and exact conflict questions;
+- project/FluxPack selection remaining native, and one exact confirmation for
+  irreversible FluxPack installation;
+- support/log exclusions for prompts, chat bodies, file contents, absolute
+  paths, raw diffs/checkpoints, cookies, provider keys, Nexus tokens, and other
+  credentials;
+- user-facing warning that model/Search output may be inaccurate or hostile and
+  cannot authorize filesystem changes.
 
-- data categories: prompts, selected chat history, compact build/profile/mod
-  context, evidence cards, source ids, source tiers, citations, blocked/quota
-  and backoff records, discarded-source reasons, compressed run state,
-  cost/usage ledgers, and support/audit trace metadata;
-- purposes and legal bases for external AI research, source-tier evaluation,
-  evidence-card retention, quota/backoff handling, support diagnostics, and
-  cost control;
-- recipients/subprocessors: AI providers, search/grounding providers, Nexus API
-  endpoints, allowed non-Nexus source hosts, and any future Fluxora routing or
-  support service;
-- international transfers outside the EU/EEA and the safeguards or user choices
-  that apply;
-- retention/deletion/export controls for local AI history, context graph data,
-  evidence cards, caches, compressed run state, prompt cache observations, and
-  provider usage records;
-- support-bundle defaults: source/evidence ids, tiers, confidence, fingerprints,
-  blocked/quota state, discard reasons, and compact summaries may be useful,
-  while raw web/forum bodies, raw HTML, provider-search transcripts, cookies,
-  authenticated pages, provider keys, Nexus tokens, raw prompts, arbitrary local
-  files, and full logs must stay excluded by default unless a separate explicit
-  opt-in flow and legal text covers that transfer;
-- Nexus API terms, rate limits, and the separate decision required before any
-  explicit public Nexus page policy is enabled.
-
-Do not treat this TODO as legal advice or user-facing final wording.
+Public release remains blocked until owner/legal approval is recorded and the
+localized in-product disclosure matches the bundled text.
