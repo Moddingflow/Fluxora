@@ -3,6 +3,7 @@
 #include "FluxoraCore/GameSupport/GameTypes.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -45,11 +46,41 @@ namespace fluxora
         std::vector<std::wstring> basePlugins;
     };
 
+    enum class GameVfsMountTargetBase
+    {
+        GameDirectory,
+        Documents,
+        LocalAppData,
+        RoamingAppData
+    };
+
+    enum class GameVfsMountSourceKind
+    {
+        ActiveMods,
+        ProfileSettings,
+        ProfileSaves
+    };
+
+    // Declarative mapping shared by content placement and VFS launch planning.
+    // Game-specific paths belong in the definition, never in native C++ code.
+    struct GameVfsMountRule
+    {
+        std::wstring id;
+        GameVfsMountTargetBase targetBase{GameVfsMountTargetBase::GameDirectory};
+        std::filesystem::path targetPath;
+        GameVfsMountSourceKind sourceKind{GameVfsMountSourceKind::ActiveMods};
+        bool primaryContentRoot{false};
+        bool includeUnwrappedModRoot{false};
+        std::vector<std::wstring> wrapperDirectories;
+        std::filesystem::path overwritePath;
+    };
+
     struct GameContentLayoutRules
     {
         std::wstring dataFolder;
         bool supportsRootFiles{false};
         std::wstring rootFileWrapperDirectory;
+        std::vector<GameVfsMountRule> mountRules;
     };
 
     struct GameVfsRules
@@ -59,7 +90,7 @@ namespace fluxora
         std::wstring userSettingsDirectoryName;
         std::vector<std::wstring> profileIniFileNames;
         std::vector<std::wstring> saveDirectoryNames;
-        std::vector<std::wstring> excludedLaunchCacheDirectories;
+        std::vector<std::wstring> materializedLaunchCacheDirectories;
     };
 
     struct GameScriptExtenderRules

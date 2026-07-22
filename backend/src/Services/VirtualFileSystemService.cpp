@@ -1,6 +1,7 @@
 #include "FluxoraCore/Services/VirtualFileSystemService.hpp"
 
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
+#include "FluxoraCore/Services/BodySlideIntegrationService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
 #include "FluxoraCore/Services/VfsMountPlan.hpp"
@@ -16,6 +17,7 @@
 #include <cstdint>
 #include <cwctype>
 #include <iomanip>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <sstream>
@@ -39,6 +41,37 @@ namespace fluxora
 {
     namespace
     {
+        class ManagedLaunchLeaseGuard final
+        {
+        public:
+            explicit ManagedLaunchLeaseGuard(BodySlideIntegrationService& service) noexcept
+                : service_(service)
+            {
+            }
+
+            ~ManagedLaunchLeaseGuard()
+            {
+                if (!sessionId_.empty())
+                {
+                    service_.abandonLaunch(sessionId_);
+                }
+            }
+
+            void arm(std::wstring sessionId)
+            {
+                sessionId_ = std::move(sessionId);
+            }
+
+            void release() noexcept
+            {
+                sessionId_.clear();
+            }
+
+        private:
+            BodySlideIntegrationService& service_;
+            std::wstring sessionId_;
+        };
+
 #ifdef _WIN32
         std::string toUtf8(const std::wstring& value)
         {
@@ -157,7 +190,8 @@ namespace fluxora
                 ";userSettingsDirectory=" + toUtf8(rules->userSettingsDirectoryName) +
                 ";profileIniFiles=" + joinVfsList(rules->profileIniFileNames) +
                 ";saveDirectories=" + joinVfsList(rules->saveDirectoryNames) +
-                ";excludedLaunchCacheDirectories=" + joinVfsList(rules->excludedLaunchCacheDirectories);
+                ";materializedLaunchCacheDirectories=" +
+                    joinVfsList(rules->materializedLaunchCacheDirectories);
         }
 
         std::wstring toLower(std::wstring value)
@@ -260,17 +294,6 @@ namespace fluxora
             return toLower(value);
         }
 
-        std::wstring normalizedRelativePathForComparison(const std::filesystem::path& path)
-        {
-            std::wstring value = path.lexically_normal().wstring();
-            while (!value.empty() && (value.back() == L'\\' || value.back() == L'/'))
-            {
-                value.pop_back();
-            }
-
-            return toLower(value);
-        }
-
         void appendUniqueDirectory(
             std::vector<std::filesystem::path>& directories,
             const std::filesystem::path& directory)
@@ -292,30 +315,6 @@ namespace fluxora
             if (existing == directories.end())
             {
                 directories.push_back(directory);
-            }
-        }
-
-        void appendUniqueRelativePath(
-            std::vector<std::filesystem::path>& paths,
-            const std::filesystem::path& path)
-        {
-            if (path.empty())
-            {
-                return;
-            }
-
-            const std::wstring normalized = normalizedRelativePathForComparison(path);
-            const auto existing = std::find_if(
-                paths.begin(),
-                paths.end(),
-                [&normalized](const std::filesystem::path& candidate)
-                {
-                    return normalizedRelativePathForComparison(candidate) == normalized;
-                });
-
-            if (existing == paths.end())
-            {
-                paths.push_back(path);
             }
         }
 
@@ -369,157 +368,6 @@ namespace fluxora
             }
 
             return {};
-        }
-
-        std::string trimAscii(std::string value)
-        {
-            const auto isSpace = [](unsigned char character)
-            {
-                return character == ' ' ||
-                    character == '\t' ||
-                    character == '\r' ||
-                    character == '\n';
-            };
-
-            while (!value.empty() && isSpace(static_cast<unsigned char>(value.front())))
-            {
-                value.erase(value.begin());
-            }
-
-            while (!value.empty() && isSpace(static_cast<unsigned char>(value.back())))
-            {
-                value.pop_back();
-            }
-
-            return value;
-        }
-
-        std::string toLowerAscii(std::string value)
-        {
-            std::transform(
-                value.begin(),
-                value.end(),
-                value.begin(),
-                [](unsigned char character)
-                {
-                    return static_cast<char>(
-                        character >= 'A' && character <= 'Z'
-                            ? character - 'A' + 'a'
-                            : character);
-                });
-            return value;
-        }
-
-        std::wstring asciiToWide(const std::string& value)
-        {
-            return std::wstring(value.begin(), value.end());
-        }
-
-        std::filesystem::path normalizeRelativeSettingsPath(std::wstring value)
-        {
-            while (!value.empty() && (value.front() == L'"' || value.front() == L'\''))
-            {
-                value.erase(value.begin());
-            }
-            while (!value.empty() && (value.back() == L'"' || value.back() == L'\''))
-            {
-                value.pop_back();
-            }
-
-            while (!value.empty() && (value.back() == L'\\' || value.back() == L'/'))
-            {
-                value.pop_back();
-            }
-
-            if (value.empty())
-            {
-                return {};
-            }
-
-            std::filesystem::path path(value);
-            if (path.is_absolute() || !path.root_name().empty())
-            {
-                return {};
-            }
-
-            for (const std::filesystem::path& part : path)
-            {
-                if (part == L".." || part == L"." || part.empty())
-                {
-                    return {};
-                }
-            }
-
-            path = path.lexically_normal();
-            return path.empty() || path == L"." ? std::filesystem::path{} : path;
-        }
-
-        std::filesystem::path readLocalSavePathFromIni(const std::filesystem::path& path)
-        {
-            std::ifstream file(path, std::ios::in | std::ios::binary);
-            if (!file)
-            {
-                return {};
-            }
-
-            std::filesystem::path localSavePath;
-            std::string line;
-            while (std::getline(file, line))
-            {
-                if (line.rfind("\xEF\xBB\xBF", 0) == 0)
-                {
-                    line.erase(0, 3);
-                }
-
-                const std::size_t comment = line.find_first_of(";#");
-                if (comment != std::string::npos)
-                {
-                    line.erase(comment);
-                }
-
-                const std::size_t equals = line.find('=');
-                if (equals == std::string::npos)
-                {
-                    continue;
-                }
-
-                const std::string key = toLowerAscii(trimAscii(line.substr(0, equals)));
-                if (key != "slocalsavepath")
-                {
-                    continue;
-                }
-
-                const std::string value = trimAscii(line.substr(equals + 1));
-                const std::filesystem::path parsed =
-                    normalizeRelativeSettingsPath(asciiToWide(value));
-                if (!parsed.empty())
-                {
-                    localSavePath = parsed;
-                }
-            }
-
-            return localSavePath;
-        }
-
-        std::vector<std::filesystem::path> collectSaveTargets(
-            const std::filesystem::path& profileDirectory,
-            const std::vector<std::wstring>& saveDirectoryNames,
-            const std::vector<std::wstring>& profileIniFileNames)
-        {
-            std::vector<std::filesystem::path> targets;
-            for (const std::wstring& saveDirectoryName : saveDirectoryNames)
-            {
-                appendUniqueRelativePath(targets, std::filesystem::path(saveDirectoryName));
-            }
-
-            for (const std::wstring& fileName : profileIniFileNames)
-            {
-                appendUniqueRelativePath(
-                    targets,
-                    readLocalSavePathFromIni(profileDirectory / std::filesystem::path(fileName)));
-            }
-
-            return targets;
         }
 
         std::wstring safePathSegment(std::wstring value, std::wstring_view fallback)
@@ -611,6 +459,50 @@ namespace fluxora
 #endif
 
             return {};
+        }
+
+        std::filesystem::path roamingAppDataDirectory()
+        {
+#ifdef _WIN32
+            if (const std::wstring appData = readEnvironmentVariable(L"APPDATA"); !appData.empty())
+            {
+                return std::filesystem::path(appData);
+            }
+
+            if (const std::filesystem::path folder = shellFolderPath(CSIDL_APPDATA); !folder.empty())
+            {
+                return folder;
+            }
+#endif
+
+            return {};
+        }
+
+        std::filesystem::path resolveVfsMountTarget(
+            const GameVfsMountRule& rule,
+            const std::filesystem::path& gameDirectory)
+        {
+            std::filesystem::path base;
+            switch (rule.targetBase)
+            {
+            case GameVfsMountTargetBase::GameDirectory:
+                base = gameDirectory;
+                break;
+            case GameVfsMountTargetBase::Documents:
+                base = documentsDirectory();
+                break;
+            case GameVfsMountTargetBase::LocalAppData:
+                base = localAppDataDirectory();
+                break;
+            case GameVfsMountTargetBase::RoamingAppData:
+                base = roamingAppDataDirectory();
+                break;
+            }
+            if (base.empty())
+            {
+                return {};
+            }
+            return rule.targetPath.empty() ? base : base / rule.targetPath;
         }
 
         void writeTextFile(const std::filesystem::path& path, const std::string& content)
@@ -768,12 +660,12 @@ namespace fluxora
 
         void appendProfileSavesMount(
             std::vector<VfsMountDescriptor>& mounts,
-            const std::filesystem::path& settingsTarget,
+            const std::filesystem::path& target,
             const std::filesystem::path& overwrite,
-            const std::vector<std::filesystem::path>& saveTargets,
-            const std::vector<std::filesystem::path>& saveDirectories)
+            const std::vector<std::filesystem::path>& saveDirectories,
+            const std::filesystem::path& whiteoutRoot)
         {
-            if (settingsTarget.empty() || overwrite.empty())
+            if (target.empty() || overwrite.empty())
             {
                 return;
             }
@@ -788,91 +680,73 @@ namespace fluxora
                 }
             }
 
-            for (const std::filesystem::path& saveTarget : saveTargets)
-            {
-                if (saveTarget.empty())
-                {
-                    continue;
-                }
-
-                mounts.push_back(VfsMountDescriptor{
-                    settingsTarget / saveTarget,
-                    overwrite,
-                    readDirectories,
-                    {}
-                });
-            }
+            mounts.push_back(VfsMountDescriptor{
+                target,
+                overwrite,
+                readDirectories,
+                {},
+                {},
+                whiteoutRoot
+            });
         }
 
         void appendGameProfileSettingsMounts(
             std::vector<VfsMountDescriptor>& mounts,
             const GameVfsRules& rules,
+            const ContentLayoutSupportRules& contentRules,
+            const std::filesystem::path& gameDirectory,
             const std::filesystem::path& profilesDirectory,
             const std::filesystem::path& profileDirectory,
             const std::filesystem::path& profileOverwriteRoot,
+            const std::filesystem::path& whiteoutRoot,
             std::wstring_view profileName)
         {
-            const std::wstring& settingsDirectoryName = rules.userSettingsDirectoryName;
-            if (settingsDirectoryName.empty())
-            {
-                return;
-            }
-
             const bool hasProfileEntries = directoryHasEntries(profileDirectory);
             const std::vector<std::filesystem::path> saveDirectories =
                 collectProfileSaveDirectories(
                     profilesDirectory,
                     profileDirectory,
                     rules.saveDirectoryNames);
-            const std::vector<std::filesystem::path> saveTargets =
-                collectSaveTargets(
-                    profileDirectory,
-                    rules.saveDirectoryNames,
-                    rules.profileIniFileNames);
-            const std::filesystem::path saveOverwriteDirectory =
-                profileSaveOverwriteDirectory(
-                    profilesDirectory,
-                    profileDirectory,
-                    rules.saveDirectoryNames);
-            if (!hasProfileEntries && saveDirectories.empty() && saveOverwriteDirectory.empty())
+            if (!hasProfileEntries && saveDirectories.empty())
             {
                 return;
             }
 
             const std::filesystem::path profileOverwrite =
                 profileOverwriteRoot / safePathSegment(std::wstring(profileName), L"Default");
-            const std::filesystem::path documents = documentsDirectory();
-            if (!documents.empty())
+            for (const GameVfsMountRule& rule : contentRules.mountRules)
             {
-                const std::filesystem::path documentsTarget =
-                    documents / L"My Games" / settingsDirectoryName;
-                const std::filesystem::path documentsOverwrite = profileOverwrite / L"documents";
-
-                if (hasProfileEntries)
+                const std::filesystem::path target = resolveVfsMountTarget(rule, gameDirectory);
+                if (rule.sourceKind == GameVfsMountSourceKind::ProfileSettings && hasProfileEntries)
                 {
+                    const std::size_t originalSize = mounts.size();
                     appendProfileSettingsMount(
                         mounts,
-                        documentsTarget,
-                        documentsOverwrite,
+                        target,
+                        rule.overwritePath.empty()
+                            ? profileOverwrite
+                            : profileOverwrite / rule.overwritePath,
                         profileDirectory);
+                    if (mounts.size() != originalSize)
+                    {
+                        mounts.back().whiteoutRoot = whiteoutRoot / rule.id;
+                    }
                 }
-
-                appendProfileSavesMount(
-                    mounts,
-                    documentsTarget,
-                    saveOverwriteDirectory,
-                    saveTargets,
-                    saveDirectories);
-            }
-
-            const std::filesystem::path localAppData = localAppDataDirectory();
-            if (!localAppData.empty() && hasProfileEntries)
-            {
-                appendProfileSettingsMount(
-                    mounts,
-                    localAppData / settingsDirectoryName,
-                    profileOverwrite / L"local-appdata",
-                    profileDirectory);
+                else if (rule.sourceKind == GameVfsMountSourceKind::ProfileSaves)
+                {
+                    const std::filesystem::path saveOverwrite = rule.overwritePath.empty()
+                        ? profileSaveOverwriteDirectory(
+                            profilesDirectory,
+                            profileDirectory,
+                            rules.saveDirectoryNames)
+                        : profileDirectory / rule.overwritePath;
+                    appendProfileSavesMount(
+                        mounts,
+                        target,
+                        saveOverwrite,
+                        saveDirectories,
+                        whiteoutRoot / rule.id);
+                }
             }
         }
 
@@ -895,6 +769,7 @@ namespace fluxora
             writer.key(vfs::protocol::fields::mods);
             writePathArray(writer, mount.mods);
             writer.stringArray(vfs::protocol::fields::excludedRootNames, mount.excludedRootNames);
+            writer.field(vfs::protocol::fields::whiteoutRoot, mount.whiteoutRoot.wstring());
             writer.endObject();
         }
 
@@ -902,6 +777,8 @@ namespace fluxora
             const std::filesystem::path& logPath,
             const std::filesystem::path& hookDll,
             std::uint32_t managerProcessId,
+            std::wstring_view operationId,
+            std::uint32_t preparationMs,
             const std::vector<VfsMountDescriptor>& mounts)
         {
             JsonWriter writer;
@@ -912,6 +789,10 @@ namespace fluxora
             writer.field(
                 vfs::protocol::fields::managerProcessId,
                 static_cast<std::uintmax_t>(managerProcessId));
+            writer.field(vfs::protocol::fields::operationId, operationId);
+            writer.field(
+                vfs::protocol::fields::preparationMs,
+                static_cast<std::uintmax_t>(preparationMs));
 
             if (!mounts.empty())
             {
@@ -936,9 +817,11 @@ namespace fluxora
     VirtualFileSystemService::VirtualFileSystemService(
         Logger& logger,
         ExecutableService& executables,
+        BodySlideIntegrationService& bodySlideIntegration,
         const BuildPathSettingsService& pathSettings) noexcept
         : logger_(logger),
           executables_(executables),
+          bodySlideIntegration_(bodySlideIntegration),
           pathSettings_(pathSettings)
     {
     }
@@ -976,6 +859,8 @@ namespace fluxora
             readEnvironmentVariable(L"FLUXORA_VFS_CONFIG");
         ResolvedExecutableLaunch resolved =
             executables_.resolveExecutable(configPath, executableId, profileName, additionalArguments);
+        const bool isManagedBodySlide =
+            resolved.executable.managedToolKind == bodySlideManagedToolKind;
         const auto executableResolvedAt = std::chrono::steady_clock::now();
         logger_.writeOperation(
             LogLevel::Info,
@@ -996,12 +881,26 @@ namespace fluxora
             "vfsOperation failed selectedGameId=\"" + toUtf8(resolved.gameId.value()) +
                 "\", definitionVersion=\"" + toUtf8(resolved.gameDefinitionVersion) +
                 "\", unsupportedCapabilityError=\"" + reason + "\".");
+        if (isManagedBodySlide)
+        {
+            throw BodySlideIntegrationError(
+                L"BODYSLIDE_VFS_UNAVAILABLE",
+                "BodySlide requires Fluxora VFS, but VFS support is unavailable on this platform.");
+        }
         throw std::runtime_error(
             "Virtual file system launch failed: " + reason +
             " Rebuild the Windows package with FLUXORA_ENABLE_VFS=ON and FluxoraVfs.dll bundled next to FluxoraCore.dll.");
 #else
+        std::optional<BodySlideLaunchPreparation> bodySlidePreparation;
+        ManagedLaunchLeaseGuard managedLease(bodySlideIntegration_);
         const auto fallbackPlainLaunch = [&](const std::string& reason) -> GameExecutableLaunchResult
         {
+            if (isManagedBodySlide)
+            {
+                throw BodySlideIntegrationError(
+                    L"BODYSLIDE_VFS_UNAVAILABLE",
+                    "BodySlide requires a successful VFS launch: " + reason);
+            }
             logger_.write(LogLevel::Warning, "Launching without the virtual file system: " + reason);
             logger_.writeOperation(
                 LogLevel::Warning,
@@ -1028,6 +927,12 @@ namespace fluxora
                     "\", appliedVfsRules=\"" +
                     vfsRulesSummary(resolved.vfsRules.has_value() ? &resolved.vfsRules->rules : nullptr) +
                     "\", unsupportedCapabilityError=\"" + reason + "\".");
+            if (isManagedBodySlide)
+            {
+                throw BodySlideIntegrationError(
+                    L"BODYSLIDE_VFS_UNAVAILABLE",
+                    "BodySlide VFS launch failed: " + reason);
+            }
             throw std::runtime_error("Virtual file system launch failed: " + reason);
         };
 
@@ -1091,16 +996,20 @@ namespace fluxora
         {
             profile = resolved.defaultProfile.empty() ? L"Default" : resolved.defaultProfile;
         }
-        const std::filesystem::path modsDirectory =
-            pathSettings_.modsDirectory(resolved.projectDirectory);
-        // A launch can occur before the debounced filesystem watcher publishes
-        // an external layout change. Shallow placement analysis is cheap enough
-        // to force fresh per-project roots here rather than risk stale Data/Root
-        // Builder classification.
-        invalidateVfsContentPlacementCache(modsDirectory, {modsDirectory});
+        if (isManagedBodySlide)
+        {
+            bodySlidePreparation = bodySlideIntegration_.prepareLaunch(
+                configPath,
+                resolved,
+                profile);
+            managedLease.arm(bodySlidePreparation->sessionId);
+        }
         std::vector<VfsActiveMod> activeMods;
-        activeMods.reserve(resolved.activeProfileMods.size());
-        for (ExecutableLaunchMod& mod : resolved.activeProfileMods)
+        std::vector<ExecutableLaunchMod>& launchMods = bodySlidePreparation.has_value()
+            ? bodySlidePreparation->activeProfileMods
+            : resolved.activeProfileMods;
+        activeMods.reserve(launchMods.size());
+        for (ExecutableLaunchMod& mod : launchMods)
         {
             activeMods.push_back(VfsActiveMod{
                 std::move(mod.path),
@@ -1131,8 +1040,11 @@ namespace fluxora
         if (rootBuilderEnabled && !launchCacheRoot.empty())
         {
             const std::filesystem::path launchCacheDataTarget = launchCacheRoot / dataDirectory;
-            std::vector<std::wstring> launchCacheDataExcluded =
-                rules->excludedLaunchCacheDirectories;
+            std::vector<std::wstring> launchCacheDataExcluded{
+                L".flow",
+                dataDirectory,
+                rootBuilderDirectoryName
+            };
 
             std::vector<std::filesystem::path> launchCacheDataMods;
             if (isDirectory(resolved.gamePath / dataDirectory))
@@ -1150,7 +1062,9 @@ namespace fluxora
                     launchCacheDataTarget,
                     overwrite,
                     launchCacheDataMods,
-                    launchCacheDataExcluded
+                    launchCacheDataExcluded,
+                    {},
+                    vfsDirectory / L"whiteouts" / L"primary-content"
                 });
             }
 
@@ -1158,7 +1072,9 @@ namespace fluxora
                 launchCacheRoot,
                 rootOverwrite,
                 {},
-                std::vector<std::wstring>{dataDirectory}
+                std::vector<std::wstring>{dataDirectory},
+                {},
+                vfsDirectory / L"whiteouts" / L"game-root"
             });
         }
 
@@ -1171,10 +1087,20 @@ namespace fluxora
             appendGameProfileSettingsMounts(
                 mounts,
                 *rules,
+                *contentRules,
+                resolved.gamePath,
                 profilesDirectory,
                 profileDirectory,
                 vfsDirectory / L"profile-overwrite",
+                vfsDirectory / L"whiteouts",
                 profile);
+        }
+        if (bodySlidePreparation.has_value())
+        {
+            bodySlideIntegration_.applyVfsPolicy(
+                mounts,
+                resolved,
+                *bodySlidePreparation);
         }
         const auto finalMountsReadyAt = std::chrono::steady_clock::now();
 
@@ -1201,11 +1127,29 @@ namespace fluxora
         const std::filesystem::path logPath = vfsDirectory / L"vfs.log";
         const std::uint32_t managerProcessId = GetCurrentProcessId();
         const std::filesystem::path sessionsDirectory = vfsDirectory / L"sessions";
+        const std::wstring sessionId = launchSessionId();
         const std::filesystem::path descriptorPath =
             sessionsDirectory /
-            (L"vfs-config-" + std::to_wstring(managerProcessId) + L"-" + launchSessionId() + L".json");
+            (L"vfs-config-" + std::to_wstring(managerProcessId) + L"-" + sessionId + L".json");
+        const std::string operationIdUtf8 = Logger::operationId();
+        const std::wstring operationId = operationIdUtf8.empty()
+            ? L"vfs-" + sessionId
+            : std::wstring(operationIdUtf8.begin(), operationIdUtf8.end());
+        const auto preparationDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - launchStartedAt).count();
+        const std::uint32_t preparationMs = static_cast<std::uint32_t>(
+            (std::min)(
+                preparationDuration,
+                static_cast<decltype(preparationDuration)>(
+                    (std::numeric_limits<std::uint32_t>::max)())));
         const std::string descriptorContent =
-            toUtf8(buildDescriptor(logPath, hookDll, managerProcessId, mounts));
+            toUtf8(buildDescriptor(
+                logPath,
+                hookDll,
+                managerProcessId,
+                operationId,
+                preparationMs,
+                mounts));
 
         const PathSafetyService pathSafety;
         const PathSafetyResult vfsDirectorySafety =
@@ -1356,6 +1300,23 @@ namespace fluxora
             readEnvironmentVariable(L"FLUXORA_VFS_CONFIG") == managerVfsEnvironmentBefore;
 
         const DWORD processId = processInformation.dwProcessId;
+        if (bodySlidePreparation.has_value())
+        {
+            try
+            {
+                bodySlideIntegration_.bindProcess(
+                    bodySlidePreparation->sessionId,
+                    static_cast<std::uint32_t>(processId));
+                managedLease.release();
+            }
+            catch (...)
+            {
+                TerminateProcess(processInformation.hProcess, ERROR_PROCESS_ABORTED);
+                CloseHandle(processInformation.hThread);
+                CloseHandle(processInformation.hProcess);
+                throw;
+            }
+        }
         CloseHandle(processInformation.hThread);
         CloseHandle(processInformation.hProcess);
 
@@ -1395,7 +1356,7 @@ namespace fluxora
                 ", totalUs=" +
                 std::to_string(elapsedMicroseconds(launchStartedAt, processCreatedAt)) + ".");
 
-        return GameExecutableLaunchResult{
+        GameExecutableLaunchResult result{
             resolved.executable,
             resolved.resolvedExecutablePath,
             resolved.resolvedWorkingDirectory,
@@ -1406,6 +1367,15 @@ namespace fluxora
             static_cast<std::uint32_t>(processId),
             managerEnvironmentUnchanged
         };
+        if (bodySlidePreparation.has_value())
+        {
+            result.managedSessionId = bodySlidePreparation->sessionId;
+            result.managedToolKind = std::wstring(bodySlideManagedToolKind);
+            result.outputMod = bodySlidePreparation->outputMod;
+            result.configurationStatus = bodySlidePreparation->configurationStatus;
+            result.warnings = bodySlidePreparation->warnings;
+        }
+        return result;
 #endif
     }
 

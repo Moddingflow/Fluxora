@@ -10,6 +10,7 @@
 bin/
 !frontend-tauri/src-tauri/src/bin/
 !frontend-tauri/src-tauri/src/bin/**
+frontend-tauri/src-tauri/resources/speech/
 obj/
 TestResults/
 

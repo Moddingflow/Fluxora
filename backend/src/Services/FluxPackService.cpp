@@ -1008,6 +1008,10 @@ namespace fluxora
 
         bool isGeneratedAssetMod(const InstalledModRecord& mod)
         {
+            if (toLower(mod.source.provider) == L"generated-bodyslide")
+            {
+                return true;
+            }
             const std::wstring name = mod.folderName + L" " + mod.displayName;
             return containsAny(
                 name,

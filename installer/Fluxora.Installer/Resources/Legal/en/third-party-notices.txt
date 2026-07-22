@@ -1,5 +1,5 @@
 Fluxora Third-Party Notices
-Last updated: 13 July 2026
+Last updated: 21 July 2026
 
 Fluxora includes third-party runtime, installer, build and test components. This notice is a release checklist and transparency notice. It is not a substitute for final owner/legal review before public distribution.
 
@@ -13,6 +13,11 @@ Runtime and application components:
 - zlib for reading compressed Bethesda archive entries in local file previews.
 - Zstandard 1.5.7 for local FluxPack content-store compression (BSD license reproduced below).
 - Microsoft Detours when the Windows VFS/hook feature is built.
+- whisper-rs 0.16.0 (Unlicense/public domain dedication) and whisper.cpp (MIT) for local Vulkan GPU speech recognition with automatic CPU fallback.
+- OpenAI Whisper small model weights (MIT) in the bundled quantized local model.
+- Silero VAD 6.2.0 model and runtime integration (MIT) for local speech detection.
+
+Complete applicable speech-component license texts are installed under `resources/speech/licenses` and are part of the approved installer payload.
 
 Installer components:
 - Microsoft .NET runtime components used by the Windows installer build.
@@ -21,6 +26,7 @@ Installer components:
 Build, packaging and test components:
 - Tauri bundler, Tauri bundler makers and plugins, and Tauri fuses.
 - Vite, TypeScript and related TypeScript/React tooling.
+- LunarG Vulkan SDK 1.4.341.1 as a pinned, copy-only build tool for the Vulkan speech host; the SDK is not installed system-wide or shipped as a runtime payload.
 - Playwright and Vitest for smoke and unit tests.
 - GoogleTest for native backend tests.
 

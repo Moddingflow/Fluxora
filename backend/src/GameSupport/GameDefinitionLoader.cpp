@@ -543,7 +543,7 @@ namespace fluxora
 
             validateAllowedFields(
                 *rules,
-                {L"dataFolder", L"supportsRootFiles", L"rootFileWrapperDirectory"},
+                {L"dataFolder", L"supportsRootFiles", L"rootFileWrapperDirectory", L"mountRules"},
                 L"contentLayoutRules");
             GameContentLayoutRules result;
             result.dataFolder = readOptionalString(*rules, L"dataFolder", L"contentLayoutRules");
@@ -559,7 +559,241 @@ namespace fluxora
             result.rootFileWrapperDirectory =
                 readOptionalString(*rules, L"rootFileWrapperDirectory", L"contentLayoutRules");
 
+            if (const JsonValue* mountRules = rules->find(L"mountRules");
+                mountRules != nullptr && !mountRules->isNull())
+            {
+                if (!mountRules->isArray())
+                {
+                    throw std::runtime_error("contentLayoutRules.mountRules must be an array.");
+                }
+
+                for (const JsonValue& item : mountRules->asArray())
+                {
+                    if (!item.isObject())
+                    {
+                        throw std::runtime_error("contentLayoutRules.mountRules items must be objects.");
+                    }
+                    validateAllowedFields(
+                        item,
+                        {
+                            L"id",
+                            L"targetBase",
+                            L"targetPath",
+                            L"source",
+                            L"primaryContentRoot",
+                            L"includeUnwrappedModRoot",
+                            L"wrapperDirectories",
+                            L"overwritePath"
+                        },
+                        L"contentLayoutRules.mountRules[]");
+
+                    GameVfsMountRule rule;
+                    rule.id = readRequiredString(item, L"id", L"contentLayoutRules.mountRules[]");
+                    const std::wstring targetBase =
+                        readRequiredString(item, L"targetBase", L"contentLayoutRules.mountRules[]");
+                    if (targetBase == L"gameDirectory")
+                    {
+                        rule.targetBase = GameVfsMountTargetBase::GameDirectory;
+                    }
+                    else if (targetBase == L"documents")
+                    {
+                        rule.targetBase = GameVfsMountTargetBase::Documents;
+                    }
+                    else if (targetBase == L"localAppData")
+                    {
+                        rule.targetBase = GameVfsMountTargetBase::LocalAppData;
+                    }
+                    else if (targetBase == L"roamingAppData")
+                    {
+                        rule.targetBase = GameVfsMountTargetBase::RoamingAppData;
+                    }
+                    else
+                    {
+                        throw std::runtime_error("contentLayoutRules.mountRules[].targetBase is unsupported.");
+                    }
+
+                    rule.targetPath = readOptionalString(
+                        item,
+                        L"targetPath",
+                        L"contentLayoutRules.mountRules[]");
+                    const std::wstring source =
+                        readRequiredString(item, L"source", L"contentLayoutRules.mountRules[]");
+                    if (source == L"activeMods")
+                    {
+                        rule.sourceKind = GameVfsMountSourceKind::ActiveMods;
+                    }
+                    else if (source == L"profileSettings")
+                    {
+                        rule.sourceKind = GameVfsMountSourceKind::ProfileSettings;
+                    }
+                    else if (source == L"profileSaves")
+                    {
+                        rule.sourceKind = GameVfsMountSourceKind::ProfileSaves;
+                    }
+                    else
+                    {
+                        throw std::runtime_error("contentLayoutRules.mountRules[].source is unsupported.");
+                    }
+
+                    if (const JsonValue* value = item.find(L"primaryContentRoot"))
+                    {
+                        if (value->type() != JsonValue::Type::Boolean)
+                        {
+                            throw std::runtime_error(
+                                "contentLayoutRules.mountRules[].primaryContentRoot must be a boolean.");
+                        }
+                        rule.primaryContentRoot = value->asBoolean();
+                    }
+                    if (const JsonValue* value = item.find(L"includeUnwrappedModRoot"))
+                    {
+                        if (value->type() != JsonValue::Type::Boolean)
+                        {
+                            throw std::runtime_error(
+                                "contentLayoutRules.mountRules[].includeUnwrappedModRoot must be a boolean.");
+                        }
+                        rule.includeUnwrappedModRoot = value->asBoolean();
+                    }
+                    rule.wrapperDirectories = readStringArray(
+                        item,
+                        L"wrapperDirectories",
+                        false,
+                        L"contentLayoutRules.mountRules[]");
+                    rule.overwritePath = readOptionalString(
+                        item,
+                        L"overwritePath",
+                        L"contentLayoutRules.mountRules[]");
+                    result.mountRules.push_back(std::move(rule));
+                }
+            }
+
             return result;
+        }
+
+        void adaptLegacyContentMountRules(GameDefinition& definition)
+        {
+            if (!definition.contentLayoutRules.mountRules.empty())
+            {
+                return;
+            }
+
+            const std::wstring dataFolder = definition.contentLayoutRules.dataFolder.empty()
+                ? definition.dataFolder
+                : definition.contentLayoutRules.dataFolder;
+            if (!dataFolder.empty())
+            {
+                definition.contentLayoutRules.mountRules.push_back(GameVfsMountRule{
+                    L"primary-content",
+                    GameVfsMountTargetBase::GameDirectory,
+                    dataFolder,
+                    GameVfsMountSourceKind::ActiveMods,
+                    true,
+                    true,
+                    {dataFolder},
+                    {}
+                });
+            }
+
+            if (definition.contentLayoutRules.supportsRootFiles &&
+                !definition.contentLayoutRules.rootFileWrapperDirectory.empty())
+            {
+                definition.contentLayoutRules.mountRules.push_back(GameVfsMountRule{
+                    L"game-root",
+                    GameVfsMountTargetBase::GameDirectory,
+                    {},
+                    GameVfsMountSourceKind::ActiveMods,
+                    false,
+                    false,
+                    {definition.contentLayoutRules.rootFileWrapperDirectory},
+                    definition.contentLayoutRules.rootFileWrapperDirectory
+                });
+            }
+
+            if (!definition.vfsRules.userSettingsDirectoryName.empty())
+            {
+                const std::filesystem::path settingsDirectory =
+                    definition.vfsRules.userSettingsDirectoryName;
+                definition.contentLayoutRules.mountRules.push_back(GameVfsMountRule{
+                    L"documents",
+                    GameVfsMountTargetBase::Documents,
+                    std::filesystem::path(L"My Games") / settingsDirectory,
+                    GameVfsMountSourceKind::ProfileSettings,
+                    false,
+                    false,
+                    {},
+                    L"documents"
+                });
+                definition.contentLayoutRules.mountRules.push_back(GameVfsMountRule{
+                    L"local-appdata",
+                    GameVfsMountTargetBase::LocalAppData,
+                    settingsDirectory,
+                    GameVfsMountSourceKind::ProfileSettings,
+                    false,
+                    false,
+                    {},
+                    L"local-appdata"
+                });
+
+                for (std::size_t index = 0;
+                    index < definition.vfsRules.saveDirectoryNames.size();
+                    ++index)
+                {
+                    const std::filesystem::path saveDirectory =
+                        definition.vfsRules.saveDirectoryNames[index];
+                    definition.contentLayoutRules.mountRules.push_back(GameVfsMountRule{
+                        L"profile-saves-" + std::to_wstring(index + 1),
+                        GameVfsMountTargetBase::Documents,
+                        std::filesystem::path(L"My Games") / settingsDirectory / saveDirectory,
+                        GameVfsMountSourceKind::ProfileSaves,
+                        false,
+                        false,
+                        {},
+                        saveDirectory
+                    });
+                }
+            }
+        }
+
+        void validateContentMountRules(GameDefinition& definition)
+        {
+            std::set<std::wstring> ids;
+            std::size_t primaryRoots = 0;
+            for (const GameVfsMountRule& rule : definition.contentLayoutRules.mountRules)
+            {
+                if (!ids.insert(toAsciiLower(trimAscii(rule.id))).second)
+                {
+                    throw std::runtime_error("contentLayoutRules.mountRules contains duplicate ids.");
+                }
+                validateOptionalGameRelativePath(rule.targetPath.wstring(), L"contentLayoutRules.mountRules[].targetPath");
+                validateOptionalGameRelativePath(rule.overwritePath.wstring(), L"contentLayoutRules.mountRules[].overwritePath");
+                validateGameRelativePathArray(
+                    rule.wrapperDirectories,
+                    L"contentLayoutRules.mountRules[].wrapperDirectories");
+                if (rule.primaryContentRoot)
+                {
+                    ++primaryRoots;
+                    if (rule.sourceKind != GameVfsMountSourceKind::ActiveMods ||
+                        rule.targetBase != GameVfsMountTargetBase::GameDirectory)
+                    {
+                        throw std::runtime_error(
+                            "The primary content root must map activeMods into gameDirectory.");
+                    }
+                }
+            }
+
+            if (!definition.contentLayoutRules.mountRules.empty() && primaryRoots != 1)
+            {
+                throw std::runtime_error("contentLayoutRules.mountRules must define exactly one primaryContentRoot.");
+            }
+
+            if (primaryRoots == 1)
+            {
+                const auto primary = std::find_if(
+                    definition.contentLayoutRules.mountRules.begin(),
+                    definition.contentLayoutRules.mountRules.end(),
+                    [](const GameVfsMountRule& rule) { return rule.primaryContentRoot; });
+                definition.contentLayoutRules.dataFolder = primary->targetPath.wstring();
+                definition.dataFolder = primary->targetPath.wstring();
+            }
         }
 
         [[nodiscard]] GameVfsRules readVfsRules(const JsonValue& object)
@@ -578,6 +812,7 @@ namespace fluxora
                     L"userSettingsDirectoryName",
                     L"profileIniFileNames",
                     L"saveDirectoryNames",
+                    L"materializedLaunchCacheDirectories",
                     L"excludedLaunchCacheDirectories"
                 },
                 L"vfsRules");
@@ -600,8 +835,21 @@ namespace fluxora
                 readStringArray(*rules, L"profileIniFileNames", false, L"vfsRules");
             result.saveDirectoryNames =
                 readStringArray(*rules, L"saveDirectoryNames", false, L"vfsRules");
-            result.excludedLaunchCacheDirectories =
-                readStringArray(*rules, L"excludedLaunchCacheDirectories", false, L"vfsRules");
+            result.materializedLaunchCacheDirectories = readStringArray(
+                *rules,
+                L"materializedLaunchCacheDirectories",
+                false,
+                L"vfsRules");
+            if (result.materializedLaunchCacheDirectories.empty())
+            {
+                // Schema v1 compatibility alias. These paths control physical
+                // launch-cache preparation only and never VFS exclusion.
+                result.materializedLaunchCacheDirectories = readStringArray(
+                    *rules,
+                    L"excludedLaunchCacheDirectories",
+                    false,
+                    L"vfsRules");
+            }
             return result;
         }
 
@@ -703,8 +951,8 @@ namespace fluxora
                 definition.vfsRules.saveDirectoryNames,
                 L"vfsRules.saveDirectoryNames");
             validateGameRelativePathArray(
-                definition.vfsRules.excludedLaunchCacheDirectories,
-                L"vfsRules.excludedLaunchCacheDirectories");
+                definition.vfsRules.materializedLaunchCacheDirectories,
+                L"vfsRules.materializedLaunchCacheDirectories");
             validateGameRelativePathArray(definition.healthRules.requiredFiles, L"healthRules.requiredFiles");
         }
 
@@ -975,7 +1223,7 @@ namespace fluxora
 
         GameDefinition definition;
         definition.schemaVersion = readRequiredString(root, L"schemaVersion", L"definition");
-        if (definition.schemaVersion != L"1")
+        if (definition.schemaVersion != L"1" && definition.schemaVersion != L"2")
         {
             throw std::runtime_error("Unsupported game definition schemaVersion '" +
                 narrowContext(definition.schemaVersion) + "'.");
@@ -1016,6 +1264,16 @@ namespace fluxora
         definition.pluginRules = readPluginRules(root);
         definition.contentLayoutRules = readContentLayoutRules(root);
         definition.vfsRules = readVfsRules(root);
+        if (definition.schemaVersion == L"1")
+        {
+            adaptLegacyContentMountRules(definition);
+        }
+        else if (definition.contentLayoutRules.mountRules.empty())
+        {
+            throw std::runtime_error(
+                "Schema v2 definitions must declare contentLayoutRules.mountRules.");
+        }
+        validateContentMountRules(definition);
         definition.launchRules = readLaunchRules(root);
         definition.healthRules = readHealthRules(root);
         if (definition.healthRules.requiredFiles.empty())

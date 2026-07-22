@@ -438,6 +438,15 @@ namespace fluxora
         throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
     }
 
+    InstalledModRecord InstanceMetadataStore::renameInstalledMod(
+        const std::filesystem::path&,
+        const std::filesystem::path&,
+        const std::filesystem::path&,
+        std::wstring_view)
+    {
+        throw std::runtime_error("Fluxora instance metadata storage requires SQLite on Windows.");
+    }
+
     void InstanceMetadataStore::deleteInstalledMod(
         const std::filesystem::path&,
         const std::filesystem::path&)
@@ -7605,6 +7614,95 @@ namespace fluxora
             writePortableManifest(record);
         }
         return record;
+    }
+
+    InstalledModRecord InstanceMetadataStore::renameInstalledMod(
+        const std::filesystem::path& projectDirectory,
+        const std::filesystem::path& currentModDirectory,
+        const std::filesystem::path& targetModDirectory,
+        std::wstring_view displayName)
+    {
+        const std::lock_guard metadataLock(metadataStoreMutex());
+
+        if (projectDirectory.empty() || currentModDirectory.empty() || targetModDirectory.empty())
+        {
+            throw std::invalid_argument("Project and installed mod directories are required.");
+        }
+        if (currentModDirectory.parent_path() != targetModDirectory.parent_path())
+        {
+            throw std::invalid_argument("Installed mod rename must stay inside the same mods directory.");
+        }
+        if (!std::filesystem::is_directory(currentModDirectory))
+        {
+            throw std::invalid_argument("Installed mod directory does not exist.");
+        }
+        if (std::filesystem::exists(targetModDirectory))
+        {
+            throw std::invalid_argument("Installed mod rename target already exists.");
+        }
+
+        Database database = openInstanceDatabase(projectDirectory);
+        InstalledModRecord record = readRecordByFolder(
+            database,
+            projectDirectory,
+            currentModDirectory.filename().wstring(),
+            currentModDirectory.parent_path());
+        if (record.state != L"installed" && record.state != L"disabled")
+        {
+            throw std::invalid_argument("Only installed mods can be renamed.");
+        }
+
+        std::error_code renameError;
+        std::filesystem::rename(currentModDirectory, targetModDirectory, renameError);
+        if (renameError)
+        {
+            throw std::runtime_error("Installed mod directory could not be renamed: " + renameError.message());
+        }
+
+        const InstalledModRecord previousRecord = record;
+        try
+        {
+            record.folderName = targetModDirectory.filename().wstring();
+            record.displayName = displayName.empty() ? record.folderName : std::wstring(displayName);
+            record.updatedAt = nowUtcText();
+            record.path = targetModDirectory;
+
+            Transaction transaction(database);
+            Statement update = database.prepare(
+                "UPDATE mods SET folder_name = ?, display_name = ?, updated_at = ? WHERE id = ?;");
+            update.bindText(1, record.folderName);
+            update.bindText(2, record.displayName);
+            update.bindText(3, record.updatedAt);
+            update.bindInt64(4, record.id);
+            update.stepDone();
+            bumpModInventoryRevision(database);
+            record = readRecordByFolder(
+                database,
+                projectDirectory,
+                record.folderName,
+                targetModDirectory.parent_path());
+            writePortableManifest(record);
+            transaction.commit();
+            return record;
+        }
+        catch (...)
+        {
+            std::error_code rollbackError;
+            std::filesystem::rename(targetModDirectory, currentModDirectory, rollbackError);
+            if (!rollbackError)
+            {
+                try
+                {
+                    writePortableManifest(previousRecord);
+                }
+                catch (...)
+                {
+                    // Preserve the original failure. Database rollback and the
+                    // directory name are the authoritative recovery state.
+                }
+            }
+            throw;
+        }
     }
 
     void InstanceMetadataStore::registerInstalledMods(

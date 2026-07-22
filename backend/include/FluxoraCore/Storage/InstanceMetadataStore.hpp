@@ -568,6 +568,14 @@ namespace fluxora
             std::wstring_view version,
             const ModSourceRecord& source);
 
+        // Renames a managed installed-mod directory while retaining its durable
+        // UUID and profile-order relations. The target must not already exist.
+        static InstalledModRecord renameInstalledMod(
+            const std::filesystem::path& projectDirectory,
+            const std::filesystem::path& currentModDirectory,
+            const std::filesystem::path& targetModDirectory,
+            std::wstring_view displayName);
+
         static void registerInstalledMods(
             const std::filesystem::path& projectDirectory,
             const std::vector<InstalledModImportRecord>& mods,

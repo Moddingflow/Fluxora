@@ -128,7 +128,7 @@ fn main() {
 
     let result =
         fluxora_tauri_lib::run_native_ai_integration_fixture(&game, &install_root, &archive_path)
-            .expect("live Gemini Russian Community Shaders action smoke");
+            .expect("live Gemini action-first and implicit-repair smoke");
     assert_eq!(
         result.pointer("/response/status").and_then(Value::as_str),
         Some("done")
@@ -148,6 +148,42 @@ fn main() {
     assert_eq!(
         result
             .get("overrideExistsAfterRollback")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/response/status")
+            .and_then(Value::as_str),
+        Some("done")
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/response/execution/mode")
+            .and_then(Value::as_str),
+        Some("repair")
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/response/execution/origin")
+            .and_then(Value::as_str),
+        Some("implicit")
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/response/fileToolDiagnostics/allowedRisk")
+            .and_then(Value::as_str),
+        Some("reversible")
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/response/fileToolDiagnostics/verifiedMutations")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/overrideExistsAfterRollback")
             .and_then(Value::as_bool),
         Some(false)
     );

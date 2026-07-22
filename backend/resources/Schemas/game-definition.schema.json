@@ -19,7 +19,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": "1"
+      "enum": ["1", "2"]
     },
     "definitionVersion": {
       "type": "string",
@@ -129,6 +129,12 @@
         },
         "rootFileWrapperDirectory": {
           "type": "string"
+        },
+        "mountRules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/vfsMountRule"
+          }
         }
       }
     },
@@ -149,6 +155,9 @@
           "$ref": "#/$defs/nonEmptyStringArray"
         },
         "saveDirectoryNames": {
+          "$ref": "#/$defs/nonEmptyStringArray"
+        },
+        "materializedLaunchCacheDirectories": {
           "$ref": "#/$defs/nonEmptyStringArray"
         },
         "excludedLaunchCacheDirectories": {
@@ -296,6 +305,37 @@
             "gameRoot",
             "game"
           ]
+        }
+      }
+    },
+    "vfsMountRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "targetBase", "source"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/normalizedIdentifier"
+        },
+        "targetBase": {
+          "enum": ["gameDirectory", "documents", "localAppData", "roamingAppData"]
+        },
+        "targetPath": {
+          "type": "string"
+        },
+        "source": {
+          "enum": ["activeMods", "profileSettings", "profileSaves"]
+        },
+        "primaryContentRoot": {
+          "type": "boolean"
+        },
+        "includeUnwrappedModRoot": {
+          "type": "boolean"
+        },
+        "wrapperDirectories": {
+          "$ref": "#/$defs/nonEmptyStringArray"
+        },
+        "overwritePath": {
+          "type": "string"
         }
       }
     },

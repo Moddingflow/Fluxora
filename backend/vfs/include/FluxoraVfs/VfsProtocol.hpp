@@ -24,7 +24,7 @@ namespace fluxora::vfs::protocol
 
     // Current descriptor schema version. Bump when the JSON layout changes in a
     // way the injected DLL must be able to detect.
-    inline constexpr int schemaVersion = 3;
+    inline constexpr int schemaVersion = 4;
 
     // JSON field names of the descriptor document.
     namespace fields
@@ -49,6 +49,12 @@ namespace fluxora::vfs::protocol
         // session. Injected processes unload the hook when this process exits.
         inline constexpr const wchar_t* managerProcessId = L"managerProcessId";
 
+        // Correlates core preparation, injected processes and cache recovery.
+        inline constexpr const wchar_t* operationId = L"operationId";
+
+        // Manager-side launch preparation elapsed before descriptor creation.
+        inline constexpr const wchar_t* preparationMs = L"preparationMs";
+
         // Ordered array of absolute mod directories. Order is load order ascending:
         // the FIRST entry has the LOWEST priority and the LAST entry the HIGHEST.
         // A later mod therefore overrides files contributed by an earlier mod, and
@@ -64,5 +70,10 @@ namespace fluxora::vfs::protocol
         // Root Builder uses a top-level "root" folder for game-root files, so the
         // data mount excludes it while a separate game-root mount projects it.
         inline constexpr const wchar_t* excludedRootNames = L"excludedRootNames";
+
+        // Separate, non-visible deletion metadata for this mount. A marker at a
+        // relative path hides every lower layer until a new overwrite write
+        // removes the marker.
+        inline constexpr const wchar_t* whiteoutRoot = L"whiteoutRoot";
     }
 }

@@ -4,6 +4,7 @@ import {
   Gauge,
   Languages,
   Link2,
+  Mic,
   Plug,
   RefreshCw,
   UploadCloud
@@ -45,12 +46,15 @@ interface SettingsWorkspaceProps {
   developerModeEnabled: boolean;
   isTransferRunning: boolean;
   languageBusy: string | null;
+  microphoneAllowed: boolean;
+  microphonePermissionBusy: boolean;
   lastBuildDate: string;
   connectionBusyProviderId: string | null;
   connectionProviders: FluxoraExternalConnectionStatus[];
   onDeveloperModeChange: (enabled: boolean) => void;
   onOpenTransfer: () => void;
   onOpenRepository: () => void;
+  onResetMicrophonePermission: () => void;
   onSectionChange: (section: SettingsSectionId) => void;
   onSetLanguage: (language: string) => void;
   onToggleConnection: (providerId: string) => void;
@@ -67,12 +71,15 @@ export function SettingsWorkspace({
   developerModeEnabled,
   isTransferRunning,
   languageBusy,
+  microphoneAllowed,
+  microphonePermissionBusy,
   lastBuildDate,
   connectionBusyProviderId,
   connectionProviders,
   onDeveloperModeChange,
   onOpenTransfer,
   onOpenRepository,
+  onResetMicrophonePermission,
   onSectionChange,
   onSetLanguage,
   onToggleConnection,
@@ -91,6 +98,8 @@ export function SettingsWorkspace({
                 return Link2;
               case 'language':
                 return Languages;
+              case 'privacy':
+                return Mic;
               case 'developers':
                 return Code2;
               case 'transfer':
@@ -246,6 +255,35 @@ export function SettingsWorkspace({
     />
   );
 
+  const renderPrivacySettings = () => (
+    <div className="settings-panel settings-panel--privacy" aria-label="Privacy settings">
+      <div className="settings-connections-list">
+        <div
+          className="settings-service-row settings-service-row--connection settings-service-row--privacy"
+          data-status={microphoneAllowed ? 'ready' : 'checking'}
+        >
+          <div className="settings-service-main">
+            <span className="settings-service-icon settings-service-icon--privacy" aria-hidden="true">
+              <Mic size={20} />
+            </span>
+            <span className="settings-service-copy">
+              <strong>AI microphone</strong>
+              <span>{microphoneAllowed ? 'Allowed until reset' : 'Fluxora will ask before recording'}</span>
+            </span>
+          </div>
+          <button
+            className="primary-button"
+            disabled={!microphoneAllowed || microphonePermissionBusy}
+            onClick={onResetMicrophonePermission}
+            type="button"
+          >
+            {microphonePermissionBusy ? 'Resetting…' : 'Reset access'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   const renderDeveloperSettings = () => (
     <div className="settings-panel settings-panel--developer" aria-label="Developer settings">
       <div className="settings-connections-list">
@@ -321,6 +359,8 @@ export function SettingsWorkspace({
         return renderConnectionSettings();
       case 'language':
         return renderLanguageSettings();
+      case 'privacy':
+        return renderPrivacySettings();
       case 'developers':
         return renderDeveloperSettings();
       case 'transfer':

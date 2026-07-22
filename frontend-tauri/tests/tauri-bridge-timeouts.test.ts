@@ -316,6 +316,40 @@ describe('Tauri bridge request timeouts', () => {
     });
   });
 
+  it('routes managed executable completion through the long-running bridge lane', async () => {
+    const request: OperationRequest = { operationId: 'op_bodyslide_finalize' };
+    invokeMock.mockResolvedValue({
+      sessionId: 'session-1',
+      outcome: 'completed',
+      finalized: true,
+      deferred: false,
+      outputMod: {
+        id: 'output-1',
+        displayName: 'Foundation - BodySlide Output',
+        folderName: 'Foundation - BodySlide Output',
+        path: 'C:\\Fluxora\\Builds\\Foundation\\mods\\Foundation - BodySlide Output',
+        provider: 'generated-bodyslide'
+      },
+      warnings: []
+    });
+
+    const api = createTauriFluxoraApi();
+    await expect(
+      api.executables.completeManagedLaunch('session-1', 'completed', request)
+    ).resolves.toMatchObject({
+      sessionId: 'session-1',
+      finalized: true,
+      operationId: request.operationId
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('fluxora_bridge_request', {
+      method: 'executables.completeManagedLaunch',
+      params: { sessionId: 'session-1', outcome: 'completed' },
+      request,
+      timeoutMs: 120_000
+    });
+  });
+
   it('gives overwrite cleanup a long file-mutation timeout', async () => {
     const request: OperationRequest = { operationId: 'op_clear_overwrite' };
     invokeMock.mockResolvedValue({ accepted: true });

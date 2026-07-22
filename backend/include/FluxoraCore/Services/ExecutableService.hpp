@@ -23,6 +23,18 @@ namespace fluxora
         std::wstring arguments;
         std::wstring workingDirectory;
         std::wstring iconPath;
+        // Optional additive marker for tools whose launch lifecycle is managed
+        // by the core. Empty keeps legacy manifests fully compatible.
+        std::wstring managedToolKind;
+    };
+
+    struct ManagedOutputMod
+    {
+        std::wstring id;
+        std::wstring displayName;
+        std::wstring folderName;
+        std::filesystem::path path;
+        std::wstring provider;
     };
 
     struct GameExecutableLaunchResult
@@ -36,6 +48,11 @@ namespace fluxora
         std::uint32_t handoffTimeoutMs{0};
         std::uint32_t processId{0};
         bool managerEnvironmentUnchanged{true};
+        std::wstring managedSessionId;
+        std::wstring managedToolKind;
+        std::optional<ManagedOutputMod> outputMod;
+        std::wstring configurationStatus;
+        std::vector<std::wstring> warnings;
     };
 
     // Minimal, launch-scoped view of an enabled profile mod. Executable
@@ -75,6 +92,7 @@ namespace fluxora
         std::vector<std::wstring> expectedChildProcessNames;
         std::wstring handoffDisplayName;
         std::uint32_t handoffTimeoutMs{0};
+        std::wstring projectName;
     };
 
     class ExecutableService final : public IService

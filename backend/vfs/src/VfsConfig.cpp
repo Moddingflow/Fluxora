@@ -125,6 +125,7 @@ namespace fluxora::vfs
             mount.overwrite = readString(value, protocol::fields::overwrite);
             mount.mods = readStringArray(value, protocol::fields::mods);
             mount.excludedRootNames = readStringArray(value, protocol::fields::excludedRootNames);
+            mount.whiteoutRoot = readString(value, protocol::fields::whiteoutRoot);
             return mount;
         }
     }
@@ -159,12 +160,18 @@ namespace fluxora::vfs
             {
                 config.schemaVersion = std::stoi(schema->asNumber());
             }
+            if (config.schemaVersion != protocol::schemaVersion)
+            {
+                return false;
+            }
 
             config.target = readString(root, protocol::fields::target);
             config.overwrite = readString(root, protocol::fields::overwrite);
             config.logPath = readString(root, protocol::fields::logPath);
             config.hookDll = readString(root, protocol::fields::hookDll);
             config.managerProcessId = readUInt32(root, protocol::fields::managerProcessId);
+            config.operationId = readString(root, protocol::fields::operationId);
+            config.preparationMs = readUInt32(root, protocol::fields::preparationMs);
             config.mods = readStringArray(root, protocol::fields::mods);
 
             if (const JsonValue* mounts = root.find(protocol::fields::mounts);
@@ -186,6 +193,7 @@ namespace fluxora::vfs
                     config.target,
                     config.overwrite,
                     config.mods,
+                    {},
                     {}
                 });
             }

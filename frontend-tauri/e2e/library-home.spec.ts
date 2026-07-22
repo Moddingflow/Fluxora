@@ -2119,10 +2119,60 @@ test.beforeEach(async ({ page }) => {
         }
       },
       executables: {
+        completeManagedLaunch: async (sessionId: any, outcome: any, operation: any) => {
+          calls.push({
+            method: 'executables.completeManagedLaunch',
+            payload: { operation, outcome, sessionId }
+          });
+          await waitForOperationPaint();
+          return {
+            sessionId,
+            outcome,
+            finalized: true,
+            deferred: false,
+            outputMod: {
+              id: 'bodyslide-output-id',
+              displayName: 'Skyrim graphics overhaul - BodySlide Output',
+              folderName: 'Skyrim graphics overhaul - BodySlide Output',
+              path: 'D:\\Builds\\Skyrim graphics overhaul\\mods\\Skyrim graphics overhaul - BodySlide Output',
+              provider: 'generated-bodyslide'
+            },
+            warnings: [],
+            operationId: operation?.operationId ?? 'op_bodyslide_complete'
+          };
+        },
         getIcon: async () => ({ iconPath: '', operationId: 'op_icon' }),
         launch: async (configPath: any, executableId: any, profileName: any, operation: any) => {
           calls.push({ method: 'executables.launch', payload: { configPath, executableId, operation, profileName } });
           await waitForOperationPaint();
+          if (executableId === 'bodyslide') {
+            return {
+              arguments: '',
+              displayName: 'BodySlide',
+              executablePath: 'D:\\Builds\\Skyrim graphics overhaul\\mods\\BodySlide\\CalienteTools\\BodySlide\\BodySlide x64.exe',
+              expectedChildProcessNames: [],
+              handoffDisplayName: '',
+              handoffTimeoutMs: 0,
+              iconPath: '',
+              launchTrackingKind: 'direct',
+              managedSessionId: 'bodyslide-session-1',
+              managedToolKind: 'bodySlide',
+              outputMod: {
+                id: 'bodyslide-output-id',
+                displayName: 'Skyrim graphics overhaul - BodySlide Output',
+                folderName: 'Skyrim graphics overhaul - BodySlide Output',
+                path: 'D:\\Builds\\Skyrim graphics overhaul\\mods\\Skyrim graphics overhaul - BodySlide Output',
+                provider: 'generated-bodyslide'
+              },
+              configurationStatus: 'configured',
+              warnings: [],
+              operationId: operation?.operationId ?? 'op_bodyslide_launch',
+              processId: 5_252,
+              resolvedExecutablePath: 'D:\\Builds\\Skyrim graphics overhaul\\mods\\BodySlide\\CalienteTools\\BodySlide\\BodySlide x64.exe',
+              resolvedWorkingDirectory: 'D:\\Builds\\Skyrim graphics overhaul\\mods\\BodySlide\\CalienteTools\\BodySlide',
+              workingDirectory: ''
+            };
+          }
           return {
             arguments: '-forcesteamloader',
             displayName: 'SKSE',
@@ -2139,16 +2189,29 @@ test.beforeEach(async ({ page }) => {
             workingDirectory: 'C:\\Games\\Skyrim'
           };
         },
-        list: async () => [
-          {
-            id: 'skse',
-            displayName: 'SKSE',
-            executablePath: 'C:\\Games\\Skyrim\\skse64_loader.exe',
-            arguments: '-forcesteamloader',
-            workingDirectory: 'C:\\Games\\Skyrim',
-            iconPath: ''
-          }
-        ],
+        list: async () =>
+          window.localStorage.getItem('fluxora.test.bodySlideExecutable') === 'true'
+            ? [
+                {
+                  id: 'bodyslide',
+                  displayName: 'BodySlide',
+                  executablePath: 'D:\\Builds\\Skyrim graphics overhaul\\mods\\BodySlide\\CalienteTools\\BodySlide\\BodySlide x64.exe',
+                  arguments: '',
+                  workingDirectory: '',
+                  iconPath: '',
+                  managedToolKind: 'bodySlide'
+                }
+              ]
+            : [
+                {
+                  id: 'skse',
+                  displayName: 'SKSE',
+                  executablePath: 'C:\\Games\\Skyrim\\skse64_loader.exe',
+                  arguments: '-forcesteamloader',
+                  workingDirectory: 'C:\\Games\\Skyrim',
+                  iconPath: ''
+                }
+              ],
         save: async () => []
       },
       fluxPack: {
@@ -2992,6 +3055,9 @@ test.beforeEach(async ({ page }) => {
         waitForExit: async (processId: any, operation: any) => {
           calls.push({ method: 'processes.waitForExit', payload: { operation, processId } });
           await waitForOperationPaint();
+          if (window.localStorage.getItem('fluxora.test.bodySlideWatcherError') === 'true') {
+            throw new Error('Injected BodySlide watcher failure');
+          }
           processExitWaitCount += 1;
           if (processExitWaitCount % 2 === 1) {
             return {
@@ -5574,6 +5640,68 @@ test('runs build package, check and launch actions through the facade', async ({
   } | null;
   expect(selectedExportPayload?.request?.packageType).toBe('full');
   expect(selectedExportPayload?.request?.includeGeneratedAssets).toBe(true);
+});
+
+test('finalizes managed BodySlide after the last VFS holder exits and refreshes mods', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('fluxora.test.bodySlideExecutable', 'true');
+  });
+  await openSkyrimBuild(page);
+  await page.evaluate(() => {
+    const scope = window as any;
+    const getWorkspace = scope.fluxora.mods.getWorkspace;
+    scope.fluxora.mods.getWorkspace = async (...args: unknown[]) => {
+      scope.__fluxoraCalls.push({ method: 'bodyslide.mods.refresh', payload: {} });
+      return getWorkspace(...args);
+    };
+  });
+
+  const launch = page.getByLabel('Build header').getByRole('button', { name: 'Launch' });
+  await launch.click();
+  await expect(page.getByText('Подготовка BodySlide', { exact: true })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).__fluxoraCalls.some(
+          (call: { method: string }) => call.method === 'executables.completeManagedLaunch'
+        )
+      )
+    )
+    .toBe(true);
+  const calls = await page.evaluate(() => (window as any).__fluxoraCalls as Array<any>);
+  const completeIndex = calls.findIndex(
+    (call) => call.method === 'executables.completeManagedLaunch'
+  );
+  const refreshIndex = calls.findIndex(
+    (call, index) => index > completeIndex && call.method === 'bodyslide.mods.refresh'
+  );
+  expect(completeIndex).toBeGreaterThan(-1);
+  expect(refreshIndex).toBeGreaterThan(completeIndex);
+  expect(calls[completeIndex]?.payload?.outcome).toBe('completed');
+  await expect(launch).toBeEnabled();
+});
+
+test('still finalizes BodySlide and preserves the workspace when the watcher fails', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('fluxora.test.bodySlideExecutable', 'true');
+    window.localStorage.setItem('fluxora.test.bodySlideWatcherError', 'true');
+  });
+  await openSkyrimBuild(page);
+  const launch = page.getByLabel('Build header').getByRole('button', { name: 'Launch' });
+  await launch.click();
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const completion = ((window as any).__fluxoraCalls as Array<any>).find(
+          (call) => call.method === 'executables.completeManagedLaunch'
+        );
+        return completion?.payload?.outcome;
+      })
+    )
+    .toBe('watcher-error');
+  await expect(page.getByRole('heading', { name: 'Skyrim graphics overhaul' })).toBeVisible();
+  await expect(launch).toBeEnabled();
 });
 
 test('packages the build from the mods search-row three-dot menu', async ({ page }) => {

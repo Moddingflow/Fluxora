@@ -157,6 +157,37 @@ namespace fluxora::tests
         EXPECT_TRUE(containsChild(*root, L"Wrapped.esp"));
     }
 
+    TEST(VfsTreeTests, WhiteoutHidesLowerFileUntilOverwriteRecreatesIt)
+    {
+        TempDirectory temp;
+        const std::filesystem::path data = temp.path() / L"Game" / L"Data";
+        const std::filesystem::path mod = temp.path() / L"mods" / L"Settings";
+        const std::filesystem::path overwrite = temp.path() / L"overwrite";
+        const std::filesystem::path whiteouts = temp.path() / L"whiteouts";
+        writeTextFile(data / L"NovelSubsystem" / L"state.futureext", "base");
+        writeTextFile(mod / L"NovelSubsystem" / L"state.futureext", "mod");
+        writeTextFile(whiteouts / L"NovelSubsystem" / L"state.futureext", "");
+
+        vfs::VfsTree tree;
+        tree.build(vfs::VfsMountConfig{
+            data.wstring(),
+            overwrite.wstring(),
+            {mod.wstring()},
+            {},
+            whiteouts.wstring()
+        });
+
+        EXPECT_EQ(
+            tree.classify(L"NovelSubsystem\\state.futureext").kind,
+            vfs::VfsTree::PathInfo::Kind::Whiteout);
+        EXPECT_FALSE(containsChild(*tree.listing(L"NovelSubsystem"), L"state.futureext"));
+
+        writeTextFile(overwrite / L"NovelSubsystem" / L"state.futureext", "new");
+        const vfs::VfsTree::PathInfo recreated = tree.classify(L"NovelSubsystem\\state.futureext");
+        ASSERT_EQ(recreated.kind, vfs::VfsTree::PathInfo::Kind::File);
+        expectSamePath(recreated.winner, overwrite / L"NovelSubsystem" / L"state.futureext");
+    }
+
     TEST(VfsTreeTests, DirectClassifyFindsNestedOverlayFileBeforeDirectoryEnumeration)
     {
         TempDirectory temp;

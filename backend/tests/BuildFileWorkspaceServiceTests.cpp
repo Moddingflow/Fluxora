@@ -9,6 +9,10 @@
 
 #include <fstream>
 
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
 namespace fluxora::tests
 {
     namespace
@@ -172,12 +176,235 @@ namespace fluxora::tests
         });
         EXPECT_EQ(duplicateError.code(), "stale-version");
 
+        writeTextFile(overrideFile, "edited after creation\n");
+        const auto modifiedConflict = service.rollbackRun(
+            L"chat-create",
+            L"run-create",
+            L"operation-rollback-modified-create");
+        EXPECT_EQ(modifiedConflict.state, BuildFileRollbackState::Conflict);
+        EXPECT_EQ(modifiedConflict.reason, BuildFileRollbackReason::CreatedFileModified);
+        EXPECT_EQ(readTextFile(overrideFile), "edited after creation\n");
+        const auto modifiedStates = service.getFileRollbackStates(
+            L"chat-create",
+            L"operation-created-states");
+        ASSERT_EQ(modifiedStates.size(), 1u);
+        EXPECT_EQ(modifiedStates[0].reason, BuildFileRollbackReason::CreatedFileModified);
+        writeTextFile(overrideFile, "created by Fluxora\n");
+
         const auto rollback = service.rollbackRun(
             L"chat-create",
             L"run-create",
             L"operation-rollback-create");
         EXPECT_EQ(rollback.state, BuildFileRollbackState::RolledBack);
         EXPECT_FALSE(std::filesystem::exists(overrideFile));
+    }
+
+    TEST(BuildFileWorkspaceServiceTests, UndoOlderRunPreservesNewerNonOverlappingChanges)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Foundation Edition";
+        const std::filesystem::path source = project / L"mods" / L"Example" / L"settings.ini";
+        const std::filesystem::path managed =
+            project / L"mods" / L"Fluxora AI Overrides" / L"settings.ini";
+        writeTextFile(project / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(project / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(source, "alpha\r\nbeta\r\ngamma\r\n");
+        writeTextFile(managed, "alpha\r\nbeta\r\ngamma\r\n");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        static_cast<void>(InstanceMetadataStore::registerInstalledMod(
+            project,
+            source.parent_path(),
+            L"Example",
+            L"1.0",
+            ModSourceRecord{L"local"}));
+        static_cast<void>(InstanceMetadataStore::registerInstalledMod(
+            project,
+            managed.parent_path(),
+            L"Fluxora AI Overrides",
+            L"1.0",
+            ModSourceRecord{L"local"}));
+        InstanceMetadataStore::replaceProfileOrderItems(
+            project,
+            L"Default",
+            {
+                ProfileOrderImportItemRecord{L"mod", L"Example", L""},
+                ProfileOrderImportItemRecord{L"mod", L"Fluxora AI Overrides", L""}
+            });
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        BuildFileWorkspaceService service(logger, pathSettings);
+        pathSettings.initialize();
+        service.initialize();
+        service.beginChat(L"chat-independent-undo", project);
+
+        const auto currentManaged = [&]()
+        {
+            const auto page = service.discover(
+                L"chat-independent-undo",
+                BuildFileDiscoveryRequest{
+                    {BuildFileScope::Build},
+                    {L"settings"},
+                    {L".ini"},
+                    {L"settings.ini"},
+                    {},
+                    20,
+                    L"",
+                    L""});
+            const auto match = std::find_if(page.candidates.begin(), page.candidates.end(), [](const auto& entry)
+            {
+                return entry.effectiveWinner && entry.file.ownerMod == L"Fluxora AI Overrides";
+            });
+            if (match != page.candidates.end())
+            {
+                return match->file;
+            }
+            const auto winner = std::find_if(page.candidates.begin(), page.candidates.end(), [](const auto& entry)
+            {
+                return entry.effectiveWinner;
+            });
+            return winner == page.candidates.end() ? page.candidates.front().file : winner->file;
+        };
+        const auto applyPatch = [&](std::wstring_view runId, std::wstring_view expected, std::wstring_view replacement)
+        {
+            const auto file = currentManaged();
+            const auto read = service.readText(
+                L"chat-independent-undo",
+                BuildFileTextReadRequest{file.fileRef, 1, 120, 8192});
+            auto patch = BuildFileMutation::patch(
+                file.fileRef,
+                read.sha256,
+                std::wstring(expected),
+                std::wstring(replacement),
+                BuildFileMutationFormat::Ini);
+            patch.revision = file.indexRevision;
+            return service.apply(L"chat-independent-undo", runId, L"operation", {patch});
+        };
+
+        static_cast<void>(applyPatch(L"run-selected", L"beta", L"beta selected"));
+        static_cast<void>(applyPatch(L"run-newer", L"gamma", L"gamma\r\nnewer line"));
+
+        const BuildFileRollbackResult rollback = service.rollbackRun(
+            L"chat-independent-undo",
+            L"run-selected",
+            L"operation-rollback-selected");
+
+        ASSERT_EQ(rollback.state, BuildFileRollbackState::RolledBack);
+        EXPECT_EQ(rollback.mode, BuildFileRollbackMode::InverseMerge);
+        EXPECT_TRUE(rollback.preservedNewerChanges);
+        EXPECT_EQ(readTextFile(managed), "alpha\r\nbeta\r\ngamma\r\nnewer line\r\n");
+    }
+
+    TEST(BuildFileWorkspaceServiceTests, OneOverlappingFilePreventsEveryWriteInTheRun)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Foundation Edition";
+        const std::filesystem::path managedRoot =
+            project / L"mods" / L"Fluxora AI Overrides";
+        const std::filesystem::path first = managedRoot / L"first.ini";
+        const std::filesystem::path second = managedRoot / L"second.ini";
+        writeTextFile(project / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(project / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(first, "alpha\r\nbeta\r\ngamma\r\n");
+        writeTextFile(second, "one\r\ntwo\r\nthree\r\n");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+        static_cast<void>(InstanceMetadataStore::registerInstalledMod(
+            project,
+            managedRoot,
+            L"Fluxora AI Overrides",
+            L"1.0",
+            ModSourceRecord{L"local"}));
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        BuildFileWorkspaceService service(logger, pathSettings);
+        pathSettings.initialize();
+        service.initialize();
+        service.beginChat(L"chat-atomic-conflict", project);
+
+        const auto firstPage = service.search(
+            L"chat-atomic-conflict",
+            BuildFileSearchRequest{BuildFileScope::Build, L"first.ini", 20, L""});
+        const auto secondPage = service.search(
+            L"chat-atomic-conflict",
+            BuildFileSearchRequest{BuildFileScope::Build, L"second.ini", 20, L""});
+        ASSERT_EQ(firstPage.entries.size(), 1u);
+        ASSERT_EQ(secondPage.entries.size(), 1u);
+        const auto firstRead = service.readText(
+            L"chat-atomic-conflict",
+            BuildFileTextReadRequest{firstPage.entries[0].fileRef, 1, 120, 8192});
+        const auto secondRead = service.readText(
+            L"chat-atomic-conflict",
+            BuildFileTextReadRequest{secondPage.entries[0].fileRef, 1, 120, 8192});
+        auto firstPatch = BuildFileMutation::patch(
+            firstPage.entries[0].fileRef,
+            firstRead.sha256,
+            L"beta",
+            L"beta selected",
+            BuildFileMutationFormat::Ini);
+        firstPatch.revision = firstPage.entries[0].indexRevision;
+        auto secondPatch = BuildFileMutation::patch(
+            secondPage.entries[0].fileRef,
+            secondRead.sha256,
+            L"two",
+            L"two selected",
+            BuildFileMutationFormat::Ini);
+        secondPatch.revision = secondPage.entries[0].indexRevision;
+        static_cast<void>(service.apply(
+            L"chat-atomic-conflict",
+            L"run-atomic-conflict",
+            L"operation-atomic-conflict",
+            {firstPatch, secondPatch}));
+
+        writeTextFile(first, "newer heading\r\nalpha\r\nbeta selected\r\ngamma\r\n");
+        writeTextFile(second, "one\r\nnewer overlapping value\r\nthree\r\n");
+        const std::string firstBeforeUndo = readTextFile(first);
+        const std::string secondBeforeUndo = readTextFile(second);
+
+        const auto rollback = service.rollbackRun(
+            L"chat-atomic-conflict",
+            L"run-atomic-conflict",
+            L"operation-atomic-conflict-rollback");
+        EXPECT_EQ(rollback.state, BuildFileRollbackState::Conflict);
+        EXPECT_EQ(rollback.reason, BuildFileRollbackReason::OverlappingEdit);
+        EXPECT_EQ(readTextFile(first), firstBeforeUndo);
+        EXPECT_EQ(readTextFile(second), secondBeforeUndo);
+        const auto states = service.getFileRollbackStates(
+            L"chat-atomic-conflict",
+            L"operation-atomic-conflict-states");
+        ASSERT_EQ(states.size(), 1u);
+        EXPECT_EQ(states[0].reason, BuildFileRollbackReason::OverlappingEdit);
+
+#ifdef _WIN32
+        writeTextFile(first, "alpha\r\nbeta selected\r\ngamma\r\n");
+        writeTextFile(second, "one\r\ntwo selected\r\nthree\r\n");
+        const HANDLE lockedSecond = CreateFileW(
+            second.c_str(),
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+        ASSERT_NE(lockedSecond, INVALID_HANDLE_VALUE);
+        std::string writeFailure;
+        try
+        {
+            static_cast<void>(service.rollbackRun(
+                L"chat-atomic-conflict",
+                L"run-atomic-conflict",
+                L"operation-atomic-write-failure"));
+        }
+        catch (const std::exception& error)
+        {
+            writeFailure = error.what();
+        }
+        CloseHandle(lockedSecond);
+        EXPECT_FALSE(writeFailure.empty());
+        EXPECT_NE(writeFailure.find("Access is denied"), std::string::npos);
+        EXPECT_EQ(readTextFile(first), "alpha\r\nbeta selected\r\ngamma\r\n");
+        EXPECT_EQ(readTextFile(second), "one\r\ntwo selected\r\nthree\r\n");
+#endif
     }
 
     TEST(BuildFileWorkspaceServiceTests, PreservesUtf16BomAndRefusesRollbackOverExternalChanges)
@@ -236,6 +463,61 @@ namespace fluxora::tests
             L"run-utf16",
             L"operation-conflict");
         EXPECT_EQ(conflict.state, BuildFileRollbackState::Conflict);
+    }
+
+    TEST(BuildFileWorkspaceServiceTests, RollbackCheckpointSurvivesWorkspaceServiceRestart)
+    {
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Foundation Edition";
+        const std::filesystem::path source = project / L"mods" / L"Example" / L"restart.ini";
+        const std::filesystem::path managed =
+            project / L"mods" / L"Fluxora AI Overrides" / L"restart.ini";
+        writeTextFile(project / L"stock game" / L"SkyrimSE.exe", "MZ");
+        writeTextFile(project / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(source, "Value=before\r\n");
+        InstanceMetadataStore::ensureInstance(project, L"skyrimse");
+
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        pathSettings.initialize();
+        {
+            BuildFileWorkspaceService service(logger, pathSettings);
+            service.initialize();
+            service.beginChat(L"chat-restart-public", project);
+            const auto page = service.search(
+                L"chat-restart-public",
+                BuildFileSearchRequest{BuildFileScope::Build, L"restart.ini", 20, L""});
+            ASSERT_EQ(page.entries.size(), 1u);
+            const auto read = service.readText(
+                L"chat-restart-public",
+                BuildFileTextReadRequest{page.entries.front().fileRef, 1, 120, 8192});
+            auto patch = BuildFileMutation::patch(
+                page.entries.front().fileRef,
+                read.sha256,
+                L"before",
+                L"after",
+                BuildFileMutationFormat::Ini);
+            patch.revision = page.entries.front().indexRevision;
+            static_cast<void>(service.apply(
+                L"chat-restart-public",
+                L"run-restart-public",
+                L"operation-restart-public",
+                {patch}));
+            ASSERT_TRUE(std::filesystem::is_regular_file(managed));
+            service.shutdown();
+        }
+        {
+            BuildFileWorkspaceService restarted(logger, pathSettings);
+            restarted.initialize();
+            restarted.beginChat(L"chat-restart-public", project);
+            const auto rollback = restarted.rollbackRun(
+                L"chat-restart-public",
+                L"run-restart-public",
+                L"operation-restart-public-rollback");
+            EXPECT_EQ(rollback.state, BuildFileRollbackState::RolledBack);
+            EXPECT_FALSE(std::filesystem::exists(managed));
+        }
+        pathSettings.shutdown();
     }
 
     TEST(BuildFileWorkspaceServiceTests, SearchExposesArchiveMetadataButNotScriptsOrProtectedFiles)

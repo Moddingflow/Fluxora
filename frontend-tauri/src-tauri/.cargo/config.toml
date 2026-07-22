@@ -1,0 +1,2 @@
+[env]
+LIBCLANG_PATH = { value = "../../build/tool-cache/libclang/21.1.8/runtimes/win-x64/native", relative = true }

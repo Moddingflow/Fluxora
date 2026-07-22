@@ -2,9 +2,11 @@
 
 #include "FluxoraCore/GameSupport/GameSupportRegistry.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
+#include "FluxoraCore/Services/BodySlideIntegrationService.hpp"
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
+#include "FluxoraCore/Services/RootBuilderLaunchCacheReconciler.hpp"
 #include "FluxoraCore/Storage/AtomicFileStore.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
@@ -35,7 +37,7 @@ namespace fluxora
     namespace
     {
         constexpr std::wstring_view launchExecutablesField = L"launchExecutables";
-        constexpr int rootBuilderLaunchCacheManifestSchemaVersion = 1;
+        constexpr int rootBuilderLaunchCacheManifestSchemaVersion = 2;
         constexpr std::wstring_view rootBuilderLaunchCacheManifestFileName =
             L".fluxora-root-launch-cache.json";
         constexpr std::wstring_view skyrimGameId = L"skyrimse";
@@ -1162,6 +1164,7 @@ namespace fluxora
 
         struct RootBuilderLaunchCacheManifest
         {
+            int schemaVersion{0};
             std::wstring revision;
             std::map<std::wstring, RootBuilderLaunchCacheManifestFile> files;
             std::map<std::wstring, RootBuilderLaunchCacheDirectoryStamp> directories;
@@ -1653,7 +1656,7 @@ namespace fluxora
             if (context.vfsRules.has_value())
             {
                 for (const std::wstring& directoryName :
-                     context.vfsRules->rules.excludedLaunchCacheDirectories)
+                     context.vfsRules->rules.materializedLaunchCacheDirectories)
                 {
                     if (!equalsIgnoreCase(directoryName, rootBuilderDirectoryName(context)))
                     {
@@ -1836,8 +1839,8 @@ namespace fluxora
                 const JsonValue* schemaVersion = root.find(L"schemaVersion");
                 const std::optional<std::uintmax_t> schema =
                     schemaVersion == nullptr ? std::nullopt : parseUnsignedJsonNumber(*schemaVersion);
-                if (!schema.has_value() ||
-                    schema.value() != static_cast<std::uintmax_t>(rootBuilderLaunchCacheManifestSchemaVersion))
+                if (!schema.has_value() || schema.value() < 1 ||
+                    schema.value() > static_cast<std::uintmax_t>(rootBuilderLaunchCacheManifestSchemaVersion))
                 {
                     throw std::runtime_error("schema version is unsupported");
                 }
@@ -1848,13 +1851,16 @@ namespace fluxora
                     throw std::runtime_error("revision is missing");
                 }
 
-                const JsonValue* filesValue = root.find(L"files");
+                const JsonValue* filesValue = schema.value() >= 2
+                    ? root.find(L"baselineFiles")
+                    : root.find(L"files");
                 if (filesValue == nullptr || !filesValue->isArray())
                 {
                     throw std::runtime_error("files are missing");
                 }
 
                 RootBuilderLaunchCacheManifest manifest;
+                manifest.schemaVersion = static_cast<int>(schema.value());
                 manifest.revision = revisionValue->asString();
                 const JsonValue* sealedValue = root.find(L"sealed");
                 manifest.sealed =
@@ -1991,7 +1997,7 @@ namespace fluxora
                     .endObject();
             }
             writer.endArray()
-                .key(L"files")
+                .key(L"baselineFiles")
                 .beginArray();
             for (const auto& [key, file] : state.files)
             {
@@ -2781,10 +2787,11 @@ namespace fluxora
             if (!backingSafety.safe())
             {
                 logger.write(
-                    LogLevel::Warning,
+                    LogLevel::Error,
                     "Root Builder launch cache refused unsafe backing executable: " +
                         toUtf8(backingPath.wstring()) + " (" + pathSafetyErrorForLog(backingSafety) + ").");
-                return std::nullopt;
+                throw std::runtime_error(
+                    "Root Builder launch cache refused an unsafe backing executable; launch blocked.");
             }
 
             const PathSafetyResult relativeSafety =
@@ -2792,11 +2799,12 @@ namespace fluxora
             if (!relativeSafety.safe())
             {
                 logger.write(
-                    LogLevel::Warning,
+                    LogLevel::Error,
                     "Root Builder launch cache refused unsafe backing relative path: " +
                         toUtf8(location->relativePath.wstring()) + " (" +
                         pathSafetyErrorForLog(relativeSafety) + ").");
-                return std::nullopt;
+                throw std::runtime_error(
+                    "Root Builder launch cache refused an unsafe relative path; launch blocked.");
             }
 
             const bool executableIsUnderData =
@@ -2812,10 +2820,11 @@ namespace fluxora
             if (!cacheRootSafety.safe())
             {
                 logger.write(
-                    LogLevel::Warning,
+                    LogLevel::Error,
                     "Root Builder launch cache refused unsafe cache directory: " +
                         toUtf8(cacheRoot.wstring()) + " (" + pathSafetyErrorForLog(cacheRootSafety) + ").");
-                return std::nullopt;
+                throw std::runtime_error(
+                    "Root Builder launch cache directory is unsafe. The cache was preserved; launch blocked.");
             }
 
             std::string failure;
@@ -2831,10 +2840,11 @@ namespace fluxora
             if (error)
             {
                 logger.write(
-                    LogLevel::Warning,
+                    LogLevel::Error,
                     "Root Builder launch cache directory could not be inspected: " +
                         toUtf8(cacheRoot.wstring()) + " (" + filesystemErrorForLog(error) + ").");
-                return std::nullopt;
+                throw std::runtime_error(
+                    "Root Builder launch cache directory could not be inspected. The cache was preserved; launch blocked.");
             }
 
             error.clear();
@@ -2842,15 +2852,69 @@ namespace fluxora
             if (error)
             {
                 logger.write(
-                    LogLevel::Warning,
+                    LogLevel::Error,
                     "Root Builder launch cache directory could not be created: " +
                         toUtf8(cacheRoot.wstring()) + " (" + filesystemErrorForLog(error) + ").");
-                return std::nullopt;
+                throw std::runtime_error(
+                    "Root Builder launch cache directory could not be created; launch blocked.");
             }
 
             const std::filesystem::path manifestPath = rootBuilderLaunchCacheManifestPath(cacheRoot);
             RootBuilderLaunchCacheManifestReadResult manifestRead =
                 readRootBuilderLaunchCacheManifest(manifestPath, logger);
+            bool reconciledCacheChanged = false;
+            bool manifestMigrationNeeded = false;
+            if (manifestRead.status == RootBuilderLaunchCacheManifestStatus::Loaded &&
+                manifestRead.manifest.has_value())
+            {
+                std::vector<RootBuilderLaunchCacheBaselineFile> baselineFiles;
+                baselineFiles.reserve(manifestRead.manifest->files.size());
+                for (const auto& [key, file] : manifestRead.manifest->files)
+                {
+                    static_cast<void>(key);
+                    baselineFiles.push_back(RootBuilderLaunchCacheBaselineFile{
+                        file.relativePath,
+                        file.stamp.size,
+                        file.stamp.modifiedTicks
+                    });
+                }
+
+                const std::filesystem::path whiteoutRoot =
+                    context.projectDirectory / L".flow" / L"vfs" / L"whiteouts";
+                RootBuilderLaunchCacheReconcileRequest reconcileRequest{
+                    cacheRoot,
+                    manifestPath,
+                    std::move(baselineFiles),
+                    {
+                        RootBuilderLaunchCacheReconcileMount{
+                            dataDirectoryPath(context),
+                            context.overwriteDirectory,
+                            whiteoutRoot / L"primary-content"
+                        },
+                        RootBuilderLaunchCacheReconcileMount{
+                            {},
+                            rootBuilderDirectory(context, context.overwriteDirectory),
+                            whiteoutRoot / L"game-root"
+                        }
+                    }
+                };
+                const RootBuilderLaunchCacheReconcileResult reconcileResult =
+                    RootBuilderLaunchCacheReconciler(logger).reconcile(reconcileRequest);
+                if (!reconcileResult.success)
+                {
+                    logger.write(
+                        LogLevel::Error,
+                        "Root Builder launch cache reconciliation failed; launch blocked and cache preserved: " +
+                            reconcileResult.failure + ".");
+                    throw std::runtime_error(
+                        "Root Builder launch cache reconciliation failed: " +
+                        reconcileResult.failure +
+                        ". The launch cache was preserved; fix the reported path or permissions and retry.");
+                }
+                reconciledCacheChanged = reconcileResult.cacheChanged;
+                manifestMigrationNeeded = manifestRead.manifest->schemaVersion <
+                    rootBuilderLaunchCacheManifestSchemaVersion;
+            }
             const auto manifestCoversExecutable = [&]() -> bool
             {
                 return manifestRead.manifest.has_value() &&
@@ -2860,6 +2924,8 @@ namespace fluxora
             };
             std::string warmFailure;
             if (manifestRead.status == RootBuilderLaunchCacheManifestStatus::Loaded &&
+                !reconciledCacheChanged &&
+                !manifestMigrationNeeded &&
                 manifestCoversExecutable() &&
                 rootBuilderLaunchCacheWarmManifestLooksReusable(
                     cacheRoot,
@@ -2892,37 +2958,17 @@ namespace fluxora
             if (manifestRead.status == RootBuilderLaunchCacheManifestStatus::Corrupt ||
                 (manifestRead.status == RootBuilderLaunchCacheManifestStatus::Missing && cacheRootExisted))
             {
-                stats.rebuilt = true;
                 const std::string rebuildReason =
                     manifestRead.status == RootBuilderLaunchCacheManifestStatus::Corrupt
                         ? ("manifest was invalid: " + manifestRead.reason)
                         : "manifest was missing";
                 logger.write(
-                    LogLevel::Info,
-                    "Root Builder launch cache will be rebuilt because " + rebuildReason + ".");
-
-                std::filesystem::remove_all(cacheRoot, error);
-                if (error)
-                {
-                    logger.write(
-                        LogLevel::Warning,
-                        "Root Builder launch cache could not be cleared for rebuild: " +
-                            toUtf8(cacheRoot.wstring()) + " (" + filesystemErrorForLog(error) + ").");
-                    return std::nullopt;
-                }
-
-                error.clear();
-                std::filesystem::create_directories(cacheRoot, error);
-                if (error)
-                {
-                    logger.write(
-                        LogLevel::Warning,
-                        "Root Builder launch cache directory could not be recreated: " +
-                            toUtf8(cacheRoot.wstring()) + " (" + filesystemErrorForLog(error) + ").");
-                    return std::nullopt;
-                }
-
-                manifestRead = RootBuilderLaunchCacheManifestReadResult{};
+                    LogLevel::Error,
+                    "Root Builder launch cache cannot be reconciled because " + rebuildReason +
+                        "; launch blocked and cache preserved at " + toUtf8(cacheRoot.wstring()) + ".");
+                throw std::runtime_error(
+                    "Root Builder launch cache cannot be reconciled because " + rebuildReason +
+                    ". The cache was preserved for recovery.");
             }
 
             const std::optional<RootBuilderLaunchCacheDesiredState> desiredState =
@@ -2934,9 +2980,12 @@ namespace fluxora
             if (!desiredState.has_value())
             {
                 logger.write(
-                    LogLevel::Warning,
-                    "Root Builder launch cache could not be prepared: " + failure + ".");
-                return std::nullopt;
+                    LogLevel::Error,
+                    "Root Builder launch cache could not be prepared; launch blocked and cache preserved: " +
+                        failure + ".");
+                throw std::runtime_error(
+                    "Root Builder launch cache could not be prepared: " + failure +
+                    ". The cache was preserved; launch blocked.");
             }
 
             stats.revisionChanged = manifestRead.manifest.has_value() &&
@@ -2958,11 +3007,12 @@ namespace fluxora
                 failure))
             {
                 logger.write(
-                    LogLevel::Warning,
-                    "Root Builder launch cache could not be prepared: " + failure + ".");
-                error.clear();
-                std::filesystem::remove_all(cacheRoot, error);
-                return std::nullopt;
+                    LogLevel::Error,
+                    "Root Builder launch cache synchronization failed; launch blocked and cache preserved: " +
+                        failure + ".");
+                throw std::runtime_error(
+                    "Root Builder launch cache synchronization failed: " + failure +
+                    ". The cache was preserved; launch blocked.");
             }
 
             logger.write(
@@ -2986,12 +3036,12 @@ namespace fluxora
             if (!isReadableExecutableFile(cachedExecutable))
             {
                 logger.write(
-                    LogLevel::Warning,
+                    LogLevel::Error,
                     "Root Builder launch cache did not contain a readable executable: " +
                         toUtf8(cachedExecutable.wstring()) + ".");
-                error.clear();
-                std::filesystem::remove_all(cacheRoot, error);
-                return std::nullopt;
+                throw std::runtime_error(
+                    "Root Builder launch cache did not contain a readable executable. "
+                    "The cache was preserved; launch blocked.");
             }
 
             std::error_code sourceSizeError;
@@ -3001,7 +3051,7 @@ namespace fluxora
             if (sourceSizeError || cachedSizeError || sourceSize != cachedSize)
             {
                 logger.write(
-                    LogLevel::Warning,
+                    LogLevel::Error,
                     "Root Builder launch cache executable failed validation: source=\"" +
                         toUtf8(backingPath.wstring()) +
                         "\", cached=\"" +
@@ -3015,9 +3065,9 @@ namespace fluxora
                         "), cachedError=(" +
                         filesystemErrorForLog(cachedSizeError) +
                         ").");
-                error.clear();
-                std::filesystem::remove_all(cacheRoot, error);
-                return std::nullopt;
+                throw std::runtime_error(
+                    "Root Builder launch cache executable failed validation. "
+                    "The cache was preserved; launch blocked.");
             }
 
             return RootBuilderLaunchCache{
@@ -3301,6 +3351,20 @@ namespace fluxora
             return normalizeExecutables(executables);
         }
 
+        void detectManagedToolKinds(std::vector<GameExecutable>& executables)
+        {
+            for (GameExecutable& executable : executables)
+            {
+                if (!executable.managedToolKind.empty())
+                {
+                    continue;
+                }
+                executable.managedToolKind = BodySlideIntegrationService::detectManagedToolKind(
+                    executable,
+                    std::filesystem::path(executable.executablePath));
+            }
+        }
+
         GameExecutable readExecutableObject(const JsonValue& value, int index)
         {
             if (!value.isObject())
@@ -3315,6 +3379,7 @@ namespace fluxora
                 readStringOrDefault(value, L"arguments"),
                 readStringOrDefault(value, L"workingDirectory")
             };
+            executable.managedToolKind = readStringOrDefault(value, L"managedToolKind");
 
             if (executable.executablePath.empty())
             {
@@ -3364,6 +3429,10 @@ namespace fluxora
             writer.field(L"executablePath", executable.executablePath);
             writer.field(L"arguments", executable.arguments);
             writer.field(L"workingDirectory", executable.workingDirectory);
+            if (!executable.managedToolKind.empty())
+            {
+                writer.field(L"managedToolKind", executable.managedToolKind);
+            }
             writer.endObject();
         }
 
@@ -4123,6 +4192,7 @@ namespace fluxora
         context.overwriteDirectory = settings.overwriteDirectory;
         std::vector<GameExecutable> executables =
             withDefaultGameExecutable(context, readExecutablesFromManifest(context.manifest));
+        detectManagedToolKinds(executables);
         resolveExecutableIconPaths(context, iconService_, executables);
         return executables;
     }
@@ -4137,6 +4207,7 @@ namespace fluxora
         context.modsDirectory = settings.modsDirectory;
         context.overwriteDirectory = settings.overwriteDirectory;
         std::vector<GameExecutable> normalized = normalizeExecutables(executables);
+        detectManagedToolKinds(normalized);
         writeManifestWithExecutables(context, normalized);
         resolveExecutableIconPaths(context, iconService_, normalized);
         logger_.write(LogLevel::Info, "Project executable list updated.");
@@ -4165,6 +4236,7 @@ namespace fluxora
         context.overwriteDirectory = settings.overwriteDirectory;
         std::vector<GameExecutable> executables =
             withDefaultGameExecutable(context, readExecutablesFromManifest(context.manifest));
+        detectManagedToolKinds(executables);
         const auto match = std::find_if(
             executables.begin(),
             executables.end(),
@@ -4224,9 +4296,11 @@ namespace fluxora
             else
             {
                 logger_.write(
-                    LogLevel::Warning,
-                    "Root Builder launch cache could not be prepared; launching backing executable directly: " +
+                    LogLevel::Error,
+                    "Root Builder launch cache resolution unexpectedly produced no cache; launch blocked: " +
                         toUtf8(resolvedExecutablePath.wstring()));
+                throw std::runtime_error(
+                    "Root Builder launch cache could not be prepared; launch blocked.");
             }
         }
 
@@ -4308,7 +4382,11 @@ namespace fluxora
             trackingMetadata.kind,
             trackingMetadata.expectedChildProcessNames,
             trackingMetadata.handoffDisplayName,
-            trackingMetadata.handoffTimeoutMs
+            trackingMetadata.handoffTimeoutMs,
+            readStringOrDefault(
+                context.manifest,
+                L"name",
+                context.projectDirectory.filename().wstring())
         };
     }
 

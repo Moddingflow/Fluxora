@@ -473,9 +473,11 @@ namespace fluxora::tests
 
         const std::filesystem::path skyUi = mods / L"SkyUI";
         const std::filesystem::path nemesis = mods / L"Nemesis Output";
+        const std::filesystem::path bodySlideOutput = mods / L"Generated Geometry";
         const std::filesystem::path patch = mods / L"My Custom Patch";
         writeTextFile(skyUi / L"interface" / L"skyui.swf", "ui");
         writeTextFile(nemesis / L"meshes" / L"actors" / L"behavior.hkx", "generated");
+        writeTextFile(bodySlideOutput / L"meshes" / L"actors" / L"body.nif", "bodyslide");
         writeTextFile(patch / L"Data" / L"MyPatch.esp", "patch");
         writeTextFile(profiles / L"Default" / L"plugins.txt", "*Skyrim.esm\n*MyPatch.esp\n");
         writeTextFile(profiles / L"Default" / L"loadorder.txt", "Skyrim.esm\nMyPatch.esp\n");
@@ -537,6 +539,12 @@ namespace fluxora::tests
                 }
                 },
                 InstalledModImportRecord{nemesis, L"Nemesis Output", {}, true, {}},
+                InstalledModImportRecord{
+                    bodySlideOutput,
+                    L"Generated Geometry",
+                    {},
+                    true,
+                    ModSourceRecord{L"generated-bodyslide"}},
                 InstalledModImportRecord{patch, L"My Custom Patch", L"1.0", true, {}}
             });
         InstanceMetadataStore::replaceProfileOrderItems(
@@ -561,7 +569,7 @@ namespace fluxora::tests
         EXPECT_EQ(exported.sourceArchiveCount, 1U);
         EXPECT_EQ(exported.bundledModCount, 0U);
         EXPECT_EQ(exported.packageType, L"recipe");
-        EXPECT_EQ(exported.generatedAssetCount, 1U);
+        EXPECT_EQ(exported.generatedAssetCount, 2U);
         EXPECT_EQ(exported.customPatchCount, 1U);
         EXPECT_GE(exported.customConfigCount, 3U);
         EXPECT_EQ(exported.installStepCount, 4U);
@@ -592,12 +600,26 @@ namespace fluxora::tests
         const FluxPackSummary inspected = service.inspectFluxPack(output);
         EXPECT_EQ(inspected.buildName, L"FluxPack Test Build");
         EXPECT_EQ(inspected.sourceArchiveCount, 1U);
-        EXPECT_EQ(inspected.generatedAssetCount, 1U);
+        EXPECT_EQ(inspected.generatedAssetCount, 2U);
         EXPECT_EQ(inspected.customPatchCount, 1U);
         EXPECT_GE(inspected.customConfigCount, 3U);
         EXPECT_EQ(inspected.installStepCount, 4U);
         EXPECT_TRUE(inspected.generatedAssetsIncluded);
         EXPECT_TRUE(inspected.installPlanAvailable);
+
+        const std::filesystem::path recipeWithoutGeneratedOutput =
+            temp.path() / L"FluxPack Test Build Recipe Without Generated.fluxpack";
+        const FluxPackSummary recipeWithoutGenerated = service.exportProject(FluxPackExportRequest{
+            config,
+            recipeWithoutGeneratedOutput,
+            false,
+            {},
+            FluxPackPackageType::Recipe
+        });
+        EXPECT_FALSE(recipeWithoutGenerated.generatedAssetsIncluded);
+        const std::string recipeWithoutGeneratedManifest =
+            FluxPackPackageReader(recipeWithoutGeneratedOutput).readManifest();
+        EXPECT_EQ(recipeWithoutGeneratedManifest.find("body.nif"), std::string::npos);
 
         const std::filesystem::path fullOutput = temp.path() / L"FluxPack Test Build Full.fluxpack";
         const FluxPackSummary full = service.exportProject(FluxPackExportRequest{
@@ -632,6 +654,8 @@ namespace fluxora::tests
             fullInstalled.projectDirectory / L"mods" / L"SkyUI" / L"interface" / L"skyui.swf"));
         EXPECT_TRUE(std::filesystem::is_regular_file(
             fullInstalled.projectDirectory / L"mods" / L"Nemesis Output" / L"meshes" / L"actors" / L"behavior.hkx"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            fullInstalled.projectDirectory / L"mods" / L"Generated Geometry" / L"meshes" / L"actors" / L"body.nif"));
         EXPECT_FALSE(fullInstalled.hasWarnings);
         const std::vector<InstalledModRecord> fullInstalledMods = InstanceMetadataStore::listInstalledMods(
             fullInstalled.projectDirectory,

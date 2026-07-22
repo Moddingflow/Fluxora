@@ -218,12 +218,14 @@ describe('settings workspace state', () => {
     expect(settingsSections.map((section) => section.id)).toEqual([
       'connections',
       'language',
+      'privacy',
       'transfer',
       'developers'
     ]);
     expect(settingsSections).toEqual([
       { id: 'connections', label: 'Connections', hint: '' },
       { id: 'language', label: 'Languages', hint: 'EN / RU / DE' },
+      { id: 'privacy', label: 'Privacy', hint: 'Microphone' },
       { id: 'transfer', label: 'Transfer', hint: 'MO2 import' },
       { id: 'developers', label: 'Для разработчиков', hint: 'Debug' }
     ]);

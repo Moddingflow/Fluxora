@@ -9,6 +9,7 @@
 #include <detours.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cwctype>
 #include <mutex>
@@ -30,12 +31,19 @@ namespace fluxora::vfs
             VfsTree tree;
             std::wstring targetLower;
             std::wstring overwrite;
+            std::wstring whiteoutRoot;
             std::vector<std::wstring> excludedRootNames;
         };
 
         std::vector<RuntimeMount> g_mounts;
         std::string g_hookDllAnsi;
         std::wstring g_configPath;
+        std::wstring g_operationId;
+        std::uint32_t g_preparationMs = 0;
+        std::size_t g_mountSourceCount = 0;
+        std::atomic_uint64_t g_redirectedWrites{0};
+        std::atomic_uint64_t g_whiteouts{0};
+        std::atomic_uint64_t g_errors{0};
         bool g_hooksInstalled = false;
 
         // Re-entrancy guard. While a hook is doing its work it inevitably calls
@@ -93,6 +101,65 @@ namespace fluxora::vfs
             if (base.empty()) return leaf;
             if (leaf.empty()) return base;
             return base + L"\\" + leaf;
+        }
+
+        std::wstring extendedWin32Path(const std::wstring& path)
+        {
+            if (path.rfind(L"\\\\?\\", 0) == 0 || path.rfind(L"\\??\\", 0) == 0 ||
+                path.size() < 248 || path.size() < 2 || path[1] != L':')
+            {
+                return path;
+            }
+            return L"\\\\?\\" + path;
+        }
+
+        void makeParentDirectories(const std::wstring& filePath);
+
+        std::wstring whiteoutPathForRel(const RuntimeMount& mount, const std::wstring& rel)
+        {
+            return mount.whiteoutRoot.empty() || rel.empty()
+                ? std::wstring()
+                : joinPath(mount.whiteoutRoot, rel);
+        }
+
+        void clearWhiteout(RuntimeMount& mount, const std::wstring& rel)
+        {
+            const std::wstring marker = whiteoutPathForRel(mount, rel);
+            if (!marker.empty())
+            {
+                const std::wstring nativeMarker = extendedWin32Path(marker);
+                DeleteFileW(nativeMarker.c_str());
+            }
+            mount.tree.notifyMutation(rel);
+        }
+
+        bool createWhiteout(RuntimeMount& mount, const std::wstring& rel)
+        {
+            const std::wstring marker = whiteoutPathForRel(mount, rel);
+            if (marker.empty())
+            {
+                return false;
+            }
+            makeParentDirectories(marker);
+            const std::wstring nativeMarker = extendedWin32Path(marker);
+            const HANDLE file = CreateFileW(
+                nativeMarker.c_str(),
+                GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr,
+                CREATE_ALWAYS,
+                FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
+                nullptr);
+            if (file == INVALID_HANDLE_VALUE)
+            {
+                ++g_errors;
+                return false;
+            }
+            FlushFileBuffers(file);
+            CloseHandle(file);
+            mount.tree.notifyMutation(rel);
+            ++g_whiteouts;
+            return true;
         }
 
         std::string toAnsi(const std::wstring& value)
@@ -435,6 +502,18 @@ namespace fluxora::vfs
             return true;
         }
 
+        bool trackedFileState(HANDLE handle, FileState& fileState)
+        {
+            std::scoped_lock lock(g_dirMutex);
+            const auto state = g_fileStates.find(handle);
+            if (state == g_fileStates.end())
+            {
+                return false;
+            }
+            fileState = state->second;
+            return fileState.mountIndex < g_mounts.size();
+        }
+
         // Resolve the absolute DOS path an OBJECT_ATTRIBUTES refers to. Handles
         // both fully qualified NT names and opens relative to a directory handle.
         bool dosPathFromObjectAttributes(POBJECT_ATTRIBUTES attributes, std::wstring& dosPath)
@@ -566,10 +645,12 @@ namespace fluxora::vfs
             {
                 if (directory[index] == L'\\' && index > 2)
                 {
-                    CreateDirectoryW(directory.substr(0, index).c_str(), nullptr);
+                    const std::wstring parent = extendedWin32Path(directory.substr(0, index));
+                    CreateDirectoryW(parent.c_str(), nullptr);
                 }
             }
-            CreateDirectoryW(directory.c_str(), nullptr);
+            const std::wstring nativeDirectory = extendedWin32Path(directory);
+            CreateDirectoryW(nativeDirectory.c_str(), nullptr);
         }
 
         std::wstring parentRelLower(const std::wstring& relLower)
@@ -585,7 +666,8 @@ namespace fluxora::vfs
                 return false;
             }
 
-            const DWORD attributes = GetFileAttributesW(path.c_str());
+            const std::wstring nativePath = extendedWin32Path(path);
+            const DWORD attributes = GetFileAttributesW(nativePath.c_str());
             return attributes != INVALID_FILE_ATTRIBUTES &&
                 (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         }
@@ -628,14 +710,17 @@ namespace fluxora::vfs
         // Copy-on-write into the writable overwrite overlay. Returns the path the
         // write should be redirected to, leaving every mod folder untouched.
         std::wstring writeRedirect(
-            const RuntimeMount& mount,
+            RuntimeMount& mount,
             const std::wstring& rel,
             bool fileKnown,
             const std::wstring& winner,
             ULONG disposition)
         {
+            ++g_redirectedWrites;
+            clearWhiteout(mount, rel);
             const std::wstring candidate = joinPath(mount.overwrite, rel);
-            if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES)
+            const std::wstring nativeCandidate = extendedWin32Path(candidate);
+            if (GetFileAttributesW(nativeCandidate.c_str()) != INVALID_FILE_ATTRIBUTES)
             {
                 return candidate;
             }
@@ -644,7 +729,8 @@ namespace fluxora::vfs
             if (fileKnown && !dispositionTruncates(disposition) && !winner.empty())
             {
                 // Read-modify-write: seed the overlay with the current contents.
-                CopyFileW(winner.c_str(), candidate.c_str(), TRUE);
+                const std::wstring nativeWinner = extendedWin32Path(winner);
+                CopyFileW(nativeWinner.c_str(), nativeCandidate.c_str(), TRUE);
             }
             return candidate;
         }
@@ -654,6 +740,7 @@ namespace fluxora::vfs
             bool redirect = false;
             std::wstring path;
             bool registerMerge = false;
+            bool notFound = false;
             std::size_t mountIndex = 0;
             std::wstring relLower;
         };
@@ -665,7 +752,7 @@ namespace fluxora::vfs
             bool writeAccess,
             bool directoryOpen)
         {
-            const RuntimeMount& mount = g_mounts[mountIndex];
+            RuntimeMount& mount = g_mounts[mountIndex];
             const std::wstring relN = VfsTree::normalizeRel(rel);
             const std::wstring relLower = VfsTree::toLower(relN);
             const VfsTree::PathInfo info = mount.tree.classify(relN);
@@ -697,12 +784,25 @@ namespace fluxora::vfs
                 }
                 return decision;
 
+            case VfsTree::PathInfo::Kind::Whiteout:
+                if (dispositionCreates(disposition) || writeAccess)
+                {
+                    decision.redirect = true;
+                    decision.path = writeRedirect(mount, relN, false, {}, disposition);
+                }
+                else
+                {
+                    decision.notFound = true;
+                }
+                return decision;
+
             case VfsTree::PathInfo::Kind::Unknown:
             default:
                 if (!mount.overwrite.empty())
                 {
                     const std::wstring candidate = joinPath(mount.overwrite, relN);
-                    const DWORD attributes = GetFileAttributesW(candidate.c_str());
+                    const std::wstring nativeCandidate = extendedWin32Path(candidate);
+                    const DWORD attributes = GetFileAttributesW(nativeCandidate.c_str());
                     if (attributes != INVALID_FILE_ATTRIBUTES)
                     {
                         decision.redirect = true;
@@ -717,7 +817,8 @@ namespace fluxora::vfs
                     if (dispositionCreates(disposition) || writeAccess)
                     {
                         const std::wstring realCandidate = joinPath(mount.tree.target(), relN);
-                        const DWORD realAttributes = GetFileAttributesW(realCandidate.c_str());
+                        const std::wstring nativeRealCandidate = extendedWin32Path(realCandidate);
+                        const DWORD realAttributes = GetFileAttributesW(nativeRealCandidate.c_str());
                         const bool realFileExists =
                             realAttributes != INVALID_FILE_ATTRIBUTES &&
                             (realAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
@@ -831,6 +932,12 @@ namespace fluxora::vfs
             g_mounts.clear();
             g_hookDllAnsi.clear();
             g_configPath.clear();
+            g_operationId.clear();
+            g_preparationMs = 0;
+            g_mountSourceCount = 0;
+            g_redirectedWrites = 0;
+            g_whiteouts = 0;
+            g_errors = 0;
             g_hooksInstalled = false;
         }
 
@@ -960,37 +1067,6 @@ namespace fluxora::vfs
             FindClose(find);
         }
 
-        bool hasPathSegment(const std::wstring& pathLower, std::wstring_view segment)
-        {
-            if (pathLower == segment)
-            {
-                return true;
-            }
-
-            const std::wstring token = L"\\" + std::wstring(segment);
-            return pathLower.size() >= token.size() &&
-                (pathLower.ends_with(token) || pathLower.find(token + L"\\") != std::wstring::npos);
-        }
-
-        bool shouldLogDiagnosticEnumeration(const DirEnumState& state)
-        {
-            if (state.mountIndex >= g_mounts.size())
-            {
-                return false;
-            }
-
-            const std::wstring& target = g_mounts[state.mountIndex].targetLower;
-            if (state.relLower == L"skse\\plugins" ||
-                state.relLower == L"dllplugins" ||
-                hasPathSegment(target, L"__mo_saves") ||
-                hasPathSegment(target, L"saves"))
-            {
-                return true;
-            }
-
-            return false;
-        }
-
         void buildEnumEntries(DirEnumState& state)
         {
             state.entries.clear();
@@ -1046,18 +1122,6 @@ namespace fluxora::vfs
                         return !matches(child.nameLower);
                     }),
                 state.entries.end());
-
-            if (shouldLogDiagnosticEnumeration(state))
-            {
-                const std::wstring rel = state.relLower.empty() ? L"<root>" : state.relLower;
-                const std::wstring pattern = state.pattern.empty() ? L"<all>" : state.pattern;
-                VfsLog::writef(
-                    L"VfsEnum target=%s rel=%s pattern=%s entries=%zu",
-                    g_mounts[state.mountIndex].tree.target().c_str(),
-                    rel.c_str(),
-                    pattern.c_str(),
-                    state.entries.size());
-            }
 
             state.index = 0;
             state.built = true;
@@ -1384,13 +1448,14 @@ namespace fluxora::vfs
                 return false;
             }
 
-            const RuntimeMount& mount = g_mounts[match.mountIndex];
+            RuntimeMount& mount = g_mounts[match.mountIndex];
             if (mount.overwrite.empty())
             {
                 return false;
             }
 
             overwritePath = overwritePathForRel(mount, VfsTree::normalizeRel(match.rel));
+            clearWhiteout(mount, VfsTree::normalizeRel(match.rel));
             makeParentDirectories(overwritePath);
             return true;
         }
@@ -1525,6 +1590,15 @@ namespace fluxora::vfs
             }
 
             NTSTATUS status;
+            if (handled && decision.notFound)
+            {
+                if (IoStatusBlock != nullptr)
+                {
+                    IoStatusBlock->Status = StatusObjectNameNotFound;
+                    IoStatusBlock->Information = 0;
+                }
+                return StatusObjectNameNotFound;
+            }
             if (handled && decision.redirect)
             {
                 RedirectScope redirect(ObjectAttributes, decision.path);
@@ -1548,6 +1622,14 @@ namespace fluxora::vfs
                 else
                 {
                     registerFileHandle(*FileHandle, decision.mountIndex, decision.relLower);
+                }
+                if ((CreateOptions & FILE_DELETE_ON_CLOSE) != 0 &&
+                    !createWhiteout(g_mounts[decision.mountIndex], decision.relLower))
+                {
+                    VfsLog::writef(
+                        L"Could not persist create-delete-on-close whiteout: mount=%zu rel=%s",
+                        decision.mountIndex,
+                        decision.relLower.c_str());
                 }
             }
 
@@ -1588,6 +1670,15 @@ namespace fluxora::vfs
             }
 
             NTSTATUS status;
+            if (handled && decision.notFound)
+            {
+                if (IoStatusBlock != nullptr)
+                {
+                    IoStatusBlock->Status = StatusObjectNameNotFound;
+                    IoStatusBlock->Information = 0;
+                }
+                return StatusObjectNameNotFound;
+            }
             if (handled && decision.redirect)
             {
                 RedirectScope redirect(ObjectAttributes, decision.path);
@@ -1609,6 +1700,14 @@ namespace fluxora::vfs
                 else
                 {
                     registerFileHandle(*FileHandle, decision.mountIndex, decision.relLower);
+                }
+                if ((OpenOptions & FILE_DELETE_ON_CLOSE) != 0 &&
+                    !createWhiteout(g_mounts[decision.mountIndex], decision.relLower))
+                {
+                    VfsLog::writef(
+                        L"Could not persist open-delete-on-close whiteout: mount=%zu rel=%s",
+                        decision.mountIndex,
+                        decision.relLower.c_str());
                 }
             }
 
@@ -1642,6 +1741,10 @@ namespace fluxora::vfs
                     RedirectScope redirect(ObjectAttributes, decision.path);
                     return Real_NtQueryAttributesFile(ObjectAttributes, FileInformation);
                 }
+                if (decision.notFound)
+                {
+                    return StatusObjectNameNotFound;
+                }
             }
 
             return Real_NtQueryAttributesFile(ObjectAttributes, FileInformation);
@@ -1673,6 +1776,10 @@ namespace fluxora::vfs
                 {
                     RedirectScope redirect(ObjectAttributes, decision.path);
                     return Real_NtQueryFullAttributesFile(ObjectAttributes, FileInformation);
+                }
+                if (decision.notFound)
+                {
+                    return StatusObjectNameNotFound;
                 }
             }
 
@@ -1823,6 +1930,8 @@ namespace fluxora::vfs
             }
 
             Guard guard;
+            FileState trackedState;
+            const bool tracked = trackedFileState(FileHandle, trackedState);
             if (FileInformationClass == FileRenameInformation ||
                 FileInformationClass == FileRenameInformationEx)
             {
@@ -1834,17 +1943,50 @@ namespace fluxora::vfs
                         FileInformationClass,
                         rewritten))
                 {
-                    return Real_NtSetInformationFile(
+                    const NTSTATUS status = Real_NtSetInformationFile(
                         FileHandle,
                         IoStatusBlock,
                         rewritten.data(),
                         rewritten.size(),
                         FileInformationClass);
+                    if (status == StatusSuccess && tracked &&
+                        !createWhiteout(g_mounts[trackedState.mountIndex], trackedState.relLower))
+                    {
+                        VfsLog::writef(
+                            L"Could not persist rename whiteout: mount=%zu rel=%s",
+                            trackedState.mountIndex,
+                            trackedState.relLower.c_str());
+                    }
+                    return status;
                 }
             }
 
-            return Real_NtSetInformationFile(
+            bool deleteRequested = false;
+            if (FileInformationClass == FileDispositionInformation &&
+                FileInformation != nullptr && Length >= sizeof(FileDispositionInformationData))
+            {
+                deleteRequested = static_cast<const FileDispositionInformationData*>(FileInformation)->DeleteFile != 0;
+            }
+            else if (FileInformationClass == FileDispositionInformationEx &&
+                FileInformation != nullptr && Length >= sizeof(FileDispositionInformationExData))
+            {
+                constexpr ULONG fileDispositionDelete = 0x00000001;
+                deleteRequested =
+                    (static_cast<const FileDispositionInformationExData*>(FileInformation)->Flags &
+                        fileDispositionDelete) != 0;
+            }
+
+            const NTSTATUS status = Real_NtSetInformationFile(
                 FileHandle, IoStatusBlock, FileInformation, Length, FileInformationClass);
+            if (status == StatusSuccess && deleteRequested && tracked &&
+                !createWhiteout(g_mounts[trackedState.mountIndex], trackedState.relLower))
+            {
+                VfsLog::writef(
+                    L"Could not persist delete-on-close whiteout: mount=%zu rel=%s",
+                    trackedState.mountIndex,
+                    trackedState.relLower.c_str());
+            }
+            return status;
         }
 
         NTSTATUS NTAPI Hook_NtDeleteFile(POBJECT_ATTRIBUTES ObjectAttributes)
@@ -1857,22 +1999,49 @@ namespace fluxora::vfs
             Guard guard;
 
             std::wstring dosPath;
-            std::wstring redirectedDosPath;
-            if (dosPathFromObjectAttributes(ObjectAttributes, dosPath) &&
-                overwritePathForMountedDosPath(dosPath, redirectedDosPath) &&
-                GetFileAttributesW(redirectedDosPath.c_str()) != INVALID_FILE_ATTRIBUTES)
+            TargetMatch match;
+            if (!dosPathFromObjectAttributes(ObjectAttributes, dosPath) ||
+                !underMountedTarget(dosPath, match) || match.mountIndex >= g_mounts.size())
             {
-                RedirectScope redirect(ObjectAttributes, redirectedDosPath);
                 return Real_NtDeleteFile(ObjectAttributes);
             }
 
-            TargetMatch match;
-            if (underMountedTarget(dosPath, match))
+            RuntimeMount& mount = g_mounts[match.mountIndex];
+            const std::wstring rel = VfsTree::normalizeRel(match.rel);
+            if (mount.tree.classify(rel).kind == VfsTree::PathInfo::Kind::Whiteout)
             {
                 return StatusObjectNameNotFound;
             }
 
-            return Real_NtDeleteFile(ObjectAttributes);
+            const std::wstring redirectedDosPath = overwritePathForRel(mount, rel);
+            const std::wstring nativeRedirectedPath = extendedWin32Path(redirectedDosPath);
+            const DWORD overwriteAttributes = GetFileAttributesW(nativeRedirectedPath.c_str());
+            if (overwriteAttributes != INVALID_FILE_ATTRIBUTES)
+            {
+                RedirectScope redirect(ObjectAttributes, redirectedDosPath);
+                const NTSTATUS status = Real_NtDeleteFile(ObjectAttributes);
+                if (status != StatusSuccess)
+                {
+                    return status;
+                }
+            }
+            else
+            {
+                const VfsTree::PathInfo info = mount.tree.classify(rel);
+                const std::wstring realPath = joinPath(mount.tree.target(), rel);
+                const std::wstring nativeRealPath = extendedWin32Path(realPath);
+                const DWORD realAttributes = GetFileAttributesW(nativeRealPath.c_str());
+                if (info.kind == VfsTree::PathInfo::Kind::Unknown && realAttributes == INVALID_FILE_ATTRIBUTES)
+                {
+                    return StatusObjectNameNotFound;
+                }
+            }
+
+            if (!createWhiteout(mount, rel))
+            {
+                VfsLog::writef(L"Could not persist direct-delete whiteout: rel=%s", rel.c_str());
+            }
+            return StatusSuccess;
         }
 
         NTSTATUS NTAPI Hook_NtClose(HANDLE Handle)
@@ -1998,6 +2167,7 @@ namespace fluxora::vfs
             // If the child cannot be injected, launching it normally would silently
             // drop the MO2-style virtual view for script extenders and launchers.
             const DWORD injectionError = GetLastError();
+            ++g_errors;
             VfsLog::writef(
                 L"Child injection failed (error %lu); blocked unvirtualized child launch.", injectionError);
             SetLastError(injectionError);
@@ -2112,6 +2282,7 @@ namespace fluxora::vfs
             }
 
             const DWORD injectionError = GetLastError();
+            ++g_errors;
             VfsLog::writef(
                 L"Child injection failed (error %lu); blocked unvirtualized child launch.", injectionError);
             SetLastError(injectionError);
@@ -2123,6 +2294,7 @@ namespace fluxora::vfs
         {
             if (real == nullptr)
             {
+                ++g_errors;
                 VfsLog::writef(L"Hook target was not found: %S", name);
                 return !required;
             }
@@ -2130,6 +2302,7 @@ namespace fluxora::vfs
             const LONG result = DetourAttach(reinterpret_cast<PVOID*>(&real), reinterpret_cast<PVOID>(hook));
             if (result != NO_ERROR)
             {
+                ++g_errors;
                 VfsLog::writef(L"Failed to attach hook: %S (error %ld)", name, result);
                 return !required;
             }
@@ -2150,6 +2323,12 @@ namespace fluxora::vfs
     bool installHooks(const VfsConfig& config)
     {
         g_mounts.clear();
+        g_operationId = config.operationId.empty() ? L"<none>" : config.operationId;
+        g_preparationMs = config.preparationMs;
+        g_mountSourceCount = 0;
+        g_redirectedWrites = 0;
+        g_whiteouts = 0;
+        g_errors = 0;
         for (const VfsMountConfig& mountConfig : config.mounts)
         {
             if (!mountConfig.isValid() ||
@@ -2162,7 +2341,9 @@ namespace fluxora::vfs
             mount.tree.build(mountConfig);
             mount.targetLower = VfsTree::toLower(mount.tree.target());
             mount.overwrite = mount.tree.overwrite();
+            mount.whiteoutRoot = mount.tree.whiteoutRoot();
             mount.excludedRootNames = normalizedExcludedRootNames(mountConfig.excludedRootNames);
+            g_mountSourceCount += mountConfig.mods.size();
             g_mounts.push_back(std::move(mount));
         }
 
@@ -2242,7 +2423,12 @@ namespace fluxora::vfs
             return false;
         }
 
-        VfsLog::write(L"Virtual file system hooks installed.");
+        VfsLog::writef(
+            L"VFS session started operationId=%s preparationMs=%lu mounts=%zu modSources=%zu.",
+            g_operationId.c_str(),
+            static_cast<unsigned long>(g_preparationMs),
+            g_mounts.size(),
+            g_mountSourceCount);
         g_hooksInstalled = true;
         return true;
     }
@@ -2274,6 +2460,17 @@ namespace fluxora::vfs
         detach(Real_CreateProcessA, &Hook_CreateProcessA);
 
         DetourTransactionCommit();
+
+        VfsLog::writef(
+            L"VFS session summary operationId=%s preparationMs=%lu mounts=%zu modSources=%zu "
+            L"redirectedWrites=%llu whiteouts=%llu errors=%llu.",
+            g_operationId.empty() ? L"<none>" : g_operationId.c_str(),
+            static_cast<unsigned long>(g_preparationMs),
+            g_mounts.size(),
+            g_mountSourceCount,
+            static_cast<unsigned long long>(g_redirectedWrites.load()),
+            static_cast<unsigned long long>(g_whiteouts.load()),
+            static_cast<unsigned long long>(g_errors.load()));
 
         clearRuntimeState();
     }

@@ -2,6 +2,7 @@
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
 #include "FluxoraCore/Services/ExecutableService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
+#include "FluxoraCore/Services/VfsMountPlan.hpp"
 #include "FluxoraCore/Storage/InstanceMetadataStore.hpp"
 #include "FluxoraCore/Support/JsonReader.hpp"
 
@@ -455,6 +456,45 @@ namespace fluxora::tests
             normalized(warm.resolvedExecutablePath),
             normalized(cold.resolvedExecutablePath));
         EXPECT_EQ(std::filesystem::last_write_time(manifest), before);
+    }
+
+    TEST(ExecutableServiceTests, RootBuilderLaunchCacheMigratesV1AndRecoversRuntimeMutationsBeforeSync)
+    {
+        TempDirectory temp;
+        const RootBuilderLaunchCacheTestProject paths = createRootBuilderLaunchCacheTestProject(temp);
+
+        const ResolvedExecutableLaunch cold = resolveSkseExecutable(paths.config);
+        ASSERT_FALSE(cold.rootBuilderLaunchCacheDirectory.empty());
+        const std::filesystem::path manifest =
+            cold.rootBuilderLaunchCacheDirectory / L".fluxora-root-launch-cache.json";
+        std::string legacyManifest = readTextFile(manifest);
+        const std::size_t schema = legacyManifest.find("\"schemaVersion\":2");
+        ASSERT_NE(schema, std::string::npos);
+        legacyManifest.replace(schema, std::string("\"schemaVersion\":2").size(), "\"schemaVersion\":1");
+        const std::size_t baselineFiles = legacyManifest.find("\"baselineFiles\"");
+        ASSERT_NE(baselineFiles, std::string::npos);
+        legacyManifest.replace(baselineFiles, std::string("\"baselineFiles\"").size(), "\"files\"");
+        writeTextFile(manifest, legacyManifest);
+
+        const std::filesystem::path cachePlugins =
+            cold.rootBuilderLaunchCacheDirectory / L"Data" / L"SKSE" / L"Plugins";
+        writeTextFile(cachePlugins / L"shared.dll", "runtime-changed");
+        writeTextFile(cachePlugins / L"SmoothCam.json", "selected-preset");
+        ASSERT_TRUE(std::filesystem::remove(cachePlugins / L"high-only.dll"));
+
+        const ResolvedExecutableLaunch warm = resolveSkseExecutable(paths.config);
+
+        EXPECT_EQ(
+            normalized(warm.rootBuilderLaunchCacheDirectory),
+            normalized(cold.rootBuilderLaunchCacheDirectory));
+        EXPECT_EQ(readTextFile(paths.overwrite / L"SKSE" / L"Plugins" / L"shared.dll"), "runtime-changed");
+        EXPECT_EQ(readTextFile(paths.overwrite / L"SKSE" / L"Plugins" / L"SmoothCam.json"), "selected-preset");
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            paths.project / L".flow" / L"vfs" / L"whiteouts" /
+                L"primary-content" / L"SKSE" / L"Plugins" / L"high-only.dll"));
+        const std::string migratedManifest = readTextFile(manifest);
+        EXPECT_NE(migratedManifest.find("\"schemaVersion\":2"), std::string::npos);
+        EXPECT_NE(migratedManifest.find("\"baselineFiles\""), std::string::npos);
     }
 
     TEST(ExecutableServiceTests, RootBuilderLaunchCacheRefreshesAddedRuntimeFileAfterWarmManifestCheck)
@@ -1099,6 +1139,105 @@ namespace fluxora::tests
         EXPECT_EQ(readTextFile(resolved.resolvedExecutablePath), "MZ alpha winner");
     }
 
+    TEST(ExecutableServiceTests, FoundationAcceptanceRecoversV1RuntimeFilesAndBenchmarksMountPlanWhenConfigured)
+    {
+        wchar_t configBuffer[32'768]{};
+        const DWORD configLength = GetEnvironmentVariableW(
+            L"FLUXORA_FOUNDATION_ACCEPTANCE_CONFIG",
+            configBuffer,
+            static_cast<DWORD>(std::size(configBuffer)));
+        if (configLength == 0 || configLength >= std::size(configBuffer))
+        {
+            GTEST_SKIP() << "Set FLUXORA_FOUNDATION_ACCEPTANCE_CONFIG for the local real-build acceptance run.";
+        }
+
+        const std::filesystem::path config(configBuffer);
+        ASSERT_TRUE(std::filesystem::is_regular_file(config));
+        Logger::setOperationId(L"foundation-vfs-recovery-acceptance");
+        Logger logger;
+        BuildPathSettingsService pathSettings(logger);
+        ExecutableIconService iconService(logger);
+        ExecutableService service(logger, iconService, pathSettings);
+
+        const ResolvedExecutableLaunch resolved = service.resolveExecutable(
+            config,
+            L"nvot",
+            L"Foundation Edition");
+        ASSERT_FALSE(resolved.rootBuilderLaunchCacheDirectory.empty());
+        ASSERT_TRUE(resolved.contentLayoutRules.has_value());
+        ASSERT_TRUE(resolved.vfsRules.has_value());
+        EXPECT_GE(resolved.activeProfileMods.size(), 600U);
+
+        const std::filesystem::path overwrite = resolved.projectDirectory / L"overwrite";
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            overwrite / L"SKSE/Plugins/SmoothCam.json"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            resolved.rootBuilderLaunchCacheDirectory / L"Data/SKSE/Plugins/SmoothCam.json"));
+        const std::string manifest = readTextFile(
+            resolved.rootBuilderLaunchCacheDirectory / L".fluxora-root-launch-cache.json");
+        EXPECT_NE(manifest.find("\"schemaVersion\":2"), std::string::npos);
+        EXPECT_NE(manifest.find("\"baselineFiles\":"), std::string::npos);
+
+        const auto measureMountPlan = [&resolved, &logger](BuildPathSettingsService& settings)
+        {
+            std::vector<VfsActiveMod> mods;
+            mods.reserve(resolved.activeProfileMods.size());
+            for (const ExecutableLaunchMod& mod : resolved.activeProfileMods)
+            {
+                mods.push_back(VfsActiveMod{mod.path, mod.name, mod.contentFingerprint});
+            }
+            const auto started = std::chrono::steady_clock::now();
+            const VfsGameRootMountPlan plan = buildVfsGameRootMountPlan(
+                logger,
+                std::move(mods),
+                settings,
+                resolved.projectDirectory,
+                resolved.gamePath,
+                L"Foundation Edition",
+                resolved.gameCapabilities,
+                resolved.vfsRules.value(),
+                resolved.contentLayoutRules.value());
+            const long long elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - started).count();
+            EXPECT_FALSE(plan.mounts.empty());
+            EXPECT_EQ(plan.activeMods.size(), resolved.activeProfileMods.size());
+            return elapsed;
+        };
+
+        std::vector<long long> coldSamplesUs;
+        std::vector<long long> warmSamplesUs;
+        for (int run = 0; run < 5; ++run)
+        {
+            BuildPathSettingsService coldSettings(logger);
+            coldSamplesUs.push_back(measureMountPlan(coldSettings));
+        }
+        for (int run = 0; run < 5; ++run)
+        {
+            warmSamplesUs.push_back(measureMountPlan(pathSettings));
+        }
+        std::sort(coldSamplesUs.begin(), coldSamplesUs.end());
+        std::sort(warmSamplesUs.begin(), warmSamplesUs.end());
+        constexpr long long historicalMountPlanUs = 40'609;
+        const long long coldMedianUs = coldSamplesUs[coldSamplesUs.size() / 2];
+        const long long warmMedianUs = warmSamplesUs[warmSamplesUs.size() / 2];
+        std::cout << "Foundation VFS cold mount-plan samples us:";
+        for (const long long sample : coldSamplesUs)
+        {
+            std::cout << ' ' << sample;
+        }
+        std::cout << "; median=" << coldMedianUs << '\n';
+        std::cout << "Foundation VFS warm mount-plan samples us:";
+        for (const long long sample : warmSamplesUs)
+        {
+            std::cout << ' ' << sample;
+        }
+        std::cout << "; median=" << warmMedianUs
+                  << "; historical=" << historicalMountPlanUs << '\n';
+        EXPECT_LE(coldMedianUs, historicalMountPlanUs * 110 / 100);
+        EXPECT_LE(warmMedianUs, historicalMountPlanUs * 110 / 100);
+        Logger::clearOperationId();
+    }
+
     TEST(ExecutableServiceTests, RootBuilderLaunchCacheRefusesPreexistingJunction)
     {
         TempDirectory temp;
@@ -1161,10 +1300,9 @@ namespace fluxora::tests
         ExecutableIconService iconService(logger);
         ExecutableService service(logger, iconService, pathSettings);
 
-        const ResolvedExecutableLaunch resolved = service.resolveExecutable(config, L"skse");
-
-        EXPECT_TRUE(resolved.rootBuilderLaunchCacheDirectory.empty());
-        EXPECT_EQ(normalized(resolved.resolvedExecutablePath), normalized(skseLoader));
+        EXPECT_THROW(
+            static_cast<void>(service.resolveExecutable(config, L"skse")),
+            std::runtime_error);
         EXPECT_EQ(readTextFile(outside / L"sentinel.txt"), "keep");
         EXPECT_FALSE(std::filesystem::exists(outside / L"skse64_loader.exe"));
 

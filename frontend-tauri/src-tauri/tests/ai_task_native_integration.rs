@@ -118,7 +118,7 @@ fn text_turn(text: &str) -> Value {
 }
 
 fn read_http_request(stream: &mut TcpStream) -> Option<(String, Value)> {
-    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(30))).ok()?;
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 4096];
     let header_end = loop {
@@ -132,6 +132,10 @@ fn read_http_request(stream: &mut TcpStream) -> Option<(String, Value)> {
         }
     };
     let headers = String::from_utf8_lossy(&bytes[..header_end]).to_ascii_lowercase();
+    if headers.lines().any(|line| line.trim() == "expect: 100-continue") {
+        stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").ok()?;
+        stream.flush().ok()?;
+    }
     let content_length = headers
         .lines()
         .find_map(|line| line.strip_prefix("content-length:"))
@@ -169,33 +173,30 @@ fn write_http_response(stream: &mut TcpStream, body: Value) {
 impl MockGeminiGateway {
     fn start() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock Gemini gateway");
-        listener
-            .set_nonblocking(true)
-            .expect("set mock gateway nonblocking");
         let address = listener.local_addr().expect("mock gateway address");
         let stopping = Arc::new(AtomicBool::new(false));
         let worker_stopping = stopping.clone();
         let methods = Arc::new(Mutex::new(Vec::new()));
         let worker_methods = methods.clone();
+        let generation = Arc::new(Mutex::new(0_u8));
+        let worker_generation = generation.clone();
         let worker = thread::spawn(move || {
-            let mut generation = 0_u8;
             while !worker_stopping.load(Ordering::Relaxed) {
                 let (mut stream, _) = match listener.accept() {
                     Ok(connection) => connection,
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(5));
-                        continue;
-                    }
-                    Err(_) => break,
+                    Err(_) => continue,
                 };
-                let Some((method, body)) = read_http_request(&mut stream) else {
-                    continue;
-                };
-                worker_methods
-                    .lock()
-                    .expect("record mock method")
-                    .push(method.clone());
-                let response = match method.as_str() {
+                let request_methods = worker_methods.clone();
+                let request_generation = worker_generation.clone();
+                thread::spawn(move || {
+                    let Some((method, body)) = read_http_request(&mut stream) else {
+                        return;
+                    };
+                    request_methods
+                        .lock()
+                        .expect("record mock method")
+                        .push(method.clone());
+                    let response = match method.as_str() {
                     "" => json!({
                         "available": true,
                         "providerId": "gemini",
@@ -207,11 +208,26 @@ impl MockGeminiGateway {
                     }),
                     "counttokens" => json!({ "totalTokens": 512 }),
                     "generatecontent" => {
-                        let current = generation;
-                        generation = generation.saturating_add(1);
+                        let current = {
+                            let mut generation = request_generation
+                                .lock()
+                                .expect("advance mock generation");
+                            let current = *generation;
+                            *generation = generation.saturating_add(1);
+                            current
+                        };
                         match current {
                             0 => text_turn("You can locate and edit the file manually."),
                             1 => function_turn(
+                                "declare-goal",
+                                "local_execution_declare_goal",
+                                json!({
+                                    "mode": "repair",
+                                    "origin": "explicit",
+                                    "requestedOutcome": "Set Community Shaders Menu.ToggleKey to PageDown and verify the managed override."
+                                }),
+                            ),
+                            2 => function_turn(
                                 "discover",
                                 "local_files_discover",
                                 json!({
@@ -222,14 +238,14 @@ impl MockGeminiGateway {
                                     "semanticKeys": ["Menu.ToggleKey"]
                                 }),
                             ),
-                            2 => function_turn(
+                            3 => function_turn(
                                 "search-exact",
                                 "local_files_search",
                                 json!({
                                     "query": "Cabbage CS Preset/SKSE/Plugins/CommunityShaders/SettingsUser.json"
                                 }),
                             ),
-                            3 => {
+                            4 => {
                                 let file_ref = last_string(&body, "fileRef");
                                 function_turn(
                                     "read-range-1",
@@ -237,7 +253,7 @@ impl MockGeminiGateway {
                                     json!({ "fileRef": file_ref, "startLine": 1, "maxLines": 3 }),
                                 )
                             }
-                            4 => function_turn(
+                            5 => function_turn(
                                 "read-range-2",
                                 "local_text_read",
                                 json!({
@@ -246,12 +262,12 @@ impl MockGeminiGateway {
                                     "maxLines": 3
                                 }),
                             ),
-                            5 => function_turn(
+                            6 => function_turn(
                                 "search-toggle-text",
                                 "local_text_search",
                                 json!({ "query": "ToggleKey" }),
                             ),
-                            6 => function_turn(
+                            7 => function_turn(
                                 "query-toggle",
                                 "local_json_query",
                                 json!({
@@ -259,7 +275,7 @@ impl MockGeminiGateway {
                                     "pointer": "/Menu/ToggleKey"
                                 }),
                             ),
-                            7 => function_turn(
+                            8 => function_turn(
                                 "inspect-recipe",
                                 "local_config_inspect_recipe",
                                 json!({
@@ -268,7 +284,7 @@ impl MockGeminiGateway {
                                     "requestedValue": "PageDown"
                                 }),
                             ),
-                            8 => function_turn(
+                            9 => function_turn(
                                 "stage-toggle",
                                 "local_json_stage_set_pointer",
                                 json!({
@@ -281,15 +297,209 @@ impl MockGeminiGateway {
                                     "format": "json"
                                 }),
                             ),
-                            9 => function_turn("commit", "local_files_commit", json!({})),
-                            _ => text_turn(
+                            10 => function_turn("commit", "local_files_commit", json!({})),
+                            11 => text_turn(
                                 "Готово: PageDown записан и проверен в Fluxora AI Overrides.",
                             ),
+                            12 => function_turn(
+                                "declare-implicit-audio-goal",
+                                "local_execution_declare_goal",
+                                json!({
+                                    "mode": "repair",
+                                    "origin": "implicit",
+                                    "requestedOutcome": "Reduce the painfully loud battle music using the single safe reversible build setting."
+                                }),
+                            ),
+                            13 => function_turn(
+                                "discover-audio-ini",
+                                "local_files_discover",
+                                json!({
+                                    "scopes": ["build"],
+                                    "extensions": [".ini"],
+                                    "configHints": ["AudioMixer.ini"],
+                                    "semanticKeys": ["BattleMusicVolume"]
+                                }),
+                            ),
+                            14 => function_turn(
+                                "search-audio-ini",
+                                "local_files_search",
+                                json!({ "query": "SKSE/Plugins/AudioMixer.ini" }),
+                            ),
+                            15 => function_turn(
+                                "read-audio-ini",
+                                "local_text_read",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "startLine": 1,
+                                    "maxLines": 16
+                                }),
+                            ),
+                            16 => function_turn(
+                                "query-audio-volume",
+                                "local_ini_query",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "section": "Audio",
+                                    "key": "BattleMusicVolume"
+                                }),
+                            ),
+                            17 => function_turn(
+                                "stage-audio-volume",
+                                "local_ini_stage_set_key",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "revision": last_string(&body, "indexRevision"),
+                                    "baseSha256": last_string(&body, "sha256"),
+                                    "section": "Audio",
+                                    "key": "BattleMusicVolume",
+                                    "expectedValue": "1.0",
+                                    "value": "0.35",
+                                    "operation": "set"
+                                }),
+                            ),
+                            18 => function_turn("commit-audio", "local_files_commit", json!({})),
+                            19 => text_turn(
+                                "Done: the battle-music volume was reduced in a verified managed override.",
+                            ),
+                            20 => function_turn(
+                                "declare-ambiguous-audio-goal",
+                                "local_execution_declare_goal",
+                                json!({
+                                    "mode": "repair",
+                                    "origin": "implicit",
+                                    "requestedOutcome": "Reduce the painfully loud music after identifying which of the two plausible volume controls the user means."
+                                }),
+                            ),
+                            21 => function_turn(
+                                "discover-dual-audio-ini",
+                                "local_files_discover",
+                                json!({
+                                    "scopes": ["build"],
+                                    "extensions": [".ini"],
+                                    "configHints": ["DualAudio.ini"],
+                                    "semanticKeys": ["CombatVolume", "AmbientVolume"]
+                                }),
+                            ),
+                            22 => function_turn(
+                                "search-dual-audio-ini",
+                                "local_files_search",
+                                json!({ "query": "SKSE/Plugins/DualAudio.ini" }),
+                            ),
+                            23 => function_turn(
+                                "read-dual-audio-ini",
+                                "local_text_read",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "startLine": 1,
+                                    "maxLines": 16
+                                }),
+                            ),
+                            24 => function_turn(
+                                "ask-audio-choice",
+                                "local_execution_request_input",
+                                json!({
+                                    "question": "Should Fluxora reduce the first setting (combat music) or the second setting (ambient music)?"
+                                }),
+                            ),
+                            25 => function_turn(
+                                "continue-ambiguous-audio-goal",
+                                "local_execution_declare_goal",
+                                json!({
+                                    "mode": "repair",
+                                    "origin": "continuation",
+                                    "requestedOutcome": "Reduce the first setting, combat music, and verify the reversible managed override."
+                                }),
+                            ),
+                            26 => function_turn(
+                                "rediscover-dual-audio-ini",
+                                "local_files_discover",
+                                json!({
+                                    "scopes": ["build"],
+                                    "extensions": [".ini"],
+                                    "configHints": ["DualAudio.ini"],
+                                    "semanticKeys": ["CombatVolume"]
+                                }),
+                            ),
+                            27 => function_turn(
+                                "research-dual-audio-exact",
+                                "local_files_search",
+                                json!({ "query": "SKSE/Plugins/DualAudio.ini" }),
+                            ),
+                            28 => function_turn(
+                                "reread-dual-audio-ini",
+                                "local_text_read",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "startLine": 1,
+                                    "maxLines": 16
+                                }),
+                            ),
+                            29 => function_turn(
+                                "query-combat-volume",
+                                "local_ini_query",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "section": "Audio",
+                                    "key": "CombatVolume"
+                                }),
+                            ),
+                            30 => function_turn(
+                                "stage-combat-volume",
+                                "local_ini_stage_set_key",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "revision": last_string(&body, "indexRevision"),
+                                    "baseSha256": last_string(&body, "sha256"),
+                                    "section": "Audio",
+                                    "key": "CombatVolume",
+                                    "expectedValue": "1.0",
+                                    "value": "0.35",
+                                    "operation": "set"
+                                }),
+                            ),
+                            31 => function_turn("commit-combat-volume", "local_files_commit", json!({})),
+                            32 => text_turn(
+                                "Done: combat music was reduced and verified in the managed override.",
+                            ),
+                            33 => function_turn(
+                                "declare-unsupported-config-goal",
+                                "local_execution_declare_goal",
+                                json!({
+                                    "mode": "repair",
+                                    "origin": "implicit",
+                                    "requestedOutcome": "Correct the bad volume in the unsupported binary config if Fluxora can do so safely."
+                                }),
+                            ),
+                            34 => function_turn(
+                                "discover-unsupported-config",
+                                "local_files_discover",
+                                json!({
+                                    "scopes": ["build"],
+                                    "extensions": [".ini"],
+                                    "configHints": ["UnsupportedAudio.ini"]
+                                }),
+                            ),
+                            35 => function_turn(
+                                "search-unsupported-config",
+                                "local_files_search",
+                                json!({ "query": "SKSE/Plugins/UnsupportedAudio.ini" }),
+                            ),
+                            36 => function_turn(
+                                "read-unsupported-config",
+                                "local_text_read",
+                                json!({
+                                    "fileRef": last_string(&body, "fileRef"),
+                                    "startLine": 1,
+                                    "maxLines": 16
+                                }),
+                            ),
+                            _ => text_turn("This unsupported file cannot be changed safely."),
                         }
                     }
                     _ => json!({}),
-                };
-                write_http_response(&mut stream, response);
+                    };
+                    write_http_response(&mut stream, response);
+                });
             }
         });
         Self {
@@ -380,6 +590,9 @@ fn main() {
     let gateway = MockGeminiGateway::start();
 
     let _app_data = EnvGuard::set("APPDATA", fixture.path.join("AppData"));
+    let app_root = fixture.path.join("AppRoot");
+    std::fs::create_dir_all(&app_root).expect("create fixture app root");
+    let _app_root = EnvGuard::set("FLUXORA_APP_ROOT", &app_root);
     let _bridge = EnvGuard::set("FLUXORA_BRIDGE_HOST_PATH", &bridge);
     let _provider = EnvGuard::set("FLUXORA_AI_HOST_PATH", &real_ai_host);
     let _gateway = EnvGuard::set("FLUXORA_AI_TEST_GATEWAY_URL", &gateway.url);
@@ -420,6 +633,24 @@ fn main() {
             .pointer("/response/fileToolDiagnostics/thinkingLevel")
             .and_then(Value::as_str),
         Some("high")
+    );
+    assert_eq!(
+        result
+            .pointer("/response/fileToolDiagnostics/mode")
+            .and_then(Value::as_str),
+        Some("repair")
+    );
+    assert_eq!(
+        result
+            .pointer("/response/fileToolDiagnostics/origin")
+            .and_then(Value::as_str),
+        Some("explicit")
+    );
+    assert_eq!(
+        result
+            .pointer("/response/fileToolDiagnostics/allowedRisk")
+            .and_then(Value::as_str),
+        Some("irreversible-with-confirmation")
     );
     assert_eq!(
         result
@@ -509,6 +740,157 @@ fn main() {
     assert!(
         !override_path.exists(),
         "managed override must be removed by rollback"
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/response/status")
+            .and_then(Value::as_str),
+        Some("done")
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/response/execution/mode")
+            .and_then(Value::as_str),
+        Some("repair")
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/response/execution/origin")
+            .and_then(Value::as_str),
+        Some("implicit")
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/response/fileToolDiagnostics/allowedRisk")
+            .and_then(Value::as_str),
+        Some("reversible")
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/response/fileToolDiagnostics/verifiedMutations")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert!(
+        result
+            .pointer("/implicitAudio/sourceContent")
+            .and_then(Value::as_str)
+            .is_some_and(|source| source.contains("BattleMusicVolume=1.0")),
+        "implicit repair must leave the source mod unchanged"
+    );
+    assert!(
+        result
+            .pointer("/implicitAudio/managedContent")
+            .and_then(Value::as_str)
+            .is_some_and(|managed| managed.contains("BattleMusicVolume=0.35")),
+        "implicit repair must write the generic INI setting to the managed override"
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/rollback/state")
+            .and_then(Value::as_str),
+        Some("rolled-back")
+    );
+    assert_eq!(
+        result
+            .pointer("/implicitAudio/overrideExistsAfterRollback")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        result
+            .pointer("/ambiguousAudio/response/status")
+            .and_then(Value::as_str),
+        Some("needs-input"),
+        "ambiguous response: {}",
+        result.pointer("/ambiguousAudio/response").unwrap_or(&Value::Null)
+    );
+    assert_eq!(
+        result
+            .pointer("/ambiguousAudio/response/execution/state")
+            .and_then(Value::as_str),
+        Some("needs-input")
+    );
+    assert!(
+        result
+            .pointer("/ambiguousAudio/response/execution/pendingQuestion")
+            .and_then(Value::as_str)
+            .is_some_and(|question| question.contains("first setting") && question.contains("second setting")),
+        "ambiguity must produce exactly one concrete decision question"
+    );
+    assert_eq!(
+        result
+            .pointer("/ambiguousAudio/continuationResponse/status")
+            .and_then(Value::as_str),
+        Some("done")
+    );
+    assert_eq!(
+        result
+            .pointer("/ambiguousAudio/continuationResponse/execution/origin")
+            .and_then(Value::as_str),
+        Some("continuation")
+    );
+    assert_eq!(
+        result
+            .pointer("/ambiguousAudio/response/execution/goalId")
+            .and_then(Value::as_str),
+        result
+            .pointer("/ambiguousAudio/continuationResponse/execution/goalId")
+            .and_then(Value::as_str),
+        "the short answer must continue the same active goal"
+    );
+    assert!(
+        result
+            .pointer("/ambiguousAudio/sourceContent")
+            .and_then(Value::as_str)
+            .is_some_and(|source| source.contains("CombatVolume=1.0") && source.contains("AmbientVolume=1.0")),
+        "the ambiguous source mod must remain unchanged"
+    );
+    assert!(
+        result
+            .pointer("/ambiguousAudio/managedContent")
+            .and_then(Value::as_str)
+            .is_some_and(|managed| managed.contains("CombatVolume=0.35") && managed.contains("AmbientVolume=1.0")),
+        "the continuation must change only the selected first setting"
+    );
+    assert_eq!(
+        result
+            .pointer("/ambiguousAudio/rollback/state")
+            .and_then(Value::as_str),
+        Some("rolled-back")
+    );
+    assert_eq!(
+        result
+            .pointer("/ambiguousAudio/overrideExistsAfterRollback")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        result
+            .pointer("/unsupportedConfig/response/status")
+            .and_then(Value::as_str),
+        Some("blocked")
+    );
+    assert_eq!(
+        result
+            .pointer("/unsupportedConfig/response/execution/terminalReason")
+            .and_then(Value::as_str),
+        Some("binary"),
+        "unsupported response: {}",
+        result.pointer("/unsupportedConfig/response").unwrap_or(&Value::Null)
+    );
+    assert_eq!(
+        result
+            .pointer("/unsupportedConfig/overrideExists")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert!(
+        result
+            .pointer("/unsupportedConfig/response/text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.to_ascii_lowercase().contains("manually")),
+        "unsupported files must return the exact blocker without manual-edit advice"
     );
     let distractor_path = PathBuf::from(
         result

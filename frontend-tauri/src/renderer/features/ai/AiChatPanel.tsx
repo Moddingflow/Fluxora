@@ -1,10 +1,12 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Bot,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
   FileText,
+  FolderOpen,
   Plus,
   RotateCcw,
   Send,
@@ -18,11 +20,18 @@ import type {
   FluxoraAiFileChange,
   FluxoraAiFileChangeSet
 } from '../../../shared/fluxora-api';
+import aiMicIcon from '../../../../../icons/ai-mic.svg';
 import type { AiProviderDiagnostic } from './ai-chat-settings';
 import type { AiChatState } from './ai-chat-state';
+import { formatVoiceDuration } from './ai-voice-state';
+import { useAiVoiceInput } from './use-ai-voice-input';
+import { AiMicrophonePermissionDialog } from './AiMicrophonePermissionDialog';
+import { AiFileDiffPreviewDialog } from './AiFileDiffPreviewDialog';
+import { AiVoiceProcessingIndicator } from './AiVoiceProcessingIndicator';
 
 export interface AiChatPanelProps {
   hostReady: boolean;
+  language?: string;
   providerDiagnostic?: AiProviderDiagnostic | null;
   showCheckedSites?: boolean;
   showDeveloperDiagnostics?: boolean;
@@ -34,20 +43,18 @@ export interface AiChatPanelProps {
   onDraftChange: (value: string) => void;
   onOpenSource: (url: string) => void;
   onOpenFileChange: (change: FluxoraAiFileChange, firstChangedLine: number, changeSet: FluxoraAiFileChangeSet) => void;
-  onOpenFileChangeMod: (change: FluxoraAiFileChange) => void;
-  onRollbackFileChange: (changeSet: FluxoraAiFileChangeSet, change: FluxoraAiFileChange) => void;
-  onRollbackFileRun: (changeSet: FluxoraAiFileChangeSet) => void;
+  onRevealFileChange?: (change: FluxoraAiFileChange, changeSet: FluxoraAiFileChangeSet) => void;
+  onRollbackFileRun: (changeSet: FluxoraAiFileChangeSet) => void | Promise<void>;
   onUndoCapability: (compensationToken: string) => void;
-  onResize: (width: number) => void;
   onSend: () => void;
   onSelectChat: (chatId: string) => void;
   onToggleCollapse: () => void;
+  onVoiceSend?: (prompt: string, operationId: string) => boolean | Promise<boolean>;
 }
 
-const tokenNumber = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
-const messageTime = (createdAt: string) =>
-  new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(createdAt));
+const rejectVoiceSend = () => false;
 
+const tokenNumber = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
 const ContextUsage = ({ state }: { state: AiChatState }) => {
   const chat = state.chats.find((candidate) => candidate.id === state.activeChatId);
   const usage = chat?.contextUsage;
@@ -82,49 +89,94 @@ const SourceList = ({ sources, onOpen }: {
 
 const FileChanges = ({
   changeSet,
+  onContextMenu,
   onOpen,
-  onOpenMod,
-  onRollbackFile,
   onRollbackRun
 }: {
   changeSet: FluxoraAiFileChangeSet;
+  onContextMenu: (
+    change: FluxoraAiFileChange,
+    changeSet: FluxoraAiFileChangeSet,
+    position: { left: number; top: number }
+  ) => void;
   onOpen: (change: FluxoraAiFileChange, firstChangedLine: number, changeSet: FluxoraAiFileChangeSet) => void;
-  onOpenMod: (change: FluxoraAiFileChange) => void;
-  onRollbackFile: (changeSet: FluxoraAiFileChangeSet, change: FluxoraAiFileChange) => void;
-  onRollbackRun: (changeSet: FluxoraAiFileChangeSet) => void;
-}) => (
-  <div className="ai-file-change-set" aria-label="Applied file changes">
-    <header>
-      <strong>Managed override</strong>
-      <button
-        type="button"
-        disabled={changeSet.rollbackState !== 'available'}
-        onClick={() => onRollbackRun(changeSet)}
-      >
-        <RotateCcw size={12} aria-hidden="true" /> Undo run
-      </button>
-    </header>
-    {changeSet.files.map((change) => (
-      <div className="ai-file-change" key={change.fileRef}>
-        <button type="button" onClick={() => onOpen(change, change.hunks[0]?.newStart ?? 1, changeSet)}>
-          <FileText size={13} aria-hidden="true" />
-          <span>{change.relativePath}</span>
-        </button>
-        {change.ownerMod ? (
-          <button type="button" onClick={() => onOpenMod(change)}>{change.ownerMod}</button>
-        ) : null}
-        <small>+{change.addedLines} −{change.removedLines} · {change.verification}</small>
+  onRollbackRun: (changeSet: FluxoraAiFileChangeSet) => void | Promise<void>;
+}) => {
+  const [undoing, setUndoing] = useState(false);
+  const rollbackLabel = undoing
+    ? 'Undoing…'
+    : changeSet.rollbackState === 'rolled-back'
+      ? 'Undone'
+      : changeSet.rollbackState === 'conflict'
+        ? 'Needs review'
+        : changeSet.rollbackState === 'unavailable'
+          ? 'Undo unavailable'
+          : 'Undo';
+
+  const undo = async () => {
+    if (undoing || changeSet.rollbackState !== 'available') return;
+    setUndoing(true);
+    try {
+      await onRollbackRun(changeSet);
+    } finally {
+      setUndoing(false);
+    }
+  };
+
+  return (
+    <div
+      className="ai-file-change-set"
+      aria-label="Applied file changes"
+      data-run-id={changeSet.runId}
+      data-rollback-state={undoing ? 'undoing' : changeSet.rollbackState}
+      data-rollback-reason={changeSet.rollbackReason}
+    >
+      <header>
+        <strong>Managed override</strong>
         <button
           type="button"
-          disabled={change.rollbackState !== 'available'}
-          onClick={() => onRollbackFile(changeSet, change)}
+          disabled={undoing || changeSet.rollbackState !== 'available'}
+          onClick={() => void undo()}
         >
-          <RotateCcw size={12} aria-hidden="true" /> Undo
+          <RotateCcw size={12} aria-hidden="true" /> {rollbackLabel}
         </button>
+      </header>
+      <div className="ai-file-change-set__files">
+        {changeSet.files.map((change) => (
+          <button
+            className="ai-file-change"
+            type="button"
+            key={change.fileRef}
+            onClick={() => onOpen(change, change.hunks[0]?.newStart ?? 1, changeSet)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onContextMenu(change, changeSet, { left: event.clientX, top: event.clientY });
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+              event.preventDefault();
+              const bounds = event.currentTarget.getBoundingClientRect();
+              onContextMenu(change, changeSet, { left: bounds.left + 12, top: bounds.bottom + 4 });
+            }}
+          >
+            <FileText size={13} aria-hidden="true" />
+            <span className="ai-file-change__path">{change.relativePath}</span>
+            <span className="ai-file-change__stats" aria-label={`${change.addedLines} lines added, ${change.removedLines} lines removed`}>
+              <span className="ai-file-change__added">+{change.addedLines}</span>
+              <span className="ai-file-change__removed">−{change.removedLines}</span>
+            </span>
+          </button>
+        ))}
       </div>
-    ))}
-  </div>
-);
+      {changeSet.rollbackState === 'rolled-back' && changeSet.preservedNewerChanges ? (
+        <small className="ai-file-change-set__confirmation" role="status">
+          Newer non-overlapping changes were preserved.
+        </small>
+      ) : null}
+    </div>
+  );
+};
 
 const CapabilityEffects = ({
   execution,
@@ -161,6 +213,7 @@ const CapabilityEffects = ({
 
 export function AiChatPanel({
   hostReady,
+  language = 'en-us',
   providerDiagnostic,
   showDeveloperDiagnostics = false,
   state,
@@ -171,26 +224,63 @@ export function AiChatPanel({
   onDraftChange,
   onOpenSource,
   onOpenFileChange,
-  onOpenFileChangeMod,
-  onRollbackFileChange,
+  onRevealFileChange = () => undefined,
   onRollbackFileRun,
   onUndoCapability,
-  onResize,
   onSend,
   onSelectChat,
-  onToggleCollapse
+  onToggleCollapse,
+  onVoiceSend = rejectVoiceSend
 }: AiChatPanelProps) {
+  const [previewedFile, setPreviewedFile] = useState<{
+    change: FluxoraAiFileChange;
+    changeSet: FluxoraAiFileChangeSet;
+  } | null>(null);
+  const [fileContextMenu, setFileContextMenu] = useState<{
+    change: FluxoraAiFileChange;
+    changeSet: FluxoraAiFileChangeSet;
+    left: number;
+    top: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!fileContextMenu) return;
+    const closeMenu = () => setFileContextMenu(null);
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest('.ai-file-change-menu')) return;
+      closeMenu();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu();
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('scroll', closeMenu, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true);
+    };
+  }, [fileContextMenu]);
   const activeEvents = useMemo(
     () => state.intermediateEvents.filter((event) =>
       !state.activeRunId || event.runId === state.activeRunId || event.operationId === state.runs.find((run) => run.id === state.activeRunId)?.operationId
     ).slice(-6),
     [state.activeRunId, state.intermediateEvents, state.runs]
   );
+  const voice = useAiVoiceInput({
+    draft: state.draft,
+    language,
+    ownerChatId: state.activeChatId,
+    onDraftChange,
+    onSend: onVoiceSend
+  });
 
   if (state.isCollapsed) {
     return (
       <aside className="ai-chat-panel ai-chat-panel--collapsed" aria-label="Fluxora AI">
-        <button type="button" aria-label="Expand AI chat" onClick={onToggleCollapse}>
+        <button type="button" aria-label="Expand AI chat" onClick={() => { void voice.cancel(); onToggleCollapse(); }}>
           <Bot size={18} aria-hidden="true" />
           <ChevronLeft size={14} aria-hidden="true" />
         </button>
@@ -199,26 +289,61 @@ export function AiChatPanel({
   }
 
   const canSend = Boolean(state.draft.trim()) && hostReady && !providerDiagnostic && !state.isRunning;
+  const voiceCaptureActive = ['preparing', 'recording', 'transcribing'].includes(voice.state.phase);
   return (
     <aside className="ai-chat-panel" aria-label="Fluxora AI">
-      <button
-        type="button"
-        className="ai-chat-panel__resize"
-        role="separator"
-        aria-label="Resize AI chat"
-        aria-orientation="vertical"
-        onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
-        onPointerMove={(event) => {
-          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-            onResize(Math.max(320, Math.min(720, window.innerWidth - event.clientX)));
-          }
-        }}
-      />
+      {previewedFile ? (
+        <AiFileDiffPreviewDialog
+          change={previewedFile.change}
+          onClose={() => setPreviewedFile(null)}
+          onOpenEditor={() => {
+            onOpenFileChange(
+              previewedFile.change,
+              previewedFile.change.hunks[0]?.newStart ?? 1,
+              previewedFile.changeSet
+            );
+            setPreviewedFile(null);
+          }}
+          onShowInFolder={() => onRevealFileChange(previewedFile.change, previewedFile.changeSet)}
+        />
+      ) : null}
+      {fileContextMenu ? createPortal(
+        <div
+          className="mod-row-menu mod-row-menu--context ai-file-change-menu"
+          role="menu"
+          aria-label={`${fileContextMenu.change.relativePath} actions`}
+          style={{
+            left: Math.min(fileContextMenu.left, Math.max(8, window.innerWidth - 244)),
+            top: Math.min(fileContextMenu.top, Math.max(8, window.innerHeight - 50))
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              onRevealFileChange(fileContextMenu.change, fileContextMenu.changeSet);
+              setFileContextMenu(null);
+            }}
+          >
+            <FolderOpen size={14} aria-hidden="true" />
+            <span>Открыть в проводнике</span>
+          </button>
+        </div>,
+        document.body
+      ) : null}
+      {voice.state.phase === 'requesting-permission' ? (
+        <AiMicrophonePermissionDialog
+          language={language}
+          onAllow={() => void voice.allowPermission()}
+          onDeny={() => void voice.denyPermission()}
+        />
+      ) : null}
       <header className="ai-chat-panel__header">
         <span className="ai-chat-panel__identity"><Bot className="ai-chat-panel__icon" size={17} aria-hidden="true" /><strong>Fluxora AI</strong></span>
         <div className="ai-chat-panel__controls">
-          <button className="ai-chat-panel__icon-button" type="button" aria-label="Collapse AI chat" onClick={onToggleCollapse}><ChevronRight size={15} /></button>
-          <button className="ai-chat-panel__icon-button" type="button" aria-label="Close AI chat" onClick={onClose}><X size={15} /></button>
+          <button className="ai-chat-panel__icon-button" type="button" aria-label="Collapse AI chat" onClick={() => { void voice.cancel(); onToggleCollapse(); }}><ChevronRight size={15} /></button>
+          <button className="ai-chat-panel__icon-button" type="button" aria-label="Close AI chat" onClick={() => { void voice.cancel(); onClose(); }}><X size={15} /></button>
         </div>
       </header>
 
@@ -263,15 +388,20 @@ export function AiChatPanel({
             </div>
           ) : state.messages.map((message) => (
             <article className="ai-chat-message" data-role={message.role} data-status={message.agentStatus} key={message.id}>
-              <header className="ai-chat-message__meta"><strong>{message.role === 'user' ? 'You' : 'Gemini'}</strong><time>{messageTime(message.createdAt)}</time></header>
               <div className="ai-chat-message__content"><p>{message.text}</p></div>
+              {message.agentStatus === 'needs-input' ? (
+                <small className="ai-chat-message__waiting" role="status">Waiting for your answer</small>
+              ) : null}
               <SourceList sources={message.sources ?? []} onOpen={onOpenSource} />
               {message.fileChangeSet ? (
                 <FileChanges
                   changeSet={message.fileChangeSet}
-                  onOpen={onOpenFileChange}
-                  onOpenMod={onOpenFileChangeMod}
-                  onRollbackFile={onRollbackFileChange}
+                  onContextMenu={(change, changeSet, position) => {
+                    setFileContextMenu({ change, changeSet, ...position });
+                  }}
+                  onOpen={(change, _firstChangedLine, changeSet) => {
+                    setPreviewedFile({ change, changeSet });
+                  }}
                   onRollbackRun={onRollbackFileRun}
                 />
               ) : null}
@@ -298,28 +428,117 @@ export function AiChatPanel({
         </div>
 
         <footer className="ai-chat-input">
-          <div className="ai-chat-input__surface" data-disabled={state.isRunning ? 'true' : undefined}>
-            <textarea
-              aria-label="Message Fluxora AI"
-              placeholder="Ask Gemini about this build…"
-              value={state.draft}
-              disabled={state.isRunning}
-              onChange={(event) => onDraftChange(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey && canSend) {
-                  event.preventDefault();
-                  onSend();
-                }
-              }}
-            />
-            <div className="ai-chat-input__toolbar">
-              <span />
-              {state.isRunning ? (
-                <button className="ai-chat-input__tool-button ai-chat-input__tool-button--danger" type="button" aria-label="Stop AI run" onClick={onCancel}><Square size={14} /></button>
+          <div
+            className="ai-chat-input__surface"
+            data-disabled={state.isRunning ? 'true' : undefined}
+            data-voice-active={voiceCaptureActive ? 'true' : undefined}
+          >
+            {voiceCaptureActive ? (
+              voice.state.phase === 'transcribing' ? (
+                <AiVoiceProcessingIndicator
+                  language={language}
+                  onCancel={() => { void voice.cancel(); }}
+                />
               ) : (
-                <button className="ai-chat-send-button" type="button" aria-label="Send message" disabled={!canSend} onClick={onSend}><Send size={15} /></button>
-              )}
-            </div>
+              <div className="ai-voice-recorder" role="status" aria-live="polite">
+                <div className="ai-voice-recorder__status">
+                  <strong>{formatVoiceDuration(voice.state.elapsedMs)}</strong>
+                  <span>{voice.state.phase === 'recording'
+                    ? 'Listening locally'
+                    : 'Starting microphone…'}</span>
+                </div>
+                <div className="ai-voice-waveform" aria-label="Live microphone level">
+                  {voice.state.levels.map((level, index) => (
+                    <span
+                      key={index}
+                      style={{ '--ai-voice-level': Math.max(0.08, level) } as React.CSSProperties}
+                    />
+                  ))}
+                </div>
+                <div className="ai-voice-recorder__actions">
+                  <button
+                    className="ai-voice-action ai-voice-action--stop"
+                    type="button"
+                    aria-label="Stop and add voice transcript"
+                    onClick={() => void voice.stop('draft')}
+                  >
+                    <Square size={13} aria-hidden="true" />
+                  </button>
+                  <button
+                    className="ai-voice-action ai-voice-action--send"
+                    type="button"
+                    aria-label="Stop, transcribe and send message"
+                    disabled={voice.state.phase !== 'recording'}
+                    onClick={() => void voice.stop('send')}
+                  >
+                    <Send size={15} aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+              )
+            ) : (
+              <>
+                <textarea
+                  aria-label="Message Fluxora AI"
+                  placeholder="Ask Gemini about this build…"
+                  value={state.draft}
+                  disabled={state.isRunning}
+                  onChange={(event) => onDraftChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey && canSend) {
+                      event.preventDefault();
+                      onSend();
+                    }
+                  }}
+                />
+                {voice.state.error ? (
+                  <div className="ai-voice-error" role="alert">
+                    <span>{voice.state.error.userMessage}</span>
+                    <div className="ai-voice-error__actions">
+                      {voice.state.error.canOpenMicrophoneSettings ? (
+                        <button type="button" onClick={() => void voice.openMicrophoneSettings()}>
+                          Open Windows settings
+                        </button>
+                      ) : null}
+                      {voice.state.error.canRetry ? (
+                        <button type="button" onClick={() => void voice.start()}>
+                          Retry recording
+                        </button>
+                      ) : null}
+                    </div>
+                    {showDeveloperDiagnostics ? (
+                      <details className="ai-voice-error__debug">
+                        <summary>Developer details</summary>
+                        <code>
+                          {voice.state.error.code} · {voice.state.error.stage} ·{' '}
+                          {voice.state.error.operationId}
+                          {voice.state.error.debugMessage
+                            ? ` · ${voice.state.error.debugMessage}`
+                            : ''}
+                        </code>
+                      </details>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className="ai-chat-input__toolbar">
+                  <button
+                    className="ai-chat-input__tool-button ai-chat-input__mic-button"
+                    type="button"
+                    aria-label="Start voice input"
+                    title="Voice input"
+                    disabled={state.isRunning}
+                    onClick={() => void voice.start()}
+                  >
+                    <img src={aiMicIcon} alt="" aria-hidden="true" />
+                  </button>
+                  {state.isRunning ? (
+                    <button className="ai-chat-input__tool-button ai-chat-input__tool-button--danger" type="button" aria-label="Stop AI run" onClick={onCancel}><Square size={14} /></button>
+                  ) : (
+                    <button className="ai-chat-send-button" type="button" aria-label="Send message" disabled={!canSend} onClick={onSend}><Send size={15} /></button>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </footer>
       </div>

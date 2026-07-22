@@ -1,12 +1,12 @@
 # Fluxora AI Evaluation Suite
 
-Status: current single-agent release gate, 2026-07-20.
+Status: current single-agent release gate, 2026-07-22.
 
 ## Purpose
 
 The gate verifies the shipped Fluxora AI contract: one Gemini model, isolated
-build-scoped tabs, an authoritative evidence coordinator, action-wide typed
-capabilities with read-only answers, safe complete file discovery, native verified reversible actions,
+build-scoped tabs, an authoritative goal/evidence coordinator, risk-filtered
+typed capabilities, safe complete file discovery, native verified reversible actions,
 real context accounting, typed failures, grounding citations, and the managed
 gateway v2. It contains no subagent, autonomous-job, cost planner, direct-web
 fetch, or offline product-provider scenarios.
@@ -23,7 +23,9 @@ The script executes:
 - `tests/ai-single-agent-contract.test.ts`;
 - `tests/ai-single-agent-state.test.ts`;
 - `tests/ai-single-agent-panel.test.tsx`;
-- `tests/ai-gateway-v2.test.ts`.
+- `tests/ai-gateway-v2.test.ts`;
+- `tests/ai-voice-contract.test.ts`;
+- `tests/ai-voice-state.test.ts`.
 
 The complete Vitest suite is still required because AI changes share renderer,
 facade, bridge-timeout, settings, titlebar, and native integration boundaries.
@@ -39,16 +41,62 @@ facade, bridge-timeout, settings, titlebar, and native integration boundaries.
 - a new tab receives no messages, summary, events, or runs from another tab;
 - background completion and events are routed by run/operation id;
 - older saved sessions are normalized when per-tab event storage is absent;
+- `needs-input` persists one active goal per tab and a short answer after state
+  reload continues the same `goalId`;
+- verified completion, terminal blocking, and cancellation clear the active goal;
 - cancellation targets one operation and never terminates the shared sidecar.
+
+### Local voice input
+
+- facade tests prove `Uint8Array` remains the raw IPC body, all metadata reaches
+  the final Tauri invoke unchanged, renderer calls carry `auto`, explicit
+  EN/RU/DE remain contract-compatible, and results serialize detected language
+  plus Vulkan/CPU backend;
+- component tests prove Allow persistence, Deny non-persistence, reset,
+  focus/Escape containment, localized copy, safe error redaction, and reducer
+  transitions;
+- capture tests prove 16 kHz mono DSP constraints, the exact five-minute cap,
+  a 30 FPS waveform ceiling, 32 display bars, and track/node/context cleanup;
+- reducer tests cover requesting, recording, transcription, error, tab-owner
+  reset, operation-id preservation, and draft append semantics;
+- Rust tests cover exact WebView origin/kind, deny-by-default, one-shot and TTL,
+  profile reset to `DEFAULT`, late-callback fail-closed behavior, raw framing
+  and metadata, exact five minutes versus one extra sample, automatic Whisper
+  language with translation disabled, explicit-language compatibility, detected
+  language/no-speech serialization, language-aware glossary replacement,
+  Vulkan-to-CPU fallback with one deadline and no fallback after cancel, one CPU
+  crash restart, SHA-256 failures, concurrent warmup, VAD no-speech,
+  outer-silence trimming, and content-free stderr/logging;
+- Playwright covers Fluxora-owned consent, Deny and repeated prompt, persisted
+  Allow, Privacy reset, safe versus developer error details, mic to waveform to
+  draft, recording before warmup completes, immediate spinner-only Stop state,
+  Cancel, mic to one Gemini Send using the same operation id, no-speech, and
+  close cleanup;
+- multilingual fixtures cover RU, EN, DE, and at least one other Whisper
+  language without translation, while proper names normalize and ordinary
+  words remain in the recording language; installed-app performance smoke covers
+  Vulkan and forced CPU separately.
 
 ### Gemini host and context
 
 Rust host tests verify:
 
-- one provider/model, the full typed contract from the first action round, and
-  read-only functions for answers;
-- simultaneous `google_search` and local function declarations;
+- one provider/model and a required high-thinking first-round
+  `local.execution.declare_goal` call over the current dialogue/active goal;
+- `answer | inspect | repair`, `explicit | implicit | continuation`, one invalid
+  goal retry, then exact `intent-contract-invalid`;
+- exact-dialogue `readOnlyEvidence` for answer/inspect, including rejection of
+  a hallucinated quote that attempts to downgrade a requested change;
+- read-only tools for answer/inspect, reversible tools for implicit repair, and
+  unchanged exact confirmation for irreversible work;
+- separate local-function and web-only `google_search` requests, with research
+  returned as untrusted evidence that cannot expand risk;
 - function-call id and thought-signature preservation;
+- exact registry resolution for both provider-safe and internal dotted tool
+  names, while near-miss and invented names remain rejected;
+- lossless paging for tool results above 64 KiB, bounded provider pages,
+  matching call ids/names, unchanged small responses, and host-only handling of
+  continuation calls while native sibling calls remain forwardable;
 - 64-round, 128-call, ten-minute emergency guards;
 - two recoveries per error cause; recovery errors do not consume stagnation,
   while three semantically repeated successful results stop execution;
@@ -58,15 +106,17 @@ Rust host tests verify:
 - estimated context usage is labelled estimated;
 - an oversized current turn returns `ai.context.current-turn-too-large`;
 - provider errors retain their real stage and retryability.
-- polite Russian, English, and German action detection while instructional
-  questions remain `answer`, plus all four provider routes;
-- `high` thinking for file actions and diagnostics, `medium` for ordinary chat
+- Russian, English, and German unwanted-state descriptions using the same
+  implicit-repair contract while informational requests remain read-only;
+- host-owned `request_input`, `needs-input`, same-goal continuation, and no C++
+  dispatch for the host-owned call;
+- `high` thinking for goal declaration, repair and diagnostics, `medium` for ordinary chat
   and summary compression, `temperature: 1.0`, hidden thought text, and
   preserved thought signatures;
 - exact invalid-field feedback, two bounded correction retries, successful-only
   read-only caching, default `build` search scope, preserved explicit scopes,
   and premature-final recovery;
-- `ANY` for unfinished actions, `AUTO` for answers/reads and `NONE` for the
+- `ANY` for goal declaration and unfinished repairs, `AUTO` for answers/reads and `NONE` for the
   final report;
 - `tool-completed` only for `ok=true`, with separate `tool-blocked`,
   `recovery-started` and `verification-completed` events;
@@ -102,14 +152,22 @@ window, `unique`/`ambiguous`/`not-found`, cooperative cancellation, reparse and
 path containment, protected/binary files, UTF-16 and Windows-1251, external
 read/write races, read-only Game/Downloads/Overwrite scopes, the 16-file and
 2-MiB batch limits, one mutation per file, atomic failure, managed overrides,
-reread verification, diff, and rollback.
+reread verification, diff, and rollback. The rollback suite additionally covers
+exact undo; independent undo of the first of two runs; later line insertion;
+overlapping-line and multi-file transactional conflicts; unchanged and modified
+created files; UTF-8, UTF-16, Windows-1251 and CRLF preservation; restoration
+after a partial write failure; restart persistence; corrupt manifest rejection;
+content-addressed deduplication; and whole-run eviction under the 256 MiB chat
+and 1 GiB global policies. Bridge coverage asserts additive `mode`, `reason`,
+and `preservedNewerChanges`, `getRollbackStates` operation correlation, and
+protocol-v1 compatibility.
 
 The feature-gated native integration fixture runs the real
-`fluxora-ai-host` against a localhost mock of the managed Gemini transport. It
-first tries to finish with manual-edit advice. The host rejects that premature
-completion, then traces search, two distinct bounded read ranges, text search,
-JSON query, recipe inspection, staging and commit. The first file search omits
-`scope`, so the real default-to-`build` path is exercised with this Russian request:
+`fluxora-ai-host` against a localhost mock of the managed Gemini transport. Its
+first invalid goal response proves the single retry, then it traces search, two
+distinct bounded read ranges, text search, JSON query, recipe inspection,
+staging and commit. The first file search omits `scope`, so the real
+default-to-`build` path is exercised with this Russian regression request:
 
 `Можешь в Community Shaders сделать так, чтобы Menu.ToggleKey был PageDown?`
 
@@ -120,6 +178,16 @@ that the broker finds the real target, stages and commits exactly one
 managed override, leaves both source and distractors unchanged, returns a
 verified diff, puts `Fluxora AI Overrides` last and enabled, and removes the
 override on rollback.
+
+The same fixture then sends the original natural English problem description,
+`The battle music in this build is painfully loud.`, and requires
+`mode=repair`, `origin=implicit`, `allowedRisk=reversible`, a generic INI
+managed override, source preservation, native reread, verified diff and Undo.
+A two-parameter INI produces exactly one host-owned `needs-input`; `the first
+one` continues the same `goalId`, changes only the selected parameter, verifies,
+and rolls back. A binary config must finish with exact `binary` blocking and no
+manual-edit advice. Host security tests additionally inject instructions through
+local config and web research and prove that neither changes risk or scope.
 
 ### Gateway
 
@@ -135,12 +203,19 @@ deployed function, not inferred only from TypeScript source.
 
 ### Component and E2E
 
-`ai-single-agent-panel.test.tsx` verifies exact context display, sources, file
-changes and Undo, with no model/routing/subagent UI. `e2e/ai-chat.spec.ts` uses
+`ai-single-agent-panel.test.tsx` verifies exact context display, sources, one
+Undo per response, file diff statistics, 616px/56px fixed panel tokens, no
+resize handle, no message author/time metadata, and no model/routing/subagent
+UI. Titlebar component tests require AI between Refresh and Settings and absent
+outside build-scoped routes; reducer tests restore unavailable/conflict state by
+independent run id. `e2e/ai-chat.spec.ts` uses
 the natural polite Russian Community Shaders action and requires a verified
 change set rather than instructional prose. It verifies the managed override
-path, verified diff, file/run Undo, and that an action response without a change
-set or verified execution effect is shown as blocked. Playwright checks honest
+path, persisted read-only red/green diff preview, explicit full-editor handoff,
+the custom reveal-in-file-manager context menu, run Undo, inverse-merge
+preservation, persisted Undo after restart, conflict/no-data-loss behavior,
+1100x700 and maximized layout, and that
+an action response without a change set or verified execution effect is shown as blocked. Playwright checks honest
 blocked/recovery/verification events before the final response. It also covers
 selected-build-only access, a real
 persistence reload, isolated empty new tab, live tool event, sources,

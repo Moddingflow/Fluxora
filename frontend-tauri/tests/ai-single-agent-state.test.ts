@@ -27,6 +27,132 @@ class MemoryStorage implements Storage {
 }
 
 describe('single-agent chat persistence', () => {
+  it('maps a validated needs-input response to a waiting state instead of blocked', () => {
+    expect(aiAgentStatusFromResponse({
+      operationId: 'op-needs-input',
+      providerId: 'gemini',
+      modelId: 'gemini-3.1-flash-lite',
+      status: 'needs-input',
+      text: 'Should Fluxora change the combat track or the ambient track?',
+      streamChunks: [],
+      sources: [],
+      toolCallsAllowed: true,
+      execution: {
+        goalId: 'goal-needs-input',
+        kind: 'action',
+        mode: 'repair',
+        origin: 'implicit',
+        requestedOutcome: 'Reduce the painfully loud music.',
+        domain: 'files',
+        phase: 'inspect',
+        state: 'needs-input',
+        verifiedEffects: [],
+        pendingQuestion: 'Should Fluxora change the combat track or the ambient track?'
+      }
+    })).toBe('needs-input');
+  });
+
+  it('persists an active goal, sends it with the continuation, and clears it after completion', () => {
+    const session = createAiSession('build:alpha', 'Alpha');
+    let state: AiChatState = {
+      activeChatId: session.activeChatId,
+      activeRunId: null,
+      chats: session.chats,
+      draft: '',
+      intermediateEvents: [],
+      isCollapsed: false,
+      isOpen: true,
+      isRunning: false,
+      messages: [],
+      runs: [],
+      session
+    };
+    const firstRun = createAiRunForPrompt(state.session, 'operation-first', 'The music is painfully loud.');
+    state = aiChatReducer(state, {
+      type: 'submit-user-message',
+      message: createAiMessage('user', 'The music is painfully loud.', new Date(), firstRun.id),
+      run: firstRun,
+      event: createAiStreamEvent(firstRun, 'run-started')
+    });
+    state = aiChatReducer(state, {
+      type: 'append-assistant-message',
+      message: createAiMessage('assistant', 'Combat or ambient track?', new Date(), firstRun.id, {
+        agentStatus: 'needs-input',
+        execution: {
+          goalId: 'goal-existing',
+          kind: 'action',
+          mode: 'repair',
+          origin: 'implicit',
+          requestedOutcome: 'Reduce the painfully loud music.',
+          domain: 'files',
+          phase: 'inspect',
+          state: 'needs-input',
+          verifiedEffects: [],
+          pendingQuestion: 'Combat or ambient track?'
+        }
+      }),
+      event: createAiStreamEvent(firstRun, 'run-finished', { status: 'needs-input' }),
+      status: 'needs-input'
+    });
+
+    expect(state.session.chats[0].activeGoal).toEqual({
+      goalId: 'goal-existing',
+      mode: 'repair',
+      origin: 'implicit',
+      requestedOutcome: 'Reduce the painfully loud music.',
+      pendingQuestion: 'Combat or ambient track?'
+    });
+    const storage = new MemoryStorage();
+    saveAiSession(storage, state.session);
+    const restoredSession = loadAiSession(storage, { projectId: 'alpha', projectName: 'Alpha' });
+    expect(restoredSession.chats[0].activeGoal?.goalId).toBe('goal-existing');
+    const cancelledState = aiChatReducer(state, {
+      type: 'cancel-run',
+      message: createAiMessage('assistant', 'Stopped.', new Date(), firstRun.id, { agentStatus: 'stopped' }),
+      event: createAiStreamEvent(firstRun, 'run-cancelled', { status: 'stopped' })
+    });
+    expect(cancelledState.session.chats[0].activeGoal).toBeNull();
+
+    const continuationRun = createAiRunForPrompt(restoredSession, 'operation-second', 'the first one');
+    expect(createAiHostChatRequest(
+      continuationRun,
+      restoredSession,
+      'the first one',
+      defaultAiChatSettings
+    ).activeGoal?.goalId).toBe('goal-existing');
+
+    state = aiChatReducer(state, {
+      type: 'submit-user-message',
+      message: createAiMessage('user', 'the first one', new Date(), continuationRun.id),
+      run: continuationRun,
+      event: createAiStreamEvent(continuationRun, 'run-started')
+    });
+    state = aiChatReducer(state, {
+      type: 'append-assistant-message',
+      message: createAiMessage('assistant', 'Applied and verified.', new Date(), continuationRun.id, {
+        agentStatus: 'completed',
+        execution: {
+          goalId: 'goal-existing',
+          kind: 'action',
+          mode: 'repair',
+          origin: 'continuation',
+          requestedOutcome: 'Reduce the combat track.',
+          domain: 'files',
+          phase: 'report',
+          state: 'completed',
+          verifiedEffects: [{
+            tool: 'local.files.commit',
+            operationId: 'operation-second',
+            verification: 'native-postcondition'
+          }]
+        }
+      }),
+      event: createAiStreamEvent(continuationRun, 'run-finished', { status: 'completed' }),
+      status: 'completed'
+    });
+    expect(state.session.chats[0].activeGoal).toBeNull();
+  });
+
   it('never presents an action response without a verified file change set as completed', () => {
     const base = {
       operationId: 'op-action',
@@ -74,6 +200,9 @@ describe('single-agent chat persistence', () => {
       execution: {
         goalId: 'op-file-action',
         kind: 'action',
+        mode: 'repair',
+        origin: 'explicit',
+        requestedOutcome: 'Apply and verify the requested file change.',
         domain: 'files',
         phase: 'report',
         state: 'completed',
@@ -89,6 +218,9 @@ describe('single-agent chat persistence', () => {
       execution: {
         goalId: 'op-file-action',
         kind: 'action',
+        mode: 'repair',
+        origin: 'explicit',
+        requestedOutcome: 'Apply and verify the requested file change.',
         domain: 'files',
         phase: 'report',
         state: 'completed',
@@ -112,6 +244,9 @@ describe('single-agent chat persistence', () => {
       execution: {
         goalId: 'op-action',
         kind: 'action',
+        mode: 'repair',
+        origin: 'explicit',
+        requestedOutcome: 'Apply and verify the requested mod change.',
         domain: 'mods',
         phase: 'report',
         state: 'completed',
@@ -127,6 +262,9 @@ describe('single-agent chat persistence', () => {
       execution: {
         goalId: 'op-action',
         kind: 'action',
+        mode: 'repair',
+        origin: 'explicit',
+        requestedOutcome: 'Apply and verify the requested mod change.',
         domain: 'mods',
         phase: 'verify',
         state: 'blocked',
@@ -166,8 +304,7 @@ describe('single-agent chat persistence', () => {
       isRunning: false,
       messages: [],
       runs: [],
-      session,
-      width: 380
+      session
     };
     const withSecondTab = aiChatReducer(initialState, { type: 'create-chat' });
     session = withSecondTab.session;
@@ -227,8 +364,7 @@ describe('single-agent chat persistence', () => {
       isRunning: false,
       messages: [],
       runs: [],
-      session,
-      width: 380
+      session
     };
     const firstChatId = state.activeChatId;
     const firstRun = createAiRunForPrompt(state.session, 'operation-first', 'first prompt');
@@ -289,6 +425,9 @@ describe('single-agent chat persistence', () => {
       execution: {
         goalId: 'goal-undo',
         kind: 'action',
+        mode: 'repair',
+        origin: 'explicit',
+        requestedOutcome: 'Apply and verify the requested mod change.',
         domain: 'mods',
         phase: 'report',
         state: 'completed',
@@ -311,8 +450,7 @@ describe('single-agent chat persistence', () => {
       isRunning: false,
       messages: chat.messages,
       runs: [],
-      session,
-      width: 380
+      session
     }, {
       type: 'update-capability-rollback',
       compensationToken: 'undo-token',
@@ -320,5 +458,65 @@ describe('single-agent chat persistence', () => {
     });
 
     expect(state.messages[0].execution?.verifiedEffects[0].rollbackState).toBe('rolled-back');
+  });
+
+  it('restores unavailable and conflict rollback states by independent run id', () => {
+    const session = createAiSession('build:alpha', 'Alpha');
+    const chat = session.chats[0];
+    const fileChangeSet = (runId: string) => ({
+      schema: 'fluxora.ai.file-change-set.v1' as const,
+      operationId: `operation-${runId}`,
+      runId,
+      chatId: chat.id,
+      rollbackState: 'available' as const,
+      files: [{
+        fileRef: `file-${runId}`,
+        scope: 'build' as const,
+        relativePath: `${runId}.ini`,
+        status: 'applied' as const,
+        hunks: [],
+        addedLines: 1,
+        removedLines: 0,
+        validation: 'valid' as const,
+        verification: 'reread verified',
+        beforeVersion: 'before',
+        afterVersion: 'after',
+        rollbackState: 'available' as const
+      }]
+    });
+    chat.messages.push(
+      createAiMessage('assistant', 'first', new Date(), 'run-first', { fileChangeSet: fileChangeSet('run-first') }),
+      createAiMessage('assistant', 'second', new Date(), 'run-second', { fileChangeSet: fileChangeSet('run-second') })
+    );
+
+    const state = aiChatReducer({
+      activeChatId: chat.id,
+      activeRunId: null,
+      chats: [chat],
+      draft: '',
+      intermediateEvents: [],
+      isCollapsed: false,
+      isOpen: true,
+      isRunning: false,
+      messages: chat.messages,
+      runs: [],
+      session
+    }, {
+      type: 'restore-file-rollback-states',
+      chatId: chat.id,
+      states: [
+        { runId: 'run-first', state: 'conflict', reason: 'overlapping-edit' },
+        { runId: 'run-second', state: 'unavailable', reason: 'checkpoint-expired' }
+      ]
+    });
+
+    expect(state.messages[0].fileChangeSet).toMatchObject({
+      rollbackState: 'conflict',
+      rollbackReason: 'overlapping-edit'
+    });
+    expect(state.messages[1].fileChangeSet).toMatchObject({
+      rollbackState: 'unavailable',
+      rollbackReason: 'checkpoint-expired'
+    });
   });
 });

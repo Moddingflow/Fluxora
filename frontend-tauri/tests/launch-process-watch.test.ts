@@ -40,11 +40,12 @@ describe('launch process watch wiring', () => {
     expect(processPlatform).toContain('find_processes_using_module');
     expect(rustShell).toContain('Native process exit signal unavailable; using fallback polling');
     expect(rustShell).toContain('Tracked process exited but a VFS holder remains');
+    expect(launchFlow).toContain('Подготовка BodySlide');
+    expect(launchFlow).toContain('Запуск через VFS');
+    expect(launchFlow).toContain('Обновление output');
     expect(launchFlow).toMatch(
-      /ready\.state !== 'running'[\s\S]*setLaunchSplash\(\(current\) => \(current\?\.operationId === operationId \? null : current\)\);[\s\S]*void loadModsWorkspace\(selectedProject, \{\s*resetScroll: false,\s*showBusy: false,\s*showLoading: false\s*\}\);/
+      /finally \{[\s\S]*window\.fluxora\.executables\.completeManagedLaunch\([\s\S]*await loadModsWorkspace\(selectedProject, \{\s*resetScroll: false,\s*showBusy: false,\s*showLoading: false\s*\}\);[\s\S]*setLaunchSplash/
     );
-    expect(launchFlow).toMatch(
-      /await watchLaunchProcessSession\([\s\S]*setLaunchSplash\(\(current\) =>[\s\S]*current\?\.operationId === operationId \? null : current[\s\S]*void loadModsWorkspace\(selectedProject, \{\s*resetScroll: false,\s*showBusy: false,\s*showLoading: false\s*\}\);/
-    );
+    expect(launchFlow).toContain("managedOutcome = managedSessionId ? 'watcher-error' : 'failed'");
   });
 });

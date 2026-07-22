@@ -9,6 +9,7 @@ default-run = "fluxora_tauri"
 [features]
 default = []
 native-ai-integration-fixture = []
+speech-vulkan = ["whisper-rs/vulkan"]
 
 [lib]
 name = "fluxora_tauri_lib"
@@ -17,6 +18,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [[bin]]
 name = "fluxora_ai_host"
 path = "src/bin/fluxora_ai_host.rs"
+
+[[bin]]
+name = "fluxora_speech_host"
+path = "src/bin/fluxora_speech_host.rs"
+
+[[bin]]
+name = "fluxora_speech_host_vulkan"
+path = "src/bin/fluxora_speech_host_vulkan.rs"
 
 [[test]]
 name = "ai_task_native_integration"
@@ -36,12 +45,19 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 keyring = "4.1.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+regex = "1"
 rusqlite = { version = "0.37", features = ["bundled"] }
 notify-debouncer-full = "0.8.0-rc.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 tokio = { version = "1", features = ["fs", "io-util", "process", "sync", "time"] }
+whisper-rs = { version = "=0.16.0", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38.2"
+windows = "0.61.3"

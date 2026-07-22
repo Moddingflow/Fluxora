@@ -209,6 +209,7 @@ namespace fluxora::vfs
             std::scoped_lock lock(cacheMutex_, other.cacheMutex_);
             target_ = std::move(other.target_);
             overwrite_ = std::move(other.overwrite_);
+            whiteoutRoot_ = std::move(other.whiteoutRoot_);
             mods_ = std::move(other.mods_);
             excludedRootNames_ = std::move(other.excludedRootNames_);
             fileMap_ = std::move(other.fileMap_);
@@ -221,6 +222,7 @@ namespace fluxora::vfs
             other.built_ = false;
             other.target_.clear();
             other.overwrite_.clear();
+            other.whiteoutRoot_.clear();
             other.mods_.clear();
             other.excludedRootNames_.clear();
             other.fileMap_.clear();
@@ -258,6 +260,29 @@ namespace fluxora::vfs
             : relLower.substr(0, separator);
         return std::find(excludedRootNames_.begin(), excludedRootNames_.end(), rootName) !=
             excludedRootNames_.end();
+    }
+
+    bool VfsTree::isWhiteoutedLocked(const std::wstring& relLower) const
+    {
+        if (whiteoutRoot_.empty() || relLower.empty())
+        {
+            return false;
+        }
+        const std::wstring marker = joinPath(whiteoutRoot_, relLower);
+        const DWORD attributes = GetFileAttributesW(marker.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        {
+            return false;
+        }
+        if (!overwrite_.empty())
+        {
+            const DWORD overwriteAttributes = GetFileAttributesW(joinPath(overwrite_, relLower).c_str());
+            if (overwriteAttributes != INVALID_FILE_ATTRIBUTES)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     bool VfsTree::hasCurrentOverlayMissLocked(const std::wstring& relLower) const
@@ -497,6 +522,11 @@ namespace fluxora::vfs
                 }
             }
 
+            if (isWhiteoutedLocked(relLower))
+            {
+                return PathLookup{PathInfo::Kind::Whiteout, {}, false};
+            }
+
             if (directoryListingProvesOverlayMissLocked(relLower))
             {
                 cacheOverlayMissLocked(relLower);
@@ -622,6 +652,12 @@ namespace fluxora::vfs
             const std::wstring childRelLower = relLower.empty()
                 ? nameLower
                 : relLower + L"\\" + nameLower;
+            if (isWhiteoutedLocked(childRelLower))
+            {
+                fileMap_.erase(childRelLower);
+                dirMap_.erase(childRelLower);
+                continue;
+            }
             if (child.isDirectory)
             {
                 DirNode& childNode = ensureDir(childRelLower);
@@ -650,6 +686,7 @@ namespace fluxora::vfs
         std::scoped_lock lock(cacheMutex_);
         target_ = stripTrailingSlashes(config.target);
         overwrite_ = stripTrailingSlashes(config.overwrite);
+        whiteoutRoot_ = stripTrailingSlashes(config.whiteoutRoot);
         mods_.clear();
         mods_.reserve(config.mods.size());
         for (const std::wstring& mod : config.mods)
@@ -721,6 +758,35 @@ namespace fluxora::vfs
             : it->second.children;
     }
 
+    void VfsTree::notifyMutation(const std::wstring& rel)
+    {
+        const std::wstring key = toLower(normalizeRel(rel));
+        std::scoped_lock lock(cacheMutex_);
+        ++revision_;
+        fileMap_.erase(key);
+        overlayMissRevisions_.erase(key);
+        parentLookupCounts_.erase(key);
+
+        const std::size_t separator = key.find_last_of(L'\\');
+        const std::wstring parent = separator == std::wstring::npos
+            ? std::wstring()
+            : key.substr(0, separator);
+        parentLookupCounts_.erase(parent);
+        overlayMissRevisions_.erase(parent);
+        if (auto node = dirMap_.find(parent); node != dirMap_.end())
+        {
+            node->second.childrenBuilt = false;
+            node->second.children.reset();
+            node->second.overlayChildNamesLower.clear();
+        }
+        if (auto node = dirMap_.find(key); node != dirMap_.end())
+        {
+            node->second.childrenBuilt = false;
+            node->second.children.reset();
+            node->second.overlayChildNamesLower.clear();
+        }
+    }
+
     VfsTree::PathInfo VfsTree::classify(const std::wstring& rel) const
     {
         const std::wstring relN = normalizeRel(rel);
@@ -741,6 +807,12 @@ namespace fluxora::vfs
             PathInfo info;
             info.kind = PathInfo::Kind::File;
             info.winner = lookup.path;
+            return info;
+        }
+        if (lookup.kind == PathInfo::Kind::Whiteout)
+        {
+            PathInfo info;
+            info.kind = PathInfo::Kind::Whiteout;
             return info;
         }
 

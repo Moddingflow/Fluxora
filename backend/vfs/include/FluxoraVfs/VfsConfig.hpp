@@ -12,6 +12,7 @@ namespace fluxora::vfs
         std::wstring overwrite;  // writable overlay for this mount
         std::vector<std::wstring> mods; // load order ascending (last wins)
         std::vector<std::wstring> excludedRootNames;
+        std::wstring whiteoutRoot;
 
         [[nodiscard]] bool isValid() const noexcept
         {
@@ -31,6 +32,8 @@ namespace fluxora::vfs
         std::wstring logPath;
         std::wstring hookDll;    // FluxoraVfs.dll path, for child re-injection
         std::uint32_t managerProcessId{0};
+        std::wstring operationId;
+        std::uint32_t preparationMs{0};
         std::vector<std::wstring> mods; // load order ascending (last wins)
         std::vector<VfsMountConfig> mounts;
 

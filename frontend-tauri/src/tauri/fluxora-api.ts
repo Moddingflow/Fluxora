@@ -21,6 +21,7 @@ import type {
   FluxoraExternalConnectionStatus,
   FluxoraFileDropEvent,
   FluxoraLaunchProcessWatchRequest,
+  FluxoraManagedLaunchCompletion,
   FluxoraIpcChannel,
   FluxoraGameTemplate,
   FluxoraAnalyzeContentLayoutRequest,
@@ -33,6 +34,7 @@ import type {
   FluxoraAiFileReadRequest,
   FluxoraAiFileReadResult,
   FluxoraAiFileRollbackResult,
+  FluxoraAiFileRollbackState,
   FluxoraAiFileSaveRequest,
   FluxoraAiContextUsage,
   FluxoraAiHostStatus,
@@ -41,6 +43,10 @@ import type {
   FluxoraAiProviderConnectionResult,
   FluxoraAiProviderDescriptor,
   FluxoraAiProviderTestResult,
+  FluxoraVoicePrepareRequest,
+  FluxoraVoiceStatus,
+  FluxoraVoiceTranscriptionRequest,
+  FluxoraVoiceTranscriptionResult,
   FluxoraApiLimitStatus,
   FluxoraBuildContentChangedEvent,
   FluxoraBuildContentWatchRequest,
@@ -249,6 +255,23 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
   },
   publicApi: createModdingflowPublicApiDogfoodClient(),
   ai: {
+    armMicrophoneCapture: (request: OperationRequest) =>
+      invokeTyped<void>(ipc, FluxoraIpcChannels.aiArmMicrophoneCapture, request),
+    prepareVoice: (request: FluxoraVoicePrepareRequest) =>
+      invokeTyped<FluxoraVoiceStatus>(ipc, FluxoraIpcChannels.aiPrepareVoice, request),
+    resetMicrophonePermission: (request: OperationRequest) =>
+      invokeTyped<void>(ipc, FluxoraIpcChannels.aiResetMicrophonePermission, request),
+    transcribeVoice: (pcm: Uint8Array, metadata: FluxoraVoiceTranscriptionRequest) =>
+      invokeTyped<FluxoraVoiceTranscriptionResult>(
+        ipc,
+        FluxoraIpcChannels.aiTranscribeVoice,
+        pcm,
+        metadata
+      ),
+    cancelVoiceTranscription: (operationId: string) =>
+      invokeTyped<void>(ipc, FluxoraIpcChannels.aiCancelVoiceTranscription, operationId),
+    openMicrophonePrivacySettings: () =>
+      invokeTyped<void>(ipc, FluxoraIpcChannels.aiOpenMicrophonePrivacySettings),
     cancelRun: (operationId: string, request?: OperationRequest) =>
       invokeTyped<FluxoraAiCancelRunResult>(
         ipc,
@@ -293,6 +316,19 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         chatId,
         runId,
         request
+      ),
+    getFileRollbackStates: (chatId: string, operationId: string) =>
+      invokeTyped<FluxoraAiFileRollbackState[]>(
+        ipc,
+        FluxoraIpcChannels.aiFileGetRollbackStates,
+        chatId,
+        operationId
+      ),
+    resetFileRollbackCheckpoints: (operationId: string) =>
+      invokeTyped<void>(
+        ipc,
+        FluxoraIpcChannels.aiFileResetRollbackCheckpoints,
+        operationId
       ),
     estimateContext: (request: FluxoraAiChatRequest) =>
       invokeTyped<FluxoraAiContextUsage>(ipc, FluxoraIpcChannels.aiEstimateContext, request),
@@ -1066,6 +1102,14 @@ export const createFluxoraApi = (ipc: IpcInvoker): FluxoraApi => ({
         profileName,
         request
       ),
+    completeManagedLaunch: (sessionId, outcome, request) =>
+      invokeTyped<FluxoraManagedLaunchCompletion>(
+        ipc,
+        FluxoraIpcChannels.executablesCompleteManagedLaunch,
+        sessionId,
+        outcome,
+        request
+      ),
     getIcon: (executablePath: string, request?: OperationRequest) =>
       invokeTyped<FluxoraExecutableIconResult>(
         ipc,
@@ -1740,6 +1784,19 @@ const requestWithOperationId = (rawRequest: unknown, scope: string): OperationRe
   };
 };
 
+const voiceRequestWithOperationId = <T extends OperationRequest>(
+  rawRequest: unknown,
+  scope: string
+): T => {
+  const request = rawRequest && typeof rawRequest === 'object'
+    ? rawRequest as Record<string, unknown>
+    : {};
+  return {
+    ...request,
+    operationId: operationIdOf(requestWithOperationId(rawRequest, scope), scope)
+  } as T;
+};
+
 const operationIdOf = (request: OperationRequest, scope: string): string =>
   request.operationId ?? createOperationId(scope);
 
@@ -2119,6 +2176,42 @@ const createBrowserPreviewInvoker = (): IpcInvoker => ({
       case FluxoraIpcChannels.aiRestartHost:
         return browserPreviewAiStatus(args[0]);
 
+      case FluxoraIpcChannels.aiPrepareVoice: {
+        const request = voiceRequestWithOperationId<FluxoraVoicePrepareRequest>(
+          args[0],
+          'ai_voice_prepare'
+        );
+        return {
+          operationId: operationIdOf(request, 'ai_voice_prepare'),
+          ready: true,
+          warmed: true,
+          health: 'ready',
+          modelVersion: 'small-q5_1',
+          glossaryVersion: '1'
+        } satisfies FluxoraVoiceStatus;
+      }
+
+      case FluxoraIpcChannels.aiTranscribeVoice: {
+        const request = requestWithOperationId(args[1], 'ai_voice_transcribe') as FluxoraVoiceTranscriptionRequest;
+        return {
+          operationId: operationIdOf(request, 'ai_voice_transcribe'),
+          transcript: '',
+          detectedLanguage: null,
+          backend: 'cpu',
+          modelVersion: 'small-q5_1',
+          glossaryVersion: '1',
+          durationMs: Number(request.durationMs) || 0,
+          processingTimeMs: 0,
+          noSpeech: true
+        } satisfies FluxoraVoiceTranscriptionResult;
+      }
+
+      case FluxoraIpcChannels.aiCancelVoiceTranscription:
+      case FluxoraIpcChannels.aiArmMicrophoneCapture:
+      case FluxoraIpcChannels.aiResetMicrophonePermission:
+      case FluxoraIpcChannels.aiOpenMicrophonePrivacySettings:
+        return undefined;
+
       case FluxoraIpcChannels.apiLimitsList: {
         const request = requestWithOperationId(args[0], 'api_limits_list');
         return {
@@ -2472,10 +2565,78 @@ const createTauriInvoker = (): IpcInvoker => ({
           request: requestWithOperationId(args[2], 'ai_file_rollback_run')
         });
 
+      case FluxoraIpcChannels.aiFileGetRollbackStates:
+        return invoke<FluxoraAiFileRollbackState[]>('fluxora_ai_file_get_rollback_states', {
+          chatId: optionalString(args[0]),
+          operationId: optionalString(args[1])
+        });
+
+      case FluxoraIpcChannels.aiFileResetRollbackCheckpoints:
+        return invoke<void>('fluxora_ai_file_reset_rollback_checkpoints', {
+          operationId: optionalString(args[0])
+        });
+
       case FluxoraIpcChannels.aiGetStatus:
         return invoke<FluxoraAiHostStatus>('fluxora_ai_get_status', {
           request: requestWithOperationId(args[0], 'ai_status')
         });
+
+      case FluxoraIpcChannels.aiPrepareVoice:
+        return invoke<FluxoraVoiceStatus>('fluxora_ai_prepare_voice', {
+          request: voiceRequestWithOperationId<FluxoraVoicePrepareRequest>(
+            args[0],
+            'ai_voice_prepare'
+          )
+        });
+
+      case FluxoraIpcChannels.aiArmMicrophoneCapture:
+        return invoke('fluxora_ai_arm_microphone_capture', {
+          request: voiceRequestWithOperationId<OperationRequest>(
+            args[0],
+            'ai_microphone_arm'
+          )
+        });
+
+      case FluxoraIpcChannels.aiTranscribeVoice: {
+        const pcm = args[0];
+        const metadata = voiceRequestWithOperationId<FluxoraVoiceTranscriptionRequest>(
+          args[1],
+          'ai_voice_transcribe'
+        );
+        if (!(pcm instanceof Uint8Array)) {
+          throw new Error('Voice transcription requires a Uint8Array PCM body.');
+        }
+        return invoke<FluxoraVoiceTranscriptionResult>(
+          'fluxora_ai_transcribe_voice',
+          pcm,
+          {
+            headers: {
+              'x-fluxora-operation-id': operationIdOf(metadata, 'ai_voice_transcribe'),
+              'x-fluxora-sample-rate-hz': String(metadata.sampleRateHz),
+              'x-fluxora-channel-count': String(metadata.channelCount),
+              'x-fluxora-duration-ms': String(metadata.durationMs),
+              'x-fluxora-completion-mode': metadata.completionMode,
+              'x-fluxora-language': metadata.language
+            }
+          }
+        );
+      }
+
+      case FluxoraIpcChannels.aiCancelVoiceTranscription:
+        return invoke('fluxora_ai_cancel_voice_transcription', {
+          operationId: optionalString(args[0])
+        });
+
+      case FluxoraIpcChannels.aiResetMicrophonePermission:
+        return invoke('fluxora_ai_reset_microphone_permission', {
+          request: voiceRequestWithOperationId<OperationRequest>(
+            args[0],
+            'ai_microphone_reset'
+          )
+        });
+
+      case FluxoraIpcChannels.aiOpenMicrophonePrivacySettings:
+        return invoke('fluxora_ai_open_microphone_privacy_settings');
 
       case FluxoraIpcChannels.aiCancelRun:
         return invoke<FluxoraAiCancelRunResult>('fluxora_ai_cancel_run', {
@@ -3361,6 +3522,16 @@ const createTauriInvoker = (): IpcInvoker => ({
           executablesLaunchTimeoutMs
         );
         return withOperationId(data, request, 'executables_launch');
+      }
+      case FluxoraIpcChannels.executablesCompleteManagedLaunch: {
+        const request = requestWithOperationId(args[2], 'executables_complete_managed_launch');
+        const data = await bridgeRequest<Record<string, unknown>>(
+          'executables.completeManagedLaunch',
+          { sessionId: args[0], outcome: args[1] },
+          request,
+          executablesLaunchTimeoutMs
+        );
+        return withOperationId(data, request, 'executables_complete_managed_launch');
       }
 
       case FluxoraIpcChannels.transferAnalyzeMo2: {

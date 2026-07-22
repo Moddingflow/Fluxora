@@ -1,6 +1,5 @@
 #include "FluxoraCore/Services/ModService.hpp"
 
-#include "FluxoraCore/Services/VfsMountPlan.hpp"
 
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/InstallProjectGate.hpp"
@@ -1069,9 +1068,6 @@ namespace fluxora
             projectDirectory,
             changedPaths,
             pathSettings_.modsDirectory(projectDirectory));
-        invalidateVfsContentPlacementCache(
-            pathSettings_.modsDirectory(projectDirectory),
-            changedPaths);
     }
 
     std::vector<ModFileTreeEntry> ModService::listModFileTree(

@@ -59,6 +59,56 @@ namespace fluxora::tests
 #endif
         }
 
+        std::wstring fromUtf8(const std::string& value)
+        {
+#ifdef _WIN32
+            if (value.empty())
+            {
+                return {};
+            }
+
+            const int size = MultiByteToWideChar(
+                CP_UTF8,
+                MB_ERR_INVALID_CHARS,
+                value.data(),
+                static_cast<int>(value.size()),
+                nullptr,
+                0);
+            if (size <= 0)
+            {
+                throw std::runtime_error("Invalid UTF-8 test input.");
+            }
+            std::wstring out(static_cast<std::size_t>(size), L'\0');
+            MultiByteToWideChar(
+                CP_UTF8,
+                MB_ERR_INVALID_CHARS,
+                value.data(),
+                static_cast<int>(value.size()),
+                out.data(),
+                size);
+            return out;
+#else
+            return std::wstring(value.begin(), value.end());
+#endif
+        }
+
+#ifdef _WIN32
+        std::filesystem::path currentTestExecutablePath()
+        {
+            std::wstring path(32'768, L'\0');
+            const DWORD length = GetModuleFileNameW(
+                nullptr,
+                path.data(),
+                static_cast<DWORD>(path.size()));
+            if (length == 0 || length >= path.size())
+            {
+                throw std::runtime_error("Current test executable path is unavailable.");
+            }
+            path.resize(length);
+            return std::filesystem::path(path);
+        }
+#endif
+
         struct InstallProgressCapture
         {
             std::filesystem::path targetDirectory;
@@ -485,6 +535,493 @@ namespace fluxora::tests
 
         fluxora_core_shutdown();
     }
+
+    TEST(FluxoraCoreApiTests, ManagedExecutableDtoIsAdditiveAndCompletionErrorsStayTyped)
+    {
+        fluxora_core_shutdown();
+        TempDirectory temp;
+        const std::filesystem::path project = temp.path() / L"Managed Build";
+        const std::filesystem::path config = temp.path() / L"configs" / L"managed.json";
+        writeTextFile(project / L"stock game" / L"Data" / L"Skyrim.esm", "master");
+        writeTextFile(
+            project / L"mods" / L"BodySlide" / L"CalienteTools" / L"BodySlide" /
+                L"BodySlide x64.exe",
+            "MZ");
+        writeTextFile(
+            config,
+            "{"
+            "\"id\":\"managed\",\"name\":\"Managed Build\","
+            "\"gameId\":\"skyrimse\",\"templateId\":\"skyrimse\","
+            "\"projectDirectory\":\"" + toUtf8(project.generic_wstring()) + "\","
+            "\"gamePath\":\"stock game\",\"dataDirectory\":\"Data\","
+            "\"defaultProfile\":\"Default\",\"launchExecutables\":[{"
+            "\"id\":\"bodyslide\",\"displayName\":\"BodySlide\","
+            "\"executablePath\":\"mods/BodySlide/CalienteTools/BodySlide/BodySlide x64.exe\","
+            "\"arguments\":\"\",\"workingDirectory\":\"\"}]}"
+        );
+
+        std::array<wchar_t, 16> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_get_game_executables(
+                config.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const std::wstring listed = copyBufferedApiOutput();
+        EXPECT_NE(listed.find(L"\"managedToolKind\":\"bodySlide\""), std::wstring::npos);
+
+        std::array<wchar_t, 256> completion{};
+        EXPECT_EQ(
+            fluxora_complete_managed_executable_launch(
+                L"missing-session",
+                L"completed",
+                completion.data(),
+                static_cast<int>(completion.size())),
+            FluxoraCoreResultCoreError);
+        EXPECT_TRUE(lastCoreError().starts_with(
+            L"bodyslide:BODYSLIDE_SESSION_NOT_FOUND:"));
+        fluxora_core_shutdown();
+    }
+
+#if defined(_WIN32) && defined(_WIN64)
+    TEST(FluxoraCoreApiTests, BodySlideVfsProbeReadsActiveModAndWritesOnlyManagedOutput)
+    {
+        fluxora_core_shutdown();
+        TempDirectory temp;
+        const std::filesystem::path game = temp.path() / L"Source Game";
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+
+        std::array<wchar_t, 4> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_create_project(
+                L"BodySlide VFS Build",
+                L"skyrimse",
+                game.c_str(),
+                installRoot.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const JsonValue created = JsonReader::parse(copyBufferedApiOutput());
+        const std::filesystem::path project(created.find(L"projectDirectory")->asString());
+        const std::filesystem::path config(created.find(L"configPath")->asString());
+        const std::filesystem::path gameData =
+            std::filesystem::path(created.find(L"gamePath")->asString()) / L"Data";
+
+        ASSERT_EQ(
+            fluxora_create_empty_mod(
+                project.c_str(),
+                L"Active Shapes",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        static_cast<void>(copyBufferedApiOutput());
+        const std::filesystem::path activeMod = project / L"mods" / L"Active Shapes";
+        writeTextFile(activeMod / L"meshes" / L"source.nif", "from-active-mod");
+
+        ASSERT_EQ(
+            fluxora_create_empty_mod(
+                project.c_str(),
+                L"BodySlide",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        static_cast<void>(copyBufferedApiOutput());
+        const std::filesystem::path toolDirectory =
+            project / L"mods" / L"BodySlide" / L"CalienteTools" / L"BodySlide";
+        const std::filesystem::path probeStatus = temp.path() / L"bodyslide-vfs-probe-status.txt";
+        const std::filesystem::path probeSource =
+            std::filesystem::path(currentTestExecutablePath()).parent_path() /
+            L"FluxoraBodySlideVfsProbe.exe";
+        ASSERT_TRUE(std::filesystem::is_regular_file(probeSource));
+        const std::filesystem::path bodySlideExecutable = toolDirectory / L"BodySlide x64.exe";
+        std::filesystem::create_directories(bodySlideExecutable.parent_path());
+        std::filesystem::copy_file(
+            probeSource,
+            bodySlideExecutable,
+            std::filesystem::copy_options::overwrite_existing);
+        writeTextFile(toolDirectory / L"res" / L"xrc" / L"BodySlide.xrc", "resource");
+        ASSERT_EQ(fluxora_set_all_installed_mods_enabled(project.c_str(), 1), FluxoraCoreResultOk);
+
+        JsonWriter executables;
+        executables.beginArray()
+            .beginObject()
+                .field(L"id", L"bodyslide")
+                .field(L"displayName", L"BodySlide")
+                .field(L"executablePath", bodySlideExecutable.wstring())
+                .field(
+                    L"arguments",
+                    L"\"" + gameData.generic_wstring() + L"/\" \"" + probeStatus.wstring() + L"\"")
+                .field(L"workingDirectory", toolDirectory.wstring())
+                .field(L"iconPath", L"")
+                .field(L"managedToolKind", L"bodySlide")
+            .endObject()
+            .endArray();
+        ASSERT_EQ(
+            fluxora_save_game_executables(
+                config.c_str(),
+                executables.str().c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        static_cast<void>(copyBufferedApiOutput());
+
+        ASSERT_EQ(
+            fluxora_launch_game_executable(
+                config.c_str(),
+                L"bodyslide",
+                L"Default",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const JsonValue launch = JsonReader::parse(copyBufferedApiOutput());
+        ASSERT_NE(launch.find(L"managedSessionId"), nullptr);
+        ASSERT_NE(launch.find(L"outputMod"), nullptr);
+        const JsonValue& outputMod = *launch.find(L"outputMod");
+        const std::filesystem::path output(outputMod.find(L"path")->asString());
+        const std::uint32_t processId = static_cast<std::uint32_t>(
+            std::stoul(launch.find(L"processId")->asNumber()));
+        const HANDLE process = OpenProcess(
+            SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+            FALSE,
+            processId);
+        if (process != nullptr)
+        {
+            ASSERT_EQ(WaitForSingleObject(process, 30'000), WAIT_OBJECT_0);
+            DWORD exitCode = 0;
+            ASSERT_TRUE(GetExitCodeProcess(process, &exitCode));
+            CloseHandle(process);
+            ASSERT_EQ(exitCode, 0U);
+        }
+        else
+        {
+            EXPECT_EQ(GetLastError(), static_cast<DWORD>(ERROR_INVALID_PARAMETER));
+        }
+
+        for (int attempt = 0;
+             attempt < 100 && !std::filesystem::exists(output / L"meshes" / L"created.nif");
+             ++attempt)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        ASSERT_TRUE(std::filesystem::is_regular_file(probeStatus));
+        EXPECT_EQ(readTextFile(probeStatus), "ok");
+        EXPECT_EQ(readTextFile(activeMod / L"meshes" / L"source.nif"), "from-active-mod");
+        const std::filesystem::path rewrittenOutput = output / L"meshes" / L"source.nif";
+        const std::filesystem::path createdOutput = output / L"meshes" / L"created.nif";
+        if (!std::filesystem::is_regular_file(rewrittenOutput) ||
+            !std::filesystem::is_regular_file(createdOutput))
+        {
+            for (const std::filesystem::directory_entry& entry :
+                 std::filesystem::recursive_directory_iterator(project))
+            {
+                std::cerr << "BodySlide VFS diagnostic: " << entry.path().string() << '\n';
+            }
+        }
+        EXPECT_TRUE(std::filesystem::is_regular_file(rewrittenOutput));
+        EXPECT_TRUE(std::filesystem::is_regular_file(createdOutput));
+        if (std::filesystem::is_regular_file(rewrittenOutput))
+        {
+            EXPECT_EQ(readTextFile(rewrittenOutput), "rewritten-by-probe");
+        }
+        if (std::filesystem::is_regular_file(createdOutput))
+        {
+            EXPECT_EQ(readTextFile(createdOutput), "created-by-probe");
+        }
+        EXPECT_FALSE(std::filesystem::exists(project / L"overwrite" / L"meshes" / L"source.nif"));
+        EXPECT_FALSE(std::filesystem::exists(project / L"overwrite" / L"root" / L"Datameshes"));
+        EXPECT_FALSE(std::filesystem::exists(gameData / L"meshes" / L"source.nif"));
+
+        std::array<wchar_t, 2048> completion{};
+        EXPECT_EQ(
+            fluxora_complete_managed_executable_launch(
+                launch.find(L"managedSessionId")->asString().c_str(),
+                L"completed",
+                completion.data(),
+                static_cast<int>(completion.size())),
+            FluxoraCoreResultOk) << toUtf8(lastCoreError());
+        EXPECT_NE(std::wstring(completion.data()).find(L"\"finalized\":true"), std::wstring::npos);
+        fluxora_core_shutdown();
+    }
+
+    TEST(FluxoraCoreApiTests, UniversalVfsProbeExercisesRealInjectedWindowsSemantics)
+    {
+        fluxora_core_shutdown();
+        TempDirectory temp;
+        const std::filesystem::path game = temp.path() / L"Source Game";
+        const std::filesystem::path installRoot = temp.path() / L"Builds";
+        const std::filesystem::path status = temp.path() / L"universal-vfs-status.txt";
+        writeTextFile(game / L"SkyrimSE.exe", "MZ");
+        writeTextFile(game / L"Data" / L"Skyrim.esm", "master");
+
+        const std::filesystem::path probeSource =
+            std::filesystem::path(currentTestExecutablePath()).parent_path() /
+            L"FluxoraUniversalVfsProbe.exe";
+        ASSERT_TRUE(std::filesystem::is_regular_file(probeSource));
+        const std::filesystem::path probeExecutable = game / L"FluxoraUniversalVfsProbe.exe";
+        std::filesystem::create_directories(game);
+        std::filesystem::copy_file(
+            probeSource,
+            probeExecutable,
+            std::filesystem::copy_options::overwrite_existing);
+
+        std::array<wchar_t, 4> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_create_project(
+                L"Universal VFS Build",
+                L"skyrimse",
+                game.c_str(),
+                installRoot.c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const JsonValue created = JsonReader::parse(copyBufferedApiOutput());
+        const std::filesystem::path project(created.find(L"projectDirectory")->asString());
+        const std::filesystem::path config(created.find(L"configPath")->asString());
+
+        ASSERT_EQ(
+            fluxora_create_empty_mod(
+                project.c_str(),
+                L"Low Universal",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        static_cast<void>(copyBufferedApiOutput());
+        ASSERT_EQ(
+            fluxora_create_empty_mod(
+                project.c_str(),
+                L"High Universal",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        static_cast<void>(copyBufferedApiOutput());
+
+        const std::filesystem::path low = project / L"mods" / L"Low Universal";
+        const std::filesystem::path high = project / L"mods" / L"High Universal";
+        const std::filesystem::path unknown =
+            L"NovelSubsystem/deep/state.futureext";
+        writeTextFile(low / unknown, "low-unwrapped");
+        writeTextFile(high / unknown, "high-unwrapped");
+        writeTextFile(high / L"Data" / unknown, "high-wrapper");
+        writeTextFile(high / L"root" / L"root-only.dll", "root-wrapper");
+        writeTextFile(high / L"Data/meshes/pbr/surface.nif", "PBR-NIF");
+        writeTextFile(high / L"Data/materials/pbr/surface.mat", "PBR-MAT");
+        writeTextFile(high / L"Data/textures/pbr/surface.dds", "PBR-DDS");
+        writeTextFile(high / L"Data/NovelSubsystem/truncate.bin", "lower-truncate-value");
+        writeTextFile(high / L"Data/NovelSubsystem/rename-source.bin", "source-value");
+        writeTextFile(high / L"Data/NovelSubsystem/rename-target.bin", "target-value");
+        writeTextFile(high / L"Data/NovelSubsystem/delete-me.bin", "delete-value");
+        writeTextFile(high / L"Data/NovelSubsystem/delete-on-close.bin", "delete-on-close-value");
+        ASSERT_EQ(fluxora_set_all_installed_mods_enabled(project.c_str(), 1), FluxoraCoreResultOk);
+
+        JsonWriter executables;
+        executables.beginArray()
+            .beginObject()
+                .field(L"id", L"universal-vfs-probe")
+                .field(L"displayName", L"Universal VFS Probe")
+                .field(L"executablePath", probeExecutable.wstring())
+                .field(
+                    L"arguments",
+                    L"\"" + (game / L"Data").wstring() + L"\" \"" +
+                        game.wstring() + L"\" \"" + status.wstring() + L"\"")
+                .field(L"workingDirectory", game.wstring())
+                .field(L"iconPath", L"")
+            .endObject()
+            .endArray();
+        ASSERT_EQ(
+            fluxora_save_game_executables(
+                config.c_str(),
+                executables.str().c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        static_cast<void>(copyBufferedApiOutput());
+
+        ASSERT_EQ(
+            fluxora_launch_game_executable(
+                config.c_str(),
+                L"universal-vfs-probe",
+                L"Default",
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const JsonValue launch = JsonReader::parse(copyBufferedApiOutput());
+        const std::uint32_t processId = static_cast<std::uint32_t>(
+            std::stoul(launch.find(L"processId")->asNumber()));
+        const HANDLE process = OpenProcess(
+            SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+            FALSE,
+            processId);
+        ASSERT_NE(process, nullptr);
+        ASSERT_EQ(WaitForSingleObject(process, 30'000), WAIT_OBJECT_0);
+        DWORD exitCode = 0;
+        ASSERT_TRUE(GetExitCodeProcess(process, &exitCode));
+        CloseHandle(process);
+
+        ASSERT_TRUE(std::filesystem::is_regular_file(status));
+        const std::string probeStatus = readTextFile(status);
+        if (probeStatus != "ok" || exitCode != 0U)
+        {
+            std::error_code diagnosticError;
+            for (std::filesystem::recursive_directory_iterator iterator(
+                    project,
+                    std::filesystem::directory_options::skip_permission_denied,
+                    diagnosticError), end;
+                iterator != end && !diagnosticError;
+                iterator.increment(diagnosticError))
+            {
+                std::cerr << "Universal VFS diagnostic: " << iterator->path().string() << '\n';
+            }
+        }
+        ASSERT_EQ(probeStatus, "ok");
+        ASSERT_EQ(exitCode, 0U) << probeStatus;
+        EXPECT_EQ(readTextFile(high / L"Data" / unknown), "high-wrapper");
+        EXPECT_EQ(readTextFile(high / L"Data/NovelSubsystem/rename-source.bin"), "source-value");
+        EXPECT_EQ(readTextFile(high / L"Data/NovelSubsystem/delete-me.bin"), "delete-value");
+        EXPECT_EQ(
+            readTextFile(project / L"overwrite" / unknown),
+            "+appendapper+tail");
+        EXPECT_EQ(
+            readTextFile(project / L"overwrite/NovelSubsystem/truncate.bin"),
+            "truncated");
+        EXPECT_EQ(
+            readTextFile(project / L"overwrite/NovelSubsystem/rename-target.bin"),
+            "source-value");
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            project / L".flow/vfs/whiteouts/primary-content/novelsubsystem/rename-source.bin"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            project / L".flow/vfs/whiteouts/primary-content/novelsubsystem/delete-me.bin"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            project / L".flow/vfs/whiteouts/primary-content/novelsubsystem/delete-on-close.bin"));
+        const std::string vfsLog = readTextFile(project / L".flow/vfs/vfs.log");
+        EXPECT_NE(vfsLog.find("VFS session started operationId="), std::string::npos);
+        EXPECT_NE(vfsLog.find("preparationMs="), std::string::npos);
+        EXPECT_NE(vfsLog.find("redirectedWrites="), std::string::npos);
+        EXPECT_NE(vfsLog.find("whiteouts="), std::string::npos);
+        EXPECT_NE(vfsLog.find("errors=0"), std::string::npos);
+        EXPECT_EQ(vfsLog.find("operationId=<none>"), std::string::npos);
+        EXPECT_FALSE(std::filesystem::exists(game / L"Data/NovelSubsystem"));
+        fluxora_core_shutdown();
+    }
+
+    TEST(FluxoraCoreApiTests, FoundationAcceptanceReadsRealPbrChainThroughInjectedVfsWhenConfigured)
+    {
+        fluxora_core_shutdown();
+        wchar_t configBuffer[32'768]{};
+        const DWORD configLength = GetEnvironmentVariableW(
+            L"FLUXORA_FOUNDATION_ACCEPTANCE_CONFIG",
+            configBuffer,
+            static_cast<DWORD>(std::size(configBuffer)));
+        if (configLength == 0 || configLength >= std::size(configBuffer))
+        {
+            GTEST_SKIP() << "Set FLUXORA_FOUNDATION_ACCEPTANCE_CONFIG for the local real-build acceptance run.";
+        }
+
+        const std::filesystem::path sourceConfig(configBuffer);
+        ASSERT_TRUE(std::filesystem::is_regular_file(sourceConfig));
+        const std::string originalConfig = readTextFile(sourceConfig);
+        const JsonValue configJson = JsonReader::parse(fromUtf8(originalConfig));
+        const JsonValue* projectDirectoryValue = configJson.find(L"projectDirectory");
+        const JsonValue* gamePathValue = configJson.find(L"gamePath");
+        const JsonValue* dataDirectoryValue = configJson.find(L"dataDirectory");
+        const JsonValue* defaultProfileValue = configJson.find(L"defaultProfile");
+        ASSERT_NE(projectDirectoryValue, nullptr);
+        ASSERT_NE(gamePathValue, nullptr);
+        ASSERT_NE(dataDirectoryValue, nullptr);
+        ASSERT_NE(defaultProfileValue, nullptr);
+
+        const std::filesystem::path project(projectDirectoryValue->asString());
+        const std::filesystem::path game = project / gamePathValue->asString();
+        const std::filesystem::path data = game / dataDirectoryValue->asString();
+        const std::filesystem::path mesh =
+            project / L"mods/DrJacopo's - 3D Deathbell (Low Poly Nexus Version)/meshes/plants/deathbell01.nif";
+        const std::filesystem::path pbrDescriptor =
+            project / L"mods/Cathedral PBR Plants/PBRNifPatcher/Cathedral3DDeathbellPBR.json";
+        const std::filesystem::path pbrTexture =
+            project / L"mods/Cathedral PBR Plants/textures/PBR/plants/deathbell01.dds";
+        ASSERT_TRUE(std::filesystem::is_regular_file(mesh));
+        ASSERT_TRUE(std::filesystem::is_regular_file(pbrDescriptor));
+        ASSERT_TRUE(std::filesystem::is_regular_file(pbrTexture));
+
+        TempDirectory temp;
+        const std::filesystem::path copiedConfig = temp.path() / L"Foundation-readonly.json";
+        const std::filesystem::path status = temp.path() / L"foundation-pbr-status.txt";
+        std::filesystem::copy_file(sourceConfig, copiedConfig);
+        const std::filesystem::path probeExecutable =
+            std::filesystem::path(currentTestExecutablePath()).parent_path() /
+            L"FluxoraUniversalVfsProbe.exe";
+        ASSERT_TRUE(std::filesystem::is_regular_file(probeExecutable));
+
+        JsonWriter executables;
+        executables.beginArray()
+            .beginObject()
+                .field(L"id", L"foundation-pbr-readonly-probe")
+                .field(L"displayName", L"Foundation PBR Read-only Probe")
+                .field(L"executablePath", probeExecutable.wstring())
+                .field(
+                    L"arguments",
+                    L"--readonly-three \"" + data.wstring() + L"\" \"" + status.wstring() +
+                        L"\" \"meshes\\plants\\deathbell01.nif\" \"" + mesh.wstring() +
+                        L"\" \"PBRNifPatcher\\Cathedral3DDeathbellPBR.json\" \"" +
+                        pbrDescriptor.wstring() +
+                        L"\" \"textures\\PBR\\plants\\deathbell01.dds\" \"" +
+                        pbrTexture.wstring() + L"\"")
+                .field(L"workingDirectory", game.wstring())
+                .field(L"iconPath", L"")
+            .endObject()
+            .endArray();
+
+        std::array<wchar_t, 4> smallBuffer{};
+        ASSERT_EQ(
+            fluxora_save_game_executables(
+                copiedConfig.c_str(),
+                executables.str().c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        static_cast<void>(copyBufferedApiOutput());
+        ASSERT_EQ(
+            fluxora_launch_game_executable(
+                copiedConfig.c_str(),
+                L"foundation-pbr-readonly-probe",
+                defaultProfileValue->asString().c_str(),
+                smallBuffer.data(),
+                static_cast<int>(smallBuffer.size())),
+            FluxoraCoreResultBufferTooSmall) << toUtf8(lastCoreError());
+        const JsonValue launch = JsonReader::parse(copyBufferedApiOutput());
+        const std::uint32_t processId = static_cast<std::uint32_t>(
+            std::stoul(launch.find(L"processId")->asNumber()));
+        const HANDLE process = OpenProcess(
+            SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+            FALSE,
+            processId);
+        ASSERT_NE(process, nullptr);
+        ASSERT_EQ(WaitForSingleObject(process, 60'000), WAIT_OBJECT_0);
+        DWORD exitCode = 0;
+        ASSERT_TRUE(GetExitCodeProcess(process, &exitCode));
+        CloseHandle(process);
+
+        ASSERT_TRUE(std::filesystem::is_regular_file(status));
+        EXPECT_EQ(readTextFile(status), "ok");
+        EXPECT_EQ(exitCode, 0U) << readTextFile(status);
+        EXPECT_EQ(readTextFile(sourceConfig), originalConfig);
+
+        const JsonValue* managedSessionId = launch.find(L"managedSessionId");
+        if (managedSessionId != nullptr && managedSessionId->isString())
+        {
+            std::array<wchar_t, 2048> completion{};
+            EXPECT_EQ(
+                fluxora_complete_managed_executable_launch(
+                    managedSessionId->asString().c_str(),
+                    L"completed",
+                    completion.data(),
+                    static_cast<int>(completion.size())),
+                FluxoraCoreResultOk) << toUtf8(lastCoreError());
+        }
+        fluxora_core_shutdown();
+    }
+#endif
 
     TEST(FluxoraCoreApiTests, SkyrimModMutationsSynchronizePluginStateFiles)
     {

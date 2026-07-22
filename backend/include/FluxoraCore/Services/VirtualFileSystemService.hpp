@@ -11,6 +11,7 @@ namespace fluxora
 {
     class Logger;
     class BuildPathSettingsService;
+    class BodySlideIntegrationService;
 
     // Launches a game executable behind a user-mode virtual file system, the same
     // idea Mod Organizer 2 uses: the mods are never copied into the game folder.
@@ -25,6 +26,7 @@ namespace fluxora
         VirtualFileSystemService(
             Logger& logger,
             ExecutableService& executables,
+            BodySlideIntegrationService& bodySlideIntegration,
             const BuildPathSettingsService& pathSettings) noexcept;
 
         void initialize() override;
@@ -44,6 +46,7 @@ namespace fluxora
     private:
         Logger& logger_;
         ExecutableService& executables_;
+        BodySlideIntegrationService& bodySlideIntegration_;
         const BuildPathSettingsService& pathSettings_;
         bool initialized_{false};
     };

@@ -1,6 +1,6 @@
 {
-  "schemaVersion": "1",
-  "definitionVersion": "1.0.0",
+  "schemaVersion": "2",
+  "definitionVersion": "2.0.0",
   "id": "skyrimse",
   "displayName": "Skyrim Special Edition",
   "summary": "Сборка для Skyrim SE: плагины .esp/.esm/.esl, порядок загрузки, INI-твики и SKSE64.",
@@ -113,7 +113,55 @@
   "contentLayoutRules": {
     "dataFolder": "Data",
     "supportsRootFiles": true,
-    "rootFileWrapperDirectory": "root"
+    "rootFileWrapperDirectory": "root",
+    "mountRules": [
+      {
+        "id": "primary-content",
+        "targetBase": "gameDirectory",
+        "targetPath": "Data",
+        "source": "activeMods",
+        "primaryContentRoot": true,
+        "includeUnwrappedModRoot": true,
+        "wrapperDirectories": ["Data"],
+        "overwritePath": ""
+      },
+      {
+        "id": "game-root",
+        "targetBase": "gameDirectory",
+        "targetPath": "",
+        "source": "activeMods",
+        "wrapperDirectories": ["root"],
+        "overwritePath": "root"
+      },
+      {
+        "id": "documents",
+        "targetBase": "documents",
+        "targetPath": "My Games/Skyrim Special Edition",
+        "source": "profileSettings",
+        "overwritePath": "documents"
+      },
+      {
+        "id": "local-appdata",
+        "targetBase": "localAppData",
+        "targetPath": "Skyrim Special Edition",
+        "source": "profileSettings",
+        "overwritePath": "local-appdata"
+      },
+      {
+        "id": "saves",
+        "targetBase": "documents",
+        "targetPath": "My Games/Skyrim Special Edition/Saves",
+        "source": "profileSaves",
+        "overwritePath": "Saves"
+      },
+      {
+        "id": "legacy-profile-saves",
+        "targetBase": "documents",
+        "targetPath": "My Games/Skyrim Special Edition/__MO_Saves",
+        "source": "profileSaves",
+        "overwritePath": "Saves"
+      }
+    ]
   },
   "vfsRules": {
     "supportsRootBuilder": true,
@@ -127,7 +175,7 @@
     "saveDirectoryNames": [
       "Saves"
     ],
-    "excludedLaunchCacheDirectories": [
+    "materializedLaunchCacheDirectories": [
       "root",
       "SKSE",
       "DLLPlugins",

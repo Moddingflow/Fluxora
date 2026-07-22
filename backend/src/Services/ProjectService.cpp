@@ -1,5 +1,7 @@
 #include "FluxoraCore/Services/ProjectService.hpp"
 
+#include "FluxoraCore/Services/BodySlideIntegrationService.hpp"
+
 #include "FluxoraCore/GameSupport/GameDetectionService.hpp"
 #include "FluxoraCore/GameSupport/GameHealthCheckService.hpp"
 #include "FluxoraCore/GameSupport/GameSupportRegistry.hpp"
@@ -2583,9 +2585,13 @@ namespace fluxora
         }
     }
 
-    ProjectService::ProjectService(Logger& logger, const TemplateService& templates) noexcept
+    ProjectService::ProjectService(
+        Logger& logger,
+        const TemplateService& templates,
+        BodySlideIntegrationService* bodySlideIntegration) noexcept
         : logger_(logger),
-          templates_(templates)
+          templates_(templates),
+          bodySlideIntegration_(bodySlideIntegration)
     {
     }
 
@@ -3257,6 +3263,12 @@ namespace fluxora
         {
             throw std::invalid_argument("A build folder with this name already exists.");
         }
+        if (bodySlideIntegration_ != nullptr)
+        {
+            bodySlideIntegration_->preflightProjectRename(
+                previous.projectDirectory,
+                renamed.name);
+        }
 
         std::filesystem::create_directories(renamed.configPath.parent_path());
         AtomicFileStore fileStore;
@@ -3272,6 +3284,7 @@ namespace fluxora
 
         bool movedProjectDirectory = false;
         bool wroteRenamedManifest = false;
+        bool renamedBodySlideOutput = false;
         std::optional<std::filesystem::path> renameRecoveryMarker;
         try
         {
@@ -3317,6 +3330,13 @@ namespace fluxora
                     renameRecoveryMarker.value(),
                     "transaction marker");
             }
+            if (bodySlideIntegration_ != nullptr)
+            {
+                bodySlideIntegration_->completeProjectRename(
+                    renamed.projectDirectory,
+                    renamed.name);
+                renamedBodySlideOutput = true;
+            }
             transaction.commit();
         }
         catch (const std::exception& exception)
@@ -3330,6 +3350,22 @@ namespace fluxora
                 }
                 rollbackFailure += std::move(message);
             };
+
+            if (renamedBodySlideOutput && bodySlideIntegration_ != nullptr)
+            {
+                try
+                {
+                    bodySlideIntegration_->completeProjectRename(
+                        renamed.projectDirectory,
+                        previous.name);
+                }
+                catch (const std::exception& restoreException)
+                {
+                    noteRollbackFailure(
+                        std::string("BodySlide output name could not be restored: ") +
+                        restoreException.what());
+                }
+            }
 
             if (movedProjectDirectory)
             {

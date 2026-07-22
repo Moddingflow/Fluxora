@@ -163,6 +163,7 @@ namespace fluxora
                     : definition.contentLayoutRules.dataFolder,
                 definition.contentLayoutRules.supportsRootFiles,
                 definition.contentLayoutRules.rootFileWrapperDirectory,
+                definition.contentLayoutRules.mountRules,
                 definition.pluginExtensions,
                 definition.archiveExtensions,
                 {},

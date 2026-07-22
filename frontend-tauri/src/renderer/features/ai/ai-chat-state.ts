@@ -3,9 +3,11 @@ import type {
   FluxoraAiCitation,
   FluxoraAiContextUsage,
   FluxoraAiFileChangeSet,
+  FluxoraAiFileRollbackState,
   FluxoraAiFileToolDiagnostics,
   FluxoraAiIntermediateEvent,
   FluxoraAiExecution,
+  FluxoraAiGoalContext,
   FluxoraAiTokenUsage
 } from '../../../shared/fluxora-api';
 
@@ -15,6 +17,7 @@ export type AiAgentStatus =
   | 'reading'
   | 'writing'
   | 'verifying'
+  | 'needs-input'
   | 'completed'
   | 'blocked'
   | 'stopped';
@@ -79,6 +82,7 @@ export interface AiChatThread {
   conversationSummary: string | null;
   providerHistoryStartIndex: number;
   intermediateEvents: FluxoraAiIntermediateEvent[];
+  activeGoal: FluxoraAiGoalContext | null;
 }
 
 export interface AiSession {
@@ -104,14 +108,12 @@ export interface AiChatState {
   messages: AiMessage[];
   runs: AiRun[];
   session: AiSession;
-  width: number;
 }
 
 export type AiChatAction =
   | { type: 'toggle-open' }
   | { type: 'close' }
   | { type: 'toggle-collapse' }
-  | { type: 'set-width'; width: number }
   | { type: 'set-draft'; value: string }
   | { type: 'create-chat'; now?: Date }
   | { type: 'select-chat'; chatId: string }
@@ -135,22 +137,20 @@ export type AiChatAction =
   | { type: 'cancel-run'; message: AiMessage; event: AiStreamEvent }
   | { type: 'update-file-change-set'; changeSet: FluxoraAiFileChangeSet }
   | {
+      type: 'restore-file-rollback-states';
+      chatId: string;
+      states: FluxoraAiFileRollbackState[];
+    }
+  | {
       type: 'update-capability-rollback';
       compensationToken: string;
       rollbackState: 'available' | 'rolling-back' | 'rolled-back' | 'blocked';
     };
 
-export const AI_CHAT_PANEL_MIN_WIDTH = 320;
-export const AI_CHAT_PANEL_MAX_WIDTH = 560;
-export const AI_CHAT_PANEL_DEFAULT_WIDTH = 380;
-export const AI_CHAT_PANEL_COLLAPSED_WIDTH = 56;
 export const DEFAULT_AI_CHAT_TITLE = 'New chat';
 
 const nowIso = (now = new Date()) => now.toISOString();
 const compactId = (value: string) => value.replace(/[^a-z0-9_-]/gi, '-').slice(0, 48) || 'build';
-
-export const clampAiChatPanelWidth = (width: number) =>
-  Math.min(AI_CHAT_PANEL_MAX_WIDTH, Math.max(AI_CHAT_PANEL_MIN_WIDTH, width));
 
 export function createAiChatTitleFromPrompt(prompt: string): string {
   const normalized = prompt.replace(/\s+/g, ' ').trim();
@@ -170,7 +170,8 @@ export function createAiChatThread(scopeKey: string, now = new Date()): AiChatTh
     contextUsage: null,
     conversationSummary: null,
     providerHistoryStartIndex: 0,
-    intermediateEvents: []
+    intermediateEvents: [],
+    activeGoal: null
   };
 }
 
@@ -205,8 +206,7 @@ export const initialAiChatState: AiChatState = {
   isRunning: false,
   messages: [],
   runs: [],
-  session: initialSession,
-  width: AI_CHAT_PANEL_DEFAULT_WIDTH
+  session: initialSession
 };
 
 export function createAiMessage(
@@ -314,7 +314,6 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
     case 'toggle-open': return { ...state, isOpen: !state.isOpen, isCollapsed: false };
     case 'close': return { ...state, isOpen: false };
     case 'toggle-collapse': return { ...state, isCollapsed: !state.isCollapsed };
-    case 'set-width': return { ...state, width: clampAiChatPanelWidth(action.width) };
     case 'set-draft': return { ...state, draft: action.value };
     case 'restore-session': return stateFromSession({ ...state, draft: '', intermediateEvents: [] }, action.session);
     case 'create-chat': {
@@ -407,6 +406,19 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
         contextUsage: action.message.contextUsage ?? chat.contextUsage,
         conversationSummary: action.message.conversationSummary ?? chat.conversationSummary,
         providerHistoryStartIndex: action.message.providerHistoryStartIndex ?? chat.providerHistoryStartIndex,
+        activeGoal: action.status === 'needs-input'
+          && action.message.execution?.state === 'needs-input'
+          && action.message.execution.mode === 'repair'
+          ? {
+              goalId: action.message.execution.goalId,
+              mode: action.message.execution.mode,
+              origin: action.message.execution.origin === 'continuation'
+                ? (chat.activeGoal?.origin ?? 'implicit')
+                : action.message.execution.origin,
+              requestedOutcome: action.message.execution.requestedOutcome,
+              pendingQuestion: action.message.execution.pendingQuestion ?? action.message.text
+            }
+          : null,
         runs: chat.runs.map((run) => run.id === action.event.runId ? {
           ...run,
           state: 'completed',
@@ -422,6 +434,7 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
       if (!chatId) return state;
       const session = updateChatById(state.session, chatId, (chat) => ({
         ...chat,
+        activeGoal: null,
         messages: [...chat.messages, action.message],
         runs: chat.runs.map((run) => run.id === action.event.runId ? {
           ...run,
@@ -443,6 +456,35 @@ export function aiChatReducer(state: AiChatState, action: AiChatAction): AiChatS
               ? { ...message, fileChangeSet: action.changeSet }
               : message
           )
+        }))
+      };
+      return stateFromSession(state, session);
+    }
+    case 'restore-file-rollback-states': {
+      const byRunId = new Map(action.states.map((rollbackState) => [rollbackState.runId, rollbackState]));
+      const session = {
+        ...state.session,
+        chats: state.session.chats.map((chat) => chat.id !== action.chatId ? chat : ({
+          ...chat,
+          messages: chat.messages.map((message) => {
+            const changeSet = message.fileChangeSet;
+            const rollbackState = changeSet ? byRunId.get(changeSet.runId) : undefined;
+            if (!changeSet) return message;
+            const restoredState = rollbackState?.state ?? 'unavailable';
+            const restoredReason = rollbackState?.reason ?? 'checkpoint-corrupt';
+            return {
+              ...message,
+              fileChangeSet: {
+                ...changeSet,
+                rollbackState: restoredState,
+                rollbackReason: restoredReason,
+                files: changeSet.files.map((file) => ({
+                  ...file,
+                  rollbackState: restoredState
+                }))
+              }
+            };
+          })
         }))
       };
       return stateFromSession(state, session);

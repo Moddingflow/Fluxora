@@ -37,12 +37,23 @@ The Tauri build path performs these steps:
 
 - configure and build `backend/` through CMake;
 - build the Tauri-side `fluxora-ai-host` binary and stage it as `FluxoraAIHost.exe`;
-- collect `FluxoraBridgeHost.exe`, `FluxoraAIHost.exe`, `FluxoraCore.dll` and `FluxoraVfs.dll` into `build/tauri-native/win32/x64`;
+- verify the pinned libclang build dependency and build the CPU-only `fluxora-speech-host` as `FluxoraSpeechHost.exe`;
+- build the CPU host in isolated `build/cpu` with explicit optimized MSVC Release flags so Cargo/CMake cannot silently produce an unoptimized fallback binary;
+- download the pinned LunarG Vulkan SDK 1.4.341.1 into ignored `build/tool-cache`, verify SHA-256, install it in supported unattended `copy_only` mode without modifying the system Vulkan installation, and build `fluxora-speech-host-vulkan` as `FluxoraSpeechHostVulkan.exe`;
+- use the short ignored `build/vk` Cargo target for the Vulkan build so whisper.cpp's nested shader-generator paths remain below the Windows MSBuild/FileTracker path limit;
+- download the pinned Whisper `small-q5_1` and Silero VAD 6.2.0 assets only during the build into ignored `build/model-cache/speech`, validating revision, size where declared, and SHA-256 before staging;
+- collect `FluxoraBridgeHost.exe`, `FluxoraAIHost.exe`, both speech hosts, `FluxoraCore.dll` and `FluxoraVfs.dll` into `build/tauri-native/win32/x64`;
 - run `npm install` and `npm run build` in `frontend-tauri/` after staging native payloads into `frontend-tauri/src-tauri/resources/native`;
 - copy the built Tauri app from `frontend-tauri/src-tauri/target/release/Fluxora.exe` into `output/`;
-- verify `output/Fluxora.exe`, `output/resources/native/FluxoraBridgeHost.exe`, `output/resources/native/FluxoraAIHost.exe`, `output/resources/native/FluxoraCore.dll` and `output/resources/native/FluxoraVfs.dll`;
+- verify `output/Fluxora.exe`, both speech-host files, all other native hosts/core/VFS, the speech manifest, glossary, licenses, and both model hashes under `output/resources/speech`;
 - create `installer/Fluxora.Installer/Resources/Payload/FluxoraPayload.flxpkg.gz`;
 - publish the approved Windows installer to `output-installer/FluxoraSetup.exe`.
+
+The installed app is fully offline for speech recognition. Runtime code neither
+downloads nor updates speech assets. Model updates require a reviewed manifest
+revision/hash change and a new signed installer build. Model cache and generated
+Tauri speech resources are build artifacts and must not be committed or
+distributed as a portable package.
 
 ### Protected Downloads data during build and update
 

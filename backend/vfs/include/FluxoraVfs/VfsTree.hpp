@@ -55,6 +55,7 @@ namespace fluxora::vfs
             enum class Kind
             {
                 Unknown,   // not provided by any mod / overlay
+                Whiteout,  // explicitly deleted from the merged view
                 File,
                 Directory
             };
@@ -69,6 +70,7 @@ namespace fluxora::vfs
 
         [[nodiscard]] const std::wstring& target() const noexcept { return target_; }
         [[nodiscard]] const std::wstring& overwrite() const noexcept { return overwrite_; }
+        [[nodiscard]] const std::wstring& whiteoutRoot() const noexcept { return whiteoutRoot_; }
         [[nodiscard]] bool isBuilt() const noexcept { return built_; }
 
         // Pure lookup: classify a path (relative to the mount target, backslashes,
@@ -85,6 +87,10 @@ namespace fluxora::vfs
         // The snapshot is immutable and shared by directory enumeration callers.
         using DirectoryListing = std::shared_ptr<const std::vector<DirChild>>;
         [[nodiscard]] DirectoryListing listing(const std::wstring& relLower) const;
+
+        // Invalidates lazy lookup/enumeration caches after a redirected write,
+        // rename or delete changes the mutable overlay during the session.
+        void notifyMutation(const std::wstring& rel);
 
         // Path helpers shared with the hooks.
         [[nodiscard]] static std::wstring toLower(std::wstring value);
@@ -130,6 +136,7 @@ namespace fluxora::vfs
         DirNode& ensureDir(const std::wstring& relLower) const;
         [[nodiscard]] bool isExcludedTopLevelName(const std::wstring& name) const;
         [[nodiscard]] bool isExcludedRelativePath(const std::wstring& relLower) const;
+        [[nodiscard]] bool isWhiteoutedLocked(const std::wstring& relLower) const;
         [[nodiscard]] bool hasOverlayDirectoryLocked(
             const std::wstring& rel,
             const std::wstring& relLower) const;
@@ -139,6 +146,7 @@ namespace fluxora::vfs
 
         std::wstring target_;
         std::wstring overwrite_;
+        std::wstring whiteoutRoot_;
         std::vector<std::wstring> mods_;
         std::vector<std::wstring> excludedRootNames_;
 

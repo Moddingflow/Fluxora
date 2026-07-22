@@ -45,13 +45,75 @@ const installMockProductRuntime = async (page: Page) => {
     type StubWindow = Window & {
       __fluxoraAiHostCalls?: string[];
       __resolveFluxoraAiChatRespond?: () => void;
+      __resolveFluxoraVoicePrepare?: () => void;
+      __emitFluxoraVoiceSamples?: (sampleCount?: number) => void;
+      __fluxoraVoiceCaptureStarts?: number;
+      __fluxoraVoiceLifecycle?: string[];
+      __fluxoraVoiceTrackStops?: number;
+      __fluxoraVoiceOperationIds?: string[];
+      __fluxoraChatOperationIds?: string[];
     };
     const stubWindow = window as StubWindow;
     let installedApi: Record<string, any> | undefined;
 
+    class FakeVoiceAudioNode {
+      connect() { return this; }
+      disconnect() { /* test fixture */ }
+    }
+    class FakeVoiceWorkletNode extends FakeVoiceAudioNode {
+      port = {
+        close: () => undefined,
+        onmessage: null as ((event: MessageEvent<Float32Array>) => void) | null
+      };
+      constructor() {
+        super();
+        stubWindow.__emitFluxoraVoiceSamples = (sampleCount = 4_000) => {
+          const samples = new Float32Array(sampleCount);
+          samples.fill(0.25);
+          this.port.onmessage?.({ data: samples } as MessageEvent<Float32Array>);
+        };
+      }
+    }
+    class FakeVoiceAudioContext {
+      audioWorklet = { addModule: async () => undefined };
+      destination = {};
+      sampleRate = 16_000;
+      close = async () => undefined;
+      createGain = () => Object.assign(new FakeVoiceAudioNode(), { gain: { value: 1 } });
+      createMediaStreamSource = () => new FakeVoiceAudioNode();
+    }
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => {
+          stubWindow.__fluxoraVoiceCaptureStarts = (stubWindow.__fluxoraVoiceCaptureStarts ?? 0) + 1;
+          (stubWindow.__fluxoraVoiceLifecycle ??= []).push('capture');
+          if (window.localStorage.getItem('fluxora.e2e.voice-denied') === 'yes') {
+            throw new DOMException('Microphone permission denied', 'NotAllowedError');
+          }
+          return {
+            getTracks: () => [{
+              stop: () => {
+                stubWindow.__fluxoraVoiceTrackStops = (stubWindow.__fluxoraVoiceTrackStops ?? 0) + 1;
+              }
+            }]
+          };
+        }
+      }
+    });
+    Object.defineProperty(window, 'AudioContext', { configurable: true, value: FakeVoiceAudioContext });
+    Object.defineProperty(window, 'AudioWorkletNode', { configurable: true, value: FakeVoiceWorkletNode });
+
     const patchApi = (api: Record<string, any>) => {
       const calls: string[] = [];
       const listeners = new Set<(event: Record<string, unknown>) => void>();
+      const rollbackStorageKey = 'fluxora.e2e.rollback-states';
+      const readRollbackStates = () => JSON.parse(
+        window.localStorage.getItem(rollbackStorageKey) || '[]'
+      ) as Array<{ chatId: string; runId: string; state: string; reason?: string }>;
+      const writeRollbackStates = (
+        states: Array<{ chatId: string; runId: string; state: string; reason?: string }>
+      ) => window.localStorage.setItem(rollbackStorageKey, JSON.stringify(states));
       const project = {
         id: 'e2e-ai-build',
         name: 'E2E AI Build',
@@ -120,6 +182,11 @@ const installMockProductRuntime = async (page: Page) => {
             rollbackState: 'available'
           }]
         } : undefined;
+        if (fileChangeSet) {
+          const states = readRollbackStates().filter((state) => state.runId !== fileChangeSet.runId);
+          states.push({ chatId: fileChangeSet.chatId, runId: fileChangeSet.runId, state: 'available' });
+          writeRollbackStates(states);
+        }
         const text = isNeedsInput
           ? 'Профиль Default уже существует. Создать профиль с именем Default 2?'
           : isBlockedAction
@@ -274,6 +341,7 @@ const installMockProductRuntime = async (page: Page) => {
         const runId = String(request.runId ?? 'run-e2e');
         const prompt = String(((request.messages as Array<{ text?: string }> | undefined)?.at(-1))?.text ?? '');
         const operationId = operationIdOf(request, 'ai_chat_run');
+        (stubWindow.__fluxoraChatOperationIds ??= []).push(operationId);
         const event = (seq: number, type: string, stage: string, message: string, level = 'info') => ({
           schema: 'fluxora.ai.intermediate-event.v1', eventId: `e2e-${runId}-${seq}`,
           runId, operationId, seq, createdAt: new Date().toISOString(), type, level,
@@ -305,19 +373,123 @@ const installMockProductRuntime = async (page: Page) => {
         calls.push('ai.cancelRun');
         return { operationId, status: 'accepted', accepted: true };
       };
+      api.ai.prepareVoice = async (request: Record<string, unknown>) => {
+        calls.push('ai.prepareVoice');
+        (stubWindow.__fluxoraVoiceLifecycle ??= []).push('prepare');
+        if (window.localStorage.getItem('fluxora.e2e.voice-prepare-hang') === 'yes') {
+          await new Promise<void>((resolve) => {
+            stubWindow.__resolveFluxoraVoicePrepare = resolve;
+          });
+        }
+        return {
+          operationId: operationIdOf(request, 'ai_voice_prepare'),
+          ready: true,
+          warmed: true,
+          health: 'ready',
+          modelVersion: 'small-q5_1',
+          glossaryVersion: '1.0.0'
+        };
+      };
+      api.ai.armMicrophoneCapture = async () => {
+        calls.push('ai.armMicrophoneCapture');
+        (stubWindow.__fluxoraVoiceLifecycle ??= []).push('arm');
+      };
+      api.ai.resetMicrophonePermission = async () => {
+        calls.push('ai.resetMicrophonePermission');
+      };
+      api.ai.transcribeVoice = async (_pcm: Uint8Array, request: Record<string, unknown>) => {
+        calls.push('ai.transcribeVoice');
+        const operationId = operationIdOf(request, 'ai_voice_transcribe');
+        (stubWindow.__fluxoraVoiceOperationIds ??= []).push(operationId);
+        if (window.localStorage.getItem('fluxora.e2e.voice-hang') === 'yes') {
+          return new Promise(() => undefined);
+        }
+        if (window.localStorage.getItem('fluxora.e2e.voice-timeout') === 'yes') {
+          throw { code: 'speech.host.timeout', message: 'invalid args: C:\\private\\speech-model.bin', retryable: true };
+        }
+        if (window.localStorage.getItem('fluxora.e2e.voice-no-speech') === 'yes') {
+          return {
+            operationId,
+            transcript: '',
+            noSpeech: true,
+            detectedLanguage: null,
+            backend: 'cpu'
+          };
+        }
+        return {
+          operationId,
+          transcript: window.localStorage.getItem('fluxora.e2e.voice-transcript') || 'проверь голосовой ввод',
+          noSpeech: false,
+          detectedLanguage: 'ru',
+          backend: 'vulkan'
+        };
+      };
+      api.ai.cancelVoiceTranscription = async (operationId: string) => {
+        calls.push('ai.cancelVoiceTranscription');
+        if (window.localStorage.getItem('fluxora.e2e.voice-hang') === 'yes') {
+          return new Promise(() => undefined);
+        }
+        return { operationId, accepted: true };
+      };
+      api.ai.openMicrophonePrivacySettings = async () => {
+        calls.push('ai.openMicrophonePrivacySettings');
+      };
       api.ai.rollbackFile = async () => {
         calls.push('ai.rollbackFile');
-        return { state: 'rolled-back', files: [{ fileRef: 'opaque-e2e-file', rollbackState: 'rolled-back' }] };
+        return {
+          operationId: 'rollback-file', runId: 'legacy-file-run', state: 'rolled-back',
+          mode: 'exact', preservedNewerChanges: false,
+          files: [{ fileRef: 'opaque-e2e-file', rollbackState: 'rolled-back' }]
+        };
       };
-      api.ai.rollbackRun = async () => {
+      api.ai.rollbackRun = async (chatId: string, runId: string, request?: Record<string, unknown>) => {
         calls.push('ai.rollbackRun');
-        return { state: 'rolled-back', files: [{ fileRef: 'opaque-e2e-file', rollbackState: 'rolled-back' }] };
+        const states = readRollbackStates();
+        const selectedIndex = states.findIndex((state) => state.chatId === chatId && state.runId === runId);
+        if (window.localStorage.getItem('fluxora.e2e.rollback-conflict') === runId) {
+          if (selectedIndex >= 0) {
+            states[selectedIndex] = {
+              ...states[selectedIndex],
+              state: 'conflict',
+              reason: 'overlapping-edit'
+            };
+          }
+          writeRollbackStates(states);
+          return {
+            operationId: operationIdOf(request, 'rollback-run'), runId, state: 'conflict',
+            reason: 'overlapping-edit', mode: 'inverse-merge', preservedNewerChanges: false,
+            files: [{ fileRef: 'opaque-e2e-file', rollbackState: 'conflict' }]
+          };
+        }
+        const preservedNewerChanges = states.slice(selectedIndex + 1).some((state) => state.state === 'available');
+        if (selectedIndex >= 0) states[selectedIndex] = { ...states[selectedIndex], state: 'rolled-back' };
+        writeRollbackStates(states);
+        return {
+          operationId: operationIdOf(request, 'rollback-run'), runId, state: 'rolled-back',
+          mode: preservedNewerChanges ? 'inverse-merge' : 'exact', preservedNewerChanges,
+          files: [{ fileRef: 'opaque-e2e-file', rollbackState: 'rolled-back' }]
+        };
+      };
+      api.ai.getFileRollbackStates = async (chatId: string) => {
+        calls.push('ai.getFileRollbackStates');
+        return readRollbackStates()
+          .filter((state) => state.chatId === chatId)
+          .map(({ runId, state, reason }) => ({ runId, state, ...(reason ? { reason } : {}) }));
+      };
+      api.ai.resetFileRollbackCheckpoints = async () => {
+        calls.push('ai.resetFileRollbackCheckpoints');
+        window.localStorage.removeItem(rollbackStorageKey);
       };
       api.links.openExternal = async (url: string) => {
         calls.push(`links.openExternal:${url}`);
         return { ok: true };
       };
+      api.shell.showItemInFolder = async (path: string) => {
+        calls.push(`shell.showItemInFolder:${path}`);
+        return { ok: true };
+      };
       api.windowControls.openAiTextEditor = async () => calls.push('windowControls.openAiTextEditor');
+      api.windowControls.openTextEditor = async () => calls.push('windowControls.openTextEditor');
       stubWindow.__fluxoraAiHostCalls = calls;
       return api;
     };
@@ -339,10 +511,10 @@ const installMockProductRuntime = async (page: Page) => {
 };
 
 const openSelectedBuildAi = async (page: Page) => {
-  await expect(page.getByRole('button', { name: 'Open Fluxora AI for this build', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Open Fluxora AI', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Open E2E AI Build' }).click();
   await expect(page.getByLabel('Selected build', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Open Fluxora AI for this build', exact: true }).click();
+  await page.getByRole('button', { name: 'Open Fluxora AI', exact: true }).click();
   await expect(page.getByRole('complementary', { name: 'Fluxora AI' })).toBeVisible();
 };
 
@@ -350,6 +522,14 @@ const resolvePendingAiResponse = async (page: Page) => {
   await expect.poll(() => page.evaluate(() => typeof (window as any).__resolveFluxoraAiChatRespond))
     .toBe('function');
   await page.evaluate(() => (window as any).__resolveFluxoraAiChatRespond());
+};
+
+const startVoiceAndAllowIfNeeded = async (page: Page) => {
+  await page.getByRole('button', { name: 'Start voice input' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Allow microphone access' });
+  if (await dialog.isVisible()) {
+    await dialog.getByRole('button', { name: 'Allow', exact: true }).click();
+  }
 };
 
 test.beforeEach(async ({ page }) => {
@@ -400,26 +580,70 @@ test('renders grounding sources, verified file changes and working Undo actions'
   const changeSet = page.locator('.ai-file-change-set');
   await expect(changeSet).toHaveCount(1);
   await expect(changeSet).toContainText('Fluxora AI Overrides/SKSE/Plugins/CommunityShaders/SettingsUser.json');
-  await expect(changeSet).toContainText('json-pointer-matched-after-reread');
-  await changeSet.getByRole('button', { name: /Fluxora AI Overrides\/SKSE\/Plugins\/CommunityShaders\/SettingsUser.json/ }).click();
-  await page.getByRole('button', { name: 'Gemini grounding source' }).click();
-  await changeSet.locator('.ai-file-change').getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(changeSet).toContainText('+1');
+  await expect(changeSet).toContainText('−1');
+  const changedFile = changeSet.getByRole('button', { name: /Fluxora AI Overrides\/SKSE\/Plugins\/CommunityShaders\/SettingsUser.json/ });
+  await changedFile.click();
+  const diffPreview = page.getByRole('dialog', { name: 'Changes preview: SettingsUser.json' });
+  await expect(diffPreview).toBeVisible();
+  await expect(diffPreview.locator('[data-diff-kind="removed"]')).toContainText('35');
+  await expect(diffPreview.locator('[data-diff-kind="added"]')).toContainText('34');
+  await expect(diffPreview.getByRole('textbox')).toHaveCount(0);
+  await diffPreview.getByRole('button', { name: 'Close changes preview' }).click();
+
+  await changedFile.click({ button: 'right' });
+  const changeMenu = page.getByRole('menu', { name: /SettingsUser.json actions/ });
+  await expect(changeMenu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(changeMenu).toHaveCount(0);
+  await changedFile.click({ button: 'right' });
+  await changeMenu.getByRole('menuitem', { name: 'Открыть в проводнике' }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
-    .toContain('ai.rollbackFile');
+    .toContain('shell.showItemInFolder:D:\\Fluxora\\Builds\\E2E AI Build\\mods\\Fluxora AI Overrides\\SKSE\\Plugins\\CommunityShaders\\SettingsUser.json');
+
+  await changedFile.click();
+  await diffPreview.getByRole('button', { name: 'Open full editor' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
+    .toContain('windowControls.openTextEditor');
+  await page.getByRole('button', { name: 'Gemini grounding source' }).click();
 
   await page.getByLabel('Message Fluxora AI').fill('[file-change] verify run Undo');
   await page.getByRole('button', { name: 'Send message' }).click();
   await resolvePendingAiResponse(page);
   await expect(page.locator('.ai-file-change-set')).toHaveCount(2);
-  await page.locator('.ai-file-change-set').last().getByRole('button', { name: 'Undo run' }).click();
+  const firstRun = page.locator('.ai-file-change-set').first();
+  const secondRun = page.locator('.ai-file-change-set').last();
+  await firstRun.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(firstRun.getByRole('button', { name: 'Undone', exact: true })).toBeDisabled();
+  await expect(firstRun).toContainText('Newer non-overlapping changes were preserved.');
+  await expect(secondRun.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
+
+  const secondRunId = await secondRun.getAttribute('data-run-id');
+  await page.evaluate((runId) => {
+    const states = JSON.parse(window.localStorage.getItem('fluxora.e2e.rollback-states') || '[]');
+    const second = states.findLast((state: { state: string }) => state.state === 'available');
+    window.localStorage.setItem('fluxora.e2e.rollback-conflict', runId || second?.runId || '');
+    window.localStorage.setItem('fluxora.e2e.current-file-data', 'newer user data');
+  }, secondRunId);
+  await secondRun.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(secondRun.getByRole('button', { name: 'Needs review', exact: true })).toBeDisabled();
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem('fluxora.e2e.current-file-data')))
+    .toBe('newer user data');
 
   await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
     .toEqual(expect.arrayContaining([
-      'windowControls.openAiTextEditor',
       'links.openExternal:https://example.com/source',
-      'ai.rollbackFile',
       'ai.rollbackRun'
     ]));
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
+    .not.toContain('windowControls.openAiTextEditor');
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
+    .not.toContain('ai.rollbackFile');
+
+  await page.reload();
+  await openSelectedBuildAi(page);
+  await expect(page.getByRole('button', { name: 'Undone', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Needs review', exact: true })).toHaveCount(1);
 });
 
 test('shows an uncommitted file action as blocked instead of successful advice', async ({ page }) => {
@@ -448,7 +672,7 @@ test('asks one exact question for a real native conflict', async ({ page }) => {
   await resolvePendingAiResponse(page);
 
   const response = page.locator('.ai-chat-message[data-role="assistant"]').last();
-  await expect(response).toHaveAttribute('data-status', 'blocked');
+  await expect(response).toHaveAttribute('data-status', 'needs-input');
   await expect(response).toContainText('Профиль Default уже существует. Создать профиль с именем Default 2?');
   await expect(response).not.toContainText('Готово');
   expect(((await response.textContent()) ?? '').match(/\?/g)).toHaveLength(1);
@@ -473,10 +697,197 @@ test('removes legacy AI state without touching unrelated settings and supports c
   await expect(page.getByRole('button', { name: 'Expand AI chat' })).toBeVisible();
 });
 
-test('pins the input surface to the panel bottom with and without diagnostics', async ({ page }) => {
+test('owns microphone consent, persists Allow and restores the prompt after Privacy reset', async ({ page }) => {
+  await page.goto(baseUrl);
+  await openSelectedBuildAi(page);
+
+  await page.getByRole('button', { name: 'Start voice input' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Allow microphone access' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Allow', exact: true })).toBeFocused();
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
+    .not.toEqual(expect.arrayContaining(['ai.prepareVoice', 'ai.armMicrophoneCapture']));
+  expect(await page.evaluate(() => (window as any).__fluxoraVoiceCaptureStarts ?? 0)).toBe(0);
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem('fluxora.settings.aiMicrophoneAllowed'))).toBeNull();
+
+  await page.getByRole('button', { name: 'Start voice input' }).click();
+  await page.getByRole('dialog', { name: 'Allow microphone access' })
+    .getByRole('button', { name: 'Deny', exact: true })
+    .click();
+  expect(await page.evaluate(() => window.localStorage.getItem('fluxora.settings.aiMicrophoneAllowed'))).toBeNull();
+  expect(await page.evaluate(() => (window as any).__fluxoraVoiceCaptureStarts ?? 0)).toBe(0);
+
+  await page.getByRole('button', { name: 'Start voice input' }).click();
+  await page.getByRole('dialog', { name: 'Allow microphone access' })
+    .getByRole('button', { name: 'Allow', exact: true })
+    .click();
+  await expect(page.getByText('Listening locally')).toBeVisible();
+  expect(await page.evaluate(() => window.localStorage.getItem('fluxora.settings.aiMicrophoneAllowed'))).toBe('true');
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
+    .toEqual(expect.arrayContaining(['ai.prepareVoice', 'ai.armMicrophoneCapture']));
+  expect(await page.evaluate(() => (window as any).__fluxoraVoiceCaptureStarts ?? 0)).toBe(1);
+  expect(await page.evaluate(() => (window as any).__fluxoraVoiceLifecycle ?? []))
+    .toEqual(['prepare', 'arm', 'capture']);
+
+  await page.keyboard.press('Escape');
+  await page.reload();
+  await openSelectedBuildAi(page);
+  await page.getByRole('button', { name: 'Start voice input' }).click();
+  await expect(page.getByRole('dialog', { name: 'Allow microphone access' })).toHaveCount(0);
+  await expect(page.getByText('Listening locally')).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  await page.goto(`${baseUrl}/?window=settings`);
+  await page.getByRole('button').filter({ hasText: 'Privacy' }).click();
+  await expect(page.locator('.settings-panel--privacy')).toBeVisible();
+  await page.getByRole('button', { name: 'Reset access' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
+    .toContain('ai.resetMicrophonePermission');
+  expect(await page.evaluate(() => window.localStorage.getItem('fluxora.settings.aiMicrophoneAllowed'))).toBeNull();
+
+  await page.goto(baseUrl);
+  await openSelectedBuildAi(page);
+  await page.getByRole('button', { name: 'Start voice input' }).click();
+  await expect(page.getByRole('dialog', { name: 'Allow microphone access' })).toBeVisible();
+});
+
+test('records locally, paints 32 levels and adds the transcript to the existing draft', async ({ page }) => {
+  await page.goto(baseUrl);
+  await openSelectedBuildAi(page);
+  await page.getByLabel('Message Fluxora AI').fill('Сначала');
+
+  await startVoiceAndAllowIfNeeded(page);
+  await expect(page.getByText('Listening locally')).toBeVisible();
+  await page.evaluate(() => (window as any).__emitFluxoraVoiceSamples?.(4_000));
+  await expect(page.locator('.ai-voice-waveform > span')).toHaveCount(32);
+  await page.getByRole('button', { name: 'Stop and add voice transcript' }).click();
+
+  await expect(page.getByLabel('Message Fluxora AI')).toHaveValue('Сначала проверь голосовой ввод');
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraVoiceTrackStops ?? 0)).toBe(1);
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
+    .toEqual(expect.arrayContaining(['ai.prepareVoice', 'ai.transcribeVoice']));
+});
+
+test('records without waiting for model warmup and shows only cancellable busy UI after Stop', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => window.localStorage.setItem('fluxora.e2e.voice-prepare-hang', 'yes'));
+  await page.evaluate(() => window.localStorage.setItem('fluxora.e2e.voice-hang', 'yes'));
+  await openSelectedBuildAi(page);
+
+  await startVoiceAndAllowIfNeeded(page);
+  await expect(page.getByText('Listening locally')).toBeVisible();
+  await page.evaluate(() => (window as any).__emitFluxoraVoiceSamples?.(4_000));
+  await page.getByRole('button', { name: 'Stop and add voice transcript' }).click();
+  await expect(page.locator('.ai-voice-processing__spinner')).toBeVisible();
+  await expect(page.locator('.ai-voice-processing .sr-only')).toHaveText('Transcribing locally');
+  await expect(page.getByText('Transcribing locally…')).toHaveCount(0);
+  await expect(page.locator('.ai-voice-waveform')).toHaveCount(0);
+  await expect(page.locator('.ai-voice-recorder__status strong')).toHaveCount(0);
+
+  const cancel = page.getByRole('button', { name: 'Cancel voice input' });
+  await expect(cancel).toBeEnabled();
+  await cancel.click();
+
+  await expect(page.getByLabel('Message Fluxora AI')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
+    .toContain('ai.cancelVoiceTranscription');
+});
+
+test('sends one Gemini run with the same voice operation id', async ({ page }) => {
+  await page.goto(baseUrl);
+  await openSelectedBuildAi(page);
+  await page.getByLabel('Message Fluxora AI').fill('Контекст');
+
+  await startVoiceAndAllowIfNeeded(page);
+  await expect(page.getByText('Listening locally')).toBeVisible();
+  await page.evaluate(() => (window as any).__emitFluxoraVoiceSamples?.(4_000));
+  await page.getByRole('button', { name: 'Stop, transcribe and send message' }).click();
+
+  await expect(page.locator('.ai-chat-message[data-role="user"]')).toContainText('Контекст проверь голосовой ввод');
+  await expect.poll(() => page.evaluate(() => ({
+    chat: (window as any).__fluxoraChatOperationIds ?? [],
+    voice: (window as any).__fluxoraVoiceOperationIds ?? []
+  }))).toEqual(expect.objectContaining({
+    chat: expect.arrayContaining([expect.any(String)]),
+    voice: expect.arrayContaining([expect.any(String)])
+  }));
+  const operationIds = await page.evaluate(() => ({
+    chat: (window as any).__fluxoraChatOperationIds,
+    voice: (window as any).__fluxoraVoiceOperationIds
+  }));
+  expect(operationIds.chat).toEqual(operationIds.voice);
+  expect(operationIds.chat).toHaveLength(1);
+  await resolvePendingAiResponse(page);
+});
+
+test('reports permission and no-speech errors and always releases the microphone', async ({ page }) => {
+  await page.goto(baseUrl);
+  await openSelectedBuildAi(page);
+  await page.evaluate(() => window.localStorage.setItem('fluxora.e2e.voice-denied', 'yes'));
+  await startVoiceAndAllowIfNeeded(page);
+  await expect(page.getByRole('alert')).toContainText('Windows blocked microphone access');
+  await page.getByRole('button', { name: 'Open Windows settings' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraAiHostCalls ?? []))
+    .toContain('ai.openMicrophonePrivacySettings');
+
+  await page.evaluate(() => {
+    window.localStorage.removeItem('fluxora.e2e.voice-denied');
+    window.localStorage.setItem('fluxora.e2e.voice-no-speech', 'yes');
+  });
+  await startVoiceAndAllowIfNeeded(page);
+  await expect(page.getByText('Listening locally')).toBeVisible();
+  await page.evaluate(() => (window as any).__emitFluxoraVoiceSamples?.(4_000));
+  await page.getByRole('button', { name: 'Stop and add voice transcript' }).click();
+  await expect(page.getByRole('alert')).toContainText('No speech was detected');
+
+  await page.evaluate(() => window.localStorage.removeItem('fluxora.e2e.voice-no-speech'));
+  await startVoiceAndAllowIfNeeded(page);
+  await expect(page.getByText('Listening locally')).toBeVisible();
+  await page.getByRole('button', { name: 'Close AI chat' }).click();
+  await expect(page.getByRole('complementary', { name: 'Fluxora AI' })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as any).__fluxoraVoiceTrackStops ?? 0)).toBe(2);
+});
+
+test('keeps a transcript as draft when Gemini is unavailable and reports speech timeout', async ({ page }) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() => window.localStorage.setItem('fluxora.e2e.ai-diagnostic', 'yes'));
+  await page.reload();
+  await openSelectedBuildAi(page);
+
+  await page.getByLabel('Message Fluxora AI').fill('Не теряй');
+  await startVoiceAndAllowIfNeeded(page);
+  await expect(page.getByText('Listening locally')).toBeVisible();
+  await page.evaluate(() => (window as any).__emitFluxoraVoiceSamples?.(4_000));
+  await page.getByRole('button', { name: 'Stop, transcribe and send message' }).click();
+  await expect(page.getByLabel('Message Fluxora AI')).toHaveValue('Не теряй проверь голосовой ввод');
+  expect(await page.evaluate(() => ((window as any).__fluxoraAiHostCalls ?? [])
+    .filter((call: string) => call === 'ai.chatRespond').length)).toBe(0);
+
+  await page.evaluate(() => window.localStorage.setItem('fluxora.e2e.voice-timeout', 'yes'));
+  await startVoiceAndAllowIfNeeded(page);
+  await expect(page.getByText('Listening locally')).toBeVisible();
+  await page.evaluate(() => (window as any).__emitFluxoraVoiceSamples?.(4_000));
+  await page.getByRole('button', { name: 'Stop and add voice transcript' }).click();
+  await expect(page.locator('.ai-voice-error')).toContainText('Local speech recognition timed out');
+  await expect(page.locator('.ai-voice-error')).not.toContainText('invalid args');
+
+  await page.evaluate(() => window.localStorage.setItem('fluxora.settings.developerMode', 'true'));
+  await page.reload();
+  await openSelectedBuildAi(page);
+  await startVoiceAndAllowIfNeeded(page);
+  await page.evaluate(() => (window as any).__emitFluxoraVoiceSamples?.(4_000));
+  await page.getByRole('button', { name: 'Stop and add voice transcript' }).click();
+  await page.getByText('Developer details').click();
+  await expect(page.locator('.ai-voice-error__debug')).toContainText('invalid args: C:\\private\\speech-model.bin');
+});
+
+test('keeps the 616px panel and composer breathing room with and without diagnostics', async ({ page }) => {
   const cases = [
-    { diagnostic: false, viewport: { width: 1280, height: 720 } },
-    { diagnostic: true, viewport: { width: 1280, height: 720 } },
+    { diagnostic: false, viewport: { width: 1100, height: 700 } },
+    { diagnostic: true, viewport: { width: 1100, height: 700 } },
     { diagnostic: false, viewport: { width: 1440, height: 900 } },
     { diagnostic: true, viewport: { width: 1440, height: 900 } }
   ];
@@ -499,9 +910,14 @@ test('pins the input surface to the panel bottom with and without diagnostics', 
     const inputBox = await page.locator('.ai-chat-input__surface').boundingBox();
     expect(panelBox).not.toBeNull();
     expect(inputBox).not.toBeNull();
-    expect(Math.abs(
+    expect(panelBox?.width).toBe(616);
+    expect(
       (panelBox?.y ?? 0) + (panelBox?.height ?? 0) -
       ((inputBox?.y ?? 0) + (inputBox?.height ?? 0))
-    )).toBeLessThanOrEqual(1);
+    ).toBeGreaterThanOrEqual(15);
+    expect(
+      (panelBox?.y ?? 0) + (panelBox?.height ?? 0) -
+      ((inputBox?.y ?? 0) + (inputBox?.height ?? 0))
+    ).toBeLessThanOrEqual(17);
   }
 });

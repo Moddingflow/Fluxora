@@ -1,4 +1,6 @@
 export const FluxoraIpcChannels = {
+  aiArmMicrophoneCapture: 'fluxora:ai:arm-microphone-capture',
+  aiCancelVoiceTranscription: 'fluxora:ai:cancel-voice-transcription',
   aiCancelRun: 'fluxora:ai:cancel-run',
   aiChatRespond: 'fluxora:ai:chat-respond',
   aiUndoCapability: 'fluxora:ai:undo-capability',
@@ -11,12 +13,18 @@ export const FluxoraIpcChannels = {
   aiFileSetDirty: 'fluxora:ai:file-set-dirty',
   aiFileRollbackFile: 'fluxora:ai:file-rollback-file',
   aiFileRollbackRun: 'fluxora:ai:file-rollback-run',
+  aiFileGetRollbackStates: 'fluxora:ai:file-get-rollback-states',
+  aiFileResetRollbackCheckpoints: 'fluxora:ai:file-reset-rollback-checkpoints',
   aiGetStatus: 'fluxora:ai:get-status',
   aiListModels: 'fluxora:ai:list-models',
   aiListProviders: 'fluxora:ai:list-providers',
+  aiOpenMicrophonePrivacySettings: 'fluxora:ai:open-microphone-privacy-settings',
+  aiPrepareVoice: 'fluxora:ai:prepare-voice',
+  aiResetMicrophonePermission: 'fluxora:ai:reset-microphone-permission',
   aiRestartHost: 'fluxora:ai:restart-host',
   aiRunEvent: 'fluxora:ai:run-event',
   aiTestProvider: 'fluxora:ai:test-provider',
+  aiTranscribeVoice: 'fluxora:ai:transcribe-voice',
   apiLimitsList: 'fluxora:api-limits:list',
   connectionsConnect: 'fluxora:connections:connect',
   connectionsDisconnect: 'fluxora:connections:disconnect',
@@ -57,6 +65,7 @@ export const FluxoraIpcChannels = {
   buildContentUnwatch: 'fluxora:build-content:unwatch',
   buildContentChanged: 'fluxora:build-content:changed',
   executablesGetIcon: 'fluxora:executables:get-icon',
+  executablesCompleteManagedLaunch: 'fluxora:executables:complete-managed-launch',
   executablesLaunch: 'fluxora:executables:launch',
   executablesList: 'fluxora:executables:list',
   executablesSave: 'fluxora:executables:save',
@@ -325,6 +334,50 @@ export interface FluxoraAiCancelRunResult {
   processId?: number | null;
 }
 
+export type FluxoraVoiceCompletionMode = 'draft' | 'send';
+export type FluxoraVoiceLanguage = 'auto' | 'en' | 'ru' | 'de';
+export type FluxoraVoiceBackend = 'vulkan' | 'cpu';
+
+export interface FluxoraVoiceError {
+  code: string;
+  userMessage: string;
+  stage: string;
+  operationId: string;
+  debugMessage?: string;
+}
+
+export interface FluxoraVoicePrepareRequest extends OperationRequest {}
+
+export interface FluxoraVoiceStatus {
+  operationId: string;
+  ready: boolean;
+  warmed: boolean;
+  health: 'ready' | 'starting' | 'unavailable' | 'blocked';
+  modelVersion: string;
+  glossaryVersion: string;
+  error?: FluxoraVoiceError | null;
+}
+
+export interface FluxoraVoiceTranscriptionRequest extends OperationRequest {
+  sampleRateHz: 16000;
+  channelCount: 1;
+  durationMs: number;
+  completionMode: FluxoraVoiceCompletionMode;
+  language: FluxoraVoiceLanguage;
+}
+
+export interface FluxoraVoiceTranscriptionResult {
+  operationId: string;
+  transcript: string;
+  detectedLanguage: string | null;
+  backend: FluxoraVoiceBackend;
+  modelVersion: string;
+  glossaryVersion: string;
+  durationMs: number;
+  processingTimeMs: number;
+  noSpeech: boolean;
+}
+
 export type FluxoraAiChatRole = 'system' | 'user' | 'assistant';
 
 export interface FluxoraAiChatMessage {
@@ -419,6 +472,9 @@ export interface FluxoraAiFileChangeSet {
   chatId: string;
   files: FluxoraAiFileChange[];
   rollbackState: 'available' | 'rolled-back' | 'conflict' | 'unavailable';
+  rollbackReason?: FluxoraAiFileRollbackReason;
+  rollbackMode?: 'exact' | 'inverse-merge';
+  preservedNewerChanges?: boolean;
 }
 
 export interface FluxoraAiFileReadRequest extends OperationRequest {
@@ -460,6 +516,23 @@ export interface FluxoraAiFileRollbackResult {
   runId: string;
   state: 'available' | 'rolled-back' | 'conflict' | 'unavailable';
   files: FluxoraAiFileChange[];
+  mode: 'exact' | 'inverse-merge';
+  reason?: FluxoraAiFileRollbackReason;
+  preservedNewerChanges: boolean;
+}
+
+export type FluxoraAiFileRollbackReason =
+  | 'overlapping-edit'
+  | 'checkpoint-expired'
+  | 'checkpoint-corrupt'
+  | 'encoding-changed'
+  | 'path-changed'
+  | 'created-file-modified';
+
+export interface FluxoraAiFileRollbackState {
+  runId: string;
+  state: 'available' | 'rolled-back' | 'conflict' | 'unavailable';
+  reason?: FluxoraAiFileRollbackReason;
 }
 
 export interface FluxoraAiChatRequest extends OperationRequest {
@@ -472,6 +545,7 @@ export interface FluxoraAiChatRequest extends OperationRequest {
   fileWorkspace?: FluxoraAiFileWorkspaceEnvelope;
   conversationSummary?: string | null;
   providerHistoryStartIndex?: number;
+  activeGoal?: FluxoraAiGoalContext | null;
 }
 
 export type FluxoraAiContextUsagePrecision = 'exact' | 'estimated';
@@ -552,6 +626,21 @@ export interface FluxoraAiFileToolDiagnostics {
   newEvidenceCount: number;
   stagnantResultCount: number;
   phaseTransitions: string[];
+  mode?: FluxoraAiGoalMode;
+  origin?: FluxoraAiGoalOrigin;
+  allowedRisk?: 'read-only' | 'reversible' | 'irreversible-with-confirmation';
+  continuedGoal?: boolean;
+}
+
+export type FluxoraAiGoalMode = 'answer' | 'inspect' | 'repair';
+export type FluxoraAiGoalOrigin = 'explicit' | 'implicit' | 'continuation';
+
+export interface FluxoraAiGoalContext {
+  goalId: string;
+  mode: FluxoraAiGoalMode;
+  origin: FluxoraAiGoalOrigin;
+  requestedOutcome: string;
+  pendingQuestion?: string | null;
 }
 
 export type FluxoraAiExecutionDomain =
@@ -584,6 +673,9 @@ export interface FluxoraAiCapabilityUndoResult {
 export interface FluxoraAiExecution {
   goalId: string;
   kind: 'action' | 'answer';
+  mode: FluxoraAiGoalMode;
+  origin: FluxoraAiGoalOrigin;
+  requestedOutcome: string;
   domain: FluxoraAiExecutionDomain;
   phase: 'discover' | 'inspect' | 'mutate' | 'verify' | 'report';
   state: 'running' | 'needs-input' | 'blocked' | 'completed';
@@ -733,7 +825,16 @@ export interface FluxoraExecutable {
   arguments: string;
   workingDirectory: string;
   iconPath: string;
+  managedToolKind?: 'bodySlide';
   executableDisplayMetadata?: unknown;
+}
+
+export interface FluxoraManagedOutputMod {
+  id: string;
+  displayName: string;
+  folderName: string;
+  path: string;
+  provider: string;
 }
 
 export interface FluxoraExecutableLaunchResult extends FluxoraExecutable {
@@ -745,6 +846,27 @@ export interface FluxoraExecutableLaunchResult extends FluxoraExecutable {
   handoffTimeoutMs: number;
   launchTrackingMetadata?: unknown;
   processId: number;
+  operationId: string;
+  managedSessionId?: string;
+  managedToolKind?: 'bodySlide';
+  outputMod?: FluxoraManagedOutputMod;
+  configurationStatus?: 'configured' | 'recovered' | string;
+  warnings?: string[];
+}
+
+export type FluxoraManagedLaunchOutcome =
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'watcher-error';
+
+export interface FluxoraManagedLaunchCompletion {
+  sessionId: string;
+  outcome: string;
+  finalized: boolean;
+  deferred: boolean;
+  outputMod: FluxoraManagedOutputMod;
+  warnings: string[];
   operationId: string;
 }
 
@@ -2166,6 +2288,15 @@ export interface FluxoraApi {
   };
   publicApi: FluxoraPublicApiClient;
   ai: {
+    armMicrophoneCapture: (request: OperationRequest) => Promise<void>;
+    prepareVoice: (request: FluxoraVoicePrepareRequest) => Promise<FluxoraVoiceStatus>;
+    resetMicrophonePermission: (request: OperationRequest) => Promise<void>;
+    transcribeVoice: (
+      pcm: Uint8Array,
+      metadata: FluxoraVoiceTranscriptionRequest
+    ) => Promise<FluxoraVoiceTranscriptionResult>;
+    cancelVoiceTranscription: (operationId: string) => Promise<void>;
+    openMicrophonePrivacySettings: () => Promise<void>;
     cancelRun: (
       operationId: string,
       request?: OperationRequest
@@ -2190,6 +2321,11 @@ export interface FluxoraApi {
       runId: string,
       request?: OperationRequest
     ) => Promise<FluxoraAiFileRollbackResult>;
+    getFileRollbackStates: (
+      chatId: string,
+      operationId: string
+    ) => Promise<FluxoraAiFileRollbackState[]>;
+    resetFileRollbackCheckpoints: (operationId: string) => Promise<void>;
     estimateContext: (request: FluxoraAiChatRequest) => Promise<FluxoraAiContextUsage>;
     getStatus: (request?: OperationRequest) => Promise<FluxoraAiHostStatus>;
     restartHost: (request?: OperationRequest) => Promise<FluxoraAiHostStatus>;
@@ -2547,6 +2683,11 @@ export interface FluxoraApi {
       profileName?: string,
       request?: OperationRequest
     ) => Promise<FluxoraExecutableLaunchResult>;
+    completeManagedLaunch: (
+      sessionId: string,
+      outcome: FluxoraManagedLaunchOutcome,
+      request?: OperationRequest
+    ) => Promise<FluxoraManagedLaunchCompletion>;
     getIcon: (
       executablePath: string,
       request?: OperationRequest

@@ -3,6 +3,7 @@
 #include "FluxoraCore/Services/AppSettingsService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/BuildFileWorkspaceService.hpp"
+#include "FluxoraCore/Services/BodySlideIntegrationService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/DownloadTransferLimiter.hpp"
 #include "FluxoraCore/Services/InstallOperationService.hpp"
@@ -51,11 +52,19 @@ namespace fluxora
           effectiveFileTree_(std::make_unique<EffectiveFileTreeService>(*logger_, *profileOrder_, *buildPathSettings_)),
           executableIcons_(std::make_unique<ExecutableIconService>(*logger_)),
           executables_(std::make_unique<ExecutableService>(*logger_, *executableIcons_, *buildPathSettings_)),
+          bodySlideIntegration_(std::make_unique<BodySlideIntegrationService>(*logger_, *buildPathSettings_)),
           templates_(std::make_unique<TemplateService>(*logger_)),
-          projects_(std::make_unique<ProjectService>(*logger_, *templates_)),
+          projects_(std::make_unique<ProjectService>(
+              *logger_,
+              *templates_,
+              bodySlideIntegration_.get())),
           fluxPacks_(std::make_unique<FluxPackService>(*logger_, *projects_, *downloads_, *buildPathSettings_)),
           modOrganizerImport_(std::make_unique<ModOrganizerImportService>(*logger_, *templates_, *projects_, *buildPathSettings_)),
-          virtualFileSystem_(std::make_unique<VirtualFileSystemService>(*logger_, *executables_, *buildPathSettings_)),
+          virtualFileSystem_(std::make_unique<VirtualFileSystemService>(
+              *logger_,
+              *executables_,
+              *bodySlideIntegration_,
+              *buildPathSettings_)),
           grassCache_(std::make_unique<GrassCacheService>(
               *logger_,
               *projects_,
@@ -97,6 +106,7 @@ namespace fluxora
         effectiveFileTree_->initialize();
         executableIcons_->initialize();
         executables_->initialize();
+        bodySlideIntegration_->initialize();
         templates_->initialize();
         projects_->initialize();
         fluxPacks_->initialize();
@@ -121,6 +131,7 @@ namespace fluxora
         fluxPacks_->shutdown();
         projects_->shutdown();
         templates_->shutdown();
+        bodySlideIntegration_->shutdown();
         executables_->shutdown();
         executableIcons_->shutdown();
         effectiveFileTree_->shutdown();
@@ -205,6 +216,11 @@ namespace fluxora
     ExecutableIconService& Core::executableIcons() noexcept
     {
         return *executableIcons_;
+    }
+
+    BodySlideIntegrationService& Core::bodySlideIntegration() noexcept
+    {
+        return *bodySlideIntegration_;
     }
 
     FluxPackService& Core::fluxPacks() noexcept

@@ -74,31 +74,44 @@ namespace fluxora::tests
     };
 
 #ifdef _WIN32
-    TEST_F(VfsMountPlanTests, InvalidatingChangedModRefreshesContentPlacement)
+    TEST_F(VfsMountPlanTests, UnknownContentAlwaysMountsAndExplicitWrappersWinInsideEachMod)
     {
-        const InstalledModEntry mod = mods_.createEmptyMod(project_, L"Layout Mod");
+        const InstalledModEntry low = mods_.createEmptyMod(project_, L"Low Mod");
+        const InstalledModEntry high = mods_.createEmptyMod(project_, L"High Mod");
         InstanceMetadataStore::replaceProfileOrderItems(
             project_,
             L"Default",
-            {ProfileOrderImportItemRecord{L"mod", L"Layout Mod", {}}});
-        writeTextFile(mod.id / L"Data" / L"textures" / L"base.dds", "base");
+            {
+                ProfileOrderImportItemRecord{L"mod", L"Low Mod", {}},
+                ProfileOrderImportItemRecord{L"mod", L"High Mod", {}}
+            });
+        writeTextFile(low.id / L"NovelSubsystem" / L"deep" / L"state.futureext", "low-root");
+        writeTextFile(low.id / L"Data" / L"NovelSubsystem" / L"deep" / L"state.futureext", "low-wrapper");
+        writeTextFile(high.id / L"NovelSubsystem" / L"deep" / L"state.futureext", "high-root");
+        writeTextFile(high.id / L"Data" / L"NovelSubsystem" / L"deep" / L"state.futureext", "high-wrapper");
+        writeTextFile(high.id / L".flow" / L"manifest.json", "{}");
+        writeTextFile(high.id / L"root" / L"EngineFixes.dll", "root");
 
-        (void)mods_.listInstalledMods(project_);
-        const VfsGameRootMountPlan initial = buildPlan();
-        EXPECT_FALSE(initial.dataMods.empty());
-        EXPECT_TRUE(initial.rootMods.empty());
-        ASSERT_TRUE(vfsContentPlacementCacheContainsForTesting(mod.id));
+        const VfsGameRootMountPlan plan = buildPlan();
 
-        const std::filesystem::path newRootFile = mod.id / L"root" / L"EngineFixes.dll";
-        writeTextFile(newRootFile, "root");
-        invalidateVfsContentPlacementCache(
-            pathSettings_.modsDirectory(project_),
-            {newRootFile});
-        EXPECT_FALSE(vfsContentPlacementCacheContainsForTesting(mod.id));
-
-        const VfsGameRootMountPlan refreshed = buildPlan();
-        ASSERT_EQ(refreshed.rootMods.size(), 1U);
-        EXPECT_EQ(normalized(refreshed.rootMods.front()), normalized(mod.id / L"root"));
+        ASSERT_GE(plan.mounts.size(), 2U);
+        const VfsMountDescriptor& dataMount = plan.mounts.front();
+        ASSERT_EQ(dataMount.mods.size(), 4U);
+        EXPECT_EQ(normalized(dataMount.mods[0]), normalized(low.id));
+        EXPECT_EQ(normalized(dataMount.mods[1]), normalized(low.id / L"Data"));
+        EXPECT_EQ(normalized(dataMount.mods[2]), normalized(high.id));
+        EXPECT_EQ(normalized(dataMount.mods[3]), normalized(high.id / L"Data"));
+        EXPECT_NE(
+            std::find(dataMount.excludedRootNames.begin(), dataMount.excludedRootNames.end(), L".flow"),
+            dataMount.excludedRootNames.end());
+        EXPECT_NE(
+            std::find(dataMount.excludedRootNames.begin(), dataMount.excludedRootNames.end(), L"Data"),
+            dataMount.excludedRootNames.end());
+        EXPECT_NE(
+            std::find(dataMount.excludedRootNames.begin(), dataMount.excludedRootNames.end(), L"root"),
+            dataMount.excludedRootNames.end());
+        ASSERT_EQ(plan.rootMods.size(), 1U);
+        EXPECT_EQ(normalized(plan.rootMods.front()), normalized(high.id / L"root"));
     }
 
     TEST_F(VfsMountPlanTests, FreshActivationLaunchReconcilesOfflineTopLevelInventoryBeforeWorkspaceRead)
@@ -158,9 +171,11 @@ namespace fluxora::tests
         ASSERT_EQ(plan.activeMods.size(), 2U);
         EXPECT_EQ(normalized(plan.activeMods[0].path), normalized(kept.id));
         EXPECT_EQ(normalized(plan.activeMods[1].path), normalized(added));
-        ASSERT_EQ(plan.dataMods.size(), 2U);
-        EXPECT_EQ(normalized(plan.dataMods[0]), normalized(kept.id / L"Data"));
-        EXPECT_EQ(normalized(plan.dataMods[1]), normalized(added / L"Data"));
+        ASSERT_EQ(plan.dataMods.size(), 4U);
+        EXPECT_EQ(normalized(plan.dataMods[0]), normalized(kept.id));
+        EXPECT_EQ(normalized(plan.dataMods[1]), normalized(kept.id / L"Data"));
+        EXPECT_EQ(normalized(plan.dataMods[2]), normalized(added));
+        EXPECT_EQ(normalized(plan.dataMods[3]), normalized(added / L"Data"));
         EXPECT_EQ(InstanceMetadataStore::inventorySyncCountForTesting(), 1U);
         EXPECT_EQ(InstanceMetadataStore::stableMetadataHandleOpenCountForTesting(), 0U);
         EXPECT_NE(readTextFile(disabledManifest).find(R"("state":"disabled")"), std::string::npos);
@@ -209,8 +224,9 @@ namespace fluxora::tests
 
         ASSERT_EQ(plan.activeMods.size(), 1U);
         EXPECT_EQ(normalized(plan.activeMods.front().path), normalized(mod));
-        ASSERT_EQ(plan.dataMods.size(), 1U);
-        EXPECT_EQ(normalized(plan.dataMods.front()), normalized(mod / L"Data"));
+        ASSERT_EQ(plan.dataMods.size(), 2U);
+        EXPECT_EQ(normalized(plan.dataMods[0]), normalized(mod));
+        EXPECT_EQ(normalized(plan.dataMods[1]), normalized(mod / L"Data"));
         EXPECT_EQ(InstanceMetadataStore::sqlPrepareCountForTesting(), 0U);
     }
 #endif

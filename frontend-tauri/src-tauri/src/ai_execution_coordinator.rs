@@ -2,6 +2,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
+use crate::goal_contract::{FluxoraAiGoal, GoalMode, GoalOrigin};
 pub use crate::tool_contract::ToolDomain as AiExecutionDomain;
 use crate::tool_contract::{tool_contract, ToolOperation, ToolRisk, ToolVerification};
 #[cfg(test)]
@@ -116,6 +117,9 @@ impl AiToolOutcome {
 pub struct AiExecutionCoordinator {
     goal_id: String,
     kind: AiExecutionKind,
+    mode: GoalMode,
+    origin: GoalOrigin,
+    requested_outcome: String,
     domain: AiExecutionDomain,
     phase: AiExecutionPhase,
     state: AiExecutionState,
@@ -138,6 +142,13 @@ impl AiExecutionCoordinator {
         Self {
             goal_id: goal_id.into(),
             kind,
+            mode: if kind == AiExecutionKind::Action {
+                GoalMode::Repair
+            } else {
+                GoalMode::Answer
+            },
+            origin: GoalOrigin::Explicit,
+            requested_outcome: "Complete the validated Fluxora task.".to_string(),
             domain,
             phase: AiExecutionPhase::Discover,
             state: AiExecutionState::Running,
@@ -152,6 +163,7 @@ impl AiExecutionCoordinator {
         }
     }
 
+    #[cfg(test)]
     pub fn from_prompt(goal_id: impl Into<String>, prompt: &str, action: bool) -> Self {
         Self::new(
             goal_id,
@@ -162,6 +174,22 @@ impl AiExecutionCoordinator {
             },
             infer_domain(prompt),
         )
+    }
+
+    pub fn from_goal(goal: &FluxoraAiGoal, prompt: &str) -> Self {
+        let mut coordinator = Self::new(
+            goal.goal_id(),
+            if goal.mode() == GoalMode::Repair {
+                AiExecutionKind::Action
+            } else {
+                AiExecutionKind::Answer
+            },
+            infer_domain(prompt),
+        );
+        coordinator.mode = goal.mode();
+        coordinator.origin = goal.origin();
+        coordinator.requested_outcome = goal.requested_outcome().to_string();
+        coordinator
     }
 
     #[cfg(test)]
@@ -186,12 +214,38 @@ impl AiExecutionCoordinator {
         self.pending_question.as_deref()
     }
 
+    pub fn request_input(&mut self, question: impl Into<String>) {
+        if self.state != AiExecutionState::Running {
+            return;
+        }
+        self.state = AiExecutionState::NeedsInput;
+        self.pending_question = Some(question.into());
+        self.terminal_reason = Some("needs-input".to_string());
+    }
+
     pub const fn new_evidence_count(&self) -> usize {
         self.new_evidence_count
     }
 
     pub const fn stagnant_result_count(&self) -> u8 {
         self.stagnant_result_count
+    }
+
+    pub fn observe_host_evidence(&mut self, label: &str, result: &Value) {
+        if self.state != AiExecutionState::Running {
+            return;
+        }
+        let delta = collect_evidence_delta(&mut self.evidence, label, result);
+        if delta.is_empty() {
+            self.stagnant_result_count = self.stagnant_result_count.saturating_add(1);
+        } else {
+            self.new_evidence_count = self.new_evidence_count.saturating_add(delta.len());
+            self.stagnant_result_count = 0;
+            self.transition_to(AiExecutionPhase::Inspect);
+        }
+        if self.stagnant_result_count >= MAX_CONSECUTIVE_NO_EVIDENCE {
+            self.block("no-new-evidence".to_string());
+        }
     }
 
     pub fn phase_transitions(&self) -> &[String] {
@@ -356,6 +410,9 @@ impl AiExecutionCoordinator {
         json!({
             "goalId": self.goal_id,
             "kind": self.kind.as_str(),
+            "mode": self.mode.as_str(),
+            "origin": self.origin.as_str(),
+            "requestedOutcome": self.requested_outcome,
             "domain": self.domain.as_str(),
             "phase": self.phase.as_str(),
             "state": self.state.as_str(),

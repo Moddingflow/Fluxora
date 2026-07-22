@@ -147,6 +147,7 @@ Phase 9 extends `fluxora.bridge.v1` from simple install to the full WPF parity i
 Phase 10 extends `fluxora.bridge.v1` to WPF-parity profile management and executable launch configuration:
 
 - Native host routes `profiles.list`, `profiles.create`, `profiles.clone`, `profiles.rename`, `profiles.delete`, `executables.list`, `executables.save`, `executables.getIcon` and `executables.launch` to existing C++ C ABI functions backed by `ProfileService` and `ExecutableService`.
+- Managed BodySlide launches additionally route `executables.completeManagedLaunch` to the background bridge lane. The C++ `BodySlideIntegrationService` owns the config overlay, generated output identity, lease recovery, and BodySlide-specific VFS mount policy; see [BodySlide integration](../integrations/bodyslide.md).
 - Tauri Rust shell/facade expose typed `window.fluxora.profiles.*` and `window.fluxora.executables.*` calls only; renderer still has no Node.js, filesystem, shell, native module or raw command access.
 - Tauri Rust shell owns `window.fluxora.processes.waitForLaunchReady` and `waitForExit`. On Windows, process exit uses the signaled process handle as the primary path (`WaitForSingleObject` with an infinite wait on a dedicated native-wait thread); a 250 ms process-presence poll is retained only when the native wait cannot be established. After each exit, the shell enumerates live processes with `FluxoraVfs.dll` loaded and returns the next holder as `trackedKind: "vfsHolder"`, so the renderer keeps the launch splash attached to the process that still owns the active VFS session.
 - Renderer owns profile/executable search, selected-row state, in-app edit controls, two-step destructive confirmation state, icon/launch status display and capability explanations only.
@@ -693,24 +694,30 @@ Gemini function declarations use provider-safe names from the AI host registry.
 The unchanged bridge contract continues to use `local.*` names; Tauri receives
 only those internal names. Provider calls are mapped to internal names before
 dispatch, while matching function responses retain the provider name, call id,
-and opaque thought signature. On `generateContent`, file-tool rounds declare
-custom functions without `google_search`; chat-only rounds may declare Search,
-because the provider rejects those tool families when combined on that endpoint.
+and opaque thought signature. Every build task first declares one validated
+goal through the host-owned `local.execution.declare_goal`; invalid output gets
+one retry and then exact `intent-contract-invalid`. Local function rounds omit
+`google_search`; host-owned web research uses a separate web-only request of the
+same Gemini model because the provider rejects those tool families when combined
+on that endpoint.
 Invalid tool schemas, transport failures, rate
 limits, and managed-gateway failures remain distinct typed errors. Their safe
 payloads contain no prompt, local path, or provider response body.
 
-The file loop uses `fluxora.ai.tool-session.v3`. The host classifies multilingual
-requests as `action` or `answer`, records `local-required`, `local-auto`,
-`web-search`, or `none`, validates calls against the declaration registry, and
-allows two correction retries. Every action receives the full supported typed
-contract from its first tool round; answers receive read-only tools, while
-inferred domain and monotonic phase remain diagnostics. Mutations are staged without side effects and a
+The file loop uses `fluxora.ai.tool-session.v3`. The host validates
+`answer | inspect | repair` plus `explicit | implicit | continuation`, maps
+`repair` to compatible `action`/`local-required`, and filters declarations by
+the goal's risk ceiling. Answer/inspect are read-only; an implicit repair may
+use only read-only and reversible capabilities. Inferred domain and monotonic
+phase remain diagnostics. Host-owned `local.execution.request_input` never
+crosses into C++; it persists one active goal per renderer tab and a short
+answer continues the same `goalId`. Mutations are staged without side effects and a
 separate `local.files.commit` maps the whole batch to one native
 `buildFiles.apply`. The Rust shell caches duplicate read-only calls, enforces 16
 distinct targets and one mutation per target, and emits only redacted
-`fluxora.ai.file-tool-diagnostics.v2`, including native-session preopen,
-semantic-evidence/stagnation counts and phase transitions. The additive `execution` response object
+`fluxora.ai.file-tool-diagnostics.v2`, including native-session preopen, goal
+mode/risk/continuation, semantic-evidence/stagnation counts and phase transitions;
+prompts, config contents, web snippets, and user questions stay out of logs. The additive `execution` response object
 is authoritative for all domains; host, shell, and renderer reject a completed
 action without a native verified effect. File actions additionally retain the
 compatible verified `fileChangeSet`.
@@ -1135,6 +1142,66 @@ Cross-process safety remains core-owned. `InstallProjectGate`, target/archive lo
   archive/download install and FluxPack export/install use an explicit
   two-hour file-mutation budget so normal large filesystem work is not treated
   as a crashed host and terminated mid-operation.
+
+## Local speech boundary
+
+Fluxora AI voice input uses a separate `FluxoraSpeechHost` process and never
+passes audio to `FluxoraAIHost`, Gemini, the C++ core, or the bridge lanes. The
+WebView sends only in-memory mono 16 kHz f32 PCM through one raw Tauri command;
+metadata remains in bounded ASCII headers. Rust validates size, format and
+completion metadata,
+owns cancellation and one-restart lifecycle, and resolves only installer-owned
+host/model resources. The renderer always sends speech language `auto`; the
+EN/RU/DE interface locale is used only for consent and localized errors. The
+host lets Whisper select the recording's language, always disables translation,
+and returns `detectedLanguage` (or `null` for no speech) together with the
+selected `vulkan` or `cpu` backend. The transcript therefore remains in its
+original language and becomes ordinary AI draft text only after local inference
+completes.
+
+The speech host uses deterministic Greedy 1 decoding with bounded token output;
+short recordings are decoded as one segment after trimming Silero-detected
+outer silence, with a duration-sized encoder context rather than Whisper's
+default 30-second window. Rust applies a duration-aware deadline from 15 seconds
+up to five minutes and bounds host reset waiting to five seconds. A renderer
+watchdog starting at 20 seconds independently cancels the process and returns a
+typed retryable error instead of leaving renderer state pending.
+
+On Windows the Rust shell first starts `FluxoraSpeechHostVulkan` for Vulkan
+Whisper offload while keeping Silero VAD on CPU. Missing Vulkan runtime/device,
+startup, handshake, or GPU-initialization failures fall back automatically to
+the dependency-light `FluxoraSpeechHost` CPU process with the same `operationId`
+and absolute deadline. Cancellation never starts fallback. Both processes start
+without a console window and keep their stdio protocol loop on one dedicated
+thread with an explicit native-inference stack reserve so Whisper/VAD model
+preparation cannot overflow the executable main-thread stack.
+
+After consent, model preparation starts concurrently with microphone opening
+and never gates the start of recording. Stop immediately replaces the recording
+waveform/timer with a fixed `LoaderCircle`, accessible Cancel action, and a
+screen-reader-only localized status while PCM finalization and the already
+running preparation finish. Reduced-motion mode keeps the same geometry without
+continuous rotation.
+
+The versioned glossary normalizes official proper names and abbreviations for
+every detected language. Ordinary terms are language-specific for EN/RU/DE and
+are not replaced by English equivalents; other languages receive proper-name
+normalization only. Speech logs contain technical lifecycle/error data plus the
+backend, thread count, model-load/VAD/inference/total timing and real-time
+factor. Audio, transcript, glossary matches, and detected language are never
+logged.
+
+The renderer-owned consent flag is local and persists only after Allow. The
+Windows shell owns the WebView2 `PermissionRequested` gate: it clears old saved
+microphone decisions to `DEFAULT`, never saves a new decision, and permits only
+one request from `http://tauri.localhost` during a ten-second arm window. The
+gate and profile reset fail closed without affecting other permission kinds.
+
+This boundary intentionally has no temporary audio file, database record,
+cache, telemetry, transcript log, glossary log, prompt log, or runtime download.
+The renderer owns permission UI, recording timer/waveform, processing indicator
+and cleanup; Rust owns OS settings launch and process safety; the speech hosts
+own inference only.
 
 ## Testing and validation strategy
 

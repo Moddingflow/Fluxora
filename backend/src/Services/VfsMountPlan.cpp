@@ -3,12 +3,9 @@
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/ProfileOrderService.hpp"
-#include "FluxoraCore/Services/VfsContentPlacementAnalyzer.hpp"
 
 #include <algorithm>
 #include <cwctype>
-#include <map>
-#include <mutex>
 #include <utility>
 
 #ifdef _WIN32
@@ -26,7 +23,6 @@ namespace fluxora
             {
                 return {};
             }
-
             const int size = WideCharToMultiByte(
                 CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
             std::string out(static_cast<std::size_t>(size), '\0');
@@ -53,59 +49,19 @@ namespace fluxora
             return toLower(std::wstring(left)) == toLower(std::wstring(right));
         }
 
-        struct VfsContentPlacementCacheEntry
+        void appendUniqueIgnoreCase(std::vector<std::wstring>& values, std::wstring value)
         {
-            std::wstring contentFingerprint;
-            VfsContentPlacementRoots roots;
-        };
-
-        std::mutex& vfsContentPlacementCacheMutex()
-        {
-            static std::mutex mutex;
-            return mutex;
-        }
-
-        std::map<std::wstring, VfsContentPlacementCacheEntry>& vfsContentPlacementCache()
-        {
-            static std::map<std::wstring, VfsContentPlacementCacheEntry> cache;
-            return cache;
-        }
-
-        VfsContentPlacementRoots analyzeVfsContentPlacement(
-            const VfsActiveMod& mod,
-            const VfsContentPlacementAnalyzer& placementAnalyzer,
-            const ContentLayoutSupportRules& contentRules,
-            const std::wstring& dataDirectory,
-            const std::wstring& rootBuilderDirectoryName,
-            Logger& logger)
-        {
-            const std::wstring cacheKey = vfsNormalizedPathForComparison(mod.path);
-            if (!cacheKey.empty() && !mod.contentFingerprint.empty())
+            if (value.empty() || std::find_if(
+                    values.begin(),
+                    values.end(),
+                    [&value](const std::wstring& candidate)
+                    {
+                        return equalsIgnoreCase(candidate, value);
+                    }) != values.end())
             {
-                std::lock_guard lock(vfsContentPlacementCacheMutex());
-                const auto cached = vfsContentPlacementCache().find(cacheKey);
-                if (cached != vfsContentPlacementCache().end() &&
-                    cached->second.contentFingerprint == mod.contentFingerprint)
-                {
-                    return cached->second.roots;
-                }
+                return;
             }
-
-            const VfsContentPlacementRoots roots = placementAnalyzer.analyze(
-                mod.path,
-                contentRules,
-                dataDirectory,
-                rootBuilderDirectoryName,
-                &logger);
-
-            if (!cacheKey.empty() && !mod.contentFingerprint.empty())
-            {
-                std::lock_guard lock(vfsContentPlacementCacheMutex());
-                vfsContentPlacementCache()[cacheKey] =
-                    VfsContentPlacementCacheEntry{mod.contentFingerprint, roots};
-            }
-
-            return roots;
+            values.push_back(std::move(value));
         }
 
         std::wstring fallbackSourceName(const std::filesystem::path& path)
@@ -122,11 +78,6 @@ namespace fluxora
             std::vector<VfsActiveMod> mods;
             for (const ProfileModOrderItem& item : profileOrder.listCachedLaunchModOrder(projectDirectory, profileName))
             {
-                // Keep every enabled layer in the launch plan. A conflict-summary
-                // cache can be briefly stale before a debounced watcher event, and
-                // pruning a supposedly fully overwritten mod would then change the
-                // overlay if the winning file was removed. USVFS priority already
-                // makes redundant lower layers semantically harmless.
                 if (item.kind == L"mod" && item.isEnabled && !item.id.empty())
                 {
                     mods.push_back(VfsActiveMod{
@@ -136,106 +87,110 @@ namespace fluxora
                     });
                 }
             }
-
             return mods;
         }
 
-        void appendMountSource(
-            std::vector<std::filesystem::path>& mountRoots,
-            std::vector<VfsMountSourceRoot>& sources,
+        std::vector<GameVfsMountRule> effectiveMountRules(const ContentLayoutSupportRules& contentRules)
+        {
+            if (!contentRules.mountRules.empty())
+            {
+                return contentRules.mountRules;
+            }
+
+            std::vector<GameVfsMountRule> rules;
+            if (!contentRules.dataFolder.empty())
+            {
+                rules.push_back(GameVfsMountRule{
+                    L"primary-content",
+                    GameVfsMountTargetBase::GameDirectory,
+                    contentRules.dataFolder,
+                    GameVfsMountSourceKind::ActiveMods,
+                    true,
+                    true,
+                    {contentRules.dataFolder},
+                    {}
+                });
+            }
+            if (contentRules.supportsRootFiles && !contentRules.rootFileWrapperDirectory.empty())
+            {
+                rules.push_back(GameVfsMountRule{
+                    L"game-root",
+                    GameVfsMountTargetBase::GameDirectory,
+                    {},
+                    GameVfsMountSourceKind::ActiveMods,
+                    false,
+                    false,
+                    {contentRules.rootFileWrapperDirectory},
+                    contentRules.rootFileWrapperDirectory
+                });
+            }
+            return rules;
+        }
+
+        std::vector<std::wstring> structuralRootNames(const std::vector<GameVfsMountRule>& rules)
+        {
+            std::vector<std::wstring> names{L".flow"};
+            for (const GameVfsMountRule& rule : rules)
+            {
+                for (const std::wstring& wrapper : rule.wrapperDirectories)
+                {
+                    appendUniqueIgnoreCase(names, wrapper);
+                }
+            }
+            return names;
+        }
+
+        void appendSource(
+            VfsMountDescriptor& mount,
+            std::vector<std::filesystem::path>& legacyRoots,
             const VfsActiveMod& mod,
             const std::filesystem::path& root)
         {
-            mountRoots.push_back(root);
-            sources.push_back(VfsMountSourceRoot{root, mod.path, mod.name});
+            mount.mods.push_back(root);
+            mount.modSources.push_back(VfsMountSourceRoot{root, mod.path, mod.name});
+            legacyRoots.push_back(root);
         }
 
-        std::vector<VfsMountSourceRoot> collectRootBuilderSources(
+        VfsMountDescriptor buildActiveModsMount(
+            const GameVfsMountRule& rule,
+            const std::vector<GameVfsMountRule>& allRules,
             const std::vector<VfsActiveMod>& mods,
-            const std::vector<VfsContentPlacementRoots>& placements,
-            const std::wstring& rootBuilderDirectoryName,
-            std::vector<std::filesystem::path>& rootMods)
+            const std::filesystem::path& gameDirectory,
+            const std::filesystem::path& overwriteRoot,
+            std::vector<std::filesystem::path>& legacyRoots)
         {
-            std::vector<VfsMountSourceRoot> sources;
-            rootMods.reserve(mods.size());
-            sources.reserve(mods.size());
-            for (std::size_t index = 0; index < mods.size(); ++index)
+            VfsMountDescriptor mount;
+            mount.target = rule.targetPath.empty()
+                ? gameDirectory
+                : gameDirectory / rule.targetPath;
+            mount.overwrite = rule.overwritePath.empty()
+                ? overwriteRoot
+                : overwriteRoot / rule.overwritePath;
+            mount.whiteoutRoot = overwriteRoot.parent_path() / L".flow" / L"vfs" /
+                L"whiteouts" / rule.id;
+            mount.excludedRootNames = rule.includeUnwrappedModRoot
+                ? structuralRootNames(allRules)
+                : std::vector<std::wstring>{L".flow"};
+
+            // Preserve load order across mods while giving explicit wrappers
+            // priority over an unpackaged root inside the same mod.
+            for (const VfsActiveMod& mod : mods)
             {
-                if (index >= placements.size() || !placements[index].rootBuilderRoot)
+                if (rule.includeUnwrappedModRoot)
                 {
-                    continue;
+                    appendSource(mount, legacyRoots, mod, mod.path);
                 }
-
-                appendMountSource(rootMods, sources, mods[index], mods[index].path / rootBuilderDirectoryName);
-            }
-
-            return sources;
-        }
-
-        std::vector<VfsMountSourceRoot> collectDataMountSources(
-            const std::vector<VfsActiveMod>& mods,
-            const std::vector<VfsContentPlacementRoots>& placements,
-            const std::wstring& dataDirectory,
-            bool rootBuilderEnabled,
-            const std::wstring& rootBuilderDirectoryName,
-            std::vector<std::filesystem::path>& dataMods)
-        {
-            std::vector<VfsMountSourceRoot> sources;
-            dataMods.reserve(rootBuilderEnabled ? mods.size() * 2 : mods.size());
-            sources.reserve(dataMods.capacity());
-            for (std::size_t index = 0; index < mods.size(); ++index)
-            {
-                if (index >= placements.size())
+                for (const std::wstring& wrapper : rule.wrapperDirectories)
                 {
-                    continue;
-                }
-
-                const VfsActiveMod& mod = mods[index];
-                const VfsContentPlacementRoots& placement = placements[index];
-                if (placement.dataAtModRoot)
-                {
-                    appendMountSource(dataMods, sources, mod, mod.path);
-                }
-
-                const std::filesystem::path nestedData = mod.path / dataDirectory;
-                if (placement.dataWrapper)
-                {
-                    appendMountSource(dataMods, sources, mod, nestedData);
-                }
-
-                if (!rootBuilderEnabled)
-                {
-                    continue;
-                }
-
-                const std::filesystem::path rootData =
-                    mod.path / rootBuilderDirectoryName / dataDirectory;
-                if (placement.rootBuilderData)
-                {
-                    appendMountSource(dataMods, sources, mod, rootData);
+                    const std::filesystem::path wrapperRoot = mod.path / wrapper;
+                    std::error_code error;
+                    if (std::filesystem::is_directory(wrapperRoot, error) && !error)
+                    {
+                        appendSource(mount, legacyRoots, mod, wrapperRoot);
+                    }
                 }
             }
-
-            return sources;
-        }
-
-        std::vector<std::wstring> dataMountExcludedRootNames(
-            const std::wstring& dataDirectory,
-            bool rootBuilderEnabled,
-            const std::wstring& rootBuilderDirectoryName)
-        {
-            std::vector<std::wstring> names;
-            if (!dataDirectory.empty())
-            {
-                names.push_back(dataDirectory);
-            }
-            if (rootBuilderEnabled &&
-                !rootBuilderDirectoryName.empty() &&
-                !equalsIgnoreCase(dataDirectory, rootBuilderDirectoryName))
-            {
-                names.push_back(rootBuilderDirectoryName);
-            }
-            return names;
+            return mount;
         }
     }
 
@@ -246,7 +201,6 @@ namespace fluxora
         {
             return false;
         }
-
         std::filesystem::directory_iterator iterator(
             path,
             std::filesystem::directory_options::skip_permission_denied,
@@ -261,69 +215,8 @@ namespace fluxora
         {
             value.pop_back();
         }
-
         return toLower(value);
     }
-
-    void invalidateVfsContentPlacementCache(
-        const std::filesystem::path& modsDirectory,
-        const std::vector<std::filesystem::path>& changedPaths)
-    {
-        if (modsDirectory.empty() || changedPaths.empty())
-        {
-            return;
-        }
-
-        const std::filesystem::path root = std::filesystem::absolute(modsDirectory).lexically_normal();
-        const std::wstring normalizedRoot = vfsNormalizedPathForComparison(root);
-        std::vector<std::wstring> affectedModKeys;
-        bool invalidateProject = false;
-        for (const std::filesystem::path& changedPath : changedPaths)
-        {
-            const std::filesystem::path absolute = std::filesystem::absolute(
-                changedPath.is_absolute() ? changedPath : root / changedPath).lexically_normal();
-            const std::filesystem::path relative = absolute.lexically_relative(root);
-            if (relative.empty() || relative == L".")
-            {
-                invalidateProject = true;
-                break;
-            }
-            auto component = relative.begin();
-            if (component == relative.end() || *component == L"..")
-            {
-                continue;
-            }
-            affectedModKeys.push_back(vfsNormalizedPathForComparison(root / *component));
-        }
-
-        std::lock_guard lock(vfsContentPlacementCacheMutex());
-        auto& cache = vfsContentPlacementCache();
-        if (invalidateProject)
-        {
-            const std::wstring prefix = normalizedRoot + L"\\";
-            std::erase_if(
-                cache,
-                [&normalizedRoot, &prefix](const auto& entry)
-                {
-                    return entry.first == normalizedRoot || entry.first.starts_with(prefix);
-                });
-            return;
-        }
-        for (const std::wstring& key : affectedModKeys)
-        {
-            cache.erase(key);
-        }
-    }
-
-#ifdef FLUXORA_VFS_TEST_HOOKS
-    bool vfsContentPlacementCacheContainsForTesting(
-        const std::filesystem::path& modDirectory)
-    {
-        std::lock_guard lock(vfsContentPlacementCacheMutex());
-        return vfsContentPlacementCache().contains(
-            vfsNormalizedPathForComparison(modDirectory));
-    }
-#endif
 
     VfsGameRootMountPlan buildVfsGameRootMountPlan(
         Logger& logger,
@@ -336,85 +229,56 @@ namespace fluxora
         const VfsSupportRules& vfsRules,
         const ContentLayoutSupportRules& contentRules)
     {
-        const GameVfsRules& rules = vfsRules.rules;
         VfsGameRootMountPlan plan;
-        plan.dataDirectory = contentRules.dataFolder;
-        plan.rootBuilderDirectoryName = rules.rootBuilderDirectoryName;
+        plan.activeMods = std::move(activeMods);
+        plan.rootBuilderDirectoryName = vfsRules.rules.rootBuilderDirectoryName;
         plan.rootBuilderEnabled =
-            rules.supportsRootBuilder &&
+            vfsRules.rules.supportsRootBuilder &&
             !plan.rootBuilderDirectoryName.empty() &&
-            contentRules.supportsRootFiles &&
             capabilities.has(GameCapability::RootFiles);
 
-        const std::wstring profile = profileName.empty()
-            ? std::wstring(L"Default")
-            : std::wstring(profileName);
-        plan.activeMods = std::move(activeMods);
-
-        const VfsContentPlacementAnalyzer placementAnalyzer;
-        std::vector<VfsContentPlacementRoots> placements;
-        placements.reserve(plan.activeMods.size());
-        for (const VfsActiveMod& mod : plan.activeMods)
-        {
-            placements.push_back(analyzeVfsContentPlacement(
-                mod,
-                placementAnalyzer,
-                contentRules,
-                plan.dataDirectory,
-                plan.rootBuilderDirectoryName,
-                logger));
-        }
-
+        const std::vector<GameVfsMountRule> rules = effectiveMountRules(contentRules);
         const std::filesystem::path overwrite = pathSettings.overwriteDirectory(projectDirectory);
-        const std::filesystem::path dataTarget = gameDirectory / plan.dataDirectory;
-        std::vector<VfsMountSourceRoot> dataSources = collectDataMountSources(
-            plan.activeMods,
-            placements,
-            plan.dataDirectory,
-            plan.rootBuilderEnabled,
-            plan.rootBuilderDirectoryName,
-            plan.dataMods);
-
-        if (!plan.dataMods.empty() || vfsDirectoryHasEntries(overwrite))
+        for (const GameVfsMountRule& rule : rules)
         {
-            plan.mounts.push_back(VfsMountDescriptor{
-                dataTarget,
-                overwrite,
-                plan.dataMods,
-                dataMountExcludedRootNames(
-                    plan.dataDirectory,
-                    plan.rootBuilderEnabled,
-                    plan.rootBuilderDirectoryName),
-                std::move(dataSources)
-            });
-        }
-
-        if (plan.rootBuilderEnabled)
-        {
-            std::vector<VfsMountSourceRoot> rootSources = collectRootBuilderSources(
-                plan.activeMods,
-                placements,
-                plan.rootBuilderDirectoryName,
-                plan.rootMods);
-            const std::filesystem::path rootOverwrite = overwrite / plan.rootBuilderDirectoryName;
-            if (!plan.rootMods.empty() || vfsDirectoryHasEntries(rootOverwrite))
+            if (rule.sourceKind != GameVfsMountSourceKind::ActiveMods ||
+                rule.targetBase != GameVfsMountTargetBase::GameDirectory)
             {
-                plan.mounts.push_back(VfsMountDescriptor{
-                    gameDirectory,
-                    rootOverwrite,
-                    plan.rootMods,
-                    {plan.dataDirectory},
-                    std::move(rootSources)
-                });
+                continue;
+            }
+            if (!rule.primaryContentRoot && rule.targetPath.empty() &&
+                !capabilities.has(GameCapability::RootFiles))
+            {
+                continue;
+            }
+
+            std::vector<std::filesystem::path>& legacyRoots = rule.primaryContentRoot
+                ? plan.dataMods
+                : plan.rootMods;
+            VfsMountDescriptor mount = buildActiveModsMount(
+                rule,
+                rules,
+                plan.activeMods,
+                gameDirectory,
+                overwrite,
+                legacyRoots);
+            if (rule.primaryContentRoot)
+            {
+                plan.dataDirectory = rule.targetPath.wstring();
+            }
+            if (!mount.mods.empty() || vfsDirectoryHasEntries(mount.overwrite))
+            {
+                plan.mounts.push_back(std::move(mount));
             }
         }
 
+        const std::wstring profile = profileName.empty() ? L"Default" : std::wstring(profileName);
         logger.write(
             LogLevel::Info,
-            "VFS game-root mount plan prepared: profile=\"" + toUtf8(profile) +
+            "VFS declarative mount plan prepared: profile=\"" + toUtf8(profile) +
                 "\", activeMods=" + std::to_string(plan.activeMods.size()) +
-                ", dataMods=" + std::to_string(plan.dataMods.size()) +
-                ", rootMods=" + std::to_string(plan.rootMods.size()) +
+                ", contentSources=" + std::to_string(plan.dataMods.size()) +
+                ", rootSources=" + std::to_string(plan.rootMods.size()) +
                 ", mounts=" + std::to_string(plan.mounts.size()) + ".");
         return plan;
     }
@@ -430,9 +294,7 @@ namespace fluxora
         const VfsSupportRules& vfsRules,
         const ContentLayoutSupportRules& contentRules)
     {
-        const std::wstring profile = profileName.empty()
-            ? std::wstring(L"Default")
-            : std::wstring(profileName);
+        const std::wstring profile = profileName.empty() ? L"Default" : std::wstring(profileName);
         return buildVfsGameRootMountPlan(
             logger,
             collectEnabledMods(profileOrder, projectDirectory, profile),

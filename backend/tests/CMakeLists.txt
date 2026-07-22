@@ -15,8 +15,10 @@ endif()
 
 add_executable(FluxoraCoreTests
     AppSettingsServiceTests.cpp
+    AiRollbackCheckpointStoreTests.cpp
     ArchiveCatalogServiceTests.cpp
     AtomicFileStoreTests.cpp
+    BodySlideIntegrationServiceTests.cpp
     BuildFileWorkspaceServiceTests.cpp
     BuildPathSettingsServiceTests.cpp
     ContentLayoutServiceTests.cpp
@@ -35,6 +37,7 @@ add_executable(FluxoraCoreTests
     InstallSchedulerTests.cpp
     InstallTransactionJournalTests.cpp
     InstanceMetadataStoreTests.cpp
+    InverseTextMergeServiceTests.cpp
     JsonSupportTests.cpp
     LaunchDescriptorStoreTests.cpp
     FomodInstallerServiceTests.cpp
@@ -57,19 +60,21 @@ add_executable(FluxoraCoreTests
     PathSafetyServiceTests.cpp
     PluginServiceTests.cpp
     ProjectServiceTests.cpp
+    RootBuilderLaunchCacheReconcilerTests.cpp
     ProjectStateTransactionTests.cpp
     ScopedFileCleanupTests.cpp
     TemplateServiceTests.cpp
-    VfsContentPlacementAnalyzerTests.cpp
     VfsMountPlanTests.cpp
     TestFilesystem.hpp
     ../src/Services/AppSettingsService.cpp
+    ../src/Services/AiRollbackCheckpointStore.cpp
     ../src/Services/ArchiveCatalogService.cpp
     ../src/Services/BulkFileCopyService.cpp
     ../src/Services/BuildFileDiscoveryService.cpp
     ../src/Services/ConfigRecipeRegistry.cpp
     ../src/Services/BuildFileWorkspaceService.cpp
     ../src/Services/BuildPathSettingsService.cpp
+    ../src/Services/BodySlideIntegrationService.cpp
     ../src/Services/ContentLayoutService.cpp
     ../src/GameSupport/DefinitionBackedGameSupport.cpp
     ../src/GameSupport/GameDefinitionLoader.cpp
@@ -90,6 +95,7 @@ add_executable(FluxoraCoreTests
     ../src/Services/FluxPackPackage.cpp
     ../src/Services/FluxPackService.cpp
     ../src/Services/GrassCacheService.cpp
+    ../src/Services/InverseTextMergeService.cpp
     ../src/Services/ManagedAiOverrideService.cpp
     ../src/Services/HookService.cpp
     ../src/Services/InstallConflictPreviewService.cpp
@@ -117,8 +123,8 @@ add_executable(FluxoraCoreTests
     ../src/Services/ProfileOrderService.cpp
     ../src/Services/ProfileService.cpp
     ../src/Services/ProjectService.cpp
+    ../src/Services/RootBuilderLaunchCacheReconciler.cpp
     ../src/Services/TemplateService.cpp
-    ../src/Services/VfsContentPlacementAnalyzer.cpp
     ../src/Services/VfsMountPlan.cpp
     ../src/Storage/AtomicFileStore.cpp
     ../src/Storage/InstanceMetadataStore.cpp
@@ -209,6 +215,30 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:FluxoraCore>
         $<TARGET_FILE_DIR:FluxoraCoreApiTests>)
+
+if(WIN32 AND FLUXORA_ENABLE_VFS)
+    add_executable(FluxoraBodySlideVfsProbe BodySlideVfsProbe.cpp)
+    add_executable(FluxoraUniversalVfsProbe UniversalVfsProbe.cpp)
+    target_compile_features(FluxoraBodySlideVfsProbe PRIVATE cxx_std_20)
+    target_compile_features(FluxoraUniversalVfsProbe PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(FluxoraBodySlideVfsProbe PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(FluxoraUniversalVfsProbe PRIVATE /W4 /permissive- /utf-8)
+    endif()
+    add_dependencies(FluxoraCoreApiTests FluxoraBodySlideVfsProbe FluxoraUniversalVfsProbe FluxoraVfs)
+    add_custom_command(
+        TARGET FluxoraCoreApiTests
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:FluxoraBodySlideVfsProbe>
+            $<TARGET_FILE_DIR:FluxoraCoreApiTests>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:FluxoraUniversalVfsProbe>
+            $<TARGET_FILE_DIR:FluxoraCoreApiTests>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:FluxoraVfs>
+            $<TARGET_FILE_DIR:FluxoraCoreApiTests>)
+endif()
 
 gtest_discover_tests(FluxoraCoreApiTests DISCOVERY_MODE PRE_TEST)
 

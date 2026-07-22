@@ -292,14 +292,36 @@ try {
         throw 'Invented fileRef did not fail with typed, correlated outside-scope.'
     }
 
+    $statesBeforeRollback = Send-Request -Method 'buildFiles.getRollbackStates' -OperationId 'op_bridge_rollback_states_before' -Params @{
+        chatId = 'chat-bridge'
+    }
+    $runBridgeStateBefore = @($statesBeforeRollback.result.data | Where-Object { $_.runId -eq 'run-bridge' })
+    if ($runBridgeStateBefore.Count -ne 1 -or
+        $runBridgeStateBefore[0].state -ne 'available' -or
+        $statesBeforeRollback.meta.operationId -ne 'op_bridge_rollback_states_before') {
+        $actualStates = $statesBeforeRollback | ConvertTo-Json -Depth 10 -Compress
+        throw "buildFiles.getRollbackStates did not serialize the available run or preserve operationId. Actual: $actualStates"
+    }
+
     $rollback = Send-Request -Method 'buildFiles.rollbackRun' -OperationId 'op_bridge_rollback' -Params @{
         chatId = 'chat-bridge'
         runId = 'run-bridge'
     }
     if ($rollback.result.data.state -ne 'rolled-back' -or
         $rollback.result.data.operationId -ne 'op_bridge_rollback' -or
+        $rollback.result.data.mode -ne 'exact' -or
+        $rollback.result.data.preservedNewerChanges -ne $false -or
         [System.IO.File]::Exists($settingsOverride)) {
-        throw 'buildFiles.rollbackRun failed or lost operationId.'
+        throw 'buildFiles.rollbackRun failed or lost additive rollback fields/operationId.'
+    }
+
+    $statesAfterRollback = Send-Request -Method 'buildFiles.getRollbackStates' -OperationId 'op_bridge_rollback_states_after' -Params @{
+        chatId = 'chat-bridge'
+    }
+    $runBridgeStateAfter = @($statesAfterRollback.result.data | Where-Object { $_.runId -eq 'run-bridge' })
+    if ($runBridgeStateAfter.Count -ne 1 -or
+        $runBridgeStateAfter[0].state -ne 'rolled-back') {
+        throw 'buildFiles.getRollbackStates did not restore the run-level rolled-back state.'
     }
 
     $emptySearch = Send-Request -Method 'buildFiles.search' -Params @{
@@ -336,6 +358,18 @@ try {
         -not [System.IO.File]::Exists($emptyOverride) -or
         [System.IO.File]::ReadAllText($emptyOverride) -ne "saved`n") {
         throw 'buildFiles.replace-document did not isolate the empty editor save in the managed override.'
+    }
+
+    $resetRollbackCheckpoints = Send-Request -Method 'buildFiles.resetRollbackCheckpoints' -OperationId 'op_bridge_rollback_reset' -Params @{}
+    if ($resetRollbackCheckpoints.result.data.reset -ne $true -or
+        $resetRollbackCheckpoints.meta.operationId -ne 'op_bridge_rollback_reset') {
+        throw 'buildFiles.resetRollbackCheckpoints failed or lost operationId.'
+    }
+    $statesAfterReset = Send-Request -Method 'buildFiles.getRollbackStates' -Params @{
+        chatId = 'chat-bridge'
+    }
+    if ($statesAfterReset.result.data.Count -ne 0) {
+        throw 'Full AI rollback reset retained checkpoint state.'
     }
 
     $shutdown = Send-Request -Method 'system.shutdown' -Params @{}

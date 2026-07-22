@@ -30,6 +30,7 @@ else {
 }
 $TauriNativeResourcesRoot = Join-Path $ProjectRoot 'build\tauri-native'
 $TauriNativeResourcesDir = Join-Path $TauriProject 'src-tauri\resources\native'
+$TauriSpeechResourcesDir = Join-Path $TauriProject 'src-tauri\resources\speech'
 $TauriExecutableName = 'Fluxora.exe'
 $FluxoraSkillsSourceDir = Join-Path $ProjectRoot 'FLUXORASKILLS\skills'
 $FluxoraAiDirectoryName = 'Fluxora AI'
@@ -176,11 +177,91 @@ function Get-TauriAiHostCargoOutputName {
     return 'fluxora_ai_host'
 }
 
+function Get-TauriSpeechHostResourceName {
+    if ($Runtime -like 'win-*') {
+        return 'FluxoraSpeechHost.exe'
+    }
+
+    return 'FluxoraSpeechHost'
+}
+
+function Get-TauriSpeechHostCargoOutputName {
+    if ($Runtime -like 'win-*') {
+        return 'fluxora_speech_host.exe'
+    }
+
+    return 'fluxora_speech_host'
+}
+
+function Get-TauriVulkanSpeechHostResourceName {
+    if ($Runtime -like 'win-*') {
+        return 'FluxoraSpeechHostVulkan.exe'
+    }
+
+    return 'FluxoraSpeechHostVulkan'
+}
+
+function Get-TauriVulkanSpeechHostCargoOutputName {
+    if ($Runtime -like 'win-*') {
+        return 'fluxora_speech_host_vulkan.exe'
+    }
+
+    return 'fluxora_speech_host_vulkan'
+}
+
 function Build-TauriAiHost {
     $tauriRustRoot = Join-Path $TauriProject 'src-tauri'
+    $cpuCargoTarget = Join-Path $ProjectRoot 'build\cpu'
+    $vulkanCargoTarget = Join-Path $ProjectRoot 'build\vk'
+    & (Join-Path $TauriProject 'scripts\ensure-libclang.ps1')
     Push-Location $tauriRustRoot
     try {
-        Invoke-CheckedCommand -FilePath 'cargo' -Arguments @('build', '--release', '--bin', 'fluxora_ai_host')
+        Invoke-CheckedCommand -FilePath 'cargo' -Arguments @(
+            'build', '--release',
+            '--bin', 'fluxora_ai_host'
+        )
+        $previousCargoTarget = $env:CARGO_TARGET_DIR
+        $previousCFlags = $env:CMAKE_C_FLAGS_RELEASE
+        $previousCxxFlags = $env:CMAKE_CXX_FLAGS_RELEASE
+        try {
+            $env:CARGO_TARGET_DIR = $cpuCargoTarget
+            $env:CMAKE_C_FLAGS_RELEASE = '/O2 /Ob2 /DNDEBUG'
+            $env:CMAKE_CXX_FLAGS_RELEASE = '/O2 /Ob2 /DNDEBUG /utf-8'
+            Invoke-CheckedCommand -FilePath 'cargo' -Arguments @(
+                'build', '--release',
+                '--bin', 'fluxora_speech_host'
+            )
+        }
+        finally {
+            if ($null -eq $previousCargoTarget) { Remove-Item -LiteralPath 'Env:CARGO_TARGET_DIR' -ErrorAction SilentlyContinue } else { $env:CARGO_TARGET_DIR = $previousCargoTarget }
+            if ($null -eq $previousCFlags) { Remove-Item -LiteralPath 'Env:CMAKE_C_FLAGS_RELEASE' -ErrorAction SilentlyContinue } else { $env:CMAKE_C_FLAGS_RELEASE = $previousCFlags }
+            if ($null -eq $previousCxxFlags) { Remove-Item -LiteralPath 'Env:CMAKE_CXX_FLAGS_RELEASE' -ErrorAction SilentlyContinue } else { $env:CMAKE_CXX_FLAGS_RELEASE = $previousCxxFlags }
+        }
+
+        & (Join-Path $TauriProject 'scripts\ensure-vulkan-sdk.ps1')
+        $previousCargoTarget = $env:CARGO_TARGET_DIR
+        try {
+            $env:CARGO_TARGET_DIR = $vulkanCargoTarget
+            $previousCFlags = $env:CMAKE_C_FLAGS_RELEASE
+            $previousCxxFlags = $env:CMAKE_CXX_FLAGS_RELEASE
+            $env:CMAKE_C_FLAGS_RELEASE = '/O2 /Ob2 /DNDEBUG'
+            $env:CMAKE_CXX_FLAGS_RELEASE = '/O2 /Ob2 /DNDEBUG /utf-8'
+            Invoke-CheckedCommand -FilePath 'cargo' -Arguments @(
+                'build', '--release',
+                '--features', 'speech-vulkan',
+                '--bin', 'fluxora_speech_host_vulkan'
+            )
+        }
+        finally {
+            if ($null -eq $previousCargoTarget) {
+                Remove-Item -LiteralPath 'Env:CARGO_TARGET_DIR' -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:CARGO_TARGET_DIR = $previousCargoTarget
+            }
+            if ($null -eq $previousCFlags) { Remove-Item -LiteralPath 'Env:CMAKE_C_FLAGS_RELEASE' -ErrorAction SilentlyContinue } else { $env:CMAKE_C_FLAGS_RELEASE = $previousCFlags }
+            if ($null -eq $previousCxxFlags) { Remove-Item -LiteralPath 'Env:CMAKE_CXX_FLAGS_RELEASE' -ErrorAction SilentlyContinue } else { $env:CMAKE_CXX_FLAGS_RELEASE = $previousCxxFlags }
+        }
     }
     finally {
         Pop-Location
@@ -192,6 +273,24 @@ function Build-TauriAiHost {
     }
 
     throw "Fluxora AI host build completed, but the binary was not found at '$hostPath'."
+}
+
+function Get-TauriSpeechHostPath {
+    $hostPath = Join-Path $ProjectRoot (Join-Path 'build\cpu\release' (Get-TauriSpeechHostCargoOutputName))
+    if (Test-Path -LiteralPath $hostPath -PathType Leaf) {
+        return $hostPath
+    }
+
+    throw "Fluxora speech host build completed, but the binary was not found at '$hostPath'."
+}
+
+function Get-TauriVulkanSpeechHostPath {
+    $hostPath = Join-Path $ProjectRoot (Join-Path 'build\vk\release' (Get-TauriVulkanSpeechHostCargoOutputName))
+    if (Test-Path -LiteralPath $hostPath -PathType Leaf) {
+        return $hostPath
+    }
+
+    throw "Fluxora Vulkan speech host build completed, but the binary was not found at '$hostPath'."
 }
 
 function Get-TauriPackageTarget {
@@ -846,6 +945,7 @@ Assert-ChildPath -Path $PayloadManifestPath -ParentPath $ProjectRoot
 Assert-ChildPath -Path $InstallerManifestPath -ParentPath $ProjectRoot
 Assert-ChildPath -Path $TauriNativeResourcesRoot -ParentPath $ProjectRoot
 Assert-ChildPath -Path $TauriNativeResourcesDir -ParentPath $ProjectRoot
+Assert-ChildPath -Path $TauriSpeechResourcesDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $FluxoraSkillsSourceDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $FluxoraAiSkillsOutputDir -ParentPath $ProjectRoot
 Assert-ChildPath -Path $PreservedDownloadsStagingDir -ParentPath $ProjectRoot
@@ -946,20 +1046,32 @@ Invoke-BuildStep "Preparing Tauri native resources ($($tauriTarget.Platform)/$($
         if ((Test-Path -LiteralPath $TauriNativeResourcesDir) -and (-not $NoClean)) {
             Remove-Item -LiteralPath $TauriNativeResourcesDir -Recurse -Force
         }
+        if ((Test-Path -LiteralPath $TauriSpeechResourcesDir) -and (-not $NoClean)) {
+            Remove-Item -LiteralPath $TauriSpeechResourcesDir -Recurse -Force
+        }
 
         New-Item -ItemType Directory -Path $tauriNativeTargetDir -Force | Out-Null
         New-Item -ItemType Directory -Path $TauriNativeResourcesDir -Force | Out-Null
 
         $nativeBridgeHostPath = Get-NativeBridgeHostPath
         $nativeCorePath = Get-NativeCorePath
+        & (Join-Path $TauriProject 'scripts\stage-speech-resources.ps1')
         $aiHostPath = Build-TauriAiHost
         $aiHostResourceName = Get-TauriAiHostResourceName
+        $speechHostPath = Get-TauriSpeechHostPath
+        $speechHostResourceName = Get-TauriSpeechHostResourceName
+        $vulkanSpeechHostPath = Get-TauriVulkanSpeechHostPath
+        $vulkanSpeechHostResourceName = Get-TauriVulkanSpeechHostResourceName
         Copy-Item -LiteralPath $nativeBridgeHostPath -Destination $tauriNativeTargetDir -Force
         Copy-Item -LiteralPath $nativeCorePath -Destination $tauriNativeTargetDir -Force
         Copy-Item -LiteralPath $aiHostPath -Destination (Join-Path $tauriNativeTargetDir $aiHostResourceName) -Force
+        Copy-Item -LiteralPath $speechHostPath -Destination (Join-Path $tauriNativeTargetDir $speechHostResourceName) -Force
+        Copy-Item -LiteralPath $vulkanSpeechHostPath -Destination (Join-Path $tauriNativeTargetDir $vulkanSpeechHostResourceName) -Force
         Copy-Item -LiteralPath $nativeBridgeHostPath -Destination $TauriNativeResourcesDir -Force
         Copy-Item -LiteralPath $nativeCorePath -Destination $TauriNativeResourcesDir -Force
         Copy-Item -LiteralPath $aiHostPath -Destination (Join-Path $TauriNativeResourcesDir $aiHostResourceName) -Force
+        Copy-Item -LiteralPath $speechHostPath -Destination (Join-Path $TauriNativeResourcesDir $speechHostResourceName) -Force
+        Copy-Item -LiteralPath $vulkanSpeechHostPath -Destination (Join-Path $TauriNativeResourcesDir $vulkanSpeechHostResourceName) -Force
 
         $nativeBridgeHostPdbPath = [System.IO.Path]::ChangeExtension($nativeBridgeHostPath, '.pdb')
         if ($IncludeSymbols -and (Copy-FluxoraSymbolFile -Path $nativeBridgeHostPdbPath -DestinationDirectory (Join-Path $SymbolsOutputDir 'native'))) {
@@ -1045,11 +1157,15 @@ Invoke-BuildStep "Packaging Tauri app ($($tauriTarget.Platform)/$($tauriTarget.A
         Copy-Item -LiteralPath $tauriExePath -Destination (Join-Path $OutputDir $TauriExecutableName) -Force
         New-Item -ItemType Directory -Path (Join-Path $OutputDir 'resources\native') -Force | Out-Null
         Copy-DirectoryContents -SourceDirectory $TauriNativeResourcesDir -DestinationDirectory (Join-Path $OutputDir 'resources\native')
+        New-Item -ItemType Directory -Path (Join-Path $OutputDir 'resources\speech') -Force | Out-Null
+        Copy-DirectoryContents -SourceDirectory $TauriSpeechResourcesDir -DestinationDirectory (Join-Path $OutputDir 'resources\speech')
         New-Item -ItemType Directory -Path $FluxoraAiSkillsOutputDir -Force | Out-Null
         Copy-DirectoryContents -SourceDirectory $FluxoraSkillsSourceDir -DestinationDirectory $FluxoraAiSkillsOutputDir
 
         $packagedBridgeHostPath = Join-Path $OutputDir 'resources\native\FluxoraBridgeHost.exe'
         $packagedAiHostPath = Join-Path $OutputDir 'resources\native\FluxoraAIHost.exe'
+        $packagedSpeechHostPath = Join-Path $OutputDir 'resources\native\FluxoraSpeechHost.exe'
+        $packagedVulkanSpeechHostPath = Join-Path $OutputDir 'resources\native\FluxoraSpeechHostVulkan.exe'
         $packagedCorePath = Join-Path $OutputDir 'resources\native\FluxoraCore.dll'
         $packagedVfsPath = Join-Path $OutputDir 'resources\native\FluxoraVfs.dll'
         $packagedGeneralSkillPath = Join-Path $FluxoraAiSkillsOutputDir 'GENERAL\ConciseResponse\SKILL.MD'
@@ -1060,6 +1176,27 @@ Invoke-BuildStep "Packaging Tauri app ($($tauriTarget.Platform)/$($tauriTarget.A
         }
         if (-not (Test-Path -LiteralPath $packagedAiHostPath -PathType Leaf)) {
             throw "Tauri package is missing bundled AI host at '$packagedAiHostPath'."
+        }
+        if (-not (Test-Path -LiteralPath $packagedSpeechHostPath -PathType Leaf)) {
+            throw "Tauri package is missing bundled speech host at '$packagedSpeechHostPath'."
+        }
+        if (-not (Test-Path -LiteralPath $packagedVulkanSpeechHostPath -PathType Leaf)) {
+            throw "Tauri package is missing bundled Vulkan speech host at '$packagedVulkanSpeechHostPath'."
+        }
+        $speechManifestPath = Join-Path $OutputDir 'resources\speech\manifest.json'
+        if (-not (Test-Path -LiteralPath $speechManifestPath -PathType Leaf)) {
+            throw "Tauri package is missing the offline speech manifest at '$speechManifestPath'."
+        }
+        $speechManifest = Get-Content -LiteralPath $speechManifestPath -Raw | ConvertFrom-Json
+        foreach ($speechAsset in @($speechManifest.model, $speechManifest.vad)) {
+            $speechAssetPath = Join-Path $OutputDir (Join-Path 'resources\speech\models' $speechAsset.fileName)
+            if (-not (Test-Path -LiteralPath $speechAssetPath -PathType Leaf)) {
+                throw "Tauri package is missing offline speech asset '$speechAssetPath'."
+            }
+            $actualSpeechHash = Get-FileSha256Hex -Path $speechAssetPath
+            if (-not [string]::Equals($actualSpeechHash, $speechAsset.sha256, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Packaged speech asset hash mismatch for '$speechAssetPath'."
+            }
         }
         if (-not (Test-Path -LiteralPath $packagedCorePath -PathType Leaf)) {
             throw "Tauri package is missing bundled native core at '$packagedCorePath'."

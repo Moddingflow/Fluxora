@@ -226,6 +226,27 @@ $requestMeta = @{
     locale = 'en-US'
 }
 
+$repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+$managedCompletionResponse = Invoke-BridgeHostRequest `
+    -EnvironmentVariables @{ FLUXORA_APP_ROOT = $repositoryRoot } `
+    -Request @{
+        jsonrpc = '2.0'
+        id = 'bodyslide_missing_session'
+        method = 'executables.completeManagedLaunch'
+        params = @{
+            sessionId = 'missing-session'
+            outcome = 'completed'
+        }
+        meta = $requestMeta
+    }
+if ($managedCompletionResponse.error.code -ne 'BODYSLIDE_SESSION_NOT_FOUND') {
+    throw "Expected typed BodySlide session error, received: $($managedCompletionResponse | ConvertTo-Json -Depth 10 -Compress)"
+}
+if ($managedCompletionResponse.id -ne 'bodyslide_missing_session' -or
+    $managedCompletionResponse.meta.operationId -ne 'op_bridge_protocol_test') {
+    throw 'Managed executable completion response lost request envelope correlation.'
+}
+
 $incompatibleResponse = Invoke-BridgeHostRequest -Request @{
     jsonrpc = '2.0'
     id = 'handshake_incompatible'

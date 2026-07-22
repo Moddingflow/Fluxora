@@ -1,5 +1,5 @@
 Fluxora Hinweise zu Drittanbieter-Komponenten
-Stand: 13. Juli 2026
+Stand: 21. Juli 2026
 
 Fluxora enthält Drittanbieter-Komponenten für Laufzeit, Installer, Build und Tests. Dieser Hinweis dient als Release-Checkliste und Transparenzhinweis. Er ersetzt keine abschließende Prüfung durch Owner/Legal vor einer öffentlichen Distribution.
 
@@ -13,6 +13,11 @@ Laufzeit- und Anwendungskomponenten:
 - zlib zum Lesen komprimierter Bethesda-Archiveinträge in lokalen Datei-Vorschauen.
 - Zstandard 1.5.7 für die lokale FluxPack-Content-Store-Komprimierung (BSD-Lizenztext siehe unten).
 - Microsoft Detours, wenn die Windows VFS/Hook-Funktion gebaut wird.
+- whisper-rs 0.16.0 (Unlicense/Public-Domain-Widmung) und whisper.cpp (MIT) für lokale Spracherkennung auf der Vulkan-GPU mit automatischem CPU-Fallback.
+- OpenAI Whisper Small-Modellgewichte (MIT) im mitgelieferten quantisierten lokalen Modell.
+- Silero VAD 6.2.0 Modell und Runtime-Integration (MIT) für lokale Spracherkennung.
+
+Die vollständigen anwendbaren Lizenztexte der Sprachkomponenten werden unter `resources/speech/licenses` installiert und sind Teil des freigegebenen Installer-Payloads.
 
 Installer-Komponenten:
 - Microsoft .NET Laufzeitkomponenten, die vom Windows-Installer-Build verwendet werden.
@@ -21,6 +26,7 @@ Installer-Komponenten:
 Build-, Packaging- und Test-Komponenten:
 - Tauri bundler, Tauri bundler Maker und Plugins sowie Tauri Fuses.
 - Vite, TypeScript und zugehörige TypeScript/React-Werkzeuge.
+- LunarG Vulkan SDK 1.4.341.1 als angeheftetes Copy-only-Build-Werkzeug für den Vulkan-Sprachhost; das SDK wird weder systemweit installiert noch als Runtime-Payload ausgeliefert.
 - Playwright und Vitest für Smoke- und Unit-Tests.
 - GoogleTest für native Backend-Tests.
 

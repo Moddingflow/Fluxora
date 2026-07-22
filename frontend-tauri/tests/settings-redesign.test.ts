@@ -57,6 +57,8 @@ const baseSettingsWorkspaceProps: SettingsWorkspaceProps = {
   developerModeEnabled: false,
   isTransferRunning: false,
   languageBusy: null,
+  microphoneAllowed: false,
+  microphonePermissionBusy: false,
   lastBuildDate: '2026-07-03T10:15:00.000Z',
   connectionBusyProviderId: null,
   connectionProviders: [],
@@ -69,6 +71,7 @@ const baseSettingsWorkspaceProps: SettingsWorkspaceProps = {
     transferCancellationAvailable: false
   },
   onDeveloperModeChange: () => undefined,
+  onResetMicrophonePermission: () => undefined,
   onOpenRepository: () => undefined,
   onOpenTransfer: () => undefined,
   onSectionChange: () => undefined,
@@ -232,6 +235,29 @@ describe('settings redesign', () => {
     expect(html).not.toContain('Connect this provider');
   });
 
+  it('shows local microphone consent and a native reset action in Privacy', () => {
+    const allowed = renderSettingsWorkspace({
+      microphoneAllowed: true,
+      section: 'privacy'
+    });
+    const notAllowed = renderSettingsWorkspace({
+      microphoneAllowed: false,
+      section: 'privacy'
+    });
+
+    expect(allowed).toContain('AI microphone');
+    expect(allowed).toContain('Allowed until reset');
+    expect(allowed).toContain('Reset access');
+    expect(allowed).not.toContain('disabled=""');
+    expect(notAllowed).toContain('Fluxora will ask before recording');
+    expect(notAllowed).toContain('disabled=""');
+
+    const app = readText('frontend-tauri', 'src', 'renderer', 'App.tsx');
+    expect(app).toContain('resetAiMicrophonePermission(window.localStorage)');
+    expect(app).toContain('window.fluxora.ai.resetMicrophonePermission');
+    expect(app).toContain("createRendererOperationId('ai_microphone_permission_reset')");
+  });
+
   it('keeps Settings styling aligned with the compact UI-kit source', () => {
     const styles = readText('frontend-tauri', 'src', 'renderer', 'styles.css');
 
@@ -257,6 +283,7 @@ describe('settings redesign', () => {
     expect(styles).not.toContain('linear-gradient(180deg, rgba(var(--flx-accent-rgb), 0.18), rgba(var(--flx-accent-rgb), 0.1))');
     expect(styles).toContain('.settings-panel--transfer');
     expect(styles).toContain('.settings-panel--developer');
+    expect(styles).toContain('.settings-panel--privacy');
     expect(styles).toContain('.settings-repository-button');
     expect(styles).not.toContain('.settings-panel--ai');
     expect(styles).not.toContain('.settings-ai-');

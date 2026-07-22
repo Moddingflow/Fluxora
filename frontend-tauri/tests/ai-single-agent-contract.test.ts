@@ -17,13 +17,25 @@ describe('single-agent product contract', () => {
     expect(contract).not.toContain('local-dry-run');
   });
 
-  it('uses one bounded coordinator with action-wide typed capabilities and read-only answers', () => {
+  it('uses one bounded goal coordinator with risk-filtered typed capabilities', () => {
     const host = read('src-tauri/src/bin/fluxora_ai_host.rs');
+    const goalContract = read('src-tauri/src/bin/fluxora_ai_host/goal_contract.rs');
     const toolContract = read('src-tauri/src/bin/fluxora_ai_host/tool_contract.rs');
     const coordinator = read('src-tauri/src/ai_execution_coordinator.rs');
     expect(host).toContain('"googleSearch"');
     expect(host).toContain('"functionDeclarations"');
-    expect(host).toContain('tool_declarations_for_task_kind');
+    expect(host).toContain('tool_declarations_for_risk');
+    expect(host).toContain('prepared_goal_body');
+    expect(host).toContain('declare_goal_with');
+    expect(host).toContain('research_web_with');
+    expect(host).toContain('request_input_from_calls');
+    expect(host).toContain('intent-contract-invalid');
+    expect(goalContract).toContain('local.execution.declare_goal');
+    expect(goalContract).toContain('local.execution.request_input');
+    expect(goalContract).toContain('local.execution.research_web');
+    expect(goalContract).toContain('GoalMode::Answer | GoalMode::Inspect => ToolRisk::ReadOnly');
+    expect(goalContract).toContain('GoalOrigin::Implicit => ToolRisk::Reversible');
+    expect(goalContract).toContain('GoalOrigin::Continuation');
     expect(host).not.toContain('declarations_for_execution_phase');
     expect(host).toContain('fluxora.ai.tool-session.v3');
     expect(host).toContain('action-without-verified-effect');
@@ -41,7 +53,9 @@ describe('single-agent product contract', () => {
     expect(toolContract).toContain('pub enum ToolRisk');
     expect(toolContract).toContain('pub enum ToolVerification');
     expect(toolContract).toContain('pub enum ToolCompensation');
-    expect(toolContract).toContain('task_kind == TaskKind::Action || contract.risk == ToolRisk::ReadOnly');
+    expect(toolContract).toContain('allowed_risk.allows(contract.risk)');
+    expect(toolContract).not.toContain('classify_task');
+    expect(toolContract).not.toContain('action_markers');
     expect(toolContract).toContain('local.text.stage_patch');
     expect(toolContract).toContain('local.text.stage_create');
     expect(toolContract).toContain('local.json.stage_set_pointer');
@@ -66,11 +80,16 @@ describe('single-agent product contract', () => {
     expect(host).not.toMatch(/orchestrat|subagent|local-dry-run/i);
   });
 
-  it('keeps AI out of the global titlebar and inside the selected build header', () => {
+  it('keeps build-scoped AI in the global titlebar and out of the build header', () => {
     const titlebar = read('src/renderer/components/chrome/AppTitlebar.tsx');
     const buildHeader = read('src/renderer/features/build/BuildDetailHeader.tsx');
-    expect(titlebar).not.toMatch(/Toggle AI|onToggleAi|geminiIcon/);
-    expect(buildHeader).toContain('Open Fluxora AI for this build');
+    const app = read('src/renderer/App.tsx');
+    expect(titlebar).toMatch(/Toggle AI|onToggleAi|geminiIcon/);
+    expect(buildHeader).not.toMatch(/Fluxora AI|onToggleAi|geminiIcon/);
+    expect(app).toContain('buildScopedAiRoutes.has(activeRoute)');
+    expect(app).toContain('!isCreateOpen');
+    expect(app).toContain('!isTransferPageOpen');
+    expect(app).toContain('!isSecondaryWindow');
   });
 
   it('does not expose shell or arbitrary URL-fetch tools to Gemini', () => {
@@ -140,6 +159,41 @@ describe('single-agent product contract', () => {
       channel: FluxoraIpcChannels.aiUndoCapability,
       args: ['undo-token', { operationId: 'undo-operation' }]
     }]);
+  });
+
+  it('routes rollback-state recovery with the caller operation id through the typed facade', async () => {
+    const invocations: Array<{ channel: string; args: unknown[] }> = [];
+    const ipc: IpcInvoker = {
+      invoke: async (channel, ...args) => {
+        invocations.push({ channel, args });
+        return [{ runId: 'run-older', state: 'conflict', reason: 'overlapping-edit' }];
+      }
+    };
+
+    const result = await createFluxoraApi(ipc).ai.getFileRollbackStates(
+      'chat-alpha',
+      'operation-rollback-states'
+    );
+
+    expect(result).toEqual([
+      { runId: 'run-older', state: 'conflict', reason: 'overlapping-edit' }
+    ]);
+    expect(invocations).toEqual([{
+      channel: FluxoraIpcChannels.aiFileGetRollbackStates,
+      args: ['chat-alpha', 'operation-rollback-states']
+    }]);
+  });
+
+  it('keeps additive rollback fields and public file rollback compatibility in the typed contract', () => {
+    const contract = read('src/shared/fluxora-api.ts');
+    expect(contract).toContain("mode: 'exact' | 'inverse-merge'");
+    expect(contract).toContain('preservedNewerChanges: boolean');
+    expect(contract).toContain("| 'overlapping-edit'");
+    expect(contract).toContain('rollbackFile: (');
+    expect(contract).toContain('getFileRollbackStates: (');
+    expect(contract).toContain('resetFileRollbackCheckpoints: (operationId: string)');
+    const shell = read('src-tauri/src/lib.rs');
+    expect(shell).toContain('buildFiles.resetRollbackCheckpoints');
   });
 
   it('uses the current publishable-key contract with a legacy environment alias only', () => {

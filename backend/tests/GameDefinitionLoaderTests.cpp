@@ -127,6 +127,7 @@ namespace fluxora::tests
 
         ASSERT_EQ(definitions.size(), 1U);
         const GameDefinition& skyrim = definitions.front();
+        EXPECT_EQ(skyrim.schemaVersion, L"2");
         EXPECT_EQ(skyrim.id.value(), L"skyrimse");
         EXPECT_EQ(skyrim.displayName, L"Skyrim Special Edition");
         EXPECT_EQ(skyrim.dataFolder, L"Data");
@@ -140,6 +141,14 @@ namespace fluxora::tests
         EXPECT_EQ(skyrim.contentLayoutRules.dataFolder, L"Data");
         EXPECT_TRUE(skyrim.contentLayoutRules.supportsRootFiles);
         EXPECT_EQ(skyrim.contentLayoutRules.rootFileWrapperDirectory, L"root");
+        ASSERT_EQ(skyrim.contentLayoutRules.mountRules.size(), 6U);
+        const auto primaryMount = std::find_if(
+            skyrim.contentLayoutRules.mountRules.begin(),
+            skyrim.contentLayoutRules.mountRules.end(),
+            [](const GameVfsMountRule& rule) { return rule.primaryContentRoot; });
+        ASSERT_NE(primaryMount, skyrim.contentLayoutRules.mountRules.end());
+        EXPECT_EQ(primaryMount->targetPath, std::filesystem::path(L"Data"));
+        EXPECT_TRUE(primaryMount->includeUnwrappedModRoot);
         EXPECT_TRUE(skyrim.vfsRules.supportsRootBuilder);
         EXPECT_EQ(skyrim.vfsRules.rootBuilderDirectoryName, L"root");
         EXPECT_EQ(skyrim.vfsRules.userSettingsDirectoryName, L"Skyrim Special Edition");
@@ -151,10 +160,10 @@ namespace fluxora::tests
             skyrim.vfsRules.profileIniFileNames.end());
         EXPECT_NE(
             std::find(
-                skyrim.vfsRules.excludedLaunchCacheDirectories.begin(),
-                skyrim.vfsRules.excludedLaunchCacheDirectories.end(),
+                skyrim.vfsRules.materializedLaunchCacheDirectories.begin(),
+                skyrim.vfsRules.materializedLaunchCacheDirectories.end(),
                 L"NetScriptFramework"),
-            skyrim.vfsRules.excludedLaunchCacheDirectories.end());
+            skyrim.vfsRules.materializedLaunchCacheDirectories.end());
         ASSERT_EQ(skyrim.healthRules.requiredFiles.size(), 2U);
         ASSERT_TRUE(skyrim.launchRules.scriptExtender.has_value());
         EXPECT_EQ(skyrim.launchRules.scriptExtender->loaderExecutable.displayName(), L"skse64_loader.exe");
@@ -223,11 +232,11 @@ namespace fluxora::tests
         EXPECT_TRUE(containsString(skyrim.vfsRules.profileIniFileNames, L"SkyrimCustom.ini"));
         EXPECT_TRUE(containsString(skyrim.vfsRules.profileIniFileNames, L"SkyrimPrefs.ini"));
         EXPECT_TRUE(containsString(skyrim.vfsRules.saveDirectoryNames, L"Saves"));
-        EXPECT_TRUE(containsString(skyrim.vfsRules.excludedLaunchCacheDirectories, L"root"));
-        EXPECT_TRUE(containsString(skyrim.vfsRules.excludedLaunchCacheDirectories, L"SKSE"));
-        EXPECT_TRUE(containsString(skyrim.vfsRules.excludedLaunchCacheDirectories, L"DLLPlugins"));
-        EXPECT_TRUE(containsString(skyrim.vfsRules.excludedLaunchCacheDirectories, L"Plugins"));
-        EXPECT_TRUE(containsString(skyrim.vfsRules.excludedLaunchCacheDirectories, L"NetScriptFramework"));
+        EXPECT_TRUE(containsString(skyrim.vfsRules.materializedLaunchCacheDirectories, L"root"));
+        EXPECT_TRUE(containsString(skyrim.vfsRules.materializedLaunchCacheDirectories, L"SKSE"));
+        EXPECT_TRUE(containsString(skyrim.vfsRules.materializedLaunchCacheDirectories, L"DLLPlugins"));
+        EXPECT_TRUE(containsString(skyrim.vfsRules.materializedLaunchCacheDirectories, L"Plugins"));
+        EXPECT_TRUE(containsString(skyrim.vfsRules.materializedLaunchCacheDirectories, L"NetScriptFramework"));
     }
 
     TEST(GameDefinitionLoaderTests, NormalizesIdsDomainsAndExtensions)
@@ -247,6 +256,47 @@ namespace fluxora::tests
         EXPECT_EQ(definition.executables.front().name.normalizedName(), L"example.exe");
         ASSERT_TRUE(definition.executableRoles.primary.has_value());
         EXPECT_EQ(definition.executableRoles.primary->normalizedName(), L"example.exe");
+    }
+
+    TEST(GameDefinitionLoaderTests, SchemaV1AdaptsLegacyLaunchCacheAlias)
+    {
+        const std::wstring json = replaceFirst(
+            std::wstring(minimalDefinition),
+            L"\"excludedLaunchCacheDirectories\": []",
+            L"\"excludedLaunchCacheDirectories\": [\"Plugins\"]");
+
+        const GameDefinition definition = GameDefinitionLoader::loadDefinition(json);
+
+        ASSERT_EQ(definition.vfsRules.materializedLaunchCacheDirectories.size(), 1U);
+        EXPECT_EQ(definition.vfsRules.materializedLaunchCacheDirectories.front(), L"Plugins");
+    }
+
+    TEST(GameDefinitionLoaderTests, SchemaV2RequiresAndLoadsDeclarativeMountRules)
+    {
+        std::wstring json = replaceFirst(
+            std::wstring(minimalDefinition),
+            L"\"schemaVersion\": \"1\"",
+            L"\"schemaVersion\": \"2\"");
+        json = replaceFirst(
+            std::move(json),
+            L"\"supportsRootFiles\": false\n            }",
+            LR"json("supportsRootFiles": false,
+                "mountRules": [{
+                    "id": "content",
+                    "targetBase": "gameDirectory",
+                    "targetPath": "Content",
+                    "source": "activeMods",
+                    "primaryContentRoot": true,
+                    "includeUnwrappedModRoot": true,
+                    "wrapperDirectories": ["Content"]
+                }]
+            })json");
+
+        const GameDefinition definition = GameDefinitionLoader::loadDefinition(json);
+
+        ASSERT_EQ(definition.contentLayoutRules.mountRules.size(), 1U);
+        EXPECT_EQ(definition.contentLayoutRules.dataFolder, L"Content");
+        EXPECT_EQ(definition.dataFolder, L"Content");
     }
 
     TEST(GameDefinitionLoaderTests, RejectsUnknownFields)
@@ -283,7 +333,7 @@ namespace fluxora::tests
     {
         EXPECT_THROW(
             (void)GameDefinitionLoader::loadDefinition(
-                replaceFirst(std::wstring(minimalDefinition), L"\"schemaVersion\": \"1\"", L"\"schemaVersion\": \"2\"")),
+                replaceFirst(std::wstring(minimalDefinition), L"\"schemaVersion\": \"1\"", L"\"schemaVersion\": \"3\"")),
             std::runtime_error);
     }
 

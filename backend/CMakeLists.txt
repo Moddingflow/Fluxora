@@ -132,11 +132,13 @@ endif()
 # FluxoraCore: the C++ core / business logic exposed to the C# UI over a C ABI.
 # --------------------------------------------------------------------------
 add_library(FluxoraCore SHARED
+    src/Services/AiRollbackCheckpointStore.cpp
     src/FluxoraCoreApi.cpp
     src/Core.cpp
     src/Services/AppSettingsService.cpp
     src/Services/ArchiveCatalogService.cpp
     src/Services/BuildPathSettingsService.cpp
+    src/Services/BodySlideIntegrationService.cpp
     src/Services/BuildFileDiscoveryService.cpp
     src/Services/ConfigRecipeRegistry.cpp
     src/Services/BuildFileWorkspaceService.cpp
@@ -153,7 +155,8 @@ add_library(FluxoraCore SHARED
       src/Services/InstallProjectGate.cpp
       src/Services/InstallOperationService.cpp
       src/Services/InstallScheduler.cpp
-      src/Services/InstallTransactionJournal.cpp
+    src/Services/InstallTransactionJournal.cpp
+    src/Services/InverseTextMergeService.cpp
     src/Services/ContentLayoutService.cpp
     src/Services/DownloadService.cpp
     src/Services/DownloadTransferLimiter.cpp
@@ -189,8 +192,8 @@ add_library(FluxoraCore SHARED
     src/Services/ProfileOrderService.cpp
     src/Services/ProfileService.cpp
     src/Services/ProjectService.cpp
+    src/Services/RootBuilderLaunchCacheReconciler.cpp
     src/Services/TemplateService.cpp
-    src/Services/VfsContentPlacementAnalyzer.cpp
     src/Services/VfsMountPlan.cpp
     src/Services/VirtualFileSystemService.cpp
     src/Support/LaunchDescriptorStore.cpp

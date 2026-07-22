@@ -1,6 +1,6 @@
 # Fluxora AI Architecture
 
-Status: current single-agent architecture, 2026-07-20.
+Status: current single-agent architecture, 2026-07-22.
 
 ## Product Contract
 
@@ -44,20 +44,90 @@ the global title bar and from builds that are not selected.
 Every user-triggered run and every native tool call carries the same
 `operationId` through renderer, Rust, AI host, bridge host, C++ core, and logs.
 
+## Local Voice Input V1
+
+Voice input is an optional local input method inside the selected build's AI
+panel. It does not add a provider, model picker, agent, tool, or orchestration
+path. The renderer captures mono 16 kHz `Float32` PCM with an `AudioWorklet`,
+keeps it only in memory, and sends the bounded byte view through Tauri raw IPC.
+The typed facade exposes `prepareVoice`, `armMicrophoneCapture`,
+`transcribeVoice`, `resetMicrophonePermission`,
+`cancelVoiceTranscription`, and `openMicrophonePrivacySettings`; the renderer
+has no filesystem or process access. Fluxora's localized EN/RU/DE consent
+dialog runs before model preparation or capture. Allow is stored locally until
+Settings > Privacy resets it; Deny is not stored. After Allow, model preparation
+starts concurrently with microphone opening and never delays active recording.
+
+The Rust shell validates every raw payload and metadata header, owns separate
+Vulkan and CPU speech-host lifecycles, permits one CPU crash restart, and writes
+only content-free speech lifecycle records to the separate speech log. It first
+uses `FluxoraSpeechHostVulkan` for Vulkan Whisper offload with CPU Silero VAD.
+Missing runtime/device, startup, handshake, or GPU initialization automatically
+falls back to dependency-light `FluxoraSpeechHost` with the same `operationId`
+and absolute deadline; cancellation never launches fallback. Both hosts use the
+bundled `small-q5_1`, standalone Silero VAD 6.2.0, deterministic Greedy 1
+decoding, bounded per-segment token generation, temperature 0, no translation
+or timestamps, and 1..8 threads clamped to logical cores minus one. The renderer
+always sends `auto`; Whisper detects the primary language and the typed result
+contains `detectedLanguage` plus `backend`. The EN/RU/DE UI locale remains only
+for consent and errors. Silero's first-to-last speech window removes outer
+silence before inference. Short recordings use one strictly bounded decoder segment
+and a duration-sized encoder context instead of paying for Whisper's default
+30-second window. The versioned glossary is a deterministic whole-term
+postprocessor: official names and abbreviations normalize in every language,
+ordinary terms use language-specific EN/RU/DE canonicals, and other languages
+receive proper-name normalization only. It is not injected as a long decoder
+prompt that can bias short multilingual recordings.
+
+On Windows, Rust resets any saved WebView2 microphone decision to `DEFAULT` at
+startup and handles `PermissionRequested` without storing a profile decision.
+Only the normalized `http://tauri.localhost` origin can consume one armed
+permission within ten seconds; every other microphone request is denied and
+other WebView permission kinds are left untouched. Initialization and reset
+fail closed.
+
+Audio is capped at five minutes and is never written to disk, placed in logs,
+included in support data, or sent to Gemini. Stop adds the local transcript to
+the existing draft and completes the voice operation. Send passes the same
+voice `operationId` into the normal single Gemini run; only that text follows
+the existing online AI privacy contract. Closing/collapsing/changing the AI tab,
+Escape, error, or unmount stops tracks, disconnects the worklet, closes the
+audio context, clears buffers, and cancels active native transcription.
+Short transcription requests have a 15-second native safety deadline; longer
+requests scale with audio duration up to a five-minute ceiling. A separate
+renderer watchdog starts at 20 seconds, cancels the native process, and returns
+a typed retryable error even if native cleanup becomes unresponsive. Users can
+also cancel while transcription is active. Immediately after Stop the visible
+timer, waveform, and text are replaced by a fixed cancellable spinner; only a
+localized screen-reader status remains. Host reset waiting is bounded to five
+seconds. Speech logs include backend, threads, model-load/VAD/inference/total
+times and real-time factor, but never audio, transcript, detected language, or
+glossary content.
+
 ## Authoritative Execution Coordinator
 
-`AiExecutionCoordinator` is a focused module outside `lib.rs`. An explicit
-`action` receives the complete supported typed tool set from its first round;
-an `answer` receives read-only tools only. The model can choose a declared
-tool, but it cannot decide whether work succeeded. Inferred domain and phase
+`AiExecutionCoordinator` is a focused module outside `lib.rs`. Every build task
+starts with the host-owned `local.execution.declare_goal` contract in required
+function-calling mode. The validated modes are `answer`, `inspect`, and
+`repair`; a repair records `explicit`, `implicit`, or `continuation` origin.
+An `answer` or `inspect` declaration must also return an exact bounded quote
+from the current user dialogue as `readOnlyEvidence`. The host rejects a
+missing or invented quote, retries the declaration once, and never lets an
+unsupported read-only classification silently downgrade a requested change.
+Answer and inspect receive read-only tools. An implicit repair receives only
+read-only and reversible capabilities, while explicit irreversible work keeps
+its existing exact confirmation. The model can choose a declared tool, but it
+cannot decide whether work succeeded. Inferred domain and phase
 remain diagnostics rather than authority. The coordinator keeps the
 authoritative goal, actual domain selected by the tool, monotonic phase,
 semantic evidence set, recovery count, pending question, terminal reason and
-native verified effects outside Gemini history. The cycle is
-`goal -> execute -> native verify -> completed | exact blocker`.
+native verified effects outside Gemini history. The repair cycle is
+`declare goal -> inspect/search -> optional research -> stage -> commit ->
+native reread -> completed | needs-input | exact blocker`.
 
-The response adds `execution` with `goalId`, `kind`, `domain`, `phase`,
-`state`, `verifiedEffects`, `pendingQuestion` and `terminalReason`. Each tool
+The response adds `execution` with `goalId`, compatible `kind`, `mode`, `origin`,
+`requestedOutcome`, `domain`, `phase`, `state`, `verifiedEffects`,
+`pendingQuestion` and `terminalReason`. Each tool
 result also carries internal `fluxora.ai.tool-outcome.v1` status, exact error
 code, new evidence, recovery directive, compensation token and the same
 `operationId`. Existing `fileChangeSet` data remains additive and compatible.
@@ -107,25 +177,27 @@ Function must be deployed before a desktop client that selects v2.
 
 ## Gemini Conversation Loop
 
-Chat-only generation requests declare model-native `google_search`; typed
-rounds declare the full supported contract for an `action` and its read-only
-subset for an `answer`. Phase and inferred domain never remove a declared
-capability. These tool families stay in separate `generateContent` requests because that endpoint
-rejects the combined declaration, while the single sequential conversation
-loop still owns both routes. There is no retry that silently removes a rejected
-tool schema. Grounding metadata is normalized to source citations shown beside
-the answer.
+The first provider round declares only host-owned
+`local.execution.declare_goal`, uses function-calling mode `ANY`, and analyzes
+the complete current dialogue plus any unfinished active goal. Invalid output
+gets one matched correction round and then exact `intent-contract-invalid`;
+there is no keyword fallback. Subsequent typed rounds are filtered by the
+validated risk. Host-owned `local.execution.research_web` can request a separate
+web-only `google_search` round of the same Gemini model when local evidence does
+not establish semantics. Local declarations and Search stay in separate
+`generateContent` requests. Returned grounding/citations are appended as
+untrusted evidence and never grant write authority.
 
-Before dispatch the host classifies the latest multilingual request as
-`action` or `answer` and records one explicit route: `local-required`,
-`local-auto`, `web-search`, or `none`. An explicit file action is
-`local-required`; it cannot be downgraded to advice or web research. Tool
-session schema `fluxora.ai.tool-session.v3` carries this classification through
-every round.
+The goal contract maps `repair` to compatible `kind=action` and
+`local-required`; `answer` and `inspect` map to compatible `kind=answer` with
+read-only authority. A natural description of an unwanted build state is an
+implicit repair unless the user explicitly limits the request to explanation or
+diagnosis. Tool-session schema `fluxora.ai.tool-session.v3` carries mode, origin,
+requested outcome, allowed risk, and continuation state through every round.
 
-Every Gemini 3 request uses `temperature: 1.0`. The host selects
-`thinkingConfig.thinkingLevel=high` for file actions and diagnostic prompts,
-and `medium` for ordinary chat and continuation-summary compression. Thought
+Every Gemini 3 request uses `temperature: 1.0`. Goal declaration always uses
+`thinkingConfig.thinkingLevel=high`; validated repair and inspect rounds remain
+high, while answer and continuation-summary compression use medium. Thought
 summaries are not requested or rendered. Text parts marked as thoughts are
 excluded from user-visible answers, while opaque thought signatures remain
 unchanged in provider history for later function-call turns. The selected
@@ -134,15 +206,41 @@ level is exposed only as bounded internal diagnostics and safe log metadata.
 `FluxoraAIHost` owns one explicit provider-name registry. The public/native
 tool contract keeps names such as `local.files.search`, while Gemini receives
 only registered names matching `[A-Za-z_][A-Za-z0-9_]{0,63}`, such as
-`local_files_search`. Incoming calls are translated back to the internal name
-before Tauri/C++ dispatch. The matching `functionResponse` uses the original
-provider name and call id, and the original model content (including an opaque
-thought signature) remains unchanged in provider history.
+`local_files_search`. Incoming calls are canonicalized only when they exactly
+match either name of a registry entry: the provider-safe name or its internal
+dotted name. This tolerates Gemini following a model-facing internal label
+without admitting fuzzy, suffixed, or invented tool names. Model-generated
+instructions use the provider-safe registry name. Before Tauri/C++ dispatch,
+the call is translated to its internal name. The matching `functionResponse`
+uses the exact name and call id from the original call, and the original model
+content (including an opaque thought signature) remains unchanged in provider
+history.
 
-Web and local-file content are untrusted data. Neither can grant a capability,
+One function response remains bounded to 64 KiB. A larger redacted tool result
+is no longer rejected: the AI host retains up to 64 MiB of serialized JSON in
+the current in-memory session, returns the first lossless bounded chunk with an
+opaque `resultRef` and `nextOffset`, and serves later chunks through the
+host-owned read-only `local.tool_result.read_page` tool. Continuation calls do
+not repeat the native operation and are never forwarded to the Tauri/C++
+bridge; mixed turns still forward their ordinary typed-tool siblings and merge
+one correctly matched response per Gemini call id. The stored result is removed
+after its final page or when the tool session ends. If the per-session store is
+exhausted, Gemini receives a small retryable tool result asking for a narrower
+query, cursor, JSON pointer, or text window instead of a fatal session error.
+
+Web and local-file content are untrusted data. Neither can change the validated
+goal/risk, grant a capability,
 approve a mutation, widen a root, manufacture a valid file reference, or cause
 direct URL fetching. The model has no shell, PowerShell, command execution,
 arbitrary process launch, or arbitrary URL tool.
+
+`local.execution.request_input` is also host-owned and is never forwarded to
+C++. It accepts one bounded concrete question for a repair, moves execution to
+`needs-input`, and returns the active goal to the renderer. Each tab persists
+its own optional `activeGoal`; a short answer is revalidated as `continuation`
+and must reuse the same `goalId` and original risk ceiling. Verified completion,
+cancellation, and terminal blocking clear it. Diagnostics may log mode, risk,
+and continuation, but never prompts, config contents, or user questions.
 
 Function-call model parts, including their call identifiers and thought
 signatures, remain in provider history before matching function responses are
@@ -224,8 +322,9 @@ host returns a typed context-size error instead of silently dropping content.
 
 ## Typed Capability Tools
 
-For an explicit action, discovery, bounded reads, staging, commit and all
-supported domain capabilities are declared from the first tool round. The
+For a validated repair, discovery, bounded reads, permitted staging, commit and
+supported domain capabilities up to the goal's risk ceiling are declared from
+the first execution tool round. The
 coordinator still advances monotonically through discovery, inspection,
 staging, verification and report phases for diagnostics. Supported file
 operations are:
@@ -266,7 +365,28 @@ verification failure, rereads every target, and returns core-generated diffs
 plus rollback state. Exact text patch/create and supported INI/JSON semantic
 operations share the same native containment, revision, hash, encoding and
 postcondition guards. The source mod is unchanged. Rollback checks each
-post-write hash and refuses to overwrite later user or external edits.
+response-owned `runId` independently. If the target still equals that run's
+`after` snapshot, rollback is exact. Otherwise C++ performs an inverse three-way
+merge with `base=after`, `ours=current`, and `theirs=before`, preserving newer
+non-overlapping edits and refusing overlapping logical lines, encoding/path
+changes, or ambiguity without writing any file. A created file is removed only
+while it still matches `after`. Every run is preflighted as one transaction; one
+conflict leaves all current files untouched, and a later write failure restores
+the original current bytes of every file already touched.
+
+Rollback checkpoints are a separate C++ service under the local Fluxora app
+root. Per-file `before` and `after` snapshots are SHA-256 content-addressed
+blobs, deduplicated across runs, and Zstandard-compressed only when the stored
+payload becomes smaller. Versioned manifests contain verified build ownership
+and contained relative paths, never arbitrary absolute targets. Loading checks
+manifest version, build/chat ownership, path containment, hashes, encoding, and
+blob integrity. Corrupt, expired, incompatible, or incomplete data is
+unavailable and cannot authorize a write. A run is admitted before its file
+mutation or the mutation does not start. Storage is bounded to 256 MiB per chat
+and 1 GiB globally; cleanup garbage-collects unreferenced blobs and then expires
+oldest available runs whole, first in the overflowing chat and then globally.
+Closing a chat removes that chat's checkpoints, and deleting a build removes
+every checkpoint owned by that build.
 Ambiguity, key conflicts, unsupported formats, stale revisions, dirty editors,
 and external changes fail closed without mutation and produce one concrete
 question or typed blocker. The built-in Community Shaders recipe maps PageDown
@@ -303,10 +423,22 @@ prompt text, file contents, diff bodies, credentials, provider keys, absolute
 paths, or provider response bodies. Failed provider HTTP bodies are not read
 into desktop error payloads.
 
-The right-side AI panel body uses named grid areas `tabs`, `context`, optional
+The right-side AI panel is a fixed `616px` design token (`56px` collapsed); it
+has no renderer width state, resize separator, or direct filesystem access. Its
+only build-scoped entry is the main titlebar button between Refresh and Settings,
+hidden on Home, Settings, create/transfer flows, and secondary windows. The body uses named grid areas `tabs`, `context`, optional
 `diagnostic`, `messages`, and `input`. Messages own the only flexible row; the
-single input surface is the final row and stays flush with the panel bottom at
-supported viewport sizes.
+single input surface is the final row. Each assistant response owns at most one
+neutral managed-change block and one run-level Undo. File rows show the relative
+path and `+N`/`-N` statistics and open a persisted read-only diff preview at the
+first hunk without reopening the ended native chat session. Red removed lines
+and green added lines use the core-generated verified hunks. A separate explicit
+action opens the managed mod file in the full editor. Right-click replaces the
+WebView context menu with the standard Fluxora row menu and can reveal the file
+in the platform file manager. Per-file rollback remains protocol-compatible but
+is not exposed in chat.
+`getFileRollbackStates(chatId, operationId)` restores `available`, `rolled-back`,
+`conflict`, or `unavailable` after reload, rollback, and storage eviction.
 
 ## Privacy And Release
 
@@ -316,6 +448,12 @@ bounded local fragments to Supabase and Google/Gemini. Tabs remain locally
 stored until the user closes/clears them or removes Fluxora application data.
 Closing a tab removes it from local AI session storage; provider-side handling
 is governed by the applicable provider terms.
+
+The rollback store never uploads checkpoint blobs, file bodies, or diff bodies.
+It retains local snapshots only while their chat/build lifecycle and the
+256 MiB per-chat / 1 GiB global bounds permit. Logs record operation, chat/run,
+exact versus inverse mode, file count, conflict reason, and eviction only; they
+exclude checkpoint content and diffs.
 
 Bundled English, German, and Russian privacy/terms text describes the managed
 gateway, Gemini/Search processing, selected local fragments, local tab

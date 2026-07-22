@@ -17,6 +17,7 @@
 namespace fluxora
 {
     class Logger;
+    class BodySlideIntegrationService;
     class TemplateService;
     struct ProjectCreateRequest
     {
@@ -66,7 +67,10 @@ namespace fluxora
     class ProjectService final : public IService
     {
     public:
-        ProjectService(Logger& logger, const TemplateService& templates) noexcept;
+        ProjectService(
+            Logger& logger,
+            const TemplateService& templates,
+            BodySlideIntegrationService* bodySlideIntegration = nullptr) noexcept;
 
         void initialize() override;
         void shutdown() override;
@@ -111,6 +115,7 @@ namespace fluxora
 
         Logger& logger_;
         const TemplateService& templates_;
+        BodySlideIntegrationService* bodySlideIntegration_{nullptr};
         std::vector<ProjectDescriptor> projects_;
         mutable std::mutex projectSummaryCacheMutex_;
         mutable std::unordered_map<std::wstring, ProjectSummaryCacheEntry> projectSummaryCache_;

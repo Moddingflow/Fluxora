@@ -65,7 +65,7 @@ import menuToggleLeftIcon from '../../../Icons/toggle-left.svg';
 import menuToggleRightIcon from '../../../Icons/toggle-right.svg';
 import menuTrashIcon from '../../../Icons/trash-2.svg';
 import { AppTitlebar } from './components/chrome/AppTitlebar';
-import { Button, EmptyState, LoadingSplash, StatusDot } from './design-system';
+import { Badge, Button, EmptyState, LoadingSplash, StatusDot } from './design-system';
 import { PrimitivePreview } from './design-system/PrimitivePreview';
 import {
   LibraryHome,
@@ -76,8 +76,14 @@ import {
   type ProjectRuntimeSummary
 } from './features/library/projectLibraryStats';
 import { AiChatPanel } from './features/ai/AiChatPanel';
+import { resolveAiManagedFileLocation } from './features/ai/ai-managed-file-location';
 import {
-  AI_CHAT_PANEL_COLLAPSED_WIDTH,
+  aiMicrophonePermissionChangedEvent,
+  aiMicrophonePermissionStorageKey,
+  hasAiMicrophonePermission,
+  resetAiMicrophonePermission
+} from './features/ai/ai-microphone-permission';
+import {
   aiChatReducer,
   createAiMessage,
   createAiStreamEvent,
@@ -430,6 +436,28 @@ const FilePreviewWorkspace = lazy(async () => {
   return { default: module.FilePreviewWorkspace };
 });
 
+const bodySlideLaunchErrorMessage = (error: unknown): string => {
+  const code =
+    error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string'
+      ? (error as { code: string }).code
+      : '';
+  const messages: Record<string, string> = {
+    BODYSLIDE_EXTERNAL_TOOL:
+      'BodySlide находится вне сборки. Импортируйте BodySlide в сборку и повторите запуск.',
+    BODYSLIDE_X86_UNSUPPORTED: 'Нужен официальный 64-битный BodySlide.',
+    BODYSLIDE_PLATFORM_UNSUPPORTED: 'Управляемый BodySlide поддерживается только в Windows.',
+    BODYSLIDE_RUNTIME_INVALID: 'Файлы установленного BodySlide повреждены или неполны.',
+    BODYSLIDE_GAME_UNSUPPORTED: 'BodySlide v1 поддерживает только Skyrim SE/AE.',
+    BODYSLIDE_OUTPUT_CONFLICT:
+      'Имя BodySlide Output уже занято пользовательским модом. Данные не изменены.',
+    BODYSLIDE_SESSION_ACTIVE: 'BodySlide уже запущен для этой сборки.',
+    BODYSLIDE_SESSION_NOT_FOUND: 'Сессия BodySlide уже завершена или была восстановлена.',
+    BODYSLIDE_VFS_UNAVAILABLE: 'BodySlide нельзя запустить без рабочего Fluxora VFS.',
+    BODYSLIDE_CONFIGURATION_FAILED: 'Не удалось безопасно подготовить конфигурацию BodySlide.'
+  };
+  return messages[code] ?? errorMessage(error);
+};
+
 type RouteId =
   | 'home'
   | 'build'
@@ -440,6 +468,17 @@ type RouteId =
   | 'profiles'
   | 'executables'
   | 'settings';
+
+const buildScopedAiRoutes = new Set<RouteId>([
+  'build',
+  'workspace',
+  'mods',
+  'plugins',
+  'downloads',
+  'profiles',
+  'executables'
+]);
+const aiRollbackCheckpointResetMarker = 'fluxora.ai.rollback-checkpoints.v1';
 
 type CatalogState = LibraryCatalogState;
 
@@ -1254,6 +1293,9 @@ export const App = () => {
   const [, setMessage] = useState<string | null>(null);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [aiChat, dispatchAiChat] = useReducer(aiChatReducer, initialAiChatState);
+  const [aiRollbackStoreReady, setAiRollbackStoreReady] = useState(
+    () => window.localStorage.getItem(aiRollbackCheckpointResetMarker) === 'ready'
+  );
   const [aiHostStatus, setAiHostStatus] = useState<FluxoraAiHostStatus | null>(null);
   const [aiChatSettings] = useState<AiChatSettings>(() =>
     loadAiChatSettings(window.localStorage)
@@ -1321,6 +1363,10 @@ export const App = () => {
   const [developerModeEnabled, setDeveloperModeEnabled] = useState(() =>
     loadDeveloperModeSetting(window.localStorage)
   );
+  const [microphoneAllowed, setMicrophoneAllowed] = useState(() =>
+    hasAiMicrophonePermission(window.localStorage)
+  );
+  const [microphonePermissionBusy, setMicrophonePermissionBusy] = useState(false);
   const [settingsBusyLabel, setSettingsBusyLabel] = useState<string | null>(null);
   const [connectionSnapshot, setConnectionSnapshot] = useState<FluxoraExternalConnectionSnapshot>(() =>
     loadCachedConnectionSnapshot(window.localStorage)
@@ -1346,6 +1392,24 @@ export const App = () => {
     []
   );
   connectionCoordinatorRef.current = connectionCoordinator;
+  useEffect(() => {
+    const refreshMicrophonePermission = () => {
+      setMicrophoneAllowed(hasAiMicrophonePermission(window.localStorage));
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === aiMicrophonePermissionStorageKey) {
+        refreshMicrophonePermission();
+      }
+    };
+    window.addEventListener('focus', refreshMicrophonePermission);
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener(aiMicrophonePermissionChangedEvent, refreshMicrophonePermission);
+    return () => {
+      window.removeEventListener('focus', refreshMicrophonePermission);
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener(aiMicrophonePermissionChangedEvent, refreshMicrophonePermission);
+    };
+  }, []);
   const nexusConnection = providerFromSnapshot(connectionSnapshot, 'nexus');
   const nexusConnectionReady = connectionIsReady(nexusConnection);
   const nxmAutoRegistrationAttemptedRef = useRef(false);
@@ -5660,16 +5724,21 @@ export const App = () => {
 
     const operationId = createRendererOperationId('executables_launch');
     const launchStartedAtMs = performance.now();
-    setExecutablesBusyLabel('Launching executable');
+    const isManagedBodySlide = selectedExecutableItem.managedToolKind === 'bodySlide';
+    let managedSessionId: string | undefined;
+    let managedOutcome: 'completed' | 'failed' | 'watcher-error' = 'failed';
+    let launchedResult: FluxoraExecutableLaunchResult | null = null;
+    let trackedProcessLabel = selectedExecutableItem.displayName;
+    setExecutablesBusyLabel(isManagedBodySlide ? 'Подготовка BodySlide' : 'Launching executable');
     setExecutableLaunchResult(null);
     setLaunchSplash({
       operationId,
       appName: selectedExecutableItem.displayName,
       buildName: selectedProject.name,
-      detail: 'Процесс запускается',
+      detail: isManagedBodySlide ? 'Подготовка BodySlide' : 'Процесс запускается',
       state: 'starting',
       subtitle: selectedProject.name,
-      title: 'Процесс запускается'
+      title: isManagedBodySlide ? 'Подготовка BodySlide' : 'Процесс запускается'
     });
     setMessage(null);
 
@@ -5680,6 +5749,21 @@ export const App = () => {
         selectedProjectProfileName,
         { operationId }
       );
+      launchedResult = result;
+      managedSessionId = result.managedSessionId;
+      if (managedSessionId) {
+        setExecutablesBusyLabel('Запуск через VFS');
+        setLaunchSplash((current) =>
+          current?.operationId === operationId
+            ? {
+                ...current,
+                detail: 'Запуск через VFS',
+                subtitle: result.outputMod?.displayName ?? selectedProject.name,
+                title: 'Запуск через VFS'
+              }
+            : current
+        );
+      }
       const processCreatedAtMs = performance.now();
       void window.fluxora.ui
         .log({
@@ -5711,13 +5795,6 @@ export const App = () => {
           ready.state === 'timeout'
             ? `Fluxora не обнаружила ${processName} до истечения времени запуска.`
             : `${processName} завершился до того, как Fluxora смогла отследить процесс.`;
-        setLaunchSplash((current) => (current?.operationId === operationId ? null : current));
-        setExecutablesBusyLabel(null);
-        void loadModsWorkspace(selectedProject, {
-          resetScroll: false,
-          showBusy: false,
-          showLoading: false
-        });
         setMessage(reason);
         return;
       }
@@ -5743,7 +5820,7 @@ export const App = () => {
           executableName
         }))
       ];
-      let trackedProcessLabel = processName;
+      trackedProcessLabel = processName;
       await watchLaunchProcessSession({
         activeProcess: ready,
         knownProcesses,
@@ -5768,17 +5845,65 @@ export const App = () => {
         operationId,
         waitForExit: window.fluxora.processes.waitForExit
       });
-      setLaunchSplash((current) => (current?.operationId === operationId ? null : current));
-      setExecutablesBusyLabel(null);
+      managedOutcome = 'completed';
       setMessage(`${trackedProcessLabel} закрыт. Можно продолжить работу в Mod Manager.`);
-      void loadModsWorkspace(selectedProject, {
-        resetScroll: false,
-        showBusy: false,
-        showLoading: false
-      });
     } catch (error) {
-      setMessage(errorMessage(error));
+      managedOutcome = managedSessionId ? 'watcher-error' : 'failed';
+      setMessage(isManagedBodySlide ? bodySlideLaunchErrorMessage(error) : errorMessage(error));
     } finally {
+      if (managedSessionId) {
+        setExecutablesBusyLabel('Обновление output');
+        setLaunchSplash((current) =>
+          current?.operationId === operationId
+            ? {
+                ...current,
+                detail: 'Обновление output',
+                state: 'starting',
+                subtitle:
+                  launchedResult?.outputMod?.displayName ?? `${selectedProject.name} - BodySlide Output`,
+                title: 'Обновление output'
+              }
+            : current
+        );
+        try {
+          const completion = await window.fluxora.executables.completeManagedLaunch(
+            managedSessionId,
+            managedOutcome,
+            { operationId }
+          );
+          if (completion.deferred) {
+            setMessage(
+              completion.warnings[0] ??
+                'BodySlide всё ещё работает; обновление output завершится при следующем запуске.'
+            );
+          } else if (managedOutcome === 'completed') {
+            const warning = launchedResult?.warnings?.[0] ?? completion.warnings[0];
+            setMessage(
+              warning
+                ? `${trackedProcessLabel} закрыт. ${warning}`
+                : `${completion.outputMod.displayName} обновлён.`
+            );
+          }
+        } catch (completionError) {
+          setMessage(
+            `BodySlide завершён, но output не удалось обновить: ${bodySlideLaunchErrorMessage(
+              completionError
+            )}`
+          );
+        }
+      }
+      if (launchedResult) {
+        try {
+          await loadModsWorkspace(selectedProject, {
+            resetScroll: false,
+            showBusy: false,
+            showLoading: false
+          });
+        } catch {
+          // The managed completion already invalidated native caches. A manual
+          // refresh remains available if the renderer refresh itself fails.
+        }
+      }
       setLaunchSplash((current) => (current?.operationId === operationId ? null : current));
       setExecutablesBusyLabel(null);
     }
@@ -7508,16 +7633,45 @@ export const App = () => {
   }, [chromePlatform]);
 
   useEffect(() => {
+    if (window.localStorage.getItem(aiRollbackCheckpointResetMarker) === 'ready') {
+      setAiRollbackStoreReady(true);
+      return;
+    }
+    const operationId = createRendererOperationId('ai_file_rollback_checkpoints_reset');
+    void window.fluxora.ai.resetFileRollbackCheckpoints(operationId).then(
+      () => {
+        window.localStorage.setItem(aiRollbackCheckpointResetMarker, 'ready');
+        setAiRollbackStoreReady(true);
+      },
+      () => undefined
+    );
+  }, []);
+
+  useEffect(() => {
     activeAiRunsRef.current.forEach((run) => {
       run.handle?.dispose();
       requestNativeAiRunCancel(run.operationId);
     });
     activeAiRunsRef.current.clear();
+    const restoredSession = loadAiSession(window.localStorage, aiSessionScope);
     dispatchAiChat({
       type: 'restore-session',
-      session: loadAiSession(window.localStorage, aiSessionScope)
+      session: restoredSession
     });
-  }, [aiSessionScope]);
+    if (selectedProject && aiRollbackStoreReady) {
+      restoredSession.chats.forEach((chat) => {
+        const operationId = createRendererOperationId('ai_file_rollback_states_restore');
+        void window.fluxora.ai.getFileRollbackStates(chat.id, operationId).then(
+          (states) => dispatchAiChat({
+            type: 'restore-file-rollback-states',
+            chatId: chat.id,
+            states
+          }),
+          () => undefined
+        );
+      });
+    }
+  }, [aiRollbackStoreReady, aiSessionScope, selectedProjectId]);
 
   useEffect(() => {
     saveAiSession(window.localStorage, aiChat.session);
@@ -7586,7 +7740,12 @@ export const App = () => {
         !isEditableShortcutTarget(event.target)
       ) {
         event.preventDefault();
-        if (selectedProject && activeRoute !== 'home') {
+        if (
+          selectedProject &&
+          buildScopedAiRoutes.has(activeRoute) &&
+          !isCreateOpen &&
+          !isTransferPageOpen
+        ) {
           dispatchAiChat({ type: 'toggle-open' });
         }
       }
@@ -7595,7 +7754,7 @@ export const App = () => {
     document.addEventListener('keydown', handleKeyDown);
 
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [activeRoute, isSecondaryWindow, selectedProject]);
+  }, [activeRoute, isCreateOpen, isSecondaryWindow, isTransferPageOpen, selectedProject]);
 
   useEffect(() => {
     if (!selectedProject && aiChat.isOpen) {
@@ -14181,6 +14340,12 @@ export const App = () => {
                 <div className="mod-row__main" role="cell">
                   <strong>{executableTitle(entry)}</strong>
                   <span>{entry.id}</span>
+                  {entry.managedToolKind === 'bodySlide' ? (
+                    <>
+                      <Badge tone="accent">BodySlide · VFS</Badge>
+                      <span>{selectedProject?.name ?? 'Build'} - BodySlide Output</span>
+                    </>
+                  ) : null}
                 </div>
                 <span role="cell">{shortPath(entry.executablePath)}</span>
                 <span role="cell">{entry.arguments || '-'}</span>
@@ -14341,8 +14506,23 @@ export const App = () => {
             </div>
             <div>
               <dt>Launch</dt>
-              <dd>{executableCapabilities.launchAvailable ? 'available' : 'limited'}</dd>
+              <dd>
+                {selectedExecutableItem?.managedToolKind === 'bodySlide'
+                  ? 'BodySlide · VFS'
+                  : executableCapabilities.launchAvailable
+                    ? 'available'
+                    : 'limited'}
+              </dd>
             </div>
+            {selectedExecutableItem?.managedToolKind === 'bodySlide' ? (
+              <div>
+                <dt>Output</dt>
+                <dd>
+                  {executableLaunchResult?.outputMod?.displayName ??
+                    `${selectedProject?.name ?? 'Build'} - BodySlide Output`}
+                </dd>
+              </div>
+            ) : null}
           </dl>
         </div>
       )}
@@ -14360,6 +14540,9 @@ export const App = () => {
               ? `Process ${executableLaunchResult.processId}`
               : executableLaunchResult.launchTrackingKind}
           </span>
+          {executableLaunchResult.outputMod ? (
+            <span>Output: {executableLaunchResult.outputMod.displayName}</span>
+          ) : null}
         </div>
       ) : null}
     </aside>
@@ -14651,6 +14834,24 @@ export const App = () => {
     saveDeveloperModeSetting(window.localStorage, enabled);
   };
 
+  const resetMicrophonePermission = async () => {
+    if (microphonePermissionBusy) return;
+    const operationId = createRendererOperationId('ai_microphone_permission_reset');
+    setMicrophonePermissionBusy(true);
+    setSettingsBusyLabel(null);
+    resetAiMicrophonePermission(window.localStorage);
+    setMicrophoneAllowed(false);
+    window.dispatchEvent(new Event(aiMicrophonePermissionChangedEvent));
+    try {
+      await window.fluxora.ai.resetMicrophonePermission({ operationId });
+      setSettingsBusyLabel(null);
+    } catch {
+      setSettingsBusyLabel('Microphone access could not be fully reset. Retry.');
+    } finally {
+      setMicrophonePermissionBusy(false);
+    }
+  };
+
   const openOriginalRepository = () => {
     void window.fluxora.links.openExternal(fluxoraOriginalRepositoryUrl);
   };
@@ -14664,11 +14865,14 @@ export const App = () => {
       developerModeEnabled={developerModeEnabled}
       isTransferRunning={isTransferRunning}
       languageBusy={languageBusy}
+      microphoneAllowed={microphoneAllowed}
+      microphonePermissionBusy={microphonePermissionBusy}
       lastBuildDate={rendererBuildDate}
       connectionBusyProviderId={connectionBusyProviderId}
       connectionProviders={connectionSnapshot.providers}
       onDeveloperModeChange={setDeveloperMode}
       onOpenRepository={openOriginalRepository}
+      onResetMicrophonePermission={() => void resetMicrophonePermission()}
       section={settingsSection}
       settingsBusyLabel={settingsBusyLabel}
       settingsCapabilities={settingsCapabilities}
@@ -14696,7 +14900,6 @@ export const App = () => {
     return (
       <section className="build-page" aria-label="Selected build">
         <BuildDetailHeader
-          aiActive={aiChat.isOpen}
           buildCapabilities={buildHeaderCapabilities}
           executables={executablesWorkspace.items}
           executablesBusyLabel={executablesBusyLabel}
@@ -14719,7 +14922,6 @@ export const App = () => {
           }}
           onGenerateGrassCache={() => requestGrassCacheGeneration()}
           onSettings={() => void openBuildPathSettings()}
-          onToggleAi={() => dispatchAiChat({ type: 'toggle-open' })}
           profileOptions={buildProfileOptions}
           profilesBusyLabel={profilesBusyLabel}
           project={selectedProject}
@@ -14892,13 +15094,16 @@ export const App = () => {
       });
   };
 
-  const sendAiChatMessageAsync = async () => {
-    const prompt = aiChat.draft.trim();
+  const sendAiChatMessageAsync = async (
+    promptOverride?: string,
+    operationIdOverride?: string
+  ): Promise<boolean> => {
+    const prompt = (promptOverride ?? aiChat.draft).trim();
     if (!prompt || aiChat.isRunning || !aiHostStatus?.ready || aiChatProviderDiagnostic?.level === 'error') {
-      return;
+      return false;
     }
 
-    const operationId = createRendererOperationId('ai_chat_run');
+    const operationId = operationIdOverride ?? createRendererOperationId('ai_chat_run');
     const requestSession = aiChat.session;
     const run = createAiRunForPrompt(requestSession, operationId, prompt);
     const runControl: ActiveAiRunControl = {
@@ -14982,7 +15187,7 @@ export const App = () => {
       };
 
       if (activeAiRunsRef.current.get(run.sessionId) !== runControl || runControl.cancelled) {
-        return;
+        return false;
       }
 
       runControl.handle = startHostAiRun(
@@ -15015,18 +15220,32 @@ export const App = () => {
               event,
               status
             });
+            if (message.fileChangeSet) {
+              const operationId = createRendererOperationId('ai_file_rollback_states_after_run');
+              void window.fluxora.ai
+                .getFileRollbackStates(message.fileChangeSet.chatId, operationId)
+                .then(
+                  (states) => dispatchAiChat({
+                    type: 'restore-file-rollback-states',
+                    chatId: message.fileChangeSet!.chatId,
+                    states
+                  }),
+                  () => undefined
+                );
+            }
           },
           onLog: logAiRuntimeEntry
         }
       );
       if (runControl.cancelled) {
         runControl.handle.cancel();
-        return;
+        return false;
       }
       void estimateAiContextUsage();
+      return true;
     } catch (error) {
       if (activeAiRunsRef.current.get(run.sessionId) !== runControl || runControl.cancelled) {
-        return;
+        return false;
       }
 
       activeAiRunsRef.current.delete(run.sessionId);
@@ -15041,6 +15260,7 @@ export const App = () => {
             : 'AI chat preflight failed.',
         operationId
       });
+      return false;
     }
   };
 
@@ -15093,71 +15313,47 @@ export const App = () => {
 
   const openAiFileChange = (
     change: FluxoraAiFileChange,
-    firstChangedLine: number,
-    changeSet: FluxoraAiFileChangeSet
+    _firstChangedLine: number,
+    _changeSet: FluxoraAiFileChangeSet
   ) => {
+    if (!selectedProject) {
+      setMessage('Open the build before opening this managed override in the editor.');
+      return;
+    }
+    const location = resolveAiManagedFileLocation(selectedProject, change);
+    if (!location) {
+      setMessage('Managed override location is unavailable.');
+      return;
+    }
     const fileName = change.relativePath.replaceAll('\\', '/').split('/').filter(Boolean).pop()
       ?? 'Editor';
-    void window.fluxora.windowControls.openAiTextEditor(
-      changeSet.chatId,
-      change.fileRef,
+    void window.fluxora.windowControls.openTextEditor(
+      selectedProject.configPath,
+      selectedProject.projectDirectory,
+      location.modPath,
+      location.relativePath,
       fileName,
-      firstChangedLine
     ).catch((error) => setMessage(errorMessage(error)));
   };
 
-  const openAiFileChangeMod = (change: FluxoraAiFileChange) => {
-    const owner = change.ownerMod?.trim().toLocaleLowerCase();
-    if (!owner) {
-      return;
-    }
-    const item = modsWorkspace.items.find((candidate) =>
-      candidate.isMod && (
-        candidate.id.trim().toLocaleLowerCase() === owner ||
-        modItemTitle(candidate).trim().toLocaleLowerCase() === owner
-      )
-    );
-    if (!item) {
-      setMessage(`Mod owner "${change.ownerMod}" is not present in the current build.`);
-      return;
-    }
-    const relativeInsideMod = change.relativePath
-      .replaceAll('\\', '/')
-      .split('/')
-      .slice(1)
-      .join('/');
-    void openModDetailsWindow(item, relativeInsideMod);
-  };
-
-  const rollbackAiFileChange = async (
-    changeSet: FluxoraAiFileChangeSet,
-    change: FluxoraAiFileChange
+  const revealAiFileChange = (
+    change: FluxoraAiFileChange,
+    _changeSet: FluxoraAiFileChangeSet
   ) => {
-    try {
-      const result = await window.fluxora.ai.rollbackFile(
-        changeSet.chatId,
-        changeSet.runId,
-        change.fileRef,
-        { operationId: createRendererOperationId('ai_file_rollback') }
-      );
-      const files = changeSet.files.map((file) => {
-        const rolledBack = result.files.find((candidate) => candidate.fileRef === file.fileRef);
-        return rolledBack ?? file;
-      });
-      dispatchAiChat({
-        type: 'update-file-change-set',
-        changeSet: {
-          ...changeSet,
-          files,
-          rollbackState: result.state
-        }
-      });
-      setMessage(result.state === 'conflict'
-        ? 'Rollback stopped: the file changed after the AI write.'
-        : 'AI file change rolled back.');
-    } catch (error) {
-      setMessage(errorMessage(error));
+    if (!selectedProject) {
+      setMessage('Open the build before revealing this managed override.');
+      return;
     }
+    const location = resolveAiManagedFileLocation(selectedProject, change);
+    if (!location) {
+      setMessage('Managed override location is unavailable.');
+      return;
+    }
+    void window.fluxora.shell.showItemInFolder(location.absolutePath).then((result) => {
+      if (!result.ok) {
+        setMessage(result.message ?? 'Managed override location could not be opened.');
+      }
+    }).catch((error) => setMessage(errorMessage(error)));
   };
 
   const rollbackAiFileRun = async (changeSet: FluxoraAiFileChangeSet) => {
@@ -15174,12 +15370,24 @@ export const App = () => {
           files: changeSet.files.map((file) =>
             result.files.find((candidate) => candidate.fileRef === file.fileRef) ?? file
           ),
-          rollbackState: result.state
+          rollbackState: result.state,
+          rollbackReason: result.reason,
+          rollbackMode: result.mode,
+          preservedNewerChanges: result.preservedNewerChanges
         }
       });
+      const stateOperationId = createRendererOperationId('ai_file_rollback_states_after_undo');
+      const states = await window.fluxora.ai.getFileRollbackStates(changeSet.chatId, stateOperationId);
+      dispatchAiChat({
+        type: 'restore-file-rollback-states',
+        chatId: changeSet.chatId,
+        states
+      });
       setMessage(result.state === 'conflict'
-        ? 'Run rollback stopped because one or more files changed externally.'
-        : 'AI file run rolled back.');
+        ? 'Undo needs review. Current files were left unchanged.'
+        : result.preservedNewerChanges
+          ? 'Undo complete. Newer non-overlapping changes were preserved.'
+          : 'AI file run undone.');
     } catch (error) {
       setMessage(errorMessage(error));
     }
@@ -15211,22 +15419,28 @@ export const App = () => {
     }
   };
 
-  const aiChatLayoutStyle = {
-    '--ai-chat-width': `${aiChat.isCollapsed ? AI_CHAT_PANEL_COLLAPSED_WIDTH : aiChat.width}px`
-  } as CSSProperties;
+  const titlebarAiVisible =
+    !isSecondaryWindow &&
+    Boolean(selectedProject) &&
+    !isCreateOpen &&
+    !isTransferPageOpen &&
+    buildScopedAiRoutes.has(activeRoute);
 
   const renderTitlebar = (showSettingsButton: boolean) => (
     <AppTitlebar
       homeActive={activeRoute === 'home' && !isTransferPageOpen}
+      aiActive={aiChat.isOpen}
       mode={isSecondaryWindow ? 'settings' : 'main'}
       settingsActive={isSettingsWindow}
       showShortcuts={showSettingsButton}
+      showAi={showSettingsButton && titlebarAiVisible}
       title={windowTitle}
       onClose={() => void closeWindow()}
       onHome={() => changeRoute('home')}
       onMinimize={() => void minimizeWindow()}
       onOpenSettings={() => void openSettingsWindow()}
       onRefresh={() => void refreshCurrentView()}
+      onToggleAi={() => dispatchAiChat({ type: 'toggle-open' })}
       onToggleMaximize={() => void toggleMaximizeWindow()}
     />
   );
@@ -15306,7 +15520,6 @@ export const App = () => {
         className="workspace-with-ai"
         data-ai-collapsed={aiChat.isCollapsed ? 'true' : undefined}
         data-ai-open={aiChat.isOpen ? 'true' : undefined}
-        style={aiChatLayoutStyle}
       >
         <section className="workspace workspace--full">
           <div className="content-area">
@@ -15360,9 +15573,10 @@ export const App = () => {
           </div>
         </section>
 
-        {aiChat.isOpen && selectedProject ? (
+        {aiChat.isOpen && selectedProject && titlebarAiVisible ? (
           <AiChatPanel
             hostReady={aiHostStatus?.ready ?? false}
+            language={bridgeStatus?.language ?? 'en-us'}
             providerDiagnostic={aiChatProviderDiagnostic}
             showCheckedSites={developerModeEnabled}
             showDeveloperDiagnostics={developerModeEnabled}
@@ -15390,14 +15604,13 @@ export const App = () => {
             onDraftChange={(value) => dispatchAiChat({ type: 'set-draft', value })}
             onOpenSource={openAiSource}
             onOpenFileChange={openAiFileChange}
-            onOpenFileChangeMod={openAiFileChangeMod}
-            onRollbackFileChange={(changeSet, change) => void rollbackAiFileChange(changeSet, change)}
-            onRollbackFileRun={(changeSet) => void rollbackAiFileRun(changeSet)}
+            onRevealFileChange={revealAiFileChange}
+            onRollbackFileRun={rollbackAiFileRun}
             onUndoCapability={(compensationToken) => void rollbackAiCapability(compensationToken)}
-            onResize={(width) => dispatchAiChat({ type: 'set-width', width })}
             onSend={sendAiChatMessage}
             onSelectChat={(chatId) => dispatchAiChat({ type: 'select-chat', chatId })}
             onToggleCollapse={() => dispatchAiChat({ type: 'toggle-collapse' })}
+            onVoiceSend={(prompt, operationId) => sendAiChatMessageAsync(prompt, operationId)}
           />
         ) : null}
       </section>

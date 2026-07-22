@@ -332,12 +332,39 @@ namespace fluxora
         BuildFileRollbackState rollbackState{BuildFileRollbackState::Available};
     };
 
+    enum class BuildFileRollbackMode
+    {
+        Exact,
+        InverseMerge
+    };
+
+    enum class BuildFileRollbackReason
+    {
+        None,
+        OverlappingEdit,
+        CheckpointExpired,
+        CheckpointCorrupt,
+        EncodingChanged,
+        PathChanged,
+        CreatedFileModified
+    };
+
     struct BuildFileRollbackResult
     {
         std::wstring operationId;
         std::wstring runId;
         BuildFileRollbackState state{BuildFileRollbackState::Unavailable};
         std::vector<BuildFileChange> files;
+        BuildFileRollbackMode mode{BuildFileRollbackMode::Exact};
+        BuildFileRollbackReason reason{BuildFileRollbackReason::None};
+        bool preservedNewerChanges{false};
+    };
+
+    struct BuildFileRollbackRunState
+    {
+        std::wstring runId;
+        BuildFileRollbackState state{BuildFileRollbackState::Unavailable};
+        BuildFileRollbackReason reason{BuildFileRollbackReason::None};
     };
 
     class BuildFileWorkspaceService final : public IService
@@ -407,6 +434,11 @@ namespace fluxora
             std::wstring_view chatId,
             std::wstring_view runId,
             std::wstring_view operationId);
+        [[nodiscard]] std::vector<BuildFileRollbackRunState> getFileRollbackStates(
+            std::wstring_view chatId,
+            std::wstring_view operationId);
+        void eraseBuildCheckpoints(const std::filesystem::path& projectDirectory);
+        void eraseAllCheckpoints(std::wstring_view operationId);
 
         [[nodiscard]] bool isInitialized() const noexcept;
 

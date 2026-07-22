@@ -83,6 +83,24 @@ pub enum ToolRisk {
     Irreversible,
 }
 
+impl ToolRisk {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::Reversible => "reversible",
+            Self::Irreversible => "irreversible-with-confirmation",
+        }
+    }
+
+    const fn allows(self, candidate: Self) -> bool {
+        match self {
+            Self::ReadOnly => matches!(candidate, Self::ReadOnly),
+            Self::Reversible => !matches!(candidate, Self::Irreversible),
+            Self::Irreversible => true,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolVerification {
     SemanticResult,
@@ -132,6 +150,8 @@ const fn contract(
     }
 }
 
+pub const TOOL_RESULT_PAGE_TOOL: &str = "local.tool_result.read_page";
+
 pub const TOOL_CONTRACT_REGISTRY: &[ToolContract] = &[
     contract(
         "local_files_discover",
@@ -173,6 +193,15 @@ pub const TOOL_CONTRACT_REGISTRY: &[ToolContract] = &[
         "local_text_search",
         "local.text.search",
         ToolOperation::Discover,
+        ToolDomain::Files,
+        ToolRisk::ReadOnly,
+        ToolVerification::SemanticResult,
+        ToolCompensation::None,
+    ),
+    contract(
+        "local_tool_result_read_page",
+        TOOL_RESULT_PAGE_TOOL,
+        ToolOperation::Inspect,
         ToolDomain::Files,
         ToolRisk::ReadOnly,
         ToolVerification::SemanticResult,
@@ -531,6 +560,14 @@ fn tool_specs() -> Vec<ToolSpec> {
             ],
         },
         ToolSpec {
+            internal_name: TOOL_RESULT_PAGE_TOOL,
+            description: "Continue a large prior tool response without repeating the native operation. Copy resultRef and nextOffset exactly from providerResultPage, then read pages until complete=true before claiming exhaustive results.",
+            parameters: vec![
+                required("resultRef", NON_EMPTY_STRING),
+                required("offset", ParameterKind::Integer),
+            ],
+        },
+        ToolSpec {
             internal_name: "local.json.query",
             description: "Query JSON or JSONC by RFC 6901 pointer.",
             parameters: vec![required("fileRef", NON_EMPTY_STRING), required("pointer", NON_EMPTY_STRING)],
@@ -724,10 +761,10 @@ pub fn provider_tool_name(internal_name: &str) -> Option<&'static str> {
     tool_contract(internal_name).map(|contract| contract.provider_name)
 }
 
-pub fn internal_tool_name(provider_name: &str) -> Option<&'static str> {
+pub fn internal_tool_name(call_name: &str) -> Option<&'static str> {
     TOOL_CONTRACT_REGISTRY
         .iter()
-        .find(|mapping| mapping.provider_name == provider_name)
+        .find(|mapping| mapping.provider_name == call_name || mapping.internal_name == call_name)
         .map(|mapping| mapping.internal_name)
 }
 
@@ -772,7 +809,15 @@ pub fn typed_tool_declarations() -> Vec<Value> {
         .collect()
 }
 
+#[cfg(test)]
 pub fn tool_declarations_for_task_kind(task_kind: TaskKind) -> Vec<Value> {
+    tool_declarations_for_risk(match task_kind {
+        TaskKind::Action => ToolRisk::Irreversible,
+        TaskKind::Answer => ToolRisk::ReadOnly,
+    })
+}
+
+pub fn tool_declarations_for_risk(allowed_risk: ToolRisk) -> Vec<Value> {
     typed_tool_declarations()
         .into_iter()
         .filter(|declaration| {
@@ -784,7 +829,7 @@ pub fn tool_declarations_for_task_kind(task_kind: TaskKind) -> Vec<Value> {
             else {
                 return false;
             };
-            task_kind == TaskKind::Action || contract.risk == ToolRisk::ReadOnly
+            allowed_risk.allows(contract.risk)
         })
         .collect()
 }
@@ -967,82 +1012,6 @@ pub fn is_staging_tool(name: &str) -> bool {
 
 pub fn is_commit_tool(name: &str) -> bool {
     tool_contract(name).is_some_and(|contract| contract.operation == ToolOperation::Commit)
-}
-
-pub fn classify_task(prompt: &str) -> TaskKind {
-    let normalized = prompt.trim().to_lowercase();
-    if ["как ", "how ", "wie ", "можно ли "]
-        .iter()
-        .any(|prefix| normalized.starts_with(prefix))
-    {
-        return TaskKind::Answer;
-    }
-    let action_markers = [
-        "измени",
-        "поменяй",
-        "замени",
-        "запиши",
-        "создай",
-        "установи",
-        "поставь",
-        "отредактируй",
-        "исправь",
-        "добавь",
-        "удали",
-        "включи",
-        "выключи",
-        "перемести",
-        "возобнови",
-        "отмени",
-        "изменить",
-        "поменять",
-        "заменить",
-        "записать",
-        "создать",
-        "установить",
-        "поставить",
-        "отредактировать",
-        "исправить",
-        "добавить",
-        "удалить",
-        "change ",
-        "set ",
-        "replace ",
-        "write ",
-        "create ",
-        "edit ",
-        "update ",
-        "add ",
-        "delete ",
-        "remove ",
-        "enable ",
-        "disable ",
-        "move ",
-        "resume ",
-        "cancel ",
-        "make ",
-        "fix ",
-        "ändere",
-        "ändern",
-        "ersetze",
-        "schreibe",
-        "erstelle",
-        "aktualisiere",
-        "füge",
-        "lösche",
-        "setze",
-        "setzen",
-        "beheben",
-        "сделать так, чтобы",
-    ];
-    if action_markers
-        .iter()
-        .any(|marker| normalized.contains(marker))
-    {
-        TaskKind::Action
-    } else {
-        TaskKind::Answer
-    }
 }
 
 pub const fn provider_routing(task_kind: TaskKind, has_file_workspace: bool) -> ProviderRouting {

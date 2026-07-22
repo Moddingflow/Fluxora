@@ -35,6 +35,8 @@ mod ai_capability_adapters;
 #[allow(dead_code)]
 #[path = "bin/fluxora_ai_host/tool_contract.rs"]
 mod ai_tool_contract;
+mod microphone_permission;
+mod speech;
 
 use ai_capability_adapters::{
     find_download_can_install, find_download_state, find_mod_enabled, find_plugin_order,
@@ -42,6 +44,14 @@ use ai_capability_adapters::{
     sanitize_installs, sanitize_mod_workspace, sanitize_plugins, AiEntityKind, AiEntityRefRegistry,
 };
 use ai_tool_contract::{tool_contract, ToolDomain, ToolOperation, ToolRisk};
+use microphone_permission::{
+    configure_main_webview, fluxora_ai_arm_microphone_capture,
+    fluxora_ai_reset_microphone_permission, MicrophonePermissionState,
+};
+use speech::{
+    fluxora_ai_cancel_voice_transcription, fluxora_ai_open_microphone_privacy_settings,
+    fluxora_ai_prepare_voice, fluxora_ai_transcribe_voice, SpeechHostState,
+};
 
 const BRIDGE_PROTOCOL_VERSION: &str = "1.0";
 const BRIDGE_TIMEOUT_MS: u64 = 10_000;
@@ -2114,6 +2124,11 @@ async fn resolve_ai_host_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn fluxora_app_root() -> Result<PathBuf, String> {
+    #[cfg(feature = "native-ai-integration-fixture")]
+    if let Some(path) = std::env::var_os("FLUXORA_APP_ROOT") {
+        return Ok(PathBuf::from(path));
+    }
+
     let executable = std::env::current_exe()
         .map_err(|error| format!("Fluxora executable path is unavailable: {error}"))?;
     executable
@@ -5595,6 +5610,46 @@ async fn fluxora_ai_file_rollback_run(
     .await
 }
 
+#[tauri::command]
+async fn fluxora_ai_file_get_rollback_states(
+    app: AppHandle,
+    chat_id: String,
+    operation_id: String,
+) -> Result<Value, String> {
+    let operation_id = if operation_id.trim().is_empty() {
+        crate::operation_id(None, "ai_file_get_rollback_states")
+    } else {
+        operation_id
+    };
+    request_ai_build_files(
+        &app,
+        "buildFiles.getRollbackStates",
+        json!({ "chatId": chat_id }),
+        &operation_id,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn fluxora_ai_file_reset_rollback_checkpoints(
+    app: AppHandle,
+    operation_id: String,
+) -> Result<(), String> {
+    let operation_id = if operation_id.trim().is_empty() {
+        crate::operation_id(None, "ai_file_reset_rollback_checkpoints")
+    } else {
+        operation_id
+    };
+    request_ai_build_files(
+        &app,
+        "buildFiles.resetRollbackCheckpoints",
+        json!({}),
+        &operation_id,
+    )
+    .await
+    .map(|_| ())
+}
+
 async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value, String> {
     let mut request = request;
     let operation_id = request
@@ -5648,6 +5703,10 @@ async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value
     let mut host_phase_transitions = Vec::<Value>::new();
     let mut task_kind = "answer".to_string();
     let mut thinking_level = "medium".to_string();
+    let mut goal_mode = "answer".to_string();
+    let mut goal_origin = "explicit".to_string();
+    let mut allowed_risk = "read-only".to_string();
+    let mut continued_goal = false;
     let mut provider_routing = if has_file_workspace {
         "local-auto"
     } else {
@@ -5778,6 +5837,25 @@ async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value
                     .and_then(Value::as_str)
                     .unwrap_or(&task_kind)
                     .to_string();
+                goal_mode = turn
+                    .get("mode")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&goal_mode)
+                    .to_string();
+                goal_origin = turn
+                    .get("origin")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&goal_origin)
+                    .to_string();
+                allowed_risk = turn
+                    .get("allowedRisk")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&allowed_risk)
+                    .to_string();
+                continued_goal = turn
+                    .get("continuedGoal")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(continued_goal);
                 provider_routing = turn
                     .get("providerRouting")
                     .and_then(Value::as_str)
@@ -6190,16 +6268,50 @@ async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value
     }
     let final_result = match result {
         Ok(mut data) => {
+            task_kind = data
+                .pointer("/fileToolDiagnostics/taskKind")
+                .and_then(Value::as_str)
+                .unwrap_or(&task_kind)
+                .to_string();
             thinking_level = data
                 .pointer("/internalDiagnostics/thinkingLevel")
                 .or_else(|| data.pointer("/fileToolDiagnostics/thinkingLevel"))
                 .and_then(Value::as_str)
                 .unwrap_or(&thinking_level)
                 .to_string();
+            goal_mode = data
+                .pointer("/fileToolDiagnostics/mode")
+                .and_then(Value::as_str)
+                .unwrap_or(&goal_mode)
+                .to_string();
+            goal_origin = data
+                .pointer("/fileToolDiagnostics/origin")
+                .and_then(Value::as_str)
+                .unwrap_or(&goal_origin)
+                .to_string();
+            allowed_risk = data
+                .pointer("/fileToolDiagnostics/allowedRisk")
+                .and_then(Value::as_str)
+                .unwrap_or(&allowed_risk)
+                .to_string();
+            continued_goal = data
+                .pointer("/fileToolDiagnostics/continuedGoal")
+                .and_then(Value::as_bool)
+                .unwrap_or(continued_goal);
             let host_terminal_reason = data
                 .get("toolLoopTerminalReason")
                 .and_then(Value::as_str)
                 .map(str::to_string);
+            if data.get("status").and_then(Value::as_str) == Some("needs-input")
+                && data.pointer("/execution/state").and_then(Value::as_str)
+                    == Some("needs-input")
+            {
+                staged_needs_input = data
+                    .pointer("/execution/pendingQuestion")
+                    .and_then(Value::as_str)
+                    .or_else(|| data.get("text").and_then(Value::as_str))
+                    .map(str::to_string);
+            }
             if let Value::Object(fields) = &mut data {
                 fields.insert("operationId".to_string(), json!(operation_id.clone()));
                 if let Some(text) = staged_text.filter(|text| !text.trim().is_empty()) {
@@ -6303,6 +6415,10 @@ async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value
                     json!({
                         "schema": "fluxora.ai.file-tool-diagnostics.v2",
                         "taskKind": task_kind,
+                        "mode": goal_mode,
+                        "origin": goal_origin,
+                        "allowedRisk": allowed_risk,
+                        "continuedGoal": continued_goal,
                         "providerRouting": provider_routing,
                         "thinkingLevel": thinking_level.clone(),
                         "outcome": outcome,
@@ -6336,7 +6452,11 @@ async fn execute_ai_chat_request(app: AppHandle, request: Value) -> Result<Value
                 "info",
                 "AiChat",
                 &format!(
-                    "AI response completed through the bounded tool-session broker. thinkingLevel={}",
+                    "AI response completed through the bounded tool-session broker. mode={} origin={} allowedRisk={} continuedGoal={} thinkingLevel={}",
+                    goal_mode,
+                    goal_origin,
+                    allowed_risk,
+                    continued_goal,
                     thinking_level
                 ),
                 Some(&operation_id),
@@ -8898,6 +9018,8 @@ pub fn run_native_ai_integration_fixture(
     let app = tauri::Builder::default()
         .manage(BridgeState::default())
         .manage(AiHostState::default())
+        .manage(SpeechHostState::default())
+        .manage(MicrophonePermissionState::default())
         .manage(AiDirtyEditorState::default())
         .manage(AiCompensationState::default())
         .manage(OperationStatusState::default())
@@ -9341,6 +9463,42 @@ pub fn run_native_ai_integration_fixture(
         .map_err(|error| error.to_string())?;
         std::fs::write(&weak_match_path, b"{\"note\":\"weak discovery match\"}\r\n")
             .map_err(|error| error.to_string())?;
+        let audio_virtual_path = PathBuf::from("SKSE")
+            .join("Plugins")
+            .join("AudioMixer.ini");
+        let audio_source_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Cabbage CS Preset")
+            .join(&audio_virtual_path);
+        std::fs::write(
+            &audio_source_path,
+            b"; generic fixture\r\n[Audio]\r\nBattleMusicVolume=1.0\r\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let dual_audio_virtual_path = PathBuf::from("SKSE")
+            .join("Plugins")
+            .join("DualAudio.ini");
+        let dual_audio_source_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Cabbage CS Preset")
+            .join(&dual_audio_virtual_path);
+        std::fs::write(
+            &dual_audio_source_path,
+            b"; ambiguous generic fixture\r\n[Audio]\r\nCombatVolume=1.0\r\nAmbientVolume=1.0\r\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let unsupported_virtual_path = PathBuf::from("SKSE")
+            .join("Plugins")
+            .join("UnsupportedAudio.ini");
+        let unsupported_source_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Cabbage CS Preset")
+            .join(&unsupported_virtual_path);
+        std::fs::write(
+            &unsupported_source_path,
+            [0_u8, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8],
+        )
+            .map_err(|error| error.to_string())?;
 
         let response = execute_ai_chat_request(
             handle.clone(),
@@ -9417,6 +9575,236 @@ pub fn run_native_ai_integration_fixture(
         };
         let override_exists_after_rollback = override_path.exists();
 
+        let implicit_audio_response = execute_ai_chat_request(
+            handle.clone(),
+            json!({
+                "operationId": "op_native_ai_implicit_audio",
+                "runId": "run-native-ai-implicit-audio",
+                "sessionId": "chat-native-ai-implicit-audio",
+                "providerId": "gemini",
+                "modelId": "gemini-3.1-flash-lite",
+                "messages": [{
+                    "role": "user",
+                    "text": "The battle music in this build is painfully loud."
+                }],
+                "fileWorkspace": {
+                    "schema": "fluxora.ai.file-workspace-envelope.v1",
+                    "chatId": "chat-native-ai-implicit-audio",
+                    "projectId": "native-ai-integration",
+                    "projectDirectory": project_directory,
+                    "game": "Skyrim Special Edition",
+                    "profile": "Default",
+                    "counts": { "mods": 1, "plugins": 0, "downloads": 0 },
+                    "dirtyFileRefs": []
+                }
+            }),
+        )
+        .await?;
+        let audio_override_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Fluxora AI Overrides")
+            .join(&audio_virtual_path);
+        if !audio_override_path.is_file() {
+            return Err(format!(
+                "Implicit repair fixture did not create the managed INI override. Response: {}",
+                serde_json::to_string(&implicit_audio_response)
+                    .unwrap_or_else(|_| "<unavailable>".to_string())
+            ));
+        }
+        let audio_source_content = std::fs::read_to_string(&audio_source_path)
+            .map_err(|error| format!("Implicit repair source reread failed: {error}"))?;
+        let audio_managed_content = std::fs::read_to_string(&audio_override_path)
+            .map_err(|error| format!("Implicit repair override reread failed: {error}"))?;
+        let implicit_audio_rollback = {
+            let state = bridge_state(&handle);
+            let mut bridge = state.process.lock().await;
+            bridge
+                .request(
+                    &handle,
+                    "buildFiles.rollbackRun",
+                    json!({
+                        "chatId": "chat-native-ai-implicit-audio",
+                        "runId": "run-native-ai-implicit-audio"
+                    }),
+                    OperationRequest {
+                        operation_id: Some("op_native_ai_implicit_audio_rollback".to_string()),
+                    },
+                    BRIDGE_TIMEOUT_MS,
+                )
+                .await?
+        };
+        let audio_override_exists_after_rollback = audio_override_path.exists();
+
+        if std::env::var("FLUXORA_AI_LIVE_PROVIDER_SMOKE").as_deref() == Ok("1") {
+            {
+                let state = ai_host_state(&handle);
+                state.process.lock().await.reset().await;
+            }
+            {
+                let state = bridge_state(&handle);
+                state.process.lock().await.reset().await;
+            }
+            return Ok(json!({
+                "response": response,
+                "sourcePath": source_path.to_string_lossy(),
+                "overridePath": override_path.to_string_lossy(),
+                "sourceContent": source_content,
+                "managedContent": managed_content,
+                "rollback": rollback,
+                "overrideExistsAfterRollback": override_exists_after_rollback,
+                "implicitAudio": {
+                    "response": implicit_audio_response,
+                    "sourcePath": audio_source_path.to_string_lossy(),
+                    "overridePath": audio_override_path.to_string_lossy(),
+                    "sourceContent": audio_source_content,
+                    "managedContent": audio_managed_content,
+                    "rollback": implicit_audio_rollback,
+                    "overrideExistsAfterRollback": audio_override_exists_after_rollback
+                }
+            }));
+        }
+
+        let ambiguity_response = execute_ai_chat_request(
+            handle.clone(),
+            json!({
+                "operationId": "op_native_ai_ambiguous_audio",
+                "runId": "run-native-ai-ambiguous-audio",
+                "sessionId": "chat-native-ai-ambiguous-audio",
+                "providerId": "gemini",
+                "modelId": "gemini-3.1-flash-lite",
+                "messages": [{
+                    "role": "user",
+                    "text": "The music in this build is painfully loud."
+                }],
+                "fileWorkspace": {
+                    "schema": "fluxora.ai.file-workspace-envelope.v1",
+                    "chatId": "chat-native-ai-ambiguous-audio",
+                    "projectId": "native-ai-integration",
+                    "projectDirectory": project_directory,
+                    "game": "Skyrim Special Edition",
+                    "profile": "Default",
+                    "counts": { "mods": 1, "plugins": 0, "downloads": 0 },
+                    "dirtyFileRefs": []
+                }
+            }),
+        )
+        .await?;
+        let ambiguity_goal_id = ambiguity_response
+            .pointer("/execution/goalId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("Ambiguity fixture did not return a goalId: {ambiguity_response}"))?
+            .to_string();
+        let ambiguity_question = ambiguity_response
+            .pointer("/execution/pendingQuestion")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!("Ambiguity fixture did not return one pending question: {ambiguity_response}")
+            })?
+            .to_string();
+        let ambiguity_active_goal = json!({
+            "goalId": ambiguity_goal_id,
+            "mode": "repair",
+            "origin": "implicit",
+            "requestedOutcome": ambiguity_response
+                .pointer("/execution/requestedOutcome")
+                .and_then(Value::as_str)
+                .unwrap_or("Reduce the painfully loud music."),
+            "pendingQuestion": ambiguity_question
+        });
+        let ambiguity_continuation_response = execute_ai_chat_request(
+            handle.clone(),
+            json!({
+                "operationId": "op_native_ai_ambiguous_audio_continuation",
+                "runId": "run-native-ai-ambiguous-audio-continuation",
+                "sessionId": "chat-native-ai-ambiguous-audio",
+                "providerId": "gemini",
+                "modelId": "gemini-3.1-flash-lite",
+                "messages": [
+                    { "role": "user", "text": "The music in this build is painfully loud." },
+                    { "role": "assistant", "text": ambiguity_question },
+                    { "role": "user", "text": "the first one" }
+                ],
+                "activeGoal": ambiguity_active_goal,
+                "fileWorkspace": {
+                    "schema": "fluxora.ai.file-workspace-envelope.v1",
+                    "chatId": "chat-native-ai-ambiguous-audio",
+                    "projectId": "native-ai-integration",
+                    "projectDirectory": project_directory,
+                    "game": "Skyrim Special Edition",
+                    "profile": "Default",
+                    "counts": { "mods": 1, "plugins": 0, "downloads": 0 },
+                    "dirtyFileRefs": []
+                }
+            }),
+        )
+        .await?;
+        let dual_audio_override_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Fluxora AI Overrides")
+            .join(&dual_audio_virtual_path);
+        if !dual_audio_override_path.is_file() {
+            return Err(format!(
+                "Ambiguity continuation did not create the managed INI override. Response: {}",
+                serde_json::to_string(&ambiguity_continuation_response)
+                    .unwrap_or_else(|_| "<unavailable>".to_string())
+            ));
+        }
+        let dual_audio_source_content = std::fs::read_to_string(&dual_audio_source_path)
+            .map_err(|error| format!("Ambiguity source reread failed: {error}"))?;
+        let dual_audio_managed_content = std::fs::read_to_string(&dual_audio_override_path)
+            .map_err(|error| format!("Ambiguity override reread failed: {error}"))?;
+        let ambiguity_rollback = {
+            let state = bridge_state(&handle);
+            let mut bridge = state.process.lock().await;
+            bridge
+                .request(
+                    &handle,
+                    "buildFiles.rollbackRun",
+                    json!({
+                        "chatId": "chat-native-ai-ambiguous-audio",
+                        "runId": "run-native-ai-ambiguous-audio-continuation"
+                    }),
+                    OperationRequest {
+                        operation_id: Some(
+                            "op_native_ai_ambiguous_audio_continuation_rollback".to_string(),
+                        ),
+                    },
+                    BRIDGE_TIMEOUT_MS,
+                )
+                .await?
+        };
+        let dual_audio_override_exists_after_rollback = dual_audio_override_path.exists();
+
+        let unsupported_response = execute_ai_chat_request(
+            handle.clone(),
+            json!({
+                "operationId": "op_native_ai_unsupported_config",
+                "runId": "run-native-ai-unsupported-config",
+                "sessionId": "chat-native-ai-unsupported-config",
+                "providerId": "gemini",
+                "modelId": "gemini-3.1-flash-lite",
+                "messages": [{
+                    "role": "user",
+                    "text": "This mod's unsupported binary config has the wrong volume."
+                }],
+                "fileWorkspace": {
+                    "schema": "fluxora.ai.file-workspace-envelope.v1",
+                    "chatId": "chat-native-ai-unsupported-config",
+                    "projectId": "native-ai-integration",
+                    "projectDirectory": project_directory,
+                    "game": "Skyrim Special Edition",
+                    "profile": "Default",
+                    "counts": { "mods": 1, "plugins": 0, "downloads": 0 },
+                    "dirtyFileRefs": []
+                }
+            }),
+        )
+        .await?;
+        let unsupported_override_path = PathBuf::from(&project_directory)
+            .join("mods")
+            .join("Fluxora AI Overrides")
+            .join(&unsupported_virtual_path);
+
         {
             let state = ai_host_state(&handle);
             state.process.lock().await.reset().await;
@@ -9437,6 +9825,31 @@ pub fn run_native_ai_integration_fixture(
             "weakMatchPath": weak_match_path.to_string_lossy(),
             "rollback": rollback,
             "overrideExistsAfterRollback": override_exists_after_rollback,
+            "implicitAudio": {
+                "response": implicit_audio_response,
+                "sourcePath": audio_source_path.to_string_lossy(),
+                "overridePath": audio_override_path.to_string_lossy(),
+                "sourceContent": audio_source_content,
+                "managedContent": audio_managed_content,
+                "rollback": implicit_audio_rollback,
+                "overrideExistsAfterRollback": audio_override_exists_after_rollback
+            },
+            "ambiguousAudio": {
+                "response": ambiguity_response,
+                "continuationResponse": ambiguity_continuation_response,
+                "sourcePath": dual_audio_source_path.to_string_lossy(),
+                "overridePath": dual_audio_override_path.to_string_lossy(),
+                "sourceContent": dual_audio_source_content,
+                "managedContent": dual_audio_managed_content,
+                "rollback": ambiguity_rollback,
+                "overrideExistsAfterRollback": dual_audio_override_exists_after_rollback
+            },
+            "unsupportedConfig": {
+                "response": unsupported_response,
+                "sourcePath": unsupported_source_path.to_string_lossy(),
+                "overridePath": unsupported_override_path.to_string_lossy(),
+                "overrideExists": unsupported_override_path.exists()
+            },
             "modOrder": order,
             "capabilityScenarios": capability_scenarios
         }))
@@ -9456,6 +9869,8 @@ pub fn run() {
     builder
         .manage(BridgeState::default())
         .manage(AiHostState::default())
+        .manage(SpeechHostState::default())
+        .manage(MicrophonePermissionState::default())
         .manage(AiDirtyEditorState::default())
         .manage(AiCompensationState::default())
         .manage(OperationStatusState::default())
@@ -9466,6 +9881,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app = app.handle().clone();
+            configure_main_webview(&app);
             handle_nxm_activation_args(app.clone(), std::env::args().collect(), "startup");
             let cleanup_app = app.clone();
             tauri::async_runtime::spawn(async move {
@@ -9536,6 +9952,12 @@ pub fn run() {
             fluxora_security_state,
             fluxora_log,
             fluxora_ai_cancel_run,
+            fluxora_ai_prepare_voice,
+            fluxora_ai_arm_microphone_capture,
+            fluxora_ai_reset_microphone_permission,
+            fluxora_ai_transcribe_voice,
+            fluxora_ai_cancel_voice_transcription,
+            fluxora_ai_open_microphone_privacy_settings,
             fluxora_ai_get_status,
             fluxora_ai_restart_host,
             fluxora_ai_list_providers,
@@ -9552,6 +9974,8 @@ pub fn run() {
             fluxora_ai_file_set_dirty,
             fluxora_ai_file_rollback_file,
             fluxora_ai_file_rollback_run,
+            fluxora_ai_file_get_rollback_states,
+            fluxora_ai_file_reset_rollback_checkpoints,
             fluxora_bridge_request,
             fluxora_start_nif_preview,
             fluxora_prepare_nif_preview_variant,
@@ -10407,6 +10831,7 @@ mod tests {
             ("executables.list", BridgeLane::Main),
             ("executables.save", BridgeLane::Main),
             ("executables.launch", BridgeLane::Main),
+            ("executables.completeManagedLaunch", BridgeLane::Background),
             ("executables.getIcon", BridgeLane::Main),
             ("mods.listInstalled", BridgeLane::Main),
             ("mods.getWorkspace", BridgeLane::Main),

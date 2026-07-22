@@ -1,9 +1,11 @@
 #include "FluxoraCore/Services/BuildFileWorkspaceService.hpp"
 
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
+#include "FluxoraCore/Services/AiRollbackCheckpointStore.hpp"
 #include "FluxoraCore/Services/BuildFileDiscoveryService.hpp"
 #include "FluxoraCore/Services/ConfigRecipeRegistry.hpp"
 #include "FluxoraCore/Services/FluxPackPackage.hpp"
+#include "FluxoraCore/Services/InverseTextMergeService.hpp"
 #include "FluxoraCore/Services/Logger.hpp"
 #include "FluxoraCore/Services/ManagedAiOverrideService.hpp"
 #include "FluxoraCore/Services/PathSafetyService.hpp"
@@ -82,6 +84,21 @@ namespace fluxora
             return result;
         }
 
+        [[nodiscard]] const char* rollbackReasonForLog(BuildFileRollbackReason reason) noexcept
+        {
+            switch (reason)
+            {
+            case BuildFileRollbackReason::None: return "none";
+            case BuildFileRollbackReason::OverlappingEdit: return "overlapping-edit";
+            case BuildFileRollbackReason::CheckpointExpired: return "checkpoint-expired";
+            case BuildFileRollbackReason::CheckpointCorrupt: return "checkpoint-corrupt";
+            case BuildFileRollbackReason::EncodingChanged: return "encoding-changed";
+            case BuildFileRollbackReason::PathChanged: return "path-changed";
+            case BuildFileRollbackReason::CreatedFileModified: return "created-file-modified";
+            }
+            return "checkpoint-corrupt";
+        }
+
         [[nodiscard]] std::filesystem::path checkpointBaseDirectory()
         {
 #ifdef _WIN32
@@ -105,7 +122,18 @@ namespace fluxora
                 return std::filesystem::path(value) / ".fluxora" / "ai-checkpoints";
             }
 #endif
+#ifdef _WIN32
+            return std::filesystem::temp_directory_path() / L"Fluxora" / L"ai-checkpoints" /
+                (L"process-" + std::to_wstring(GetCurrentProcessId()));
+#else
             return std::filesystem::temp_directory_path() / L"Fluxora" / L"ai-checkpoints";
+#endif
+        }
+
+        [[nodiscard]] std::wstring buildCheckpointKey(const std::filesystem::path& projectDirectory)
+        {
+            const auto bytes = projectDirectory.lexically_normal().generic_u8string();
+            return computeFluxPackBytesSha256(bytes.data(), bytes.size());
         }
 
         [[nodiscard]] std::wstring opaqueToken(
@@ -1306,8 +1334,10 @@ namespace fluxora
         struct ChangeRecord
         {
             std::wstring fileRef;
+            std::filesystem::path root;
             std::filesystem::path path;
-            std::filesystem::path checkpointPath;
+            std::vector<char> beforeBytes;
+            std::vector<char> afterBytes;
             std::wstring beforeHash;
             std::wstring afterHash;
             BuildFileTextEncoding encoding{BuildFileTextEncoding::Unsupported};
@@ -1339,7 +1369,8 @@ namespace fluxora
         State(Logger& loggerValue, const BuildPathSettingsService& pathSettingsValue)
             : logger(loggerValue),
               pathSettings(pathSettingsValue),
-              managedOverrides(loggerValue, pathSettingsValue)
+              managedOverrides(loggerValue, pathSettingsValue),
+              checkpoints(checkpointBaseDirectory())
         {
         }
 
@@ -1347,6 +1378,7 @@ namespace fluxora
         const BuildPathSettingsService& pathSettings;
         BuildFileDiscoveryService discovery;
         ManagedAiOverrideService managedOverrides;
+        AiRollbackCheckpointStore checkpoints;
         ConfigRecipeRegistry configRecipes;
         bool initialized{false};
         std::atomic<std::uint64_t> sequence{0};
@@ -1686,19 +1718,12 @@ namespace fluxora
         {
             return;
         }
-        std::error_code error;
-        std::filesystem::remove_all(checkpointBaseDirectory(), error);
         state_->initialized = true;
     }
 
     void BuildFileWorkspaceService::shutdown()
     {
         std::scoped_lock lock(state_->mutex);
-        for (const auto& [_, session] : state_->sessions)
-        {
-            std::error_code error;
-            std::filesystem::remove_all(session.checkpointRoot, error);
-        }
         state_->sessions.clear();
         state_->initialized = false;
     }
@@ -1734,7 +1759,6 @@ namespace fluxora
         session.chatId = std::wstring(chatId);
         session.profileName = normalizedProfile;
         session.projectDirectory = canonicalProject;
-        session.checkpointRoot = checkpointBaseDirectory() / checkpointSegment(chatId);
         session.roots = {
             {BuildFileScope::Build, PathSafetyService().canonicalize(paths.modsDirectory)},
             {BuildFileScope::Game, PathSafetyService().canonicalize(paths.gameDirectory)},
@@ -1760,10 +1784,117 @@ namespace fluxora
                 throw BuildFileWorkspaceError("outside-scope", "Workspace roots cannot be reparse points.");
             }
         }
+        try
+        {
+            const auto storedRuns = state_->checkpoints.loadRuns(
+                chatId,
+                buildCheckpointKey(canonicalProject));
+            for (const auto& storedRun : storedRuns)
+            {
+                State::Run run;
+                run.operationId = storedRun.operationId;
+                switch (storedRun.state)
+                {
+                case AiRollbackCheckpointState::Available:
+                    run.rollbackState = BuildFileRollbackState::Available;
+                    break;
+                case AiRollbackCheckpointState::RolledBack:
+                    run.rollbackState = BuildFileRollbackState::RolledBack;
+                    break;
+                case AiRollbackCheckpointState::Conflict:
+                    run.rollbackState = BuildFileRollbackState::Conflict;
+                    break;
+                case AiRollbackCheckpointState::Unavailable:
+                    run.rollbackState = BuildFileRollbackState::Unavailable;
+                    break;
+                }
+                for (const auto& storedFile : storedRun.files)
+                {
+                    const std::filesystem::path path =
+                        (canonicalProject / std::filesystem::path(storedFile.relativePath)).lexically_normal();
+                    ensureContained(canonicalProject, path);
+                    const auto rootMatch = std::find_if(
+                        session.roots.begin(),
+                        session.roots.end(),
+                        [&path](const State::Root& root)
+                        {
+                            const auto relative = path.lexically_relative(root.path);
+                            return root.scope == BuildFileScope::Build &&
+                                !root.contentsAreVirtualRoot &&
+                                !relative.empty() &&
+                                !relative.is_absolute() &&
+                                *relative.begin() != L"..";
+                        });
+                    if (rootMatch == session.roots.end())
+                    {
+                        throw std::runtime_error("Rollback checkpoint path no longer belongs to this build.");
+                    }
+                    auto& reference = registerReference(*state_, session, *rootMatch, path);
+                    reference.read = std::filesystem::is_regular_file(path);
+                    reference.readHash = reference.read
+                        ? sha256(readBytes(path))
+                        : L"";
+                    reference.encoding = static_cast<BuildFileTextEncoding>(storedFile.encoding);
+
+                    BuildFileChange change;
+                    change.fileRef = reference.token;
+                    change.scope = BuildFileScope::Build;
+                    change.ownerMod = storedFile.ownerMod;
+                    change.relativePath = storedFile.displayRelativePath;
+                    change.status = storedFile.created
+                        ? BuildFileChangeStatus::Created
+                        : BuildFileChangeStatus::Applied;
+                    change.addedLines = storedFile.addedLines;
+                    change.removedLines = storedFile.removedLines;
+                    change.beforeVersion = storedFile.beforeVersion;
+                    change.afterVersion = storedFile.afterVersion;
+                    change.rollbackState = run.rollbackState;
+
+                    std::optional<ManagedAiOverridePlan> managedOverride;
+                    if (storedFile.managedOverride)
+                    {
+                        ManagedAiOverridePlan plan;
+                        plan.modsRoot = rootMatch->path;
+                        plan.modRoot = rootMatch->path / std::filesystem::path(ManagedAiOverrideService::modName());
+                        plan.targetPath = path;
+                        plan.relativePath = storedFile.displayRelativePath;
+                        const auto relative = std::filesystem::path(storedFile.displayRelativePath);
+                        auto part = relative.begin();
+                        if (part != relative.end()) ++part;
+                        std::filesystem::path virtualPath;
+                        for (; part != relative.end(); ++part) virtualPath /= *part;
+                        plan.virtualPath = virtualPath.generic_wstring();
+                        plan.targetExisted = std::filesystem::is_regular_file(path);
+                        plan.modExisted = true;
+                        managedOverride = std::move(plan);
+                    }
+                    run.changes.push_back(State::ChangeRecord{
+                        reference.token,
+                        rootMatch->path,
+                        path,
+                        storedFile.beforeBytes,
+                        storedFile.afterBytes,
+                        storedFile.beforeHash,
+                        storedFile.afterHash,
+                        static_cast<BuildFileTextEncoding>(storedFile.encoding),
+                        storedFile.created,
+                        std::move(managedOverride),
+                        storedFile.registeredManagedMod,
+                        std::move(change)
+                    });
+                }
+                session.runs.emplace(storedRun.runId, std::move(run));
+            }
+        }
+        catch (const std::exception&)
+        {
+            state_->logger.writeOperation(
+                LogLevel::Warning,
+                "AiBuildFiles",
+                "Rollback checkpoints were not restored chatId=" + narrowAscii(chatId));
+        }
         if (const auto existing = state_->sessions.find(session.chatId); existing != state_->sessions.end())
         {
-            std::error_code error;
-            std::filesystem::remove_all(existing->second.checkpointRoot, error);
             state_->sessions.erase(existing);
         }
         state_->sessions.emplace(session.chatId, std::move(session));
@@ -1883,8 +2014,7 @@ namespace fluxora
         {
             return;
         }
-        std::error_code error;
-        std::filesystem::remove_all(match->second.checkpointRoot, error);
+        state_->checkpoints.eraseChat(chatId);
         state_->sessions.erase(match);
     }
 
@@ -2793,21 +2923,55 @@ namespace fluxora
 
         State::Run run;
         run.operationId = std::wstring(operationId);
-        const std::filesystem::path runCheckpointRoot =
-            session.checkpointRoot / checkpointSegment(runId);
+        AiRollbackCheckpointRun checkpointRun;
+        checkpointRun.chatId = std::wstring(chatId);
+        checkpointRun.buildKey = buildCheckpointKey(session.projectDirectory);
+        checkpointRun.runId = std::wstring(runId);
+        checkpointRun.operationId = std::wstring(operationId);
+        checkpointRun.createdAt = static_cast<std::uintmax_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        for (const auto& plan : plans)
+        {
+            const std::filesystem::path relative = plan.path.lexically_relative(session.projectDirectory);
+            if (relative.empty() || relative.is_absolute() || *relative.begin() == L"..")
+            {
+                throw BuildFileWorkspaceError("outside-scope", "Rollback checkpoint path is outside the build.");
+            }
+            checkpointRun.files.push_back(AiRollbackCheckpointFile{
+                relative.generic_wstring(),
+                plan.relativePath,
+                ownerModFor(plan.scope, plan.relativePath),
+                plan.beforeHash,
+                plan.afterHash,
+                plan.beforeBytes,
+                plan.afterBytes,
+                static_cast<int>(plan.encoding),
+                plan.created,
+                plan.managedOverride.has_value(),
+                plan.managedOverride.has_value() && !plan.managedOverride->modExisted,
+                0,
+                0,
+                plan.beforeVersion,
+                plan.afterVersion
+            });
+        }
+        try
+        {
+            state_->checkpoints.saveRun(checkpointRun);
+        }
+        catch (const std::exception&)
+        {
+            throw BuildFileWorkspaceError(
+                "checkpoint-unavailable",
+                "Rollback checkpoints could not be stored; no files were changed.");
+        }
         std::vector<std::size_t> committed;
         try
         {
             for (std::size_t index = 0; index < plans.size(); ++index)
             {
                 Plan& plan = plans[index];
-                const std::filesystem::path checkpoint =
-                    runCheckpointRoot / (L"file_" + std::to_wstring(index) + L".checkpoint");
-                if (!plan.created)
-                {
-                    writeCheckpoint(checkpoint, plan.beforeBytes);
-                }
-
                 PathSafetyWriteOptions writeOptions;
                 writeOptions.requiredBytes = plan.afterBytes.size();
                 PathSafetyService()
@@ -2949,10 +3113,16 @@ namespace fluxora
                 change.removedLines = removed.size();
                 change.addedLines = added.size();
                 change.hunks.push_back(std::move(hunk));
+                checkpointRun.files[index].addedLines = change.addedLines;
+                checkpointRun.files[index].removedLines = change.removedLines;
+                checkpointRun.files[index].beforeVersion = change.beforeVersion;
+                checkpointRun.files[index].afterVersion = change.afterVersion;
                 run.changes.push_back(State::ChangeRecord{
                     committedReference.token,
+                    plan.root,
                     plan.path,
-                    checkpoint,
+                    plan.beforeBytes,
+                    plan.afterBytes,
                     plan.beforeHash,
                     plan.afterHash,
                     plan.encoding,
@@ -2996,8 +3166,16 @@ namespace fluxora
                 {
                 }
             }
-            std::error_code error;
-            std::filesystem::remove_all(runCheckpointRoot, error);
+            try
+            {
+                state_->checkpoints.removeRun(
+                    chatId,
+                    buildCheckpointKey(session.projectDirectory),
+                    runId);
+            }
+            catch (const std::exception&)
+            {
+            }
             throw;
         }
 
@@ -3010,10 +3188,36 @@ namespace fluxora
             result.files.push_back(change.change);
         }
         session.runs.emplace(std::wstring(runId), std::move(run));
+        try
+        {
+            for (const auto& state : state_->checkpoints.getRunStates(
+                chatId,
+                buildCheckpointKey(session.projectDirectory)))
+            {
+                const auto existing = session.runs.find(state.runId);
+                if (existing != session.runs.end() &&
+                    state.state == AiRollbackCheckpointState::Unavailable)
+                {
+                    existing->second.rollbackState = BuildFileRollbackState::Unavailable;
+                    existing->second.changes.clear();
+                    state_->logger.writeOperation(
+                        LogLevel::Info,
+                        "AiBuildFiles",
+                        "Evicted AI rollback checkpoint chatId=" + narrowAscii(chatId) +
+                            " runId=" + narrowAscii(state.runId) +
+                            " reason=checkpoint-expired operationId=" + narrowAscii(operationId));
+                }
+            }
+        }
+        catch (const std::exception&)
+        {
+        }
         state_->logger.writeOperation(
             LogLevel::Info,
             "AiBuildFiles",
-            "Applied AI file batch files=" + std::to_string(result.files.size()) +
+            "Applied AI file batch chatId=" + narrowAscii(chatId) +
+                " runId=" + narrowAscii(runId) +
+                " files=" + std::to_string(result.files.size()) +
                 " operationId=" + narrowAscii(operationId));
         return result;
     }
@@ -3074,7 +3278,7 @@ namespace fluxora
         }
         else
         {
-            const std::vector<char> checkpoint = readBytes(changeMatch->checkpointPath);
+            const std::vector<char>& checkpoint = changeMatch->beforeBytes;
             AtomicFileStore().writeTextFile(
                 changeMatch->path,
                 std::string(checkpoint.begin(), checkpoint.end()),
@@ -3105,62 +3309,383 @@ namespace fluxora
         BuildFileRollbackResult result;
         result.operationId = std::wstring(operationId);
         result.runId = std::wstring(runId);
-        for (const auto& change : run.changes)
+        if (run.rollbackState == BuildFileRollbackState::Unavailable)
         {
-            if (sha256(readBytes(change.path)) != change.afterHash)
+            result.state = BuildFileRollbackState::Unavailable;
+            result.reason = BuildFileRollbackReason::CheckpointExpired;
+            return result;
+        }
+        if (run.rollbackState == BuildFileRollbackState::RolledBack)
+        {
+            result.state = BuildFileRollbackState::RolledBack;
+            for (const auto& change : run.changes)
             {
-                BuildFileChange conflict = change.change;
-                conflict.status = BuildFileChangeStatus::Conflict;
-                conflict.rollbackState = BuildFileRollbackState::Conflict;
-                result.files.push_back(std::move(conflict));
-                result.state = BuildFileRollbackState::Conflict;
-                run.rollbackState = BuildFileRollbackState::Conflict;
-                return result;
+                BuildFileChange rolledBack = change.change;
+                rolledBack.status = BuildFileChangeStatus::RolledBack;
+                rolledBack.rollbackState = BuildFileRollbackState::RolledBack;
+                result.files.push_back(std::move(rolledBack));
+            }
+            return result;
+        }
+
+        struct RollbackPlan
+        {
+            State::ChangeRecord* change{nullptr};
+            std::vector<char> currentBytes;
+            std::vector<char> targetBytes;
+            bool remove{false};
+            BuildFileRollbackMode mode{BuildFileRollbackMode::Exact};
+            bool preservedNewerChanges{false};
+        };
+        std::vector<RollbackPlan> plans;
+        plans.reserve(run.changes.size());
+        const auto conflictResult = [&](State::ChangeRecord& change, BuildFileRollbackReason reason)
+            -> BuildFileRollbackResult
+        {
+            BuildFileChange conflict = change.change;
+            conflict.status = BuildFileChangeStatus::Conflict;
+            conflict.rollbackState = BuildFileRollbackState::Conflict;
+            result.files.push_back(std::move(conflict));
+            result.state = BuildFileRollbackState::Conflict;
+            result.reason = reason;
+            run.rollbackState = BuildFileRollbackState::Conflict;
+            try
+            {
+                state_->checkpoints.setRunState(
+                    chatId,
+                    buildCheckpointKey(session.projectDirectory),
+                    runId,
+                    AiRollbackCheckpointState::Conflict,
+                    reason == BuildFileRollbackReason::CheckpointCorrupt
+                        ? AiRollbackCheckpointReason::Corrupt
+                        : reason == BuildFileRollbackReason::OverlappingEdit
+                            ? AiRollbackCheckpointReason::OverlappingEdit
+                            : reason == BuildFileRollbackReason::EncodingChanged
+                                ? AiRollbackCheckpointReason::EncodingChanged
+                                : reason == BuildFileRollbackReason::PathChanged
+                                    ? AiRollbackCheckpointReason::PathChanged
+                                    : reason == BuildFileRollbackReason::CreatedFileModified
+                                        ? AiRollbackCheckpointReason::CreatedFileModified
+                                        : AiRollbackCheckpointReason::None);
+            }
+            catch (const std::exception&)
+            {
+            }
+            state_->logger.writeOperation(
+                LogLevel::Warning,
+                "AiBuildFiles",
+                "AI rollback conflict chatId=" + narrowAscii(chatId) +
+                    " runId=" + narrowAscii(runId) +
+                    " files=" + std::to_string(run.changes.size()) +
+                    " reason=" + rollbackReasonForLog(reason) +
+                    " operationId=" + narrowAscii(operationId));
+            return result;
+        };
+
+        for (auto& change : run.changes)
+        {
+            try
+            {
+                PathSafetyService()
+                    .validateWritePath(change.root, change.path)
+                    .throwIfUnsafe("AI build file rollback");
+            }
+            catch (const std::exception&)
+            {
+                return conflictResult(change, BuildFileRollbackReason::PathChanged);
+            }
+
+            std::error_code existsError;
+            const bool exists = std::filesystem::is_regular_file(change.path, existsError);
+            if (existsError || !exists)
+            {
+                return conflictResult(change, BuildFileRollbackReason::PathChanged);
+            }
+            std::vector<char> current = readBytes(change.path);
+            if (change.created)
+            {
+                if (sha256(current) != change.afterHash)
+                {
+                    return conflictResult(change, BuildFileRollbackReason::CreatedFileModified);
+                }
+                plans.push_back(RollbackPlan{
+                    &change,
+                    std::move(current),
+                    {},
+                    true,
+                    BuildFileRollbackMode::Exact,
+                    false
+                });
+                continue;
+            }
+
+            const std::vector<char>& before = change.beforeBytes;
+            const std::vector<char>& after = change.afterBytes;
+            if (sha256(before) != change.beforeHash || sha256(after) != change.afterHash)
+            {
+                return conflictResult(change, BuildFileRollbackReason::CheckpointCorrupt);
+            }
+
+            if (sha256(current) == change.afterHash)
+            {
+                plans.push_back(RollbackPlan{
+                    &change,
+                    std::move(current),
+                    before,
+                    false,
+                    BuildFileRollbackMode::Exact,
+                    false
+                });
+                continue;
+            }
+
+            DecodedText base;
+            DecodedText ours;
+            DecodedText theirs;
+            try
+            {
+                base = decodeText(after);
+                ours = decodeText(current);
+                theirs = decodeText(before);
+            }
+            catch (const BuildFileWorkspaceError&)
+            {
+                return conflictResult(change, BuildFileRollbackReason::EncodingChanged);
+            }
+            if (base.encoding != change.encoding || ours.encoding != change.encoding ||
+                theirs.encoding != change.encoding)
+            {
+                return conflictResult(change, BuildFileRollbackReason::EncodingChanged);
+            }
+
+            const InverseTextMergeResult merged = InverseTextMergeService().merge(
+                base.text,
+                ours.text,
+                theirs.text);
+            if (!merged.succeeded())
+            {
+                return conflictResult(change, BuildFileRollbackReason::OverlappingEdit);
+            }
+            plans.push_back(RollbackPlan{
+                &change,
+                std::move(current),
+                encodeText(merged.content, change.encoding),
+                false,
+                BuildFileRollbackMode::InverseMerge,
+                merged.preservedNewerChanges
+            });
+        }
+
+        std::vector<std::size_t> committed;
+        try
+        {
+            for (std::size_t index = 0; index < plans.size(); ++index)
+            {
+                RollbackPlan& plan = plans[index];
+                if (plan.remove)
+                {
+                    std::error_code removeError;
+                    if (!std::filesystem::remove(plan.change->path, removeError) || removeError)
+                    {
+                        throw BuildFileWorkspaceError(
+                            "permission-denied",
+                            "Created file could not be removed during rollback.");
+                    }
+                }
+                else
+                {
+                    AtomicFileStore().writeTextFile(
+                        plan.change->path,
+                        std::string(plan.targetBytes.begin(), plan.targetBytes.end()),
+                        AtomicFileWriteOptions{
+                            L"AI build file rollback",
+                            ProjectStateValidation::None,
+                            {},
+                            true});
+                }
+                committed.push_back(index);
             }
         }
-        for (auto iterator = run.changes.rbegin(); iterator != run.changes.rend(); ++iterator)
+        catch (...)
         {
-            State::Reference& reference = requireReference(session, iterator->fileRef);
-            if (iterator->created)
+            for (auto iterator = committed.rbegin(); iterator != committed.rend(); ++iterator)
             {
-                std::error_code removeError;
-                if (!std::filesystem::remove(iterator->path, removeError) || removeError)
+                RollbackPlan& plan = plans[*iterator];
+                try
                 {
-                    throw BuildFileWorkspaceError("permission-denied", "Created file could not be removed during rollback.");
+                    AtomicFileStore().writeTextFile(
+                        plan.change->path,
+                        std::string(plan.currentBytes.begin(), plan.currentBytes.end()),
+                        AtomicFileWriteOptions{
+                            L"AI build file rollback recovery",
+                            ProjectStateValidation::None,
+                            {},
+                            true});
                 }
+                catch (...)
+                {
+                }
+            }
+            throw;
+        }
+
+        for (auto iterator = plans.rbegin(); iterator != plans.rend(); ++iterator)
+        {
+            State::Reference& reference = requireReference(session, iterator->change->fileRef);
+            if (iterator->remove)
+            {
                 reference.read = false;
                 reference.readHash.clear();
-                if (iterator->managedOverride.has_value())
+                if (iterator->change->managedOverride.has_value())
                 {
                     state_->managedOverrides.cleanupAfterRollback(
                         session.projectDirectory,
-                        *iterator->managedOverride,
-                        iterator->registeredManagedMod,
+                        *iterator->change->managedOverride,
+                        iterator->change->registeredManagedMod,
                         operationId);
                 }
             }
             else
             {
-                const std::vector<char> checkpoint = readBytes(iterator->checkpointPath);
-                AtomicFileStore().writeTextFile(
-                    iterator->path,
-                    std::string(checkpoint.begin(), checkpoint.end()),
-                    AtomicFileWriteOptions{L"AI build file rollback", ProjectStateValidation::None, {}, true});
-                reference.readHash = iterator->beforeHash;
+                reference.readHash = sha256(iterator->targetBytes);
             }
-            BuildFileChange rolledBack = iterator->change;
+            if (iterator->mode == BuildFileRollbackMode::InverseMerge)
+            {
+                result.mode = BuildFileRollbackMode::InverseMerge;
+            }
+            result.preservedNewerChanges =
+                result.preservedNewerChanges || iterator->preservedNewerChanges;
+            BuildFileChange rolledBack = iterator->change->change;
             rolledBack.status = BuildFileChangeStatus::RolledBack;
             rolledBack.rollbackState = BuildFileRollbackState::RolledBack;
             result.files.push_back(std::move(rolledBack));
         }
         run.rollbackState = BuildFileRollbackState::RolledBack;
         result.state = BuildFileRollbackState::RolledBack;
+        try
+        {
+            state_->checkpoints.setRunState(
+                chatId,
+                buildCheckpointKey(session.projectDirectory),
+                runId,
+                AiRollbackCheckpointState::RolledBack);
+        }
+        catch (const std::exception&)
+        {
+        }
         state_->logger.writeOperation(
             LogLevel::Info,
             "AiBuildFiles",
-            "Rolled back AI file batch files=" + std::to_string(result.files.size()) +
+            "Rolled back AI file batch chatId=" + narrowAscii(chatId) +
+                " runId=" + narrowAscii(runId) +
+                " mode=" + std::string(
+                    result.mode == BuildFileRollbackMode::InverseMerge ? "inverse-merge" : "exact") +
+                " files=" + std::to_string(result.files.size()) +
+                " preservedNewerChanges=" + (result.preservedNewerChanges ? "true" : "false") +
                 " operationId=" + narrowAscii(operationId));
         return result;
+    }
+
+    std::vector<BuildFileRollbackRunState> BuildFileWorkspaceService::getFileRollbackStates(
+        std::wstring_view chatId,
+        std::wstring_view operationId)
+    {
+        std::scoped_lock lock(state_->mutex);
+        State::Session& session = requireSession(*state_, chatId);
+        std::vector<BuildFileRollbackRunState> result;
+        try
+        {
+            const auto states = state_->checkpoints.getRunStates(
+                chatId,
+                buildCheckpointKey(session.projectDirectory));
+            result.reserve(states.size());
+            for (const auto& state : states)
+            {
+                BuildFileRollbackRunState mapped;
+                mapped.runId = state.runId;
+                switch (state.state)
+                {
+                case AiRollbackCheckpointState::Available:
+                    mapped.state = BuildFileRollbackState::Available;
+                    break;
+                case AiRollbackCheckpointState::RolledBack:
+                    mapped.state = BuildFileRollbackState::RolledBack;
+                    break;
+                case AiRollbackCheckpointState::Conflict:
+                    mapped.state = BuildFileRollbackState::Conflict;
+                    break;
+                case AiRollbackCheckpointState::Unavailable:
+                    mapped.state = BuildFileRollbackState::Unavailable;
+                    break;
+                }
+                switch (state.reason)
+                {
+                case AiRollbackCheckpointReason::Corrupt:
+                    mapped.reason = BuildFileRollbackReason::CheckpointCorrupt;
+                    break;
+                case AiRollbackCheckpointReason::Expired:
+                    mapped.reason = BuildFileRollbackReason::CheckpointExpired;
+                    break;
+                case AiRollbackCheckpointReason::OverlappingEdit:
+                    mapped.reason = BuildFileRollbackReason::OverlappingEdit;
+                    break;
+                case AiRollbackCheckpointReason::EncodingChanged:
+                    mapped.reason = BuildFileRollbackReason::EncodingChanged;
+                    break;
+                case AiRollbackCheckpointReason::PathChanged:
+                    mapped.reason = BuildFileRollbackReason::PathChanged;
+                    break;
+                case AiRollbackCheckpointReason::CreatedFileModified:
+                    mapped.reason = BuildFileRollbackReason::CreatedFileModified;
+                    break;
+                case AiRollbackCheckpointReason::None:
+                    mapped.reason = BuildFileRollbackReason::None;
+                    break;
+                }
+                result.push_back(std::move(mapped));
+            }
+        }
+        catch (const std::exception&)
+        {
+            result.reserve(session.runs.size());
+            for (const auto& [runId, _] : session.runs)
+            {
+                result.push_back({
+                    runId,
+                    BuildFileRollbackState::Unavailable,
+                    BuildFileRollbackReason::CheckpointCorrupt
+                });
+            }
+        }
+        state_->logger.writeOperation(
+            LogLevel::Info,
+            "AiBuildFiles",
+            "Read AI rollback states chatId=" + narrowAscii(chatId) +
+                " runs=" + std::to_string(result.size()) +
+                " operationId=" + narrowAscii(operationId));
+        return result;
+    }
+
+    void BuildFileWorkspaceService::eraseBuildCheckpoints(
+        const std::filesystem::path& projectDirectory)
+    {
+        std::scoped_lock lock(state_->mutex);
+        state_->checkpoints.eraseBuild(buildCheckpointKey(
+            PathSafetyService().canonicalize(projectDirectory)));
+    }
+
+    void BuildFileWorkspaceService::eraseAllCheckpoints(std::wstring_view operationId)
+    {
+        std::scoped_lock lock(state_->mutex);
+        state_->checkpoints.eraseAll();
+        for (auto& [_, session] : state_->sessions)
+        {
+            session.runs.clear();
+        }
+        state_->logger.writeOperation(
+            LogLevel::Info,
+            "AiBuildFiles",
+            "Reset all AI rollback checkpoints operationId=" + narrowAscii(operationId));
     }
 
     bool BuildFileWorkspaceService::isInitialized() const noexcept

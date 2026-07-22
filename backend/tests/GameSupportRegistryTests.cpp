@@ -157,10 +157,10 @@ namespace fluxora::tests
             vfsRules.rules.profileIniFileNames.end());
         EXPECT_NE(
             std::find(
-                vfsRules.rules.excludedLaunchCacheDirectories.begin(),
-                vfsRules.rules.excludedLaunchCacheDirectories.end(),
+                vfsRules.rules.materializedLaunchCacheDirectories.begin(),
+                vfsRules.rules.materializedLaunchCacheDirectories.end(),
                 L"DLLPlugins"),
-            vfsRules.rules.excludedLaunchCacheDirectories.end());
+            vfsRules.rules.materializedLaunchCacheDirectories.end());
     }
 
     TEST(GameSupportRegistryTests, UnknownLookupsReturnExplicitUnsupportedWithoutSkyrimFallback)

@@ -34,6 +34,7 @@ namespace fluxora
         std::vector<std::filesystem::path> mods;
         std::vector<std::wstring> excludedRootNames;
         std::vector<VfsMountSourceRoot> modSources;
+        std::filesystem::path whiteoutRoot;
     };
 
     struct VfsGameRootMountPlan
@@ -49,15 +50,6 @@ namespace fluxora
 
     [[nodiscard]] bool vfsDirectoryHasEntries(const std::filesystem::path& path);
     [[nodiscard]] std::wstring vfsNormalizedPathForComparison(const std::filesystem::path& path);
-
-    void invalidateVfsContentPlacementCache(
-        const std::filesystem::path& modsDirectory,
-        const std::vector<std::filesystem::path>& changedPaths);
-
-#ifdef FLUXORA_VFS_TEST_HOOKS
-    [[nodiscard]] bool vfsContentPlacementCacheContainsForTesting(
-        const std::filesystem::path& modDirectory);
-#endif
 
     [[nodiscard]] VfsGameRootMountPlan buildVfsGameRootMountPlan(
         Logger& logger,

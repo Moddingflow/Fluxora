@@ -646,6 +646,22 @@ namespace
                 };
             }
         }
+        constexpr std::wstring_view bodySlidePrefix = L"bodyslide:";
+        if (message.starts_with(bodySlidePrefix))
+        {
+            const std::size_t codeEnd = message.find(L':', bodySlidePrefix.size());
+            if (codeEnd != std::wstring::npos)
+            {
+                const std::wstring typedCode = message.substr(
+                    bodySlidePrefix.size(),
+                    codeEnd - bodySlidePrefix.size());
+                return BridgeError{
+                    typedCode,
+                    message.substr(codeEnd + 1),
+                    ErrorCategory::Core,
+                    typedCode == L"BODYSLIDE_SESSION_ACTIVE"};
+            }
+        }
         if (message == L"install.identityPlanStale")
         {
             return BridgeError{
@@ -769,7 +785,9 @@ namespace
                 L"queryIni",
                 L"apply",
                 L"rollbackFile",
-                L"rollbackRun"
+                L"rollbackRun",
+                L"getRollbackStates",
+                L"resetRollbackCheckpoints"
             });
         writer.endObject();
         writer.key(L"plugins").beginObject();
@@ -805,7 +823,8 @@ namespace
                 L"list",
                 L"save",
                 L"getIcon",
-                L"launch"
+                L"launch",
+                L"completeManagedLaunch"
             });
         writer.endObject();
         writer.key(L"executableLaunch").beginObject();
@@ -1617,6 +1636,23 @@ namespace
                     configPath.c_str(),
                     executableId.c_str(),
                     profileName.empty() ? nullptr : profileName.c_str(),
+                    buffer,
+                    length);
+            });
+    }
+
+    std::wstring payloadCompleteManagedExecutableLaunch(const BridgeRequest& request)
+    {
+        const fluxora::JsonValue& params = requiredParamsObject(request);
+        const std::wstring sessionId = requiredStringField(params, L"sessionId");
+        const std::wstring outcome = optionalStringField(&params, L"outcome");
+        return payloadFromCoreJson(
+            L"core.managedExecutableCompletionFailed",
+            [&sessionId, &outcome](wchar_t* buffer, int length)
+            {
+                return fluxora_complete_managed_executable_launch(
+                    sessionId.c_str(),
+                    outcome.empty() ? nullptr : outcome.c_str(),
                     buffer,
                     length);
             });
@@ -3627,6 +3663,10 @@ namespace
         if (request.method == L"executables.launch")
         {
             return payloadLaunchExecutable(request);
+        }
+        if (request.method == L"executables.completeManagedLaunch")
+        {
+            return payloadCompleteManagedExecutableLaunch(request);
         }
         if (request.method == L"executables.getIcon")
         {

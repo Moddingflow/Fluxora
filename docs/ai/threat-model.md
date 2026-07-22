@@ -1,6 +1,6 @@
 # Fluxora AI Threat Model
 
-Status: current single-agent design, 2026-07-20.
+Status: current single-agent design, 2026-07-22.
 
 ## Scope And Trust Boundaries
 
@@ -16,7 +16,7 @@ Trust boundaries:
 3. Rust shell/tool broker to the AI sidecar and native bridge.
 4. Native bridge to C++ core and registered filesystem roots.
 5. Desktop host to the Supabase Edge gateway.
-6. Gateway to Google/Gemini and model-native Search.
+6. Gateway to Google/Gemini and a separate web-only model-native Search round.
 
 The model, model output, grounding results, local file contents, filenames, and
 tool arguments are never trusted authorities.
@@ -33,9 +33,31 @@ Mitigations:
 - undeclared tools do not exist;
 - there is no shell, process-launch, or direct URL-fetch declaration;
 - tools use fixed schemas and opaque refs;
+- the validated goal fixes the risk ceiling before local or web evidence is
+  processed; evidence cannot replace or upgrade that goal;
 - C++ independently enforces root, format, revision, hash, VFS, and mutation
   policy;
 - Search/file content cannot mint refs or approval state.
+
+### Goal misclassification or continuation escalates authority
+
+A natural problem description is downgraded to advice, or a short answer after
+clarification is treated as a fresh explicit request with broader authority.
+
+Mitigations:
+
+- every build task begins with required host-owned `declare_goal` using the
+  complete current dialogue and any unfinished active goal;
+- modes and origins are validated enums; invalid output gets one retry and then
+  exact `intent-contract-invalid`, never a keyword fallback;
+- an unwanted state is an implicit repair unless the user explicitly requests
+  only explanation or diagnosis;
+- answer/inspect must cite an exact bounded quote from the current user
+  dialogue; absent or invented read-only evidence is an invalid goal contract;
+- implicit repair is capped at reversible risk, and continuation reuses the
+  same `goalId` and original risk ceiling;
+- the renderer persists active goals per tab and clears them on verified
+  completion, cancellation, or terminal blocking.
 
 ### Path traversal, symlink escape, or broad machine scan
 
@@ -87,10 +109,11 @@ instead of acting, or claims success without a native write.
 
 Mitigations:
 
-- multilingual action detection forces `local-required` routing;
-- declaration and argument validation come from one typed registry; an action
-  gets the full supported typed set from round one, while an answer is
-  read-only and phase/domain inference never grants authority;
+- validated `repair` forces `local-required` routing and cannot be downgraded by
+  provider prose;
+- goal/risk validation and argument validation are host-owned; answer/inspect
+  are read-only, implicit repair is reversible-only, and phase/domain inference
+  never grants authority;
 - invalid calls receive exact field/code/hint feedback and at most two retries;
 - duplicate read-only calls are cached within the run;
 - staged file changes have no side effects and only `local.files.commit` can
@@ -137,13 +160,26 @@ summary, or cancellation terminates unrelated work.
 
 Mitigations:
 
-- tabs own messages, summary, provider cursor, events, and runs;
+- tabs own messages, summary, provider cursor, events, runs, and any active goal;
 - reducer updates locate tabs by run/operation id rather than current selection;
 - the Rust shell tracks active/cancelled operation ids;
 - cancelling one run marks only that operation and does not terminate the
   shared sidecar;
 - persisted legacy sessions are normalized and pre-single-agent state is
   removed once.
+
+### User questions or private content leak through diagnostics
+
+A pending clarification, prompt, config body, or research snippet is copied to
+ordinary operation logs.
+
+Mitigations:
+
+- diagnostics log only bounded mode, allowed risk, continuation, lifecycle,
+  counts, operation ids, and safe error codes;
+- prompts, user questions, local config contents, and web snippets are excluded;
+- host-owned `request_input` remains in the response/session path and is never
+  forwarded to C++ merely for logging.
 
 ### Context truncation or misleading usage
 

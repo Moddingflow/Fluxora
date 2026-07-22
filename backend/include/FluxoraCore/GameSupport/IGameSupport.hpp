@@ -74,6 +74,7 @@ namespace fluxora
         std::wstring dataFolder;
         bool supportsRootFiles{false};
         std::wstring rootFileWrapperDirectory;
+        std::vector<GameVfsMountRule> mountRules;
         std::vector<NormalizedExtension> pluginExtensions;
         std::vector<NormalizedExtension> archiveExtensions;
         std::vector<ExecutableName> scriptExtenderLoaders;

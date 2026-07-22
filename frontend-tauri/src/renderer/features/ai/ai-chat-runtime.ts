@@ -112,9 +112,29 @@ const normalizeSingleAgentSession = (session: AiSession): AiSession => ({
   ...session,
   chats: session.chats.map((chat) => ({
     ...chat,
-    intermediateEvents: Array.isArray(chat.intermediateEvents) ? chat.intermediateEvents : []
+    intermediateEvents: Array.isArray(chat.intermediateEvents) ? chat.intermediateEvents : [],
+    activeGoal: normalizeActiveGoal(chat.activeGoal)
   }))
 });
+
+const normalizeActiveGoal = (value: unknown): AiSession['chats'][number]['activeGoal'] => {
+  if (!value || typeof value !== 'object') return null;
+  const goal = value as Partial<NonNullable<AiSession['chats'][number]['activeGoal']>>;
+  if (typeof goal.goalId !== 'string' || !goal.goalId.trim()
+    || goal.mode !== 'repair'
+    || !['explicit', 'implicit', 'continuation'].includes(goal.origin ?? '')
+    || typeof goal.requestedOutcome !== 'string' || !goal.requestedOutcome.trim()
+    || typeof goal.pendingQuestion !== 'string' || !goal.pendingQuestion.trim()) {
+    return null;
+  }
+  return {
+    goalId: goal.goalId,
+    mode: goal.mode,
+    origin: goal.origin!,
+    requestedOutcome: goal.requestedOutcome,
+    pendingQuestion: goal.pendingQuestion
+  };
+};
 
 const recoverInterruptedRuns = (session: AiSession, now = new Date()): AiSession => {
   let changed = false;
@@ -224,6 +244,7 @@ export const createAiHostChatRequest = (
     ],
     conversationSummary: chat.conversationSummary,
     providerHistoryStartIndex: chat.providerHistoryStartIndex,
+    activeGoal: chat.activeGoal,
     fileWorkspace: settings.fileWorkspace,
     stream: true
   };
@@ -255,6 +276,9 @@ const typedErrorFromUnknown = (error: unknown): FluxoraAiChatError => {
 };
 
 export const aiAgentStatusFromResponse = (response: FluxoraAiChatResponse): AiAgentStatus => {
+  if (response.status === 'needs-input' && response.execution?.state === 'needs-input') {
+    return 'needs-input';
+  }
   if (response.status !== 'done') return 'blocked';
   if (response.execution) {
     if (response.execution.state !== 'completed') return 'blocked';

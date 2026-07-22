@@ -8,6 +8,7 @@
 #include "FluxoraCore/Services/AppSettingsService.hpp"
 #include "FluxoraCore/Services/BuildPathSettingsService.hpp"
 #include "FluxoraCore/Services/BuildFileWorkspaceService.hpp"
+#include "FluxoraCore/Services/BodySlideIntegrationService.hpp"
 #include "FluxoraCore/Services/DownloadService.hpp"
 #include "FluxoraCore/Services/EffectiveFileTreeService.hpp"
 #include "FluxoraCore/Services/ExecutableIconService.hpp"
@@ -612,6 +613,10 @@ namespace
         writer.field(L"arguments", executable.arguments);
         writer.field(L"workingDirectory", executable.workingDirectory);
         writer.field(L"iconPath", executable.iconPath);
+        if (!executable.managedToolKind.empty())
+        {
+            writer.field(L"managedToolKind", executable.managedToolKind);
+        }
         writer.key(L"executableDisplayMetadata");
         writeExecutableDisplayMetadata(
             writer,
@@ -681,6 +686,44 @@ namespace
             false);
         writer.field(L"processId", static_cast<int>(result.processId));
         writer.field(L"managerEnvironmentUnchanged", result.managerEnvironmentUnchanged);
+        if (!result.managedSessionId.empty())
+        {
+            writer.field(L"managedSessionId", result.managedSessionId);
+            writer.field(L"managedToolKind", result.managedToolKind);
+            if (result.outputMod.has_value())
+            {
+                writer.key(L"outputMod").beginObject();
+                writer.field(L"id", result.outputMod->id);
+                writer.field(L"displayName", result.outputMod->displayName);
+                writer.field(L"folderName", result.outputMod->folderName);
+                writer.field(L"path", result.outputMod->path.wstring());
+                writer.field(L"provider", result.outputMod->provider);
+                writer.endObject();
+            }
+            writer.field(L"configurationStatus", result.configurationStatus);
+            writer.stringArray(L"warnings", result.warnings);
+        }
+        writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeManagedLaunchCompletion(
+        const fluxora::ManagedLaunchCompletion& completion)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginObject();
+        writer.field(L"sessionId", completion.sessionId);
+        writer.field(L"outcome", completion.outcome);
+        writer.field(L"finalized", completion.finalized);
+        writer.field(L"deferred", completion.deferred);
+        writer.key(L"outputMod").beginObject();
+        writer.field(L"id", completion.outputMod.id);
+        writer.field(L"displayName", completion.outputMod.displayName);
+        writer.field(L"folderName", completion.outputMod.folderName);
+        writer.field(L"path", completion.outputMod.path.wstring());
+        writer.field(L"provider", completion.outputMod.provider);
+        writer.endObject();
+        writer.stringArray(L"warnings", completion.warnings);
         writer.endObject();
         return writer.str();
     }
@@ -2735,6 +2778,7 @@ namespace
                 readString(L"workingDirectory"),
                 readString(L"iconPath")
             };
+            executable.managedToolKind = readString(L"managedToolKind");
             values.push_back(std::move(executable));
         }
 
@@ -3314,9 +3358,18 @@ namespace
         hasLastBufferedOutput = false;
         const char* message = exception.what();
         const bool isBadAllocation = dynamic_cast<const std::bad_alloc*>(&exception) != nullptr;
-        lastError = isBadAllocation
-            ? L"Fluxora ran out of memory while processing this operation. Close memory-intensive apps and retry."
-            : messageToWide(std::string_view(message, std::strlen(message)));
+        if (const auto* bodySlideError = dynamic_cast<const fluxora::BodySlideIntegrationError*>(&exception);
+            bodySlideError != nullptr)
+        {
+            lastError = L"bodyslide:" + bodySlideError->code() + L":" +
+                messageToWide(std::string_view(message, std::strlen(message)));
+        }
+        else
+        {
+            lastError = isBadAllocation
+                ? L"Fluxora ran out of memory while processing this operation. Close memory-intensive apps and retry."
+                : messageToWide(std::string_view(message, std::strlen(message)));
+        }
         const bool isInvalidArgument = dynamic_cast<const std::invalid_argument*>(&exception) != nullptr;
         logApiException(isInvalidArgument ? fluxora::LogLevel::Warning : fluxora::LogLevel::Error, exception);
         logBridge(
@@ -3589,6 +3642,28 @@ namespace
         return L"unavailable";
     }
 
+    std::wstring buildFileRollbackModeText(fluxora::BuildFileRollbackMode mode)
+    {
+        return mode == fluxora::BuildFileRollbackMode::InverseMerge
+            ? L"inverse-merge"
+            : L"exact";
+    }
+
+    std::wstring buildFileRollbackReasonText(fluxora::BuildFileRollbackReason reason)
+    {
+        switch (reason)
+        {
+        case fluxora::BuildFileRollbackReason::None: return L"";
+        case fluxora::BuildFileRollbackReason::OverlappingEdit: return L"overlapping-edit";
+        case fluxora::BuildFileRollbackReason::CheckpointExpired: return L"checkpoint-expired";
+        case fluxora::BuildFileRollbackReason::CheckpointCorrupt: return L"checkpoint-corrupt";
+        case fluxora::BuildFileRollbackReason::EncodingChanged: return L"encoding-changed";
+        case fluxora::BuildFileRollbackReason::PathChanged: return L"path-changed";
+        case fluxora::BuildFileRollbackReason::CreatedFileModified: return L"created-file-modified";
+        }
+        return L"checkpoint-corrupt";
+    }
+
     std::wstring buildFileResolutionText(fluxora::BuildFileResolution resolution)
     {
         switch (resolution)
@@ -3835,6 +3910,12 @@ namespace
         writer.field(L"operationId", rollback.operationId);
         writer.field(L"runId", rollback.runId);
         writer.field(L"state", buildFileRollbackStateText(rollback.state));
+        writer.field(L"mode", buildFileRollbackModeText(rollback.mode));
+        if (rollback.reason != fluxora::BuildFileRollbackReason::None)
+        {
+            writer.field(L"reason", buildFileRollbackReasonText(rollback.reason));
+        }
+        writer.field(L"preservedNewerChanges", rollback.preservedNewerChanges);
         writer.key(L"files").beginArray();
         for (const auto& file : rollback.files)
         {
@@ -3842,6 +3923,26 @@ namespace
         }
         writer.endArray();
         writer.endObject();
+        return writer.str();
+    }
+
+    std::wstring serializeBuildFileRollbackStates(
+        const std::vector<fluxora::BuildFileRollbackRunState>& states)
+    {
+        fluxora::JsonWriter writer;
+        writer.beginArray();
+        for (const auto& state : states)
+        {
+            writer.beginObject();
+            writer.field(L"runId", state.runId);
+            writer.field(L"state", buildFileRollbackStateText(state.state));
+            if (state.reason != fluxora::BuildFileRollbackReason::None)
+            {
+                writer.field(L"reason", buildFileRollbackReasonText(state.reason));
+            }
+            writer.endObject();
+        }
+        writer.endArray();
         return writer.str();
     }
 
@@ -3933,6 +4034,12 @@ namespace
         std::wstring_view method,
         const fluxora::JsonValue& params)
     {
+        if (method == L"resetRollbackCheckpoints")
+        {
+            core().buildFiles().eraseAllCheckpoints(
+                buildFilesRequiredString(params, L"operationId"));
+            return L"{\"reset\":true}";
+        }
         const std::wstring chatId = buildFilesRequiredString(params, L"chatId");
         if (method == L"beginChat")
         {
@@ -4051,6 +4158,12 @@ namespace
             return serializeBuildFileRollback(core().buildFiles().rollbackRun(
                 chatId,
                 buildFilesRequiredString(params, L"runId"),
+                buildFilesRequiredString(params, L"operationId")));
+        }
+        if (method == L"getRollbackStates")
+        {
+            return serializeBuildFileRollbackStates(core().buildFiles().getFileRollbackStates(
+                chatId,
                 buildFilesRequiredString(params, L"operationId")));
         }
         throw std::invalid_argument("Unsupported build-files method.");
@@ -4653,7 +4766,10 @@ extern "C"
                 "Project",
                 std::string("Delete project requested. configPath=\"") +
                     pathForLog(std::filesystem::path(configPath)) + "\"");
+            const auto project = core().projects().readProjectConfigSummary(
+                std::filesystem::path(configPath)).project;
             core().projects().deleteProject(std::filesystem::path(configPath));
+            core().buildFiles().eraseBuildCheckpoints(project.projectDirectory);
             logOperation(fluxora::LogLevel::Info, "Project", "Delete project completed.");
             return FluxoraCoreResultOk;
         }
@@ -4697,7 +4813,9 @@ extern "C"
                 };
             }
 
+            const auto project = core().projects().readProjectConfigSummary(request.configPath).project;
             core().projects().deleteProject(request);
+            core().buildFiles().eraseBuildCheckpoints(project.projectDirectory);
             logOperation(fluxora::LogLevel::Info, "Project", "Delete project completed.");
             return FluxoraCoreResultOk;
         }
@@ -5281,6 +5399,34 @@ extern "C"
         {
             const std::wstring json = serializeNexusModsAuthStatus(core().nexusModsAuth().status());
             return writeToBuffer(json, jsonBuffer, jsonBufferLength);
+        }
+        catch (const std::exception& exception)
+        {
+            return mapException(exception);
+        }
+    }
+
+    int fluxora_complete_managed_executable_launch(
+        const wchar_t* sessionId,
+        const wchar_t* outcome,
+        wchar_t* jsonBuffer,
+        int jsonBufferLength)
+    {
+        try
+        {
+            if (isBlank(sessionId))
+            {
+                lastError = L"Managed launch session id is required.";
+                return FluxoraCoreResultInvalidArgument;
+            }
+            const fluxora::ManagedLaunchCompletion completion =
+                core().bodySlideIntegration().completeManagedLaunch(
+                    sessionId,
+                    isBlank(outcome) ? L"completed" : std::wstring_view(outcome));
+            return writeToBuffer(
+                serializeManagedLaunchCompletion(completion),
+                jsonBuffer,
+                jsonBufferLength);
         }
         catch (const std::exception& exception)
         {

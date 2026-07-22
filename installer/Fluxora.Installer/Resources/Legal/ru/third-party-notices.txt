@@ -1,5 +1,5 @@
 Уведомления Fluxora о сторонних компонентах
-Дата обновления: 13 июля 2026 г.
+Дата обновления: 21 июля 2026 г.
 
 Fluxora включает сторонние runtime, installer, build и test components. Этот документ является release checklist и уведомлением для прозрачности. Он не заменяет финальную проверку owner/legal перед публичным распространением.
 
@@ -13,6 +13,11 @@ Runtime и компоненты приложения:
 - zlib для чтения сжатых записей Bethesda archive в локальном preview файлов.
 - Zstandard 1.5.7 для локального сжатия content store FluxPack (текст BSD-лицензии приведён ниже).
 - Microsoft Detours, если собрана Windows VFS/hook функция.
+- whisper-rs 0.16.0 (Unlicense/public domain dedication) и whisper.cpp (MIT) для локального распознавания речи на Vulkan GPU с автоматическим переходом на CPU.
+- Веса модели OpenAI Whisper small (MIT) во встроенной квантованной локальной модели.
+- Модель и runtime-интеграция Silero VAD 6.2.0 (MIT) для локального определения речи.
+
+Полные применимые тексты лицензий speech-компонентов устанавливаются в `resources/speech/licenses` и входят в approved installer payload.
 
 Компоненты установщика:
 - Microsoft .NET runtime components, используемые Windows installer build.
@@ -21,6 +26,7 @@ Runtime и компоненты приложения:
 Build, packaging и test components:
 - Tauri bundler, Tauri bundler makers/plugins и Tauri fuses.
 - Vite, TypeScript и related TypeScript/React tooling.
+- LunarG Vulkan SDK 1.4.341.1 как закреплённый copy-only build tool для Vulkan speech host; SDK не устанавливается в систему и не входит в runtime payload.
 - Playwright и Vitest для smoke/unit tests.
 - GoogleTest для native backend tests.
 
