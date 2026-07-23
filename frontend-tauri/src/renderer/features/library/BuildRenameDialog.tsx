@@ -21,7 +21,6 @@ export interface BuildRenameDialogProps {
 }
 
 export interface BuildRenameDialogCopy {
-  cancelLabel: string;
   closeLabel: string;
   inputLabel: string;
   renameLabel: string;
@@ -36,9 +35,8 @@ const buildRenameDialogCopyByLanguage: Record<
   BuildRenameDialogCopy
 > = {
   en: {
-    cancelLabel: 'Cancel',
     closeLabel: 'Close build rename',
-    inputLabel: 'Build name',
+    inputLabel: 'New build name',
     renameLabel: 'Rename',
     renamingLabel: 'Renaming…',
     requiredMessage: 'Enter a build name.',
@@ -46,9 +44,8 @@ const buildRenameDialogCopyByLanguage: Record<
     unchangedMessage: 'Enter a different build name.'
   },
   de: {
-    cancelLabel: 'Abbrechen',
     closeLabel: 'Umbenennen der Sammlung schließen',
-    inputLabel: 'Name der Sammlung',
+    inputLabel: 'Neuer Name der Sammlung',
     renameLabel: 'Umbenennen',
     renamingLabel: 'Wird umbenannt…',
     requiredMessage: 'Gib einen Namen für die Sammlung ein.',
@@ -56,9 +53,8 @@ const buildRenameDialogCopyByLanguage: Record<
     unchangedMessage: 'Gib einen anderen Namen für die Sammlung ein.'
   },
   ru: {
-    cancelLabel: 'Отмена',
     closeLabel: 'Закрыть переименование сборки',
-    inputLabel: 'Название сборки',
+    inputLabel: 'Новое название сборки',
     renameLabel: 'Переименовать',
     renamingLabel: 'Переименование…',
     requiredMessage: 'Введите название сборки.',
@@ -137,12 +133,6 @@ export function BuildRenameDialog({
   const validationId = state.validationMessage
     ? 'build-rename-dialog-validation'
     : undefined;
-  const describedBy = [
-    state.gameName ? 'build-rename-dialog-context' : null,
-    validationId
-  ]
-    .filter(Boolean)
-    .join(' ') || undefined;
   const normalizedName = state.name.trim();
   const isSubmitDisabled =
     state.isSubmitting ||
@@ -169,7 +159,7 @@ export function BuildRenameDialog({
       <section
         ref={dialogRef}
         aria-busy={state.isSubmitting || undefined}
-        aria-describedby={describedBy}
+        aria-describedby={validationId}
         aria-labelledby="build-rename-dialog-title"
         aria-modal="true"
         className="build-rename-dialog"
@@ -197,17 +187,9 @@ export function BuildRenameDialog({
         }}
       >
         <header className="build-rename-dialog__header">
-          <div className="build-rename-dialog__identity">
-            <span aria-hidden="true" className="build-rename-dialog__icon">
-              <Icon name="file-text" size={16} strokeWidth={2} />
-            </span>
-            <span className="build-rename-dialog__title">
-              <strong id="build-rename-dialog-title">{copy.title}</strong>
-              {state.gameName ? (
-                <span id="build-rename-dialog-context">{state.gameName}</span>
-              ) : null}
-            </span>
-          </div>
+          <h2 className="build-rename-dialog__title" id="build-rename-dialog-title">
+            {copy.title}
+          </h2>
           <IconButton
             disabled={state.isSubmitting}
             label={copy.closeLabel}
@@ -252,15 +234,6 @@ export function BuildRenameDialog({
           ) : null}
 
           <footer className="build-rename-dialog__actions">
-            <Button
-              disabled={state.isSubmitting}
-              size="sm"
-              type="button"
-              variant="secondary"
-              onClick={onCancel}
-            >
-              {copy.cancelLabel}
-            </Button>
             <Button disabled={isSubmitDisabled} size="sm" type="submit">
               {state.isSubmitting ? copy.renamingLabel : copy.renameLabel}
             </Button>

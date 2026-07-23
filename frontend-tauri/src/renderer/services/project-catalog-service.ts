@@ -57,6 +57,37 @@ export const upsertProject = (projects: FluxoraProject[], next: FluxoraProject):
   return copy;
 };
 
+const projectsShareIdentity = (left: FluxoraProject, right: FluxoraProject): boolean =>
+  left.configPath === right.configPath ||
+  left.projectDirectory === right.projectDirectory ||
+  left.id === right.id;
+
+export const replaceRenamedProject = (
+  projects: FluxoraProject[],
+  previous: FluxoraProject,
+  renamed: FluxoraProject
+): FluxoraProject[] => {
+  const reconciled: FluxoraProject[] = [];
+  let replaced = false;
+
+  for (const project of projects) {
+    if (
+      projectsShareIdentity(project, previous) ||
+      projectsShareIdentity(project, renamed)
+    ) {
+      if (!replaced) {
+        reconciled.push(renamed);
+        replaced = true;
+      }
+      continue;
+    }
+
+    reconciled.push(project);
+  }
+
+  return replaced ? reconciled : [renamed, ...projects];
+};
+
 export const mergeProjectIntoCatalog = (
   catalog: FluxoraProjectCatalog,
   project: FluxoraProject

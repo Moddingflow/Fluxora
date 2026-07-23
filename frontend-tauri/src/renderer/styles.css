@@ -1690,10 +1690,10 @@ button:disabled {
 }
 
 .ai-chat-input__surface:focus-within {
-  border-color: rgba(var(--flx-accent-rgb), 0.54);
+  border-color: var(--flx-accent-hover);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 0 0 3px rgba(var(--flx-accent-rgb), 0.16),
+    var(--shadow-accent-glow),
     0 10px 28px rgba(0, 0, 0, 0.22);
 }
 
@@ -2244,7 +2244,17 @@ select {
 input:focus,
 select:focus {
   border-color: var(--flx-accent-hover);
-  box-shadow: 0 0 0 3px rgba(var(--flx-accent-rgb), 0.3);
+  box-shadow: var(--shadow-accent-glow);
+}
+
+input:focus-visible,
+select:focus-visible {
+  outline: none;
+}
+
+.flx-input__control:focus,
+.flx-select__control:focus {
+  box-shadow: none;
 }
 
 input::placeholder {
@@ -8767,61 +8777,33 @@ body.row-reorder-active * {
 }
 
 .build-rename-dialog__header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 58px;
-  padding: 8px 9px 8px 17px;
+  gap: 8px;
+  min-height: 44px;
+  padding: 5px 7px;
   border-bottom: 1px solid var(--line);
   background: var(--flx-panel-soft);
 }
 
-.build-rename-dialog__identity {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.build-rename-dialog__icon {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
-  place-items: center;
-  border: 1px solid var(--flx-accent-line);
-  border-radius: var(--radius-sm);
-  color: var(--flx-accent-bright);
-  background: var(--flx-accent-soft);
-}
-
 .build-rename-dialog__title {
-  display: grid;
-  gap: 2px;
+  grid-column: 2;
   min-width: 0;
-}
-
-.build-rename-dialog__title strong,
-.build-rename-dialog__title span {
-  min-width: 0;
+  margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.build-rename-dialog__title strong {
+  text-align: center;
   color: var(--text);
   font-size: 13px;
   font-weight: 750;
   line-height: 1.2;
 }
 
-.build-rename-dialog__title span {
-  color: var(--subtle);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.25;
+.build-rename-dialog__header > .flx-icon-button {
+  grid-column: 3;
+  justify-self: end;
 }
 
 .build-rename-dialog__form {
@@ -8841,10 +8823,6 @@ body.row-reorder-active * {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
-}
-
-.build-rename-dialog .flx-input:focus-within {
-  box-shadow: 0 0 0 3px rgba(var(--flx-accent-hover-rgb), 0.16);
 }
 
 .build-rename-dialog__validation {

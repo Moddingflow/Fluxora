@@ -278,7 +278,7 @@
   --shadow-panel: 0 8px 20px rgba(4, 7, 13, 0.3);
   --shadow-popup: 0 12px 32px rgba(4, 7, 13, 0.52);
   --shadow-menu: var(--shadow-popup);
-  --shadow-accent-glow: 0 0 0 3px rgba(var(--flx-accent-hover-rgb), 0.3);
+  --shadow-accent-glow: 0 0 0 3px var(--flx-accent-hover);
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
   --dur-fast: 120ms;
   --dur-base: 160ms;

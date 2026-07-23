@@ -3138,7 +3138,14 @@ test.beforeEach(async ({ page }) => {
           }
           const project =
             projects.find((candidate) => candidate.configPath === configPath) ?? skyrimProject;
-          return { ...project, name: newName };
+          const renamedConfigPath = `D:\\Fluxora\\Configs\\${newName}.json`;
+          return {
+            ...project,
+            id: renamedConfigPath,
+            name: newName,
+            configPath: renamedConfigPath,
+            projectDirectory: `D:\\Fluxora\\Builds\\${newName}`
+          };
         }
       },
       security: {
@@ -4073,6 +4080,38 @@ const elementFocusIndicator = async (locator: Locator) =>
     };
   });
 
+const expectSolidFocusBand = async (
+  control: Locator,
+  surfaceSelector?: string
+) => {
+  await expect
+    .poll(() =>
+      control.evaluate((element, selector) => {
+        const surface = selector ? element.closest(selector) : element;
+        if (!(surface instanceof HTMLElement)) {
+          throw new Error(`Expected a focus surface matching ${selector}.`);
+        }
+
+        const style = getComputedStyle(surface);
+        const controlStyle = getComputedStyle(element);
+        return {
+          borderColor: style.borderTopColor,
+          boxShadow: style.boxShadow,
+          controlBoxShadow: controlStyle.boxShadow,
+          controlOutlineStyle: controlStyle.outlineStyle
+        };
+      }, surfaceSelector)
+    )
+    .toEqual({
+      borderColor: 'rgb(248, 202, 98)',
+      boxShadow: 'rgb(248, 202, 98) 0px 0px 0px 3px',
+      controlBoxShadow: surfaceSelector
+        ? 'none'
+        : 'rgb(248, 202, 98) 0px 0px 0px 3px',
+      controlOutlineStyle: 'none'
+    });
+};
+
 const capturePhase13Screenshot = async (
   page: Page,
   testInfo: { outputPath(path: string): string },
@@ -4108,7 +4147,12 @@ test('selects, opens and creates builds from the redesigned library home', async
 
   await page.getByLabel('Home').click();
   await page.getByRole('button', { name: 'New build' }).first().click();
-  await page.getByPlaceholder('My Skyrim build').fill('  Playwright build  ');
+  const buildNameInput = page.getByPlaceholder('My Skyrim build');
+  await buildNameInput.fill('  Playwright build  ');
+  await buildNameInput.press('Tab');
+  await page.keyboard.press('Shift+Tab');
+  await expect(buildNameInput).toBeFocused();
+  await expectSolidFocusBand(buildNameInput);
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByRole('button', { name: 'Next' }).click();
   await page.getByPlaceholder('Path to game executable').fill('C:\\Games\\Skyrim\\SkyrimSE.exe');
@@ -4151,12 +4195,43 @@ test('renames a build in the Fluxora dialog with complete keyboard behavior', as
   };
 
   let dialog = await openRenameDialog();
-  const initialInput = dialog.getByRole('textbox', { name: 'Build name' });
+  const initialInput = dialog.getByRole('textbox', { name: 'New build name' });
+  const closeButton = dialog.getByRole('button', { name: 'Close build rename' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText('Skyrim Special Edition', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'Rename build' })).toBeVisible();
+  await expect(dialog.getByText('Skyrim Special Edition', { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
+  expect(
+    await dialog.evaluate((dialogElement) => {
+      const header = dialogElement.querySelector('.build-rename-dialog__header');
+      const title = dialogElement.querySelector('#build-rename-dialog-title');
+      if (!(header instanceof HTMLElement) || !(title instanceof HTMLElement)) {
+        throw new Error('Expected the compact rename dialog header and title.');
+      }
+
+      const dialogRect = dialogElement.getBoundingClientRect();
+      const headerRect = header.getBoundingClientRect();
+      const titleRect = title.getBoundingClientRect();
+      return {
+        headerHeight: headerRect.height,
+        titleCenterOffset: Math.abs(
+          titleRect.left + titleRect.width / 2 -
+            (dialogRect.left + dialogRect.width / 2)
+        )
+      };
+    })
+  ).toMatchObject({
+    headerHeight: 44,
+    titleCenterOffset: 0
+  });
   await expect(initialInput).toBeFocused();
   await expect(initialInput).toHaveValue('Skyrim graphics overhaul');
   await expect(dialog.getByRole('button', { name: 'Rename', exact: true })).toBeDisabled();
+  await initialInput.press('Tab');
+  await expect(closeButton).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(initialInput).toBeFocused();
+  await expectSolidFocusBand(initialInput, '.flx-input');
   expect(
     await initialInput.evaluate((input) => {
       const control = input as HTMLInputElement;
@@ -4172,9 +4247,7 @@ test('renames a build in the Fluxora dialog with complete keyboard behavior', as
     start: 0
   });
   await initialInput.press('Tab');
-  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
-  await page.keyboard.press('Tab');
-  await expect(dialog.getByRole('button', { name: 'Close build rename' })).toBeFocused();
+  await expect(closeButton).toBeFocused();
 
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
@@ -4183,8 +4256,8 @@ test('renames a build in the Fluxora dialog with complete keyboard behavior', as
     .toBeNull();
 
   dialog = await openRenameDialog();
-  await dialog.getByRole('textbox', { name: 'Build name' }).fill('Skyrim Ascendant');
-  await dialog.getByRole('textbox', { name: 'Build name' }).press('Enter');
+  await dialog.getByRole('textbox', { name: 'New build name' }).fill('Skyrim Ascendant');
+  await dialog.getByRole('textbox', { name: 'New build name' }).press('Enter');
 
   await expect
     .poll(() => latestCallPayload(page, 'projects.rename'))
@@ -4197,6 +4270,11 @@ test('renames a build in the Fluxora dialog with complete keyboard behavior', as
     });
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Skyrim Ascendant' })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Select Skyrim graphics overhaul' })
+  ).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Select Skyrim Ascendant' })).toHaveCount(1);
+  await expect(page.getByText('2 builds', { exact: true })).toBeVisible();
 });
 
 test('keeps the build rename dialog open and actionable after a native rename error', async ({
@@ -4213,7 +4291,7 @@ test('keeps the build rename dialog open and actionable after a native rename er
   await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
 
   const dialog = page.getByRole('dialog', { name: 'Rename build' });
-  const input = dialog.getByRole('textbox', { name: 'Build name' });
+  const input = dialog.getByRole('textbox', { name: 'New build name' });
   await input.fill('Existing build');
   await input.press('Enter');
 
@@ -8937,7 +9015,13 @@ test('text editor provides a VS Code-style workbench and protects dirty files', 
   await expect(page.getByRole('treeitem', { name: /BugFixesSSE\.json/ })).toBeVisible();
 
   await page.keyboard.press('Control+Shift+P');
-  await expect(page.getByRole('dialog', { name: 'Command Palette' })).toBeVisible();
+  const commandPalette = page.getByRole('dialog', { name: 'Command Palette' });
+  const commandInput = commandPalette.getByRole('textbox', {
+    name: 'Command Palette'
+  });
+  await expect(commandPalette).toBeVisible();
+  await expect(commandInput).toBeFocused();
+  await expectSolidFocusBand(commandInput, '.text-editor-quick-input-field');
   await page.keyboard.press('Escape');
 
   await codeEditor.click();

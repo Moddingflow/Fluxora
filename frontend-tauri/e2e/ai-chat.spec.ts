@@ -548,7 +548,18 @@ test('keeps AI out of Home and runs one persisted Gemini chat inside the selecte
   await page.goto(baseUrl);
   await openSelectedBuildAi(page);
 
-  await page.getByLabel('Message Fluxora AI').fill('Проверь Community Shaders');
+  const messageInput = page.getByLabel('Message Fluxora AI');
+  await messageInput.fill('Проверь Community Shaders');
+  await expect
+    .poll(() =>
+      page.locator('.ai-chat-input__surface').evaluate((surface) => {
+        const style = getComputedStyle(surface);
+        return style.boxShadow.includes(
+          `${style.borderTopColor} 0px 0px 0px 3px`
+        );
+      })
+    )
+    .toBe(true);
   await page.getByRole('button', { name: 'Send message' }).click();
   await expect(page.locator('.ai-context-usage')).toContainText(/12.345.*1.048.576/);
   await expect(page.locator('.ai-chat-message[data-role="user"]')).toContainText('Проверь Community Shaders');

@@ -30,7 +30,7 @@ describe('build rename dialog', () => {
     expect(renderDialog(null)).toBe('');
   });
 
-  it('renders a compact accessible rename form with the current build identity', () => {
+  it('renders a compact accessible rename form without redundant build context or actions', () => {
     const markup = renderDialog({
       currentName: 'SkyrimDragonis',
       gameName: 'Skyrim Special Edition',
@@ -42,12 +42,13 @@ describe('build rename dialog', () => {
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('aria-modal="true"');
     expect(markup).toContain('Rename build');
-    expect(markup).toContain('Skyrim Special Edition');
-    expect(markup).toContain('Build name');
+    expect(markup).toContain('New build name');
     expect(markup).toContain('value="SkyrimDragonis"');
     expect(markup).toContain(`maxLength="${BUILD_RENAME_NAME_MAX_LENGTH}"`);
-    expect(markup).toContain('Cancel');
     expect(markup).toContain('Rename');
+    expect(markup).not.toContain('Skyrim Special Edition');
+    expect(markup).not.toContain('build-rename-dialog__icon');
+    expect(markup).not.toContain('>Cancel<');
     expect(markup).not.toContain('tauri.localhost');
   });
 
@@ -76,17 +77,17 @@ describe('build rename dialog', () => {
 
   it('provides complete English, German and Russian copy', () => {
     expect(buildRenameDialogCopy('en-us')).toMatchObject({
-      inputLabel: 'Build name',
+      inputLabel: 'New build name',
       renameLabel: 'Rename',
       title: 'Rename build'
     });
     expect(buildRenameDialogCopy('de-de')).toMatchObject({
-      inputLabel: 'Name der Sammlung',
+      inputLabel: 'Neuer Name der Sammlung',
       renameLabel: 'Umbenennen',
       title: 'Sammlung umbenennen'
     });
     expect(buildRenameDialogCopy('ru-ru')).toMatchObject({
-      inputLabel: 'Название сборки',
+      inputLabel: 'Новое название сборки',
       renameLabel: 'Переименовать',
       title: 'Переименовать сборку'
     });

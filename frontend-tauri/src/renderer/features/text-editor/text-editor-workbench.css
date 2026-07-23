@@ -1008,6 +1008,11 @@
   background: var(--flx-panel);
 }
 
+.text-editor-quick-input-field:focus-within {
+  border-color: var(--flx-accent-hover);
+  box-shadow: var(--shadow-accent-glow);
+}
+
 .text-editor-quick-input-field > span {
   padding-left: 8px;
   font-family: var(--font-mono);
@@ -1022,6 +1027,10 @@
   color: var(--flx-text);
   background: transparent;
   outline: none;
+}
+
+.text-editor-quick-input-field input:focus {
+  box-shadow: none;
 }
 
 .text-editor-quick-input-results {

@@ -5,6 +5,7 @@ import {
   cleanupCreatedProject,
   createProjectFromDraft,
   loadProjectCatalog,
+  replaceRenamedProject,
   upsertProject
 } from '../src/renderer/services/project-catalog-service';
 import { defaultModNameFromPath, shortPath } from '../src/renderer/services/path-display-service';
@@ -128,6 +129,32 @@ describe('project catalog service', () => {
 
     expect(upsertProject([existing], updated)).toEqual([updated]);
     expect(upsertProject([existing], added)).toEqual([added, existing]);
+  });
+
+  it('replaces a renamed project when every path-backed identity changes', () => {
+    const existing = project({
+      id: 'C:\\Fluxora\\Builds\\Skyrim Dragonist.json',
+      name: 'Skyrim Dragonist',
+      configPath: 'C:\\Fluxora\\Builds\\Skyrim Dragonist.json',
+      projectDirectory: 'E:\\Fluxora Builds\\Skyrim Dragonist'
+    });
+    const renamed = project({
+      id: 'C:\\Fluxora\\Builds\\Dragonist.json',
+      name: 'Dragonist',
+      configPath: 'C:\\Fluxora\\Builds\\Dragonist.json',
+      projectDirectory: 'E:\\Fluxora Builds\\Dragonist'
+    });
+    const unrelated = project({
+      id: 'foundation-edition',
+      name: 'Foundation Edition',
+      configPath: 'C:\\Fluxora\\Builds\\Foundation Edition.json',
+      projectDirectory: 'E:\\Fluxora Builds\\Foundation Edition'
+    });
+
+    expect(replaceRenamedProject([existing, unrelated], existing, renamed)).toEqual([
+      renamed,
+      unrelated
+    ]);
   });
 
   it('loads catalog and templates through one renderer operation', async () => {

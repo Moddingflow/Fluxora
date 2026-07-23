@@ -200,6 +200,7 @@ import {
   openProjectConfig,
   previewProjectDirectory,
   projectCatalogFallback,
+  replaceRenamedProject,
   renameProjectConfig,
   upsertProject
 } from './services/project-catalog-service';
@@ -9567,10 +9568,14 @@ export const App = () => {
 
     try {
       const { project: renamed } = await renameProjectConfig(request.project, newName);
-      setProjects((current) => upsertProject(current, renamed));
+      setCatalog((current) => ({
+        ...current,
+        projects: replaceRenamedProject(current.projects, request.project, renamed)
+      }));
+      setProjects((current) => replaceRenamedProject(current, request.project, renamed));
       setSelectedProjectId(renamed.id);
       setLoadedWorkspaceProjectId((current) =>
-        current === request.project.id ? renamed.id : current
+        current && projectMatchesSelection(request.project, current) ? renamed.id : current
       );
       setBuildRenameDialog(null);
       setMessage(`Renamed to ${renamed.name}`);
