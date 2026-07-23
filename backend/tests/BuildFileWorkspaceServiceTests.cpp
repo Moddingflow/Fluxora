@@ -1679,6 +1679,8 @@ namespace fluxora::tests
         const std::filesystem::path source = sourceMod / virtualPath;
         const std::filesystem::path managed = managedMod / virtualPath;
         const std::filesystem::path overwrite = project / L"overwrite" / virtualPath;
+        const std::filesystem::path otherOverwrite =
+            project / L"overwrite" / L"SKSE" / L"Plugins" / L"NGIOHelper.ini";
         const std::string sourceText =
             "[Grass]\r\nUse-grass-cache=false\r\nOnly-load-from-cache=false\r\nSource-only=keep\r\n";
         const std::string managedText =
@@ -1690,6 +1692,7 @@ namespace fluxora::tests
         writeTextFile(source, sourceText);
         writeTextFile(managed, managedText);
         writeTextFile(overwrite, overwriteText);
+        writeTextFile(otherOverwrite, "[General]\r\nEnabled=true\r\n");
         InstanceMetadataStore::ensureInstance(project, L"skyrimse");
         static_cast<void>(InstanceMetadataStore::registerInstalledMod(
             project,
@@ -1757,6 +1760,23 @@ namespace fluxora::tests
             L"chat-overwrite-ini", page.entries.front().fileRef, L"Grass", L"Use-grass-cache");
         const auto onlyCache = service.queryIni(
             L"chat-overwrite-ini", page.entries.front().fileRef, L"Grass", L"Only-load-from-cache");
+        const auto laterBroadPage = service.search(
+            L"chat-overwrite-ini",
+            BuildFileSearchRequest{
+                BuildFileScope::Build,
+                L"Plugins",
+                20,
+                L""});
+        ASSERT_EQ(laterBroadPage.entries.size(), 2u);
+        EXPECT_NE(
+            std::find_if(
+                laterBroadPage.entries.begin(),
+                laterBroadPage.entries.end(),
+                [&](const BuildFileMetadata& entry)
+                {
+                    return entry.fileRef == page.entries.front().fileRef;
+                }),
+            laterBroadPage.entries.end());
         auto useMutation = BuildFileMutation::iniKey(
             BuildFileMutationOperation::IniSetKey,
             page.entries.front().fileRef,

@@ -1636,6 +1636,25 @@ namespace fluxora
             return session.refs.emplace(token, std::move(reference)).first->second;
         }
 
+        void recordReferenceResolution(
+            BuildFileWorkspaceService::State::Reference& reference,
+            std::wstring_view indexRevision,
+            BuildFileResolution resolution,
+            bool effectiveWinner)
+        {
+            const bool preserveCurrentUniqueProof =
+                reference.indexRevision == indexRevision &&
+                reference.resolution == BuildFileResolution::Unique &&
+                reference.effectiveWinner;
+            reference.indexRevision = indexRevision;
+            if (preserveCurrentUniqueProof)
+            {
+                return;
+            }
+            reference.resolution = resolution;
+            reference.effectiveWinner = effectiveWinner;
+        }
+
         [[nodiscard]] BuildFileWorkspaceService::State::Reference& requireReference(
             BuildFileWorkspaceService::State::Session& session,
             std::wstring_view token)
@@ -2006,9 +2025,11 @@ namespace fluxora
                     hit.scope,
                     buildWorkspaceIndex(session, hit.scope, request.cancellationRequested).revision).first;
             }
-            reference.indexRevision = revision->second;
-            reference.resolution = page.resolution;
-            reference.effectiveWinner = hit.effectiveWinner;
+            recordReferenceResolution(
+                reference,
+                revision->second,
+                page.resolution,
+                hit.effectiveWinner);
             BuildFileMetadata metadata = metadataFor(*state_, session, reference);
             metadata.conflictingOwners = std::move(hit.conflictingOwners);
             page.candidates.push_back(BuildFileDiscoveryCandidate{
@@ -2263,11 +2284,13 @@ namespace fluxora
         {
             const auto& candidate = *matches[candidateIndex].file;
             auto& reference = registerReference(*state_, session, *candidate.root, candidate.path);
-            reference.indexRevision = index.revision;
-            reference.resolution = matches.size() == 1
-                ? BuildFileResolution::Unique
-                : BuildFileResolution::Ambiguous;
-            reference.effectiveWinner = matches.size() == 1;
+            recordReferenceResolution(
+                reference,
+                index.revision,
+                matches.size() == 1
+                    ? BuildFileResolution::Unique
+                    : BuildFileResolution::Ambiguous,
+                matches.size() == 1);
             BuildFileMetadata metadata = metadataFor(*state_, session, reference);
             if (request.scope == BuildFileScope::Build)
             {

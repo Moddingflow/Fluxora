@@ -5200,13 +5200,13 @@
     "semantic_hash": ""
   },
   "backend/src/Services/BuildFileWorkspaceService.cpp": {
-    "mtime": 1784786291.3330908,
-    "ast_hash": "43a2dacba0e0d0f038bdf4443ada4a41",
+    "mtime": 1784788944.3510075,
+    "ast_hash": "532ac9613839a30bf3ce5d2ea69c78ba",
     "semantic_hash": ""
   },
   "backend/tests/BuildFileWorkspaceServiceTests.cpp": {
-    "mtime": 1784785982.7383554,
-    "ast_hash": "9e9fe97eb564d0f3cedbcfc68fa7dfe2",
+    "mtime": 1784788885.3525026,
+    "ast_hash": "02961bd56b7e857c5ab97804f3e8105e",
     "semantic_hash": ""
   },
   "backend/tests/BuildFilesBridgeProtocol.Tests.ps1": {
