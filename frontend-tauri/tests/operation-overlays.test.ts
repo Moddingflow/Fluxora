@@ -135,6 +135,24 @@ describe('operation overlays', () => {
     expect(markup).toContain('Отменить');
   });
 
+  it('renders live NGIO world progress as a determinate grass-cache operation', () => {
+    const markup = renderOverlay(
+      overlay({
+        kind: 'grass-cache',
+        title: 'Генерация кэша травы',
+        statusText: 'NGIO grass generation: 38% · world 2 of 4 · completed cells: 2',
+        currentItem: 'Tamriel(0, 1)',
+        percent: 38
+      })
+    );
+
+    expect(markup).toContain('aria-valuenow="38"');
+    expect(markup).toContain('38%');
+    expect(markup).toContain('world 2 of 4');
+    expect(markup).toContain('Tamriel(0, 1)');
+    expect(markup).not.toContain('data-indeterminate="true"');
+  });
+
   it('shows cancel for build creation even before native cancellation is available', () => {
     const markup = renderOverlay(
       overlay({

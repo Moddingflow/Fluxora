@@ -187,13 +187,15 @@ namespace fluxora
             {
             }
 
-            void launchAndWait(
+            GrassCacheLaunchResult launchAndWait(
                 const GrassCacheLaunchSpec& spec,
-                const std::function<bool()>& cancellationRequested) override
+                const std::function<bool()>& cancellationRequested,
+                const std::function<void()>& activityCallback) override
             {
 #ifndef _WIN32
                 (void)spec;
                 (void)cancellationRequested;
+                (void)activityCallback;
                 throw std::runtime_error("NGIO grass cache generation is only implemented on Windows.");
 #else
                 throwIfCancellationRequested(cancellationRequested);
@@ -203,6 +205,8 @@ namespace fluxora
                         spec.executableId,
                         spec.profileName,
                         spec.additionalArguments);
+                const std::filesystem::path runtimeMarkerPath =
+                    launch.resolvedExecutablePath.parent_path() / L"PrecacheGrass.txt";
 
                 if (launch.launchTrackingKind == LaunchTrackingKind::ExpectedChildProcess &&
                     !launch.expectedChildProcessNames.empty())
@@ -225,11 +229,26 @@ namespace fluxora
                             while (isProcessRunning(child->first))
                             {
                                 throwIfCancellationRequested(cancellationRequested);
+                                if (activityCallback)
+                                {
+                                    activityCallback();
+                                }
                                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
                             }
-                            return;
+                            if (activityCallback)
+                            {
+                                activityCallback();
+                            }
+                            return GrassCacheLaunchResult{
+                                runtimeMarkerPath,
+                                std::filesystem::exists(runtimeMarkerPath)
+                            };
                         }
 
+                        if (activityCallback)
+                        {
+                            activityCallback();
+                        }
                         std::this_thread::sleep_for(std::chrono::milliseconds(500));
                     }
                     logger_.writeOperation(
@@ -245,8 +264,20 @@ namespace fluxora
                 while (isProcessRunning(launch.processId))
                 {
                     throwIfCancellationRequested(cancellationRequested);
+                    if (activityCallback)
+                    {
+                        activityCallback();
+                    }
                     std::this_thread::sleep_for(std::chrono::milliseconds(250));
                 }
+                if (activityCallback)
+                {
+                    activityCallback();
+                }
+                return GrassCacheLaunchResult{
+                    runtimeMarkerPath,
+                    std::filesystem::exists(runtimeMarkerPath)
+                };
 #endif
             }
 

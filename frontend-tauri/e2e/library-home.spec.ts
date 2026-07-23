@@ -1452,6 +1452,7 @@ test.beforeEach(async ({ page }) => {
         })
       },
       ai: {
+        getFileRollbackStates: async () => [],
         getStatus: async (operation: any) => {
           calls.push({ method: 'ai.getStatus', payload: { operation } });
           return {
@@ -1539,6 +1540,12 @@ test.beforeEach(async ({ page }) => {
             ],
             capabilities: {}
           };
+        },
+        resetFileRollbackCheckpoints: async (operationId: string) => {
+          calls.push({
+            method: 'ai.resetFileRollbackCheckpoints',
+            payload: { operationId }
+          });
         }
       },
       apiLimits: {
@@ -3121,7 +3128,18 @@ test.beforeEach(async ({ page }) => {
             projectDirectory: `${installRootDirectory}\\${projectName}`
           };
         },
-        rename: async () => skyrimProject
+        rename: async (configPath: any, newName: any, operation: any) => {
+          calls.push({
+            method: 'projects.rename',
+            payload: { configPath, newName, operation }
+          });
+          if (window.localStorage.getItem('fluxora.test.renameFailure') === 'true') {
+            throw new Error('A build with this name already exists.');
+          }
+          const project =
+            projects.find((candidate) => candidate.configPath === configPath) ?? skyrimProject;
+          return { ...project, name: newName };
+        }
       },
       security: {
         getState: async () => ({
@@ -4118,6 +4136,94 @@ test('selects, opens and creates builds from the redesigned library home', async
   await page.getByRole('button', { name: 'Select Skyrim graphics overhaul' }).click();
   const skyrimSummary = page.getByRole('article', { name: 'Skyrim graphics overhaul summary' });
   await expect(skyrimSummary.getByText('248', { exact: true })).toBeVisible();
+});
+
+test('renames a build in the Fluxora dialog with complete keyboard behavior', async ({ page }) => {
+  await page.goto(baseUrl);
+  await clickSkyrimBuildSelectButton(page);
+
+  const openRenameDialog = async () => {
+    await page
+      .getByRole('button', { name: 'Skyrim graphics overhaul actions' })
+      .click();
+    await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
+    return page.getByRole('dialog', { name: 'Rename build' });
+  };
+
+  let dialog = await openRenameDialog();
+  const initialInput = dialog.getByRole('textbox', { name: 'Build name' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('Skyrim Special Edition', { exact: true })).toBeVisible();
+  await expect(initialInput).toBeFocused();
+  await expect(initialInput).toHaveValue('Skyrim graphics overhaul');
+  await expect(dialog.getByRole('button', { name: 'Rename', exact: true })).toBeDisabled();
+  expect(
+    await initialInput.evaluate((input) => {
+      const control = input as HTMLInputElement;
+      return {
+        end: control.selectionEnd,
+        length: control.value.length,
+        start: control.selectionStart
+      };
+    })
+  ).toEqual({
+    end: 'Skyrim graphics overhaul'.length,
+    length: 'Skyrim graphics overhaul'.length,
+    start: 0
+  });
+  await initialInput.press('Tab');
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: 'Close build rename' })).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect
+    .poll(() => latestCallPayload(page, 'projects.rename'))
+    .toBeNull();
+
+  dialog = await openRenameDialog();
+  await dialog.getByRole('textbox', { name: 'Build name' }).fill('Skyrim Ascendant');
+  await dialog.getByRole('textbox', { name: 'Build name' }).press('Enter');
+
+  await expect
+    .poll(() => latestCallPayload(page, 'projects.rename'))
+    .toMatchObject({
+      configPath: 'D:\\Fluxora\\Configs\\skyrim-main.json',
+      newName: 'Skyrim Ascendant',
+      operation: {
+        operationId: expect.stringContaining('projects_rename')
+      }
+    });
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Skyrim Ascendant' })).toBeVisible();
+});
+
+test('keeps the build rename dialog open and actionable after a native rename error', async ({
+  page
+}) => {
+  await page.goto(baseUrl);
+  await page.evaluate(() =>
+    window.localStorage.setItem('fluxora.test.renameFailure', 'true')
+  );
+  await clickSkyrimBuildSelectButton(page);
+  await page
+    .getByRole('button', { name: 'Skyrim graphics overhaul actions' })
+    .click();
+  await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
+
+  const dialog = page.getByRole('dialog', { name: 'Rename build' });
+  const input = dialog.getByRole('textbox', { name: 'Build name' });
+  await input.fill('Existing build');
+  await input.press('Enter');
+
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('alert')).toHaveText(
+    'A build with this name already exists.'
+  );
+  await expect(input).toBeEnabled();
+  await expect(input).toBeFocused();
+  await expect(dialog.getByRole('button', { name: 'Rename', exact: true })).toBeEnabled();
 });
 
 test('does not open a build when its row actions are double-clicked', async ({ page }) => {
@@ -7309,6 +7415,180 @@ test('uses the redesigned right pane tabs for plugins, data and downloads', asyn
   await expect(rightPane.getByRole('button', { name: 'Import', exact: true })).toHaveCount(0);
   await expect(rightPane.getByRole('button', { name: 'Archive', exact: true })).toHaveCount(0);
   await expect(rightPane.getByRole('button', { name: 'NXM', exact: true })).toHaveCount(0);
+});
+
+test('creates a plugin separator from the row menu and moves the selected plugins into it', async ({
+  page
+}) => {
+  await page.goto(baseUrl);
+  await page.evaluate(async () => {
+    const scope = window as typeof window & {
+      __fluxoraCalls?: Array<{ method: string; payload?: unknown }>;
+      fluxora: any;
+    };
+    const originalRows = await scope.fluxora.plugins.list('', '', null, {
+      operationId: 'plugin_separator_fixture'
+    });
+    const skyrim = structuredClone(
+      originalRows.find((item: any) => item.orderId === 'plugin_skyrim')
+    );
+    const firstSeparator = structuredClone(
+      originalRows.find((item: any) => item.orderId === 'sep_patches')
+    );
+    const skyui = structuredClone(
+      originalRows.find((item: any) => item.orderId === 'plugin_skyui')
+    );
+    let pluginRows = [
+      skyrim,
+      firstSeparator,
+      skyui,
+      {
+        ...structuredClone(firstSeparator),
+        id: 'sep_late',
+        orderId: 'sep_late',
+        order: 3,
+        separatorTitle: 'Late compatibility'
+      },
+      {
+        ...structuredClone(skyui),
+        id: 'Patch.esp',
+        orderId: 'plugin_patch',
+        order: 4,
+        name: 'Patch.esp',
+        sourceMod: 'Patch',
+        masterFiles: [],
+        missingMasters: []
+      }
+    ];
+    const reindex = () => {
+      pluginRows = pluginRows.map((item: any, order: number) => ({ ...item, order }));
+    };
+
+    scope.fluxora.plugins.list = async () => structuredClone(pluginRows);
+    scope.fluxora.plugins.listPersisted = async () => structuredClone(pluginRows);
+    scope.fluxora.plugins.createSeparator = async (
+      projectDirectory: string,
+      templateId: string,
+      profileName: string | null,
+      title: string,
+      targetIndex: number,
+      operation: unknown
+    ) => {
+      scope.__fluxoraCalls?.push({
+        method: 'plugins.createSeparator',
+        payload: {
+          operation,
+          profileName,
+          projectDirectory,
+          targetIndex,
+          templateId,
+          title
+        }
+      });
+      pluginRows.splice(targetIndex, 0, {
+        ...structuredClone(firstSeparator),
+        id: 'sep_created',
+        orderId: 'sep_created',
+        separatorTitle: title
+      });
+      reindex();
+      return structuredClone(pluginRows);
+    };
+    scope.fluxora.plugins.deleteSeparator = async (
+      projectDirectory: string,
+      templateId: string,
+      profileName: string | null,
+      orderId: string,
+      operation: unknown
+    ) => {
+      scope.__fluxoraCalls?.push({
+        method: 'plugins.deleteSeparator',
+        payload: { operation, orderId, profileName, projectDirectory, templateId }
+      });
+      pluginRows = pluginRows.filter((item: any) => item.orderId !== orderId);
+      reindex();
+      return structuredClone(pluginRows);
+    };
+    scope.fluxora.plugins.move = async (
+      projectDirectory: string,
+      templateId: string,
+      profileName: string | null,
+      orderId: string,
+      targetIndex: number,
+      operation: unknown
+    ) => {
+      scope.__fluxoraCalls?.push({
+        method: 'plugins.move',
+        payload: { operation, orderId, profileName, projectDirectory, targetIndex, templateId }
+      });
+      const sourceIndex = pluginRows.findIndex((item: any) => item.orderId === orderId);
+      const [moving] = pluginRows.splice(sourceIndex, 1);
+      pluginRows.splice(Math.max(0, Math.min(targetIndex, pluginRows.length)), 0, moving);
+      reindex();
+      return structuredClone(pluginRows);
+    };
+  });
+  await clickSkyrimBuildSelectButton(page);
+  await clickSkyrimBuildOpenButton(page);
+
+  const rightPane = page.getByLabel('Right pane');
+  const skyrim = rightPane.getByRole('row', { name: /Skyrim\.esm plugin/ });
+  const skyui = rightPane.getByRole('row', { name: /SkyUI\.esp plugin/ });
+  const patch = rightPane.getByRole('row', { name: /Patch\.esp plugin/ });
+  await skyrim.click();
+  await page.keyboard.down('Control');
+  await skyui.click();
+  await patch.click();
+  await page.keyboard.up('Control');
+
+  await skyui.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Create separator' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create separator' });
+  await dialog.getByLabel('Separator name').fill('Official content');
+  await dialog.getByRole('button', { name: 'Create', exact: true }).click();
+
+  await expect
+    .poll(() =>
+      rightPane.locator('.plugin-row[data-order-id]').evaluateAll((rows) =>
+        rows.map((row) => row.getAttribute('data-order-id'))
+      )
+    )
+    .toEqual([
+      'sep_created',
+      'plugin_skyrim',
+      'plugin_skyui',
+      'plugin_patch',
+      'sep_patches',
+      'sep_late'
+    ]);
+  await expect(skyrim).toHaveAttribute('data-in-separator', 'true');
+  await expect(skyui).toHaveAttribute('data-in-separator', 'true');
+  await expect(patch).toHaveAttribute('data-in-separator', 'true');
+  await expect
+    .poll(() => latestCallPayload(page, 'plugins.createSeparator'))
+    .toMatchObject({
+      targetIndex: 0,
+      title: 'Official content'
+    });
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          (window as typeof window & {
+            __fluxoraCalls?: Array<{
+              method: string;
+              payload?: { orderId?: string; targetIndex?: number };
+            }>;
+          }).__fluxoraCalls ?? []
+        )
+          .filter((call) => call.method === 'plugins.move')
+          .map((call) => call.payload)
+      )
+    )
+    .toEqual([
+      expect.objectContaining({ orderId: 'plugin_skyui', targetIndex: 2 }),
+      expect.objectContaining({ orderId: 'plugin_patch', targetIndex: 3 })
+    ]);
 });
 
 test('aligns plugin and download searches with mods and hides download commands', async ({ page }) => {

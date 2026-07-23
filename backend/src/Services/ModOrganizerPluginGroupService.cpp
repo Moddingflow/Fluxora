@@ -315,6 +315,39 @@ namespace fluxora
 
         bool importedAnyGroup = false;
         std::wstring currentGroup;
+        const auto firstGroupedPlugin = std::find_if(
+            pluginNames.begin(),
+            pluginNames.end(),
+            [&groupByPlugin](const std::wstring& pluginName)
+            {
+                return groupByPlugin.contains(toLower(pluginName));
+            });
+        if (firstGroupedPlugin != pluginNames.begin() &&
+            firstGroupedPlugin != pluginNames.end() &&
+            !resolvedTemplate.basePlugins.empty())
+        {
+            std::wstring officialContentTitle = trim(resolvedTemplate.gameName);
+            if (officialContentTitle.empty())
+            {
+                officialContentTitle = trim(resolvedTemplate.displayName);
+            }
+            if (officialContentTitle.empty())
+            {
+                officialContentTitle = trim(resolvedTemplate.id);
+            }
+            if (officialContentTitle.empty())
+            {
+                officialContentTitle = L"Game files";
+            }
+
+            items.push_back(ProfilePluginOrderImportItemRecord{
+                std::wstring(separatorKind),
+                {},
+                std::move(officialContentTitle)
+            });
+            importedAnyGroup = true;
+        }
+
         for (const std::wstring& pluginName : pluginNames)
         {
             std::wstring group;

@@ -8743,6 +8743,132 @@ body.row-reorder-active * {
   padding-top: 2px;
 }
 
+.build-rename-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(var(--flx-bg-rgb), 0.8);
+}
+
+.build-rename-dialog {
+  display: grid;
+  grid-template-rows: auto auto;
+  width: min(420px, 100%);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-popup);
+}
+
+.build-rename-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 58px;
+  padding: 8px 9px 8px 17px;
+  border-bottom: 1px solid var(--line);
+  background: var(--flx-panel-soft);
+}
+
+.build-rename-dialog__identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.build-rename-dialog__icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  border: 1px solid var(--flx-accent-line);
+  border-radius: var(--radius-sm);
+  color: var(--flx-accent-bright);
+  background: var(--flx-accent-soft);
+}
+
+.build-rename-dialog__title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.build-rename-dialog__title strong,
+.build-rename-dialog__title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-rename-dialog__title strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
+.build-rename-dialog__title span {
+  color: var(--subtle);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.build-rename-dialog__form {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 21px 22px 18px;
+}
+
+.build-rename-dialog__field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.build-rename-dialog__field > span:first-child {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.build-rename-dialog .flx-input:focus-within {
+  box-shadow: 0 0 0 3px rgba(var(--flx-accent-hover-rgb), 0.16);
+}
+
+.build-rename-dialog__validation {
+  min-width: 0;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.build-rename-dialog__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.build-rename-dialog__actions .flx-button {
+  min-width: 88px;
+}
+
 .install-dialog-body {
   overflow: auto;
 }
@@ -11647,6 +11773,10 @@ body.row-reorder-active * {
 
 :root[data-theme="light"] .mod-create-dialog-backdrop {
   background: rgba(231, 237, 228, 0.76);
+}
+
+:root[data-theme="light"] .build-rename-dialog-backdrop {
+  background: rgba(231, 237, 228, 0.78);
 }
 
 @media (max-width: 1180px) {

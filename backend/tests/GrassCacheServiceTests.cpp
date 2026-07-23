@@ -71,18 +71,25 @@ namespace fluxora::tests
                 std::filesystem::path overwriteDirectory,
                 int removeMarkerAfterLaunch,
                 int writeOutputAfterLaunch = 1,
-                LaunchHook launchHook = {})
+                LaunchHook launchHook = {},
+                std::filesystem::path runtimeMarkerDirectory = {})
                 : gameDirectory_(std::move(gameDirectory)),
                   overwriteDirectory_(std::move(overwriteDirectory)),
                   removeMarkerAfterLaunch_(removeMarkerAfterLaunch),
                   writeOutputAfterLaunch_(writeOutputAfterLaunch),
-                  launchHook_(std::move(launchHook))
+                  launchHook_(std::move(launchHook)),
+                  runtimeMarkerDirectory_(std::move(runtimeMarkerDirectory))
             {
+                if (runtimeMarkerDirectory_.empty())
+                {
+                    runtimeMarkerDirectory_ = gameDirectory_;
+                }
             }
 
-            void launchAndWait(
+            GrassCacheLaunchResult launchAndWait(
                 const GrassCacheLaunchSpec& spec,
-                const std::function<bool()>& cancellationRequested) override
+                const std::function<bool()>& cancellationRequested,
+                const std::function<void()>& activityCallback) override
             {
                 if (cancellationRequested && cancellationRequested())
                 {
@@ -91,10 +98,22 @@ namespace fluxora::tests
                 ++launchCount;
                 lastSpec = spec;
                 EXPECT_EQ(spec.additionalArguments, L"-forcesteamloader");
-                EXPECT_TRUE(std::filesystem::is_regular_file(gameDirectory_ / L"PrecacheGrass.txt"));
+                const std::filesystem::path managedMarkerPath =
+                    overwriteDirectory_ / L"root" / L"PrecacheGrass.txt";
+                EXPECT_TRUE(std::filesystem::is_regular_file(managedMarkerPath));
+                const std::filesystem::path runtimeMarkerPath =
+                    runtimeMarkerDirectory_ / L"PrecacheGrass.txt";
+                if (runtimeMarkerDirectory_ != gameDirectory_ && launchCount == 1)
+                {
+                    writeTextFile(runtimeMarkerPath, "runtime marker");
+                }
                 if (launchHook_)
                 {
                     launchHook_(launchCount);
+                }
+                if (activityCallback)
+                {
+                    activityCallback();
                 }
                 if (cancellationRequested && cancellationRequested())
                 {
@@ -108,8 +127,13 @@ namespace fluxora::tests
                 }
                 if (launchCount >= removeMarkerAfterLaunch_)
                 {
-                    std::filesystem::remove(gameDirectory_ / L"PrecacheGrass.txt");
+                    std::filesystem::remove(managedMarkerPath);
                 }
+
+                return GrassCacheLaunchResult{
+                    runtimeMarkerPath,
+                    std::filesystem::exists(runtimeMarkerPath)
+                };
             }
 
             int launchCount{0};
@@ -121,6 +145,55 @@ namespace fluxora::tests
             int removeMarkerAfterLaunch_{1};
             int writeOutputAfterLaunch_{1};
             LaunchHook launchHook_;
+            std::filesystem::path runtimeMarkerDirectory_;
+        };
+
+        class VfsRootMarkerGrassCacheRunner final : public IGrassCacheProcessRunner
+        {
+        public:
+            VfsRootMarkerGrassCacheRunner(
+                std::filesystem::path gameDirectory,
+                std::filesystem::path overwriteDirectory,
+                std::filesystem::path staleWhiteoutPath)
+                : gameDirectory_(std::move(gameDirectory)),
+                  overwriteDirectory_(std::move(overwriteDirectory)),
+                  staleWhiteoutPath_(std::move(staleWhiteoutPath))
+            {
+            }
+
+            GrassCacheLaunchResult launchAndWait(
+                const GrassCacheLaunchSpec& spec,
+                const std::function<bool()>& cancellationRequested,
+                const std::function<void()>& activityCallback) override
+            {
+                EXPECT_EQ(spec.additionalArguments, L"-forcesteamloader");
+                EXPECT_FALSE(std::filesystem::exists(gameDirectory_ / L"PrecacheGrass.txt"));
+                const std::filesystem::path managedMarker =
+                    overwriteDirectory_ / L"root" / L"PrecacheGrass.txt";
+                EXPECT_TRUE(std::filesystem::is_regular_file(managedMarker));
+                EXPECT_TRUE(std::filesystem::is_regular_file(staleWhiteoutPath_));
+
+                writeTextFile(overwriteDirectory_ / L"Grass" / L"Tamriel.cgid", "grass cache");
+                if (activityCallback)
+                {
+                    activityCallback();
+                }
+                std::filesystem::remove(managedMarker);
+                if (cancellationRequested && cancellationRequested())
+                {
+                    throw std::runtime_error("NGIO grass cache generation was canceled.");
+                }
+
+                return GrassCacheLaunchResult{
+                    gameDirectory_ / L"PrecacheGrass.txt",
+                    false
+                };
+            }
+
+        private:
+            std::filesystem::path gameDirectory_;
+            std::filesystem::path overwriteDirectory_;
+            std::filesystem::path staleWhiteoutPath_;
         };
 
         class GrassCacheServiceTestFixture : public testing::Test
@@ -268,6 +341,94 @@ namespace fluxora::tests
         EXPECT_TRUE(orderItem->isEnabled);
     }
 
+    TEST_F(GrassCacheServiceTestFixture, NgioGenerationPublishesTriggerAboveStaleGameRootWhiteout)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        const std::filesystem::path staleWhiteout =
+            project_ / L".flow" / L"vfs" / L"whiteouts" / L"game-root" /
+            L"PrecacheGrass.txt";
+        writeTextFile(staleWhiteout, "");
+        VfsRootMarkerGrassCacheRunner runner(
+            paths.gameDirectory,
+            paths.overwriteDirectory,
+            staleWhiteout);
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+
+        const GrassCacheGenerationResult result =
+            service.generateNgioGrassCache(config_, L"Default", GrassCacheGenerationOptions{2, 0});
+
+        EXPECT_EQ(result.launchCount, 1);
+        EXPECT_FALSE(std::filesystem::exists(paths.gameDirectory / L"PrecacheGrass.txt"));
+        EXPECT_FALSE(std::filesystem::exists(
+            paths.overwriteDirectory / L"root" / L"PrecacheGrass.txt"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            result.outputModPath / L"Grass" / L"Tamriel.cgid"));
+    }
+
+    TEST_F(GrassCacheServiceTestFixture, NgioGenerationReportsLiveNgioProgressBeforeLaunchReturns)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        const std::filesystem::path managedMarker =
+            paths.overwriteDirectory / L"root" / L"PrecacheGrass.txt";
+        const std::filesystem::path ngioLog =
+            project_ / L".flow" / L"vfs" / L"profile-overwrite" / L"Default" /
+            L"documents" / L"SKSE" / L"NGIO-NG.log";
+        FakeGrassCacheRunner runner(
+            paths.gameDirectory,
+            paths.overwriteDirectory,
+            1,
+            1,
+            [&](int)
+            {
+                writeTextFile(
+                    managedMarker,
+                    "cell_Tamriel_0_0\n"
+                    "cell_Tamriel_0_1\n");
+                writeTextFile(
+                    ngioLog,
+                    "[10:10:10:100][info] Generating grass for Tamriel(0, 1) "
+                    "50.000000 pct, world 2 out of 4\n");
+            });
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+        std::vector<GrassCacheGenerationProgress> observed;
+
+        (void)service.generateNgioGrassCache(
+            config_,
+            L"Default",
+            GrassCacheGenerationOptions{2, 0},
+            [&](const GrassCacheGenerationProgress& progress)
+            {
+                observed.push_back(progress);
+            });
+
+        const auto generating = std::find_if(
+            observed.begin(),
+            observed.end(),
+            [](const GrassCacheGenerationProgress& progress)
+            {
+                return progress.phase == L"generating";
+            });
+        ASSERT_NE(generating, observed.end());
+        EXPECT_NE(generating->currentStep.find(L"world 2 of 4"), std::wstring::npos);
+        EXPECT_NE(generating->currentItem.find(L"Tamriel(0, 1)"), std::wstring::npos);
+        EXPECT_GE(generating->overallPercent, 35);
+        EXPECT_LE(generating->overallPercent, 40);
+    }
+
     TEST_F(GrassCacheServiceTestFixture, NgioGenerationRestartsWhilePrecacheMarkerStillExistsAndOutputIsMissing)
     {
         const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
@@ -358,31 +519,12 @@ namespace fluxora::tests
         EXPECT_TRUE(std::filesystem::is_regular_file(outputMod / L"Grass" / L"Tamriel.cgid"));
     }
 
-    TEST_F(GrassCacheServiceTestFixture, NgioGenerationStopsWhenOutputExistsAndPrecacheMarkerRemains)
+    TEST_F(
+        GrassCacheServiceTestFixture,
+        NgioGenerationRestartsWhenPartialOutputExistsAndManagedMarkerRemains)
     {
         const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
-        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 99);
-        GrassCacheService service(
-            logger_,
-            projects_,
-            executables_,
-            mods_,
-            profileOrder_,
-            pathSettings_,
-            runner);
-
-        const GrassCacheGenerationResult result =
-            service.generateNgioGrassCache(config_, L"Default", GrassCacheGenerationOptions{3, 0});
-
-        EXPECT_EQ(runner.launchCount, 1);
-        EXPECT_EQ(result.launchCount, 1);
-        EXPECT_FALSE(std::filesystem::exists(paths.gameDirectory / L"PrecacheGrass.txt"));
-    }
-
-    TEST_F(GrassCacheServiceTestFixture, NgioGenerationRecreatesMissingPrecacheMarkerWhenOutputIsMissing)
-    {
-        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
-        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 1, 2);
+        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 2, 1);
         GrassCacheService service(
             logger_,
             projects_,
@@ -398,6 +540,111 @@ namespace fluxora::tests
         EXPECT_EQ(runner.launchCount, 2);
         EXPECT_EQ(result.launchCount, 2);
         EXPECT_FALSE(std::filesystem::exists(paths.gameDirectory / L"PrecacheGrass.txt"));
+    }
+
+    TEST_F(GrassCacheServiceTestFixture, NgioGenerationFailsWhenManagedMarkerDisappearsWithoutOutput)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 1, 99);
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+
+        try
+        {
+            (void)service.generateNgioGrassCache(
+                config_,
+                L"Default",
+                GrassCacheGenerationOptions{3, 0});
+            FAIL() << "Expected missing managed marker with empty output to fail.";
+        }
+        catch (const std::runtime_error& exception)
+        {
+            EXPECT_STREQ(
+                exception.what(),
+                "NGIO removed the managed PrecacheGrass.txt marker but produced no grass output.");
+        }
+
+        const std::wstring expectedModName = L"Skyrim Main \x00B7 Grass Cache";
+        EXPECT_EQ(runner.launchCount, 1);
+        EXPECT_FALSE(std::filesystem::exists(paths.gameDirectory / L"PrecacheGrass.txt"));
+        EXPECT_FALSE(std::filesystem::exists(paths.modsDirectory / expectedModName));
+    }
+
+    TEST_F(GrassCacheServiceTestFixture, NgioGenerationFailsAtLaunchLimitWithoutPublishingPartialOutput)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        FakeGrassCacheRunner runner(paths.gameDirectory, paths.overwriteDirectory, 99, 1);
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+
+        try
+        {
+            (void)service.generateNgioGrassCache(
+                config_,
+                L"Default",
+                GrassCacheGenerationOptions{2, 0});
+            FAIL() << "Expected persistent managed marker to hit the launch limit.";
+        }
+        catch (const std::runtime_error& exception)
+        {
+            EXPECT_STREQ(
+                exception.what(),
+                "NGIO managed PrecacheGrass.txt marker remained after the restart limit.");
+        }
+
+        const std::wstring expectedModName = L"Skyrim Main \x00B7 Grass Cache";
+        EXPECT_EQ(runner.launchCount, 2);
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            paths.overwriteDirectory / L"Grass" / L"Tamriel.cgid"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            paths.overwriteDirectory / L"Grass" / L"Tamriel.fail"));
+        EXPECT_FALSE(std::filesystem::exists(paths.modsDirectory / expectedModName));
+    }
+
+    TEST_F(GrassCacheServiceTestFixture, NgioGenerationIgnoresStaleRuntimeCopyAfterManagedMarkerDisappears)
+    {
+        const BuildPathSettings paths = pathSettings_.loadForConfig(config_);
+        const std::filesystem::path runtimeDirectory =
+            project_ / L".flow" / L"root-launch" / L"SKSE64";
+        FakeGrassCacheRunner runner(
+            paths.gameDirectory,
+            paths.overwriteDirectory,
+            1,
+            1,
+            FakeGrassCacheRunner::LaunchHook{},
+            runtimeDirectory);
+        GrassCacheService service(
+            logger_,
+            projects_,
+            executables_,
+            mods_,
+            profileOrder_,
+            pathSettings_,
+            runner);
+
+        const GrassCacheGenerationResult result =
+            service.generateNgioGrassCache(config_, L"Default", GrassCacheGenerationOptions{3, 0});
+
+        EXPECT_EQ(runner.launchCount, 1);
+        EXPECT_EQ(result.launchCount, 1);
+        EXPECT_FALSE(std::filesystem::exists(
+            paths.gameDirectory / L"PrecacheGrass.txt"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            runtimeDirectory / L"PrecacheGrass.txt"));
+        EXPECT_TRUE(std::filesystem::is_regular_file(
+            result.outputModPath / L"Grass" / L"Tamriel.cgid"));
     }
 
     TEST_F(GrassCacheServiceTestFixture, OrdinaryLaunchCleanupRemovesVfsVisiblePrecacheMarkers)

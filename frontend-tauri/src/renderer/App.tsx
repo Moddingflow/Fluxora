@@ -113,6 +113,12 @@ import { BuildSettingsWorkspace } from './features/build/BuildSettingsWorkspace'
 import { BuildDetailHeader } from './features/build/BuildDetailHeader';
 import { watchLaunchProcessSession } from './features/executables/launch-process-session';
 import {
+  BUILD_RENAME_NAME_MAX_LENGTH,
+  BuildRenameDialog,
+  buildRenameDialogCopy,
+  type BuildRenameDialogState
+} from './features/library/BuildRenameDialog';
+import {
   FluxPackExportDialog,
   type FluxPackExportOptions
 } from './features/fluxpack/FluxPackExportDialog';
@@ -129,6 +135,13 @@ import {
 } from './features/deletion/DeletionConfirmationDialog';
 import { DownloadDuplicateDecisionDialog } from './features/downloads/DownloadDuplicateDecisionDialog';
 import { MissingMastersStatus } from './features/plugins/MissingMastersStatus';
+import {
+  PluginSeparatorDialog,
+  PLUGIN_SEPARATOR_NAME_MAX_LENGTH,
+  pluginSeparatorCopy,
+  type PluginSeparatorDialogState
+} from './features/plugins/PluginSeparatorDialog';
+import { createPluginSeparatorForSelection } from './features/plugins/plugin-separator-service';
 import {
   InstallDialog,
   type InstallDialogState
@@ -498,6 +511,15 @@ interface RowContextMenuPosition {
   left: number;
   top: number;
   maxHeight: number;
+}
+
+interface BuildRenameDialogRequest extends BuildRenameDialogState {
+  project: FluxoraProject;
+}
+
+interface PluginSeparatorDialogRequest extends PluginSeparatorDialogState {
+  contextOrderId: string;
+  selectedOrderIds: string[];
 }
 
 interface StartMo2TransferOptions {
@@ -1287,6 +1309,8 @@ export const App = () => {
   const [projectOpenCommitSequence, setProjectOpenCommitSequence] = useState(0);
   const [projectMenuId, setProjectMenuId] = useState<string | null>(null);
   const [projectMenuPosition, setProjectMenuPosition] = useState<ProjectMenuPosition | null>(null);
+  const [buildRenameDialog, setBuildRenameDialog] =
+    useState<BuildRenameDialogRequest | null>(null);
   const [catalogState, setCatalogState] = useState<CatalogState>('idle');
   const [searchText, setSearchText] = useState('');
   const [templateSearchText, setTemplateSearchText] = useState('');
@@ -1558,6 +1582,8 @@ export const App = () => {
   const [pluginMenuOrderId, setPluginMenuOrderId] = useState<string | null>(null);
   const [pluginMenuPosition, setPluginMenuPosition] =
     useState<RowContextMenuPosition | null>(null);
+  const [pluginSeparatorDialog, setPluginSeparatorDialog] =
+    useState<PluginSeparatorDialogRequest | null>(null);
   const [pluginListScrollTop, setPluginListScrollTop] = useState(0);
   const [draggedPluginOrderIds, setDraggedPluginOrderIds] = useState<ReadonlySet<string>>(
     () => new Set<string>()
@@ -5205,31 +5231,97 @@ export const App = () => {
     }
   };
 
-  const createPluginSeparator = async () => {
-    if (!selectedProject || !pluginCapabilities.loadOrderSupported) {
+  const openPluginSeparatorDialog = (item: FluxoraPluginOrderItem) => {
+    if (!item.isPlugin || !pluginCapabilities.loadOrderSupported) {
       return;
     }
 
-    const title = window.prompt('Separator title')?.trim();
-    if (!title) {
-      return;
-    }
+    const selectedOrderIds = pluginsWorkspace.selectedOrderIds.has(item.orderId)
+      ? [...pluginsWorkspace.selectedOrderIds]
+      : [item.orderId];
+    setPluginSeparatorDialog({
+      contextOrderId: item.orderId,
+      name: '',
+      selectedOrderIds,
+      validationMessage: null
+    });
+  };
 
-    const selectedIndex = selectedPluginItem
-      ? pluginsWorkspace.items.findIndex((item) => item.orderId === selectedPluginItem.orderId)
-      : -1;
-    const targetIndex = selectedIndex >= 0 ? selectedIndex + 1 : pluginsWorkspace.items.length;
-
-    await runPluginMutation('Creating plugin separator', (operationId) =>
-      window.fluxora.plugins.createSeparator(
-        selectedProject.projectDirectory,
-        selectedProject.templateId,
-        selectedProjectProfileName,
-        title,
-        targetIndex,
-        { operationId }
-      )
+  const updatePluginSeparatorDialogName = (name: string) => {
+    const limitedName = name.slice(0, PLUGIN_SEPARATOR_NAME_MAX_LENGTH);
+    setPluginSeparatorDialog((current) =>
+      current
+        ? {
+            ...current,
+            name: limitedName,
+            validationMessage: null
+          }
+        : current
     );
+  };
+
+  const submitPluginSeparatorDialog = async () => {
+    if (!pluginSeparatorDialog || !selectedProject) {
+      return;
+    }
+
+    const copy = pluginSeparatorCopy(bridgeStatus?.language);
+    const title = pluginSeparatorDialog.name.trim();
+    if (!title) {
+      setPluginSeparatorDialog((current) =>
+        current
+          ? {
+              ...current,
+              validationMessage: copy.requiredMessage
+            }
+          : current
+      );
+      return;
+    }
+
+    const request = pluginSeparatorDialog;
+    const project = selectedProject;
+    const profileName = selectedProjectProfileName;
+    const previousItems = pluginsWorkspace.items;
+    setPluginSeparatorDialog(null);
+
+    await runPluginMutation(copy.creatingLabel, async (operationId) => {
+      const result = await createPluginSeparatorForSelection({
+        api: {
+          createSeparator: (separatorTitle, targetIndex) =>
+            window.fluxora.plugins.createSeparator(
+              project.projectDirectory,
+              project.templateId,
+              profileName,
+              separatorTitle,
+              targetIndex,
+              { operationId }
+            ),
+          deleteSeparator: (separatorOrderId) =>
+            window.fluxora.plugins.deleteSeparator(
+              project.projectDirectory,
+              project.templateId,
+              profileName,
+              separatorOrderId,
+              { operationId }
+            ),
+          move: (orderId, targetIndex) =>
+            window.fluxora.plugins.move(
+              project.projectDirectory,
+              project.templateId,
+              profileName,
+              orderId,
+              targetIndex,
+              { operationId }
+            )
+        },
+        contextOrderId: request.contextOrderId,
+        items: previousItems,
+        selectedOrderIds: new Set(request.selectedOrderIds),
+        title
+      });
+      dispatchPluginsWorkspace({ type: 'items-loaded', items: result.items });
+    });
   };
 
   const deletePluginSeparator = async (item: FluxoraPluginOrderItem) => {
@@ -9421,25 +9513,74 @@ export const App = () => {
     return () => window.clearInterval(timer);
   }, [overwriteClearSplash?.operationId]);
 
-  const renameProject = async (project: FluxoraProject) => {
-    const newName = window.prompt('Build name', project.name)?.trim();
-    if (!newName || newName === project.name) {
+  const openBuildRenameDialog = (project: FluxoraProject) => {
+    setBuildRenameDialog({
+      currentName: project.name,
+      gameName: project.gameName || project.templateId,
+      isSubmitting: false,
+      name: project.name,
+      project,
+      validationMessage: null
+    });
+  };
+
+  const updateBuildRenameDialogName = (name: string) => {
+    setBuildRenameDialog((current) =>
+      current
+        ? {
+            ...current,
+            name: name.slice(0, BUILD_RENAME_NAME_MAX_LENGTH),
+            validationMessage: null
+          }
+        : current
+    );
+  };
+
+  const closeBuildRenameDialog = () => {
+    setBuildRenameDialog((current) => (current?.isSubmitting ? current : null));
+  };
+
+  const submitBuildRenameDialog = async () => {
+    if (!buildRenameDialog || buildRenameDialog.isSubmitting) {
       return;
     }
 
-    setBusyLabel('Renaming build');
+    const request = buildRenameDialog;
+    const copy = buildRenameDialogCopy(bridgeStatus?.language);
+    const newName = request.name.trim();
+    if (!newName || newName === request.currentName) {
+      setBuildRenameDialog((current) =>
+        current
+          ? {
+              ...current,
+              validationMessage: newName ? copy.unchangedMessage : copy.requiredMessage
+            }
+          : current
+      );
+      return;
+    }
+
+    setBuildRenameDialog((current) =>
+      current ? { ...current, isSubmitting: true, validationMessage: null } : current
+    );
     setMessage(null);
 
     try {
-      const { project: renamed } = await renameProjectConfig(project, newName);
+      const { project: renamed } = await renameProjectConfig(request.project, newName);
       setProjects((current) => upsertProject(current, renamed));
       setSelectedProjectId(renamed.id);
-      setLoadedWorkspaceProjectId((current) => (current === project.id ? renamed.id : current));
+      setLoadedWorkspaceProjectId((current) =>
+        current === request.project.id ? renamed.id : current
+      );
+      setBuildRenameDialog(null);
       setMessage(`Renamed to ${renamed.name}`);
     } catch (error) {
-      setMessage(errorMessage(error));
-    } finally {
-      setBusyLabel(null);
+      const validationMessage = errorMessage(error);
+      setBuildRenameDialog((current) =>
+        current?.project.configPath === request.project.configPath
+          ? { ...current, isSubmitting: false, validationMessage }
+          : current
+      );
     }
   };
 
@@ -10983,7 +11124,7 @@ export const App = () => {
           role="menuitem"
           onClick={() => {
             setProjectMenuId(null);
-            void renameProject(project);
+            openBuildRenameDialog(project);
           }}
         >
           <Pencil size={15} aria-hidden="true" />
@@ -12434,6 +12575,7 @@ export const App = () => {
     const hasExpandedPluginSeparators = pluginSeparatorOrderIds.some(
       (orderId) => !pluginsWorkspace.collapsedSeparatorOrderIds.has(orderId)
     );
+    const separatorCopy = pluginSeparatorCopy(bridgeStatus?.language);
 
     return createPortal(
       <div
@@ -12450,6 +12592,21 @@ export const App = () => {
       >
         {item.isPlugin ? (
           <>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={
+                Boolean(pluginsBusyLabel) ||
+                !pluginCapabilities.loadOrderSupported
+              }
+              onClick={() => {
+                setPluginMenuOrderId(null);
+                openPluginSeparatorDialog(item);
+              }}
+            >
+              <MenuIcon source={menuLayersIcon} />
+              <span>{separatorCopy.menuLabel}</span>
+            </button>
             {!hasMultipleSelectedPluginRows ? (
               <button
                 type="button"
@@ -13743,6 +13900,26 @@ export const App = () => {
       onCancel={() => setModCreationDialog(null)}
       onNameChange={updateModCreationDialogName}
       onSubmit={() => void submitModCreationDialog()}
+    />
+  );
+
+  const renderPluginSeparatorDialog = () => (
+    <PluginSeparatorDialog
+      language={bridgeStatus?.language}
+      state={pluginSeparatorDialog}
+      onCancel={() => setPluginSeparatorDialog(null)}
+      onNameChange={updatePluginSeparatorDialogName}
+      onSubmit={() => void submitPluginSeparatorDialog()}
+    />
+  );
+
+  const renderBuildRenameDialog = () => (
+    <BuildRenameDialog
+      language={bridgeStatus?.language}
+      state={buildRenameDialog}
+      onCancel={closeBuildRenameDialog}
+      onNameChange={updateBuildRenameDialogName}
+      onSubmit={() => void submitBuildRenameDialog()}
     />
   );
 
@@ -15566,7 +15743,9 @@ export const App = () => {
                   : null}
                 {renderInstallDialog()}
                 {renderDownloadDuplicateDecision()}
+                {renderBuildRenameDialog()}
                 {renderModCreationDialog()}
+                {renderPluginSeparatorDialog()}
                 {renderFluxPackExportDialog()}
                 {renderFluxPackInstallConflictDialog()}
                 {renderFluxPackManualDownloadsDialog()}

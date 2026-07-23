@@ -272,6 +272,64 @@ namespace fluxora::tests
         EXPECT_EQ(normalized(reloaded[0].project.configPath), normalized(result.project.project.configPath));
     }
 
+    TEST(ModOrganizerImportServiceTests, ImportPersistsLeadingOfficialPluginGroup)
+    {
+        TempDirectory temp;
+        ScopedEnvironmentVariable appData(L"APPDATA", (temp.path() / L"AppData").wstring());
+        ScopedEnvironmentVariable userProfile(L"USERPROFILE", (temp.path() / L"User").wstring());
+        const std::filesystem::path appRoot = temp.path() / L"Fluxora App";
+        std::filesystem::create_directories(appRoot);
+        ScopedEnvironmentVariable appRootEnvironment(L"FLUXORA_APP_ROOT", appRoot.wstring());
+
+        const std::filesystem::path source = temp.path() / L"MO2";
+        const std::filesystem::path destinationRoot = temp.path() / L"SelectedDrive";
+        writeSkyrimMo2Instance(source);
+        const std::filesystem::path profile = source / L"profiles" / L"Default";
+        writeTextFile(
+            profile / L"loadorder.txt",
+            "Skyrim.esm\n"
+            "OfficialAddon.esl\n"
+            "SkyUI.esp\n");
+        writeTextFile(
+            profile / L"plugins.txt",
+            "*Skyrim.esm\n"
+            "*OfficialAddon.esl\n"
+            "*SkyUI.esp\n");
+        writeTextFile(
+            profile / L"plugingroups.txt",
+            "SkyUI.esp|Interface\n");
+
+        ModOrganizerImportHarness harness;
+        ModOrganizerImportRequest request;
+        request.sourceDirectory = source;
+        request.destinationRootDirectory = destinationRoot;
+        request.mode = ModOrganizerImportMode::CreateNew;
+
+        const ModOrganizerImportResult result = harness.importer.importInstance(request);
+        const std::vector<ProfilePluginOrderItemRecord> pluginOrder =
+            InstanceMetadataStore::listProfilePluginOrderItems(
+                result.project.project.projectDirectory,
+                L"Default",
+                {
+                    L"Skyrim.esm",
+                    L"Update.esm",
+                    L"Dawnguard.esm",
+                    L"HearthFires.esm",
+                    L"Dragonborn.esm",
+                    L"OfficialAddon.esl",
+                    L"SkyUI.esp"
+                });
+
+        ASSERT_EQ(pluginOrder.size(), 9U);
+        EXPECT_EQ(pluginOrder[0].kind, L"separator");
+        EXPECT_EQ(pluginOrder[0].separatorTitle, L"Skyrim Special Edition");
+        EXPECT_EQ(pluginOrder[1].pluginName, L"Skyrim.esm");
+        EXPECT_EQ(pluginOrder[6].pluginName, L"OfficialAddon.esl");
+        EXPECT_EQ(pluginOrder[7].kind, L"separator");
+        EXPECT_EQ(pluginOrder[7].separatorTitle, L"Interface");
+        EXPECT_EQ(pluginOrder[8].pluginName, L"SkyUI.esp");
+    }
+
     TEST(ModOrganizerImportServiceTests, ImportSkipsTransientInstanceDatabaseSidecars)
     {
         TempDirectory temp;

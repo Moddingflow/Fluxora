@@ -55,13 +55,20 @@ namespace fluxora
         std::wstring additionalArguments;
     };
 
+    struct GrassCacheLaunchResult
+    {
+        std::filesystem::path runtimeMarkerPath;
+        bool runtimeMarkerStillExists{false};
+    };
+
     class IGrassCacheProcessRunner
     {
     public:
         virtual ~IGrassCacheProcessRunner() = default;
-        virtual void launchAndWait(
+        [[nodiscard]] virtual GrassCacheLaunchResult launchAndWait(
             const GrassCacheLaunchSpec& spec,
-            const std::function<bool()>& cancellationRequested) = 0;
+            const std::function<bool()>& cancellationRequested,
+            const std::function<void()>& activityCallback = {}) = 0;
     };
 
     class GrassCacheService final : public IService

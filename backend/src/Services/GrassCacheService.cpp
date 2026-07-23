@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cwctype>
 #include <filesystem>
@@ -428,17 +429,189 @@ namespace fluxora
             return iterator != std::filesystem::directory_iterator{};
         }
 
-        bool grassOutputReady(const std::filesystem::path& overwriteDirectory)
-        {
-            const std::filesystem::path outputDirectory = findGrassOutputDirectory(overwriteDirectory);
-            return !outputDirectory.empty() && directoryHasEntries(outputDirectory);
-        }
-
         struct OutputFileCounts
         {
             int generated{0};
+            int cgid{0};
             int failed{0};
         };
+
+        struct NgioLogProgress
+        {
+            std::wstring currentItem;
+            int overallPercent{0};
+            int worldIndex{0};
+            int worldCount{0};
+        };
+
+        struct GrassCacheProgressTracker
+        {
+            std::uintmax_t markerOffset{0};
+            int completedCellCount{0};
+            int lastReportedPercent{-1};
+            int lastReportedCellCount{-1};
+            std::wstring lastReportedItem;
+
+            void refreshMarker(const std::filesystem::path& markerPath)
+            {
+                std::error_code sizeError;
+                const std::uintmax_t size = std::filesystem::file_size(markerPath, sizeError);
+                if (sizeError)
+                {
+                    return;
+                }
+                if (size < markerOffset)
+                {
+                    markerOffset = 0;
+                    completedCellCount = 0;
+                }
+                if (size == markerOffset)
+                {
+                    return;
+                }
+
+                std::ifstream input(markerPath, std::ios::binary);
+                if (!input)
+                {
+                    return;
+                }
+                input.seekg(static_cast<std::streamoff>(markerOffset), std::ios::beg);
+                std::string line;
+                while (std::getline(input, line))
+                {
+                    if (line.rfind("cell_", 0) == 0)
+                    {
+                        ++completedCellCount;
+                    }
+                }
+                markerOffset = size;
+            }
+        };
+
+        std::wstring safeVfsPathSegment(std::wstring value, std::wstring_view fallback)
+        {
+            static constexpr std::wstring_view invalid = L"<>:\"/\\|?*";
+            for (wchar_t& character : value)
+            {
+                if (character < 32 || invalid.find(character) != std::wstring_view::npos)
+                {
+                    character = L'_';
+                }
+            }
+            while (!value.empty() && (value.back() == L'.' || value.back() == L' '))
+            {
+                value.pop_back();
+            }
+            return value.empty() ? std::wstring(fallback) : value;
+        }
+
+        std::optional<NgioLogProgress> parseNgioLogProgressLine(const std::string& line)
+        {
+            static constexpr std::string_view messagePrefix = "Generating grass for ";
+            static constexpr std::string_view percentMarker = " pct, world ";
+            static constexpr std::string_view worldCountMarker = " out of ";
+
+            const std::size_t messageStart = line.rfind(messagePrefix);
+            if (messageStart == std::string::npos)
+            {
+                return std::nullopt;
+            }
+            const std::size_t itemStart = messageStart + messagePrefix.size();
+            const std::size_t percentEnd = line.find(percentMarker, itemStart);
+            if (percentEnd == std::string::npos || percentEnd == 0)
+            {
+                return std::nullopt;
+            }
+            const std::size_t percentStart = line.rfind(' ', percentEnd - 1);
+            if (percentStart == std::string::npos || percentStart < itemStart)
+            {
+                return std::nullopt;
+            }
+            const std::size_t worldIndexStart = percentEnd + percentMarker.size();
+            const std::size_t worldIndexEnd = line.find(worldCountMarker, worldIndexStart);
+            if (worldIndexEnd == std::string::npos)
+            {
+                return std::nullopt;
+            }
+            const std::size_t worldCountStart = worldIndexEnd + worldCountMarker.size();
+
+            try
+            {
+                const double worldPercent = std::stod(
+                    line.substr(percentStart + 1, percentEnd - percentStart - 1));
+                const int worldIndex = std::stoi(
+                    line.substr(worldIndexStart, worldIndexEnd - worldIndexStart));
+                const int worldCount = std::stoi(line.substr(worldCountStart));
+                if (worldIndex <= 0 || worldCount <= 0 || worldIndex > worldCount)
+                {
+                    return std::nullopt;
+                }
+
+                const double overall =
+                    ((static_cast<double>(worldIndex - 1) * 100.0) +
+                     (std::max)(0.0, (std::min)(100.0, worldPercent))) /
+                    static_cast<double>(worldCount);
+                const std::string item =
+                    line.substr(itemStart, percentStart - itemStart);
+                return NgioLogProgress{
+                    std::wstring(item.begin(), item.end()),
+                    static_cast<int>(std::lround(overall)),
+                    worldIndex,
+                    worldCount
+                };
+            }
+            catch (...)
+            {
+                return std::nullopt;
+            }
+        }
+
+        std::optional<NgioLogProgress> readLatestNgioLogProgress(
+            const std::filesystem::path& logPath)
+        {
+            constexpr std::streamoff maxTailBytes = 256 * 1024;
+            std::ifstream input(logPath, std::ios::binary);
+            if (!input)
+            {
+                return std::nullopt;
+            }
+
+            input.seekg(0, std::ios::end);
+            const std::streamoff end = input.tellg();
+            if (end <= 0)
+            {
+                return std::nullopt;
+            }
+            const std::streamoff start = (std::max)(std::streamoff{0}, end - maxTailBytes);
+            input.seekg(start, std::ios::beg);
+            std::string tail(static_cast<std::size_t>(end - start), '\0');
+            input.read(tail.data(), static_cast<std::streamsize>(tail.size()));
+            tail.resize(static_cast<std::size_t>(input.gcount()));
+
+            std::size_t lineEnd = tail.size();
+            while (lineEnd > 0)
+            {
+                const std::size_t newline =
+                    tail.rfind('\n', lineEnd == 0 ? 0 : lineEnd - 1);
+                const std::size_t lineStart =
+                    newline == std::string::npos ? 0 : newline + 1;
+                std::string line = tail.substr(lineStart, lineEnd - lineStart);
+                if (!line.empty() && line.back() == '\r')
+                {
+                    line.pop_back();
+                }
+                if (const auto parsed = parseNgioLogProgressLine(line); parsed.has_value())
+                {
+                    return parsed;
+                }
+                if (newline == std::string::npos)
+                {
+                    break;
+                }
+                lineEnd = newline;
+            }
+            return std::nullopt;
+        }
 
         OutputFileCounts countGrassFiles(const std::filesystem::path& grassDirectory)
         {
@@ -466,7 +639,12 @@ namespace fluxora
                 }
 
                 ++counts.generated;
-                if (equalsIgnoreCase(entry.path().extension().wstring(), L".fail"))
+                const std::wstring extension = entry.path().extension().wstring();
+                if (equalsIgnoreCase(extension, L".cgid"))
+                {
+                    ++counts.cgid;
+                }
+                else if (equalsIgnoreCase(extension, L".fail"))
                 {
                     ++counts.failed;
                 }
@@ -745,13 +923,26 @@ namespace fluxora
             containsIgnoreCase(executable->arguments, L"-forcesteamloader")
                 ? std::wstring{}
                 : std::wstring(L"-forcesteamloader");
+        const std::wstring rootBuilderDirectoryName =
+            ngioRootBuilderDirectoryName(opened.resolvedTemplate.id);
         const std::filesystem::path markerPath =
-            paths.gameDirectory / std::filesystem::path(std::wstring(precacheMarkerFileName));
+            paths.overwriteDirectory /
+            std::filesystem::path(rootBuilderDirectoryName) /
+            std::filesystem::path(std::wstring(precacheMarkerFileName));
         const std::wstring modName = outputModName(opened.project.name);
         const std::filesystem::path targetMod = paths.modsDirectory / std::filesystem::path(modName);
         const std::filesystem::path targetGrass = targetMod / std::filesystem::path(std::wstring(grassFolderName));
         const std::filesystem::path cancellationMarker =
             operationCancellationMarkerPath(Logger::operationId());
+        const std::filesystem::path ngioLogPath =
+            projectDirectory /
+            std::filesystem::path(L".flow") /
+            std::filesystem::path(L"vfs") /
+            std::filesystem::path(L"profile-overwrite") /
+            std::filesystem::path(safeVfsPathSegment(resolvedProfile, L"Default")) /
+            std::filesystem::path(L"documents") /
+            std::filesystem::path(L"SKSE") /
+            std::filesystem::path(L"NGIO-NG.log");
         const std::optional<std::uint32_t> tauriProcessId = tauriProcessIdFromEnvironment();
         const std::function<bool()> cancellationRequested =
             [this, cancellationMarker, tauriProcessId]()
@@ -770,6 +961,8 @@ namespace fluxora
             .throwIfUnsafe("Grass cache output folder path is unsafe");
         safety.validateDirectoryWriteRoot(paths.overwriteDirectory)
             .throwIfUnsafe("Overwrite directory is unsafe");
+        safety.validateWritePath(paths.overwriteDirectory, markerPath)
+            .throwIfUnsafe("Grass cache trigger path is unsafe");
 
         if (progress)
         {
@@ -783,8 +976,7 @@ namespace fluxora
         }
 
         throwIfCancellationRequested(cancellationRequested);
-        std::error_code cleanupError;
-        std::filesystem::remove(markerPath, cleanupError);
+        (void)clearStaleNgioPrecacheMarkersForLaunch(configPath);
         if (const std::filesystem::path staleSourceGrass = findGrassOutputDirectory(paths.overwriteDirectory);
             !staleSourceGrass.empty())
         {
@@ -808,8 +1000,29 @@ namespace fluxora
                 "Removed previous generated grass cache output before starting NGIO generation.");
         }
         writeMarkerFile(markerPath);
+        const std::filesystem::path lowerMarkerWhiteout =
+            projectDirectory /
+            std::filesystem::path(L".flow") /
+            std::filesystem::path(L"vfs") /
+            std::filesystem::path(L"whiteouts") /
+            std::filesystem::path(L"game-root") /
+            std::filesystem::path(std::wstring(precacheMarkerFileName));
+        logger_.writeOperation(
+            LogLevel::Info,
+            "GrassCache",
+            "Published NGIO trigger in the VFS root overlay. markerPath=\"" +
+                toUtf8(markerPath.wstring()) +
+                "\", lowerGameRootWhiteoutExists=" +
+                std::to_string(std::filesystem::exists(lowerMarkerWhiteout) ? 1 : 0) + ".");
 
         int launchCount = 0;
+        GrassCacheProgressTracker progressTracker;
+        std::error_code initialLogTimeError;
+        const std::filesystem::file_time_type initialLogWriteTime =
+            std::filesystem::last_write_time(ngioLogPath, initialLogTimeError);
+        std::error_code initialLogSizeError;
+        const std::uintmax_t initialLogSize =
+            std::filesystem::file_size(ngioLogPath, initialLogSizeError);
         try
         {
             for (; launchCount < options.maxLaunchCount; ++launchCount)
@@ -826,49 +1039,132 @@ namespace fluxora
                     });
                 }
 
-                runner_.launchAndWait(GrassCacheLaunchSpec{
-                    configPath,
-                    executable->id,
-                    resolvedProfile,
-                    extraArguments
-                }, cancellationRequested);
+                const auto reportNgioActivity =
+                    [&, currentLaunch = launchCount + 1]()
+                    {
+                        if (!progress)
+                        {
+                            return;
+                        }
+
+                        progressTracker.refreshMarker(markerPath);
+
+                        std::error_code currentLogTimeError;
+                        const std::filesystem::file_time_type currentLogWriteTime =
+                            std::filesystem::last_write_time(ngioLogPath, currentLogTimeError);
+                        std::error_code currentLogSizeError;
+                        const std::uintmax_t currentLogSize =
+                            std::filesystem::file_size(ngioLogPath, currentLogSizeError);
+                        const bool logChanged =
+                            initialLogTimeError ||
+                            initialLogSizeError ||
+                            (!currentLogTimeError &&
+                             !currentLogSizeError &&
+                             (currentLogWriteTime != initialLogWriteTime ||
+                              currentLogSize != initialLogSize));
+                        const std::optional<NgioLogProgress> ngioProgress =
+                            logChanged
+                                ? readLatestNgioLogProgress(ngioLogPath)
+                                : std::nullopt;
+                        if (!ngioProgress.has_value() &&
+                            progressTracker.completedCellCount <= 0)
+                        {
+                            return;
+                        }
+
+                        const int parsedOperationPercent = ngioProgress.has_value()
+                            ? (std::min)(94, (std::max)(8, ngioProgress->overallPercent))
+                            : (std::max)(8, progressTracker.lastReportedPercent);
+                        const int operationPercent =
+                            (std::max)(
+                                parsedOperationPercent,
+                                progressTracker.lastReportedPercent);
+                        const std::wstring currentItem = ngioProgress.has_value()
+                            ? ngioProgress->currentItem
+                            : L"Completed cells: " +
+                                std::to_wstring(progressTracker.completedCellCount);
+                        const std::wstring currentStep = ngioProgress.has_value()
+                            ? L"NGIO grass generation: " +
+                                std::to_wstring(ngioProgress->overallPercent) +
+                                L"% · world " +
+                                std::to_wstring(ngioProgress->worldIndex) +
+                                L" of " +
+                                std::to_wstring(ngioProgress->worldCount) +
+                                L" · completed cells: " +
+                                std::to_wstring(progressTracker.completedCellCount)
+                            : L"NGIO grass generation · completed cells: " +
+                                std::to_wstring(progressTracker.completedCellCount);
+                        if (operationPercent == progressTracker.lastReportedPercent &&
+                            progressTracker.completedCellCount ==
+                                progressTracker.lastReportedCellCount &&
+                            currentItem == progressTracker.lastReportedItem)
+                        {
+                            return;
+                        }
+
+                        progressTracker.lastReportedPercent = operationPercent;
+                        progressTracker.lastReportedCellCount =
+                            progressTracker.completedCellCount;
+                        progressTracker.lastReportedItem = currentItem;
+                        progress(GrassCacheGenerationProgress{
+                            L"generating",
+                            currentStep,
+                            currentItem,
+                            operationPercent,
+                            currentLaunch
+                        });
+                    };
+
+                const GrassCacheLaunchResult launchResult =
+                    runner_.launchAndWait(
+                        GrassCacheLaunchSpec{
+                            configPath,
+                            executable->id,
+                            resolvedProfile,
+                            extraArguments
+                        },
+                        cancellationRequested,
+                        reportNgioActivity);
                 throwIfCancellationRequested(cancellationRequested);
 
-                const bool markerStillExists = std::filesystem::exists(markerPath);
-                const bool outputReady = grassOutputReady(paths.overwriteDirectory);
+                const std::filesystem::path sourceGrass =
+                    findGrassOutputDirectory(paths.overwriteDirectory);
+                const OutputFileCounts launchCounts = countGrassFiles(sourceGrass);
+                const bool outputReady =
+                    !sourceGrass.empty() && directoryHasEntries(sourceGrass);
+                const bool managedMarkerStillExists = std::filesystem::exists(markerPath);
+                const std::string operationId = Logger::operationId();
                 logger_.writeOperation(
                     LogLevel::Info,
                     "GrassCache",
-                    "NGIO launch returned. launch=" + std::to_string(launchCount + 1) +
-                        ", markerStillExists=" + std::to_string(markerStillExists ? 1 : 0) +
-                        ", outputReady=" + std::to_string(outputReady ? 1 : 0) + ".");
-                if (outputReady)
+                    "NGIO launch returned. operationId=\"" +
+                        (operationId.empty() ? std::string("<none>") : operationId) +
+                        "\", launch=" + std::to_string(launchCount + 1) +
+                        ", runtimeMarkerPath=\"" +
+                        toUtf8(launchResult.runtimeMarkerPath.wstring()) +
+                        "\", runtimeMarkerStillExists=" +
+                        std::to_string(launchResult.runtimeMarkerStillExists ? 1 : 0) +
+                        ", managedMarkerPath=\"" + toUtf8(markerPath.wstring()) +
+                        "\", managedMarkerStillExists=" +
+                        std::to_string(managedMarkerStillExists ? 1 : 0) +
+                        ", cgidFiles=" + std::to_string(launchCounts.cgid) +
+                        ", failedFiles=" + std::to_string(launchCounts.failed) + ".");
+                if (!managedMarkerStillExists)
                 {
-                    if (markerStillExists)
+                    if (!outputReady)
                     {
-                        logger_.writeOperation(
-                            LogLevel::Info,
-                            "GrassCache",
-                            "NGIO produced grass output but left PrecacheGrass.txt in place; removing marker and finishing.");
-                        std::error_code removeError;
-                        std::filesystem::remove(markerPath, removeError);
+                        throw std::runtime_error(
+                            "NGIO removed the managed PrecacheGrass.txt marker but produced no grass output.");
                     }
 
                     ++launchCount;
                     break;
                 }
 
-                if (!markerStillExists)
-                {
-                    logger_.writeOperation(
-                        LogLevel::Warning,
-                        "GrassCache",
-                        "NGIO removed PrecacheGrass.txt before grass output was ready; recreating marker before restart.");
-                    writeMarkerFile(markerPath);
-                }
                 if (launchCount + 1 >= options.maxLaunchCount)
                 {
-                    throw std::runtime_error("NGIO grass cache generation did not finish before the restart limit.");
+                    throw std::runtime_error(
+                        "NGIO managed PrecacheGrass.txt marker remained after the restart limit.");
                 }
 
                 if (progress)
@@ -1011,7 +1307,7 @@ namespace fluxora
             logger_.writeOperation(
                 LogLevel::Info,
                 "GrassCache",
-                "Removed stale NGIO PrecacheGrass.txt markers before ordinary Skyrim launch. count=" +
+                "Removed stale NGIO PrecacheGrass.txt markers before Skyrim launch. count=" +
                     std::to_string(removedCount) + ".");
         }
 
